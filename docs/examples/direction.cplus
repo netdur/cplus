@@ -1,0 +1,14 @@
+enum Direction { North, South, East, West }
+
+fn opposite(d: Direction) -> Direction {
+    if d == Direction::North { return Direction::South; }
+    if d == Direction::South { return Direction::North; }
+    if d == Direction::East { return Direction::West; }
+    return Direction::East;
+}
+
+fn main() -> i32 {
+    let d: Direction = opposite(Direction::North);
+    println(d as i32);
+    return 0;
+}

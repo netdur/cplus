@@ -1,0 +1,17 @@
+fn fib(n: i32) -> i32 {
+    let mut a: i32 = 0;
+    let mut b: i32 = 1;
+    let mut i: i32 = 0;
+    while i < n {
+        let t = a + b;
+        a = b;
+        b = t;
+        i = i + 1;
+    }
+    return a;
+}
+
+fn main() -> i32 {
+    println(fib(20));
+    return 0;
+}

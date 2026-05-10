@@ -1,0 +1,15 @@
+[package]
+name = "cpc"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "cpc"
+path = "src/main.rs"
+
+[dependencies]
+cplus-core = { path = "../cplus-core" }
+
+[dev-dependencies]
+serde_json = "1"

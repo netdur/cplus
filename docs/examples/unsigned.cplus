@@ -1,0 +1,8 @@
+fn main() -> i32 {
+    let mut acc: u64 = 0;
+    for i in 1..=10 {
+        acc = acc + (i as u64);
+    }
+    println(acc as i32);
+    return 0;
+}

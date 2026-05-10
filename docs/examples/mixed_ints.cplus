@@ -1,0 +1,7 @@
+fn main() -> i32 {
+    let a: i64 = 1000000000;
+    let b: i64 = a + a;
+    let c: i32 = b as i32;
+    println(c);
+    return 0;
+}

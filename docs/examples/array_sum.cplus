@@ -1,0 +1,9 @@
+fn main() -> i32 {
+    let xs: [i32; 5] = [1, 2, 3, 4, 5];
+    let mut total: i32 = 0;
+    for i in 0..5 {
+        total = total + xs[i as usize];
+    }
+    println(total);
+    return 0;
+}

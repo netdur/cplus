@@ -1,0 +1,17 @@
+struct Point { x: i32, y: i32 }
+
+impl Point {
+    fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
+    fn magnitude_squared(self) -> i32 { return self.x * self.x + self.y * self.y; }
+    fn translate(mut self, dx: i32, dy: i32) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+}
+
+fn main() -> i32 {
+    let mut p: Point = Point::new(3, 4);
+    p.translate(1, 1);
+    println(p.magnitude_squared());
+    return 0;
+}
