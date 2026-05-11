@@ -1,0 +1,15 @@
+// Benchmark: recursive Fibonacci. Tests function call overhead.
+// fib(40) makes ~204M calls; primarily exercises the calling convention.
+
+fn fib(n: i32) -> i32 {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main() -> i32 {
+    let r: i32 = fib(40);
+    println(r);
+    return 0;
+}

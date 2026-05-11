@@ -139,7 +139,7 @@ fn phase0_hello(out: PathBuf) -> ExitCode {
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out);
+    let status = run_clang(&tmp, &out, BuildMode::Debug);
     let _ = fs::remove_file(&tmp);
     status
 }
@@ -161,7 +161,7 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out);
+    let status = run_clang(&tmp, &out, build_mode);
     let _ = fs::remove_file(&tmp);
     status
 }
@@ -196,8 +196,20 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode) -> Re
     Ok(codegen::generate(&prog, build_mode))
 }
 
-fn run_clang(input_ll: &Path, out: &Path) -> ExitCode {
+fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode) -> ExitCode {
+    // Pass the LLVM optimization level alongside our own build-mode choice:
+    //   Debug   -> `-O0`. Keeps the overflow-check intrinsics, leaves divs
+    //              and branches in source order, debuggable IR.
+    //   Release -> `-O2`. Engages LLVM's standard inlining, mem2reg,
+    //              GVN, LICM, loop reduction, etc. Without this flag clang
+    //              defaults to `-O0` and our "release" binaries are 100×
+    //              slower than they need to be.
+    let opt = match mode {
+        BuildMode::Debug => "-O0",
+        BuildMode::Release => "-O2",
+    };
     let status = Command::new("clang")
+        .arg(opt)
         .arg("-Wno-override-module")
         .arg(input_ll)
         .arg("-o")

@@ -222,6 +222,14 @@ Expected output: `28`.
    - E2E: `ownership.cplus` runs and prints 28.
    - Negative: each row of §6.2.
 
+## 7a. Scope decision: codegen lowering deferred
+
+The §3.1 table specifies that `x: T` (T non-Copy) and `mut x: T` lower to `ptr` parameters. This is a *performance* property (unlocks `noalias` in Phase 6 and avoids ABI aggregate-passing on hot paths), not a correctness one. The current aggregate-by-value lowering still implements move semantics correctly at the bit level — the caller hands the value to the callee and the borrow checker enforces that the source isn't read afterward.
+
+To keep this slice focused and reduce regression risk against the Phase-2 sample suite (which exercises struct/array params under aggregate-by-value), the Phase-3 landing **keeps the existing codegen lowering**. The pointer-pass switch will land alongside the Phase-6 `noalias`/`mut`-tracking work, where it earns its keep. Move tracking is purely a sema concern in Phase 3.
+
+This does not affect any user-visible semantics. Programs that compile under Phase 3 will continue to compile under Phase 6 with the new lowering.
+
 ## 8. Open questions
 
 - [ ] **`Copy` derivation rules.** Initial Phase 3 has only primitives + enums as `Copy`. Should structs auto-derive `Copy` if all fields are `Copy`? Lean: yes (implicit, no annotation needed for the obvious case). Arrays `[T; N]` `Copy` iff `T: Copy`? Lean: yes. But: a `Buffer { data: [u8; 1024] }` being implicitly `Copy` means `let b2 = b;` silently copies 1KB. Rust requires an explicit `#[derive(Copy)]` to avoid surprise. Decision deferred — wants its own short design note before Phase 3 lands.

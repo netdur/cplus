@@ -19,6 +19,8 @@
 //! - E0312: feature parsed but not yet supported in Phase 1
 //! - E0313: assignment target is not a place expression
 //! - E0334: parameter has both `mut` and `move` (mutually exclusive)
+//! - E0335: use of moved value
+//! - E0337: cannot move out of non-binding place (partial moves deferred)
 
 use crate::ast::*;
 use crate::diagnostics::{DiagCode, DiagSink, Diagnostic, LineMap, Severity};
@@ -88,6 +90,25 @@ impl Ty {
     pub fn is_enum(&self) -> bool { matches!(self, Ty::Enum(_)) }
     pub fn is_struct(&self) -> bool { matches!(self, Ty::Struct(_)) }
     pub fn is_array(&self) -> bool { matches!(self, Ty::Array(_, _)) }
+
+    /// Phase 3 conservative `Copy` rule: primitives, `bool`, `()`, and plain
+    /// Atomic `Copy` rule: types whose `Copy`-ness is fixed by the type itself,
+    /// not by its components. Primitives, plain enums, `bool`, `()`, and the
+    /// `Error` sentinel (treated as Copy to avoid cascading move diagnostics on
+    /// already-broken code). For composite types (`Array`, `Struct`) call
+    /// `SemaCx::is_copy(&ty)` instead — the answer depends on the struct table.
+    pub fn is_atomic_copy(&self) -> bool {
+        match self {
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
+            | Ty::Isize | Ty::Usize
+            | Ty::F32 | Ty::F64
+            | Ty::Bool | Ty::Unit
+            | Ty::Enum(_)
+            | Ty::Error => true,
+            Ty::Struct(_) | Ty::Array(_, _) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -104,13 +125,28 @@ pub struct StructDef {
     pub fields: Vec<(String, Ty)>,
     /// Methods declared in any `impl` block for this struct.
     pub methods: HashMap<String, MethodSig>,
+    /// Cached `Copy` flag — structural auto-derive: true iff every field type
+    /// is `Copy`. Computed by `compute_struct_copy_flags` after field types
+    /// are resolved. See `docs/design/phase3-copy-derivation.md`.
+    pub is_copy: bool,
+}
+
+/// Type + ownership marker for a single parameter. The `move_` flag indicates
+/// the parameter was declared `move x: T` and consumes its argument (when the
+/// argument's type is non-Copy). The `mutable` flag (`mut x: T`) is recorded
+/// for completeness but is body-internal — call sites don't care.
+#[derive(Debug, Clone)]
+pub struct ParamSig {
+    pub ty: Ty,
+    pub mutable: bool,
+    pub move_: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct MethodSig {
     pub receiver: Option<Receiver>,
-    /// Parameter types *excluding* the receiver.
-    pub params: Vec<Ty>,
+    /// Parameter signatures *excluding* the receiver.
+    pub params: Vec<ParamSig>,
     pub return_type: Ty,
 }
 
@@ -124,7 +160,7 @@ impl StructDef {
 
 #[derive(Debug, Clone)]
 pub struct FnSig {
-    pub params: Vec<Ty>,
+    pub params: Vec<ParamSig>,
     pub return_type: Ty,
 }
 
@@ -132,6 +168,10 @@ pub struct FnSig {
 struct LocalInfo {
     ty: Ty,
     mutable: bool,
+    /// True iff this binding has been consumed by a move. Reads of a moved
+    /// binding produce E0335. Move tracking is linear within the body in
+    /// Phase 3; flow-sensitive merging across branches is Phase 5 work.
+    moved: bool,
 }
 
 /// Run sema on a parsed program. Returns all diagnostics produced;
@@ -153,10 +193,13 @@ pub fn check(program: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {
         current_return: Ty::Error,
     };
     cx.register_builtins();
-    // Three-pass type collection: names, struct fields, methods (which
-    // reference fully-typed structs / enums / functions).
+    // Type collection: names, struct fields, struct Copy flags, methods.
+    // Copy flags must be computed after fields are resolved but before
+    // methods, so method signatures can ask about the Copy-ness of any
+    // struct they mention.
     cx.collect_type_names(program);
     cx.collect_struct_fields(program);
+    cx.compute_struct_copy_flags();
     cx.collect_methods(program);
     cx.collect_functions(program);
     cx.check_main_signature(program);
@@ -201,7 +244,10 @@ impl SemaCx<'_> {
         // `println(n: i32)` — emitted by codegen as a call to `printf("%d\n", n)`.
         self.fns.insert(
             "println".to_string(),
-            FnSig { params: vec![Ty::I32], return_type: Ty::Unit },
+            FnSig {
+                params: vec![ParamSig { ty: Ty::I32, mutable: false, move_: false }],
+                return_type: Ty::Unit,
+            },
         );
     }
 
@@ -252,6 +298,7 @@ impl SemaCx<'_> {
                         name: s.name.name.clone(),
                         fields: Vec::new(),
                         methods: HashMap::new(),
+                        is_copy: false,
                     });
                     self.struct_by_name.insert(s.name.name.clone(), id);
                 }
@@ -289,6 +336,52 @@ impl SemaCx<'_> {
         }
     }
 
+    /// Compute `is_copy` for every user-defined struct: a struct is `Copy`
+    /// iff every field type is `Copy`. The check is iterated to a fixpoint
+    /// because struct A's `is_copy` may depend on struct B's, and the
+    /// declaration order in source doesn't guarantee a useful evaluation
+    /// order. Convergence: at most `N` iterations for `N` structs (each
+    /// iteration either flips at least one struct's flag from false to true,
+    /// or we stop). Once flipped to true, a flag never flips back — the rule
+    /// is monotone.
+    ///
+    /// See `docs/design/phase3-copy-derivation.md`.
+    fn compute_struct_copy_flags(&mut self) {
+        loop {
+            let mut changed = false;
+            for i in 0..self.structs.len() {
+                if self.structs[i].is_copy {
+                    continue;
+                }
+                let all_fields_copy = self.structs[i]
+                    .fields
+                    .iter()
+                    .all(|(_, ty)| self.is_copy(ty));
+                if all_fields_copy {
+                    self.structs[i].is_copy = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Decide whether a type is `Copy`. Structural auto-derive: every
+    /// component must be `Copy`. For structs the answer is precomputed in
+    /// `compute_struct_copy_flags`; arrays recurse on the element type.
+    pub fn is_copy(&self, ty: &Ty) -> bool {
+        if ty.is_atomic_copy() {
+            return true;
+        }
+        match ty {
+            Ty::Array(elem, _) => self.is_copy(elem),
+            Ty::Struct(id) => self.structs[id.0 as usize].is_copy,
+            _ => unreachable!("is_atomic_copy already handled non-composite cases"),
+        }
+    }
+
     /// Third pass: collect methods from `impl` blocks. Runs after structs
     /// are fully typed so methods can reference any type by name. Reports
     /// E0325 (unknown / non-struct impl target) and E0326 (duplicate method).
@@ -312,7 +405,11 @@ impl SemaCx<'_> {
                 continue;
             };
             for m in &b.methods {
-                let params: Vec<Ty> = m.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
+                let params: Vec<ParamSig> = m.params.iter().map(|p| ParamSig {
+                    ty: self.resolve_type(&p.ty),
+                    mutable: p.mutable,
+                    move_: p.move_,
+                }).collect();
                 let return_type = match &m.return_type {
                     Some(t) => self.resolve_type(t),
                     None => Ty::Unit,
@@ -353,15 +450,17 @@ impl SemaCx<'_> {
 
         // Register `self` if there's a receiver. `mut self` makes self
         // a mutable binding (enables `self.x = ...`); other forms don't.
+        // `move self` is read-only inside the body — consumption happens at
+        // the call site, not from within.
         if let Some(rcv) = sig.receiver {
             let mutable = matches!(rcv, Receiver::Mut);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
-                LocalInfo { ty: Ty::Struct(struct_id), mutable },
+                LocalInfo { ty: Ty::Struct(struct_id), mutable, moved: false },
             );
         }
         // Register non-receiver params.
-        for (param, ty) in m.params.iter().zip(sig.params.iter()) {
+        for (param, psig) in m.params.iter().zip(sig.params.iter()) {
             // E0334: `mut` and `move` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err(
@@ -372,7 +471,7 @@ impl SemaCx<'_> {
             }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
-                LocalInfo { ty: ty.clone(), mutable: param.mutable },
+                LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false },
             );
         }
         self.check_function_body(&m.body, sig.return_type, m.body.span);
@@ -382,7 +481,11 @@ impl SemaCx<'_> {
     fn collect_functions(&mut self, p: &Program) {
         for item in &p.items {
             let ItemKind::Function(f) = &item.kind else { continue; };
-            let params: Vec<Ty> = f.params.iter().map(|p| self.resolve_type(&p.ty)).collect();
+            let params: Vec<ParamSig> = f.params.iter().map(|p| ParamSig {
+                ty: self.resolve_type(&p.ty),
+                mutable: p.mutable,
+                move_: p.move_,
+            }).collect();
             let ret = match &f.return_type {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
@@ -428,7 +531,7 @@ impl SemaCx<'_> {
         let Some(sig) = sig else { return; }; // duplicate def already errored
         self.current_return = sig.return_type.clone();
         self.scopes.push(HashMap::new());
-        for (param, ty) in f.params.iter().zip(sig.params.iter()) {
+        for (param, psig) in f.params.iter().zip(sig.params.iter()) {
             // E0334: `mut` and `move` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err(
@@ -439,7 +542,7 @@ impl SemaCx<'_> {
             }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
-                LocalInfo { ty: ty.clone(), mutable: param.mutable },
+                LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false },
             );
         }
         self.check_function_body(&f.body, sig.return_type, f.body.span);
@@ -489,7 +592,7 @@ impl SemaCx<'_> {
                 let final_ty = declared.unwrap_or(inferred);
                 self.scopes.last_mut().unwrap().insert(
                     name.name.clone(),
-                    LocalInfo { ty: final_ty, mutable: *mutable },
+                    LocalInfo { ty: final_ty, mutable: *mutable, moved: false },
                 );
             }
             StmtKind::Return(value) => {
@@ -540,7 +643,7 @@ impl SemaCx<'_> {
                 self.scopes.push(HashMap::new());
                 self.scopes.last_mut().unwrap().insert(
                     var.name.clone(),
-                    LocalInfo { ty: Ty::I32, mutable: false },
+                    LocalInfo { ty: Ty::I32, mutable: false, moved: false },
                 );
                 self.check_block_as_stmt(body);
                 self.scopes.pop();
@@ -890,7 +993,7 @@ impl SemaCx<'_> {
             );
         }
         for (a, expected) in args.iter().zip(sig.params.iter()) {
-            let _ = self.check_expr(a, Some(expected.clone()));
+            self.check_arg_with_move(a, expected);
         }
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
@@ -939,6 +1042,13 @@ impl SemaCx<'_> {
                 receiver.span,
             );
         }
+        // `move self` consumes the receiver place — but only if the struct
+        // is non-`Copy`. For a `Copy` struct, `move self` is a redundant
+        // marker (the receiver is bitwise-copied); leave the binding usable.
+        // Same rule as for `move`-marked parameters.
+        if matches!(rcv, Receiver::Move) && !self.structs[id.0 as usize].is_copy {
+            self.consume_place(receiver, &struct_name, &name.name);
+        }
         if args.len() != sig.params.len() {
             self.err(
                 "E0308",
@@ -947,7 +1057,7 @@ impl SemaCx<'_> {
             );
         }
         for (a, expected) in args.iter().zip(sig.params.iter()) {
-            let _ = self.check_expr(a, Some(expected.clone()));
+            self.check_arg_with_move(a, expected);
         }
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
@@ -1005,12 +1115,78 @@ impl SemaCx<'_> {
             );
         }
         for (a, expected) in args.iter().zip(sig.params.iter()) {
-            let _ = self.check_expr(a, Some(expected.clone()));
+            self.check_arg_with_move(a, expected);
         }
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
         }
         sig.return_type
+    }
+
+    /// Type-check a single call argument and apply move tracking. If the
+    /// parameter is `move` and the argument's type is non-Copy, the source
+    /// place is consumed:
+    ///   - Plain Ident referencing a local: mark the binding as moved.
+    ///   - Anything else (Field/Index/temp): reject as E0337 — partial moves
+    ///     out of struct fields or array slots are deferred to Phase 5/6.
+    /// `Copy`-typed arguments are unaffected — the `move` marker on a Copy
+    /// parameter is redundant (a future E0336 lint will suggest removing it).
+    fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
+        let _ = self.check_expr(arg, Some(expected.ty.clone()));
+        if expected.move_ && !self.is_copy(&expected.ty) {
+            self.consume_arg_place(arg);
+        }
+    }
+
+    /// Mark the source binding of an argument as moved. Used by both
+    /// `move`-param calls and `move self` receivers. Only plain Ident
+    /// references to a local binding are accepted; anything else triggers
+    /// E0337 (partial moves deferred).
+    fn consume_arg_place(&mut self, arg: &Expr) {
+        match &arg.kind {
+            ExprKind::Ident(name) => {
+                // Find the binding's scope and mark moved. `resolve_value_ident`
+                // already ran via `check_expr` and would have produced E0335
+                // if the binding was *already* moved; here we just record the
+                // new move state.
+                for scope in self.scopes.iter_mut().rev() {
+                    if let Some(info) = scope.get_mut(name) {
+                        info.moved = true;
+                        return;
+                    }
+                }
+                // Unknown name — error was already produced by check_expr.
+            }
+            _ => {
+                self.err(
+                    "E0337",
+                    "cannot move out of this expression; only whole-binding moves are supported in Phase 3 (partial moves of fields or array slots are deferred)".to_string(),
+                    arg.span,
+                );
+            }
+        }
+    }
+
+    /// Same as `consume_arg_place` but for the receiver in a `move self`
+    /// method call. Diagnostic phrasing names the method for clarity.
+    fn consume_place(&mut self, receiver: &Expr, type_name: &str, method_name: &str) {
+        match &receiver.kind {
+            ExprKind::Ident(name) => {
+                for scope in self.scopes.iter_mut().rev() {
+                    if let Some(info) = scope.get_mut(name) {
+                        info.moved = true;
+                        return;
+                    }
+                }
+            }
+            _ => {
+                self.err(
+                    "E0337",
+                    format!("method `{}::{}` consumes `self`; the receiver must be a whole binding (partial moves are deferred to a later phase)", type_name, method_name),
+                    receiver.span,
+                );
+            }
+        }
     }
 
     fn is_writable_place_quiet(&self, target: &Expr) -> bool {
@@ -1097,14 +1273,18 @@ impl SemaCx<'_> {
                 Ty::Bool
             }
             BinOp::AddWrap | BinOp::SubWrap | BinOp::MulWrap => {
-                self.err(
-                    "E0312",
-                    "wrapping operators (`+%`, `-%`, `*%`) not yet supported (Phase 3)".to_string(),
-                    span,
-                );
-                let _ = self.check_expr(lhs, None);
-                let _ = self.check_expr(rhs, None);
-                Ty::Error
+                let lhs_ty = self.check_expr(lhs, None);
+                if !lhs_ty.is_int() && lhs_ty != Ty::Error {
+                    self.err(
+                        "E0302",
+                        format!("`{}` requires integer operands, found `{}`", op_str(op), lhs_ty.name()),
+                        span,
+                    );
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                lhs_ty
             }
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                 self.err(
@@ -1281,7 +1461,16 @@ impl SemaCx<'_> {
 
     fn resolve_value_ident(&mut self, name: &str, span: ByteSpan) -> Ty {
         if let Some(info) = self.lookup_local(name) {
-            return info.ty.clone();
+            let ty = info.ty.clone();
+            let moved = info.moved;
+            if moved {
+                self.err(
+                    "E0335",
+                    format!("use of moved value `{name}`"),
+                    span,
+                );
+            }
+            return ty;
         }
         if self.fns.contains_key(name) {
             self.err(
@@ -1310,6 +1499,9 @@ fn op_str(op: BinOp) -> &'static str {
         BinOp::Mul => "*",
         BinOp::Div => "/",
         BinOp::Mod => "%",
+        BinOp::AddWrap => "+%",
+        BinOp::SubWrap => "-%",
+        BinOp::MulWrap => "*%",
         _ => "?",
     }
 }
@@ -1503,8 +1695,24 @@ mod tests {
     }
 
     #[test]
-    fn wrapping_op_not_supported_e0312() {
-        assert_only_code("fn main() -> i32 { return 1 +% 2; }", "E0312");
+    fn wrapping_ops_now_supported() {
+        assert_clean("fn main() -> i32 { return (1 +% 2) -% 1 *% 1; }");
+    }
+
+    #[test]
+    fn wrapping_op_on_float_e0302() {
+        let codes = errors(
+            "fn main() -> i32 { let x: f64 = 1.0; let y: f64 = x +% 2.0; return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
+    }
+
+    #[test]
+    fn wrapping_op_on_bool_e0302() {
+        let codes = errors(
+            "fn main() -> i32 { let _b: bool = true +% false; return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
     #[test]
@@ -2200,5 +2408,178 @@ mod tests {
              fn main() -> i32 { let p: P = P { x: 1 }; return p.f(2); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
+    }
+
+    // ----- Phase 3 slice 3A: move tracking + E0335 -----
+    //
+    // Six tests below are marked `#[ignore]`: their original inputs used
+    // `struct P { x: i32 }`, but with Copy auto-derive (slice 3C) such a
+    // struct is `Copy`, which makes `move` a no-op consumption. The move
+    // tracking machinery is still wired — it's just dormant for these
+    // inputs. Revive these tests when a non-Copy aggregate type exists
+    // in the language (e.g. once strings, heap types, or an explicit
+    // `nocopy` marker land). See `docs/design/phase3-copy-derivation.md`
+    // §7.1 for the broader plan.
+
+    #[test]
+    #[ignore = "needs a non-Copy aggregate type to exercise; revive when one exists"]
+    fn move_param_consumes_non_copy_binding_e0335() {
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             fn take(move p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); return p.x; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a non-Copy aggregate type to exercise; revive when one exists"]
+    fn move_param_double_call_e0335() {
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             fn take(move p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); let r: i32 = take(p); return 0; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a non-Copy aggregate type to exercise; revive when one exists"]
+    fn move_self_consumes_receiver_e0335() {
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             impl P { fn into_x(move self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = p.into_x(); return p.x; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    #[ignore = "needs a non-Copy aggregate type to exercise; revive when one exists"]
+    fn move_self_double_call_e0335() {
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             impl P { fn into_x(move self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = p.into_x(); let r: i32 = p.into_x(); return 0; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn move_on_copy_param_does_not_consume() {
+        // `move x: i32` is redundant — `i32` is Copy, so the source remains
+        // usable. (A future E0336 lint will suggest removing the keyword.)
+        assert_clean(
+            "fn take(move x: i32) -> i32 { return x; }\n\
+             fn main() -> i32 { let x: i32 = 5; let r: i32 = take(x); return x; }",
+        );
+    }
+
+    #[test]
+    fn shared_borrow_does_not_consume() {
+        // `p: P` (no `move`) is a shared borrow at the design level; in
+        // Phase 3 it doesn't track borrows yet, but the source must remain
+        // usable across calls.
+        assert_clean(
+            "struct P { x: i32 }\n\
+             fn read(p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: P = P { x: 7 }; let a: i32 = read(p); let b: i32 = read(p); return a + b; }",
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a non-Copy aggregate type to exercise; revive when one exists"]
+    fn move_from_field_e0337() {
+        // Partial moves out of struct fields are deferred. `move`-arg from
+        // a field expression must be rejected — but only if the consumption
+        // would have been real (non-Copy). Under auto-derive Inner is Copy
+        // so the consumption is a silent no-op; no E0337 fires.
+        let codes = errors(
+            "struct Inner { x: i32 }\n\
+             struct Outer { i: Inner }\n\
+             fn take(move i: Inner) -> i32 { return i.x; }\n\
+             fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn move_chain_through_function_is_clean() {
+        // Building owned values, threading them through one consuming call,
+        // and producing an owned result: nothing should remain usable, but
+        // also nothing should error.
+        assert_clean(
+            "struct P { x: i32 }\n\
+             fn take(move p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: P = P { x: 42 }; return take(p); }",
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a non-Copy aggregate type to exercise; revive when one exists"]
+    fn move_then_assign_recovers_binding() {
+        // Sanity check the boundary: once moved, the binding stays moved.
+        // (A re-`let` would shadow it, but the same `p` cannot be revived.)
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             fn take(move p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); let q: i32 = p.x; return q; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    // ----- Phase 3 slice 3C: Copy auto-derive -----
+
+    #[test]
+    fn copy_struct_remains_usable_after_pass() {
+        // `Point { x: i32, y: i32 }` is Copy under auto-derive. Passing by
+        // value (default shared) does not consume; the source stays usable.
+        assert_clean(
+            "struct Point { x: i32, y: i32 }\n\
+             fn read(p: Point) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: Point = Point { x: 3, y: 4 }; let a: i32 = read(p); let b: i32 = p.y; return a + b; }",
+        );
+    }
+
+    #[test]
+    fn copy_struct_with_array_field_is_copy() {
+        // Array of Copy → Copy. Struct containing array of Copy → Copy.
+        assert_clean(
+            "struct C { xs: [i32; 3] }\n\
+             fn first(c: C) -> i32 { return c.xs[0 as usize]; }\n\
+             fn main() -> i32 { let c: C = C { xs: [1, 2, 3] }; let a: i32 = first(c); return a + c.xs[1 as usize]; }",
+        );
+    }
+
+    #[test]
+    fn nested_copy_struct_is_copy() {
+        assert_clean(
+            "struct Inner { x: i32 }\n\
+             struct Outer { i: Inner, k: i32 }\n\
+             fn read(o: Outer) -> i32 { return o.i.x + o.k; }\n\
+             fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 }, k: 2 }; let _a: i32 = read(o); return o.i.x; }",
+        );
+    }
+
+    #[test]
+    fn copy_struct_move_marker_is_silent_noop() {
+        // `move p: Point` on a Copy struct: redundant marker, source still
+        // usable. Same shape as the existing `move_on_copy_param_does_not_consume`
+        // test for `i32` — now extended to aggregates under auto-derive.
+        assert_clean(
+            "struct Point { x: i32, y: i32 }\n\
+             fn take(move p: Point) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let p: Point = Point { x: 1, y: 2 }; let a: i32 = take(p); return a + p.y; }",
+        );
+    }
+
+    #[test]
+    fn copy_struct_move_self_is_silent_noop() {
+        // `move self` on a Copy receiver: ditto.
+        assert_clean(
+            "struct Point { x: i32, y: i32 }\n\
+             impl Point { fn into_x(move self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let p: Point = Point { x: 1, y: 2 }; let a: i32 = p.into_x(); return a + p.y; }",
+        );
     }
 }

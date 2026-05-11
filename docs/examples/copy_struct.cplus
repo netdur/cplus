@@ -1,0 +1,23 @@
+// Phase 3 slice 3C — Copy auto-derive.
+//
+// A struct is `Copy` iff every field type is `Copy`. `Point` has two `i32`
+// fields, both Copy, so `Point` is Copy. Passing it to a function does not
+// consume the source — the binding remains usable afterward, the same way
+// passing an `i32` does.
+
+struct Point { x: i32, y: i32 }
+
+fn distance_from_origin_squared(p: Point) -> i32 {
+    return p.x * p.x + p.y * p.y;
+}
+
+fn main() -> i32 {
+    let p: Point = Point { x: 3, y: 4 };
+    let d: i32 = distance_from_origin_squared(p);
+    // Under slice 3A's conservative rule this would have been E0335 on
+    // `p.x` below. Under auto-derive `Point` is Copy and `p` stays usable.
+    println(d);            // 25
+    println(p.x);          // 3
+    println(p.y);          // 4
+    return 0;
+}

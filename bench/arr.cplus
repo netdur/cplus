@@ -1,0 +1,18 @@
+// Benchmark: array access in a tight loop. The interesting case for C+
+// because every index expression compiles in a runtime bounds check
+// (`icmp uge` + branch + `llvm.trap`). C does no bounds check. LLVM may
+// hoist or elide the check when it can prove the index is in range —
+// this benchmark sees whether it actually does.
+
+fn main() -> i32 {
+    let a: [i32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let mut sum: i64 = 0i64;
+    let mut iter: i32 = 0;
+    while iter < 100000000 {
+        let idx: usize = ((iter as i64) % 8i64) as usize;
+        sum = sum +% (a[idx] as i64);
+        iter = iter +% 1;
+    }
+    println(sum as i32);
+    return 0;
+}

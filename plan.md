@@ -265,17 +265,86 @@ The original Phase-2 plan bundled raw pointers `*T` and slices `T[]` with arrays
 
 **Phase 2 exit:** ✅ met — sample programs walk arrays of structs ([array_struct.cplus](docs/examples/array_struct.cplus)). Linked lists via raw pointers deferred to Phase 3/5 with the borrow-checker rollout.
 
-### Phase 3 — Core safety + move semantics · 4–8 weeks
+### Phase 3 — Core safety + move semantics · 4–8 weeks · 🟡 in progress
+
+Structured as slices. Slice 3A (ownership surface syntax + move tracking) is done; remaining slices not yet started.
+
+#### Slice 3A — Ownership surface syntax + move tracking · ✅ done
+
+Design note: [docs/design/phase3-ownership.md](docs/design/phase3-ownership.md).
+
+- `move` reserved keyword
+- Parameter ownership markers: `x: T` (shared, default), `mut x: T` (exclusive / mutable local), `move x: T` (consumes)
+- Receiver ownership markers: `self` (Read), `mut self` (Mut), `move self` (Move); `mut move self` / `move mut self` rejected as parse errors
+- Sema E0334: `mut` + `move` on same parameter is rejected
+- Sema E0335: use of moved value
+- Sema E0337: cannot move out of non-binding place (partial moves deferred to Phase 5/6)
+- `Ty::is_copy()` — conservative Phase-3 rule: primitives + plain enums are `Copy`; structs and arrays are non-`Copy`. `Copy`-typed `move` params are silently allowed (a future E0336 lint will suggest removal).
+- Move tracking is linear within the body (no flow-sensitive merging across branches; Phase 5 work). Only whole-binding moves through a `move` parameter or `move self` call are consumed; expressions used as `move`-args must be plain `Ident`s.
+- 1 new sample: [ownership.cplus](docs/examples/ownership.cplus) — exercises all three receiver kinds; outputs `28\n7\n`
+- Codegen lowering unchanged: receivers were already pointer-passed since the §2.8a migration, so `move self` works without further codegen work. The §3.1 design-note rule to pointer-pass non-Copy *parameters* is deferred to Phase 6 alongside `noalias` (rationale recorded in design note §7a).
+- Test count: **263 total** (236 library + 27 e2e), zero warnings
+
+**Pre-existing codegen limitation surfaced:** array literals like `[0u8, 0u8, 0u8, 0u8]` lower with `i32` element type regardless of suffix. ✅ fixed in slice 3D (literal-suffix codegen).
+
+#### Slice 3B — Wrapping operators `+% -% *%` · ✅ done
+
+- `+%`, `-%`, `*%` on integer operands emit plain `add`/`sub`/`mul` regardless of build mode (no overflow check, never trap, predictable modular semantics).
+- Sema rejects wrapping ops on floats and non-numeric types (E0302).
+- 1 new sample: [wrap_arith.cplus](docs/examples/wrap_arith.cplus) — exercises u8 / i8 / multiplication / underflow.
+- Test count: **269 total** (240 library + 29 e2e), zero warnings.
+
+#### Slice 3C — Copy auto-derive for aggregates · ✅ done
+
+Design note: [docs/design/phase3-copy-derivation.md](docs/design/phase3-copy-derivation.md).
+
+- Structural rule: a type is `Copy` iff every component is `Copy`. Primitives + plain enums atomic-Copy; arrays `Copy` iff element type is; structs `Copy` iff every field is.
+- `Ty::is_copy()` removed (could not answer for structs without context); replaced by `SemaCx::is_copy(&Ty)`. Added `Ty::is_atomic_copy()` for the context-free atomic cases.
+- New `is_copy: bool` flag cached per `StructDef`; computed by `compute_struct_copy_flags` between field collection and method collection. Fixpoint pass (monotone, converges in ≤ N iterations).
+- Move tracking now gates correctly on `cx.is_copy(&ty)`: `move`-marked args and `move self` receivers consume their source only when the type is genuinely non-Copy.
+- 1 new sample: [copy_struct.cplus](docs/examples/copy_struct.cplus) — primitive-only `Point` stays usable after a pass-by-value call.
+- 5 new sema tests + 1 new e2e test (`copy_struct_runs`).
+- **Slice-3A test rework (predicted in design note §6.3):** 6 sema tests + 2 e2e tests that used `struct B { x: i32 }` to exercise move tracking are now `#[ignore]`d, with a comment pointing to the design note. They revive when a non-Copy aggregate type exists in C+ (string, heap-typed, or explicit `nocopy` marker — none yet).
+- The §3.1 design-note codegen pointer-pass rule for non-Copy params is still deferred to Phase 6 (`noalias`).
+- Test count: **267 total** (239 library + 28 e2e), 6 ignored, zero warnings.
+
+#### Slice 3D — Literal-suffix codegen fix · ✅ done
+
+Pre-existing bug: codegen's `gen_expr` returned `Ty::I32` for *every* integer literal regardless of suffix. Two consequences:
+
+- Array literals: `[10u8, 20u8, 30u8, 40u8]` had elements typed as i32, producing `[4 x i32]` SSA values that clang refused to store into the `[4 x i8]` destination.
+- Arithmetic on suffixed literals: `1u64 +% 2u64` computed the add at i32 width and then tried to store the i32 result into an i64 slot — invalid IR.
+
+Most existing samples accidentally worked because they fed unsuffixed literals into typed destinations (LLVM's textual numeric-literal operand position is width-polymorphic) or because they cast at use sites. Suffixed literals flowing into typed temporaries (array literals, arithmetic) hit the bug.
+
+Fix: `gen_expr` now reads the literal's suffix and returns the corresponding `Ty`. Unsuffixed literals still default to `Ty::I32` (same as before). 2 new codegen regression tests.
+
+#### Slice 3E — `Drop` design note · ✅ done
+
+Design note: [docs/design/phase3-drop.md](docs/design/phase3-drop.md). Implementation pending. Highlights:
+
+- Destructor: magic method name, `impl T { fn drop(mut self) { ... } }`. Wrong signature → E0338.
+- `Drop` forces `is_copy = false` regardless of fields. The empty-body `fn drop(mut self) {}` is the user-accessible "make this aggregate non-Copy" idiom in the absence of an explicit `nocopy` marker.
+- Drop runs at scope exit in reverse declaration order. Drop flags (one `i1` per binding) suppress drop on moved-out bindings; LLVM elides the flag when static analysis proves it.
+- `defer` and Drop share a single LIFO scope-exit stack. Mental model: `let x: Drop_T = ...` is roughly equivalent to immediately `defer x.drop();`.
+- Trap (debug overflow / div-by-zero) aborts without running destructors — matches our "no unwind" stance.
+- New error codes reserved: E0338 (wrong drop signature), E0339 (drop on non-struct).
+
+Implementation lands as slice 3F: extends `StructDef` with `is_drop` flag, threads drop flags + reverse-order scope-exit emission through codegen, then revives the 6+2 dormant slice-3A tests by upgrading their structs with empty `fn drop(mut self) {}`.
+
+#### Bench — clang-parity sanity check · ✅ done
+
+Sanity benchmark proved `cpc --release` matches `clang -O2` on representative non-aliasing workloads. Findings: a missing `-O` flag in the clang invocation was making release binaries 100×+ slower than they needed to be; once `-O2` was wired through, all three benchmarks (sum, fib, arr) come in at 1.00× ± noise. Numbers and source code in [bench.md](bench.md). The "C+ beats C on aliasing" story is a Phase-6 promise; this benchmark only confirms we haven't pessimized anything.
+
+#### Remaining Phase 3 slices (not yet started)
 
 - Definite assignment analysis
-- Overflow trapping in debug + `+% -% *%` wrapping operators
 - Non-null pointers, `?*T`, narrowing on `if (x != null)`
 - Tagged unions + pattern matching with exhaustiveness
 - Error unions `!T` and `try`
 - `defer`
-- **Move semantics:** every value has one owner; passing or assigning a non-`Copy` value consumes it; reading a moved-from variable is a compile error. `Copy` marker for primitives and small POD types. No borrows yet.
-
-**Ownership surface syntax** — design note: [docs/design/phase3-ownership.md](docs/design/phase3-ownership.md). Three parameter forms map to the three semantic kinds: `x: T` shared borrow, `mut x: T` exclusive borrow, `move x: T` ownership transfer. Same forms on receivers: `self` / `mut self` / `move self`. Returns are always moves (no marker). `Copy` types collapse borrow forms to by-value copies. Call sites carry no markers — signature tells the story. New error codes: E0334 (move+mut both), E0335 (use of moved value), E0337 (move from non-owned place).
+- `Drop`/destructors — design note done ([docs/design/phase3-drop.md](docs/design/phase3-drop.md)); implementation pending
+- Reviving the slice-3A E0335 / E0337 tests — unlocked by Drop (the empty-drop-method idiom provides the non-Copy aggregate)
 
 **LLVM features used:** all overflow-with-intrinsic forms for the full integer type set; `llvm.trap` for division-by-zero and overflow traps; `switch` instruction for tagged-union `match`; `noundef` parameter attribute (definite assignment lets us promise this everywhere).
 
@@ -638,8 +707,8 @@ Deferred (not blocking Phase 2):
 
 Design notes needed before their phase (per §6):
 - [x] Phase 3: ownership surface syntax (`x: T` / `mut x: T` / `move x: T`; receivers symmetric; returns always moves) — see [docs/design/phase3-ownership.md](docs/design/phase3-ownership.md)
-- [ ] Phase 3: `Copy` derivation rules — auto-derive for struct-of-Copy / array-of-Copy or require explicit marker? (note §8 open question)
-- [ ] Phase 3: `Drop`/destructors — declaration syntax, drop ordering at scope exit, interaction with `defer`
+- [x] Phase 3: `Copy` derivation rules — structural auto-derive; aggregates are `Copy` iff every component is `Copy`. See [docs/design/phase3-copy-derivation.md](docs/design/phase3-copy-derivation.md). Note: implementation requires reworking slice-3A's E0335 tests (they target structs that will become Copy under the new rule).
+- [x] Phase 3: `Drop`/destructors — magic `fn drop(mut self)` method; reverse-order scope-exit; drop flags suppress dropping of moved-out bindings; Drop forces `is_copy = false`; `defer` and drop share a single LIFO scope-exit stack. See [docs/design/phase3-drop.md](docs/design/phase3-drop.md). New error codes E0338/E0339.
 - [ ] Phase 4: `Cplus.toml` manifest schema; module discovery rules; glob-import policy
 - [ ] Phase 4: `cpc fmt` style decisions (indent, line length, alignment, comment handling)
 - [ ] Phase 4: LSP transport, capability set, what diagnostics to surface live
@@ -692,6 +761,12 @@ Resolved (kept for history):
 - Phase 2 slice 2D (fixed-size arrays) landed: `[T; N]` types; `[e1, e2, ...]` literals; bounds-checked `a[i]` indexing via `icmp uge` + `llvm.trap`; indexed assignment via place-walk extension; arrays as fn params, returns, struct fields; `Ty: Copy → Clone` refactor (~50 small clones); 2 new sample programs (array_sum, array_struct); E0329–E0332 error codes; deferred slices+raw pointers to Phase 3/5. Test total: **236** (212 library + 24 e2e), 0 warnings.
 - **Phase 2 ✅ done.** All four slices landed; slice 2E (slices + raw pointers) deferred to Phase 3/5 where the borrow-checker brings in references.
 - **Style migration (post-Phase 2)** landed: §2.8a style rules now enforced. Function bodies use explicit `return` (E0333 rejects implicit tail). Method receivers use `self`/`mut self` syntax — `&` removed from the language. All 14 sample programs rewritten. `Point::magnitude` renamed to `Point::magnitude_squared` (precise naming rule). Receiver enum collapsed: `Receiver::Value/Ref/RefMut` → `Receiver::Read/Mut`; codegen now always pointer-passes for receivers. Test count after migration: **234** (210 library + 24 e2e), 0 warnings.
+- **Phase 3 slice 3A (ownership surface syntax + move tracking) landed:** `move` keyword; parameter markers `x: T` / `mut x: T` / `move x: T`; receiver `move self`; `Ty::is_copy()` (primitives + enums); move tracking with E0335 use-of-moved and E0337 move-from-non-binding; design note [docs/design/phase3-ownership.md](docs/design/phase3-ownership.md); 1 new sample (ownership.cplus); 17 new sema tests + 10 new parser tests + 3 new e2e tests. Codegen pointer-pass for non-Copy params deferred to Phase 6 alongside `noalias` (§7a). Test total: **263** (236 library + 27 e2e), 0 warnings.
+- **Phase 3 slice 3B (wrapping operators `+% -% *%`) landed:** integer-only wrapping arithmetic; emits plain `add/sub/mul` regardless of build mode; sema rejects wrapping ops on floats (E0302); 1 new sample (wrap_arith.cplus); 3 new sema tests + 2 new codegen tests + 2 new e2e tests. Test total: **269** (240 library + 29 e2e), 0 warnings.
+- **Phase 3 slice 3C (Copy auto-derive) landed:** structural rule — aggregate `Copy` iff every component is `Copy`. `Ty::is_copy()` → `SemaCx::is_copy(&Ty)` with `is_copy` flag cached per `StructDef`; fixpoint computation pass between fields and methods. Move tracking gates correctly on the new rule. Design note [docs/design/phase3-copy-derivation.md](docs/design/phase3-copy-derivation.md); 1 new sample (copy_struct.cplus); 5 new sema tests + 1 new e2e test. 6 slice-3A move tests + 2 e2e tests moved to `#[ignore]` until a non-Copy aggregate type exists (predicted in design note §6.3). Test total: **267** (239 library + 28 e2e), 6 ignored, 0 warnings.
+- **Bench sanity check landed:** `cpc --release` was passing IR to clang without `-O`, producing 100×+ slower binaries than necessary. Fixed (now passes `-O2` in release / `-O0` in debug). Three micro-benchmarks (sum, fib, arr) confirm parity with `clang -O2`. Numbers and code in [bench.md](bench.md). The "C+ beats C on aliasing" story still rests on Phase-6 `noalias`.
+- **Phase 3 slice 3D (literal-suffix codegen fix) landed:** codegen's `gen_expr` was returning `Ty::I32` for every integer literal regardless of suffix, producing invalid IR for array literals like `[10u8, ...]` (wrong element type) and arithmetic on suffixed literals like `1u64 +% 2u64` (computed in i32, stored as i64). Fixed; 2 regression codegen tests. Test total: **269** (241 library + 28 e2e), 6 ignored, 0 warnings.
+- **Phase 3 slice 3E (Drop design note) landed:** [docs/design/phase3-drop.md](docs/design/phase3-drop.md) — magic `fn drop(mut self)` method; reverse-order scope-exit; drop flags suppress dropping of moved-out bindings; Drop forces non-Copy; `defer` and drop share a single LIFO stack. Implementation deferred to slice 3F.
 - AI-native: tooling moved out of Phase 9 into Phases 1, 4, 5
 - Speculative kept on roadmap: (17) effect tracking, (18) contracts (Phase 7+ design exploration)
 - Speculative dropped: (19) capability-based imports

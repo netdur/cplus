@@ -1,0 +1,1 @@
+C+ is a systems programming language for vibe-coded native software: C-like control and C ABI compatibility, Rust-level safety goals, and syntax/tooling designed so AI can generate code cheaply while humans can audit it confidently.

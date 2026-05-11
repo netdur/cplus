@@ -228,6 +228,65 @@ fn array_out_of_bounds_traps() {
     assert!(!run.status.success(), "expected trap on out-of-bounds index");
 }
 
+// Phase 3 slice 3B: wrapping operators `+% -% *%`
+
+#[test]
+fn wrap_arith_runs() {
+    let out = compile_and_run("wrap_arith.cplus");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    // 255u8 +% 1u8 = 0; 127i8 +% 1i8 = -128; 200u8 *% 2u8 = 144; 0u8 -% 1u8 = 255
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "0\n-128\n144\n255\n");
+}
+
+#[test]
+fn wrapping_add_does_not_trap_in_debug() {
+    // Plain `+` would trap; the wrapping form must NOT trap.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("wrap_no_trap.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { let x: i32 = 2147483647; let y: i32 = x +% 1; println(y); return 0; }",
+    )
+    .unwrap();
+    let bin = dir.join("wrap_no_trap");
+    let status = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(status.success(), "compile failed");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "wrapping add must not trap in debug");
+    // 2147483647 +% 1 wraps to -2147483648
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "-2147483648\n");
+}
+
+// Phase 3 slice 3A: ownership surface syntax + move tracking
+
+#[test]
+fn ownership_runs() {
+    let out = compile_and_run("ownership.cplus");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    // `mut self` mutates buf to all 7s; checksum sums them (4 * 7 = 28);
+    // first reads the first element (7). Order: sum, then first.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "28\n7\n");
+}
+
+// The previous slice-3A E0335 tests (`use_after_move_rejected_at_compile_time`,
+// `move_param_use_after_call_rejected`) used `struct B { x: i32 }` to
+// exercise move tracking. Under Copy auto-derive (slice 3C) that struct
+// is Copy, so `move` becomes a silent no-op and no E0335 fires.
+// Reviving these tests requires a non-Copy aggregate type, which does not
+// yet exist in C+ — see `docs/design/phase3-copy-derivation.md` §7.1.
+// The matching `#[ignore]`d sema unit tests live in cplus-core/src/sema.rs.
+
+// Phase 3 slice 3C: Copy auto-derive
+
+#[test]
+fn copy_struct_runs() {
+    let out = compile_and_run("copy_struct.cplus");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    // distance_squared = 3*3 + 4*4 = 25, then p.x = 3, p.y = 4.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "25\n3\n4\n");
+}
+
 // ---- runtime trap behavior for overflow + divide-by-zero ----
 
 const OVERFLOW_PROGRAM: &str =

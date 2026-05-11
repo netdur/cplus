@@ -1,0 +1,15 @@
+// Benchmark: tight integer loop. Sums 1..N with wrap arithmetic.
+// Pure CPU work — no memory access beyond the accumulator. Tests
+// whether C+ arithmetic lowers to the same IR clang produces for C.
+
+fn main() -> i32 {
+    let mut sum: i64 = 0i64;
+    let n: i64 = 1000000000i64;
+    let mut i: i64 = 1i64;
+    while i <= n {
+        sum = sum +% i;
+        i = i +% 1i64;
+    }
+    println(sum as i32);
+    return 0;
+}

@@ -1,0 +1,38 @@
+// Phase 3 slice 3A — ownership surface syntax demo.
+//
+//   `b: Buffer`       — shared, source remains usable
+//   `mut self`        — exclusive (method mutates self in place)
+//   `move self`       — ownership transfer (binding unusable after the call)
+//
+// In Phase 3 the borrow checker only tracks moves; full exclusive-borrow
+// propagation for `mut x: T` parameters lands with the Phase-6 noalias work.
+
+struct Buffer { data: [i32; 4] }
+
+impl Buffer {
+    fn new() -> Buffer { return Buffer { data: [0, 0, 0, 0] }; }
+    fn first(self) -> i32 { return self.data[0 as usize]; }
+    fn fill(mut self, byte: i32) {
+        self.data[0 as usize] = byte;
+        self.data[1 as usize] = byte;
+        self.data[2 as usize] = byte;
+        self.data[3 as usize] = byte;
+    }
+    fn checksum(move self) -> i32 {
+        return self.data[0 as usize] + self.data[1 as usize]
+             + self.data[2 as usize] + self.data[3 as usize];
+    }
+}
+
+fn read_first(b: Buffer) -> i32 { return b.first(); }
+
+fn main() -> i32 {
+    let mut buf: Buffer = Buffer::new();
+    buf.fill(7);                        // `mut self` — mutates buf in place
+    let f: i32 = read_first(buf);       // shared — buf still usable
+    let sum: i32 = buf.checksum();      // `move self` — consumes buf
+    // `buf` is moved here; reading `buf.data` below would be E0335.
+    println(sum);                       // 28  (= 7 * 4)
+    println(f);                         // 7
+    return 0;
+}

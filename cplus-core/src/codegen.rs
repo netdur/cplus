@@ -694,7 +694,33 @@ impl<'a> FnState<'a> {
     /// where the caller can't use a value.
     fn gen_expr(&mut self, e: &Expr) -> Option<(String, Ty)> {
         match &e.kind {
-            ExprKind::IntLit(v, _) => Some((v.to_string(), Ty::I32)),
+            ExprKind::IntLit(v, suf) => {
+                use crate::lexer::NumSuffix;
+                // Honor the literal's numeric suffix so downstream consumers
+                // (array literals, binary arithmetic, anything that builds a
+                // typed SSA temporary) emit the right LLVM width. Without
+                // this, `[10u8, 20u8]` becomes `[N x i32]` and `1u64 + 2u64`
+                // computes in i32 — both produce invalid IR when their
+                // results meet a typed destination.
+                let ty = match suf {
+                    NumSuffix::I8 => Ty::I8,
+                    NumSuffix::I16 => Ty::I16,
+                    NumSuffix::I32 => Ty::I32,
+                    NumSuffix::I64 => Ty::I64,
+                    NumSuffix::U8 => Ty::U8,
+                    NumSuffix::U16 => Ty::U16,
+                    NumSuffix::U32 => Ty::U32,
+                    NumSuffix::U64 => Ty::U64,
+                    NumSuffix::Isize => Ty::Isize,
+                    NumSuffix::Usize => Ty::Usize,
+                    // Unsuffixed integer literal: default to i32. Sema-driven
+                    // declared types still flow correctly because `let x: u64
+                    // = 42` emits `store i64 42` (LLVM accepts width-agnostic
+                    // numeric literals in the textual operand position).
+                    NumSuffix::None | NumSuffix::F32 | NumSuffix::F64 => Ty::I32,
+                };
+                Some((v.to_string(), ty))
+            }
             ExprKind::BoolLit(b) => Some((if *b { "true" } else { "false" }.to_string(), Ty::Bool)),
             ExprKind::FloatLit(v, suf) => {
                 use crate::lexer::NumSuffix;
@@ -935,8 +961,23 @@ impl<'a> FnState<'a> {
                 self.emit(&format!("{v} = {inst} {cmp} {} {l}, {r}", self.lty(&lt)));
                 (v, Ty::Bool)
             }
+            BinOp::AddWrap | BinOp::SubWrap | BinOp::MulWrap => {
+                // Wrapping operators emit plain integer `add/sub/mul`
+                // regardless of build mode: documents intent and gives
+                // predictable wrap behavior in debug too. Sema has already
+                // restricted these to integer operands.
+                let v = self.next_tmp();
+                let iop = match op {
+                    BinOp::AddWrap => "add",
+                    BinOp::SubWrap => "sub",
+                    BinOp::MulWrap => "mul",
+                    _ => unreachable!(),
+                };
+                self.emit(&format!("{v} = {iop} {} {l}, {r}", self.lty(&lt)));
+                (v, lt)
+            }
             BinOp::And | BinOp::Or => unreachable!("handled above"),
-            _ => unreachable!("sema rejects bitwise/shift/wrapping"),
+            _ => unreachable!("sema rejects bitwise/shift"),
         }
     }
 
@@ -1174,9 +1215,10 @@ impl<'a> FnState<'a> {
         let _rcv = info.receiver.expect("sema validated instance call");
         let mangled = mangle(&struct_name, &name.name);
 
-        // Build the LLVM call argument list. Both `self` and `mut self`
-        // receivers pass the struct's address as a `ptr`; the receiver kind
-        // only matters for sema-level mutability checks.
+        // Build the LLVM call argument list. All three receiver kinds
+        // (`self`, `mut self`, `move self`) pass the struct's address as a
+        // `ptr`; the receiver kind only matters for sema-level mutability
+        // and move-tracking checks.
         let mut arg_parts: Vec<String> = vec![format!("ptr {recv_ptr}")];
         for (a, pty) in args.iter().zip(info.params.iter()) {
             let (v, _) = self.gen_expr(a).expect("call arg has value");
@@ -1367,7 +1409,8 @@ fn expr_value_ty(e: &Expr) -> Option<Ty> {
         ExprKind::Block(b) => block_value_ty(b),
         ExprKind::If { then, .. } => block_value_ty(then),
         ExprKind::Binary { op, lhs, .. } => match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => expr_value_ty(lhs),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+            | BinOp::AddWrap | BinOp::SubWrap | BinOp::MulWrap => expr_value_ty(lhs),
             _ => Some(Ty::Bool),
         },
         ExprKind::Unary { op, operand } => match op {
@@ -1958,5 +2001,75 @@ mod tests {
         let ir = gen_src("fn f() { }\nfn main() -> i32 { return 0; }");
         assert!(ir.contains("ret void"));
         assert!(ir.contains("ret i32 0"));
+    }
+
+    #[test]
+    fn wrapping_ops_use_plain_arithmetic_in_debug() {
+        // Even in Debug mode, `+%`/`-%`/`*%` must NOT emit overflow-check
+        // intrinsics — that's the whole point of the wrapping operators.
+        let ir = gen_src_with(
+            "fn main() -> i32 { return 1 +% 2 -% 3 *% 4; }",
+            BuildMode::Debug,
+        );
+        assert!(ir.contains(" = add i32 "), "expected plain add, got: {ir}");
+        assert!(ir.contains(" = sub i32 "));
+        assert!(ir.contains(" = mul i32 "));
+        // No checked-arithmetic call for the wrapping body. (The preamble
+        // still declares the intrinsics for plain ops elsewhere, so we
+        // can't just grep for "with.overflow" anywhere in the IR — instead
+        // check that the body of `main` doesn't *call* the intrinsic.)
+        let main_body_start = ir.find("define i32 @main()").unwrap();
+        let main_body = &ir[main_body_start..];
+        assert!(
+            !main_body.contains("call {i32, i1} @llvm.sadd.with.overflow"),
+            "wrapping op leaked an overflow-check intrinsic into @main"
+        );
+    }
+
+    #[test]
+    fn wrapping_op_on_u32_uses_plain_add() {
+        let ir = gen_src_with(
+            "fn main() -> i32 { let x: u32 = 4000000000u32; let _y: u32 = x +% 1u32; return 0; }",
+            BuildMode::Debug,
+        );
+        assert!(ir.contains(" = add i32 "), "expected plain add i32, got: {ir}");
+    }
+
+    // Regression: gen_expr used to return Ty::I32 for every integer literal
+    // regardless of suffix, which produced invalid LLVM IR for typed
+    // destinations (array literals of non-i32 element types; arithmetic on
+    // suffixed non-i32 literals).
+
+    #[test]
+    fn u8_array_literal_lowers_with_u8_element_type() {
+        let ir = gen_src(
+            "fn main() -> i32 { let a: [u8; 4] = [10u8, 20u8, 30u8, 40u8]; return a[0 as usize] as i32; }",
+        );
+        // The array's alloca must use i8 element type, not i32.
+        assert!(
+            ir.contains("alloca [4 x i8]"),
+            "expected `alloca [4 x i8]` for the array literal, got: {ir}"
+        );
+        // And the per-element store must store an i8 value, not i32.
+        assert!(
+            ir.contains("store i8 "),
+            "expected `store i8 ...` for each element, got: {ir}"
+        );
+    }
+
+    #[test]
+    fn suffixed_u64_arithmetic_uses_i64() {
+        let ir = gen_src(
+            "fn main() -> i32 { let x: u64 = 1u64 +% 2u64; return x as i32; }",
+        );
+        // u64 wrapping add must emit `add i64`, never `add i32`.
+        assert!(
+            ir.contains(" = add i64 "),
+            "expected `add i64` for u64 wrapping add, got: {ir}"
+        );
+        assert!(
+            !ir.contains(" = add i32 "),
+            "u64 add must not lower to i32, got: {ir}"
+        );
     }
 }
