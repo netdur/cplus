@@ -1,0 +1,245 @@
+// `cocoa-min` — minimal AppKit hello-world in pure C+ source.
+//
+// Reproduces objc-c-interop/hello_appkit_c.c using Phase 11's four ObjC
+// interop primitives:
+//   - `extern fn` for the ObjC runtime C API (Phase 10)
+//   - `#[link_name = "objc_msgSend"]` for typed msg_send aliases (11.LINKNAME)
+//   - raw pointers + `unsafe` blocks (Phase 10)
+//   - `#[repr(C)] struct` for NSPoint/NSSize/NSRect (Phase 10)
+//   - `0 as *u8` for NULL sender args (11.INTPTR)
+//   - `fn(*u8, *u8, *u8) -> i8` function pointer for the IMP callback (11.FN_PTR)
+//
+// Build: see build.sh (clang -framework Cocoa -lobjc).
+// Run: launches a 800x500 window titled "Hello from C+" with a "Hello world"
+// label. Closing the window quits the app via a runtime-built delegate class.
+
+// ===========================================================================
+// ObjC runtime C API
+// ===========================================================================
+
+extern fn objc_getClass(name: *u8) -> *u8;
+extern fn sel_registerName(name: *u8) -> *u8;
+extern fn objc_allocateClassPair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8;
+extern fn objc_registerClassPair(cls: *u8);
+extern fn class_addMethod(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i8, types: *u8) -> i8;
+
+// ===========================================================================
+// `objc_msgSend` — one C symbol, many typed signatures via `#[link_name]`.
+// Each shape matches one specific Cocoa method's parameter list. The
+// AArch64 / x86_64 macOS ABI for objc_msgSend is fixed-arity-per-call-site,
+// so each typed alias picks the right ABI for that call.
+// ===========================================================================
+
+// Cocoa primitive type. CGFloat is 64-bit on 64-bit platforms.
+#[repr(C)]
+struct NSPoint {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+struct NSSize {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+struct NSRect {
+    origin: NSPoint,
+    size: NSSize,
+}
+
+// msgSend: takes receiver + selector, returns id.
+#[link_name = "objc_msgSend"]
+extern fn msg_id(recv: *u8, sel: *u8) -> *u8;
+
+// msgSend: takes receiver + selector + id arg, returns id.
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
+
+// msgSend: takes receiver + selector + id arg, returns void.
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id(recv: *u8, sel: *u8, arg: *u8);
+
+// msgSend: takes receiver + selector, returns void.
+#[link_name = "objc_msgSend"]
+extern fn msg_void(recv: *u8, sel: *u8);
+
+// msgSend: takes receiver + selector + CGFloat, returns id.
+#[link_name = "objc_msgSend"]
+extern fn msg_id_f64(recv: *u8, sel: *u8, arg: f64) -> *u8;
+
+// msgSend: takes receiver + selector + i64 arg, returns void.
+#[link_name = "objc_msgSend"]
+extern fn msg_void_i64(recv: *u8, sel: *u8, arg: i64);
+
+// msgSend: takes receiver + selector + bool-as-i8 arg, returns void.
+#[link_name = "objc_msgSend"]
+extern fn msg_void_i8(recv: *u8, sel: *u8, arg: i8);
+
+// msgSend: takes receiver + selector + u64 arg, returns void.
+#[link_name = "objc_msgSend"]
+extern fn msg_void_u64(recv: *u8, sel: *u8, arg: u64);
+
+// msgSend: NSWindow initWithContentRect:styleMask:backing:defer:
+// — NSRect by value, two u64 enums, BOOL.
+#[link_name = "objc_msgSend"]
+extern fn msg_init_window(
+    recv: *u8,
+    sel: *u8,
+    frame: NSRect,
+    style_mask: u64,
+    backing: u64,
+    defer_flag: i8,
+) -> *u8;
+
+// msgSend: NSTextField initWithFrame: — NSRect by value.
+#[link_name = "objc_msgSend"]
+extern fn msg_init_with_frame(recv: *u8, sel: *u8, frame: NSRect) -> *u8;
+
+// ===========================================================================
+// Delegate method body — installed via class_addMethod as an IMP.
+// Signature matches the ObjC ABI for `BOOL applicationShouldTerminate
+// AfterLastWindowClosed:(NSApplication *)sender` — three pointer args,
+// returns BOOL (signed char i8). The function pointer is taken by name
+// in main() via the Phase 11.FN_PTR type-directed coercion.
+// ===========================================================================
+
+fn should_terminate_after_last_window_closed(
+    self_obj: *u8,
+    _cmd: *u8,
+    application: *u8,
+) -> i8 {
+    return 1 as i8;
+}
+
+// ===========================================================================
+// `ns_string` — wrap a C string literal as an NSString. Returns an
+// autoreleased id; the autorelease pool created in main() drains them.
+// ===========================================================================
+
+fn ns_string(utf8: *u8) -> *u8 {
+    let cls: *u8 = unsafe { objc_getClass(str_ptr("NSString\0")) };
+    let sel: *u8 = unsafe { sel_registerName(str_ptr("stringWithUTF8String:\0")) };
+    return unsafe { msg_id_id(cls, sel, utf8) };
+}
+
+// ===========================================================================
+// main
+// ===========================================================================
+
+fn main() -> i32 {
+    // ---- Autorelease pool ----
+    let pool_cls: *u8 = unsafe { objc_getClass(str_ptr("NSAutoreleasePool\0")) };
+    let alloc_sel: *u8 = unsafe { sel_registerName(str_ptr("alloc\0")) };
+    let init_sel: *u8 = unsafe { sel_registerName(str_ptr("init\0")) };
+    let pool_alloc: *u8 = unsafe { msg_id(pool_cls, alloc_sel) };
+    let pool: *u8 = unsafe { msg_id(pool_alloc, init_sel) };
+
+    // ---- NSApplication.sharedApplication ----
+    let nsapp_cls: *u8 = unsafe { objc_getClass(str_ptr("NSApplication\0")) };
+    let shared_sel: *u8 = unsafe { sel_registerName(str_ptr("sharedApplication\0")) };
+    let app: *u8 = unsafe { msg_id(nsapp_cls, shared_sel) };
+
+    // app.setActivationPolicy(Regular = 0)
+    let set_policy_sel: *u8 = unsafe { sel_registerName(str_ptr("setActivationPolicy:\0")) };
+    unsafe { msg_void_i64(app, set_policy_sel, 0 as i64); }
+
+    // ---- Build CAppDelegate at runtime ----
+    let nsobject_cls: *u8 = unsafe { objc_getClass(str_ptr("NSObject\0")) };
+    let delegate_cls: *u8 = unsafe {
+        objc_allocateClassPair(nsobject_cls, str_ptr("CAppDelegate\0"), 0 as usize)
+    };
+    let should_terminate_sel: *u8 = unsafe {
+        sel_registerName(str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0"))
+    };
+    // The third `class_addMethod` arg is an IMP — a fn pointer. Phase 11.FN_PTR
+    // type-directed coercion converts the named C+ fn to the right type.
+    let _added: i8 = unsafe {
+        class_addMethod(
+            delegate_cls,
+            should_terminate_sel,
+            should_terminate_after_last_window_closed,
+            str_ptr("c@:@\0"),
+        )
+    };
+    unsafe { objc_registerClassPair(delegate_cls); }
+    let new_sel: *u8 = unsafe { sel_registerName(str_ptr("new\0")) };
+    let delegate: *u8 = unsafe { msg_id(delegate_cls, new_sel) };
+    let set_delegate_sel: *u8 = unsafe { sel_registerName(str_ptr("setDelegate:\0")) };
+    unsafe { msg_void_id(app, set_delegate_sel, delegate); }
+
+    // ---- Window ----
+    // NSWindowStyleMask values: titled=1, closable=2, miniaturizable=4, resizable=8
+    let style: u64 = 1 as u64 +% 2 as u64 +% 4 as u64 +% 8 as u64;
+    let backing: u64 = 2 as u64; // NSBackingStoreBuffered
+    let frame: NSRect = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize { width: 800.0, height: 500.0 },
+    };
+    let nswindow_cls: *u8 = unsafe { objc_getClass(str_ptr("NSWindow\0")) };
+    let window_alloc: *u8 = unsafe { msg_id(nswindow_cls, alloc_sel) };
+    let init_window_sel: *u8 = unsafe {
+        sel_registerName(str_ptr("initWithContentRect:styleMask:backing:defer:\0"))
+    };
+    let window: *u8 = unsafe {
+        msg_init_window(window_alloc, init_window_sel, frame, style, backing, 0 as i8)
+    };
+    let set_title_sel: *u8 = unsafe { sel_registerName(str_ptr("setTitle:\0")) };
+    let title: *u8 = ns_string(str_ptr("Hello from C+\0"));
+    unsafe { msg_void_id(window, set_title_sel, title); }
+    let center_sel: *u8 = unsafe { sel_registerName(str_ptr("center\0")) };
+    unsafe { msg_void(window, center_sel); }
+
+    // ---- Label (NSTextField) ----
+    let nstextfield_cls: *u8 = unsafe { objc_getClass(str_ptr("NSTextField\0")) };
+    let label_alloc: *u8 = unsafe { msg_id(nstextfield_cls, alloc_sel) };
+    let init_with_frame_sel: *u8 = unsafe { sel_registerName(str_ptr("initWithFrame:\0")) };
+    let label: *u8 = unsafe { msg_init_with_frame(label_alloc, init_with_frame_sel, frame) };
+    let set_string_value_sel: *u8 = unsafe { sel_registerName(str_ptr("setStringValue:\0")) };
+    let label_text: *u8 = ns_string(str_ptr("Hello world\0"));
+    unsafe { msg_void_id(label, set_string_value_sel, label_text); }
+    let set_alignment_sel: *u8 = unsafe { sel_registerName(str_ptr("setAlignment:\0")) };
+    unsafe { msg_void_i64(label, set_alignment_sel, 2 as i64); }  // center
+    let set_bezeled_sel: *u8 = unsafe { sel_registerName(str_ptr("setBezeled:\0")) };
+    unsafe { msg_void_i8(label, set_bezeled_sel, 0 as i8); }
+    let set_draws_bg_sel: *u8 = unsafe { sel_registerName(str_ptr("setDrawsBackground:\0")) };
+    unsafe { msg_void_i8(label, set_draws_bg_sel, 0 as i8); }
+    let set_editable_sel: *u8 = unsafe { sel_registerName(str_ptr("setEditable:\0")) };
+    unsafe { msg_void_i8(label, set_editable_sel, 0 as i8); }
+    let set_selectable_sel: *u8 = unsafe { sel_registerName(str_ptr("setSelectable:\0")) };
+    unsafe { msg_void_i8(label, set_selectable_sel, 0 as i8); }
+
+    // Bigger font
+    let nsfont_cls: *u8 = unsafe { objc_getClass(str_ptr("NSFont\0")) };
+    let bold_system_sel: *u8 = unsafe { sel_registerName(str_ptr("boldSystemFontOfSize:\0")) };
+    let font: *u8 = unsafe { msg_id_f64(nsfont_cls, bold_system_sel, 36.0) };
+    let set_font_sel: *u8 = unsafe { sel_registerName(str_ptr("setFont:\0")) };
+    unsafe { msg_void_id(label, set_font_sel, font); }
+
+    // Resize with window: NSViewWidthSizable=2 + NSViewHeightSizable=16
+    let set_autoresizing_sel: *u8 = unsafe { sel_registerName(str_ptr("setAutoresizingMask:\0")) };
+    unsafe { msg_void_u64(label, set_autoresizing_sel, 18 as u64); }
+
+    // Add label to window contentView
+    let content_view_sel: *u8 = unsafe { sel_registerName(str_ptr("contentView\0")) };
+    let content_view: *u8 = unsafe { msg_id(window, content_view_sel) };
+    let add_subview_sel: *u8 = unsafe { sel_registerName(str_ptr("addSubview:\0")) };
+    unsafe { msg_void_id(content_view, add_subview_sel, label); }
+
+    // ---- Show window + run app ----
+    let make_key_sel: *u8 = unsafe { sel_registerName(str_ptr("makeKeyAndOrderFront:\0")) };
+    unsafe { msg_void_id(window, make_key_sel, 0 as *u8); }   // sender = nil
+
+    let activate_sel: *u8 = unsafe { sel_registerName(str_ptr("activateIgnoringOtherApps:\0")) };
+    unsafe { msg_void_i8(app, activate_sel, 1 as i8); }
+
+    let run_sel: *u8 = unsafe { sel_registerName(str_ptr("run\0")) };
+    unsafe { msg_void(app, run_sel); }
+
+    // ---- Drain pool ----
+    let drain_sel: *u8 = unsafe { sel_registerName(str_ptr("drain\0")) };
+    unsafe { msg_void(pool, drain_sel); }
+
+    return 0;
+}

@@ -1,0 +1,145 @@
+// Phase 11 reference library — Allocator + Vec in pure C+ source.
+//
+// Demonstrates the Dart-FFI pattern: `Allocator` is a user-defined
+// interface, `CMalloc` wraps libc malloc/free, and a typed Vec is built
+// on top using size_of::[T]() + raw pointers.
+//
+// **Scope note**: this sample uses a concrete `VecI32` (not the fully
+// generic `Vec[T, A]`) because the fully-generic form hits two compound
+// deferred limitations:
+//
+//   1. Generic-fn return types mentioning generic structs don't yet
+//      substitute T at the call site (carry-forward from 7GEN.5c
+//      "Aggregate-typed generic args"). So a generic `vec_with_capacity[T, A]`
+//      returns `Vec[T, A]` whose T isn't substituted to the concrete type.
+//   2. `Vec[i32]::with_capacity(...)` (associated-fn call on an instantiated
+//      generic type) isn't yet wired (deferred Phase-7 polish).
+//
+// The Allocator + interface pattern works generically today — only the
+// growable-typed-container ergonomics need those two follow-up slices.
+//
+// What it does: build a VecI32 with CMalloc, push 1..=8 (exercising the
+// realloc-on-grow path since initial cap is 4), sum via indexed read,
+// print + return the sum (36). Drop fires at scope exit, freeing the buffer.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+interface Allocator {
+    fn allocate(self, bytes: usize) -> *u8;
+    fn reallocate(self, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8;
+    fn deallocate(self, p: *u8, bytes: usize);
+}
+
+// `CMalloc` is a zero-byte struct whose methods wrap libc. No state, so
+// it's Copy and threads through every method call by value. A stateful
+// allocator (e.g. an Arena with `bump_ptr: *u8`) would use `mut self`.
+struct CMalloc {}
+
+impl Allocator for CMalloc {
+    fn allocate(self, bytes: usize) -> *u8 {
+        return unsafe { malloc(bytes) };
+    }
+    fn reallocate(self, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8 {
+        return unsafe { realloc(p, new_bytes) };
+    }
+    fn deallocate(self, p: *u8, bytes: usize) {
+        unsafe { free(p); }
+        return;
+    }
+}
+
+// `VecI32` — concrete typed growable array. Specialized to i32 for this
+// sample; the generic `Vec[T, A]` shape is the natural extension once
+// the deferred slices land.
+struct VecI32 {
+    ptr: *u8,
+    len: usize,
+    cap: usize,
+    alloc: CMalloc,
+}
+
+impl VecI32 {
+    fn len(self) -> usize {
+        return self.len;
+    }
+
+    fn capacity(self) -> usize {
+        return self.cap;
+    }
+
+    fn elem_ptr(self, i: usize) -> *i32 {
+        let base: *i32 = unsafe { self.ptr as *i32 };
+        return unsafe { base + i };
+    }
+
+    fn get(self, i: usize) -> i32 {
+        let p: *i32 = self.elem_ptr(i);
+        return unsafe { *p };
+    }
+
+    fn set(mut self, i: usize, value: i32) {
+        let p: *i32 = self.elem_ptr(i);
+        unsafe { *p = value; }
+        return;
+    }
+
+    fn grow(mut self) {
+        let new_cap: usize = if self.cap == 0 as usize { 8 as usize } else { self.cap *% 2 as usize };
+        let old_bytes: usize = self.cap *% size_of::[i32]();
+        let new_bytes: usize = new_cap *% size_of::[i32]();
+        self.ptr = self.alloc.reallocate(self.ptr, old_bytes, new_bytes);
+        self.cap = new_cap;
+        return;
+    }
+
+    fn push(mut self, value: i32) {
+        if self.len == self.cap {
+            self.grow();
+        }
+        let i: usize = self.len;
+        let p: *i32 = self.elem_ptr(i);
+        unsafe { *p = value; }
+        self.len = self.len +% 1 as usize;
+        return;
+    }
+
+    fn drop(mut self) {
+        let bytes: usize = self.cap *% size_of::[i32]();
+        self.alloc.deallocate(self.ptr, bytes);
+        return;
+    }
+}
+
+fn main() -> i32 {
+    let alloc: CMalloc = CMalloc {};
+    let initial_cap: usize = 4 as usize;
+    let initial_bytes: usize = initial_cap *% size_of::[i32]();
+    let buf: *u8 = alloc.allocate(initial_bytes);
+    let mut v: VecI32 = VecI32 {
+        ptr: buf,
+        len: 0 as usize,
+        cap: initial_cap,
+        alloc: alloc,
+    };
+
+    // Push 1..=8 — exceeds initial capacity of 4, exercising realloc-on-grow.
+    let mut i: i32 = 1;
+    while i <= 8 {
+        v.push(i);
+        i = i +% 1;
+    }
+
+    // Read back and sum: 1+2+3+4+5+6+7+8 = 36.
+    let mut sum: i32 = 0;
+    let mut j: usize = 0 as usize;
+    while j < v.len() {
+        sum = sum +% v.get(j);
+        j = j +% 1 as usize;
+    }
+
+    println(sum);
+    // Drop fires here, freeing the buffer.
+    return sum;
+}

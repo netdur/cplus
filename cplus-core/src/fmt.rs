@@ -332,8 +332,34 @@ fn needs_space_between_ctx(prev_prev: Option<&TokenKind>, prev: &TokenKind, curr
         return true;
     }
     if matches!(prev, Star) {
-        let in_type_pos = matches!(prev_prev, Some(Colon) | Some(Arrow) | Some(Star));
+        // Type-position anchors: `:` / `->` / `*` / `as` / `[`.
+        // The `as` case covers `expr as *T` cast targets (Phase 11.INTPTR
+        // + raw-pointer reinterpretation casts). The `[` case covers
+        // turbofish type-arg lists like `size_of::[*u8]()`.
+        let in_type_pos = matches!(
+            prev_prev,
+            Some(Colon) | Some(Arrow) | Some(Star) | Some(As) | Some(LBracket)
+        );
         if in_type_pos {
+            return false;
+        }
+        // Unary-prefix `*p` (deref): `*` is tight to the right when the
+        // token before it can start an expression — i.e. a place where a
+        // unary prefix could legally appear. Approximated as: prev_prev
+        // is an operator / opener / statement-boundary token.
+        let unary_prefix = matches!(
+            prev_prev,
+            None
+            | Some(LParen) | Some(LBrace)
+            | Some(Comma) | Some(Semi)
+            | Some(Eq) | Some(EqEq) | Some(BangEq)
+            | Some(Lt) | Some(Le) | Some(Gt) | Some(Ge)
+            | Some(Plus) | Some(Minus) | Some(Slash) | Some(Percent)
+            | Some(AmpAmp) | Some(PipePipe)
+            | Some(Return) | Some(If) | Some(Else) | Some(While)
+            | Some(FatArrow)
+        );
+        if unary_prefix {
             return false;
         }
     }

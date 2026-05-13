@@ -3285,6 +3285,119 @@ fn phase7_self_outside_impl_rejected_e0508() {
     assert!(stderr.contains("E0508"), "expected E0508 in stderr: {stderr}");
 }
 
+// Phase 11 cocoa-min — full ObjC interop integration test.
+
+#[cfg(target_os = "macos")]
+#[test]
+fn phase11_cocoa_min_compiles_and_links() {
+    // Verify the cocoa-min sample compiles + links against Cocoa.
+    // The binary launches a GUI window when run; we don't exercise that
+    // here (would need a GUI sandbox), but the compile + link is itself
+    // a meaningful end-to-end test of all four Phase-11 ObjC slices:
+    // 11.LINKNAME (msgSend aliases), 11.INTPTR (0 as *u8), 11.FN_PTR
+    // (IMP callback), plus Phase 10 #[repr(C)] / extern fn / unsafe.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = format!(
+        "{}/../objc-c-interop/cocoa-min/hello_appkit.cplus",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let ll = dir.join("hello_appkit.ll");
+    // Emit IR.
+    let emit = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(emit.status.success(), "cpc --emit-ll failed: {}", String::from_utf8_lossy(&emit.stderr));
+    std::fs::write(&ll, &emit.stdout).unwrap();
+    // Link with Cocoa.
+    let bin = dir.join("hello_appkit");
+    let link = Command::new("clang")
+        .arg(&ll)
+        .arg("-framework").arg("Cocoa")
+        .arg("-lobjc")
+        .arg("-Wno-override-module")
+        .arg("-o").arg(&bin)
+        .status()
+        .expect("invoke clang");
+    assert!(link.success(), "clang link failed");
+    assert!(bin.exists(), "binary not created");
+}
+
+// Phase 11 reference library: Allocator interface + VecI32 demo.
+
+#[test]
+fn phase11_vec_allocator_demo_runs() {
+    // Builds VecI32 with CMalloc, pushes 1..=8 (exercising realloc-on-grow),
+    // sums via indexed read, prints + exits 36.
+    let out = compile_and_run("phase11_vec_allocator.cplus");
+    assert_eq!(out.status.code(), Some(36), "vec_allocator should exit 36");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "36\n", "should print sum to stdout");
+}
+
+#[test]
+fn phase11_raw_ptr_reinterpret_cast_in_unsafe_compiles() {
+    // The `*u8 as *T` reinterpretation cast. Required for allocator-style
+    // code that treats a byte buffer as a typed pointer.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ptr_reinterpret.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn main() -> i32 {\n\
+             let p: *u8 = unsafe { malloc(4 as usize) };\n\
+             let q: *i32 = unsafe { p as *i32 };\n\
+             unsafe { *q = 42; }\n\
+             return unsafe { *q };\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("ptr_reinterpret");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success());
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(42));
+}
+
+#[test]
+fn phase11_raw_ptr_reinterpret_outside_unsafe_rejected_e0801() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ptr_reinterpret_unsafe.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn main() -> i32 {\n\
+             let p: *u8 = unsafe { malloc(4 as usize) };\n\
+             let q: *i32 = p as *i32;\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "ptr-to-ptr reinterpret outside unsafe should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0801"), "expected E0801 in stderr: {stderr}");
+}
+
+#[test]
+fn phase11_if_expr_with_usize_arms_compiles() {
+    // Pre-existing codegen bug: expr_value_ty didn't recognize Cast,
+    // so `if c { 8 as usize } else { 16 as usize }` failed at codegen.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("if_usize.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let x: usize = if 1 == 1 { 8 as usize } else { 16 as usize };\n\
+             return x as i32;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("if_usize");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success());
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(8));
+}
+
 // Phase 11 slice 11.FN_PTR: function pointer types and values.
 
 #[test]

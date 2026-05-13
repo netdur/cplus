@@ -2788,6 +2788,13 @@ impl<'a> FnState<'a> {
             (a, b) if a.is_float() && b.is_float() => {
                 if ty_bit_width(b) > ty_bit_width(a) { "fpext" } else { "fptrunc" }
             }
+            // Phase 11: raw-pointer → raw-pointer reinterpretation.
+            // Both ends lower to LLVM `ptr` (opaque pointer model), so the
+            // cast is a no-op at the IR level — the SSA value is identical.
+            // Return the existing value unchanged with the new Ty.
+            (Ty::RawPtr(_), Ty::RawPtr(_)) => {
+                return (v, to);
+            }
             // Phase 11 / P3: integer → raw pointer. Sema gates on `unsafe`.
             // If the source integer is narrower than i64, zero-extend it first
             // (`inttoptr` requires its operand to match the target pointer
@@ -3318,8 +3325,35 @@ fn expr_value_ty(e: &Expr) -> Option<Ty> {
         // allocation, so we report `i32` here. (Sema has already verified
         // both arms of any `if` agree on the actual enum type.)
         ExprKind::Path { .. } => Some(Ty::I32),
-        // For Cast we don't have the enum table in this free function;
-        // callers that need the type should use `gen_expr`'s return value.
+        // Cast: target type is directly visible. Resolve primitives by
+        // name (we don't have the TypeTable here, so aggregates return
+        // None and the result-slot machinery falls back). This unblocks
+        // if-expressions whose arms are `... as usize` / `... as *T` /
+        // etc. — previously returned None and the if produced no value.
+        ExprKind::Cast { ty, .. } => match &ty.kind {
+            crate::ast::TypeKind::Path(name) => match name.as_str() {
+                "i8" => Some(Ty::I8), "i16" => Some(Ty::I16),
+                "i32" => Some(Ty::I32), "i64" => Some(Ty::I64),
+                "u8" => Some(Ty::U8), "u16" => Some(Ty::U16),
+                "u32" => Some(Ty::U32), "u64" => Some(Ty::U64),
+                "isize" => Some(Ty::Isize), "usize" => Some(Ty::Usize),
+                "f32" => Some(Ty::F32), "f64" => Some(Ty::F64),
+                "bool" => Some(Ty::Bool),
+                _ => None,
+            },
+            crate::ast::TypeKind::RawPtr(inner) => {
+                // Recover the pointee for `Ty::RawPtr` so two `as *T` casts
+                // produce the same Ty key for slot allocation.
+                expr_value_ty(&Expr {
+                    kind: ExprKind::Cast {
+                        expr: Box::new(Expr { kind: ExprKind::BoolLit(false), span: e.span }),
+                        ty: (**inner).clone(),
+                    },
+                    span: e.span,
+                }).map(|t| Ty::RawPtr(Box::new(t)))
+            }
+            _ => None,
+        },
         _ => None,
     }
 }

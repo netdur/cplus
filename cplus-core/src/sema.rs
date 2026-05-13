@@ -2631,6 +2631,17 @@ impl SemaCx<'_> {
                 span,
             );
         }
+        // Phase 11: raw-pointer → raw-pointer reinterpretation also requires
+        // `unsafe`. The cast is mechanically free (both ends lower to LLVM
+        // `ptr`), but the caller is asserting the reinterpreted bytes have
+        // the new pointee's layout.
+        if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) && from != to && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                "raw-pointer reinterpretation cast requires `unsafe { ... }`".to_string(),
+                span,
+            );
+        }
         to
     }
 
@@ -4482,6 +4493,13 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     // The unsafe gate lives in `check_cast` — `cast_allowed` answers only
     // the type-pair shape question.
     if from.is_int() && matches!(to, Ty::RawPtr(_)) { return true; }
+    // Phase 11: raw-pointer → raw-pointer reinterpretation (`*u8 as *T`).
+    // The standard C / Rust idiom for treating an allocator-returned byte
+    // buffer as a typed pointer. Codegen is a no-op at the LLVM level
+    // (every raw pointer lowers to `ptr` already). The unsafe gate in
+    // `check_cast` covers the soundness side — caller asserts the
+    // reinterpretation is valid.
+    if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) { return true; }
     // Forbidden:
     //   - integer/float → bool (use `!= 0`)
     //   - bool → float
