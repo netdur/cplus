@@ -781,89 +781,30 @@ String literals `"hello"` have type `str` (not `string`) — they point at a sta
 
 **Exit:** the FizzBuzz demo at [docs/examples/fizzbuzz.cplus](docs/examples/fizzbuzz.cplus) (currently emits integer codes) is rewritten to print real `"Fizz"` / `"Buzz"` / `"FizzBuzz"` strings via `println(str)`, and a sample program builds a `string` from concatenations and calls a libc function via `to_cstring()` end-to-end.
 
-### Phase 9 — Identity exploration (TypeScript-flavored review) · 1–2 months
+### Phase 9 — Identity exploration (TypeScript-flavored review) · ❌ rejected (2026-05-13)
 
-**Why this phase exists.** Early feedback flagged C+ as reading like a Rust clone. The framing is wrong — C+ is in the same design space as Rust (no-GC + memory safety + ABI-compatible-with-C), so structural similarity is unavoidable and *intentional* in the places where Rust solved the problem first. But the criticism points at something real: a reader skimming C+ for the first time sees Rust syntax everywhere, and the deliberate departures (`[T]` over `<T>`, `mut self` over `&mut self`, `interface` over `trait`, no `?`, no closures, no comptime, AI-native tooling, FFI honesty) aren't visible at first glance.
+**Status: rejected after case-by-case audit.** Decision recorded in chat session 2026-05-13; closure summary below.
 
-**TypeScript familiarity is a real ergonomic asset.** The JS/TS community is the largest single developer population in the world; visual familiarity with `function`, `type X = A | B`, `null`, `readonly`, optional-chaining, etc. lowers the cost-to-first-program for newcomers even when underlying semantics differ. "Looks similar to what I already read every day" is worth real points.
+**Why rejected.** A case-by-case walk through the major TS surface choices (mutability defaults, function keyword, aggregate types, generics bracket, null handling) showed that every TS-flavored alternative falls into one of three buckets:
 
-**Decision rubric (locked-in).** The default is: **adopt the TS-familiar spelling unless it hurts functionality, clarity, or a settled foundational decision.** Cosmetic-only renames are *good* — they capture readability gains for free. The rejects are not "we didn't bother"; they're "this rename would cost us X, where X is concrete." Every keep/reject decision gets a one-paragraph rationale in [docs/design/phase9-identity.md](docs/design/phase9-identity.md).
+1. **Flips a safety default** — `let`/`const` makes mutability the default (regression from C+'s opt-in `mut`). `null`/`undefined` makes every reference type silently nullable (regression from explicit `Option[T]`).
+2. **Violates the "no several ways to do the same thing" principle** — Rust-style turbofish `::<T>` at call sites is one form for declarations, another for calls. `class` ships with constructors *and* struct-literal construction would still work, leaving two ways to build a value.
+3. **Pays parser/semantic complexity for purely visual wins** — Context-sensitive `<T>` parsing accumulates TS's decade of corner cases. `class` either fights C+'s separation of data layout from behavior (Option 3B) or is a cosmetic rename that buys nothing (Option 3C).
 
-**Test for each candidate:**
-1. Does the TS-flavored alternative *break* semantics, type safety, or a foundational decision (§1, §2)? → **reject, with the specific breakage named.**
-2. Does it *cost* clarity (e.g. a no-op marker that newcomers will misread as meaningful, or a syntax that conflates two distinct concepts)? → **reject, with the specific confusion named.**
-3. Does it neither break nor confuse, AND match what a TS programmer would already write? → **adopt.**
-4. Does the audit *not surface* a TS-flavored alternative? → **keep current, no rationale needed.**
+The deeper reason: **TypeScript's surface syntax is inseparable from its object-oriented assumptions.** `class`/`this`/constructors, decorators-as-runtime, `null`/`undefined` nullability, the `function`+arrow split — all of these encode "objects have identity, mutability is the default, references can be absent." C+ deliberately rejects each of those assumptions. TS-flavored syntax without TS semantics would be either dishonest (looks TS, behaves C+) or impractical (the cosmetic-only subset is empty after audit).
 
-**The phase is design-heavy, code-light.** Output is a decision register: for each candidate, "adopt / reject" with rationale. The implementation slices below land the survivors.
+**What was retained as principle, not as phase work:**
+- **No several ways to do the same thing** (except universally-accepted duplications like `for`/`while`) — applied going forward.
+- **Function over syntax** — visual familiarity loses to safety. Locked in chat 2026-05-13.
 
-**Explicit non-goals.** This phase does *not* revisit:
-- The borrow checker / ownership model. That's Rust-shaped because that's the only sound design in the no-GC + safety space.
-- The fixed-width integer types (`i32`/`u32`/`usize`). Per §2.1, no `int`/`long` ambiguity, period.
-- The `interface` + standalone `impl Iface for Type` shape. The orphan rule (Phase 7 §coherence) requires impls to live separately from types; `class implements` couldn't express this.
-- Closures. Settled: out of scope for C+ entirely.
-- Async / await. Settled: no runtime.
-- Structural union types `i32 | string`. Conflicts with the tagged-union semantics that pattern-matching depends on.
+**What's still on the table as independent work (NOT under a "TS audit" banner):**
+- `type Foo = Bar` aliases — useful regardless of TS heritage; reconsider as a Phase 11 polish slice if a real use case surfaces.
+- `null` literal restricted to raw pointers in `unsafe` for FFI ergonomics (Cocoa interop needs it) — design captured in [objc-c-interop/notes.md](objc-c-interop/notes.md).
+- String interpolation — already a deferred Phase 8 item, decoupled from this rejection.
 
-**Candidates to evaluate.** Each gets a decision + rationale recorded. Inclinations below are *priors*, not commitments — the audit slice formally decides each.
+**The marketing answer.** "Looks like Rust" perception is still real. Addressing it lives elsewhere: better example programs, a "What C+ is *not*" one-pager, AI-native tooling work — none of which require a syntax reskin.
 
-*Likely adopt (TS-familiar, no functional cost):*
-1. **`type` alias keyword** — `type UserId = u64;`. TS-aligned, Rust-aligned, low cost, clear win. **Adopt.**
-2. **"Discriminated union" terminology** in docs + error messages for tagged enums. No code change; matches the term programmers actually use. **Adopt in docs.**
-3. **Optional chaining `?.`** paired with `?T` — `maybe_user?.name`. Reads cleanly with the existing nullable opt-in; desugars to `match` on `?T`. **Adopt.**
-4. **Nullish coalescing `??`** — `x ?? default`. Same family as above. Desugars cleanly. **Adopt** (together with `?.`).
-5. **Field-init shorthand** — `Point { x, y }` when local names match. Rust has this; TS object literals do; partially supported in some paths. **Adopt, consolidate.**
-6. **`null` literal for `?T` absent** — `let x: ?i32 = null;`. TS programmers write `null` reflexively. Internally still lowers to `?T`'s None case; just an alternative literal spelling. No conflict with our existing `Maybe::None` (different type). **Adopt.**
-7. **`type X = A | B` as a syntactic alias for payload-less enums** — `type Direction = North | South | East | West;` reading better for newcomers than `enum Direction { ... }`. Lowers to the same `enum`. Doesn't extend to payloads (`type Maybe[T] = Some(T) | None` would have to round-trip through the enum AST, which is fine). **Adopt as alias, keep `enum` as primary.**
-8. **`enum X { A, B }` keyword stays** as the load-bearing form for tagged enums with payloads. The `type X = A | B | C` alias above is for the no-payload case. **Adopt both, document the rule.**
-
-*Worth real evaluation (the audit decides):*
-9. **`fn` vs `function`.** TS/JS/PHP/Java all use `function`. Rust/Zig/Carbon use `fn`. The JS world is bigger; the systems-lang world is the design-space neighbor. Cost of changing: every demo, sample, test fixture, and the bench reference C code in comments — ~hundreds of touched lines. Cost of keeping: ongoing "looks like Rust" friction. **Evaluate seriously**, with sample-program-readability as the tiebreaker. Default lean: `function` if the cost can be absorbed in the audit slice; `fn` if not.
-10. **Method-style vs static-style namespacing for stdlib operations** — does `str::len(s)` read better as `s.length`? TS goes property-style for `.length`, method-style for `.startsWith(...)`. We currently lean method-style across the board. **Evaluate per type during Phase 8** (strings) — string operations are where this shows up most.
-11. **`enum`-with-payload spelling** — `enum Maybe[T] { Some(T), None }`. TS-style discriminated unions are `type Maybe<T> = { kind: "some", value: T } | { kind: "none" }` — verbose and structurally different. Our `enum` is the tighter spelling and matches Swift, Kotlin, Scala. **Likely keep `enum` for the payload case**; provide the `type X = A | B` alias for payload-less.
-12. **`async`/`await` keyword reservation.** We've settled "no async" semantically (no runtime). But reserving the keywords now (parse-only, error message) prevents future syntax-shape problems. **Evaluate** — small parser change, future-proof. Probably reserve.
-13. **Backtick template literals `` `Hello ${name}` `` for string interpolation.** Already on Phase 8's deferred list (slice 8.STR.B) using Swift's `"\(name)"` syntax. TS uses `` `${...}` ``. Phase 8 picks one; this audit just *records* the decision under the TS-familiarity lens (TS backtick syntax wins by familiarity alone; Swift syntax wins on tighter integration with the language). **Decide here, implement in 8.STR.B.**
-
-*Likely reject (functional or clarity cost):*
-14. **`readonly` modifier on struct fields.** Default is already immutable (no `mut`); adding `readonly` is either a no-op or signals "even within a `mut` struct, this field doesn't mutate." The first creates a TS-trained programmer-misreading where they expect `readonly` to *do* something; the second introduces internal-mutability semantics we don't want. **Reject, both ways hurt clarity.**
-15. **Structural union types `i32 | string`.** Conflicts with the tagged-union semantics that pattern-matching depends on; would require runtime type discrimination we don't have. **Reject, breaks foundational decisions.**
-16. **`class { ... }` bundling data + methods.** Blurs value semantics; conflicts with the standalone `impl Iface for Type` orphan rule. **Reject.**
-17. **`implements` clause on a struct/class declaration.** Same orphan-rule conflict — interface impls must live in their own block to support the coherence rule. **Reject.**
-18. **`as const` narrowing.** TS uses it for compile-time literal-type inference, which depends on TS's structural type system; our nominal/value type system doesn't have the gap it fills. **Reject as redundant.**
-19. **Anonymous record types `{ x: i32, y: i32 }`** as parameter/return types. Adds a second struct kind alongside named structs; type-system complexity (structural vs nominal subtyping) creeps in. **Likely reject** unless a strong use case surfaces.
-20. **Spread `...args`** beyond `extern fn` varargs. Invites destructuring + rest-parameter complications. **Reject in-language, keep limited to FFI.**
-
-*Already TS-aligned (no change, but documented for the rejection log):*
-21. **`[T]` generics** — chosen over `<T>` (parse ambiguity); same shape as TS visually.
-22. **`==` / `!=`** — TS's `===` is "no coercion"; we have no coercion ever, so `==` IS strict. Aligned.
-23. **`//` and `/* */` comments** — universal.
-24. **`true`/`false`** — universal.
-25. **String literals `"hello"`** — universal.
-26. **`let` for bindings** — TS uses `let`; Rust uses `let`; we use `let`. Aligned. (`const` reserved for compile-time later — same as both.)
-27. **`for x in range`** — TS has `for...of`; we have `for x in range`. Close-enough alignment.
-28. **`else if` chains, `while`, `continue`, `break`** — universal.
-
-**The marketing answer also matters.** Identity isn't only syntax. The audit should produce a one-page "What C+ is *not*" document that names the actual differentiators (AI-native tooling, FFI honesty, no closures, no comptime, structural Copy, single import mechanism, mandatory `return`) and is used in onboarding material. The shape of the marketing conversation does more to fight "cheap Rust clone" perception than any number of keyword renames.
-
-**Implementation slicing:**
-- **9.ID.audit** — the decision register. Pure design work; output is a markdown table at [docs/design/phase9-identity.md](docs/design/phase9-identity.md) with each candidate + decision + rationale paragraph. No code lands here, but every subsequent slice depends on this slice's verdicts.
-- **9.ID.docs** — terminology updates ("discriminated union," "tagged enum," etc.) across [docs/design/](docs/design/), error messages, and the README. Mechanical sed-and-review.
-- **9.ID.alias** — `type Name = T;` lands. Parser + sema. Small slice. Also handles the `type Direction = North | South | East | West;` payload-less-enum alias if .audit approves it.
-- **9.ID.opt** — `?.` and `??` operators land. Parser + sema desugar to existing `match`-on-`?T`. New error codes E0700–E0702.
-- **9.ID.null** — `null` literal as the absent value of `?T`. Parser + sema. Pure syntactic; lowers to whatever `?T`'s internal None constructor is.
-- **9.ID.lit** — field-init shorthand consolidation (`Point { x, y }` when local names match).
-- **9.ID.fn** — *conditional on .audit verdict.* If `fn` → `function`, this slice does the rename across the parser, every test fixture, every demo, the bench programs, and the LSP keyword list. Big mechanical slice; isolated so it can be reviewed cleanly. If verdict is "keep `fn`," this slice doesn't exist.
-- **9.ID.async** — *conditional on .audit verdict.* Reserve `async`/`await` as keywords with a parse-time E0703 "async is not supported in C+" error. Future-proofs the grammar.
-- **9.ID.interp** — string-interpolation syntax decision lands in Phase 8 slice 8.STR.B; this audit just *records* whether TS-style `` ` ${...} ` `` or Swift-style `"\(...)"` won. No standalone slice; cross-references 8.STR.B.
-- **9.ID.reject** — for each rejected candidate, write a one-paragraph "why not" entry in [docs/design/phase9-identity.md](docs/design/phase9-identity.md). These become the documented "but TypeScript does X" answers and short-circuit future debates.
-
-**Reserved error codes:** E0700–E0710 for identity-phase diagnostics (mostly diagnostic *rewording* for existing codes; new codes only for genuinely new constructs like `?.` on non-nullable).
-
-**LLVM features used:** none new — every candidate either desugars to existing constructs or is a parser-level rename.
-
-**Exit:** the design register at [docs/design/phase9-identity.md](docs/design/phase9-identity.md) is published with every candidate decided; the "kept as-is" decisions each have a recorded rationale paragraph (so future feedback gets a documented answer, not a fresh debate); the implemented changes ship in a single coordinated release with migration notes for any existing demos; the "What C+ is *not*" marketing one-pager exists and is linked from the README.
-
-**What this phase explicitly will not deliver.** A C+ that isn't recognizably in the systems-language family. The borrow checker, fixed-width integers, ownership semantics, monomorphization — those stay. The rubric tilts *toward* adopting TS-familiar spelling (every cosmetic-only rename is a free readability win for the largest developer population in the world), but cosmetic is not the same as semantic; any candidate that would compromise function, type safety, or a settled foundational decision gets rejected with the specific breakage named. If 60% of candidates adopt and 40% reject with documented rationale, that's a successful outcome: critics get a "we considered X and rejected it because Y" answer instead of "looks like Rust, dunno why."
+**Removed from scope:** all 9.ID.* slices (audit, docs, alias, opt, null, lit, fn, async, interp, reject). The design register at `docs/design/phase9-identity.md` was never created and won't be.
 
 ### Phase 10 — C interop hardening · 1–3 months · ✅ core complete (cross-platform verification deferred)
 
