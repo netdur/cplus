@@ -27,7 +27,16 @@ pub enum BuildMode {
 /// Generate LLVM IR for a sema-validated program. Caller must run sema first;
 /// codegen will panic on unresolvable references that sema would have caught.
 pub fn generate(program: &Program, mode: BuildMode) -> String {
-    generate_inner(program, mode, None)
+    generate_inner(program, mode, None, None)
+}
+
+/// Phase 11 polish (2026-05-13): emit LLVM IR with DWARF debug
+/// metadata. v1 ships function-level info only — DICompileUnit, DIFile,
+/// and one DISubprogram per function. Per-instruction `!DILocation`
+/// (for line-by-line stepping) is a follow-up. lldb can still identify
+/// function symbols in stack traces and set breakpoints by name.
+pub fn generate_with_debug(program: &Program, mode: BuildMode, source_file: &std::path::Path) -> String {
+    generate_inner(program, mode, None, Some(source_file))
 }
 
 /// Slice 5ATTR.4: emit a test-runner binary. The output IR contains every
@@ -52,7 +61,7 @@ pub fn generate_test_binary(
     tests: &[crate::attrs::TestFn],
     json: bool,
 ) -> String {
-    generate_inner(program, mode, Some(TestDriverConfig { tests, json }))
+    generate_inner(program, mode, Some(TestDriverConfig { tests, json }), None)
 }
 
 struct TestDriverConfig<'a> {
@@ -60,7 +69,12 @@ struct TestDriverConfig<'a> {
     json: bool,
 }
 
-fn generate_inner(program: &Program, mode: BuildMode, test_cfg: Option<TestDriverConfig<'_>>) -> String {
+fn generate_inner(
+    program: &Program,
+    mode: BuildMode,
+    test_cfg: Option<TestDriverConfig<'_>>,
+    debug_source: Option<&std::path::Path>,
+) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
     let test_mode = test_cfg.is_some();
@@ -118,6 +132,197 @@ fn generate_inner(program: &Program, mode: BuildMode, test_cfg: Option<TestDrive
     }
     if let Some(cfg) = test_cfg {
         emit_test_driver_main(&mut out, cfg.tests, cfg.json);
+    }
+    // Phase 11 polish (2026-05-13): DWARF debug metadata. v1 emits
+    // module flags + DICompileUnit + DIFile + one DISubprogram per
+    // function (named, line-numbered). Per-instruction DILocation is
+    // a follow-up — for now lldb identifies function symbols in stack
+    // traces and accepts `break <fn>` by name; line-stepping is
+    // degenerate (lands at function entry).
+    if let Some(path) = debug_source {
+        let src = std::fs::read_to_string(path).ok();
+        emit_dwarf_metadata(&mut out, program, path, src.as_deref());
+    }
+    out
+}
+
+/// Emit module-flag + !llvm.dbg.cu + DICompileUnit + DIFile metadata,
+/// plus one DISubprogram per program function. Post-processes the IR
+/// to attach `!dbg !N` to each `define` line.
+fn emit_dwarf_metadata(
+    out: &mut String,
+    program: &Program,
+    source_file: &std::path::Path,
+    src: Option<&str>,
+) {
+    let line_map = src.map(crate::diagnostics::LineMap::new);
+    let abs = source_file.canonicalize().unwrap_or_else(|_| source_file.to_path_buf());
+    let filename = abs.file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("source.cplus")
+        .to_string();
+    let directory = abs.parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or(".")
+        .to_string();
+    // Reserve metadata ids:
+    //   !0 = DwarfVersion flag
+    //   !1 = DebugInfoVersion flag
+    //   !2 = DICompileUnit
+    //   !3 = DIFile
+    //   !4 = DISubroutineType (shared "unknown type" placeholder)
+    //   !5 = empty types array
+    //   !6.. = pairs of (DISubprogram, DILocation) per fn
+    let cu_id = 2u32;
+    let file_id = 3u32;
+    let sub_type_id = 4u32;
+    let empty_types_id = 5u32;
+    let mut next_md = 6u32;
+    // First pass: collect function names + their start line.
+    // Per function we allocate two metadata ids: a DISubprogram (the
+    // `define ... !dbg !S` anchor) and a DILocation (the `!dbg !L`
+    // attached to every call inside that function — required so clang
+    // doesn't drop the whole DI block).
+    struct FnDi { sub_id: u32, loc_id: u32, line: u32 }
+    let mut fn_meta: std::collections::HashMap<String, FnDi> = std::collections::HashMap::new();
+    let alloc_pair = |name: String, line: u32, fn_meta: &mut std::collections::HashMap<String, FnDi>, next_md: &mut u32| {
+        let sub_id = *next_md;
+        let loc_id = *next_md + 1;
+        *next_md += 2;
+        fn_meta.insert(name, FnDi { sub_id, loc_id, line });
+    };
+    for item in &program.items {
+        let ItemKind::Function(f) = &item.kind else { continue; };
+        if !f.generic_params.is_empty() { continue; }
+        let line = line_for_span(f.name.span, line_map.as_ref(), src);
+        let user_name = if f.name.name == "main" { "main".to_string() } else { f.name.name.clone() };
+        alloc_pair(user_name, line, &mut fn_meta, &mut next_md);
+    }
+    // Methods on impl blocks: emit one DISubprogram per method too.
+    // The IR's `define` line uses the mangled `Type.method` name.
+    for item in &program.items {
+        let ItemKind::Impl(b) = &item.kind else { continue; };
+        for m in &b.methods {
+            if !m.generic_params.is_empty() { continue; }
+            let mangled = format!("{}.{}", b.target.name, m.name.name);
+            let line = line_for_span(m.name.span, line_map.as_ref(), src);
+            alloc_pair(mangled, line, &mut fn_meta, &mut next_md);
+        }
+    }
+    // Post-process the IR. Two attachments:
+    //   1. `define ... !dbg !S { ... }` — attach the function's
+    //      DISubprogram to the `define` line.
+    //   2. `<call|invoke> ..., !dbg !L` — attach the function's
+    //      DILocation to every call inside its body. clang rejects DI
+    //      blocks where a call instruction inside a debug-info'd
+    //      function lacks a `!dbg`.
+    let original = std::mem::take(out);
+    let mut current_loc_id: Option<u32> = None;
+    for line in original.lines() {
+        // Function definition line.
+        if let Some(stripped) = line.strip_prefix("define ") {
+            if let Some(at) = stripped.find('@') {
+                let after_at = &stripped[at + 1..];
+                if let Some(paren) = after_at.find('(') {
+                    let raw_name = &after_at[..paren];
+                    if let Some(meta) = fn_meta.get(raw_name) {
+                        current_loc_id = Some(meta.loc_id);
+                        if let Some(brace) = line.rfind('{') {
+                            let (head, tail) = line.split_at(brace);
+                            out.push_str(head.trim_end());
+                            out.push_str(&format!(" !dbg !{} ", meta.sub_id));
+                            out.push_str(tail);
+                            out.push('\n');
+                            continue;
+                        }
+                    }
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        // End of a function body: a sole `}` at column 0.
+        if line == "}" {
+            current_loc_id = None;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        // Inside a debug-info'd function: attach !dbg to any `call`
+        // or `invoke` instruction so clang accepts the DI block.
+        if let Some(loc) = current_loc_id {
+            let trimmed = line.trim_start();
+            let is_call = trimmed.starts_with("call ")
+                || trimmed.starts_with("invoke ")
+                // SSA-assignment form: `%v = call ...`.
+                || (trimmed.starts_with('%')
+                    && trimmed.contains("= call ")
+                    && !trimmed.contains("!dbg"));
+            if is_call && !line.contains("!dbg") {
+                out.push_str(line);
+                out.push_str(&format!(", !dbg !{loc}"));
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    // Emit the metadata block.
+    out.push('\n');
+    out.push_str("!llvm.module.flags = !{!0, !1}\n");
+    out.push_str("!llvm.dbg.cu = !{!2}\n");
+    out.push('\n');
+    out.push_str("!0 = !{i32 2, !\"Dwarf Version\", i32 4}\n");
+    out.push_str("!1 = !{i32 2, !\"Debug Info Version\", i32 3}\n");
+    out.push_str(&format!(
+        "!{cu_id} = distinct !DICompileUnit(language: DW_LANG_C99, file: !{file_id}, \
+         producer: \"cpc\", isOptimized: false, runtimeVersion: 0, \
+         emissionKind: FullDebug, splitDebugInlining: false)\n"
+    ));
+    out.push_str(&format!(
+        "!{file_id} = !DIFile(filename: \"{}\", directory: \"{}\")\n",
+        escape_dwarf_str(&filename), escape_dwarf_str(&directory)
+    ));
+    out.push_str(&format!(
+        "!{sub_type_id} = !DISubroutineType(types: !{empty_types_id})\n"
+    ));
+    out.push_str(&format!("!{empty_types_id} = !{{null}}\n"));
+    // Sort fn_meta entries by sub_id for stable output. Each entry
+    // emits a DISubprogram immediately followed by its DILocation.
+    let mut sorted: Vec<(String, u32, u32, u32)> = fn_meta.iter()
+        .map(|(n, m)| (n.clone(), m.sub_id, m.loc_id, m.line))
+        .collect();
+    sorted.sort_by_key(|e| e.1);
+    for (name, sub_id, loc_id, line) in sorted {
+        out.push_str(&format!(
+            "!{sub_id} = distinct !DISubprogram(name: \"{}\", linkageName: \"{}\", \
+             scope: !{file_id}, file: !{file_id}, line: {line}, type: !{sub_type_id}, \
+             scopeLine: {line}, spFlags: DISPFlagDefinition, unit: !{cu_id})\n",
+            escape_dwarf_str(&name), escape_dwarf_str(&name),
+        ));
+        out.push_str(&format!(
+            "!{loc_id} = !DILocation(line: {line}, column: 1, scope: !{sub_id})\n"
+        ));
+    }
+}
+
+fn line_for_span(span: crate::lexer::Span, line_map: Option<&crate::diagnostics::LineMap>, src: Option<&str>) -> u32 {
+    match (line_map, src) {
+        (Some(lm), Some(s)) => lm.position(span.start, s).line,
+        _ => 1,
+    }
+}
+
+fn escape_dwarf_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
     }
     out
 }

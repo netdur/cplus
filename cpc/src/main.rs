@@ -55,6 +55,10 @@ fn main() -> ExitCode {
     let mut out: Option<PathBuf> = None;
     let mut diag_mode = DiagMode::Human;
     let mut build_mode = BuildMode::Debug;
+    // Phase 11 polish (2026-05-13): `-g` emits DWARF debug metadata.
+    // v1 ships function-level DI only (DICompileUnit + DIFile +
+    // DISubprogram). Per-instruction DILocation is a follow-up.
+    let mut emit_debug_info = false;
     let mut subcommand: Option<Subcommand> = None;
     let mut fmt_opts = FmtOpts::default();
     let mut fmt_inputs: Vec<PathBuf> = Vec::new();
@@ -110,7 +114,7 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-ll requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ll(PathBuf::from(v), diag_mode, build_mode);
+                return dump_ll(PathBuf::from(v), diag_mode, build_mode, emit_debug_info);
             }
             Some("--emit-ll-project") => {
                 subcommand = Some(Subcommand::EmitLlProject);
@@ -122,6 +126,10 @@ fn main() -> ExitCode {
             }
             Some("--debug") => {
                 build_mode = BuildMode::Debug;
+                i += 1;
+            }
+            Some("-g" | "--debug-info") => {
+                emit_debug_info = true;
                 i += 1;
             }
             Some("-h" | "--help") => {
@@ -213,6 +221,7 @@ fn main() -> ExitCode {
             out.unwrap_or_else(|| PathBuf::from("a.out")),
             diag_mode,
             build_mode,
+            emit_debug_info,
         ),
         (None, None) => phase0_hello(out.unwrap_or_else(|| PathBuf::from("hello"))),
     }
@@ -298,7 +307,7 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out_path, build_mode);
+    let status = run_clang(&tmp, &out_path, build_mode, false);
     let _ = fs::remove_file(&tmp);
     status
 }
@@ -681,7 +690,7 @@ fn run_test(
         return ExitCode::FAILURE;
     }
     let bin_out = env::temp_dir().join(format!("cpc-test-{}.bin", std::process::id()));
-    let clang_status = run_clang(&tmp, &bin_out, build_mode);
+    let clang_status = run_clang(&tmp, &bin_out, build_mode, false);
     let _ = fs::remove_file(&tmp);
     if !matches!(clang_status, ExitCode::SUCCESS) {
         let _ = fs::remove_file(&bin_out);
@@ -832,12 +841,12 @@ fn phase0_hello(out: PathBuf) -> ExitCode {
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out, BuildMode::Debug);
+    let status = run_clang(&tmp, &out, BuildMode::Debug, false);
     let _ = fs::remove_file(&tmp);
     status
 }
 
-fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool) -> ExitCode {
     let src = match fs::read_to_string(&input) {
         Ok(s) => s,
         Err(e) => {
@@ -845,7 +854,7 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&input, &src, mode, build_mode) {
+    let ir = match build_ir(&input, &src, mode, build_mode, debug_info) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -854,12 +863,12 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out, build_mode);
+    let status = run_clang(&tmp, &out, build_mode, debug_info);
     let _ = fs::remove_file(&tmp);
     status
 }
 
-fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode) -> Result<String, ExitCode> {
+fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug_info: bool) -> Result<String, ExitCode> {
     // Slice 5DOC: extract doctest fences from `///` comments into appended
     // `#[test]` functions before lexing. Files without doctests are
     // unchanged — `doctest::extract` returns the input verbatim.
@@ -924,10 +933,14 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode) -> Re
         return Err(ExitCode::FAILURE);
     }
     let post_mono = run_monomorphize(prog, &mono, &std::collections::BTreeMap::new());
-    Ok(codegen::generate(&post_mono, build_mode))
+    if debug_info {
+        Ok(codegen::generate_with_debug(&post_mono, build_mode, file))
+    } else {
+        Ok(codegen::generate(&post_mono, build_mode))
+    }
 }
 
-fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode) -> ExitCode {
+fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool) -> ExitCode {
     // Pass the LLVM optimization level alongside our own build-mode choice:
     //   Debug   -> `-O0`. Keeps the overflow-check intrinsics, leaves divs
     //              and branches in source order, debuggable IR.
@@ -939,9 +952,13 @@ fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode) -> ExitCode {
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O2",
     };
-    let status = Command::new("clang")
-        .arg(opt)
-        .arg("-Wno-override-module")
+    let mut cmd = Command::new("clang");
+    cmd.arg(opt).arg("-Wno-override-module");
+    // Phase 11 polish: `-g` keeps the DWARF metadata cpc emitted in the
+    // IR through to the final binary. Without it clang silently strips
+    // the .debug_info section.
+    if debug_info { cmd.arg("-g"); }
+    let status = cmd
         .arg(input_ll)
         .arg("-o")
         .arg(out)
@@ -983,7 +1000,7 @@ fn dump_tokens(path: PathBuf, mode: DiagMode) -> ExitCode {
     }
 }
 
-fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool) -> ExitCode {
     let src = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => {
@@ -991,7 +1008,7 @@ fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match build_ir(&path, &src, mode, build_mode) {
+    match build_ir(&path, &src, mode, build_mode, debug_info) {
         Ok(ir) => { print!("{ir}"); ExitCode::SUCCESS }
         Err(code) => code,
     }

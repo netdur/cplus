@@ -4092,6 +4092,73 @@ fn phase8_interp_demo_sample_runs() {
     assert_eq!(run.status.code(), Some(0));
 }
 
+// Phase 11 polish (2026-05-13): `-g` emits DWARF debug metadata.
+// v1 ships function-level info only — verified via IR shape and via
+// `nm -a` on the linked binary (macOS debug map).
+
+#[test]
+fn phase11_debuginfo_g_emits_di_metadata() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("dbg.cplus");
+    std::fs::write(
+        &src,
+        "fn helper(x: i32) -> i32 { return x +% 1; }\n\
+         fn main() -> i32 { return helper(41); }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("-g").arg("--emit-ll").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "-g should emit IR: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("!llvm.module.flags"), "missing module flags: {ir}");
+    assert!(ir.contains("!DICompileUnit"), "missing DICompileUnit: {ir}");
+    assert!(ir.contains("!DIFile"), "missing DIFile: {ir}");
+    assert!(ir.contains("!DISubprogram(name: \"main\""),
+        "missing DISubprogram for main: {ir}");
+    assert!(ir.contains("!DISubprogram(name: \"helper\""),
+        "missing DISubprogram for helper: {ir}");
+    assert!(ir.contains("!DILocation"), "missing DILocation: {ir}");
+    // define lines should reference !dbg.
+    assert!(ir.contains("define i32 @main()") && ir.contains("!dbg "),
+        "main define should carry !dbg: {ir}");
+}
+
+#[test]
+fn phase11_debuginfo_g_binary_links() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("dbg_bin.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { return 42; }\n",
+    ).unwrap();
+    let bin = dir.join("dbg_bin");
+    let out = Command::new(cpc).arg("-g").arg(&src).arg("-o").arg(&bin)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "cpc -g should link the binary: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase11_debuginfo_off_by_default_no_di() {
+    // Sanity: without -g, no DI metadata.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("nodbg.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(!ir.contains("!DICompileUnit"), "DI should be absent without -g: {ir}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

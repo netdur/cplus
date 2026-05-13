@@ -829,6 +829,7 @@ The deeper reason: **TypeScript's surface syntax is inseparable from its object-
 - Function pointer types and values (slice 11.FN_PTR) — `fn(T1, T2) -> R` in type position, bare-ident type-directed coercion to fn pointer values. Final compiler gap for the ObjC interop story (needed for `class_addMethod(class, sel, IMP imp, types)`). Design note at [docs/design/phase11-fn-pointers.md](docs/design/phase11-fn-pointers.md). **✅ shipped 2026-05-13** — see resolved-log entry below.
 - `type Foo = Bar;` transparent type aliases — parked from the Phase-9 rejection. **✅ shipped 2026-05-13** — see resolved-log entry below.
 - Owned `string` type + `ToString` + interpolation literals `"hello ${expr}"` (slices 8.STR.3, 8.STR.6, 8.STR.B). **✅ shipped 2026-05-13** (with v1 leak — Drop integration deferred). See resolved-log entry below.
+- DWARF debug info via `-g` flag — function-level v1 (DICompileUnit, DIFile, DISubprogram + DILocation per fn). **✅ shipped 2026-05-13** — see resolved-log entry below. Per-instruction `!DILocation` and DILocalVariable are follow-ups.
 - Better error messages (continuous; borrow-checker diagnostics are the long pole)
 - Debugger support (DWARF — largely free from LLVM via `!DIFile` / `!DISubprogram` / `!DILocation` metadata; ideally wired up earlier so source positions don't have to be retrofitted)
 - Sanitizer flags (`cpc --asan` / `--ubsan` / `--tsan` / `--msan`) — instrumented user binaries via LLVM's existing pass infrastructure
@@ -1134,6 +1135,21 @@ Design notes needed before their phase (per §6):
 - [ ] Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references
 
 Resolved (kept for history):
+- **Phase 11 polish: DWARF debug metadata landed (2026-05-13):** `-g` / `--debug-info` flag emits function-level DWARF. lldb identifies cpc-compiled functions in stack traces and accepts `break <fn>` by name. **Coordinated changes:**
+  - **CLI**: `-g` / `--debug-info` flag in cpc args, separate from `--debug`/`--release` (which controls overflow checks). Threaded through `compile_file` → `build_ir` → `codegen::generate_with_debug`. `run_clang` adds `-g` to the clang invocation so clang keeps the DI through to the binary (without it, clang silently strips `.debug_info`).
+  - **Codegen `generate_with_debug(program, mode, source_file)`** — new entry point. Internal `generate_inner` gains a `debug_source: Option<&Path>` parameter. After all functions emit, calls `emit_dwarf_metadata` which:
+    - Reads the source via the path, builds a `LineMap` for span → line resolution.
+    - Reserves metadata ids: `!0`/`!1` for module flags, `!2` DICompileUnit, `!3` DIFile, `!4` shared DISubroutineType, `!5` empty types list, `!6..` paired DISubprogram + DILocation per function (and per impl-block method).
+    - Post-processes the IR: for each `define ... @name(` line, attaches `!dbg !<sub>` before the `{`. For each `call`/`invoke` instruction inside a debug-info'd function, appends `, !dbg !<loc>` (required — clang rejects DI blocks where a call lacks `!dbg`).
+    - Appends the metadata block: `!llvm.module.flags = !{!0, !1}`, `!llvm.dbg.cu = !{!2}`, module flags, DICompileUnit (language: DW_LANG_C99, producer: "cpc"), DIFile (filename + directory canonicalized), DISubroutineType (placeholder `types: !{null}` — DIBasicType for parameters is a follow-up), one DISubprogram + DILocation pair per fn.
+  - **Verified end-to-end**: dwarfdump on the linked .o (or the macOS debug map via `nm -a`) shows `DW_TAG_compile_unit` with producer/file/language, plus `DW_TAG_subprogram` for every user function with name + decl_line. Binary still runs (DI is metadata-only — execution unchanged).
+  - **macOS note**: clang on macOS produces a "debug map" pointing at intermediate `.o` files rather than embedding DWARF directly. `dsymutil <binary>` resolves the map into a `.dSYM` bundle. Because cpc deletes its temp `.o` after linking, end-users would need to retain it manually to run dsymutil. Documented; addressing it (preserving the .o or running dsymutil ourselves) is a follow-up slice.
+  - **3 new e2e tests**: `phase11_debuginfo_g_emits_di_metadata` (IR-shape check: DICompileUnit, DIFile, DISubprogram for both functions, DILocation, `!dbg ` on define), `phase11_debuginfo_g_binary_links` (full compile + run), `phase11_debuginfo_off_by_default_no_di` (no DI emitted without `-g`). **Test total: 891** (682 library + 198 e2e + 11 LSP), 0 warnings.
+  - **What's deferred** (documented in plan):
+    - Per-instruction DILocation for accurate line-by-line stepping. Current: every call gets the function's start line; non-call instructions have no `!dbg`. lldb steps land at function entry, not individual source lines.
+    - DILocalVariable + dbg.declare for variable inspection.
+    - DIBasicType for return/parameter types in DISubroutineType.
+    - macOS .dSYM auto-generation (currently requires manual `dsymutil` + retained `.o`).
 - **Phase 8.STR.3 + 8.STR.6 + 8.STR.B: owned `string`, `ToString`, and `${expr}` interpolation landed (2026-05-13):** the long-deferred Phase-8 owned string + interpolation surface, shipped together because each slice unblocks the next. Design at [docs/design/phase8-string-interpolation.md](docs/design/phase8-string-interpolation.md). **Coordinated changes:**
   - **`Ty::String` variant** — distinct from `Ty::Struct`. Lowers to LLVM `{ ptr, i64, i64 }` (24 bytes). Non-Copy, leaks in v1 (Drop integration deferred — see "What's deferred" below). Threaded through every `Ty` match site in sema + codegen + monomorphize.
   - **`string::new()`, `string::with_capacity(n)`, `s.len()`, `s.is_empty()`, `s.as_str()`, `s.clone()`** — blessed assoc-fns and methods dispatched via custom paths in `check_string_assoc_call` / `check_string_method_call` (sema) and `gen_string_assoc_call` / `gen_string_method_call` (codegen). Constructors malloc; clone malloc+memcpy.
