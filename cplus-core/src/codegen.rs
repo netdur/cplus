@@ -767,6 +767,18 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare ptr @malloc(i64)\n");
     out.push_str("declare void @free(ptr)\n");
     out.push_str("declare ptr @memcpy(ptr, ptr, i64)\n");
+    // Phase 8 slice 8.STR.6: snprintf for blessed `to_string()` on
+    // numeric primitives. Returns the number of bytes that *would have*
+    // been written (excluding NUL); we use that as the resulting
+    // `string.len`. The 32-byte buffer comfortably covers every 64-bit
+    // integer decimal plus a sign + the `%g` float format.
+    out.push_str("declare i32 @snprintf(ptr, i64, ptr, ...)\n");
+    // Format strings the to_string intrinsics use.
+    out.push_str("@.fmt_i64    = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n");
+    out.push_str("@.fmt_u64    = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n");
+    out.push_str("@.fmt_f64    = private unnamed_addr constant [3 x i8] c\"%g\\00\", align 1\n");
+    out.push_str("@.bool_true  = private unnamed_addr constant [4 x i8] c\"true\", align 1\n");
+    out.push_str("@.bool_false = private unnamed_addr constant [5 x i8] c\"false\", align 1\n");
     // Trap intrinsic — used for both overflow (debug) and divide-by-zero (always).
     out.push_str("declare void @llvm.trap()\n");
     // Checked-arithmetic intrinsics used in debug mode for signed integers
@@ -3087,6 +3099,15 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_method_call(&mut self, receiver: &Expr, name: &Ident, args: &[Expr]) -> Option<(String, Ty)> {
+        // Phase 8 slice 8.STR.6: blessed `to_string()` on primitives + `str`.
+        // The receiver is a primitive value, not a place — handle before
+        // gen_place (which expects a place-producing expression).
+        if name.name == "to_string" && args.is_empty() {
+            let (rv, rt) = self.gen_expr(receiver).expect("to_string receiver has value");
+            if Self::is_blessed_to_string_receiver_codegen(&rt) {
+                return Some(self.gen_to_string_intrinsic(&rv, &rt));
+            }
+        }
         // Materialize the receiver as a place (pointer) — works for Ident,
         // Field chains, and value-producing temporaries (gen_place handles each).
         let (recv_ptr, recv_ty) = self.gen_place(receiver);
@@ -3289,6 +3310,134 @@ impl<'a> FnState<'a> {
         let (slot, target_ty) = self.gen_place(target);
         let (v, _) = self.gen_expr(value).expect("assigned value");
         self.emit(&format!("store {} {v}, ptr {slot}", self.lty(&target_ty)));
+    }
+
+    // ---------- Phase 8 slice 8.STR.6: blessed `to_string()` ----------
+
+    fn is_blessed_to_string_receiver_codegen(ty: &Ty) -> bool {
+        matches!(ty,
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
+            | Ty::F32 | Ty::F64
+            | Ty::Bool
+            | Ty::Str)
+    }
+
+    /// Emit IR that produces a `string` aggregate for an arbitrary
+    /// primitive (or `str`) receiver value. Strategy:
+    ///   - signed int: sign-extend to i64, snprintf("%lld") into a
+    ///     32-byte malloc'd buffer, take snprintf's returned length.
+    ///   - unsigned int: zero-extend to i64, snprintf("%llu").
+    ///   - f32: fpext to f64, snprintf("%g"). f64: direct snprintf.
+    ///   - bool: branch on the i1, malloc 4/5 bytes, memcpy "true"/"false".
+    ///   - str: extract ptr+len from the fat-pointer, malloc(len),
+    ///     memcpy. The result owns the bytes; old bytes untouched.
+    fn gen_to_string_intrinsic(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        match rt {
+            Ty::Bool => self.gen_to_string_bool(rv),
+            Ty::Str => self.gen_to_string_str(rv),
+            Ty::F32 | Ty::F64 => self.gen_to_string_float(rv, rt),
+            _ if rt.is_signed_int() => self.gen_to_string_signed(rv, rt),
+            _ if rt.is_unsigned_int() => self.gen_to_string_unsigned(rv, rt),
+            _ => unreachable!("sema validated to_string receiver: {:?}", rt),
+        }
+    }
+
+    fn gen_to_string_signed(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        // Widen to i64 for the format spec.
+        let widened = match rt {
+            Ty::I64 | Ty::Isize => rv.to_string(),
+            _ => {
+                let w = self.next_tmp();
+                self.emit(&format!("{w} = sext {} {rv} to i64", self.lty(rt)));
+                w
+            }
+        };
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 32)"));
+        let written = self.next_tmp();
+        self.emit(&format!(
+            "{written} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt_i64, i64 {widened})"
+        ));
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = sext i32 {written} to i64"));
+        let v = self.string_aggregate(&buf, &len, "32");
+        (v, Ty::String)
+    }
+
+    fn gen_to_string_unsigned(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        let widened = match rt {
+            Ty::U64 | Ty::Usize => rv.to_string(),
+            _ => {
+                let w = self.next_tmp();
+                self.emit(&format!("{w} = zext {} {rv} to i64", self.lty(rt)));
+                w
+            }
+        };
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 32)"));
+        let written = self.next_tmp();
+        self.emit(&format!(
+            "{written} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt_u64, i64 {widened})"
+        ));
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = sext i32 {written} to i64"));
+        let v = self.string_aggregate(&buf, &len, "32");
+        (v, Ty::String)
+    }
+
+    fn gen_to_string_float(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        // Widen f32 → f64 for "%g".
+        let widened = match rt {
+            Ty::F64 => rv.to_string(),
+            _ => {
+                let w = self.next_tmp();
+                self.emit(&format!("{w} = fpext float {rv} to double"));
+                w
+            }
+        };
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 32)"));
+        let written = self.next_tmp();
+        self.emit(&format!(
+            "{written} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt_f64, double {widened})"
+        ));
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = sext i32 {written} to i64"));
+        let v = self.string_aggregate(&buf, &len, "32");
+        (v, Ty::String)
+    }
+
+    fn gen_to_string_bool(&mut self, rv: &str) -> (String, Ty) {
+        // Avoid the branch entirely: select between the two static
+        // pointers and lengths. The buffer must still be owned (callers
+        // can later `free` it), so unconditionally malloc 5 bytes
+        // (covers both `"true"` and `"false"`), pick which static blob
+        // and how many bytes to copy via `select`, then memcpy.
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = select i1 {rv}, i64 4, i64 5"));
+        let src = self.next_tmp();
+        self.emit(&format!("{src} = select i1 {rv}, ptr @.bool_true, ptr @.bool_false"));
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 {len})"));
+        let _cpy = self.next_tmp();
+        self.emit(&format!("{_cpy} = call ptr @memcpy(ptr {buf}, ptr {src}, i64 {len})"));
+        let v = self.string_aggregate(&buf, &len, &len);
+        (v, Ty::String)
+    }
+
+    fn gen_to_string_str(&mut self, rv: &str) -> (String, Ty) {
+        // Extract ptr+len from the str fat-pointer, malloc(len), memcpy.
+        let src_ptr = self.next_tmp();
+        self.emit(&format!("{src_ptr} = extractvalue {{ ptr, i64 }} {rv}, 0"));
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = extractvalue {{ ptr, i64 }} {rv}, 1"));
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 {len})"));
+        let _cpy = self.next_tmp();
+        self.emit(&format!("{_cpy} = call ptr @memcpy(ptr {buf}, ptr {src_ptr}, i64 {len})"));
+        let v = self.string_aggregate(&buf, &len, &len);
+        (v, Ty::String)
     }
 
     // ---------- Phase 8 slice 8.STR.3: owned `string` intrinsics ----------

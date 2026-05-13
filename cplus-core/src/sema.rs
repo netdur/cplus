@@ -1409,10 +1409,16 @@ impl SemaCx<'_> {
         // Single-method interfaces with shared shape.
         // (name, method_name, return_type, takes_other_param)
         let single: &[(&str, &str, Ty, bool)] = &[
-            ("Eq",    "eq",    Ty::Bool, true),
-            ("Ord",   "cmp",   Ty::I32,  true),
-            ("Hash",  "hash",  Ty::U64,  false),
-            ("Clone", "clone", Ty::Param("Self".to_string()), false),
+            ("Eq",       "eq",        Ty::Bool, true),
+            ("Ord",      "cmp",       Ty::I32,  true),
+            ("Hash",     "hash",      Ty::U64,  false),
+            ("Clone",    "clone",     Ty::Param("Self".to_string()), false),
+            // Phase 8 slice 8.STR.6: `ToString` — produces an owned
+            // string. Blessed impls cover every primitive + str +
+            // string; user types add their own via the usual
+            // `impl ToString for Foo { fn to_string(self) -> string }`
+            // surface.
+            ("ToString", "to_string", Ty::String, false),
         ];
         for (name, mname, ret, has_other) in single {
             let mut methods = HashMap::new();
@@ -3291,6 +3297,19 @@ impl SemaCx<'_> {
             }
             return self.check_string_method_call(name, args, call_span);
         }
+        // Phase 8 slice 8.STR.6: blessed `to_string()` on every primitive
+        // + `str`. Returns `string` (owned). User-defined structs hit
+        // the normal method-lookup below; if they provide
+        // `impl ToString for Foo { fn to_string(self) -> string }`, that
+        // path handles them.
+        if name.name == "to_string" && args.is_empty() && Self::is_blessed_to_string_receiver(&recv_ty) {
+            if !type_args.is_empty() {
+                self.err("E0501",
+                    "`to_string` takes no type arguments".to_string(),
+                    call_span);
+            }
+            return Ty::String;
+        }
         let Ty::Struct(id) = recv_ty else {
             self.err(
                 "E0324",
@@ -3466,6 +3485,22 @@ impl SemaCx<'_> {
         self.method_instantiations.insert(key);
         self.call_monos.insert(call_span, arg_tys);
         self.subst_ty_deep(&sig.return_type, &subst)
+    }
+
+    /// Phase 8 slice 8.STR.6: which receiver types get a blessed
+    /// `to_string()` method? Every numeric primitive + `bool` + `str`.
+    /// `string` is intentionally NOT in this list — its `.clone()` is
+    /// the way to duplicate an owned string, and `s.to_string()` would
+    /// be a redundant alias. User-declared structs aren't here either
+    /// — they go through the normal method-lookup with an
+    /// `impl ToString for Foo` provided by the user.
+    fn is_blessed_to_string_receiver(ty: &Ty) -> bool {
+        matches!(ty,
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
+            | Ty::F32 | Ty::F64
+            | Ty::Bool
+            | Ty::Str)
     }
 
     /// Phase 8 slice 8.STR.3: dispatch `s.method(args)` on a `string`
