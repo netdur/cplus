@@ -248,6 +248,7 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::Bool => TypeKind::Path("bool".into()),
         Ty::Unit => TypeKind::Path("()".into()),
         Ty::Str => TypeKind::Path("str".into()),
+        Ty::String => TypeKind::Path("string".into()),
         Ty::RawPtr(inner) => TypeKind::RawPtr(Box::new(ty_to_type_ast(inner, type_name_of))),
         Ty::FnPtr { params, return_type } => TypeKind::FnPtr {
             params: params.iter().map(|p| ty_to_type_ast(p, type_name_of)).collect(),
@@ -1187,6 +1188,7 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
         Ty::F32 => "f32".into(), Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
+        Ty::String => "string".into(),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty(inner, type_name_of)),
         Ty::FnPtr { params, return_type } => {
             let mut s = String::from("fn");

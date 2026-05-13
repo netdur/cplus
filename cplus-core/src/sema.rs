@@ -64,6 +64,12 @@ pub enum Ty {
     /// fat pointer `{ptr: *u8, len: usize}`. Copy semantics (a view,
     /// not an owner). String literals (`"hello"`) have this type.
     Str,
+    /// Phase 8 slice 8.STR.3: owned heap-backed string. Lowered to
+    /// `{ptr: *u8, len: usize, cap: usize}` — 24 bytes on 64-bit.
+    /// Non-Copy, has Drop (frees the buffer via libc `free`). Built by
+    /// `string::new()`, `string::with_capacity(n)`, and (slice 8.STR.B)
+    /// the `"...${expr}..."` interpolation literal.
+    String,
     /// Slice 10.FFI.1: raw pointer `*T`. Lowered to LLVM `ptr` (opaque,
     /// 8 bytes on 64-bit). Copy semantics. No borrow checking; the
     /// caller is responsible for lifetime and aliasing. Deref / index /
@@ -103,6 +109,7 @@ impl Ty {
             Ty::Bool => "bool",
             Ty::Unit => "()",
             Ty::Str => "str",
+            Ty::String => "string",
             Ty::RawPtr(_) => "raw-pointer",
             Ty::FnPtr { .. } => "fn-pointer",
             Ty::Enum(_) => "enum",
@@ -144,7 +151,8 @@ impl Ty {
             | Ty::RawPtr(_)
             | Ty::FnPtr { .. }
             | Ty::Error => true,
-            Ty::Struct(_) | Ty::Array(_, _) | Ty::Enum(_) => false,
+            // Phase 8 slice 8.STR.3: owned `string` is non-Copy and Drop.
+            Ty::Struct(_) | Ty::Array(_, _) | Ty::Enum(_) | Ty::String => false,
             // Slice 7GEN.4: a generic type parameter's Copy-ness is
             // determined by the concrete substitution. Conservatively
             // treat as non-Copy at the abstract level — bound-aware
@@ -3274,6 +3282,15 @@ impl SemaCx<'_> {
             for a in args { let _ = self.check_expr(a, None); }
             return Ty::Error;
         }
+        // Phase 8 slice 8.STR.3: blessed methods on owned `string`.
+        if matches!(recv_ty, Ty::String) {
+            if !type_args.is_empty() {
+                self.err("E0501",
+                    "blessed `string` methods take no type arguments".to_string(),
+                    call_span);
+            }
+            return self.check_string_method_call(name, args, call_span);
+        }
         let Ty::Struct(id) = recv_ty else {
             self.err(
                 "E0324",
@@ -3451,6 +3468,74 @@ impl SemaCx<'_> {
         self.subst_ty_deep(&sig.return_type, &subst)
     }
 
+    /// Phase 8 slice 8.STR.3: dispatch `s.method(args)` on a `string`
+    /// receiver. Methods: `len() -> usize`, `is_empty() -> bool`,
+    /// `as_str() -> str`, `clone() -> string`. Anything else fires E0324.
+    fn check_string_method_call(&mut self, name: &Ident, args: &[Expr], call_span: ByteSpan) -> Ty {
+        let no_args = |this: &mut Self| -> bool {
+            if !args.is_empty() {
+                this.err("E0308",
+                    format!("`string::{}` takes 0 argument(s), got {}", name.name, args.len()),
+                    call_span);
+                for a in args { let _ = this.check_expr(a, None); }
+                false
+            } else { true }
+        };
+        match name.name.as_str() {
+            "len" => { let _ = no_args(self); Ty::Usize }
+            "is_empty" => { let _ = no_args(self); Ty::Bool }
+            "as_str" => { let _ = no_args(self); Ty::Str }
+            "clone" => { let _ = no_args(self); Ty::String }
+            _ => {
+                self.err("E0324",
+                    format!("no method `{}` on type `string`", name.name),
+                    name.span);
+                for a in args { let _ = self.check_expr(a, None); }
+                Ty::Error
+            }
+        }
+    }
+
+    /// Phase 8 slice 8.STR.3: dispatch `string::method(args)`. Only two
+    /// associated fns ship in v1: `new` (no args, returns empty `string`)
+    /// and `with_capacity(n: usize)` (returns a string with `n` bytes
+    /// pre-allocated). Anything else fires E0324.
+    fn check_string_assoc_call(&mut self, method: &Ident, args: &[Expr], call_span: ByteSpan) -> Ty {
+        match method.name.as_str() {
+            "new" => {
+                if !args.is_empty() {
+                    self.err("E0308",
+                        format!("`string::new` takes 0 argument(s), got {}", args.len()),
+                        call_span);
+                }
+                Ty::String
+            }
+            "with_capacity" => {
+                if args.len() != 1 {
+                    self.err("E0308",
+                        format!("`string::with_capacity` takes 1 argument, got {}", args.len()),
+                        call_span);
+                    for a in args { let _ = self.check_expr(a, None); }
+                    return Ty::Error;
+                }
+                let arg_ty = self.check_expr(&args[0], Some(Ty::Usize));
+                if !matches!(arg_ty, Ty::Usize | Ty::Error) {
+                    self.err("E0302",
+                        format!("`string::with_capacity` expects `usize`, got `{}`", ty_display(&arg_ty)),
+                        args[0].span);
+                }
+                Ty::String
+            }
+            _ => {
+                self.err("E0324",
+                    format!("no associated function `{}` on type `string`", method.name),
+                    method.span);
+                for a in args { let _ = self.check_expr(a, None); }
+                Ty::Error
+            }
+        }
+    }
+
     fn check_assoc_call(&mut self, segments: &[Ident], type_args: &[Type], args: &[Expr], path_span: ByteSpan, call_span: ByteSpan) -> Ty {
         if segments.len() != 2 {
             self.err("E0312", "Phase 2 paths have exactly two segments".to_string(), path_span);
@@ -3459,6 +3544,18 @@ impl SemaCx<'_> {
         }
         let type_seg = &segments[0];
         let method_seg = &segments[1];
+        // Phase 8 slice 8.STR.3: blessed assoc fns on the owned `string`
+        // type. `string::new()` and `string::with_capacity(n)` are the
+        // only ways to construct an owned string in user code (besides
+        // interpolation literals — slice 8.STR.B).
+        if type_seg.name == "string" {
+            if !type_args.is_empty() {
+                self.err("E0501",
+                    "`string::{new,with_capacity}` take no type arguments".to_string(),
+                    call_span);
+            }
+            return self.check_string_assoc_call(method_seg, args, call_span);
+        }
         // Enums: a call shape `Name::Variant(args)` constructs a tagged
         // variant. Look up the variant; verify it has a payload (call form
         // is illegal for payload-less variants — use the bare path); check
@@ -3958,6 +4055,7 @@ impl SemaCx<'_> {
             "f32" => Ty::F32, "f64" => Ty::F64,
             "bool" => Ty::Bool,
             "str" => Ty::Str,
+            "string" => Ty::String,
             _ => {
                 // Slice 7GEN.4: `Self` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
@@ -4619,6 +4717,7 @@ fn ty_to_source_name(ty: &Ty) -> String {
         Ty::F32 => "f32".into(), Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(), Ty::Unit => "()".into(),
         Ty::Str => "str".into(),
+        Ty::String => "string".into(),
         Ty::RawPtr(_) => "<raw-ptr>".into(),
         Ty::FnPtr { .. } => "<fn-ptr>".into(),
         // For struct / enum, return a synthetic placeholder. This path
@@ -4656,6 +4755,7 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::F32 => "f32".into(), Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
+        Ty::String => "string".into(),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty_for_name(inner, structs, enums)),
         Ty::FnPtr { params, return_type } => {
             let mut s = String::from("fn");

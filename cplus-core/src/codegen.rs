@@ -420,6 +420,8 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
         Ty::Array(elem, _) => is_copy_ty(elem, t),
         Ty::Struct(id)     => t.struct_defs[id.0 as usize].is_copy,
         Ty::Enum(id)       => t.enum_defs[id.0 as usize].is_copy,
+        // Phase 8 slice 8.STR.3: owned `string` is non-Copy + Drop.
+        Ty::String         => false,
         Ty::Error          => false,
         // Slice 7GEN.4: generic type parameters never reach codegen
         // pre-monomorphization (slice 7GEN.5). Treat as non-Copy to
@@ -670,6 +672,7 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         "f32" => Ty::F32, "f64" => Ty::F64,
         "bool" => Ty::Bool,
         "str" => Ty::Str,
+        "string" => Ty::String,
         _ => {
             if let Some(&id) = types.enum_by_name.get(name) { return Ty::Enum(id); }
             if let Some(&id) = types.struct_by_name.get(name) { return Ty::Struct(id); }
@@ -711,6 +714,11 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         // Phase 8 slice 8.STR.1: `str` is a fat pointer { ptr, len }.
         // 16 bytes on 64-bit platforms; passed by value.
         Ty::Str => "{ ptr, i64 }".to_string(),
+        // Phase 8 slice 8.STR.3: owned `string` is { ptr, len, cap } —
+        // 24 bytes on 64-bit. Passed by value; the ptr is the only field
+        // codegen ever sees per-call, but the cap field is what `drop`
+        // reads when freeing the buffer.
+        Ty::String => "{ ptr, i64, i64 }".to_string(),
         Ty::Error => panic!("codegen reached Ty::Error — sema should have rejected the program"),
         // Slice 7GEN.4: `Ty::Param` must not reach codegen. Until
         // monomorphization (slice 7GEN.5) lowers generic items, the
@@ -753,6 +761,12 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare i32 @printf(ptr noundef, ...)\n");
     // Phase 8 slice 8.STR.3: byte-level string comparison.
     out.push_str("declare i32 @memcmp(ptr, ptr, i64)\n");
+    // Phase 8 slice 8.STR.3: owned `string` runtime. malloc + free for
+    // construction + Drop; memcpy for clone. realloc reserved for future
+    // mutation API (not used in v1).
+    out.push_str("declare ptr @malloc(i64)\n");
+    out.push_str("declare void @free(ptr)\n");
+    out.push_str("declare ptr @memcpy(ptr, ptr, i64)\n");
     // Trap intrinsic — used for both overflow (debug) and divide-by-zero (always).
     out.push_str("declare void @llvm.trap()\n");
     // Checked-arithmetic intrinsics used in debug mode for signed integers
@@ -1044,7 +1058,12 @@ fn gen_function(
         // link_name (e.g. a user could declare `#[link_name = "printf"]
         // extern fn my_printf(...)` — same symbol, would clash).
         let resolved_symbol = sig.link_name.as_deref().unwrap_or(&f.name.name);
-        if matches!(resolved_symbol, "printf" | "memcmp") {
+        // Preamble-declared libc symbols. Skip re-emission if a user's
+        // `extern fn malloc/free/memcpy` shadows; we trust the user's
+        // signature matches the preamble's (i64 args / ptr returns). The
+        // preamble shapes are the ones the `string` runtime emits calls
+        // against — a divergent user signature would mis-link anyway.
+        if matches!(resolved_symbol, "printf" | "memcmp" | "malloc" | "free" | "memcpy") {
             return;
         }
         // Phase 11 / ObjC interop: multiple `extern fn` declarations
@@ -3071,6 +3090,11 @@ impl<'a> FnState<'a> {
         // Materialize the receiver as a place (pointer) — works for Ident,
         // Field chains, and value-producing temporaries (gen_place handles each).
         let (recv_ptr, recv_ty) = self.gen_place(receiver);
+        // Phase 8 slice 8.STR.3: blessed methods on `string` are
+        // intrinsic — no MethodSig lookup, no mangled-name call.
+        if matches!(recv_ty, Ty::String) {
+            return Some(self.gen_string_method_call(&recv_ptr, &name.name, args));
+        }
         let Ty::Struct(id) = recv_ty else { unreachable!("sema validated") };
         let struct_name = self.types.struct_defs[id.0 as usize].name.clone();
         let info = self.types.struct_defs[id.0 as usize]
@@ -3126,6 +3150,10 @@ impl<'a> FnState<'a> {
         // Dispatch on the type-segment's kind.
         let type_name = &segments[0].name;
         let method_name = &segments[1].name;
+        // Phase 8 slice 8.STR.3: blessed string assoc fns.
+        if type_name == "string" {
+            return Some(self.gen_string_assoc_call(method_name, args));
+        }
         if let Some(&enum_id) = self.types.enum_by_name.get(type_name) {
             // Tagged-enum variant construction with payload.
             let info = &self.types.enum_defs[enum_id.0 as usize];
@@ -3261,6 +3289,108 @@ impl<'a> FnState<'a> {
         let (slot, target_ty) = self.gen_place(target);
         let (v, _) = self.gen_expr(value).expect("assigned value");
         self.emit(&format!("store {} {v}, ptr {slot}", self.lty(&target_ty)));
+    }
+
+    // ---------- Phase 8 slice 8.STR.3: owned `string` intrinsics ----------
+    //
+    // The `string` runtime value is a 24-byte struct `{ ptr, i64, i64 }` —
+    // (data pointer, length in bytes, capacity in bytes). Stored by value
+    // in locals; produced as an LLVM aggregate via `insertvalue` so the
+    // call site doesn't need to allocate a separate slot.
+    //
+    // Drop is NOT integrated in this initial cut: `string` locals leak
+    // their buffer at scope exit. Wiring Drop alongside the existing
+    // struct-Drop machinery is a follow-up slice — see plan.md resolved-log.
+
+    /// Build a `string` SSA value from three components.
+    fn string_aggregate(&mut self, ptr: &str, len: &str, cap: &str) -> String {
+        let v0 = self.next_tmp();
+        self.emit(&format!("{v0} = insertvalue {{ ptr, i64, i64 }} undef, ptr {ptr}, 0"));
+        let v1 = self.next_tmp();
+        self.emit(&format!("{v1} = insertvalue {{ ptr, i64, i64 }} {v0}, i64 {len}, 1"));
+        let v2 = self.next_tmp();
+        self.emit(&format!("{v2} = insertvalue {{ ptr, i64, i64 }} {v1}, i64 {cap}, 2"));
+        v2
+    }
+
+    /// `string::new()` — empty string. `ptr=null, len=0, cap=0`. No heap.
+    /// `string::with_capacity(n)` — `malloc(n)` buffer, `len=0, cap=n`.
+    fn gen_string_assoc_call(&mut self, method: &str, args: &[Expr]) -> (String, Ty) {
+        match method {
+            "new" => {
+                let _ = args;
+                let v = self.string_aggregate("null", "0", "0");
+                (v, Ty::String)
+            }
+            "with_capacity" => {
+                let (n, _) = self.gen_expr(&args[0]).expect("with_capacity arg has value");
+                let buf = self.next_tmp();
+                self.emit(&format!("{buf} = call ptr @malloc(i64 {n})"));
+                let v = self.string_aggregate(&buf, "0", &n);
+                (v, Ty::String)
+            }
+            _ => unreachable!("sema validated method `string::{method}`"),
+        }
+    }
+
+    /// Methods on a `string` receiver. The receiver is materialized as a
+    /// `ptr` to the local slot (24-byte aggregate); we load whichever
+    /// fields the method needs via `getelementptr`/`load`.
+    fn gen_string_method_call(&mut self, recv_ptr: &str, method: &str, args: &[Expr]) -> (String, Ty) {
+        let _ = args; // every v1 method is zero-arg
+        match method {
+            "len" => {
+                let lp = self.next_tmp();
+                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                let lv = self.next_tmp();
+                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                (lv, Ty::Usize)
+            }
+            "is_empty" => {
+                let lp = self.next_tmp();
+                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                let lv = self.next_tmp();
+                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                let cmp = self.next_tmp();
+                self.emit(&format!("{cmp} = icmp eq i64 {lv}, 0"));
+                (cmp, Ty::Bool)
+            }
+            "as_str" => {
+                // Extract ptr + len; package as `str` fat-pointer `{ ptr, i64 }`.
+                let pp = self.next_tmp();
+                self.emit(&format!("{pp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
+                let pv = self.next_tmp();
+                self.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                let lp = self.next_tmp();
+                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                let lv = self.next_tmp();
+                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                let s0 = self.next_tmp();
+                self.emit(&format!("{s0} = insertvalue {{ ptr, i64 }} undef, ptr {pv}, 0"));
+                let s1 = self.next_tmp();
+                self.emit(&format!("{s1} = insertvalue {{ ptr, i64 }} {s0}, i64 {lv}, 1"));
+                (s1, Ty::Str)
+            }
+            "clone" => {
+                // Load len, malloc a fresh buffer of size len (cap = len in
+                // the clone), memcpy bytes, build a new aggregate.
+                let pp = self.next_tmp();
+                self.emit(&format!("{pp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
+                let pv = self.next_tmp();
+                self.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                let lp = self.next_tmp();
+                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                let lv = self.next_tmp();
+                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                let buf = self.next_tmp();
+                self.emit(&format!("{buf} = call ptr @malloc(i64 {lv})"));
+                let _cpy = self.next_tmp();
+                self.emit(&format!("{_cpy} = call ptr @memcpy(ptr {buf}, ptr {pv}, i64 {lv})"));
+                let v = self.string_aggregate(&buf, &lv, &lv);
+                (v, Ty::String)
+            }
+            _ => unreachable!("sema validated `string.{method}`"),
+        }
     }
 }
 
