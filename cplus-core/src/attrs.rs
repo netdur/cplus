@@ -139,6 +139,9 @@ pub fn check_multi(
             ItemKind::Interface(i) => {
                 ctx.check_attrs(&i.attributes, TARGET_STRUCT, "interface");
             }
+            // Phase 11 polish: type aliases admit no attributes (the
+            // parser rejects them at the source level too).
+            ItemKind::TypeAlias(_) => {}
         }
     }
     ctx.diags

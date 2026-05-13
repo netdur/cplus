@@ -107,6 +107,9 @@ fn generate_inner(program: &Program, mode: BuildMode, test_cfg: Option<TestDrive
             // Slice 7GEN.3: interface declarations have no runtime
             // presence — they're sema-time contracts. No IR emission.
             ItemKind::Interface(_) => {}
+            // Phase 11 polish: type aliases are sema-only — resolved away
+            // before codegen ever sees them.
+            ItemKind::TypeAlias(_) => {}
             ItemKind::Enum(_) | ItemKind::Struct(_) => {
                 // Enum types are erased to i32; struct types are declared
                 // upfront in `write_struct_decls`. Nothing to emit per-item.
@@ -295,7 +298,7 @@ fn collect_types(p: &Program) -> TypeTable {
                 });
                 t.struct_by_name.insert(s.name.name.clone(), id);
             }
-            ItemKind::Function(_) | ItemKind::Impl(_) | ItemKind::Interface(_) => {}
+            ItemKind::Function(_) | ItemKind::Impl(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
         }
     }
     // Second pass: resolve struct field types.

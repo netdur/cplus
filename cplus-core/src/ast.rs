@@ -88,6 +88,20 @@ pub enum ItemKind {
     /// provide. `Self` inside method signatures refers to the
     /// implementing type at `impl`-resolution time.
     Interface(InterfaceDecl),
+    /// Phase 11 polish (2026-05-13): `type Foo = Bar;` — transparent
+    /// type alias. The aliased name resolves to the same `Ty` as the
+    /// target everywhere it's used. No new type, no nominal distinction.
+    /// Cross-file `pub` visible per the usual rules.
+    TypeAlias(TypeAlias),
+}
+
+/// Phase 11 type alias: `type Name = TargetType;`. The resolver
+/// transparently substitutes references at every use site.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAlias {
+    pub name: Ident,
+    pub target: Type,
+    pub is_pub: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

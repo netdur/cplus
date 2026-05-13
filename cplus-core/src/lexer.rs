@@ -61,6 +61,10 @@ pub enum TokenKind {
     /// declaration `interface Name { fn ... }`. Phase 7's bounded-
     /// polymorphism surface.
     Interface,
+    /// Phase 11 polish (2026-05-13): `type` keyword — opens a type
+    /// alias declaration `type Foo = Bar;`. Transparent: aliased name
+    /// resolves to the same `Ty` as the target.
+    TypeKw,
 
     // wildcard
     Underscore,
@@ -369,6 +373,7 @@ impl<'a> Lexer<'a> {
             "assert" => TokenKind::Assert,
             "borrow" => TokenKind::Borrow,
             "interface" => TokenKind::Interface,
+            "type" => TokenKind::TypeKw,
             _ => TokenKind::Ident(text.to_string()),
         };
         Token { kind, span: self.span_from(start) }

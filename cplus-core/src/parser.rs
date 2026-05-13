@@ -199,6 +199,8 @@ impl Parser {
             TokenKind::Struct => self.parse_struct_decl(is_pub, attributes),
             // Slice 7GEN.3: interface declarations.
             TokenKind::Interface => self.parse_interface_decl(is_pub, attributes),
+            // Phase 11 polish (2026-05-13): type aliases.
+            TokenKind::TypeKw => self.parse_type_alias(is_pub, attributes),
             TokenKind::Impl => {
                 if is_pub {
                     return Err(self.err_at_peek(
@@ -518,6 +520,27 @@ impl Parser {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Phase 11 polish (2026-05-13): `type Foo = Bar;` parser.
+    /// Attributes are admitted at the surface but rejected here for now —
+    /// there's no Phase-11 attribute that makes sense on aliases.
+    fn parse_type_alias(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
+        if !attributes.is_empty() {
+            return Err(self.err_at_peek(
+                "item — type aliases don't take attributes",
+            ));
+        }
+        let start = self.expect(&TokenKind::TypeKw, "`type`")?.span;
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        let target = self.parse_type()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Item {
+            kind: ItemKind::TypeAlias(crate::ast::TypeAlias { name, target, is_pub }),
+            span: start.merge(end),
+            origin_file: None,
+        })
     }
 
     fn parse_struct_decl(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {

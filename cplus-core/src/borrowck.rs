@@ -1638,7 +1638,7 @@ fn collect_e0384_diagnostics(
                     }
                 }
             }
-            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) => {}
+            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
         }
     }
 }
@@ -1795,7 +1795,7 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
                     all_diags.extend(a.diags);
                 }
             }
-            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) => {}
+            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
         }
     }
     (analysis, all_diags)

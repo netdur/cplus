@@ -3819,6 +3819,124 @@ fn phase11_vec_generic_demo_runs() {
         String::from_utf8_lossy(&run.stdout));
 }
 
+// Phase 11 polish (2026-05-13): `type Foo = Bar;` aliases.
+// Parked from the Phase-9 rejection; this is independent work that
+// landed because a real use case surfaced (renaming verbose generic
+// instantiations for readability).
+
+#[test]
+fn phase11_type_alias_primitive_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("alias_prim.cplus");
+    std::fs::write(
+        &src,
+        "type Byte = i32;\n\
+         fn main() -> i32 { let n: Byte = 42; return n; }\n",
+    ).unwrap();
+    let bin = dir.join("alias_prim");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "type alias should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase11_type_alias_struct_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("alias_struct.cplus");
+    std::fs::write(
+        &src,
+        "struct Point { x: i32, y: i32 }\n\
+         type Coord = Point;\n\
+         fn main() -> i32 {\n\
+             let p: Coord = Point { x: 20, y: 22 };\n\
+             return p.x + p.y;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("alias_struct");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "struct alias should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase11_type_alias_chained_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("alias_chain.cplus");
+    std::fs::write(
+        &src,
+        "type A = i32;\n\
+         type B = A;\n\
+         type C = B;\n\
+         fn main() -> i32 { let n: C = 42; return n; }\n",
+    ).unwrap();
+    let bin = dir.join("alias_chain");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "chained alias should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase11_type_alias_cycle_rejected_e0510() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("alias_cycle.cplus");
+    std::fs::write(
+        &src,
+        "type A = B;\n\
+         type B = A;\n\
+         fn main() -> i32 { let x: A = 0; return x; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "cyclic alias should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0510"), "expected E0510 in stderr: {stderr}");
+}
+
+#[test]
+fn phase11_type_alias_duplicate_rejected_e0301() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("alias_dup.cplus");
+    std::fs::write(
+        &src,
+        "struct Foo { x: i32 }\n\
+         type Foo = i32;\n\
+         fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "duplicate type definition should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0301"), "expected E0301 in stderr: {stderr}");
+}
+
+#[test]
+fn phase11_type_alias_in_fn_signature_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("alias_fn.cplus");
+    std::fs::write(
+        &src,
+        "type Bytes = usize;\n\
+         fn measure(n: Bytes) -> Bytes { return n; }\n\
+         fn main() -> i32 { let n: Bytes = 42 as usize; return measure(n) as i32; }\n",
+    ).unwrap();
+    let bin = dir.join("alias_fn");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "alias in fn signature should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

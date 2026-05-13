@@ -366,6 +366,11 @@ pub struct MonoInfo {
     /// Slice 7GEN.5e: generic-method instantiations.
     /// Keyed by `(struct_name, method_name, [concrete_args])`.
     pub method_instantiations: std::collections::BTreeSet<(String, String, Vec<Ty>)>,
+    /// Phase 11 polish (2026-05-13): type-alias map. Monomorphize
+    /// substitutes `TypeKind::Path(name)` where `name` is an alias to
+    /// the alias target before doing anything else — codegen never
+    /// sees alias names. Cycle detection happened at sema.
+    pub type_aliases: std::collections::BTreeMap<String, crate::ast::Type>,
 }
 
 /// Slice 7GEN.5c: per-instantiation info handed to monomorphize.
@@ -454,6 +459,8 @@ fn check_with_files_inner<'a>(
         enum_by_name: HashMap::new(),
         structs: Vec::new(),
         struct_by_name: HashMap::new(),
+        type_aliases: HashMap::new(),
+        resolving_aliases: std::collections::HashSet::new(),
         scopes: Vec::new(),
         current_return: Ty::Error,
         current_file: None,
@@ -575,12 +582,18 @@ fn check_with_files_inner<'a>(
             (sname, mname.clone(), args.clone())
         })
         .collect();
+    let type_aliases: std::collections::BTreeMap<String, Type> = cx
+        .type_aliases
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     let mono = MonoInfo {
         instantiations: std::mem::take(&mut cx.fn_instantiations),
         call_monos: std::mem::take(&mut cx.call_monos),
         struct_instantiations,
         enum_instantiations,
         method_instantiations,
+        type_aliases,
     };
     (sink.into_vec(), mono)
 }
@@ -604,6 +617,15 @@ struct SemaCx<'a> {
     enum_by_name: HashMap<String, EnumId>,
     structs: Vec<StructDef>,
     struct_by_name: HashMap<String, StructId>,
+    /// Phase 11 polish (2026-05-13): `type Foo = Bar;` aliases. Maps
+    /// the alias name to its target AST `Type`. Resolved on every use
+    /// via `resolve_type` — transparent (Foo and Bar are identical at
+    /// the Ty level). Detect cycles at resolution time, not collection.
+    type_aliases: HashMap<String, Type>,
+    /// Cycle-detection set for `resolve_type` recursion through aliases.
+    /// `type A = B; type B = A;` fires E0510 when the second resolve
+    /// re-enters the same name.
+    resolving_aliases: std::collections::HashSet<String>,
     scopes: Vec<HashMap<String, LocalInfo>>,
     current_return: Ty,
     /// Slice 4C: file the currently-checked item originated from (post
@@ -864,6 +886,24 @@ impl SemaCx<'_> {
                     });
                     self.struct_by_name.insert(s.name.name.clone(), id);
                 }
+                // Phase 11 polish: register type aliases by name. We
+                // store the *target AST type* (not a resolved Ty) so the
+                // resolver runs once at every use site — keeps the alias
+                // transparent for paths whose type depends on later
+                // items.
+                ItemKind::TypeAlias(a) => {
+                    if self.type_name_taken(&a.name.name)
+                        || self.type_aliases.contains_key(&a.name.name)
+                    {
+                        self.err(
+                            "E0301",
+                            format!("duplicate type definition `{}`", a.name.name),
+                            a.name.span,
+                        );
+                        continue;
+                    }
+                    self.type_aliases.insert(a.name.name.clone(), a.target.clone());
+                }
                 ItemKind::Function(_) | ItemKind::Impl(_) | ItemKind::Interface(_) => {}
             }
         }
@@ -871,7 +911,9 @@ impl SemaCx<'_> {
     }
 
     fn type_name_taken(&self, name: &str) -> bool {
-        self.enum_by_name.contains_key(name) || self.struct_by_name.contains_key(name)
+        self.enum_by_name.contains_key(name)
+            || self.struct_by_name.contains_key(name)
+            || self.type_aliases.contains_key(name)
     }
 
     /// Second pass: resolve struct field types and populate `StructDef.fields`.
@@ -3952,6 +3994,22 @@ impl SemaCx<'_> {
                 }
                 if let Some(&id) = self.struct_by_name.get(name) {
                     return Ty::Struct(id);
+                }
+                // Phase 11 polish: transparent type alias. Recurse into
+                // the target. Cycle detection via the resolving set —
+                // E0510 if the same alias name appears mid-resolution.
+                if let Some(target) = self.type_aliases.get(name).cloned() {
+                    if !self.resolving_aliases.insert(name.clone()) {
+                        self.err(
+                            "E0510",
+                            format!("type alias `{}` references itself", name),
+                            t.span,
+                        );
+                        return Ty::Error;
+                    }
+                    let resolved = self.resolve_type(&target);
+                    self.resolving_aliases.remove(name);
+                    return resolved;
                 }
                 self.err("E0303", format!("unknown type `{name}`"), t.span);
                 Ty::Error

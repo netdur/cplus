@@ -58,6 +58,15 @@ pub fn monomorphize(
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
 ) -> Program {
+    // Phase 11 polish (2026-05-13): substitute type aliases first.
+    // Every `TypeKind::Path(name)` where `name` is an alias gets
+    // replaced by the alias target (recursively). Cycle detection
+    // happened at sema, so we walk straight through here.
+    let program = if mono.type_aliases.is_empty() {
+        program
+    } else {
+        rewrite_aliases_in_program(program, &mono.type_aliases)
+    };
     // Slice 7GEN.5c: synthesize concrete struct items for each generic
     // struct instantiation. These get appended to the output Program.
     // The lookup map below also drives the `TypeKind::Generic` →
@@ -973,6 +982,157 @@ fn mangle_name(name: &str, args: &[Ty], type_name_of: &dyn Fn(&Ty) -> String) ->
         s.push_str(&mangle_ty(arg, type_name_of));
     }
     s
+}
+
+/// Phase 11 polish (2026-05-13): walk the program and substitute every
+/// `TypeKind::Path(name)` where `name` is a type alias with the alias's
+/// target. Recursive through nested types (Array, RawPtr, FnPtr, Generic
+/// args). Drops `TypeAlias` items themselves — they're sema-only.
+fn rewrite_aliases_in_program(
+    mut program: Program,
+    aliases: &std::collections::BTreeMap<String, Type>,
+) -> Program {
+    program.items.retain(|it| !matches!(&it.kind, ItemKind::TypeAlias(_)));
+    for item in &mut program.items {
+        match &mut item.kind {
+            ItemKind::Function(f) => {
+                for p in &mut f.params { rewrite_alias_type(&mut p.ty, aliases); }
+                if let Some(rt) = &mut f.return_type { rewrite_alias_type(rt, aliases); }
+                rewrite_alias_block(&mut f.body, aliases);
+            }
+            ItemKind::Struct(s) => {
+                for f in &mut s.fields { rewrite_alias_type(&mut f.ty, aliases); }
+            }
+            ItemKind::Enum(e) => {
+                for v in &mut e.variants {
+                    for t in &mut v.payload { rewrite_alias_type(t, aliases); }
+                }
+            }
+            ItemKind::Impl(b) => {
+                for m in &mut b.methods {
+                    for p in &mut m.params { rewrite_alias_type(&mut p.ty, aliases); }
+                    if let Some(rt) = &mut m.return_type { rewrite_alias_type(rt, aliases); }
+                    rewrite_alias_block(&mut m.body, aliases);
+                }
+            }
+            ItemKind::Interface(i) => {
+                for m in &mut i.methods {
+                    for p in &mut m.params { rewrite_alias_type(&mut p.ty, aliases); }
+                    if let Some(rt) = &mut m.return_type { rewrite_alias_type(rt, aliases); }
+                }
+            }
+            ItemKind::TypeAlias(_) => unreachable!("filtered above"),
+        }
+    }
+    program
+}
+
+fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String, Type>) {
+    match &mut t.kind {
+        TypeKind::Path(name) => {
+            if let Some(target) = aliases.get(name) {
+                let mut new_t = target.clone();
+                rewrite_alias_type(&mut new_t, aliases);
+                *t = new_t;
+            }
+        }
+        TypeKind::Array { elem, .. } => rewrite_alias_type(elem, aliases),
+        TypeKind::Borrowed { inner, .. } => rewrite_alias_type(inner, aliases),
+        TypeKind::RawPtr(inner) => rewrite_alias_type(inner, aliases),
+        TypeKind::FnPtr { params, return_type } => {
+            for p in params { rewrite_alias_type(p, aliases); }
+            if let Some(rt) = return_type { rewrite_alias_type(rt, aliases); }
+        }
+        TypeKind::Generic { args, .. } => {
+            for a in args { rewrite_alias_type(a, aliases); }
+        }
+    }
+}
+
+fn rewrite_alias_block(b: &mut Block, aliases: &std::collections::BTreeMap<String, Type>) {
+    for s in &mut b.stmts { rewrite_alias_stmt(s, aliases); }
+    if let Some(e) = &mut b.tail { rewrite_alias_expr(e, aliases); }
+}
+
+fn rewrite_alias_stmt(s: &mut Stmt, aliases: &std::collections::BTreeMap<String, Type>) {
+    match &mut s.kind {
+        StmtKind::Let { ty, init, .. } => {
+            if let Some(t) = ty { rewrite_alias_type(t, aliases); }
+            if let Some(e) = init { rewrite_alias_expr(e, aliases); }
+        }
+        StmtKind::Return(opt) => { if let Some(e) = opt { rewrite_alias_expr(e, aliases); } }
+        StmtKind::While { cond, body } => { rewrite_alias_expr(cond, aliases); rewrite_alias_block(body, aliases); }
+        StmtKind::Loop(b) => rewrite_alias_block(b, aliases),
+        StmtKind::For(fl) => {
+            match fl {
+                ForLoop::Range { iter, body, .. } => { rewrite_alias_expr(iter, aliases); rewrite_alias_block(body, aliases); }
+                ForLoop::CStyle { init, cond, update, body } => {
+                    if let Some(i) = init { rewrite_alias_stmt(i, aliases); }
+                    if let Some(c) = cond { rewrite_alias_expr(c, aliases); }
+                    for u in update { rewrite_alias_expr(u, aliases); }
+                    rewrite_alias_block(body, aliases);
+                }
+            }
+        }
+        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => rewrite_alias_expr(e, aliases),
+        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            rewrite_alias_expr(scrutinee, aliases);
+            rewrite_alias_block(body, aliases);
+            if let Some(b) = else_body { rewrite_alias_block(b, aliases); }
+        }
+        StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            rewrite_alias_expr(scrutinee, aliases);
+            rewrite_alias_block(else_body, aliases);
+        }
+        StmtKind::WhileLet { scrutinee, body, .. } => {
+            rewrite_alias_expr(scrutinee, aliases);
+            rewrite_alias_block(body, aliases);
+        }
+        StmtKind::Break | StmtKind::Continue => {}
+    }
+}
+
+fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String, Type>) {
+    match &mut e.kind {
+        ExprKind::Cast { expr, ty } => { rewrite_alias_expr(expr, aliases); rewrite_alias_type(ty, aliases); }
+        ExprKind::Call { callee, args, type_args } => {
+            rewrite_alias_expr(callee, aliases);
+            for a in args { rewrite_alias_expr(a, aliases); }
+            for t in type_args { rewrite_alias_type(t, aliases); }
+        }
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => rewrite_alias_block(b, aliases),
+        ExprKind::If { cond, then, else_branch } => {
+            rewrite_alias_expr(cond, aliases);
+            rewrite_alias_block(then, aliases);
+            if let Some(eb) = else_branch { rewrite_alias_expr(eb, aliases); }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => { rewrite_alias_expr(lhs, aliases); rewrite_alias_expr(rhs, aliases); }
+        ExprKind::Unary { operand, .. } => rewrite_alias_expr(operand, aliases),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(e2) = start { rewrite_alias_expr(e2, aliases); }
+            if let Some(e2) = end { rewrite_alias_expr(e2, aliases); }
+        }
+        ExprKind::Assign { target, value, .. } => { rewrite_alias_expr(target, aliases); rewrite_alias_expr(value, aliases); }
+        ExprKind::Field { receiver, .. } => rewrite_alias_expr(receiver, aliases),
+        ExprKind::StructLit { fields, .. } => {
+            for f in fields { rewrite_alias_expr(&mut f.value, aliases); }
+        }
+        ExprKind::GenericStructLit { fields, type_args, .. } => {
+            for f in fields { rewrite_alias_expr(&mut f.value, aliases); }
+            for t in type_args { rewrite_alias_type(t, aliases); }
+        }
+        ExprKind::GenericEnumCall { type_args, args, .. } => {
+            for t in type_args { rewrite_alias_type(t, aliases); }
+            for a in args { rewrite_alias_expr(a, aliases); }
+        }
+        ExprKind::ArrayLit { elements } => for el in elements { rewrite_alias_expr(el, aliases); },
+        ExprKind::Index { receiver, index } => { rewrite_alias_expr(receiver, aliases); rewrite_alias_expr(index, aliases); }
+        ExprKind::Match { scrutinee, arms } => {
+            rewrite_alias_expr(scrutinee, aliases);
+            for a in arms { rewrite_alias_expr(&mut a.body, aliases); }
+        }
+        _ => {}
+    }
 }
 
 /// Slice 7GEN.5c carry-forward (2026-05-13): mirror of `mangle_ty` for

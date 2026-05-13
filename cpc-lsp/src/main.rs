@@ -484,6 +484,7 @@ fn item_name_and_span(item: &cplus_core::ast::Item) -> Option<(&str, cplus_core:
         // `impl` blocks don't define a name themselves — methods inside
         // are accessed via the type. Skip; 4E.3 doesn't index methods.
         ItemKind::Impl(_) => None,
+        ItemKind::TypeAlias(a) => Some((a.name.name.as_str(), a.name.span)),
     }
 }
 

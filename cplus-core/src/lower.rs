@@ -71,7 +71,7 @@ impl Lower {
             }
             // Slice 7GEN.3: interface declarations have no bodies to
             // lower (method signatures only); pass through unchanged.
-            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) => {}
+            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
         }
     }
 

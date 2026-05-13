@@ -95,7 +95,7 @@ pub enum ResolveError {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum PrivateKind { Function, Struct, Enum, Method, Interface }
+pub enum PrivateKind { Function, Struct, Enum, Method, Interface, TypeAlias }
 
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -121,6 +121,7 @@ impl std::fmt::Display for ResolveError {
                     PrivateKind::Enum => "enum",
                     PrivateKind::Method => "method",
                     PrivateKind::Interface => "interface",
+                    PrivateKind::TypeAlias => "type alias",
                 };
                 match kind {
                     PrivateKind::Method => write!(
@@ -336,6 +337,7 @@ impl LoadFailure {
                     PrivateKind::Enum => "enum",
                     PrivateKind::Method => "method",
                     PrivateKind::Interface => "interface",
+                    PrivateKind::TypeAlias => "type alias",
                 };
                 let msg = match kind {
                     PrivateKind::Method => format!(
@@ -696,6 +698,14 @@ fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str) -> Result<Progr
                     kinds.insert(i.name.name.clone(), ItemKindTag::Interface);
                     if i.is_pub { pubs.insert(i.name.name.clone()); }
                 }
+                // Phase 11 polish: aliases register as ordinary type-level
+                // names so cross-file `pub use` lookups + import-alias
+                // rewrites apply.
+                ItemKind::TypeAlias(a) => {
+                    all.insert(a.name.name.clone());
+                    kinds.insert(a.name.name.clone(), ItemKindTag::TypeAlias);
+                    if a.is_pub { pubs.insert(a.name.name.clone()); }
+                }
             }
         }
         local_items.insert(fid.clone(), all);
@@ -767,7 +777,7 @@ fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str) -> Result<Progr
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ItemKindTag { Function, Struct, Enum, Interface }
+enum ItemKindTag { Function, Struct, Enum, Interface, TypeAlias }
 
 struct RewriteCtx {
     self_file_id: String,
@@ -832,6 +842,7 @@ impl RewriteCtx {
                 ItemKindTag::Struct => PrivateKind::Struct,
                 ItemKindTag::Enum => PrivateKind::Enum,
                 ItemKindTag::Interface => PrivateKind::Interface,
+                ItemKindTag::TypeAlias => PrivateKind::TypeAlias,
             })
             .unwrap_or(PrivateKind::Function);
         let is_pub = self.pub_items.get(target_id)
@@ -943,6 +954,14 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
                 }
             }
             ItemKind::Interface(i)
+        }
+        // Phase 11 polish: type aliases. Qualify the alias name and
+        // rewrite its target so cross-file paths in the target resolve.
+        ItemKind::TypeAlias(a) => {
+            let mut a = a.clone();
+            a.name.name = ctx.qualify_local(&a.name.name);
+            rewrite_type(&mut a.target, ctx)?;
+            ItemKind::TypeAlias(a)
         }
     };
     Ok(Item { kind, span: item.span, origin_file: Some(ctx.self_file_id.clone()) })
