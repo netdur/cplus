@@ -3664,6 +3664,161 @@ fn phase11_size_of_no_type_arg_rejected() {
     assert!(stderr.contains("E0501"), "expected E0501 in stderr: {stderr}");
 }
 
+// Slice 7GEN.5c carry-forward (closed 2026-05-13): a generic fn whose
+// declared return type names a generic struct must substitute T at the
+// call site. Previously failed with "expected struct, found struct" because
+// `subst_ty` didn't recurse through nested generic instantiations.
+
+#[test]
+fn phase7_generic_fn_returning_generic_struct_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g_ret.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         fn boxed[T](v: T) -> Box[T] { return Box[T] { value: v }; }\n\
+         fn main() -> i32 {\n\
+             let b: Box[i32] = boxed::[i32](42);\n\
+             return b.value;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("g_ret");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "generic fn returning Box[T] should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase7_generic_fn_returning_generic_struct_inferred_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g_ret_inf.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         fn boxed[T](v: T) -> Box[T] { return Box[T] { value: v }; }\n\
+         fn main() -> i32 {\n\
+             let b: Box[i32] = boxed(7);\n\
+             return b.value * 6;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("g_ret_inf");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "generic fn returning Box[T] via inference should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase7_generic_fn_returning_nested_generic_struct_runs() {
+    // Nested case: fn -> Pair[Box[T], i32]. Requires recursive subst_ty
+    // through two levels of generic instantiation.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g_nested.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         struct Pair[A, B] { first: A, second: B }\n\
+         fn wrap[T](v: T, tag: i32) -> Pair[Box[T], i32] {\n\
+             return Pair[Box[T], i32] { first: Box[T] { value: v }, second: tag };\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let p: Pair[Box[i32], i32] = wrap::[i32](20, 22);\n\
+             return p.first.value + p.second;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("g_nested");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "generic fn returning nested generic should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+// Slice 7GEN.5c carry-forward (closed 2026-05-13): `Type[args]::assoc_fn(...)`
+// — calling an associated function on an instantiated generic type — was
+// rejected. Parser emits `GenericEnumCall`; sema now routes through the
+// struct path when the name resolves to a generic struct template.
+
+#[test]
+fn phase7_generic_type_assoc_fn_call_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g_assoc.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         impl Box[T] {\n\
+             fn new(v: T) -> Box[T] { return Box[T] { value: v }; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let b: Box[i32] = Box[i32]::new(42);\n\
+             return b.value;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("g_assoc");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "Box[i32]::new should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase7_generic_type_assoc_fn_multi_args_runs() {
+    // Two type args; calls a method that doesn't return Self.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g_assoc_multi.cplus");
+    std::fs::write(
+        &src,
+        "struct Pair[A, B] { first: A, second: B }\n\
+         impl Pair[A, B] {\n\
+             fn make(a: A, b: B) -> Pair[A, B] { return Pair[A, B] { first: a, second: b }; }\n\
+             fn sum_first_and_b(self) -> i32 { return self.first; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let p: Pair[i32, bool] = Pair[i32, bool]::make(42, true);\n\
+             return p.sum_first_and_b();\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("g_assoc_multi");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "Pair[i32,bool]::make should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase11_vec_generic_demo_runs() {
+    // The fully-generic `Vec[T, A: Allocator]` sample, unblocked by the
+    // two Phase-7 generics carry-forwards landing in the same session
+    // (return-type substitution + Type[args]::assoc_fn).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = "/Users/adel/Workspace/C+/docs/examples/phase11_vec_generic.cplus";
+    let bin = dir.join("vec_generic");
+    let out = Command::new(cpc).arg(src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "Vec[T, A] sample should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(36),
+        "Vec generic demo should exit with sum 1..=8 = 36; stdout={}",
+        String::from_utf8_lossy(&run.stdout));
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

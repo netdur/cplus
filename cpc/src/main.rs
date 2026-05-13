@@ -446,6 +446,21 @@ fn run_monomorphize(
             _ => {}
         }
     }
+    // 7GEN.5c carry-forward (2026-05-13): generic instantiations live
+    // past the non-generic portion of sema's tables. Slot each one at
+    // its actual id so `name_of(Ty::Struct(id))` returns the mangled
+    // name (was returning "?" — which broke nested-generic lookups in
+    // monomorphize like `Pair[Box[T], i32]`).
+    for info in mono.struct_instantiations.values() {
+        let slot = info.id as usize;
+        if struct_names.len() <= slot { struct_names.resize(slot + 1, String::from("?")); }
+        struct_names[slot] = info.mangled_name.clone();
+    }
+    for info in mono.enum_instantiations.values() {
+        let slot = info.id as usize;
+        if enum_names.len() <= slot { enum_names.resize(slot + 1, String::from("?")); }
+        enum_names[slot] = info.mangled_name.clone();
+    }
     let name_of = move |ty: &sema::Ty| -> String {
         match ty {
             sema::Ty::Struct(id) => struct_names.get(id.0 as usize).cloned().unwrap_or_else(|| "?".into()),

@@ -37,6 +37,17 @@ use crate::ast::*;
 use crate::sema::{MonoInfo, StructId, EnumId, Ty};
 use crate::lexer::Span;
 
+/// Slice 7GEN.5c carry-forward (2026-05-13): generic-instantiation
+/// lookup re-keyed by *mangled argument names* (vs sema's Vec<Ty> form).
+/// Required because `subst_type_ast` operates on AST after recursion has
+/// produced `Path("Box__i32")` for inner generics, and converting that
+/// string back to the `Ty::Struct(id)` that sema used as a key would
+/// require sema's id table — which doesn't survive the handoff. Indexing
+/// by rendered name sidesteps the id round-trip.
+struct StructLookup {
+    by_names: std::collections::HashMap<(String, Vec<String>), String>,
+}
+
 /// Public entry point. Consumes the input `Program` and returns a new
 /// `Program` with generic templates expanded into monomorphized
 /// instances and call sites rewritten. Sema's type tables are needed
@@ -66,10 +77,18 @@ pub fn monomorphize(
         .collect();
     // Merge both into struct_lookup since subst_type_ast uses a single
     // map; sema already de-conflicts struct/enum names (E0301).
-    let mut struct_lookup: std::collections::HashMap<(String, Vec<Ty>), String> = struct_lookup;
+    let mut by_ty: std::collections::HashMap<(String, Vec<Ty>), String> = struct_lookup;
     for (k, v) in &enum_lookup {
-        struct_lookup.insert(k.clone(), v.clone());
+        by_ty.insert(k.clone(), v.clone());
     }
+    let by_names: std::collections::HashMap<(String, Vec<String>), String> = by_ty
+        .iter()
+        .map(|(k, v)| {
+            let names: Vec<String> = k.1.iter().map(|t| mangle_ty(t, type_name_of)).collect();
+            ((k.0.clone(), names), v.clone())
+        })
+        .collect();
+    let struct_lookup = StructLookup { by_names };
     // Build the substitution context for each instantiation up front
     // so call-site rewriting and template-expansion share one source.
     let mut instances: Vec<MonoInstance> = Vec::new();
@@ -257,7 +276,7 @@ fn synthesize_generic_typed_impls(
     origin_file: Option<String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
     generic_names: &std::collections::HashSet<String>,
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     out_items: &mut Vec<Item>,
@@ -351,7 +370,7 @@ fn rewrite_block_with_self(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
     mangled_name: &str,
 ) -> Block {
     // First run the generic rewrite that handles subst + generic-fn
@@ -498,7 +517,7 @@ fn synthesize_fn(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> Function {
     Function {
         name: Ident { name: inst.mangled.clone(), span: template.name.span },
@@ -525,7 +544,7 @@ fn subst_type_ast(
     ty: &Type,
     subst: &std::collections::HashMap<String, Ty>,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> Type {
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
@@ -547,19 +566,25 @@ fn subst_type_ast(
         // First substitute fn-generic params in each arg (so `Pair[T]` inside
         // a `fn id[T]` becomes `Pair[i32]` for the i32-instantiation), then
         // look up the result in the struct-instantiation map sema produced.
+        //
+        // 7GEN.5c carry-forward (2026-05-13): nested generics like
+        // `Pair[Box[T], i32]` need a *mangled-name-keyed* lookup because
+        // monomorphize doesn't carry sema's id table to round-trip an
+        // AST `Path("Box__i32")` back to `Ty::Struct(id)`. The names map
+        // is built once at the top of `monomorphize()`.
         TypeKind::Generic { name, args } => {
             let resolved_args: Vec<Type> = args
                 .iter()
                 .map(|a| subst_type_ast(a, subst, type_name_of, struct_lookup))
                 .collect();
-            // Convert each resolved AST arg back to a `Ty` for the lookup key.
-            // The args here are concrete after substitution; render them via
-            // type_name_of-style introspection. We need a `Ty` key.
-            let arg_tys: Vec<Ty> = resolved_args
+            // Compute each arg's mangled name directly from the AST form
+            // (post-recursion). This bypasses the Ty round-trip the prior
+            // version did.
+            let arg_names: Vec<String> = resolved_args
                 .iter()
-                .map(|a| type_ast_to_ty(a, type_name_of))
+                .map(mangle_type_ast_arg)
                 .collect();
-            if let Some(mangled) = struct_lookup.get(&(name.clone(), arg_tys)) {
+            if let Some(mangled) = struct_lookup.by_names.get(&(name.clone(), arg_names)) {
                 TypeKind::Path(mangled.clone())
             } else {
                 // No matching instantiation — leave as-is and let
@@ -579,43 +604,6 @@ fn subst_type_ast(
     Type { kind, span: ty.span }
 }
 
-/// Slice 7GEN.5c: convert a concrete-typed AST `Type` to a `Ty` for
-/// instantiation-map lookups. This is the inverse of `ty_to_type_ast`
-/// for the primitive + struct/enum cases that monomorphize encounters.
-/// Struct/enum name resolution is best-effort — names that don't
-/// match any in the program render as a `Param` placeholder which
-/// won't key-match anything and falls through.
-fn type_ast_to_ty(ty: &Type, _type_name_of: &dyn Fn(&Ty) -> String) -> Ty {
-    match &ty.kind {
-        TypeKind::Path(name) => match name.as_str() {
-            "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
-            "u8" => Ty::U8, "u16" => Ty::U16, "u32" => Ty::U32, "u64" => Ty::U64,
-            "isize" => Ty::Isize, "usize" => Ty::Usize,
-            "f32" => Ty::F32, "f64" => Ty::F64,
-            "bool" => Ty::Bool, "()" => Ty::Unit,
-            // For struct/enum names: monomorphize doesn't carry the
-            // sema id table. Use `Ty::Param(name)` as a stable
-            // synthetic key. The struct_lookup map's keys originally
-            // came from sema's resolved `Ty::Struct(id)`, so a string
-            // key like this won't match — but no in-tree case today
-            // exercises generic-args-that-are-themselves-aggregates.
-            // Document the limitation; revisit when needed.
-            _ => Ty::Param(name.clone()),
-        },
-        TypeKind::Array { elem, len } => Ty::Array(Box::new(type_ast_to_ty(elem, _type_name_of)), *len),
-        TypeKind::Borrowed { inner, .. } => type_ast_to_ty(inner, _type_name_of),
-        TypeKind::Generic { .. } => Ty::Param("<generic>".into()),
-        TypeKind::RawPtr(inner) => Ty::RawPtr(Box::new(type_ast_to_ty(inner, _type_name_of))),
-        TypeKind::FnPtr { params, return_type } => Ty::FnPtr {
-            params: params.iter().map(|p| type_ast_to_ty(p, _type_name_of)).collect(),
-            return_type: Box::new(match return_type {
-                Some(rt) => type_ast_to_ty(rt, _type_name_of),
-                None => Ty::Unit,
-            }),
-        },
-    }
-}
-
 /// Rewrite a top-level item to update generic-fn call sites to their
 /// mangled targets. Non-function items pass through; non-generic
 /// function bodies have their calls rewritten too (a non-generic fn
@@ -626,7 +614,7 @@ fn rewrite_item_calls(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> Item {
     let empty_subst = std::collections::HashMap::new();
     let kind = match item.kind {
@@ -704,7 +692,7 @@ fn rewrite_block(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> Block {
     Block {
         stmts: block.stmts.iter().map(|s| rewrite_stmt(s, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup)).collect(),
@@ -720,7 +708,7 @@ fn rewrite_stmt(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> Stmt {
     let kind = match &stmt.kind {
         StmtKind::Let { mutable, name, ty, init } => StmtKind::Let {
@@ -771,7 +759,7 @@ fn rewrite_for(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> ForLoop {
     match f {
         ForLoop::Range { var, iter, body } => ForLoop::Range {
@@ -795,7 +783,7 @@ fn rewrite_expr(
     inst_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
     mono: &MonoInfo,
     type_name_of: &dyn Fn(&Ty) -> String,
-    struct_lookup: &std::collections::HashMap<(String, Vec<Ty>), String>,
+    struct_lookup: &StructLookup,
 ) -> Expr {
     let kind = match &expr.kind {
         ExprKind::Call { callee, args, type_args } => {
@@ -899,12 +887,10 @@ fn rewrite_expr(
                 .iter()
                 .map(|a| subst_type_ast(a, subst, type_name_of, struct_lookup))
                 .collect();
-            let arg_tys: Vec<Ty> = resolved_args
-                .iter()
-                .map(|a| type_ast_to_ty(a, type_name_of))
-                .collect();
+            let arg_names: Vec<String> = resolved_args.iter().map(mangle_type_ast_arg).collect();
             let mangled_name = struct_lookup
-                .get(&(name.name.clone(), arg_tys))
+                .by_names
+                .get(&(name.name.clone(), arg_names))
                 .cloned()
                 .unwrap_or_else(|| name.name.clone());
             ExprKind::StructLit {
@@ -928,12 +914,10 @@ fn rewrite_expr(
                 .iter()
                 .map(|a| subst_type_ast(a, subst, type_name_of, struct_lookup))
                 .collect();
-            let arg_tys: Vec<Ty> = resolved_args
-                .iter()
-                .map(|a| type_ast_to_ty(a, type_name_of))
-                .collect();
+            let arg_names: Vec<String> = resolved_args.iter().map(mangle_type_ast_arg).collect();
             let mangled_enum = struct_lookup
-                .get(&(enum_name.name.clone(), arg_tys))
+                .by_names
+                .get(&(enum_name.name.clone(), arg_names))
                 .cloned()
                 .unwrap_or_else(|| enum_name.name.clone());
             let segments = vec![
@@ -989,6 +973,46 @@ fn mangle_name(name: &str, args: &[Ty], type_name_of: &dyn Fn(&Ty) -> String) ->
         s.push_str(&mangle_ty(arg, type_name_of));
     }
     s
+}
+
+/// Slice 7GEN.5c carry-forward (2026-05-13): mirror of `mangle_ty` for
+/// AST `Type` nodes. Used to extract a `StructLookup::by_names` key for
+/// each post-recursion arg. The shapes must match `mangle_ty` exactly so
+/// nested generics like `Pair[Box[T], i32]` look up correctly: the inner
+/// `Box[T]` resolves to `Path("Box__i32")` and we render its name as the
+/// literal `"Box__i32"` here. Falls back to a best-effort spelling for
+/// AST shapes that don't appear inside generic args today.
+fn mangle_type_ast_arg(t: &Type) -> String {
+    match &t.kind {
+        TypeKind::Path(name) => name.clone(),
+        TypeKind::Array { elem, len } => format!("arr{}_{}", len, mangle_type_ast_arg(elem)),
+        TypeKind::Borrowed { inner, .. } => mangle_type_ast_arg(inner),
+        TypeKind::RawPtr(inner) => format!("ptr_{}", mangle_type_ast_arg(inner)),
+        TypeKind::FnPtr { params, return_type } => {
+            let mut s = String::from("fn");
+            for p in params {
+                s.push('_');
+                s.push_str(&mangle_type_ast_arg(p));
+            }
+            if let Some(rt) = return_type {
+                s.push_str("_ret_");
+                s.push_str(&mangle_type_ast_arg(rt));
+            }
+            s
+        }
+        TypeKind::Generic { name, args } => {
+            // After subst_type_ast recursion this should be unreachable
+            // (Generic→Path rewrite consumes Generic nodes). If it shows
+            // up, render best-effort so an unresolved key falls through
+            // to the unchanged Generic branch in subst_type_ast.
+            let mut s = name.clone();
+            for a in args {
+                s.push_str("__");
+                s.push_str(&mangle_type_ast_arg(a));
+            }
+            s
+        }
+    }
 }
 
 /// Render a `Ty` as a name-safe string for mangling. Primitives use

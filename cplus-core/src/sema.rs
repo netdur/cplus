@@ -175,6 +175,12 @@ pub struct EnumDef {
     /// `Option::Some(v)` patterns against `Option[i32]` scrutinees
     /// (type-directed resolution). `None` for plain (non-generic) enums.
     pub generic_base: Option<String>,
+    /// Records `(template_name, concrete_args)` when this EnumDef was
+    /// synthesized from a generic-enum instantiation. Used by `subst_ty`
+    /// to recurse through nested generics: when substituting `T` inside
+    /// a return type like `Result[T, Err]`, we walk the args, substitute,
+    /// and re-instantiate. `None` for non-generic enums.
+    pub generic_origin: Option<(String, Vec<Ty>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +221,12 @@ pub struct StructDef {
     /// `src.math`). `None` for items without a qualified name (single-file
     /// mode). Used to gate field-pub checks against the access site.
     pub origin_file: Option<String>,
+    /// Records `(template_name, concrete_args)` when this StructDef was
+    /// synthesized from a generic-struct instantiation. Used by `subst_ty`
+    /// to recurse through nested generics: substituting `T` inside a
+    /// return type like `Box[T]` walks the args, substitutes, and
+    /// re-instantiates. `None` for non-generic structs.
+    pub generic_origin: Option<(String, Vec<Ty>)>,
 }
 
 /// Type + ownership marker for a single parameter. The `move_` flag indicates
@@ -362,6 +374,12 @@ pub struct StructInstantiationInfo {
     pub mangled_name: String,
     pub fields: Vec<(String, Ty, bool)>,
     pub template_origin_file: Option<String>,
+    /// Sema-assigned `StructId.0`. Exposed so consumers can map
+    /// `Ty::Struct(id)` back to a mangled name (the `name_of` closure
+    /// in `run_monomorphize`). Without this, generic instantiations
+    /// would render as `"?"` because they live past the non-generic
+    /// portion of `cx.structs`.
+    pub id: u32,
 }
 
 /// Slice 7GEN.5d: per-enum-instantiation info handed to monomorphize.
@@ -370,6 +388,8 @@ pub struct EnumInstantiationInfo {
     pub mangled_name: String,
     pub variants: Vec<EnumVariantDef>,
     pub template_origin_file: Option<String>,
+    /// See `StructInstantiationInfo::id` — same role for the enum side.
+    pub id: u32,
 }
 
 /// Slice 7GEN.5a: like `check_multi`, but also returns the
@@ -483,9 +503,18 @@ fn check_with_files_inner<'a>(
     // Slice 7GEN.5c: hand monomorphize a snapshot of the synthesized
     // struct instantiations (mangled name + concrete fields) so it can
     // emit AST struct items + rewrite Generic types in the program.
+    //
+    // 7GEN.5c carry-forward (closed 2026-05-13): filter out *placeholder*
+    // instantiations whose args still contain `Ty::Param` — those are
+    // template-body artifacts (e.g. `Box[T]` mentioned in `fn boxed[T]`'s
+    // return type), not real instantiations. Emitting them as AST struct
+    // decls would panic codegen on Ty::Param. They live in sema's table
+    // only because `resolve_type` dedup'd them; real instantiations get
+    // produced by `subst_ty_deep` at concrete call sites.
     let struct_instantiations: std::collections::BTreeMap<(String, Vec<Ty>), StructInstantiationInfo> = cx
         .struct_instantiations
         .iter()
+        .filter(|(key, _)| !key.1.iter().any(|t| ty_contains_param(t, &cx.structs, &cx.enums)))
         .map(|(key, &id)| {
             let def = &cx.structs[id.0 as usize];
             let info = StructInstantiationInfo {
@@ -505,14 +534,17 @@ fn check_with_files_inner<'a>(
                             .find(|i| matches!(&i.kind, ItemKind::Struct(s) if s.name.name == t.name.name))
                             .and_then(|i| i.origin_file.clone())
                     }),
+                id: id.0,
             };
             (key.clone(), info)
         })
         .collect();
-    // Slice 7GEN.5d: enum instantiations.
+    // Slice 7GEN.5d: enum instantiations. Same placeholder filter as
+    // the struct side (see comment above).
     let enum_instantiations: std::collections::BTreeMap<(String, Vec<Ty>), EnumInstantiationInfo> = cx
         .enum_instantiations
         .iter()
+        .filter(|(key, _)| !key.1.iter().any(|t| ty_contains_param(t, &cx.structs, &cx.enums)))
         .map(|(key, &id)| {
             let def = &cx.enums[id.0 as usize];
             let info = EnumInstantiationInfo {
@@ -528,6 +560,7 @@ fn check_with_files_inner<'a>(
                             .find(|i| matches!(&i.kind, ItemKind::Enum(e) if e.name.name == t.name.name))
                             .and_then(|i| i.origin_file.clone())
                     }),
+                id: id.0,
             };
             (key.clone(), info)
         })
@@ -787,6 +820,7 @@ impl SemaCx<'_> {
                         is_copy: false,   // computed later
                         is_tagged,
                         generic_base: None,
+                        generic_origin: None,
                     });
                     self.enum_by_name.insert(e.name.name.clone(), id);
                 }
@@ -826,6 +860,7 @@ impl SemaCx<'_> {
                         // the file the struct was *declared* in, not
                         // whatever file is currently being checked.
                         origin_file: item.origin_file.clone(),
+                        generic_origin: None,
                     });
                     self.struct_by_name.insert(s.name.name.clone(), id);
                 }
@@ -936,6 +971,18 @@ impl SemaCx<'_> {
         span: ByteSpan,
         context_desc: &str,
     ) {
+        // 7GEN.5c carry-forward (2026-05-13): when any arg is still
+        // `Ty::Param`, we're inside a template-level reference (e.g.
+        // the body of `impl Vec[T, A: Allocator]` mentions
+        // `Vec[T, A] { ... }`). Bounds will be re-checked at every
+        // concrete instantiation; checking them here would require a
+        // bound-aware lookup against the surrounding impl scope, which
+        // we don't track. Skip in that case — concrete-only enforcement
+        // is sound because every Param eventually resolves at a real
+        // call site that passes the args through this same check.
+        if args.iter().any(|a| ty_contains_param(a, &self.structs, &self.enums)) {
+            return;
+        }
         for (i, arg_ty) in args.iter().enumerate() {
             let Some(param_bounds) = bounds.get(i) else { continue; };
             for b in param_bounds {
@@ -2404,6 +2451,26 @@ impl SemaCx<'_> {
         args: &[Expr],
         span: ByteSpan,
     ) -> Ty {
+        // Slice 7GEN.5c carry-forward (closed 2026-05-13): the parser
+        // can't tell at `Ident[args]::name(...)` whether `Ident` is a
+        // generic enum (variant constructor) or a generic struct
+        // (associated-fn call). Both produce `GenericEnumCall` in the
+        // AST; dispatch here based on which template table contains
+        // the name. Struct path lowers to a 2-segment `Path` assoc-call
+        // on the mangled instantiation.
+        if self.struct_generic_templates.contains_key(&enum_name.name) {
+            let sty = self.resolve_generic_instantiation(&enum_name.name, type_args, enum_name.span);
+            let Ty::Struct(sid) = sty else {
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Error;
+            };
+            let mangled = self.structs[sid.0 as usize].name.clone();
+            let segments = vec![
+                Ident { name: mangled, span: enum_name.span },
+                variant.clone(),
+            ];
+            return self.check_assoc_call(&segments, &[], args, enum_name.span, span);
+        }
         let ty = self.resolve_generic_enum_instantiation(&enum_name.name, type_args, enum_name.span);
         let Ty::Enum(id) = ty else {
             for a in args { let _ = self.check_expr(a, None); }
@@ -3078,7 +3145,7 @@ impl SemaCx<'_> {
             // Now check each arg against the substituted parameter type.
             let mut had_err = false;
             for (param, arg) in gsig.params.iter().zip(args.iter()) {
-                let expected = subst_ty(&param.ty, &subst);
+                let expected = self.subst_ty_deep(&param.ty, &subst);
                 let actual = self.check_expr(arg, Some(expected.clone()));
                 if !matches!(actual, Ty::Error) && actual != expected {
                     self.err(
@@ -3103,7 +3170,7 @@ impl SemaCx<'_> {
             );
             self.fn_instantiations.insert((name.to_string(), concrete_args.clone()));
             self.call_monos.insert(call_span, concrete_args.clone());
-            return subst_ty(&gsig.return_type, &subst);
+            return self.subst_ty_deep(&gsig.return_type, &subst);
         }
         // Infer concrete types per param position, then unify.
         let mut had_err = false;
@@ -3156,7 +3223,7 @@ impl SemaCx<'_> {
         self.fn_instantiations.insert((name.to_string(), concrete_args.clone()));
         self.call_monos.insert(call_span, concrete_args.clone());
         // Substitute the return type and return it as the call's type.
-        subst_ty(&gsig.return_type, &subst)
+        self.subst_ty_deep(&gsig.return_type, &subst)
     }
 
     fn check_method_call(&mut self, receiver: &Expr, name: &Ident, type_args: &[Type], args: &[Expr], call_span: ByteSpan) -> Ty {
@@ -3306,7 +3373,7 @@ impl SemaCx<'_> {
         }
         // Type-check each arg against the *substituted* parameter type.
         for (a, expected) in args.iter().zip(sig.params.iter()) {
-            let expected_ty = subst_ty(&expected.ty, &subst);
+            let expected_ty = self.subst_ty_deep(&expected.ty, &subst);
             let arg_ty = self.check_expr(a, Some(expected_ty.clone()));
             if !matches!(arg_ty, Ty::Error) && arg_ty != expected_ty {
                 self.err(
@@ -3339,7 +3406,7 @@ impl SemaCx<'_> {
         let key = (struct_id, name.name.clone(), arg_tys.clone());
         self.method_instantiations.insert(key);
         self.call_monos.insert(call_span, arg_tys);
-        subst_ty(&sig.return_type, &subst)
+        self.subst_ty_deep(&sig.return_type, &subst)
     }
 
     fn check_assoc_call(&mut self, segments: &[Ident], type_args: &[Type], args: &[Expr], path_span: ByteSpan, call_span: ByteSpan) -> Ty {
@@ -3936,7 +4003,9 @@ impl SemaCx<'_> {
         if arg_tys.iter().any(|t| matches!(t, Ty::Error)) {
             return Ty::Error;
         }
-        // Slice 7GEN.5e step 4: bound check.
+        // Slice 7GEN.5e step 4: bound check (only at AST-originating call
+        // sites — substitution paths via `subst_ty` skip this because the
+        // template's bounds were already checked at the originating site).
         let param_names: Vec<String> = template.generic_params.iter()
             .map(|g| g.name.name.clone()).collect();
         let bounds: Vec<Vec<String>> = template.generic_params.iter()
@@ -3944,6 +4013,22 @@ impl SemaCx<'_> {
             .collect();
         self.check_generic_bounds(&param_names, &bounds, &arg_tys, span,
             &format!("generic struct `{}`", name));
+        self.instantiate_struct_from_arg_tys(name, &template, arg_tys)
+    }
+
+    /// Slice 7GEN.5c (factored 2026-05-13): the post-arg-resolution body
+    /// of `resolve_generic_instantiation`. Takes already-resolved `arg_tys`
+    /// and a cloned template; synthesizes the concrete `StructDef` (or
+    /// returns the existing dedup'd id). Used both from AST-typed entry
+    /// (after `resolve_type` on each arg) and from `subst_ty`'s recursion
+    /// through nested generic structs (which already has `Ty`s in hand).
+    /// Skips bound-checking — callers do it when they have AST spans.
+    fn instantiate_struct_from_arg_tys(
+        &mut self,
+        name: &str,
+        template: &crate::ast::StructDecl,
+        arg_tys: Vec<Ty>,
+    ) -> Ty {
         // Dedup against prior instantiations.
         let key = (name.to_string(), arg_tys.clone());
         if let Some(&existing) = self.struct_instantiations.get(&key) {
@@ -3981,6 +4066,7 @@ impl SemaCx<'_> {
             is_drop: false,
             is_repr_c: false,   // generic instantiations don't inherit repr(C); revisit when use case appears
             origin_file: None,
+            generic_origin: Some((name.to_string(), arg_tys.clone())),
         });
         self.struct_by_name.insert(mangled.clone(), id);
         self.struct_instantiations.insert(key, id);
@@ -3996,12 +4082,22 @@ impl SemaCx<'_> {
                 for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
-                let resolved_params: Vec<ParamSig> = t.params.iter().map(|p| ParamSig {
-                    ty: subst_self(&subst_ty(&p.ty, &method_subst), &self_ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                }).collect();
-                let resolved_return = subst_self(&subst_ty(&t.return_type, &method_subst), &self_ty);
+                // 7GEN.5c carry-forward (2026-05-13): use subst_ty_deep so
+                // method signatures mentioning *generic structs*
+                // (e.g. `fn new(v: T) -> Box[T]` inside `impl Box[T]`)
+                // get their inner T substituted at instantiation time.
+                let resolved_params: Vec<ParamSig> = {
+                    let raw: Vec<(Ty, bool, bool)> = t.params.iter()
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_)).collect();
+                    raw.into_iter().map(|(ty, mutable, move_)| {
+                        let s = self.subst_ty_deep(&ty, &method_subst);
+                        ParamSig { ty: subst_self(&s, &self_ty), mutable, move_ }
+                    }).collect()
+                };
+                let resolved_return = {
+                    let s = self.subst_ty_deep(&t.return_type, &method_subst);
+                    subst_self(&s, &self_ty)
+                };
                 self.structs[id.0 as usize].methods.insert(
                     t.name.clone(),
                     MethodSig {
@@ -4017,6 +4113,49 @@ impl SemaCx<'_> {
             }
         }
         Ty::Struct(id)
+    }
+
+    /// Slice 7GEN.5c carry-forward (closed 2026-05-13): substitute generic
+    /// params *and* recurse through nested generic struct/enum types. This
+    /// is the deep version of `subst_ty` — when the input contains a
+    /// `Ty::Struct(id)` that was itself a generic instantiation (recorded
+    /// in `generic_origin`), we substitute its args and re-instantiate via
+    /// the dedup'd helpers. Closes the long-standing bug where
+    /// `fn make[T]() -> Box[T]` left `T` inside `Box[T]` unsubstituted.
+    fn subst_ty_deep(&mut self, ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+        match ty {
+            Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+            Ty::Array(elem, len) => Ty::Array(Box::new(self.subst_ty_deep(elem, subst)), *len),
+            Ty::RawPtr(inner) => Ty::RawPtr(Box::new(self.subst_ty_deep(inner, subst))),
+            Ty::FnPtr { params, return_type } => {
+                let params = params.iter().map(|p| self.subst_ty_deep(p, subst)).collect();
+                let return_type = Box::new(self.subst_ty_deep(return_type, subst));
+                Ty::FnPtr { params, return_type }
+            }
+            Ty::Struct(id) => {
+                let origin = self.structs[id.0 as usize].generic_origin.clone();
+                let Some((name, args)) = origin else { return ty.clone(); };
+                let new_args: Vec<Ty> = args.iter().map(|a| self.subst_ty_deep(a, subst)).collect();
+                if new_args == args { return ty.clone(); }
+                // Re-instantiate. The template lookup must succeed — we
+                // wouldn't have a generic_origin recorded otherwise.
+                let template = self.struct_generic_templates.get(&name)
+                    .cloned()
+                    .expect("generic_origin names a template not in struct_generic_templates");
+                self.instantiate_struct_from_arg_tys(&name, &template, new_args)
+            }
+            Ty::Enum(id) => {
+                let origin = self.enums[id.0 as usize].generic_origin.clone();
+                let Some((name, args)) = origin else { return ty.clone(); };
+                let new_args: Vec<Ty> = args.iter().map(|a| self.subst_ty_deep(a, subst)).collect();
+                if new_args == args { return ty.clone(); }
+                let template = self.enum_generic_templates.get(&name)
+                    .cloned()
+                    .expect("generic_origin names a template not in enum_generic_templates");
+                self.instantiate_enum_from_arg_tys(&name, &template, new_args)
+            }
+            other => other.clone(),
+        }
     }
 
     /// Slice 7GEN.5c: resolve an AST `Type` to a `Ty`, but substitute
@@ -4055,7 +4194,8 @@ impl SemaCx<'_> {
         if arg_tys.iter().any(|t| matches!(t, Ty::Error)) {
             return Ty::Error;
         }
-        // Slice 7GEN.5e step 4: bound check.
+        // Slice 7GEN.5e step 4: bound check (only at AST-originating call
+        // sites — see the parallel comment in resolve_generic_instantiation).
         let param_names: Vec<String> = template.generic_params.iter()
             .map(|g| g.name.name.clone()).collect();
         let bounds: Vec<Vec<String>> = template.generic_params.iter()
@@ -4063,6 +4203,18 @@ impl SemaCx<'_> {
             .collect();
         self.check_generic_bounds(&param_names, &bounds, &arg_tys, span,
             &format!("generic enum `{}`", name));
+        self.instantiate_enum_from_arg_tys(name, &template, arg_tys)
+    }
+
+    /// Slice 7GEN.5d (factored 2026-05-13): post-arg-resolution body of
+    /// `resolve_generic_enum_instantiation`. See `instantiate_struct_from_arg_tys`
+    /// for the rationale (substitution paths re-enter without AST args).
+    fn instantiate_enum_from_arg_tys(
+        &mut self,
+        name: &str,
+        template: &crate::ast::EnumDecl,
+        arg_tys: Vec<Ty>,
+    ) -> Ty {
         let key = (name.to_string(), arg_tys.clone());
         if let Some(&existing) = self.enum_instantiations.get(&key) {
             return Ty::Enum(existing);
@@ -4095,6 +4247,7 @@ impl SemaCx<'_> {
             is_copy: false,
             is_tagged,
             generic_base: Some(name.to_string()),
+            generic_origin: Some((name.to_string(), arg_tys.clone())),
         });
         self.enum_by_name.insert(mangled, id);
         self.enum_instantiations.insert(key, id);
@@ -4304,20 +4457,38 @@ fn unify_param_against_concrete(
     }
 }
 
-/// Slice 7GEN.5a: substitute every `Ty::Param(name)` in `ty` using
-/// the binding map. Unbound params fall through unchanged (the
-/// caller is responsible for ensuring every declared generic param
-/// has a binding before calling).
-fn subst_ty(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+/// 7GEN.5c carry-forward: does this Ty contain an unbound generic param
+/// anywhere in its structure — *transitively* through generic struct/enum
+/// instantiations? Used at the sema→mono handoff to skip placeholder
+/// instantiations (see comment near `struct_instantiations` snapshot in
+/// `check`). The recursion through `generic_origin` is what catches nested
+/// cases like `Pair[Box[T], i32]`: the outer args list only contains
+/// `Ty::Struct(box_T_unbound_id)` (no top-level Param), but Box[T]'s
+/// origin args do.
+fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool {
     match ty {
-        Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
-        Ty::Array(elem, len) => Ty::Array(Box::new(subst_ty(elem, subst)), *len),
-        Ty::RawPtr(inner) => Ty::RawPtr(Box::new(subst_ty(inner, subst))),
-        Ty::FnPtr { params, return_type } => Ty::FnPtr {
-            params: params.iter().map(|p| subst_ty(p, subst)).collect(),
-            return_type: Box::new(subst_ty(return_type, subst)),
-        },
-        other => other.clone(),
+        Ty::Param(_) => true,
+        Ty::Array(elem, _) => ty_contains_param(elem, structs, enums),
+        Ty::RawPtr(inner) => ty_contains_param(inner, structs, enums),
+        Ty::FnPtr { params, return_type } => {
+            params.iter().any(|p| ty_contains_param(p, structs, enums))
+                || ty_contains_param(return_type, structs, enums)
+        }
+        Ty::Struct(id) => {
+            if let Some((_, args)) = &structs[id.0 as usize].generic_origin {
+                args.iter().any(|a| ty_contains_param(a, structs, enums))
+            } else {
+                false
+            }
+        }
+        Ty::Enum(id) => {
+            if let Some((_, args)) = &enums[id.0 as usize].generic_origin {
+                args.iter().any(|a| ty_contains_param(a, structs, enums))
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
