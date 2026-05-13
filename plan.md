@@ -831,6 +831,7 @@ The deeper reason: **TypeScript's surface syntax is inseparable from its object-
 - Owned `string` type + `ToString` + interpolation literals `"hello ${expr}"` (slices 8.STR.3, 8.STR.6, 8.STR.B). **✅ shipped 2026-05-13** (with v1 leak — Drop integration deferred). See resolved-log entry below.
 - DWARF debug info via `-g` flag — function-level v1 (DICompileUnit, DIFile, DISubprogram + DILocation per fn). **✅ shipped 2026-05-13** — see resolved-log entry below. Per-instruction `!DILocation` and DILocalVariable are follow-ups.
 - Sanitizer flags `--asan` / `--ubsan` / `--tsan` / `--msan` — plumb `-fsanitize=...` to clang + attach the matching `sanitize_*` function attribute to every `define` in cpc-emitted IR. **✅ shipped 2026-05-13** — see resolved-log entry below.
+- Borrow-checker diagnostics polish: every borrow-conflict diagnostic now surfaces a secondary "borrowed here" / "moved here" / "sibling read of X here" label so users see both ends of the conflict. **✅ shipped 2026-05-13** — see resolved-log entry below.
 - Better error messages (continuous; borrow-checker diagnostics are the long pole)
 - Debugger support (DWARF — largely free from LLVM via `!DIFile` / `!DISubprogram` / `!DILocation` metadata; ideally wired up earlier so source positions don't have to be retrofitted)
 - Sanitizer flags (`cpc --asan` / `--ubsan` / `--tsan` / `--msan`) — instrumented user binaries via LLVM's existing pass infrastructure
@@ -1136,6 +1137,22 @@ Design notes needed before their phase (per §6):
 - [ ] Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references
 
 Resolved (kept for history):
+- **Phase 11 polish: borrow-checker diagnostics now carry secondary labels (2026-05-13):** every borrow-conflict diagnostic surfaces a "borrowed here" / "moved here" / "sibling read of X here" partner span. Users see both ends of the conflict in one diagnostic — the previous form pointed at the offending operation but never at the conflicting borrow's establishment site. **Coordinated changes:**
+  - **`live_borrows` map** in `Analyzer` upgraded from `BTreeMap<Place, BTreeSet<String>>` to `BTreeMap<Place, BTreeMap<String, Span>>` — each borrower remembers the `let`-site span where the borrow was established. `acquire_borrows` takes a `borrower_span: Span` parameter; callers pass the `let` binding's name span.
+  - **`RawDiag.label: Option<(Span, String)>`** — new optional secondary span. Populated at the borrow-check error sites: E0370/E0381 cite the sibling argument span (`"shared read of X here"`); E0380 cites the *first* `mut X` arg; E0382 cites the `move X` arg. E0383/E0381 (cross-statement, read-while-borrowed) and E0372 (move-while-borrowed) look up the borrower's establishment span from `live_borrows` and label it as `"`{borrower}` borrows here"`.
+  - **Diagnostic.labels field** populated via `raw_to_diagnostic`. Already existed in the JSON shape but was unused by borrowck; this slice activated it.
+  - **`Diagnostic::render_human`** renders each label as a `file:line:col: note: <message>` block followed by the source snippet at the secondary span. Before: only primary span showed. After: both ends side-by-side in the terminal output.
+  - **JSON diagnostics** now include the `labels` array (it was always part of the shape; this slice is the first to emit a non-empty one for borrow conflicts).
+  - **2 new e2e tests**: `phase11_borrow_diagnostic_includes_secondary_label` (human renderer), `phase11_borrow_diagnostic_json_carries_labels_field` (JSON output). **Test total: 897** (682 library + 204 e2e + 11 LSP), 0 warnings.
+  - **Example before/after** (E0372: move-while-borrowed):
+    ```
+    error[E0372]: cannot move `a` while it is shared borrowed by `r`
+      |     drain(a);
+      foo.cplus:11:9: note: `r` borrows `a` here
+      |     let r: B = longest(a, b);
+      = help: ...
+    ```
+    The `note:` line + second snippet is the new piece.
 - **Phase 11 polish: sanitizer flags landed (2026-05-13):** `--asan` / `--ubsan` / `--tsan` / `--msan` produce instrumented binaries. ASan, TSan, MSan are mutually exclusive (validated at CLI parse — fires error before invoking clang). UBSan composes with any of them.
   - **CLI**: four new flags, accumulated into `sanitizers: Vec<&'static str>` and validated for the at-most-one-of-{address,thread,memory} rule.
   - **Plumbing**: threaded through `compile_file` → `build_ir` → `codegen::generate_with_options` (new entry point that accepts both debug-source and sanitizers). `run_clang` adds `-fsanitize=<comma-joined>` + `-fno-omit-frame-pointer` (for cleaner sanitizer stack traces).

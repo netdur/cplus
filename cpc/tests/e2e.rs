@@ -4239,6 +4239,70 @@ fn phase11_asan_catches_heap_overflow() {
         "ASan didn't fire on heap overflow; stderr={stderr}, status={:?}", run.status);
 }
 
+// Phase 11 polish (2026-05-13): borrow-conflict diagnostics surface a
+// secondary "borrowed here" / "moved here" / "sibling read of X here"
+// span so users see both ends of the conflict.
+
+#[test]
+fn phase11_borrow_diagnostic_includes_secondary_label() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bdiag.cplus");
+    std::fs::write(&src, "\
+struct B { x: i32 }
+impl B { fn drop(mut self) { return; } }
+fn longest(a: B, b: B) -> B {
+    if a.x > b.x { return a; }
+    return b;
+}
+fn drain(move b: B) { return; }
+fn main() -> i32 {
+    let a: B = B { x: 1 };
+    let b: B = B { x: 2 };
+    let r: B = longest(a, b);
+    drain(a);
+    return 0;
+}
+").unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0372"), "stderr: {stderr}");
+    assert!(stderr.contains("note: `r` borrows `a` here"),
+        "secondary label missing; stderr: {stderr}");
+}
+
+#[test]
+fn phase11_borrow_diagnostic_json_carries_labels_field() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bjson.cplus");
+    std::fs::write(&src, "\
+struct B { x: i32 }
+impl B { fn drop(mut self) { return; } }
+fn longest(a: B, b: B) -> B {
+    if a.x > b.x { return a; }
+    return b;
+}
+fn drain(move b: B) { return; }
+fn main() -> i32 {
+    let a: B = B { x: 1 };
+    let b: B = B { x: 2 };
+    let r: B = longest(a, b);
+    drain(a);
+    return 0;
+}
+").unwrap();
+    let out = Command::new(cpc).arg("--diagnostics=json").arg("--emit-ll").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("\"labels\""),
+        "JSON output should carry a labels field; stderr: {stderr}");
+    assert!(stderr.contains("borrows `a` here"), "stderr: {stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

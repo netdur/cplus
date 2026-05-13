@@ -101,6 +101,24 @@ impl Diagnostic {
             out.push('\n');
             out.push_str(&snippet);
         }
+        // Phase 11 polish (2026-05-13): render secondary labels as
+        // "note: <message>" lines with their own file:line:col anchor
+        // plus a source snippet. Borrow-conflict diagnostics use this
+        // to surface the "borrowed here" / "moved here" partner span
+        // so users see both ends of the conflict.
+        for l in &self.labels {
+            out.push_str(&format!(
+                "\n  {}:{}:{}: note: {}",
+                l.span.file.display(),
+                l.span.start.line,
+                l.span.start.col,
+                l.message,
+            ));
+            if let Some(snippet) = render_snippet(&l.span, src) {
+                out.push('\n');
+                out.push_str(&snippet);
+            }
+        }
         for n in &self.notes {
             out.push_str(&format!("\n  = note: {n}"));
         }

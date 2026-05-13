@@ -1185,6 +1185,7 @@ fn build_direct_claim_diag(
                     primary.place.canonical(), other.place.canonical()
                 ),
             )),
+            label: Some((other.span, format!("overlapping access to `{}` here", other.place.canonical()))),
         });
     }
 
@@ -1208,6 +1209,7 @@ fn build_direct_claim_diag(
                          (e.g. `f(mut {primary_name}.left, mut {primary_name}.right)`)."
                     ),
                 )),
+                label: Some((primary.span, format!("first `mut {primary_name}` here"))),
             })
         }
         (Exclusive, Move) | (Move, Exclusive) => {
@@ -1216,6 +1218,7 @@ fn build_direct_claim_diag(
             // 6BC.1 behavior tests pinned.
             if j < i { return None; }
             let mut_span = if matches!(primary.kind, Exclusive) { primary.span } else { other.span };
+            let move_span = if matches!(primary.kind, Exclusive) { other.span } else { primary.span };
             Some(RawDiag {
                 code: "E0382",
                 message: format!(
@@ -1231,6 +1234,7 @@ fn build_direct_claim_diag(
                          consumption in the same call. Split into two statements."
                     ),
                 )),
+                label: Some((move_span, format!("`move {primary_name}` here"))),
             })
         }
         // Shared can't appear in direct claims today (see
@@ -1365,7 +1369,12 @@ struct Analyzer<'p> {
     /// Place X is `BorrowedShared(N)` iff `live_borrows[X].len() == N`.
     /// Established by Rule-E1 / Rule-E2 calls in `let` initializers;
     /// released when a borrower goes out of scope or is moved out.
-    live_borrows: BTreeMap<Place, std::collections::BTreeSet<String>>,
+    ///
+    /// Phase 11 polish (2026-05-13): each borrower also remembers the
+    /// span where the borrow was *established* (the `let` site).
+    /// Borrow-conflict diagnostics surface this as a "borrowed here"
+    /// secondary label so users see both ends of the conflict.
+    live_borrows: BTreeMap<Place, std::collections::BTreeMap<String, Span>>,
     /// 5BC.3b/5BC.4: per-binding back-pointer to every place it borrows
     /// from. `binding_borrows_from[r] == [p1, p2]` means `let r = longest(p1, p2);`
     /// (Rule E3) recorded `r` as borrowing from both `p1` and `p2`. For
@@ -1385,6 +1394,11 @@ struct RawDiag {
     message: String,
     primary: Span,
     suggestion: Option<(Span, String, String)>, // (span, replacement, description)
+    /// Phase 11 polish (2026-05-13): optional secondary span. For
+    /// borrow-conflict diagnostics this points at the `let` site that
+    /// established the conflicting borrow ("borrowed here") so users
+    /// see both ends of the conflict in one diagnostic.
+    label: Option<(Span, String)>,
 }
 
 impl<'p> Analyzer<'p> {
@@ -1415,6 +1429,7 @@ impl<'p> Analyzer<'p> {
         &mut self,
         places: Vec<Place>,
         borrower: &str,
+        borrower_span: Span,
         flavor: BorrowFlavor,
         state: &mut BTreeMap<Place, PlaceState>,
     ) {
@@ -1428,7 +1443,7 @@ impl<'p> Analyzer<'p> {
         self.binding_borrows_from.insert(borrower.to_string(), unique.clone());
         for place in unique {
             let set = self.live_borrows.entry(place.clone()).or_default();
-            set.insert(borrower.to_string());
+            set.insert(borrower.to_string(), borrower_span);
             let new_state = match flavor {
                 BorrowFlavor::Shared => PlaceState::BorrowedShared(set.len() as u32),
                 BorrowFlavor::Exclusive => PlaceState::BorrowedExclusive(borrower.to_string()),
@@ -1597,12 +1612,19 @@ fn raw_to_diagnostic(r: RawDiag, file: &PathBuf, src: &str, lm: &LineMap) -> Dia
         }],
         None => Vec::new(),
     };
+    let labels = match r.label {
+        Some((span, message)) => vec![crate::diagnostics::Label {
+            span: lm.span(file, span, src),
+            message,
+        }],
+        None => Vec::new(),
+    };
     Diagnostic {
         severity: Severity::Error,
         code: DiagCode(r.code),
         message: r.message,
         primary: lm.span(file, r.primary, src),
-        labels: Vec::new(),
+        labels,
         notes: Vec::new(),
         suggestions,
     }
@@ -1699,6 +1721,7 @@ fn build_e0384(name: &str, params: &[Param], _ret: &Type, span: Span) -> RawDiag
                 example_param, example_param
             ),
         )),
+        label: None,
     }
 }
 
@@ -1896,7 +1919,7 @@ impl Analyzer<'_> {
                 // BorrowedShared(N) for shared borrows (Phase 5) or
                 // BorrowedExclusive(name) for exclusive ones (6BC.2).
                 if !borrow_sources.is_empty() {
-                    self.acquire_borrows(borrow_sources, &name.name, borrow_flavor, state);
+                    self.acquire_borrows(borrow_sources, &name.name, name.span, borrow_flavor, state);
                 }
             }
             StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => {
@@ -2161,6 +2184,9 @@ impl Analyzer<'_> {
                     other.canonical()
                 ))
             };
+            let borrow_span = self.live_borrows.get(other)
+                .and_then(|m| m.get(borrower))
+                .copied();
             self.diags.push(RawDiag {
                 code,
                 message: msg,
@@ -2173,6 +2199,7 @@ impl Analyzer<'_> {
                         place.canonical()
                     ),
                 )),
+                label: borrow_span.map(|s| (s, format!("`{borrower}` borrows here"))),
             });
             return;
         }
@@ -2203,6 +2230,7 @@ impl Analyzer<'_> {
                              or clone it before the branch: `let {name}_owned = {name}.clone();`"
                         ),
                     )),
+                    label: None,
                 });
                 return;
             }
@@ -2230,6 +2258,9 @@ impl Analyzer<'_> {
                     place.canonical()
                 ))
             };
+            let borrow_span = self.live_borrows.get(place)
+                .and_then(|m| m.get(borrower))
+                .copied();
             self.diags.push(RawDiag {
                 code,
                 message: msg,
@@ -2243,6 +2274,7 @@ impl Analyzer<'_> {
                          the read happens before the exclusive borrow is established."
                     ),
                 )),
+                label: borrow_span.map(|s| (s, format!("`{borrower}` borrows `{name}` here"))),
             });
             return; // one diagnostic per access
         }
@@ -2279,6 +2311,7 @@ impl Analyzer<'_> {
                          or clone it before the branch: `let {name}_owned = {name}.clone();`"
                     ),
                 )),
+                label: None,
             });
         }
     }
@@ -2489,6 +2522,7 @@ impl Analyzer<'_> {
                          all of its sub-places. Split into two statements."
                     ),
                 )),
+                label: Some((other_place_span, format!("sibling read of `{name}` here"))),
             });
         }
         // Same-place: E0370 for move, E0381 for exclusive.
@@ -2507,6 +2541,7 @@ impl Analyzer<'_> {
                          `let tmp = ...; consume(move {name}, tmp);`"
                     ),
                 )),
+                label: Some((other_place_span, format!("shared read of `{name}` here"))),
             }),
             ClaimKind::Exclusive => Some(RawDiag {
                 code: "E0381",
@@ -2523,6 +2558,7 @@ impl Analyzer<'_> {
                          two statements: `let tmp = ...; f(mut {name}, tmp);`"
                     ),
                 )),
+                label: Some((other_place_span, format!("shared read of `{name}` here"))),
             }),
             ClaimKind::Shared => None, // shared+shared is admissible
         }
@@ -2556,9 +2592,10 @@ impl Analyzer<'_> {
         let Some(st) = state.get(&place) else { return };
         match st {
             PlaceState::BorrowedShared(_) => {
-                let borrower = self.live_borrows.get(&place)
-                    .and_then(|s| s.iter().next().cloned())
-                    .unwrap_or_else(|| "(unknown)".to_string());
+                let (borrower, borrow_span) = self.live_borrows.get(&place)
+                    .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
+                    .map(|(n, s)| (n, Some(s)))
+                    .unwrap_or_else(|| ("(unknown)".to_string(), None));
                 self.diags.push(RawDiag {
                     code: "E0381",
                     message: format!(
@@ -2575,9 +2612,13 @@ impl Analyzer<'_> {
                              so the call happens before the borrow is established."
                         ),
                     )),
+                    label: borrow_span.map(|s| (s, format!("`{borrower}` borrows `{recv_name}` here"))),
                 });
             }
             PlaceState::BorrowedExclusive(borrower) if borrower != recv_name => {
+                let borrow_span = self.live_borrows.get(&place)
+                    .and_then(|m| m.get(borrower))
+                    .copied();
                 self.diags.push(RawDiag {
                     code: "E0383",
                     message: format!(
@@ -2591,6 +2632,7 @@ impl Analyzer<'_> {
                             "while `{borrower}` is alive, no overlapping access to `{recv_name}` is admitted."
                         ),
                     )),
+                    label: borrow_span.map(|s| (s, format!("`{borrower}` exclusively borrows `{recv_name}` here"))),
                 });
             }
             _ => {}
@@ -2615,17 +2657,19 @@ impl Analyzer<'_> {
         // first overlapping entry deterministically (BTreeMap iterates
         // in sorted order). The same-place case is the most common
         // pattern; partial-overlap is the 6BC.3 extension.
-        let mut hit: Option<(Place, String, PlaceOverlap)> = None;
+        let mut hit: Option<(Place, String, Span, PlaceOverlap)> = None;
         for (place, borrowers) in self.live_borrows.iter() {
             if place.root != name { continue; }
             if borrowers.is_empty() { continue; }
             let overlap = target.overlap(place);
             if matches!(overlap, PlaceOverlap::Disjoint) { continue; }
-            let borrower = borrowers.iter().next().unwrap().clone();
-            hit = Some((place.clone(), borrower, overlap));
+            let (borrower, borrower_span) = borrowers.iter().next()
+                .map(|(n, s)| (n.clone(), *s))
+                .unwrap();
+            hit = Some((place.clone(), borrower, borrower_span, overlap));
             break;
         }
-        let Some((place, borrower, overlap)) = hit else { return };
+        let Some((place, borrower, borrower_span, overlap)) = hit else { return };
         let is_exclusive = matches!(state.get(&place), Some(PlaceState::BorrowedExclusive(_)));
         let flavor_label = if is_exclusive { "exclusively" } else { "shared" };
         let (msg, hint) = if matches!(overlap, PlaceOverlap::Same) {
@@ -2668,6 +2712,7 @@ impl Analyzer<'_> {
             message: msg,
             primary: span,
             suggestion: Some((span, String::new(), hint)),
+            label: Some((borrower_span, format!("`{borrower}` borrows `{name}` here"))),
         });
     }
 }
