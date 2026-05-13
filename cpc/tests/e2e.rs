@@ -3937,6 +3937,161 @@ fn phase11_type_alias_in_fn_signature_runs() {
     assert_eq!(run.code(), Some(42));
 }
 
+// Phase 8 — owned `string` + interpolation. Three slices landed together:
+// 8.STR.3 (owned string type), 8.STR.6 (blessed ToString), 8.STR.B
+// (interpolation parser + codegen).
+
+#[test]
+fn phase8_string_new_and_methods_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("s.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let s: string = string::with_capacity(64 as usize);\n\
+             let empty: bool = s.is_empty();\n\
+             let view: str = s.as_str();\n\
+             let n: i32 = s.len() as i32;\n\
+             if empty { return 42; }\n\
+             return n;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("s");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "string methods should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn phase8_to_string_on_primitives_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ts.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let n: i32 = -1234;\n\
+             let s: string = n.to_string();\n\
+             println(s.as_str());\n\
+             return s.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("ts");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "to_string should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(5), "len of \"-1234\" is 5");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("-1234"), "stdout: {stdout}");
+}
+
+#[test]
+fn phase8_interp_simple_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ip.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let n: i32 = 42;\n\
+             let name: str = \"world\";\n\
+             let g: string = \"hello ${name}, n is ${n}\";\n\
+             println(g.as_str());\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("ip");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "interpolation should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("hello world, n is 42"), "stdout: {stdout}");
+}
+
+#[test]
+fn phase8_interp_expressions_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ipe.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let n: i32 = 7;\n\
+             let s: string = \"sum: ${n +% 3}, doubled: ${n *% 2}\";\n\
+             println(s.as_str());\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("ipe");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "expr-inside-interp should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("sum: 10, doubled: 14"), "stdout: {stdout}");
+}
+
+#[test]
+fn phase8_interp_double_dollar_escape_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("dd.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let s: str = \"price: $$5\";\n\
+             println(s);\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("dd");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "$$ escape should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("price: $5"), "stdout: {stdout}");
+}
+
+#[test]
+fn phase8_interp_non_tostring_type_rejected_e0612() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("nots.cplus");
+    std::fs::write(
+        &src,
+        "struct Point { x: i32, y: i32 }\n\
+         fn main() -> i32 {\n\
+             let p: Point = Point { x: 1, y: 2 };\n\
+             let s: string = \"point: ${p}\";\n\
+             return s.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "non-ToString type should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0612"), "expected E0612 in stderr: {stderr}");
+}
+
+#[test]
+fn phase8_interp_demo_sample_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = "/Users/adel/Workspace/C+/docs/examples/phase8_interpolation.cplus";
+    let bin = dir.join("interp_demo");
+    let out = Command::new(cpc).arg(src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "interpolation demo should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(0));
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

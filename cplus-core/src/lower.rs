@@ -161,6 +161,13 @@ impl Lower {
             ExprKind::IntLit(..) | ExprKind::FloatLit(..) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
             | ExprKind::Ident(_) => {}
+            ExprKind::InterpStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(e) = p {
+                        self.lower_expr(e);
+                    }
+                }
+            }
             ExprKind::Block(b) => self.lower_block(b),
             ExprKind::Unsafe(b) => self.lower_block(b),
             ExprKind::If { cond, then, else_branch } => {

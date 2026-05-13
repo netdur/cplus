@@ -802,27 +802,40 @@ fn write_preamble(out: &mut String) {
 fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable {
     let mut table: StrLitTable = HashMap::new();
     let mut next_id: u32 = 0;
+    fn emit_str_global(s: &str, table: &mut StrLitTable, next_id: &mut u32, out: &mut String) {
+        if table.contains_key(s) { return; }
+        let symbol = format!("@.str.{}", *next_id);
+        *next_id += 1;
+        let len = s.len();
+        let total = len + 1;
+        let mut escaped = String::new();
+        for byte in s.bytes() {
+            if byte == b'"' || byte == b'\\' || !(0x20..0x7F).contains(&byte) {
+                escaped.push_str(&format!("\\{byte:02X}"));
+            } else {
+                escaped.push(byte as char);
+            }
+        }
+        escaped.push_str("\\00");
+        out.push_str(&format!(
+            "{symbol} = private unnamed_addr constant [{total} x i8] c\"{escaped}\", align 1\n"
+        ));
+        table.insert(s.to_string(), (symbol, len));
+    }
     fn walk_expr(e: &Expr, table: &mut StrLitTable, next_id: &mut u32, out: &mut String) {
         match &e.kind {
             ExprKind::StrLit(s) => {
-                if !table.contains_key(s) {
-                    let symbol = format!("@.str.{}", *next_id);
-                    *next_id += 1;
-                    let len = s.len();
-                    let total = len + 1;
-                    let mut escaped = String::new();
-                    for byte in s.bytes() {
-                        if byte == b'"' || byte == b'\\' || !(0x20..0x7F).contains(&byte) {
-                            escaped.push_str(&format!("\\{byte:02X}"));
-                        } else {
-                            escaped.push(byte as char);
-                        }
+                emit_str_global(s, table, next_id, out);
+            }
+            ExprKind::InterpStr { parts } => {
+                // Phase 8 slice 8.STR.B: each Lit segment gets the same
+                // @.str.N treatment as a plain StrLit so codegen at the
+                // use site can reuse the existing fat-pointer machinery.
+                for p in parts {
+                    match p {
+                        crate::ast::InterpStrPart::Lit(s) => emit_str_global(s, table, next_id, out),
+                        crate::ast::InterpStrPart::Expr(e) => walk_expr(e, table, next_id, out),
                     }
-                    escaped.push_str("\\00");
-                    out.push_str(&format!(
-                        "{symbol} = private unnamed_addr constant [{total} x i8] c\"{escaped}\", align 1\n"
-                    ));
-                    table.insert(s.clone(), (symbol, len));
                 }
             }
             ExprKind::Block(b) => walk_block(b, table, next_id, out),
@@ -2029,6 +2042,9 @@ impl<'a> FnState<'a> {
                     "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
                 ));
                 Some((t2, Ty::Str))
+            }
+            ExprKind::InterpStr { parts } => {
+                Some(self.gen_interp_str(parts))
             }
             ExprKind::FloatLit(v, suf) => {
                 use crate::lexer::NumSuffix;
@@ -3310,6 +3326,83 @@ impl<'a> FnState<'a> {
         let (slot, target_ty) = self.gen_place(target);
         let (v, _) = self.gen_expr(value).expect("assigned value");
         self.emit(&format!("store {} {v}, ptr {slot}", self.lty(&target_ty)));
+    }
+
+    // ---------- Phase 8 slice 8.STR.B.2: interpolation codegen ----------
+    //
+    // Lowers `"hello ${name}, n is ${n}"` to:
+    //   1. For each Lit part: lookup the @.str.N global, take (ptr, len).
+    //   2. For each Expr part: evaluate. If primitive/str, invoke the
+    //      blessed to_string intrinsic to produce a `string`. If
+    //      already `string`, use as-is.
+    //   3. Compute total length = sum of all part lengths.
+    //   4. malloc(total).
+    //   5. memcpy each part's bytes into the buffer at the running offset.
+    //   6. Build the result aggregate `{ buf, total, total }`.
+    //
+    // v1 leak: any Expr-derived `string`'s buffer is malloc'd inside
+    // to_string and never freed. Matches the broader 8.STR.3 leak
+    // policy; Drop integration is a follow-up.
+
+    fn gen_interp_str(&mut self, parts: &[crate::ast::InterpStrPart]) -> (String, Ty) {
+        use crate::ast::InterpStrPart;
+        // First pass: produce a (ptr, len) pair per part.
+        let mut piece_ptrs: Vec<String> = Vec::with_capacity(parts.len());
+        let mut piece_lens: Vec<String> = Vec::with_capacity(parts.len());
+        for p in parts {
+            match p {
+                InterpStrPart::Lit(s) => {
+                    let (symbol, len) = self.str_lits.get(s)
+                        .expect("interp lit part missing from str_lits table")
+                        .clone();
+                    piece_ptrs.push(symbol);
+                    piece_lens.push(format!("{len}"));
+                }
+                InterpStrPart::Expr(e) => {
+                    let (v, t) = self.gen_expr(e).expect("interp expr has value");
+                    // Convert to a string aggregate.
+                    let (sv, _) = match t {
+                        Ty::String => (v, Ty::String),
+                        Ty::Str => self.gen_to_string_str(&v),
+                        Ty::Bool => self.gen_to_string_bool(&v),
+                        Ty::F32 | Ty::F64 => self.gen_to_string_float(&v, &t),
+                        ref rt if rt.is_signed_int() => self.gen_to_string_signed(&v, rt),
+                        ref rt if rt.is_unsigned_int() => self.gen_to_string_unsigned(&v, rt),
+                        _ => unreachable!("sema validated interp expr type"),
+                    };
+                    // Extract ptr+len.
+                    let pp = self.next_tmp();
+                    self.emit(&format!("{pp} = extractvalue {{ ptr, i64, i64 }} {sv}, 0"));
+                    let lp = self.next_tmp();
+                    self.emit(&format!("{lp} = extractvalue {{ ptr, i64, i64 }} {sv}, 1"));
+                    piece_ptrs.push(pp);
+                    piece_lens.push(lp);
+                }
+            }
+        }
+        // Compute total length via accumulating adds.
+        let mut total = String::from("0");
+        for l in &piece_lens {
+            let next = self.next_tmp();
+            self.emit(&format!("{next} = add i64 {total}, {l}"));
+            total = next;
+        }
+        // Allocate the output buffer.
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 {total})"));
+        // memcpy each piece at the running offset.
+        let mut offset = String::from("0");
+        for (ptr, len) in piece_ptrs.iter().zip(piece_lens.iter()) {
+            let dst = self.next_tmp();
+            self.emit(&format!("{dst} = getelementptr i8, ptr {buf}, i64 {offset}"));
+            let _cpy = self.next_tmp();
+            self.emit(&format!("{_cpy} = call ptr @memcpy(ptr {dst}, ptr {ptr}, i64 {len})"));
+            let next_off = self.next_tmp();
+            self.emit(&format!("{next_off} = add i64 {offset}, {len}"));
+            offset = next_off;
+        }
+        let v = self.string_aggregate(&buf, &total, &total);
+        (v, Ty::String)
     }
 
     // ---------- Phase 8 slice 8.STR.6: blessed `to_string()` ----------

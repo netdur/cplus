@@ -1167,6 +1167,13 @@ fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
 fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> Result<(), ResolveError> {
     match &mut e.kind {
         ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _) | ExprKind::BoolLit(_) | ExprKind::StrLit(_) => {}
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr(inner) = p {
+                    rewrite_expr(inner, ctx, scope)?;
+                }
+            }
+        }
         ExprKind::Ident(name) => {
             // Don't touch shadowed locals. Don't touch `self`.
             if scope.contains(name) || name == "self" {

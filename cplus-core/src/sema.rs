@@ -2145,6 +2145,7 @@ impl SemaCx<'_> {
             ExprKind::FloatLit(_, suf) => self.check_float_lit(*suf, expected),
             ExprKind::BoolLit(_) => Ty::Bool,
             ExprKind::StrLit(_) => Ty::Str,
+            ExprKind::InterpStr { parts } => self.check_interp_str(parts, e.span),
             ExprKind::Ident(name) => self.resolve_value_ident(name, e.span, expected.clone()),
             ExprKind::Block(b) => self.check_block_as_expr(b),
             ExprKind::Unsafe(b) => {
@@ -3485,6 +3486,43 @@ impl SemaCx<'_> {
         self.method_instantiations.insert(key);
         self.call_monos.insert(call_span, arg_tys);
         self.subst_ty_deep(&sig.return_type, &subst)
+    }
+
+    /// Phase 8 slice 8.STR.B: type-check an interpolated string literal.
+    /// Walk each part; each `Expr` part must have a type that satisfies
+    /// `ToString` (blessed primitives + `str`, or a user-declared
+    /// `impl ToString for Foo`). Result type is `Ty::String`.
+    fn check_interp_str(&mut self, parts: &[crate::ast::InterpStrPart], span: ByteSpan) -> Ty {
+        use crate::ast::InterpStrPart;
+        for part in parts {
+            if let InterpStrPart::Expr(e) = part {
+                let ty = self.check_expr(e, None);
+                if matches!(ty, Ty::Error) { continue; }
+                let ok = Self::is_blessed_to_string_receiver(&ty)
+                    || matches!(&ty, Ty::String)
+                    || matches!(&ty, Ty::Struct(id)
+                        if self.interface_impls.contains(&(
+                            "ToString".to_string(),
+                            self.structs[id.0 as usize].name.clone(),
+                        )));
+                if !ok {
+                    self.err(
+                        "E0612",
+                        format!(
+                            "type `{}` does not implement `ToString`; \
+                             cannot embed in an interpolation `${{...}}` segment",
+                            ty_display(&ty)
+                        ),
+                        e.span,
+                    );
+                }
+            }
+        }
+        // Future: if the literal has *zero* Expr parts after sub-parsing,
+        // could downgrade to Ty::Str. The lexer already returns a plain
+        // Str token in that case, so we don't reach here.
+        let _ = span;
+        Ty::String
     }
 
     /// Phase 8 slice 8.STR.6: which receiver types get a blessed

@@ -27,6 +27,16 @@ pub enum NumSuffix {
     F32, F64,
 }
 
+/// Phase 8 slice 8.STR.B.1: one piece of an interpolated string literal.
+/// `Lit` carries decoded text (escapes processed, `$$` → `$`). `Expr`
+/// carries the raw inner source plus its byte range in the parent file —
+/// the parser sub-lexes this for the embedded expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpPart {
+    Lit(String),
+    Expr { source: String, span: Span },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // literals
@@ -36,6 +46,15 @@ pub enum TokenKind {
     /// path strings. Payload is the unescaped contents (currently no escape
     /// sequences are processed — path strings don't need them).
     Str(String),
+    /// Phase 8 slice 8.STR.B.1: interpolated string literal —
+    /// `"hello ${name}, n is ${n}"`. The lexer splits the payload into
+    /// alternating literal segments (escapes decoded; `$$` becomes `$`)
+    /// and embedded expression source. Each expression is captured as
+    /// raw source text plus its span in the parent file; the parser
+    /// recursively re-lexes + parses it. Spans on the expression
+    /// tokens point back into the parent file so diagnostics render at
+    /// the right location.
+    InterpStr(Vec<InterpPart>),
     Ident(String),
     /// `// ...` line comment. Payload excludes the `//` marker and the
     /// terminating newline. Only emitted by `tokenize_with_trivia`; the
@@ -276,18 +295,21 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_string(&mut self, start: usize) -> Result<Token, LexError> {
-        // Slice 4A: minimal string literal — used for `import "path" as name;`.
-        // No escape sequences yet; the contents must be a path-friendly subset
-        // (no double quotes, no newlines, no backslashes). We reject backslash
-        // explicitly so a future escape-aware version doesn't silently change
-        // the meaning of existing strings.
+        // Phase 8 slice 8.STR.B.1: interpolated string literal.
+        // Two-phase scan:
+        //   1. Accumulate bytes into `decoded`, processing `\n`/`\t`/... escapes.
+        //   2. On `${`, flush the current `decoded` as a Lit part, scan
+        //      forward counting braces until the matching `}`, capture
+        //      the inner source as an Expr part, then resume scanning.
+        //   3. On `$$`, decode as a literal `$`.
+        //   4. On `$` followed by anything else, error (E0611-ish; raised
+        //      as LexError::UnexpectedChar for now — parser-level mapping
+        //      to E0611 in slice 8.STR.B's sema work).
+        // If no `${...}` segments appear, emit a regular `Str` token —
+        // existing consumers see the same shape as before.
         self.pos += 1; // opening "
-        // Phase 8 slice 8.STR.1: process escape sequences. The token's
-        // payload is the *decoded* UTF-8 bytes (any `\n` etc. already
-        // replaced with the corresponding byte). For Phase-4 import
-        // paths there are no escapes in practice, so this is
-        // backwards-compatible.
         let mut decoded: Vec<u8> = Vec::new();
+        let mut parts: Vec<InterpPart> = Vec::new();
         loop {
             match self.peek(0) {
                 None | Some(b'\n') => {
@@ -319,10 +341,79 @@ impl<'a> Lexer<'a> {
                         }
                     }
                 }
+                Some(b'$') => {
+                    match self.peek(1) {
+                        Some(b'$') => {
+                            // `$$` → literal `$`.
+                            decoded.push(b'$');
+                            self.pos += 2;
+                        }
+                        Some(b'{') => {
+                            // `${...}` — interpolation segment. Flush the
+                            // current decoded bytes as a Lit part.
+                            if !decoded.is_empty() {
+                                let lit = String::from_utf8(std::mem::take(&mut decoded))
+                                    .unwrap_or_default();
+                                parts.push(InterpPart::Lit(lit));
+                            }
+                            self.pos += 2; // skip `${`
+                            let inner_start = self.pos;
+                            let mut brace_depth = 1usize;
+                            while brace_depth > 0 {
+                                match self.peek(0) {
+                                    None => {
+                                        return Err(LexError {
+                                            kind: LexErrorKind::UnterminatedString,
+                                            span: self.span_from(start),
+                                        });
+                                    }
+                                    Some(b'{') => { brace_depth += 1; self.pos += 1; }
+                                    Some(b'}') => { brace_depth -= 1; if brace_depth > 0 { self.pos += 1; } }
+                                    Some(b'"') => {
+                                        // Nested string inside `${...}` not
+                                        // supported in v1 — would need a
+                                        // recursive lex_string call. The
+                                        // design doc spells this out.
+                                        return Err(LexError {
+                                            kind: LexErrorKind::UnexpectedChar('"'),
+                                            span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                                        });
+                                    }
+                                    Some(_) => { self.pos += 1; }
+                                }
+                            }
+                            let inner_end = self.pos;   // points at `}`
+                            let inner_source = std::str::from_utf8(&self.src[inner_start..inner_end])
+                                .unwrap_or("")
+                                .to_string();
+                            parts.push(InterpPart::Expr {
+                                source: inner_source,
+                                span: Span::new(inner_start as u32, inner_end as u32),
+                            });
+                            self.pos += 1; // skip the closing `}`
+                        }
+                        _ => {
+                            return Err(LexError {
+                                kind: LexErrorKind::UnexpectedChar('$'),
+                                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                            });
+                        }
+                    }
+                }
                 Some(b'"') => {
-                    let body = String::from_utf8(decoded).unwrap_or_default();
                     self.pos += 1; // closing "
-                    return Ok(Token { kind: TokenKind::Str(body), span: self.span_from(start) });
+                    if parts.is_empty() {
+                        // No interpolation — emit a plain Str token to
+                        // preserve the existing token shape.
+                        let body = String::from_utf8(decoded).unwrap_or_default();
+                        return Ok(Token { kind: TokenKind::Str(body), span: self.span_from(start) });
+                    }
+                    // Flush any trailing literal segment.
+                    if !decoded.is_empty() {
+                        let lit = String::from_utf8(decoded).unwrap_or_default();
+                        parts.push(InterpPart::Lit(lit));
+                    }
+                    return Ok(Token { kind: TokenKind::InterpStr(parts), span: self.span_from(start) });
                 }
                 Some(b) => { decoded.push(b); self.pos += 1; }
             }

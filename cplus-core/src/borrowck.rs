@@ -2000,6 +2000,14 @@ impl Analyzer<'_> {
             | ExprKind::StrLit(_)
             | ExprKind::Path { .. } => {}
 
+            ExprKind::InterpStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(e) = p {
+                        self.apply_expr(e, state);
+                    }
+                }
+            }
+
             ExprKind::Ident(name) => {
                 self.record_read(name, e.span, state);
             }
@@ -2709,6 +2717,10 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
     match &e.kind {
         ExprKind::Ident(n) => n == name,
         ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _) | ExprKind::BoolLit(_) | ExprKind::StrLit(_) => false,
+        ExprKind::InterpStr { parts } => parts.iter().any(|p| match p {
+            crate::ast::InterpStrPart::Expr(e) => expr_reads_ident(e, name),
+            _ => false,
+        }),
         ExprKind::Path { .. } => false,
         ExprKind::Block(b) => {
             b.stmts.iter().any(|s| stmt_reads_ident(s, name))

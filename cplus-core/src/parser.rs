@@ -522,6 +522,55 @@ impl Parser {
         }
     }
 
+    /// Phase 8 slice 8.STR.B.1: convert the lexer's raw interpolation parts
+    /// into AST parts. Each `Expr` part is re-lexed + parsed as a fresh
+    /// expression. Spans on the inner tokens are *relative to the inner
+    /// source*, not the parent file — accepted as a v1 limitation; the
+    /// design doc flags it (the parent token's span points at the whole
+    /// literal, which most diagnostics will resolve to anyway).
+    fn parse_interp_parts(
+        &mut self,
+        lex_parts: Vec<crate::lexer::InterpPart>,
+        whole_span: Span,
+    ) -> Result<Vec<crate::ast::InterpStrPart>, ParseError> {
+        use crate::lexer::{InterpPart, tokenize};
+        let mut out = Vec::with_capacity(lex_parts.len());
+        for part in lex_parts {
+            match part {
+                InterpPart::Lit(s) => {
+                    out.push(crate::ast::InterpStrPart::Lit(s));
+                }
+                InterpPart::Expr { source, span: _ } => {
+                    let inner_tokens = tokenize(&source).map_err(|_e| ParseError {
+                        // Use the whole-string span; precise inner-source
+                        // span needs offset adjustment which v1 skips.
+                        kind: ParseErrorKind::Unexpected {
+                            found: "invalid expression".to_string(),
+                            expected: "well-formed expression inside `${...}`",
+                        },
+                        span: whole_span,
+                    })?;
+                    let mut sub = Parser::new(inner_tokens);
+                    let expr = sub.parse_expr()?;
+                    // Confirm the parser consumed the full source —
+                    // a trailing token would mean we accepted something
+                    // like `${ 1 + 1 }; rest` which is malformed.
+                    if !matches!(sub.peek_kind(), TokenKind::Eof) {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                found: "trailing tokens".to_string(),
+                                expected: "end of expression inside `${...}`",
+                            },
+                            span: whole_span,
+                        });
+                    }
+                    out.push(crate::ast::InterpStrPart::Expr(Box::new(expr)));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Phase 11 polish (2026-05-13): `type Foo = Bar;` parser.
     /// Attributes are admitted at the surface but rejected here for now —
     /// there's no Phase-11 attribute that makes sense on aliases.
@@ -1543,6 +1592,12 @@ impl Parser {
                 let s = s.clone();
                 self.bump();
                 Ok(Expr { kind: ExprKind::StrLit(s), span: tok.span })
+            }
+            TokenKind::InterpStr(lex_parts) => {
+                let lex_parts = lex_parts.clone();
+                self.bump();
+                let parts = self.parse_interp_parts(lex_parts, tok.span)?;
+                Ok(Expr { kind: ExprKind::InterpStr { parts }, span: tok.span })
             }
             TokenKind::SelfLower => {
                 self.bump();

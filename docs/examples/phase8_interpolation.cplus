@@ -1,0 +1,42 @@
+// Phase 8.STR.B: string interpolation `"hello ${expr}"`.
+//
+// Each `${...}` segment can be any C+ expression whose type implements
+// `ToString`. Blessed impls: every numeric primitive, bool, str.
+// User types: provide `impl ToString for Foo { fn to_string(self) -> string }`.
+//
+// `$$` escapes to a literal `$`. A `$` followed by anything else
+// (other than `{` or `$`) is a lex error.
+//
+// A literal with zero `${...}` segments stays `str` (no allocation);
+// presence of any embedded expression makes the literal `string` (owned).
+
+fn main() -> i32 {
+    let n: i32 = 42;
+    let name: str = "world";
+    let pi: f64 = 3.14;
+    let on: bool = true;
+
+    // Simple identifier embed. An interpolated literal is `string`
+    // (owned); call `.as_str()` for `println`.
+    let s1: string = "hello ${name}";
+    println(s1.as_str());
+
+    // Multiple embeds, mixed types.
+    let s2: string = "n=${n}, pi=${pi}, on=${on}";
+    println(s2.as_str());
+
+    // Expression (not just an identifier) inside `${...}`.
+    let s3: string = "doubled: ${n *% 2}, plus_one: ${n +% 1}";
+    println(s3.as_str());
+
+    // Function call inside `${...}` — `str_len(s)` is the Phase-8
+    // intrinsic for the length of a `str` view.
+    let s4: string = "len of name: ${str_len(name)}";
+    println(s4.as_str());
+
+    // `$$` for a literal `$`.
+    let s5: str = "price: $$5";
+    println(s5);
+
+    return 0;
+}
