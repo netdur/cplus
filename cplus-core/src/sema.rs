@@ -69,6 +69,12 @@ pub enum Ty {
     /// caller is responsible for lifetime and aliasing. Deref / index /
     /// arithmetic land in 10.FFI.2.
     RawPtr(Box<Ty>),
+    /// Slice 11.FN_PTR: function pointer — `fn(T1, T2) -> R`. Lowered
+    /// to LLVM `ptr`. Copy semantics. No environment capture (no
+    /// closures in C+); the pointer is just the symbol's address.
+    /// Calling convention is always ccc. Two FnPtr values are equal
+    /// iff their parameter types and return type are equal.
+    FnPtr { params: Vec<Ty>, return_type: Box<Ty> },
     Enum(EnumId),
     Struct(StructId),
     /// Fixed-size array: element type + length.
@@ -98,6 +104,7 @@ impl Ty {
             Ty::Unit => "()",
             Ty::Str => "str",
             Ty::RawPtr(_) => "raw-pointer",
+            Ty::FnPtr { .. } => "fn-pointer",
             Ty::Enum(_) => "enum",
             Ty::Struct(_) => "struct",
             Ty::Array(_, _) => "array",
@@ -135,6 +142,7 @@ impl Ty {
             | Ty::Bool | Ty::Unit
             | Ty::Str
             | Ty::RawPtr(_)
+            | Ty::FnPtr { .. }
             | Ty::Error => true,
             Ty::Struct(_) | Ty::Array(_, _) | Ty::Enum(_) => false,
             // Slice 7GEN.4: a generic type parameter's Copy-ness is
@@ -259,6 +267,12 @@ pub struct FnSig {
     /// pass any number of extra args after the fixed `params`. Only
     /// set on extern fns; C+-defined fns are never variadic.
     pub is_variadic: bool,
+    /// Phase 11 / ObjC interop: `#[link_name = "..."]` aliases the
+    /// linker symbol so multiple typed `extern fn` declarations can
+    /// resolve to the same C symbol. None means "use the fn's source
+    /// name as the symbol." Only meaningful on extern fns; sema rejects
+    /// the attribute on non-extern fns.
+    pub link_name: Option<String>,
 }
 
 /// Slice 7GEN.5a: a generic-fn signature with its type-parameter
@@ -705,6 +719,7 @@ impl SemaCx<'_> {
                 params: vec![ParamSig { ty: Ty::I32, mutable: false, move_: false }],
                 return_type: Ty::Unit,
                 is_variadic: false,
+                link_name: None,
             },
         );
     }
@@ -1617,6 +1632,21 @@ impl SemaCx<'_> {
             if f.is_extern {
                 self.extern_fns.insert(f.name.name.clone());
             }
+            // Phase 11 / ObjC interop: `#[link_name = "..."]` symbol alias.
+            // Extract here once and stash on FnSig; gate placement on extern.
+            let link_name = extract_link_name(&f.attributes);
+            if link_name.is_some() && !f.is_extern {
+                // Find the attribute's span for the diagnostic primary.
+                let attr_span = f.attributes.iter()
+                    .find(|a| a.path.name == "link_name")
+                    .map(|a| a.span)
+                    .unwrap_or(f.name.span);
+                self.err(
+                    "E0356",
+                    "`#[link_name]` is only valid on `extern fn` declarations".to_string(),
+                    attr_span,
+                );
+            }
             // Slice 7GEN.4: declared generic params (`fn id[T](x: T)`)
             // are visible while resolving the function's parameter and
             // return types.
@@ -1666,7 +1696,7 @@ impl SemaCx<'_> {
                 );
                 continue;
             }
-            self.fns.insert(f.name.name.clone(), FnSig { params, return_type: ret, is_variadic: f.is_variadic });
+            self.fns.insert(f.name.name.clone(), FnSig { params, return_type: ret, is_variadic: f.is_variadic, link_name: link_name.clone() });
         }
         self.current_file = None;
     }
@@ -2012,7 +2042,7 @@ impl SemaCx<'_> {
             ExprKind::FloatLit(_, suf) => self.check_float_lit(*suf, expected),
             ExprKind::BoolLit(_) => Ty::Bool,
             ExprKind::StrLit(_) => Ty::Str,
-            ExprKind::Ident(name) => self.resolve_value_ident(name, e.span),
+            ExprKind::Ident(name) => self.resolve_value_ident(name, e.span, expected.clone()),
             ExprKind::Block(b) => self.check_block_as_expr(b),
             ExprKind::Unsafe(b) => {
                 self.unsafe_depth += 1;
@@ -2587,6 +2617,20 @@ impl SemaCx<'_> {
             );
             return Ty::Error;
         }
+        // Phase 11 / P3 from the null-handling design (design.md):
+        // integer-to-raw-pointer casts are how C+ expresses FFI null
+        // (`0 as *u8`) and how user code constructs typed pointers from
+        // raw addresses (interop with C APIs that return integers).
+        // Gated by `unsafe` — the cast itself doesn't read memory, but
+        // the resulting pointer is meaningful only if the integer was
+        // a valid address; trusting the user is the unsafe part.
+        if from.is_int() && matches!(to, Ty::RawPtr(_)) && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                "integer-to-pointer cast requires `unsafe { ... }`".to_string(),
+                span,
+            );
+        }
         to
     }
 
@@ -2679,6 +2723,88 @@ impl SemaCx<'_> {
     }
 
     fn check_call(&mut self, callee: &Expr, args: &[Expr], type_args: &[Type], call_span: ByteSpan) -> Ty {
+        // Slice 11.FN_PTR: when the callee is an Ident bound to a local
+        // of FnPtr type, this is an indirect call. Validate args against
+        // the pointer's param types, return the pointer's return type.
+        // Falls through to the named-call dispatch when the Ident is a
+        // fn name (or unknown — that path emits E0300).
+        if let ExprKind::Ident(name) = &callee.kind {
+            if let Some(info) = self.lookup_local(name) {
+                if let Ty::FnPtr { params, return_type } = info.ty.clone() {
+                    if !type_args.is_empty() {
+                        self.err(
+                            "E0501",
+                            "indirect calls through a fn-pointer do not accept type arguments".to_string(),
+                            callee.span,
+                        );
+                    }
+                    // Note: `info.moved` / `info.assigned` would be useful
+                    // diagnostics here too — but they fire when we
+                    // resolve the ident below. We don't actually resolve
+                    // the ident as a value (we only need the type), so
+                    // explicitly read it via resolve_value_ident to keep
+                    // the existing E0335/E0345 paths consistent.
+                    let _ = self.resolve_value_ident(name, callee.span, None);
+                    if args.len() != params.len() {
+                        self.err(
+                            "E0308",
+                            format!(
+                                "wrong number of arguments: fn pointer `{name}` expects {}, got {}",
+                                params.len(),
+                                args.len()
+                            ),
+                            call_span,
+                        );
+                        for a in args { let _ = self.check_expr(a, None); }
+                        return *return_type;
+                    }
+                    for (a, p) in args.iter().zip(params.iter()) {
+                        let _ = self.check_expr(a, Some(p.clone()));
+                    }
+                    return *return_type;
+                }
+            }
+        }
+        // Slice 11.FN_PTR: when the callee is a Field expression and the
+        // field's type is FnPtr, this is an indirect call through a struct
+        // field — the struct-of-callbacks pattern. Try field-as-FnPtr
+        // first; if the name isn't a field (or isn't FnPtr-typed), fall
+        // through to method dispatch.
+        if let ExprKind::Field { receiver, name } = &callee.kind {
+            let recv_ty = self.check_expr(receiver, None);
+            if let Ty::Struct(id) = &recv_ty {
+                let sdef = &self.structs[id.0 as usize];
+                if let Some((_, ft, _)) = sdef.field_with_pub(&name.name) {
+                    if let Ty::FnPtr { params, return_type } = ft {
+                        if !type_args.is_empty() {
+                            self.err(
+                                "E0501",
+                                "indirect calls through a fn-pointer field do not accept type arguments".to_string(),
+                                callee.span,
+                            );
+                        }
+                        if args.len() != params.len() {
+                            self.err(
+                                "E0308",
+                                format!(
+                                    "wrong number of arguments: fn-pointer field `{}` expects {}, got {}",
+                                    name.name,
+                                    params.len(),
+                                    args.len()
+                                ),
+                                call_span,
+                            );
+                            for a in args { let _ = self.check_expr(a, None); }
+                            return *return_type;
+                        }
+                        for (a, p) in args.iter().zip(params.iter()) {
+                            let _ = self.check_expr(a, Some(p.clone()));
+                        }
+                        return *return_type;
+                    }
+                }
+            }
+        }
         match &callee.kind {
             ExprKind::Ident(_) => self.check_named_call(callee, args, type_args, call_span),
             ExprKind::Field { receiver, name } => {
@@ -2709,6 +2835,43 @@ impl SemaCx<'_> {
         // Slice 7GEN.5b: when type_args are explicit, use them directly.
         if let Some(gsig) = self.fns_generic.get(name).cloned() {
             return self.check_generic_named_call(name, &gsig, args, type_args, call_span);
+        }
+        // Phase 11 slice 11.LAYOUT: `size_of[T]()` and `align_of[T]()`
+        // are compiler intrinsics that take exactly one type argument
+        // (via turbofish) and no value arguments. Both return `usize`.
+        // Safe — no memory access, the LLVM lowering uses GEP on a null
+        // pointer to compute the layout query as a constant the optimizer
+        // folds at -O1+.
+        if name == "size_of" || name == "align_of" {
+            if type_args.len() != 1 {
+                self.err(
+                    "E0501",
+                    format!(
+                        "`{}` takes exactly 1 type argument, got {}",
+                        name,
+                        type_args.len()
+                    ),
+                    callee.span,
+                );
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Usize;
+            }
+            if !args.is_empty() {
+                self.err(
+                    "E0302",
+                    format!(
+                        "`{}` takes no value arguments, got {}",
+                        name,
+                        args.len()
+                    ),
+                    call_span,
+                );
+                for a in args { let _ = self.check_expr(a, None); }
+            }
+            // Resolve the type argument so unresolved names produce
+            // diagnostics here rather than reaching codegen.
+            let _ = self.resolve_type(&type_args[0]);
+            return Ty::Usize;
         }
         // Non-generic fn with turbofish → reject. The user explicitly
         // asked to instantiate something that has no generic params.
@@ -3658,6 +3821,15 @@ impl SemaCx<'_> {
                 let inner_ty = self.resolve_type(inner);
                 return Ty::RawPtr(Box::new(inner_ty));
             }
+            // Slice 11.FN_PTR: function pointer type.
+            TypeKind::FnPtr { params, return_type } => {
+                let resolved_params: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
+                let resolved_ret = match return_type {
+                    Some(rt) => self.resolve_type(rt),
+                    None => Ty::Unit,
+                };
+                return Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) };
+            }
         };
         match name.as_str() {
             "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
@@ -3953,6 +4125,16 @@ impl SemaCx<'_> {
                 let inner_ty = self.resolve_field_type_with_subst(inner, subst);
                 Ty::RawPtr(Box::new(inner_ty))
             }
+            TypeKind::FnPtr { params, return_type } => {
+                let resolved_params: Vec<Ty> = params.iter()
+                    .map(|p| self.resolve_field_type_with_subst(p, subst))
+                    .collect();
+                let resolved_ret = match return_type {
+                    Some(rt) => self.resolve_field_type_with_subst(rt, subst),
+                    None => Ty::Unit,
+                };
+                Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) }
+            }
         }
     }
 
@@ -4002,7 +4184,7 @@ impl SemaCx<'_> {
         Ty::Enum(id)
     }
 
-    fn resolve_value_ident(&mut self, name: &str, span: ByteSpan) -> Ty {
+    fn resolve_value_ident(&mut self, name: &str, span: ByteSpan, expected: Option<Ty>) -> Ty {
         if let Some(info) = self.lookup_local(name) {
             let ty = info.ty.clone();
             let moved = info.moved;
@@ -4022,10 +4204,34 @@ impl SemaCx<'_> {
             }
             return ty;
         }
-        if self.fns.contains_key(name) {
+        // Slice 11.FN_PTR: when expected is `Ty::FnPtr { .. }` and `name` is
+        // a non-generic fn, coerce the named fn to a fn-pointer value. The
+        // surrounding `check_expr` validates signature equality via the
+        // generic expected-vs-actual E0302 path. Without an expected-FnPtr
+        // hint, fall through to the historical E0312 ("function used as a
+        // value") — keeps existing diagnostics for misuse cases.
+        let want_fn_ptr = matches!(expected, Some(Ty::FnPtr { .. }));
+        if let Some(sig) = self.fns.get(name).cloned() {
+            if want_fn_ptr {
+                let params: Vec<Ty> = sig.params.iter().map(|p| p.ty.clone()).collect();
+                return Ty::FnPtr {
+                    params,
+                    return_type: Box::new(sig.return_type),
+                };
+            }
             self.err(
                 "E0312",
-                format!("function `{name}` used as a value; first-class functions are not yet supported"),
+                format!("function `{name}` used as a value; assign it to a `fn(...)`-typed binding to take its address"),
+                span,
+            );
+            return Ty::Error;
+        }
+        if self.fns_generic.contains_key(name) {
+            // Slice 11.FN_PTR design note §4: generic fns cannot be taken
+            // as fn-pointer values without specifying type parameters.
+            self.err(
+                "E0821",
+                format!("cannot take address of generic function `{name}` without specifying type parameters"),
                 span,
             );
             return Ty::Error;
@@ -4095,6 +4301,11 @@ fn subst_ty(ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
     match ty {
         Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
         Ty::Array(elem, len) => Ty::Array(Box::new(subst_ty(elem, subst)), *len),
+        Ty::RawPtr(inner) => Ty::RawPtr(Box::new(subst_ty(inner, subst))),
+        Ty::FnPtr { params, return_type } => Ty::FnPtr {
+            params: params.iter().map(|p| subst_ty(p, subst)).collect(),
+            return_type: Box::new(subst_ty(return_type, subst)),
+        },
         other => other.clone(),
     }
 }
@@ -4103,6 +4314,15 @@ fn ty_display(ty: &Ty) -> String {
     match ty {
         Ty::Param(name) => name.clone(),
         Ty::Array(elem, n) => format!("[{}; {}]", ty_display(elem), n),
+        Ty::RawPtr(inner) => format!("*{}", ty_display(inner)),
+        Ty::FnPtr { params, return_type } => {
+            let params_s = params.iter().map(ty_display).collect::<Vec<_>>().join(", ");
+            if matches!(**return_type, Ty::Unit) {
+                format!("fn({params_s})")
+            } else {
+                format!("fn({params_s}) -> {}", ty_display(return_type))
+            }
+        }
         other => other.name().to_string(),
     }
 }
@@ -4140,6 +4360,10 @@ fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type 
             args: args.iter().map(|a| substitute_param_in_type_ast(a, subst)).collect(),
         },
         TypeKind::RawPtr(inner) => TypeKind::RawPtr(Box::new(substitute_param_in_type_ast(inner, subst))),
+        TypeKind::FnPtr { params, return_type } => TypeKind::FnPtr {
+            params: params.iter().map(|p| substitute_param_in_type_ast(p, subst)).collect(),
+            return_type: return_type.as_ref().map(|rt| Box::new(substitute_param_in_type_ast(rt, subst))),
+        },
     };
     Type { kind, span: ty.span }
 }
@@ -4156,6 +4380,7 @@ fn ty_to_source_name(ty: &Ty) -> String {
         Ty::Bool => "bool".into(), Ty::Unit => "()".into(),
         Ty::Str => "str".into(),
         Ty::RawPtr(_) => "<raw-ptr>".into(),
+        Ty::FnPtr { .. } => "<fn-ptr>".into(),
         // For struct / enum, return a synthetic placeholder. This path
         // is only exercised during template substitution; the resolved
         // Ty is what sema actually uses, not the rendered name.
@@ -4192,6 +4417,18 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty_for_name(inner, structs, enums)),
+        Ty::FnPtr { params, return_type } => {
+            let mut s = String::from("fn");
+            for p in params {
+                s.push('_');
+                s.push_str(&mangle_ty_for_name(p, structs, enums));
+            }
+            if !matches!(**return_type, Ty::Unit) {
+                s.push_str("_ret_");
+                s.push_str(&mangle_ty_for_name(return_type, structs, enums));
+            }
+            s
+        }
         Ty::Struct(id) => structs[id.0 as usize].name.clone(),
         Ty::Enum(id) => enums[id.0 as usize].name.clone(),
         Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty_for_name(elem, structs, enums)),
@@ -4240,12 +4477,31 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     if *from == Ty::Bool && to.is_int() { return true; }
     // enum → integer (read the variant index)
     if from.is_enum() && to.is_int() { return true; }
+    // Phase 11 / P3 (FFI null + integer-to-pointer): integer → raw pointer.
+    // The cast itself just reinterprets bits as an address (LLVM `inttoptr`).
+    // The unsafe gate lives in `check_cast` — `cast_allowed` answers only
+    // the type-pair shape question.
+    if from.is_int() && matches!(to, Ty::RawPtr(_)) { return true; }
     // Forbidden:
     //   - integer/float → bool (use `!= 0`)
     //   - bool → float
     //   - integer → enum (needs runtime range check)
     //   - any other combination
     false
+}
+
+/// Phase 11 / ObjC interop: find `#[link_name = "..."]` on an item's
+/// attribute list and return the string value. Returns `None` if absent.
+/// Attribute-shape validation has already run via attrs::check, so any
+/// `link_name` here is guaranteed to have the right arg shape.
+fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().find_map(|a| {
+        if a.path.name != "link_name" { return None; }
+        match a.args.as_slice() {
+            [AttrArg::Str(s, _)] => Some(s.clone()),
+            _ => None,
+        }
+    })
 }
 
 fn body_ends_with_return(b: &Block) -> bool {
@@ -6482,6 +6738,248 @@ mod tests {
                  }; \
              } \
              fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // Phase 11 slice 11.LAYOUT: size_of[T]() / align_of[T]() intrinsics.
+
+    #[test]
+    fn size_of_primitive_clean() {
+        assert_clean(
+            "fn main() -> i32 { let n: usize = size_of::[i32](); return 0; }",
+        );
+    }
+
+    #[test]
+    fn align_of_primitive_clean() {
+        assert_clean(
+            "fn main() -> i32 { let a: usize = align_of::[i32](); return 0; }",
+        );
+    }
+
+    #[test]
+    fn size_of_struct_clean() {
+        assert_clean(
+            "struct Point { x: i32, y: i32 } \
+             fn main() -> i32 { let n: usize = size_of::[Point](); return 0; }",
+        );
+    }
+
+    #[test]
+    fn size_of_returns_usize() {
+        // Result must be usable in usize arithmetic without a cast.
+        assert_clean(
+            "fn main() -> i32 { let n: usize = size_of::[i32]() *% 10 as usize; return 0; }",
+        );
+    }
+
+    #[test]
+    fn size_of_no_type_arg_rejected_e0501() {
+        let codes = errors("fn main() -> i32 { let n: usize = size_of(); return 0; }");
+        assert!(codes.contains(&"E0501"), "expected E0501 for missing type arg, got: {codes:?}");
+    }
+
+    #[test]
+    fn size_of_two_type_args_rejected_e0501() {
+        let codes = errors(
+            "fn main() -> i32 { let n: usize = size_of::[i32, bool](); return 0; }",
+        );
+        assert!(codes.contains(&"E0501"), "expected E0501 for two type args, got: {codes:?}");
+    }
+
+    #[test]
+    fn size_of_with_value_arg_rejected_e0302() {
+        let codes = errors(
+            "fn main() -> i32 { let n: usize = size_of::[i32](7); return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302 for value arg, got: {codes:?}");
+    }
+
+    #[test]
+    fn size_of_unknown_type_rejected_e0303() {
+        let codes = errors(
+            "fn main() -> i32 { let n: usize = size_of::[Bogus](); return 0; }",
+        );
+        assert!(codes.contains(&"E0303"), "expected E0303 for unknown type, got: {codes:?}");
+    }
+
+    #[test]
+    fn align_of_no_type_arg_rejected_e0501() {
+        let codes = errors("fn main() -> i32 { let n: usize = align_of(); return 0; }");
+        assert!(codes.contains(&"E0501"), "expected E0501 for missing type arg, got: {codes:?}");
+    }
+
+    #[test]
+    fn size_of_raw_pointer_type_clean() {
+        // Verifies size_of works for raw-pointer types — needed for
+        // allocator implementations that hand out typed pointers.
+        assert_clean(
+            "fn main() -> i32 { let n: usize = size_of::[*u8](); return 0; }",
+        );
+    }
+
+    // Phase 11 / P3 from null design (design.md): integer-to-raw-pointer
+    // casts. `0 as *T` is how C+ expresses FFI null and how integer addresses
+    // become typed pointers. Gated by `unsafe` — the cast itself just
+    // reinterprets bits; the unsafety is trusting the integer is a valid address.
+
+    #[test]
+    fn int_to_raw_pointer_cast_in_unsafe_clean() {
+        assert_clean(
+            "fn main() -> i32 { let p: *u8 = unsafe { 0 as *u8 }; return 0; }",
+        );
+    }
+
+    #[test]
+    fn int_to_raw_pointer_cast_outside_unsafe_rejected_e0801() {
+        let codes = errors(
+            "fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }",
+        );
+        assert!(codes.contains(&"E0801"), "expected E0801 outside unsafe, got: {codes:?}");
+    }
+
+    #[test]
+    fn usize_to_raw_pointer_cast_in_unsafe_clean() {
+        // Real-world FFI: take an integer-flavored address from a C API
+        // (e.g. mmap's return) and treat it as a typed pointer.
+        assert_clean(
+            "fn main() -> i32 { let addr: usize = 0xDEAD as usize; let p: *u8 = unsafe { addr as *u8 }; return 0; }",
+        );
+    }
+
+    #[test]
+    fn cast_to_double_indirection_pointer_clean() {
+        assert_clean(
+            "fn main() -> i32 { let p: **i32 = unsafe { 0 as **i32 }; return 0; }",
+        );
+    }
+
+    // Phase 11 / ObjC interop: `#[link_name = "..."]` attribute.
+    // Aliases an extern fn's linker symbol so multiple typed signatures
+    // can resolve to the same C symbol. The load-bearing trick for ObjC
+    // `objc_msgSend`-style FFI where one symbol takes many call shapes.
+
+    #[test]
+    fn link_name_on_extern_fn_clean() {
+        assert_clean(
+            "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32; \
+             fn main() -> i32 { return unsafe { my_abs(0 -% 42) }; }",
+        );
+    }
+
+    #[test]
+    fn link_name_on_non_extern_fn_rejected_e0356() {
+        let codes = errors(
+            "#[link_name = \"foo\"] fn local(x: i32) -> i32 { return x; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0356"), "expected E0356 on non-extern link_name, got: {codes:?}");
+    }
+
+    #[test]
+    fn link_name_aliases_two_decls_to_same_symbol_clean() {
+        // The headline ObjC use case shape: two typed signatures, one symbol.
+        // Sema accepts; codegen dedups the `declare` (verified by e2e).
+        assert_clean(
+            "#[link_name = \"objc_msgSend\"] extern fn msg_void(recv: *u8, sel: *u8); \
+             #[link_name = \"objc_msgSend\"] extern fn msg_id(recv: *u8, sel: *u8) -> *u8; \
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // Phase 11 slice 11.FN_PTR: function pointer types + values.
+
+    #[test]
+    fn fn_pointer_type_parses_in_let_annotation() {
+        assert_clean(
+            "fn double(x: i32) -> i32 { return x +% x; } \
+             fn main() -> i32 { let f: fn(i32) -> i32 = double; return f(5); }",
+        );
+    }
+
+    #[test]
+    fn fn_pointer_type_no_return_parses() {
+        assert_clean(
+            "fn handler(x: i32) { println(x); } \
+             fn main() -> i32 { let f: fn(i32) = handler; f(7); return 0; }",
+        );
+    }
+
+    #[test]
+    fn fn_pointer_as_struct_field_parses() {
+        assert_clean(
+            "struct Actions { on_click: fn(i32) -> i32 } \
+             fn click(x: i32) -> i32 { return x +% 1; } \
+             fn main() -> i32 { let a: Actions = Actions { on_click: click }; return a.on_click(5); }",
+        );
+    }
+
+    #[test]
+    fn fn_pointer_as_fn_parameter_parses() {
+        assert_clean(
+            "fn apply(f: fn(i32) -> i32, x: i32) -> i32 { return f(x); } \
+             fn double(x: i32) -> i32 { return x +% x; } \
+             fn main() -> i32 { return apply(double, 7); }",
+        );
+    }
+
+    #[test]
+    fn fn_pointer_signature_mismatch_rejected_e0302() {
+        let codes = errors(
+            "fn double(x: i32) -> i32 { return x +% x; } \
+             fn main() -> i32 { let f: fn(i32, i32) -> i32 = double; return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302 for signature mismatch, got: {codes:?}");
+    }
+
+    #[test]
+    fn fn_used_as_value_without_expected_fnptr_e0312() {
+        // Defensive: without an expected FnPtr type, a fn name in value
+        // position still fires E0312 (existing behavior). Coercion is
+        // type-directed only.
+        let codes = errors(
+            "fn double(x: i32) -> i32 { return x +% x; } \
+             fn main() -> i32 { let f = double; return 0; }",
+        );
+        assert!(codes.contains(&"E0312"), "expected E0312 for bare fn-as-value without expected type, got: {codes:?}");
+    }
+
+    #[test]
+    fn generic_fn_as_pointer_rejected_e0821() {
+        let codes = errors(
+            "fn identity[T](x: T) -> T { return x; } \
+             fn main() -> i32 { let f: fn(i32) -> i32 = identity; return 0; }",
+        );
+        assert!(codes.contains(&"E0821"), "expected E0821 for generic fn as pointer, got: {codes:?}");
+    }
+
+    #[test]
+    fn indirect_call_wrong_arity_e0308() {
+        let codes = errors(
+            "fn double(x: i32) -> i32 { return x +% x; } \
+             fn main() -> i32 { let f: fn(i32) -> i32 = double; return f(1, 2); }",
+        );
+        assert!(codes.contains(&"E0308"), "expected E0308 for wrong arity, got: {codes:?}");
+    }
+
+    #[test]
+    fn fn_pointer_in_extern_fn_signature_clean() {
+        // The headline ObjC interop use case: extern fn takes a callback.
+        assert_clean(
+            "extern fn atexit(cb: fn()) -> i32; \
+             fn cleanup() { } \
+             fn main() -> i32 { return unsafe { atexit(cleanup) }; }",
+        );
+    }
+
+    #[test]
+    fn size_of_inside_generic_fn_clean() {
+        // size_of::[T]() inside a generic fn body — the type arg `T` is
+        // a Ty::Param at sema-time; resolve_type allows it; monomorphize
+        // substitutes T to the concrete type via subst_type_ast.
+        assert_clean(
+            "fn typed_alloc[T](n: usize) -> usize { return n *% size_of::[T](); } \
+             fn main() -> i32 { let bytes: usize = typed_alloc::[i32](10 as usize); return 0; }",
         );
     }
 }

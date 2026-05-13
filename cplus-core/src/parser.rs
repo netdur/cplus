@@ -244,6 +244,25 @@ impl Parser {
                 if !self.eat(&TokenKind::Comma) { break; }
             }
             self.expect(&TokenKind::RParen, "`)` (attribute argument list)")?;
+        } else if self.eat(&TokenKind::Eq) {
+            // Phase 11 / ObjC interop: `#[name = "value"]` key-value form.
+            // Used by `#[link_name = "..."]` for FFI symbol aliasing.
+            // The value lowers to a single positional AttrArg::Str (or
+            // AttrArg::Ident) so attrs-validation reads the same shape
+            // it would from `#[name("value")]`.
+            match self.peek_kind() {
+                TokenKind::Str(_) => {
+                    let tok = self.peek().clone();
+                    let TokenKind::Str(s) = tok.kind else { unreachable!() };
+                    self.bump();
+                    args.push(AttrArg::Str(s, tok.span));
+                }
+                TokenKind::Ident(_) => {
+                    let id = self.expect_ident()?;
+                    args.push(AttrArg::Ident(id));
+                }
+                _ => return Err(self.err_at_peek("string literal or identifier after `=` in attribute")),
+            }
         }
         let end = self.expect(&TokenKind::RBracket, "`]` (attribute close)")?.span;
         Ok(Attribute { path, args, span: start.merge(end) })
@@ -581,11 +600,10 @@ impl Parser {
                 "extern fn — `pub` is not meaningful on extern declarations; the C symbol is always reachable",
             ));
         }
-        if !attributes.is_empty() {
-            return Err(self.err_at_peek(
-                "extern fn — attributes are not supported on extern declarations in slice 10.FFI.1",
-            ));
-        }
+        // Phase 11 / ObjC interop: attributes are now allowed on extern fns
+        // (motivated by `#[link_name = "..."]`). Attribute-shape validation
+        // runs in attrs::check; sema enforces extern-only semantic constraints
+        // (e.g. link_name requires extern, repr does not apply to fns at all).
         self.expect(&TokenKind::Extern, "`extern`")?;
         self.expect(&TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident()?;
@@ -636,7 +654,7 @@ impl Parser {
                 is_pub: false,
                 is_extern: true,
                 is_variadic,
-                attributes: Vec::new(),
+                attributes,
                 generic_params: Vec::new(),
             }),
             span: start.merge(semi.span),
@@ -782,6 +800,33 @@ impl Parser {
                 return Ok(Type {
                     kind: TypeKind::RawPtr(inner),
                     span: start.merge(end),
+                });
+            }
+            // Slice 11.FN_PTR: function pointer type — `fn(T1, T2, ...) -> R`
+            // or `fn(...)` with implicit unit return. The `fn` token here
+            // unambiguously starts a fn-pointer type because parse_type is
+            // never called at an item-declaration site (item parsing handles
+            // `fn name(...)` via its own path).
+            TokenKind::Fn => {
+                let start = self.bump().span;
+                self.expect(&TokenKind::LParen, "`(` after `fn` in fn-pointer type")?;
+                let mut params: Vec<Type> = Vec::new();
+                while !self.at(&TokenKind::RParen) {
+                    params.push(self.parse_type()?);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                let rparen = self.expect(&TokenKind::RParen, "`)` (fn-pointer parameter list)")?;
+                let mut end_span = rparen.span;
+                let return_type = if self.eat(&TokenKind::Arrow) {
+                    let rt = self.parse_type()?;
+                    end_span = rt.span;
+                    Some(Box::new(rt))
+                } else {
+                    None
+                };
+                return Ok(Type {
+                    kind: TypeKind::FnPtr { params, return_type },
+                    span: start.merge(end_span),
                 });
             }
             TokenKind::Ident(s) => {

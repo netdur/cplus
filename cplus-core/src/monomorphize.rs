@@ -221,6 +221,14 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::Unit => TypeKind::Path("()".into()),
         Ty::Str => TypeKind::Path("str".into()),
         Ty::RawPtr(inner) => TypeKind::RawPtr(Box::new(ty_to_type_ast(inner, type_name_of))),
+        Ty::FnPtr { params, return_type } => TypeKind::FnPtr {
+            params: params.iter().map(|p| ty_to_type_ast(p, type_name_of)).collect(),
+            return_type: if matches!(**return_type, Ty::Unit) {
+                None
+            } else {
+                Some(Box::new(ty_to_type_ast(return_type, type_name_of)))
+            },
+        },
         Ty::Struct(_) | Ty::Enum(_) => TypeKind::Path(type_name_of(ty)),
         Ty::Array(elem, n) => TypeKind::Array {
             elem: Box::new(ty_to_type_ast(elem, type_name_of)),
@@ -324,6 +332,10 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
             args: args.iter().map(|a| rewrite_self_in_type(a, mangled_name)).collect(),
         },
         TypeKind::RawPtr(inner) => TypeKind::RawPtr(Box::new(rewrite_self_in_type(inner, mangled_name))),
+        TypeKind::FnPtr { params, return_type } => TypeKind::FnPtr {
+            params: params.iter().map(|p| rewrite_self_in_type(p, mangled_name)).collect(),
+            return_type: return_type.as_ref().map(|rt| Box::new(rewrite_self_in_type(rt, mangled_name))),
+        },
     };
     Type { kind, span: ty.span }
 }
@@ -556,6 +568,13 @@ fn subst_type_ast(
             }
         }
         TypeKind::RawPtr(inner) => TypeKind::RawPtr(Box::new(subst_type_ast(inner, subst, type_name_of, struct_lookup))),
+        TypeKind::FnPtr { params, return_type } => TypeKind::FnPtr {
+            params: params.iter()
+                .map(|p| subst_type_ast(p, subst, type_name_of, struct_lookup))
+                .collect(),
+            return_type: return_type.as_ref()
+                .map(|rt| Box::new(subst_type_ast(rt, subst, type_name_of, struct_lookup))),
+        },
     };
     Type { kind, span: ty.span }
 }
@@ -587,6 +606,13 @@ fn type_ast_to_ty(ty: &Type, _type_name_of: &dyn Fn(&Ty) -> String) -> Ty {
         TypeKind::Borrowed { inner, .. } => type_ast_to_ty(inner, _type_name_of),
         TypeKind::Generic { .. } => Ty::Param("<generic>".into()),
         TypeKind::RawPtr(inner) => Ty::RawPtr(Box::new(type_ast_to_ty(inner, _type_name_of))),
+        TypeKind::FnPtr { params, return_type } => Ty::FnPtr {
+            params: params.iter().map(|p| type_ast_to_ty(p, _type_name_of)).collect(),
+            return_type: Box::new(match return_type {
+                Some(rt) => type_ast_to_ty(rt, _type_name_of),
+                None => Ty::Unit,
+            }),
+        },
     }
 }
 
@@ -816,7 +842,15 @@ fn rewrite_expr(
                 _ => rewrite_expr(callee, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup),
             };
             let new_args: Vec<Expr> = args.iter().map(|a| rewrite_expr(a, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup)).collect();
-            ExprKind::Call { callee: Box::new(new_callee), args: new_args, type_args: type_args.clone() }
+            // Substitute type-parameter references in turbofish type_args
+            // through the active subst map. Without this, `size_of::[T]()`
+            // (or any future intrinsic taking a type arg) inside a generic
+            // body would keep the literal `T` and panic at codegen when
+            // the LLVM type-renderer hits `Ty::Param("T")`.
+            let new_type_args: Vec<Type> = type_args.iter()
+                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup))
+                .collect();
+            ExprKind::Call { callee: Box::new(new_callee), args: new_args, type_args: new_type_args }
         }
         ExprKind::Block(b) => ExprKind::Block(rewrite_block(b, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup)),
         ExprKind::Unsafe(b) => ExprKind::Unsafe(rewrite_block(b, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup)),
@@ -970,6 +1004,18 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty(inner, type_name_of)),
+        Ty::FnPtr { params, return_type } => {
+            let mut s = String::from("fn");
+            for p in params {
+                s.push('_');
+                s.push_str(&mangle_ty(p, type_name_of));
+            }
+            if !matches!(**return_type, Ty::Unit) {
+                s.push_str("_ret_");
+                s.push_str(&mangle_ty(return_type, type_name_of));
+            }
+            s
+        }
         Ty::Struct(_) | Ty::Enum(_) => type_name_of(ty),
         Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty(elem, type_name_of)),
         Ty::Param(name) => format!("Param_{name}"),

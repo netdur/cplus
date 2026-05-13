@@ -37,6 +37,10 @@ enum ArgsSpec {
     /// `#[name(VAL)]` — exactly one ident arg from a fixed allow-list.
     /// Used by `#[repr(C)]` (slice 10.FFI.5).
     OneIdentFrom(&'static [&'static str]),
+    /// `#[name = "VAL"]` or `#[name("VAL")]` — exactly one string-literal arg.
+    /// No allow-list — the value is opaque (e.g. a linker symbol name).
+    /// Used by `#[link_name = "..."]` (Phase 11 / ObjC interop).
+    ExactlyOneStr,
 }
 
 struct AttrSpec {
@@ -69,6 +73,19 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         name: "repr",
         args: ArgsSpec::OneIdentFrom(&["C"]),
         targets: TARGET_STRUCT,
+        allow_duplicate: false,
+    },
+    // Phase 11 / ObjC interop: `#[link_name = "..."]` aliases an
+    // `extern fn`'s linker symbol. Lets the user declare the same
+    // C symbol under many typed signatures — the load-bearing trick
+    // for ObjC's `objc_msgSend` (which uses no prototype on the C side
+    // and relies on each call site picking its own ABI). Sema enforces
+    // extern-only placement (E0356 with a more specific message on
+    // non-extern fns).
+    AttrSpec {
+        name: "link_name",
+        args: ArgsSpec::ExactlyOneStr,
+        targets: TARGET_FN,
         allow_duplicate: false,
     },
 ];
@@ -233,7 +250,29 @@ impl Ctx {
                     self.emit_bad_repr_arg(attr, spec, allowed);
                 }
             }
+            ArgsSpec::ExactlyOneStr => {
+                let ok = matches!(attr.args.as_slice(), [AttrArg::Str(_, _)]);
+                if !ok {
+                    self.emit_expected_str_arg(attr, spec);
+                }
+            }
         }
+    }
+
+    fn emit_expected_str_arg(&mut self, attr: &Attribute, spec: &AttrSpec) {
+        let primary = self.make_span(attr.span);
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode("E0355"),
+            message: format!(
+                "attribute `#[{}]` requires exactly one string-literal argument (e.g. `#[{} = \"value\"]`)",
+                spec.name, spec.name
+            ),
+            primary,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
     }
 
     fn emit_unknown(&mut self, attr: &Attribute) {

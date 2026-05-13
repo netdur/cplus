@@ -76,6 +76,11 @@ fn generate_inner(program: &Program, mode: BuildMode, test_cfg: Option<TestDrive
     // lookup table so gen_expr can resolve a literal to its global.
     let str_lits = collect_and_emit_str_lits(&mut out, program);
     write_struct_decls(&mut out, &types, program);
+    // Phase 11 / ObjC interop: multiple `extern fn` declarations may share
+    // a single linker symbol via `#[link_name = "..."]`. Track emitted
+    // symbols so we never emit two `declare`s with the same name (LLVM
+    // rejects that as a redefinition).
+    let mut emitted_extern_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
     for item in &program.items {
         match &item.kind {
             ItemKind::Function(f) => {
@@ -86,7 +91,7 @@ fn generate_inner(program: &Program, mode: BuildMode, test_cfg: Option<TestDrive
                 // Slice 7GEN.4: generic functions don't emit pre-monomorphization.
                 // Slice 7GEN.5 will walk a work-queue of instantiations.
                 if !f.generic_params.is_empty() { continue; }
-                gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode);
+                gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode, &mut emitted_extern_symbols);
             }
             ItemKind::Impl(b) => {
                 let Some(&id) = types.struct_by_name.get(&b.target.name) else { continue; };
@@ -128,6 +133,11 @@ struct FnSig {
     /// `call ret_ty (fixed_types, ...) @name(args)` — the full
     /// function-type prefix is required by LLVM for varargs.
     is_variadic: bool,
+    /// Phase 11 / ObjC interop: `#[link_name = "..."]` symbol alias.
+    /// When `Some(s)`, codegen emits `declare ... @s(...)` and call
+    /// sites use `@s` instead of `@<source_name>`. Only ever set on
+    /// extern fns; sema rejects on non-extern.
+    link_name: Option<String>,
 }
 
 fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
@@ -135,7 +145,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
     // builtin: println(i32) -> ()
     sigs.insert(
         "println".to_string(),
-        FnSig { params: vec![(Ty::I32, false, false)], return_type: Ty::Unit, is_variadic: false },
+        FnSig { params: vec![(Ty::I32, false, false)], return_type: Ty::Unit, is_variadic: false, link_name: None },
     );
     for item in &p.items {
         let ItemKind::Function(f) = &item.kind else { continue; };
@@ -149,7 +159,14 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
             Some(t) => ty_from(t, types),
             None => Ty::Unit,
         };
-        sigs.insert(f.name.name.clone(), FnSig { params, return_type: ret, is_variadic: f.is_variadic });
+        let link_name = f.attributes.iter().find_map(|a| {
+            if a.path.name != "link_name" { return None; }
+            match a.args.as_slice() {
+                [AttrArg::Str(s, _)] => Some(s.clone()),
+                _ => None,
+            }
+        });
+        sigs.insert(f.name.name.clone(), FnSig { params, return_type: ret, is_variadic: f.is_variadic, link_name });
     }
     sigs
 }
@@ -395,7 +412,8 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
         | Ty::Usize | Ty::Isize
         | Ty::F32 | Ty::F64
         | Ty::Str
-        | Ty::RawPtr(_) => true,
+        | Ty::RawPtr(_)
+        | Ty::FnPtr { .. } => true,
         Ty::Array(elem, _) => is_copy_ty(elem, t),
         Ty::Struct(id)     => t.struct_defs[id.0 as usize].is_copy,
         Ty::Enum(id)       => t.enum_defs[id.0 as usize].is_copy,
@@ -632,6 +650,15 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             let inner_ty = ty_from(inner, types);
             return Ty::RawPtr(Box::new(inner_ty));
         }
+        // Slice 11.FN_PTR: fn-ptr lowers to LLVM `ptr` regardless of signature.
+        TypeKind::FnPtr { params, return_type } => {
+            let resolved_params: Vec<Ty> = params.iter().map(|p| ty_from(p, types)).collect();
+            let resolved_ret = match return_type {
+                Some(rt) => ty_from(rt, types),
+                None => Ty::Unit,
+            };
+            return Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) };
+        }
     };
     match name.as_str() {
         "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
@@ -674,6 +701,10 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         // Slice 10.FFI.1: raw pointers lower to LLVM `ptr` (opaque,
         // 8 bytes on 64-bit). Pointee info is sema-only.
         Ty::RawPtr(_) => "ptr".to_string(),
+        // Slice 11.FN_PTR: fn pointers also lower to LLVM `ptr`. Sema
+        // carries the param/return type info; codegen indirect-calls
+        // know the call signature from the FnPtr Ty, not from the LLVM IR.
+        Ty::FnPtr { .. } => "ptr".to_string(),
         // Phase 8 slice 8.STR.1: `str` is a fat pointer { ptr, len }.
         // 16 bytes on 64-bit platforms; passed by value.
         Ty::Str => "{ ptr, i64 }".to_string(),
@@ -986,6 +1017,7 @@ fn gen_function(
     str_lits: &StrLitTable,
     mode: BuildMode,
     test_mode: bool,
+    emitted_extern_symbols: &mut std::collections::HashSet<String>,
 ) {
     // Builtin name: codegen never emits a definition for it; clang links printf.
     if f.name.name == "println" {
@@ -1005,10 +1037,22 @@ fn gen_function(
         // Re-declaring them would clash at link time; skip if the
         // user's extern fn matches a preamble-emitted name. The sema
         // signature still flows through the call-site routing.
-        if matches!(f.name.name.as_str(), "printf" | "memcmp") {
+        // Phase 11 / ObjC interop: dedup also against the resolved
+        // link_name (e.g. a user could declare `#[link_name = "printf"]
+        // extern fn my_printf(...)` — same symbol, would clash).
+        let resolved_symbol = sig.link_name.as_deref().unwrap_or(&f.name.name);
+        if matches!(resolved_symbol, "printf" | "memcmp") {
             return;
         }
-        write!(out, "declare {} @{}(", llvm_ty(&return_ty, types), f.name.name).unwrap();
+        // Phase 11 / ObjC interop: multiple `extern fn` declarations
+        // may share a single linker symbol via `#[link_name = "..."]`.
+        // The codegen-side dedup prevents emitting the same `declare`
+        // twice (which LLVM rejects).
+        if emitted_extern_symbols.contains(resolved_symbol) {
+            return;
+        }
+        emitted_extern_symbols.insert(resolved_symbol.to_string());
+        write!(out, "declare {} @{}(", llvm_ty(&return_ty, types), resolved_symbol).unwrap();
         for (i, (_param, (pty, _move_flag, _mut_flag))) in f.params.iter().zip(sig.params.iter()).enumerate() {
             if i > 0 { out.push_str(", "); }
             out.push_str(&llvm_ty(pty, types));
@@ -1966,6 +2010,17 @@ impl<'a> FnState<'a> {
             }
 
             ExprKind::Ident(name) => {
+                // Slice 11.FN_PTR: bare-ident referring to a fn (sema
+                // coerced it via the expected-FnPtr context) produces
+                // the symbol's address as a `ptr` SSA value. Use the
+                // link_name if `#[link_name = "..."]` was set; otherwise
+                // the source-level name.
+                if let Some(sig) = self.sigs.get(name).cloned() {
+                    let symbol: String = sig.link_name.clone().unwrap_or_else(|| name.to_string());
+                    let params: Vec<Ty> = sig.params.iter().map(|(t, _, _)| t.clone()).collect();
+                    let ty = Ty::FnPtr { params, return_type: Box::new(sig.return_type.clone()) };
+                    return Some((format!("@{symbol}"), ty));
+                }
                 let (slot, ty) = self.lookup(name).expect("sema validated").clone();
                 let v = self.next_tmp();
                 self.emit(&format!("{v} = load {}, ptr {slot}", self.lty(&ty)));
@@ -1981,7 +2036,7 @@ impl<'a> FnState<'a> {
                 self.gen_if(cond, then, else_branch.as_deref())
             }
 
-            ExprKind::Call { callee, args, .. } => self.gen_call(callee, args),
+            ExprKind::Call { callee, args, type_args } => self.gen_call(callee, args, type_args),
 
             ExprKind::Binary { op, lhs, rhs } => Some(self.gen_binary(*op, lhs, rhs)),
 
@@ -2733,22 +2788,119 @@ impl<'a> FnState<'a> {
             (a, b) if a.is_float() && b.is_float() => {
                 if ty_bit_width(b) > ty_bit_width(a) { "fpext" } else { "fptrunc" }
             }
+            // Phase 11 / P3: integer → raw pointer. Sema gates on `unsafe`.
+            // If the source integer is narrower than i64, zero-extend it first
+            // (`inttoptr` requires its operand to match the target pointer
+            // width, which is i64 on our supported 64-bit targets).
+            (a, Ty::RawPtr(_)) if a.is_int() => {
+                let aw = ty_bit_width(a);
+                let widened: String = if aw < 64 {
+                    let w = self.next_tmp();
+                    let zext_inst = if a.is_signed_int() { "sext" } else { "zext" };
+                    self.emit(&format!("{w} = {zext_inst} {from_t} {v} to i64"));
+                    w
+                } else {
+                    v.clone()
+                };
+                self.emit(&format!("{r} = inttoptr i64 {widened} to {to_t}"));
+                return (r, to);
+            }
             _ => unreachable!("sema rejects unsupported casts: {:?} → {:?}", from, to),
         };
         self.emit(&format!("{r} = {inst} {from_t} {v} to {to_t}"));
         (r, to)
     }
 
-    fn gen_call(&mut self, callee: &Expr, args: &[Expr]) -> Option<(String, Ty)> {
+    fn gen_call(&mut self, callee: &Expr, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {
+        // Slice 11.FN_PTR: detect indirect calls. Two shapes:
+        //   1. Callee is an Ident bound to a local of FnPtr type — load
+        //      the pointer from the local's slot, then `call ret %ptr(args)`.
+        //   2. Callee is a Field expression where the field's resolved type
+        //      is FnPtr — load the pointer from the field address, then
+        //      indirect-call. Same struct-of-callbacks pattern.
+        // For both, the FnPtr's params/return give us the call signature.
+        // Direct named calls (callee is an Ident matching a sig) fall through
+        // to the existing gen_named_call path.
+        if let ExprKind::Ident(name) = &callee.kind {
+            if let Some((slot, ty)) = self.lookup(name).cloned() {
+                if let Ty::FnPtr { params, return_type } = ty {
+                    let v = self.next_tmp();
+                    self.emit(&format!("{v} = load ptr, ptr {slot}"));
+                    return self.gen_indirect_call(&v, &params, &return_type, args);
+                }
+            }
+        }
+        if let ExprKind::Field { receiver, name } = &callee.kind {
+            // Check if the field type is FnPtr — if so, indirect call.
+            // gen_place returns the address; we load the pointer value.
+            let (recv_addr, recv_ty) = self.gen_place(receiver);
+            if let Ty::Struct(id) = recv_ty {
+                let info = &self.types.struct_defs[id.0 as usize];
+                if let Some((idx, ft)) = info.fields.iter().enumerate()
+                    .find(|(_, (fname, _))| fname == &name.name)
+                    .map(|(i, (_, t))| (i as u32, t.clone()))
+                {
+                    if matches!(ft, Ty::FnPtr { .. }) {
+                        let Ty::FnPtr { params, return_type } = ft else { unreachable!() };
+                        let llvm_struct = llvm_ty(&Ty::Struct(id), self.types);
+                        let field_ptr = self.next_tmp();
+                        self.emit(&format!(
+                            "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_addr}, i32 0, i32 {idx}"
+                        ));
+                        let fn_val = self.next_tmp();
+                        self.emit(&format!("{fn_val} = load ptr, ptr {field_ptr}"));
+                        return self.gen_indirect_call(&fn_val, &params, &return_type, args);
+                    }
+                }
+            }
+        }
         match &callee.kind {
-            ExprKind::Ident(name) => self.gen_named_call(name, args),
+            ExprKind::Ident(name) => self.gen_named_call(name, args, type_args),
             ExprKind::Field { receiver, name } => self.gen_method_call(receiver, name, args),
             ExprKind::Path { segments } => self.gen_assoc_call(segments, args),
             _ => unreachable!("sema validates callee shape"),
         }
     }
 
-    fn gen_named_call(&mut self, name: &str, args: &[Expr]) -> Option<(String, Ty)> {
+    /// Slice 11.FN_PTR: indirect call through an SSA pointer value.
+    /// Lowers each arg, emits `call <retty> <ptr>(<args>)`. Mirrors the
+    /// shape of `gen_named_call` for the per-arg lowering but uses the
+    /// callee's `%v` SSA name instead of `@<name>`.
+    fn gen_indirect_call(
+        &mut self,
+        callee_val: &str,
+        params: &[Ty],
+        return_type: &Ty,
+        args: &[Expr],
+    ) -> Option<(String, Ty)> {
+        // Evaluate each arg to a value. FnPtr params are always value-passed
+        // (no `mut`/`move` machinery at the call site — those are call-site
+        // contracts, not type-level facts; the fn-pointer abstraction
+        // erases them). All callable signatures here are C-ABI (ccc).
+        let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
+        for (a, pty) in args.iter().zip(params.iter()) {
+            let (v, _) = self.gen_expr(a).expect("indirect call arg has value");
+            arg_vals.push((v, self.lty(pty)));
+        }
+        let mut arg_str = String::new();
+        for (i, (v, t)) in arg_vals.iter().enumerate() {
+            if i > 0 { arg_str.push_str(", "); }
+            arg_str.push_str(&format!("{t} {v}"));
+        }
+        match return_type {
+            Ty::Unit => {
+                self.emit(&format!("call void {callee_val}({arg_str})"));
+                None
+            }
+            ret => {
+                let v = self.next_tmp();
+                self.emit(&format!("{v} = call {} {callee_val}({arg_str})", self.lty(ret)));
+                Some((v, ret.clone()))
+            }
+        }
+    }
+
+    fn gen_named_call(&mut self, name: &str, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {
         // Special case: println(i32) → call printf with our %d\n format.
         // Phase 8 slice 8.STR.2: also handle println(str) by extracting
         // (ptr, len) from the fat-pointer value and passing both to
@@ -2807,6 +2959,37 @@ impl<'a> FnState<'a> {
             self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
             return Some((t2, Ty::Str));
         }
+        // Phase 11 slice 11.LAYOUT: `size_of[T]()` and `align_of[T]()`.
+        // The GEP-null trick gives a constant the LLVM optimizer folds
+        // at -O1+. At -O0 it becomes a real two-instruction sequence
+        // (getelementptr + ptrtoint) that returns the layout value.
+        //
+        // size_of:  ptrtoint (getelementptr T, ptr null, i64 1) to i64
+        // align_of: ptrtoint (getelementptr {i1, T}, ptr null, i64 0, i32 1) to i64
+        //
+        // The align_of trick exploits LLVM's struct layout: in `{i1, T}`,
+        // T starts at the alignment boundary of T after the i1's 1-byte
+        // storage + padding, so the offset of T is exactly alignof(T).
+        if name == "size_of" {
+            let t = ty_from(&type_args[0], &self.types);
+            let llvm_t = llvm_ty(&t, &self.types);
+            let ptr_tmp = self.next_tmp();
+            let int_tmp = self.next_tmp();
+            self.emit(&format!("{ptr_tmp} = getelementptr {llvm_t}, ptr null, i64 1"));
+            self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
+            return Some((int_tmp, Ty::Usize));
+        }
+        if name == "align_of" {
+            let t = ty_from(&type_args[0], &self.types);
+            let llvm_t = llvm_ty(&t, &self.types);
+            let ptr_tmp = self.next_tmp();
+            let int_tmp = self.next_tmp();
+            self.emit(&format!(
+                "{ptr_tmp} = getelementptr {{ i1, {llvm_t} }}, ptr null, i64 0, i32 1"
+            ));
+            self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
+            return Some((int_tmp, Ty::Usize));
+        }
         let sig = self.sigs.get(name).expect("sema validated function exists").clone();
         // Per-arg lowering. `arg_vals[i]` is (ssa-value, llvm-type-string).
         // For pointer-passed `mut x: T` params we take the address of the
@@ -2856,14 +3039,19 @@ impl<'a> FnState<'a> {
         } else {
             String::new()
         };
+        // Phase 11 / ObjC interop: `#[link_name = "..."]` aliases the
+        // linker symbol. Call sites use the link_name when present so the
+        // call resolves to the same C symbol as the user wrote in the
+        // attribute, not the C+ source-level name.
+        let symbol: &str = sig.link_name.as_deref().unwrap_or(name);
         match sig.return_type {
             Ty::Unit => {
-                self.emit(&format!("call void{type_prefix} @{name}({arg_str})"));
+                self.emit(&format!("call void{type_prefix} @{symbol}({arg_str})"));
                 None
             }
             ret => {
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = call {}{type_prefix} @{name}({arg_str})", self.lty(&ret)));
+                self.emit(&format!("{v} = call {}{type_prefix} @{symbol}({arg_str})", self.lty(&ret)));
                 Some((v, ret))
             }
         }

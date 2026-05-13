@@ -1,0 +1,54 @@
+// Phase 11 slice 11.FN_PTR — function pointer types and values demo.
+//
+// C+ admits `fn(T1, T2) -> R` as a first-class type and coerces named
+// fns to fn-pointer values when the expected type is FnPtr. No closures
+// (no environment capture); the pointer is just the symbol's address.
+//
+// This demo exercises:
+//   - fn pointer as a `let` binding type
+//   - fn pointer as a fn parameter type (callback)
+//   - fn pointer as a struct field type (struct-of-callbacks pattern)
+//   - indirect call through each
+//
+// What it does: builds a `ButtonActions` struct holding two handlers,
+// invokes them indirectly, and returns the sum (which is also achievable
+// via direct callback dispatch). Exit code: 42.
+
+struct ButtonActions {
+    on_click: fn(i32) -> i32,
+    on_hover: fn(i32) -> i32,
+}
+
+fn handle_click(state: i32) -> i32 {
+    return state +% 35;
+}
+
+fn handle_hover(state: i32) -> i32 {
+    return state +% 7;
+}
+
+// Callback-as-parameter pattern: `apply` takes any fn matching the
+// signature and invokes it.
+fn apply(callback: fn(i32) -> i32, x: i32) -> i32 {
+    return callback(x);
+}
+
+fn main() -> i32 {
+    // Pattern 1: bare-ident-as-fn-pointer-value via type-directed coercion.
+    let cb: fn(i32) -> i32 = handle_click;
+    let r1: i32 = cb(0);   // 35
+
+    // Pattern 2: pass a fn to another fn as a parameter.
+    let r2: i32 = apply(handle_hover, 0);   // 7
+
+    // Pattern 3: struct-of-callbacks. Indirect call through a field.
+    let actions: ButtonActions = ButtonActions {
+        on_click: handle_click,
+        on_hover: handle_hover,
+    };
+    let r3: i32 = actions.on_click(0);   // 35 (redundant with r1 but tests the struct path)
+    let r4: i32 = actions.on_hover(0);   // 7  (redundant with r2 but tests the struct path)
+
+    // r1 + r2 = 42; r3 + r4 = 42; we return r1 + r2 for the exit code.
+    return r1 +% r2;
+}

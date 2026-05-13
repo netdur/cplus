@@ -328,6 +328,15 @@ pub enum TypeKind {
     /// flows through the type system; deref / index / arithmetic
     /// operations land in a follow-up slice (10.FFI.2).
     RawPtr(Box<Type>),
+    /// Slice 11.FN_PTR: function pointer type — `fn(T1, T2) -> R` (or
+    /// `fn(T1, T2)` with implicit unit return). Maps to LLVM `ptr`,
+    /// same lowering as raw data pointers. Always carries the C
+    /// calling convention (ccc) at the LLVM level. `Copy` (a pointer
+    /// is 8 bytes; identity-equal pointers compare equal). Coercion
+    /// from a named C+ fn to a fn-pointer value is type-directed —
+    /// the bare identifier in an expected-FnPtr context resolves to
+    /// the symbol's address. No closures, no environment capture.
+    FnPtr { params: Vec<Type>, return_type: Option<Box<Type>> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

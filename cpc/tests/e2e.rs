@@ -3285,6 +3285,272 @@ fn phase7_self_outside_impl_rejected_e0508() {
     assert!(stderr.contains("E0508"), "expected E0508 in stderr: {stderr}");
 }
 
+// Phase 11 slice 11.FN_PTR: function pointer types and values.
+
+#[test]
+fn phase11_fn_pointer_demo_runs() {
+    let out = compile_and_run("phase11_fn_pointers.cplus");
+    // Exit 42 = handle_click(0) + handle_hover(0) = 35 + 7.
+    assert_eq!(out.status.code(), Some(42), "phase11_fn_pointers should exit 42");
+}
+
+#[test]
+fn phase11_fn_pointer_indirect_call_via_local_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fnptr_local.cplus");
+    std::fs::write(
+        &src,
+        "fn double(x: i32) -> i32 { return x +% x; }\n\
+         fn main() -> i32 {\n\
+             let f: fn(i32) -> i32 = double;\n\
+             return f(21);\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("fnptr_local");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success());
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(42));
+}
+
+#[test]
+fn phase11_fn_pointer_struct_field_runs() {
+    // The headline struct-of-callbacks pattern. Indirect call through
+    // a struct field of FnPtr type.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fnptr_struct.cplus");
+    std::fs::write(
+        &src,
+        "struct Actions { on_click: fn(i32) -> i32 }\n\
+         fn handler(x: i32) -> i32 { return x +% 35; }\n\
+         fn main() -> i32 {\n\
+             let a: Actions = Actions { on_click: handler };\n\
+             return a.on_click(7);\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("fnptr_struct");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success());
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(42));
+}
+
+#[test]
+fn phase11_fn_pointer_to_libc_atexit_runs() {
+    // Cross-language fn-pointer FFI: pass a C+ fn to libc's atexit,
+    // verify the C runtime calls our fn back during program teardown.
+    // This is the headline ObjC-interop-style use case.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fnptr_atexit.cplus");
+    std::fs::write(
+        &src,
+        "extern fn atexit(cb: fn()) -> i32;\n\
+         fn cleanup() { println(42); }\n\
+         fn main() -> i32 { unsafe { atexit(cleanup); } return 0; }\n",
+    ).unwrap();
+    let bin = dir.join("fnptr_atexit");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success(), "fn pointer to atexit should compile");
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(stdout, "42\n", "cleanup should print 42 from atexit");
+}
+
+#[test]
+fn phase11_fn_pointer_signature_mismatch_rejected_e0302() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fnptr_mismatch.cplus");
+    std::fs::write(
+        &src,
+        "fn double(x: i32) -> i32 { return x +% x; }\n\
+         fn main() -> i32 { let f: fn(bool) -> i32 = double; return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
+}
+
+// Phase 11 / P3 from null design: integer-to-raw-pointer cast.
+// `0 as *T` inside `unsafe { }` is how C+ expresses FFI null without
+// adding a `null` keyword to the language.
+
+#[test]
+fn phase11_int_to_ptr_cast_inside_unsafe_compiles() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("int_to_ptr.cplus");
+    std::fs::write(
+        &src,
+        "extern fn free(p: *u8);\n\
+         fn main() -> i32 {\n\
+             let null_ptr: *u8 = unsafe { 0 as *u8 };\n\
+             unsafe { free(null_ptr); }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("int_to_ptr");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success(), "0 as *u8 inside unsafe should compile");
+    // libc's free(NULL) is a no-op per POSIX, so the binary should exit 0.
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(0));
+}
+
+#[test]
+fn phase11_int_to_ptr_cast_outside_unsafe_rejected_e0801() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("int_to_ptr_unsafe.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "0 as *u8 outside unsafe should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0801"), "expected E0801 in stderr: {stderr}");
+}
+
+// Phase 11 / ObjC interop: `#[link_name = "..."]` attribute.
+
+#[test]
+fn phase11_link_name_aliases_symbol_runs() {
+    // Declare libc's `abs` under a different C+ name via #[link_name].
+    // Verifies the linker resolution: the C+ source calls `my_abs` but
+    // the LLVM IR's `declare`/`call` use `@abs`, which links against libc.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("link_name_abs.cplus");
+    std::fs::write(
+        &src,
+        "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32;\n\
+         fn main() -> i32 { return unsafe { my_abs(0 -% 42) }; }\n",
+    ).unwrap();
+    let bin = dir.join("link_name_abs");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success(), "link_name extern fn should compile");
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(42), "abs(-42) should return 42");
+}
+
+#[test]
+fn phase11_link_name_emits_alias_in_ir() {
+    // Verify the IR shape: `declare i32 @abs(i32)` even though the source
+    // declared `my_abs`. The call site also uses `@abs`, not `@my_abs`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("link_name_ir.cplus");
+    std::fs::write(
+        &src,
+        "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32;\n\
+         fn main() -> i32 { return unsafe { my_abs(0 -% 7) }; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success(), "compile should succeed");
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("declare i32 @abs("), "expected `declare i32 @abs(...)` in IR: {ir}");
+    assert!(ir.contains("@abs(i32"), "expected call to use `@abs` not `@my_abs`: {ir}");
+    assert!(!ir.contains("@my_abs"), "should NOT emit `@my_abs` anywhere: {ir}");
+}
+
+#[test]
+fn phase11_link_name_dedups_multiple_decls() {
+    // Two `extern fn`s aliasing the same symbol must emit only one `declare`.
+    // This is the headline ObjC use case: many typed signatures, one symbol.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("link_name_dedup.cplus");
+    std::fs::write(
+        &src,
+        "#[link_name = \"abs\"] extern fn abs_i32(x: i32) -> i32;\n\
+         #[link_name = \"abs\"] extern fn abs_again(x: i32) -> i32;\n\
+         fn main() -> i32 { return unsafe { abs_i32(0 -% 7) + abs_again(0 -% 35) }; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success(), "two link_name aliases for same symbol should compile");
+    let ir = String::from_utf8_lossy(&out.stdout);
+    let declare_count = ir.matches("declare i32 @abs(").count();
+    assert_eq!(declare_count, 1, "expected exactly one `declare @abs`, got {declare_count}: {ir}");
+    // And the binary still runs.
+    let bin = dir.join("link_name_dedup");
+    let _ = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(42), "abs(-7) + abs(-35) should be 42");
+}
+
+#[test]
+fn phase11_link_name_on_non_extern_fn_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("link_name_local.cplus");
+    std::fs::write(
+        &src,
+        "#[link_name = \"foo\"] fn local(x: i32) -> i32 { return x; }\n\
+         fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "link_name on non-extern fn should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0356"), "expected E0356 in stderr: {stderr}");
+}
+
+// Phase 11 slice 11.LAYOUT: size_of[T]() / align_of[T]() intrinsics.
+
+#[test]
+fn phase11_size_of_align_of_demo_runs() {
+    // Exit demo: prints primitive sizes/aligns + Point size, exits with size_of[Point].
+    // Locks the layout numbers: i32=4, i64=8, *u8=8 on the supported 64-bit targets,
+    // Point (two i32s) = 8 bytes.
+    let out = compile_and_run("phase11_size_of.cplus");
+    // Exit code is the size of Point (deliberately non-zero) — don't assert .success().
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // 6 primitive-layout lines (s_i8, s_i32, s_i64, a_i8, a_i32, a_i64) + 1 aggregate (s_point).
+    let expected = "1\n4\n8\n1\n4\n8\n8\n";
+    assert_eq!(stdout, expected, "stdout mismatch");
+    assert_eq!(out.status.code(), Some(8), "exit code should be size_of[Point] = 8");
+}
+
+#[test]
+fn phase11_size_of_inside_generic_fn_runs() {
+    // size_of::[T]() inside a generic fn body — monomorphize must substitute
+    // T to the concrete type via subst_type_ast in the call's type_args, or
+    // codegen panics on Ty::Param. This pins that substitution.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("size_of_generic.cplus");
+    std::fs::write(
+        &src,
+        "fn typed_size[T]() -> usize { return size_of::[T](); }\n\
+         fn main() -> i32 { let n: usize = typed_size::[i32](); return n as i32; }\n",
+    ).unwrap();
+    let bin = dir.join("size_of_generic");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success(), "size_of inside generic fn should compile cleanly");
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(4), "typed_size::[i32]() should return 4");
+}
+
+#[test]
+fn phase11_size_of_no_type_arg_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad_size_of.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { let n: usize = size_of(); return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "size_of() with no type arg should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0501"), "expected E0501 in stderr: {stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

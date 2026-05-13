@@ -337,6 +337,12 @@ fn needs_space_between_ctx(prev_prev: Option<&TokenKind>, prev: &TokenKind, curr
             return false;
         }
     }
+    // Slice 11.FN_PTR: `fn(...)` in type position is tight — no space
+    // between `fn` and `(`. The declaration form (`fn name(...)`) has an
+    // ident between, so this rule only ever fires on fn-pointer types.
+    if matches!(prev, Fn) && matches!(curr, LParen) {
+        return false;
+    }
     needs_space_between(prev, curr)
 }
 

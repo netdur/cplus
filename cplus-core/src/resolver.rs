@@ -1012,6 +1012,13 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
             for a in args.iter_mut() { rewrite_type(a, ctx)?; }
         }
         TypeKind::RawPtr(inner) => rewrite_type(inner, ctx)?,
+        // Slice 11.FN_PTR: function pointer types — recurse into each
+        // param type and the return type so cross-file references in
+        // signature components are qualified.
+        TypeKind::FnPtr { params, return_type } => {
+            for p in params.iter_mut() { rewrite_type(p, ctx)?; }
+            if let Some(rt) = return_type.as_mut() { rewrite_type(rt, ctx)?; }
+        }
     }
     Ok(())
 }

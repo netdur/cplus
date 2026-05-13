@@ -376,6 +376,8 @@ impl CopyOracle {
             TypeKind::Generic { .. } => false,
             // Slice 10.FFI.1: raw pointers are Copy.
             TypeKind::RawPtr(_) => false,
+            // Slice 11.FN_PTR: function pointers are Copy (atomic).
+            TypeKind::FnPtr { .. } => false,
         }
     }
 
@@ -388,6 +390,8 @@ impl CopyOracle {
             TypeKind::Array { elem, .. } => self.is_type_copy_internal(elem),
             TypeKind::Borrowed { inner, .. } => self.is_type_copy_internal(inner),
             TypeKind::RawPtr(_) => true,
+            // Slice 11.FN_PTR: function pointers are Copy.
+            TypeKind::FnPtr { .. } => true,
             // Slice 7GEN.5c: conservative — assume non-Copy. Real Copy-ness
             // is determined after monomorphize substitutes args into the
             // template's fields.
