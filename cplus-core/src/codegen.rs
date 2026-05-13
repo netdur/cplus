@@ -27,7 +27,7 @@ pub enum BuildMode {
 /// Generate LLVM IR for a sema-validated program. Caller must run sema first;
 /// codegen will panic on unresolvable references that sema would have caught.
 pub fn generate(program: &Program, mode: BuildMode) -> String {
-    generate_inner(program, mode, None, None)
+    generate_inner(program, mode, None, None, &[])
 }
 
 /// Phase 11 polish (2026-05-13): emit LLVM IR with DWARF debug
@@ -36,7 +36,21 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
 /// (for line-by-line stepping) is a follow-up. lldb can still identify
 /// function symbols in stack traces and set breakpoints by name.
 pub fn generate_with_debug(program: &Program, mode: BuildMode, source_file: &std::path::Path) -> String {
-    generate_inner(program, mode, None, Some(source_file))
+    generate_inner(program, mode, None, Some(source_file), &[])
+}
+
+/// Phase 11 polish (2026-05-13): emit LLVM IR with sanitizer function
+/// attributes (`sanitize_address`, `sanitize_thread`, `sanitize_memory`)
+/// attached to every user-defined `define`. Required for clang's
+/// sanitizer passes to instrument code that originates from a `.ll`
+/// (the C path auto-attaches these; the IR path doesn't).
+pub fn generate_with_options(
+    program: &Program,
+    mode: BuildMode,
+    source_file: Option<&std::path::Path>,
+    sanitizers: &[&str],
+) -> String {
+    generate_inner(program, mode, None, source_file, sanitizers)
 }
 
 /// Slice 5ATTR.4: emit a test-runner binary. The output IR contains every
@@ -61,7 +75,7 @@ pub fn generate_test_binary(
     tests: &[crate::attrs::TestFn],
     json: bool,
 ) -> String {
-    generate_inner(program, mode, Some(TestDriverConfig { tests, json }), None)
+    generate_inner(program, mode, Some(TestDriverConfig { tests, json }), None, &[])
 }
 
 struct TestDriverConfig<'a> {
@@ -74,6 +88,7 @@ fn generate_inner(
     mode: BuildMode,
     test_cfg: Option<TestDriverConfig<'_>>,
     debug_source: Option<&std::path::Path>,
+    sanitizers: &[&str],
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
@@ -143,7 +158,49 @@ fn generate_inner(
         let src = std::fs::read_to_string(path).ok();
         emit_dwarf_metadata(&mut out, program, path, src.as_deref());
     }
+    if !sanitizers.is_empty() {
+        attach_sanitizer_attrs(&mut out, sanitizers);
+    }
     out
+}
+
+/// Phase 11 polish (2026-05-13): attach `sanitize_*` attributes to
+/// every user-defined `define` line. clang's sanitizer passes only
+/// instrument functions carrying these attributes; for source compiled
+/// via clang the C frontend auto-attaches them, but cpc emits IR
+/// directly so we do it here. Inline-attribute syntax keeps the IR
+/// trivially diff-able without dragging in attribute groups.
+fn attach_sanitizer_attrs(out: &mut String, sanitizers: &[&str]) {
+    let attrs: Vec<&str> = sanitizers.iter().filter_map(|s| match *s {
+        "address" => Some("sanitize_address"),
+        "thread" => Some("sanitize_thread"),
+        "memory" => Some("sanitize_memory"),
+        // UBSan doesn't gate on a function attribute — its checks are
+        // inserted unconditionally by the pass.
+        "undefined" => None,
+        _ => None,
+    }).collect();
+    if attrs.is_empty() { return; }
+    let attr_str = attrs.join(" ");
+    let original = std::mem::take(out);
+    for line in original.lines() {
+        if line.starts_with("define ") {
+            // Insert ` <attrs>` after the `)` and before the `{` (or
+            // before any trailing `!dbg !N` attached for DWARF).
+            if let Some(close_paren) = line.find(')') {
+                let after = &line[close_paren + 1..];
+                let head = &line[..=close_paren];
+                out.push_str(head);
+                out.push(' ');
+                out.push_str(&attr_str);
+                out.push_str(after);
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
 }
 
 /// Emit module-flag + !llvm.dbg.cu + DICompileUnit + DIFile metadata,

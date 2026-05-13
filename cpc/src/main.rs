@@ -59,6 +59,10 @@ fn main() -> ExitCode {
     // v1 ships function-level DI only (DICompileUnit + DIFile +
     // DISubprogram). Per-instruction DILocation is a follow-up.
     let mut emit_debug_info = false;
+    // Phase 11 polish (2026-05-13): sanitizer flags. LLVM's
+    // instrumentation passes do the heavy lifting; cpc just plumbs
+    // the `-fsanitize=...` flag through to clang.
+    let mut sanitizers: Vec<&'static str> = Vec::new();
     let mut subcommand: Option<Subcommand> = None;
     let mut fmt_opts = FmtOpts::default();
     let mut fmt_inputs: Vec<PathBuf> = Vec::new();
@@ -114,7 +118,7 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-ll requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ll(PathBuf::from(v), diag_mode, build_mode, emit_debug_info);
+                return dump_ll(PathBuf::from(v), diag_mode, build_mode, emit_debug_info, &sanitizers);
             }
             Some("--emit-ll-project") => {
                 subcommand = Some(Subcommand::EmitLlProject);
@@ -130,6 +134,22 @@ fn main() -> ExitCode {
             }
             Some("-g" | "--debug-info") => {
                 emit_debug_info = true;
+                i += 1;
+            }
+            Some("--asan") => {
+                sanitizers.push("address");
+                i += 1;
+            }
+            Some("--ubsan") => {
+                sanitizers.push("undefined");
+                i += 1;
+            }
+            Some("--tsan") => {
+                sanitizers.push("thread");
+                i += 1;
+            }
+            Some("--msan") => {
+                sanitizers.push("memory");
                 i += 1;
             }
             Some("-h" | "--help") => {
@@ -202,6 +222,23 @@ fn main() -> ExitCode {
         }
     }
 
+    // Phase 11 polish: validate sanitizer combinations. ASan/TSan/MSan
+    // are mutually exclusive (they own the shadow memory or interpose
+    // on the same syscalls); UBSan composes with any of them.
+    {
+        let exclusive: Vec<&'static str> = sanitizers.iter()
+            .copied()
+            .filter(|s| matches!(*s, "address" | "thread" | "memory"))
+            .collect();
+        if exclusive.len() > 1 {
+            eprintln!(
+                "cpc: --asan/--tsan/--msan are mutually exclusive (got: {})",
+                exclusive.join(", ")
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+
     // `cpc lsp` forwards any remaining args to the cpc-lsp binary.
     // (`--log PATH` is the only one cpc-lsp accepts in slice 4E.1, but
     // we don't reach into here — just pass everything past `lsp`.)
@@ -222,6 +259,7 @@ fn main() -> ExitCode {
             diag_mode,
             build_mode,
             emit_debug_info,
+            &sanitizers,
         ),
         (None, None) => phase0_hello(out.unwrap_or_else(|| PathBuf::from("hello"))),
     }
@@ -307,7 +345,7 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out_path, build_mode, false);
+    let status = run_clang(&tmp, &out_path, build_mode, false, &[]);
     let _ = fs::remove_file(&tmp);
     status
 }
@@ -690,7 +728,7 @@ fn run_test(
         return ExitCode::FAILURE;
     }
     let bin_out = env::temp_dir().join(format!("cpc-test-{}.bin", std::process::id()));
-    let clang_status = run_clang(&tmp, &bin_out, build_mode, false);
+    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[]);
     let _ = fs::remove_file(&tmp);
     if !matches!(clang_status, ExitCode::SUCCESS) {
         let _ = fs::remove_file(&bin_out);
@@ -841,12 +879,12 @@ fn phase0_hello(out: PathBuf) -> ExitCode {
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out, BuildMode::Debug, false);
+    let status = run_clang(&tmp, &out, BuildMode::Debug, false, &[]);
     let _ = fs::remove_file(&tmp);
     status
 }
 
-fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool) -> ExitCode {
+fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> ExitCode {
     let src = match fs::read_to_string(&input) {
         Ok(s) => s,
         Err(e) => {
@@ -854,7 +892,7 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&input, &src, mode, build_mode, debug_info) {
+    let ir = match build_ir(&input, &src, mode, build_mode, debug_info, sanitizers) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -863,12 +901,12 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out, build_mode, debug_info);
+    let status = run_clang(&tmp, &out, build_mode, debug_info, sanitizers);
     let _ = fs::remove_file(&tmp);
     status
 }
 
-fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug_info: bool) -> Result<String, ExitCode> {
+fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> Result<String, ExitCode> {
     // Slice 5DOC: extract doctest fences from `///` comments into appended
     // `#[test]` functions before lexing. Files without doctests are
     // unchanged — `doctest::extract` returns the input verbatim.
@@ -933,14 +971,15 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug
         return Err(ExitCode::FAILURE);
     }
     let post_mono = run_monomorphize(prog, &mono, &std::collections::BTreeMap::new());
-    if debug_info {
-        Ok(codegen::generate_with_debug(&post_mono, build_mode, file))
+    if debug_info || !sanitizers.is_empty() {
+        let dbg_path = if debug_info { Some(file) } else { None };
+        Ok(codegen::generate_with_options(&post_mono, build_mode, dbg_path, sanitizers))
     } else {
         Ok(codegen::generate(&post_mono, build_mode))
     }
 }
 
-fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool) -> ExitCode {
+fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> ExitCode {
     // Pass the LLVM optimization level alongside our own build-mode choice:
     //   Debug   -> `-O0`. Keeps the overflow-check intrinsics, leaves divs
     //              and branches in source order, debuggable IR.
@@ -958,6 +997,14 @@ fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool) -> 
     // IR through to the final binary. Without it clang silently strips
     // the .debug_info section.
     if debug_info { cmd.arg("-g"); }
+    // Phase 11 polish: sanitizer instrumentation. clang owns the
+    // instrumentation pass + the matching runtime library; we just
+    // forward the comma-joined `-fsanitize=` argument.
+    if !sanitizers.is_empty() {
+        cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
+        // Better stack traces in sanitizer reports.
+        cmd.arg("-fno-omit-frame-pointer");
+    }
     let status = cmd
         .arg(input_ll)
         .arg("-o")
@@ -1000,7 +1047,7 @@ fn dump_tokens(path: PathBuf, mode: DiagMode) -> ExitCode {
     }
 }
 
-fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool) -> ExitCode {
+fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> ExitCode {
     let src = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => {
@@ -1008,7 +1055,7 @@ fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: boo
             return ExitCode::FAILURE;
         }
     };
-    match build_ir(&path, &src, mode, build_mode, debug_info) {
+    match build_ir(&path, &src, mode, build_mode, debug_info, sanitizers) {
         Ok(ir) => { print!("{ir}"); ExitCode::SUCCESS }
         Err(code) => code,
     }

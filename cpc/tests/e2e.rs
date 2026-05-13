@@ -4159,6 +4159,86 @@ fn phase11_debuginfo_off_by_default_no_di() {
     assert!(!ir.contains("!DICompileUnit"), "DI should be absent without -g: {ir}");
 }
 
+// Phase 11 polish (2026-05-13): sanitizer flags. `--asan` / `--ubsan` /
+// `--tsan` / `--msan` plumb through to clang and attach the matching
+// `sanitize_*` function attribute to every `define` in cpc-emitted IR
+// (clang's sanitizer passes skip functions without these attributes
+// when consuming a `.ll` — the C frontend auto-attaches them).
+
+#[test]
+fn phase11_asan_attaches_function_attr() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ok.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc).arg("--asan").arg("--emit-ll").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("define i32 @main() sanitize_address"),
+        "main should carry sanitize_address attr: {ir}");
+}
+
+#[test]
+fn phase11_ubsan_no_function_attr() {
+    // UBSan doesn't gate on a function attribute; we just forward
+    // -fsanitize=undefined to clang. Verify the IR is unchanged.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("u.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc).arg("--ubsan").arg("--emit-ll").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(!ir.contains("sanitize_"), "UBSan should not attach a sanitize_ attr: {ir}");
+}
+
+#[test]
+fn phase11_sanitizer_exclusive_combo_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("x.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let bin = dir.join("x");
+    let out = Command::new(cpc).arg("--asan").arg("--tsan")
+        .arg(&src).arg("-o").arg(&bin)
+        .output().expect("invoke cpc");
+    assert!(!out.status.success(), "asan + tsan should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("mutually exclusive"), "stderr: {stderr}");
+}
+
+#[test]
+fn phase11_asan_catches_heap_overflow() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("oob.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn main() -> i32 {\n\
+             let p: *u8 = unsafe { malloc(8 as usize) };\n\
+             let mut i: usize = 0 as usize;\n\
+             while i < 100 as usize {\n\
+                 unsafe { *(p + i) = 42 as u8; }\n\
+                 i = i +% 1 as usize;\n\
+             }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("oob");
+    let out = Command::new(cpc).arg("--asan").arg(&src).arg("-o").arg(&bin)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "asan build should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    // ASan exits non-zero and prints "AddressSanitizer:" on stderr.
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("AddressSanitizer"),
+        "ASan didn't fire on heap overflow; stderr={stderr}, status={:?}", run.status);
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
