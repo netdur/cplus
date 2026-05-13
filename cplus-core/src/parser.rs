@@ -70,6 +70,34 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
+    fn peek_kind_n(&self, n: usize) -> &TokenKind {
+        let idx = (self.pos + n).min(self.tokens.len() - 1);
+        &self.tokens[idx].kind
+    }
+
+    /// Slice 7GEN.5c: starting from the current position (which should
+    /// be the opening `[`), scan past the matching `]` accounting for
+    /// nested brackets. Returns the index of the token *after* the
+    /// matching `]`, or `None` if no match was found before EOF.
+    fn scan_past_bracket(&self) -> Option<usize> {
+        debug_assert!(matches!(self.peek_kind(), TokenKind::LBracket));
+        let mut depth: u32 = 0;
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 { return Some(i + 1); }
+                }
+                TokenKind::Eof => return None,
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
     fn at(&self, k: &TokenKind) -> bool {
         std::mem::discriminant(self.peek_kind()) == std::mem::discriminant(k)
     }
@@ -121,26 +149,186 @@ impl Parser {
     // ---- top-level ----
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
+        // `import` declarations may only appear at the very top of the file,
+        // before any item. Anything else after an item is parsed as an item
+        // (so a stray `import` later produces "expected item" — see
+        // `parse_item`).
+        let mut imports = Vec::new();
+        while matches!(self.peek_kind(), TokenKind::Import) {
+            imports.push(self.parse_import_decl()?);
+        }
         let mut items = Vec::new();
         while !matches!(self.peek_kind(), TokenKind::Eof) {
             items.push(self.parse_item()?);
         }
-        Ok(Program { items })
+        Ok(Program { imports, items })
+    }
+
+    fn parse_import_decl(&mut self) -> Result<ImportDecl, ParseError> {
+        let start = self.expect(&TokenKind::Import, "`import`")?.span;
+        let path_tok = self.peek().clone();
+        let path = match &path_tok.kind {
+            TokenKind::Str(s) => s.clone(),
+            _ => return Err(self.err_at_peek("string literal (import path)")),
+        };
+        self.bump();
+        self.expect(&TokenKind::As, "`as`")?;
+        let as_name = self.expect_ident()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(ImportDecl { path, as_name, span: start.merge(end) })
     }
 
     fn parse_item(&mut self) -> Result<Item, ParseError> {
+        // Attribute prefix (slice 5ATTR.1) — zero or more `#[...]` blocks.
+        // Attributes attach to the item that follows; impl blocks themselves
+        // don't carry attributes in Phase 5 (per-method placement instead),
+        // so an attribute followed by `impl` is rejected here.
+        let attributes = self.parse_attributes()?;
+        // Optional `pub` prefix (slice 4B). Stays attached to the item that
+        // follows; `impl` blocks themselves don't take `pub` (per-method
+        // `pub` instead), so a `pub impl` is rejected.
+        let is_pub = self.eat(&TokenKind::Pub);
         match self.peek_kind() {
-            TokenKind::Fn => self.parse_function(),
-            TokenKind::Enum => self.parse_enum_decl(),
-            TokenKind::Struct => self.parse_struct_decl(),
-            TokenKind::Impl => self.parse_impl_block(),
-            _ => Err(self.err_at_peek("item (`fn`, `enum`, `struct`, or `impl`)")),
+            TokenKind::Fn => self.parse_function(is_pub, attributes),
+            // Slice 10.FFI.1: `extern fn name(params) -> ret;` declarations.
+            // Item-level only — no body, terminated by `;`. The lexer's
+            // `Extern` keyword token has existed since Phase 1; this is
+            // its first real consumer.
+            TokenKind::Extern => self.parse_extern_fn(is_pub, attributes),
+            TokenKind::Enum => self.parse_enum_decl(is_pub, attributes),
+            TokenKind::Struct => self.parse_struct_decl(is_pub, attributes),
+            // Slice 7GEN.3: interface declarations.
+            TokenKind::Interface => self.parse_interface_decl(is_pub, attributes),
+            TokenKind::Impl => {
+                if is_pub {
+                    return Err(self.err_at_peek(
+                        "item — `impl` blocks don't take `pub`; mark individual methods inside the block instead",
+                    ));
+                }
+                if !attributes.is_empty() {
+                    return Err(self.err_at_peek(
+                        "item — `impl` blocks don't carry attributes in Phase 5; attach the attribute to individual methods inside instead",
+                    ));
+                }
+                self.parse_impl_block()
+            }
+            // `import` after the file's leading import block is a hard
+            // error — call it out by name so the diagnostic explains the
+            // restriction.
+            TokenKind::Import => Err(self.err_at_peek(
+                "item (`fn`, `enum`, `struct`, `impl`, or `interface`) — `import` declarations must appear at the top of the file before any item",
+            )),
+            _ => Err(self.err_at_peek("item (`fn`, `enum`, `struct`, `impl`, or `interface`)")),
+        }
+    }
+
+    /// Parse zero or more `#[...]` attribute blocks at the current position.
+    /// Each block is a single Attribute; the resulting Vec preserves source
+    /// order. Slice 5ATTR.1.
+    fn parse_attributes(&mut self) -> Result<Vec<Attribute>, ParseError> {
+        let mut attrs = Vec::new();
+        while matches!(self.peek_kind(), TokenKind::Pound) {
+            attrs.push(self.parse_one_attribute()?);
+        }
+        Ok(attrs)
+    }
+
+    fn parse_one_attribute(&mut self) -> Result<Attribute, ParseError> {
+        let start = self.expect(&TokenKind::Pound, "`#`")?.span;
+        self.expect(&TokenKind::LBracket, "`[` after `#` (attribute opener)")?;
+        let path = self.expect_ident()?;
+        let mut args: Vec<AttrArg> = Vec::new();
+        if self.eat(&TokenKind::LParen) {
+            while !self.at(&TokenKind::RParen) {
+                args.push(self.parse_attr_arg()?);
+                if !self.eat(&TokenKind::Comma) { break; }
+            }
+            self.expect(&TokenKind::RParen, "`)` (attribute argument list)")?;
+        }
+        let end = self.expect(&TokenKind::RBracket, "`]` (attribute close)")?.span;
+        Ok(Attribute { path, args, span: start.merge(end) })
+    }
+
+    fn parse_attr_arg(&mut self) -> Result<AttrArg, ParseError> {
+        // Three shapes: bare ident, string literal, or `name = VALUE`.
+        match self.peek_kind() {
+            TokenKind::Str(_) => {
+                let tok = self.peek().clone();
+                let TokenKind::Str(s) = tok.kind else { unreachable!() };
+                self.bump();
+                Ok(AttrArg::Str(s, tok.span))
+            }
+            TokenKind::Ident(_) => {
+                let name = self.expect_ident()?;
+                if self.eat(&TokenKind::Eq) {
+                    let value = match self.peek_kind() {
+                        TokenKind::Str(_) => {
+                            let tok = self.peek().clone();
+                            let TokenKind::Str(s) = tok.kind else { unreachable!() };
+                            self.bump();
+                            AttrValue::Str(s, tok.span)
+                        }
+                        TokenKind::Ident(_) => AttrValue::Ident(self.expect_ident()?),
+                        _ => return Err(self.err_at_peek("string literal or identifier (attribute key=value)")),
+                    };
+                    Ok(AttrArg::KeyValue(name, value))
+                } else {
+                    Ok(AttrArg::Ident(name))
+                }
+            }
+            _ => Err(self.err_at_peek("attribute argument (identifier or string literal)")),
         }
     }
 
     fn parse_impl_block(&mut self) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Impl, "`impl`")?.span;
-        let target = self.expect_ident()?;
+        let first_ident = self.expect_ident()?;
+        // Slice 7GEN.3: `impl Interface for Target { ... }` syntax.
+        // The two ident shapes:
+        //   - `impl Target { ... }`            → inherent impl
+        //   - `impl Interface for Target { ... }` → interface impl
+        // Disambiguate by peeking for the `for` keyword. C+ doesn't
+        // have a free-standing `for` keyword in item position other
+        // than as the for-loop statement opener inside fn bodies, so
+        // `for` here unambiguously means interface-impl syntax.
+        //
+        // Slice 7GEN.5e: `impl Generic[T] { ... }` — the target carries
+        // generic params. Type args appear on inherent impls only;
+        // interface impls (`impl Iface for Target`) keep their plain
+        // form for now (generic interface impls deferred).
+        let (interface_name, target, target_generic_params) = if self.eat(&TokenKind::For) {
+            let target = self.expect_ident()?;
+            (Some(first_ident), target, Vec::new())
+        } else {
+            // Optional `[T, U]` after the target ident, declaring
+            // impl-level generic params bound for all methods inside.
+            let params = if self.at(&TokenKind::LBracket) {
+                self.bump(); // `[`
+                let mut params = Vec::new();
+                while !self.at(&TokenKind::RBracket) {
+                    let pname = self.expect_ident()?;
+                    // Re-use the same bound-list shape as fn generic params.
+                    let mut bounds = Vec::new();
+                    if self.eat(&TokenKind::Colon) {
+                        bounds.push(self.expect_ident()?);
+                        while self.eat(&TokenKind::Plus) {
+                            bounds.push(self.expect_ident()?);
+                        }
+                    }
+                    let pspan = pname.span;
+                    params.push(GenericParam { name: pname, bounds, span: pspan });
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                self.expect(&TokenKind::RBracket, "`]`")?;
+                if params.is_empty() {
+                    return Err(self.err_at_peek("expected at least one generic param inside `[ ]`"));
+                }
+                params
+            } else {
+                Vec::new()
+            };
+            (None, first_ident, params)
+        };
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut methods = Vec::new();
         while !self.at(&TokenKind::RBrace) {
@@ -148,14 +336,77 @@ impl Parser {
         }
         let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
         Ok(Item {
-            kind: ItemKind::Impl(ImplBlock { target, methods }),
+            kind: ItemKind::Impl(ImplBlock { target, target_generic_params, methods, interface_name }),
             span: start.merge(end),
+            origin_file: None,
         })
     }
 
-    fn parse_method(&mut self) -> Result<Method, ParseError> {
+    /// Slice 7GEN.3: parse an `interface Name { ... }` declaration.
+    /// The body is a sequence of method-signature declarations
+    /// `fn name(self, ...) -> T;` — note the trailing `;` in place of
+    /// a method body. Receivers (`self` / `mut self` / `move self`)
+    /// are admitted; no-receiver methods (associated functions) are
+    /// also legal. `Self` may appear in parameter / return types
+    /// (parsed as `TypeKind::Path("Self")` — sema substitutes at
+    /// impl-resolution).
+    fn parse_interface_decl(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
+        let start = self.expect(&TokenKind::Interface, "`interface`")?.span;
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace, "`{`")?;
+        let mut methods = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            methods.push(self.parse_interface_method()?);
+        }
+        let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        Ok(Item {
+            kind: ItemKind::Interface(InterfaceDecl { name, methods, is_pub, attributes }),
+            span: start.merge(end),
+            origin_file: None,
+        })
+    }
+
+    fn parse_interface_method(&mut self) -> Result<InterfaceMethod, ParseError> {
         let start = self.expect(&TokenKind::Fn, "`fn`")?.span;
         let name = self.expect_ident()?;
+        self.expect(&TokenKind::LParen, "`(`")?;
+        let receiver = self.try_parse_receiver()?;
+        let mut params = Vec::new();
+        if receiver.is_some() {
+            if self.eat(&TokenKind::Comma) {
+                while !self.at(&TokenKind::RParen) {
+                    params.push(self.parse_param()?);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+            }
+        } else {
+            while !self.at(&TokenKind::RParen) {
+                params.push(self.parse_param()?);
+                if !self.eat(&TokenKind::Comma) { break; }
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)`")?;
+        let return_type = if self.eat(&TokenKind::Arrow) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        // Interface methods end with `;` — no body.
+        let end = self.expect(&TokenKind::Semi, "`;` (interface method signatures have no body)")?.span;
+        Ok(InterfaceMethod { name, receiver, params, return_type, span: start.merge(end) })
+    }
+
+    fn parse_method(&mut self) -> Result<Method, ParseError> {
+        // Per-method attributes (slice 5ATTR.1) then per-method `pub` (slice 4B).
+        let attributes = self.parse_attributes()?;
+        let is_pub = self.eat(&TokenKind::Pub);
+        let start = self.expect(&TokenKind::Fn, "`fn`")?.span;
+        let name = self.expect_ident()?;
+        // Slice 7GEN.5e: optional `[T, U: Bound]` after the method name,
+        // declaring method-level generic params. Re-uses the same shape
+        // as `parse_generic_params` (which is fn-only); inlined here
+        // to share the parsing logic.
+        let generic_params = self.parse_generic_params()?;
         self.expect(&TokenKind::LParen, "`(`")?;
 
         // Optional receiver as the first param: `self`, `&self`, `&mut self`.
@@ -187,7 +438,7 @@ impl Parser {
         };
         let body = self.parse_block()?;
         let span = start.merge(body.span);
-        Ok(Method { name, receiver, params, return_type, body, span })
+        Ok(Method { name, generic_params, receiver, params, return_type, body, span, is_pub, attributes })
     }
 
     /// Try to parse a receiver (`self`, `mut self`, or `move self`) at the
@@ -250,46 +501,156 @@ impl Parser {
         }
     }
 
-    fn parse_struct_decl(&mut self) -> Result<Item, ParseError> {
+    fn parse_struct_decl(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Struct, "`struct`")?.span;
         let name = self.expect_ident()?;
+        // Slice 7GEN.2: optional generic-parameter list.
+        let generic_params = self.parse_generic_params()?;
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         while !self.at(&TokenKind::RBrace) {
+            // Per-field attributes (slice 5ATTR.1) then per-field `pub` (slice 4B).
+            let field_attrs = self.parse_attributes()?;
+            let field_pub = self.eat(&TokenKind::Pub);
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
             let ty = self.parse_type()?;
             let span = fname.span.merge(ty.span);
-            fields.push(StructField { name: fname, ty, span });
+            fields.push(StructField { name: fname, ty, span, is_pub: field_pub, attributes: field_attrs });
             if !self.eat(&TokenKind::Comma) { break; }
         }
         let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
         Ok(Item {
-            kind: ItemKind::Struct(StructDecl { name, fields }),
+            kind: ItemKind::Struct(StructDecl { name, fields, is_pub, attributes, generic_params }),
             span: start.merge(end),
+            origin_file: None,
         })
     }
 
-    fn parse_enum_decl(&mut self) -> Result<Item, ParseError> {
+    fn parse_enum_decl(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Enum, "`enum`")?.span;
         let name = self.expect_ident()?;
+        // Slice 7GEN.2: optional generic-parameter list.
+        let generic_params = self.parse_generic_params()?;
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut variants = Vec::new();
         while !self.at(&TokenKind::RBrace) {
-            variants.push(self.expect_ident()?);
+            // Per-variant attributes (slice 5ATTR.1).
+            let variant_attrs = self.parse_attributes()?;
+            let variant_name = self.expect_ident()?;
+            // Optional positional payload: `Variant(T1, T2, ...)`.
+            let payload = if self.eat(&TokenKind::LParen) {
+                let mut tys = Vec::new();
+                while !self.at(&TokenKind::RParen) {
+                    tys.push(self.parse_type()?);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                self.expect(&TokenKind::RParen, "`)`")?;
+                tys
+            } else {
+                Vec::new()
+            };
+            let v_span = variant_name.span;
+            let span = match payload.last() {
+                Some(t) => v_span.merge(t.span),
+                None => v_span,
+            };
+            variants.push(EnumVariant { name: variant_name, payload, span, attributes: variant_attrs });
             if !self.eat(&TokenKind::Comma) { break; }
         }
         let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
         Ok(Item {
-            kind: ItemKind::Enum(EnumDecl { name, variants }),
+            kind: ItemKind::Enum(EnumDecl { name, variants, is_pub, attributes, generic_params }),
             span: start.merge(end),
+            origin_file: None,
         })
     }
 
-    fn parse_function(&mut self) -> Result<Item, ParseError> {
+    /// Slice 10.FFI.1: `extern fn name(params) -> ret;` — item-level
+    /// foreign-function declaration, no body, terminated by `;`.
+    /// Calling convention is C (`ccc`) — Phase 10 hardening will admit
+    /// future explicit conventions like `extern "fastcall" fn ...`.
+    /// Generic params and `pub` are rejected: an extern fn isn't
+    /// monomorphizable (the C symbol is concrete), and `pub` is
+    /// orthogonal to FFI visibility (the symbol is always reachable
+    /// at the link level).
+    fn parse_extern_fn(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
+        let start = self.peek().span;
+        if is_pub {
+            return Err(self.err_at_peek(
+                "extern fn — `pub` is not meaningful on extern declarations; the C symbol is always reachable",
+            ));
+        }
+        if !attributes.is_empty() {
+            return Err(self.err_at_peek(
+                "extern fn — attributes are not supported on extern declarations in slice 10.FFI.1",
+            ));
+        }
+        self.expect(&TokenKind::Extern, "`extern`")?;
+        self.expect(&TokenKind::Fn, "`fn`")?;
+        let name = self.expect_ident()?;
+        // Reject generic params explicitly; an extern symbol is concrete.
+        if self.at(&TokenKind::LBracket) {
+            return Err(self.err_at_peek(
+                "extern fn — generic parameters are not allowed on extern declarations",
+            ));
+        }
+        self.expect(&TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+        // Slice 10.FFI.4: optional `, ...` after the last fixed param
+        // makes this a variadic extern fn. `...` can only appear at
+        // the end, and only on extern fns (no varargs for in-language
+        // fns — they're a C ABI concession).
+        let mut is_variadic = false;
+        while !self.at(&TokenKind::RParen) {
+            if self.at(&TokenKind::Ellipsis) {
+                self.bump();
+                is_variadic = true;
+                break;
+            }
+            params.push(self.parse_param()?);
+            if !self.eat(&TokenKind::Comma) { break; }
+            // After the comma, allow `...` as the next thing.
+            if self.at(&TokenKind::Ellipsis) {
+                self.bump();
+                is_variadic = true;
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen, "`)`")?;
+        let return_type = if self.eat(&TokenKind::Arrow) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let semi = self.expect(&TokenKind::Semi, "`;` (extern fns have no body)")?;
+        // Synthesize an empty block for the body field so every existing
+        // AST-walking site keeps working without an Option<Block> migration.
+        let body = Block { stmts: Vec::new(), tail: None, span: semi.span };
+        Ok(Item {
+            kind: ItemKind::Function(Function {
+                name,
+                params,
+                return_type,
+                body,
+                is_pub: false,
+                is_extern: true,
+                is_variadic,
+                attributes: Vec::new(),
+                generic_params: Vec::new(),
+            }),
+            span: start.merge(semi.span),
+            origin_file: None,
+        })
+    }
+
+    fn parse_function(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
         let start = self.peek().span;
         self.expect(&TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident()?;
+
+        // Slice 7GEN.1: optional generic-parameter list `[T, U: Ord]`.
+        let generic_params = self.parse_generic_params()?;
 
         self.expect(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
@@ -308,9 +669,48 @@ impl Parser {
         let body = self.parse_block()?;
         let span = start.merge(body.span);
         Ok(Item {
-            kind: ItemKind::Function(Function { name, params, return_type, body }),
+            kind: ItemKind::Function(Function {
+                name, params, return_type, body, is_pub, is_extern: false, is_variadic: false, attributes, generic_params,
+            }),
             span,
+            origin_file: None,
         })
+    }
+
+    /// Slice 7GEN.1: parse an optional generic-parameter list
+    /// `[T, U: Bound1, V: Bound1 + Bound2]`. Returns an empty `Vec` when
+    /// the next token isn't `[` (the common non-generic case).
+    ///
+    /// Each parameter is an identifier optionally followed by `:` and a
+    /// `+`-separated list of bound identifiers. Trailing commas
+    /// admitted. Empty `[]` rejected (parse error — would create an
+    /// ambiguous syntactic placeholder for no purpose).
+    fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
+        if !self.at(&TokenKind::LBracket) {
+            return Ok(Vec::new());
+        }
+        self.bump(); // `[`
+        let mut params = Vec::new();
+        while !self.at(&TokenKind::RBracket) {
+            let pname = self.expect_ident()?;
+            let mut bounds = Vec::new();
+            if self.eat(&TokenKind::Colon) {
+                bounds.push(self.expect_ident()?);
+                while self.eat(&TokenKind::Plus) {
+                    bounds.push(self.expect_ident()?);
+                }
+            }
+            let span = bounds.last().map_or(pname.span, |b| pname.span.merge(b.span));
+            params.push(GenericParam { name: pname, bounds, span });
+            if !self.eat(&TokenKind::Comma) { break; }
+        }
+        self.expect(&TokenKind::RBracket, "`]`")?;
+        if params.is_empty() {
+            // Empty `[]` is a parse error — a generic parameter list
+            // must declare at least one parameter (or be absent).
+            return Err(self.err_at_peek("at least one generic parameter inside `[...]`"));
+        }
+        Ok(params)
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
@@ -330,6 +730,21 @@ impl Parser {
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type()?;
+        // Slice 6BC.5: `move x: borrow A T` is a parse error.
+        // Ownership transfer doesn't borrow — the region annotation
+        // is meaningless on a `move`-parameter. Reject here rather
+        // than at sema so the diagnostic points at the syntax site.
+        if move_ {
+            if matches!(&ty.kind, TypeKind::Borrowed { .. }) {
+                return Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "borrow region annotation".into(),
+                        expected: "an unannotated type after `move` (borrow regions cannot apply to moved parameters)",
+                    },
+                    span: ty.span,
+                });
+            }
+        }
         let span = start.merge(ty.span);
         Ok(Param { name, ty, mutable, move_, span })
     }
@@ -337,10 +752,79 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type, ParseError> {
         let tok = self.peek().clone();
         match &tok.kind {
+            // Slice 6BC.5: `borrow REGION T` opens a region-annotated
+            // borrow type. The region is an identifier (no specific
+            // case rule — convention is short uppercase, e.g. `A`,
+            // `B`, or descriptive `BUF`). Inner type is recursively
+            // parsed so `borrow A [T; N]` and `borrow A prefix::T`
+            // both work. Composition with parameter markers
+            // (`mut`/`move`) happens at the param-parsing level, not
+            // here — this only handles the type itself.
+            TokenKind::Borrow => {
+                let start = self.bump().span;
+                let region = self.expect_ident()?;
+                let inner = Box::new(self.parse_type()?);
+                let end = inner.span;
+                return Ok(Type {
+                    kind: TypeKind::Borrowed { region: region.name, inner },
+                    span: start.merge(end),
+                });
+            }
+            // Slice 10.FFI.1: raw pointer `*T`. The `*` token is the
+            // multiply operator everywhere else, but in *type position*
+            // it unambiguously starts a pointer type (binary `*` lives
+            // in expression position, never as a type). Composes
+            // recursively: `**i32` is `*(*i32)`.
+            TokenKind::Star => {
+                let start = self.bump().span;
+                let inner = Box::new(self.parse_type()?);
+                let end = inner.span;
+                return Ok(Type {
+                    kind: TypeKind::RawPtr(inner),
+                    span: start.merge(end),
+                });
+            }
             TokenKind::Ident(s) => {
-                let name = s.clone();
+                let mut name = s.clone();
+                let mut end_span = tok.span;
                 self.bump();
-                Ok(Type { kind: TypeKind::Path(name), span: tok.span })
+                // Cross-file types use `prefix::Type` syntax (Phase 4). Store
+                // the source form verbatim with `::` separators; the resolver
+                // pass rewrites this to the qualified target during the
+                // multi-file merge.
+                while matches!(self.peek_kind(), TokenKind::ColonColon) {
+                    self.bump();
+                    let seg = self.expect_ident()?;
+                    name.push_str("::");
+                    name.push_str(&seg.name);
+                    end_span = seg.span;
+                }
+                // Slice 7GEN.5c: `Name[T1, T2]` — generic-type instantiation
+                // in type position. Disambiguates from array `[T; N]` by
+                // virtue of being suffix to an ident; arrays start at `[`.
+                if matches!(self.peek_kind(), TokenKind::LBracket) {
+                    self.bump();
+                    let mut args = Vec::new();
+                    while !self.at(&TokenKind::RBracket) {
+                        args.push(self.parse_type()?);
+                        if !self.eat(&TokenKind::Comma) { break; }
+                    }
+                    let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                    return Ok(Type {
+                        kind: TypeKind::Generic { name, args },
+                        span: tok.span.merge(end),
+                    });
+                }
+                Ok(Type { kind: TypeKind::Path(name), span: tok.span.merge(end_span) })
+            }
+            // Slice 7GEN.4: `Self` is a magic type name in `interface` and
+            // `impl` contexts. Parse it as a path; sema (with the
+            // self_type_stack / type_params_stack) decides whether it
+            // resolves to a concrete type, stays abstract, or errors with
+            // E0508 outside any impl/interface context.
+            TokenKind::SelfUpper => {
+                let span = self.bump().span;
+                Ok(Type { kind: TypeKind::Path("Self".to_string()), span })
             }
             TokenKind::LBracket => {
                 let start = self.bump().span;
@@ -379,8 +863,26 @@ impl Parser {
             match self.peek_kind() {
                 TokenKind::Let => { stmts.push(self.parse_let_stmt()?); continue; }
                 TokenKind::Return => { stmts.push(self.parse_return_stmt()?); continue; }
+                TokenKind::While if matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Let)) => {
+                    stmts.push(self.parse_while_let_stmt()?);
+                    continue;
+                }
                 TokenKind::While => { stmts.push(self.parse_while_stmt()?); continue; }
                 TokenKind::For => { stmts.push(self.parse_for_stmt()?); continue; }
+                TokenKind::Defer => { stmts.push(self.parse_defer_stmt()?); continue; }
+                TokenKind::Guard => { stmts.push(self.parse_guard_let_stmt()?); continue; }
+                TokenKind::Loop => { stmts.push(self.parse_loop_stmt()?); continue; }
+                TokenKind::Break => { stmts.push(self.parse_break_stmt()?); continue; }
+                TokenKind::Continue => { stmts.push(self.parse_continue_stmt()?); continue; }
+                TokenKind::Assert => { stmts.push(self.parse_assert_stmt()?); continue; }
+                // `if let PAT = E { ... }` is a statement (slice 4A.5);
+                // plain `if EXPR { ... }` keeps its existing expression
+                // path. The split is decided by lookahead one token after
+                // `if`.
+                TokenKind::If if matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Let)) => {
+                    stmts.push(self.parse_if_let_stmt()?);
+                    continue;
+                }
                 _ => {}
             }
             // Otherwise, parse an expression and decide stmt vs tail.
@@ -406,8 +908,15 @@ impl Parser {
         let mutable = self.eat(&TokenKind::Mut);
         let name = self.expect_ident()?;
         let ty = if self.eat(&TokenKind::Colon) { Some(self.parse_type()?) } else { None };
-        self.expect(&TokenKind::Eq, "`=`")?;
-        let init = self.parse_expr()?;
+        // Two forms: `let x: T = expr;` (initialized) and `let x: T;`
+        // (uninitialized — sema's definite-assignment analysis verifies
+        // every read is preceded by an assignment). Without a type
+        // annotation the init form is required (sema can't infer).
+        let init = if self.eat(&TokenKind::Eq) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         let end = self.expect(&TokenKind::Semi, "`;`")?.span;
         Ok(Stmt {
             kind: StmtKind::Let { mutable, name, ty, init },
@@ -422,12 +931,120 @@ impl Parser {
         Ok(Stmt { kind: StmtKind::Return(value), span: start.merge(end) })
     }
 
+    fn parse_defer_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::Defer, "`defer`")?.span;
+        let expr = self.parse_expr()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt { kind: StmtKind::Defer(expr), span: start.merge(end) })
+    }
+
+    /// `assert EXPR;` — Phase 5 slice 5ATTR.3. The expression must be a
+    /// `bool` (verified at sema time). Codegen branches on the value and
+    /// traps on the false path.
+    fn parse_assert_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::Assert, "`assert`")?.span;
+        let expr = self.parse_expr()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt { kind: StmtKind::Assert(expr), span: start.merge(end) })
+    }
+
+    /// `if let PATTERN = EXPR { BODY }` and the two-arm form with `else`.
+    /// Slice 4A.5; lowered to `match` before sema.
+    fn parse_if_let_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::If, "`if`")?.span;
+        self.expect(&TokenKind::Let, "`let`")?;
+        let pattern = self.parse_pattern()?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        // Same struct-lit disambiguation as `if EXPR { ... }`.
+        let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let body = self.parse_block()?;
+        let (else_body, end) = if self.eat(&TokenKind::Else) {
+            // Two-arm `if let`: `else { ... }`. `else if` is not yet
+            // supported on `if let` (the natural workaround is `else {
+            // match scrutinee { ... } }` or a chain of `if let`s).
+            let blk = self.parse_block()?;
+            let s = blk.span;
+            (Some(blk), s)
+        } else {
+            (None, body.span)
+        };
+        Ok(Stmt {
+            kind: StmtKind::IfLet { pattern, scrutinee, body, else_body },
+            span: start.merge(end),
+        })
+    }
+
+    /// `guard let PATTERN = EXPR else { ELSE };`
+    /// `guard let PATTERN = EXPR else |COMPLEMENT_PATTERN| { ELSE };`
+    /// Slice 4A.5.
+    fn parse_guard_let_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::Guard, "`guard`")?.span;
+        self.expect(&TokenKind::Let, "`let`")?;
+        let pattern = self.parse_pattern()?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+        self.expect(&TokenKind::Else, "`else`")?;
+        // Optional complement pattern: `else |PAT| { ... }`.
+        let complement = if self.eat(&TokenKind::Pipe) {
+            let p = self.parse_pattern()?;
+            self.expect(&TokenKind::Pipe, "`|`")?;
+            Some(p)
+        } else {
+            None
+        };
+        let else_body = self.parse_block()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt {
+            kind: StmtKind::GuardLet { pattern, scrutinee, complement, else_body },
+            span: start.merge(end),
+        })
+    }
+
     fn parse_while_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::While, "`while`")?.span;
         let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let span = start.merge(body.span);
         Ok(Stmt { kind: StmtKind::While { cond, body }, span })
+    }
+
+    /// `while let PATTERN = SCRUTINEE { BODY }` — slice 4-end carry-forward
+    /// from 4A.5. Lowered (in `crate::lower`) to `loop { match ... }`.
+    fn parse_while_let_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::While, "`while`")?.span;
+        self.expect(&TokenKind::Let, "`let`")?;
+        let pattern = self.parse_pattern()?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let body = self.parse_block()?;
+        let span = start.merge(body.span);
+        Ok(Stmt {
+            kind: StmtKind::WhileLet { pattern, scrutinee, body },
+            span,
+        })
+    }
+
+    /// `loop { BODY }` — infinite loop. Exits only via `break`,
+    /// `return`, or a no-return call.
+    fn parse_loop_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::Loop, "`loop`")?.span;
+        let body = self.parse_block()?;
+        let span = start.merge(body.span);
+        Ok(Stmt { kind: StmtKind::Loop(body), span })
+    }
+
+    /// `break;` — slice 4-end. Phase 4 has no labelled-break / break-with-value.
+    fn parse_break_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::Break, "`break`")?.span;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt { kind: StmtKind::Break, span: start.merge(end) })
+    }
+
+    /// `continue;` — slice 4-end.
+    fn parse_continue_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.expect(&TokenKind::Continue, "`continue`")?.span;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt { kind: StmtKind::Continue, span: start.merge(end) })
     }
 
     fn parse_for_stmt(&mut self) -> Result<Stmt, ParseError> {
@@ -475,7 +1092,10 @@ impl Parser {
 
     fn parse_let_no_semi(&mut self) -> Result<Stmt, ParseError> {
         // Same as parse_let_stmt but without consuming a trailing `;` —
-        // the for-header's `;` separator is consumed by the caller.
+        // the for-header's `;` separator is consumed by the caller. The
+        // for-header form always requires an initializer (the natural
+        // pattern is `for (let mut i: i32 = 0; ...)`); uninitialized lets
+        // inside a for-header would be useless.
         let start = self.expect(&TokenKind::Let, "`let`")?.span;
         let mutable = self.eat(&TokenKind::Mut);
         let name = self.expect_ident()?;
@@ -484,7 +1104,7 @@ impl Parser {
         let init = self.parse_expr()?;
         let span = start.merge(init.span);
         Ok(Stmt {
-            kind: StmtKind::Let { mutable, name, ty, init },
+            kind: StmtKind::Let { mutable, name, ty, init: Some(init) },
             span,
         })
     }
@@ -723,6 +1343,39 @@ impl Parser {
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut e = self.parse_primary()?;
         loop {
+            // Slice 7GEN.5b: detect the `::[T1, T2]` turbofish.
+            // Slice 7GEN.5e: widened from `Ident`-only to also admit
+            // `Path` (assoc-fn call: `Type::method::[T]()`) and
+            // `Field` (method call: `v.method::[T]()`) callees.
+            // Plain bracket-expression accesses (`a[i]`) don't trigger
+            // the turbofish path because they don't see `::` in front.
+            if matches!(self.peek_kind(), TokenKind::ColonColon)
+                && matches!(e.kind,
+                    ExprKind::Ident(_)
+                    | ExprKind::Path { .. }
+                    | ExprKind::Field { .. })
+                && self.peek_kind_n(1) == &TokenKind::LBracket
+            {
+                self.bump();   // `::`
+                self.bump();   // `[`
+                let mut type_args = Vec::new();
+                while !self.at(&TokenKind::RBracket) {
+                    type_args.push(self.parse_type()?);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                self.expect(&TokenKind::RBracket, "`]`")?;
+                // After the turbofish, a `(args)` is required.
+                self.expect(&TokenKind::LParen, "`(` after `::[...]` turbofish")?;
+                let mut args = Vec::new();
+                while !self.at(&TokenKind::RParen) {
+                    args.push(self.parse_expr()?);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+                let span = e.span.merge(end);
+                e = Expr { kind: ExprKind::Call { callee: Box::new(e), args, type_args }, span };
+                continue;
+            }
             match self.peek_kind() {
                 TokenKind::LParen => {
                     self.bump();
@@ -733,7 +1386,7 @@ impl Parser {
                     }
                     let end = self.expect(&TokenKind::RParen, "`)`")?.span;
                     let span = e.span.merge(end);
-                    e = Expr { kind: ExprKind::Call { callee: Box::new(e), args }, span };
+                    e = Expr { kind: ExprKind::Call { callee: Box::new(e), args, type_args: Vec::new() }, span };
                 }
                 TokenKind::Dot => {
                     self.bump();
@@ -757,6 +1410,52 @@ impl Parser {
         Ok(e)
     }
 
+    /// Parse the body of a struct literal — `{ field: value, ... }` — given
+    /// a type-name `Ident` that was just consumed. `start_span` is the span
+    /// of the first source token of the literal (used to anchor the overall
+    /// `Expr` span). Caller has already verified that the next token is `{`
+    /// and that `no_struct_lit` is off.
+    /// Slice 7GEN.5c: parse the `{ field: value, ... }` body of a
+    /// generic struct literal `Pair[i32, bool] { ... }`. The caller
+    /// has already consumed the type-arg brackets.
+    fn parse_generic_struct_lit_body(&mut self, name: Ident, type_args: Vec<Type>, start_span: Span) -> Result<Expr, ParseError> {
+        self.bump(); // consume `{`
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            let fname = self.expect_ident()?;
+            self.expect(&TokenKind::Colon, "`:`")?;
+            let value = self.parse_expr()?;
+            let span = fname.span.merge(value.span);
+            fields.push(StructLitField { name: fname, value, span });
+            if !self.eat(&TokenKind::Comma) { break; }
+        }
+        let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        let span = start_span.merge(end);
+        Ok(Expr {
+            kind: ExprKind::GenericStructLit { name, type_args, fields },
+            span,
+        })
+    }
+
+    fn parse_struct_lit_body(&mut self, name: Ident, start_span: Span) -> Result<Expr, ParseError> {
+        self.bump(); // consume `{`
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            let fname = self.expect_ident()?;
+            self.expect(&TokenKind::Colon, "`:`")?;
+            let value = self.parse_expr()?;
+            let span = fname.span.merge(value.span);
+            fields.push(StructLitField { name: fname, value, span });
+            if !self.eat(&TokenKind::Comma) { break; }
+        }
+        let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        let span = start_span.merge(end);
+        Ok(Expr {
+            kind: ExprKind::StructLit { name, fields },
+            span,
+        })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let tok = self.peek().clone();
         match &tok.kind {
@@ -772,6 +1471,11 @@ impl Parser {
             }
             TokenKind::True => { self.bump(); Ok(Expr { kind: ExprKind::BoolLit(true), span: tok.span }) }
             TokenKind::False => { self.bump(); Ok(Expr { kind: ExprKind::BoolLit(false), span: tok.span }) }
+            TokenKind::Str(s) => {
+                let s = s.clone();
+                self.bump();
+                Ok(Expr { kind: ExprKind::StrLit(s), span: tok.span })
+            }
             TokenKind::SelfLower => {
                 self.bump();
                 // `self` in an expression is just an ident lookup; sema
@@ -784,37 +1488,125 @@ impl Parser {
             TokenKind::Ident(s) => {
                 let n = s.clone();
                 self.bump();
+                // Slice 7GEN.5b: if the next tokens are `::[`, leave them
+                // for `parse_postfix` to consume as a turbofish — don't
+                // start a path. A bare `Ident` with the cursor still on
+                // `::` works as long as parse_postfix runs immediately.
+                if matches!(self.peek_kind(), TokenKind::ColonColon)
+                    && self.peek_kind_n(1) == &TokenKind::LBracket
+                {
+                    return Ok(Expr { kind: ExprKind::Ident(n), span: tok.span });
+                }
                 // Path expression: `Foo::Bar` (and future N-segment paths).
                 if matches!(self.peek_kind(), TokenKind::ColonColon) {
                     let mut segments = vec![Ident { name: n, span: tok.span }];
-                    while self.eat(&TokenKind::ColonColon) {
+                    // Slice 7GEN.5e: stop segment collection at `::[`
+                    // so `parse_postfix` can pick it up as a turbofish
+                    // on the path callee (`Foo::bar::[i32](...)`).
+                    while matches!(self.peek_kind(), TokenKind::ColonColon)
+                        && self.peek_kind_n(1) != &TokenKind::LBracket
+                    {
+                        self.bump();   // `::`
                         segments.push(self.expect_ident()?);
                     }
-                    let span = tok.span.merge(segments.last().unwrap().span);
+                    let last_span = segments.last().unwrap().span;
+                    let span = tok.span.merge(last_span);
+                    // Slice 4C: cross-file struct literal `prefix::Type { ... }`.
+                    // After collecting all `::`-segments, if the next token
+                    // is `{` and we're not in a struct-lit-suppressing head
+                    // position, treat the qualified name as a struct literal
+                    // type. The resolver later splits the `::`-joined name
+                    // and applies the import-alias rewrite.
+                    if !self.no_struct_lit && matches!(self.peek_kind(), TokenKind::LBrace) {
+                        let qualified: String = segments.iter()
+                            .map(|s| s.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("::");
+                        let name_ident = Ident { name: qualified, span };
+                        return self.parse_struct_lit_body(name_ident, tok.span);
+                    }
                     return Ok(Expr { kind: ExprKind::Path { segments }, span });
+                }
+                // Slice 7GEN.5d: generic enum constructor `Option[i32]::Some(7)`
+                // in expression position. Detected by `Ident[type_args]::`
+                // peek pattern — must be a type-position generic followed by
+                // a variant path. Distinguished from indexing (`a[i]` has no
+                // `::` follow-up).
+                if matches!(self.peek_kind(), TokenKind::LBracket) {
+                    if let Some(after_bracket) = self.scan_past_bracket() {
+                        if matches!(&self.tokens[after_bracket].kind, TokenKind::ColonColon) {
+                            // `Ident[args]::Variant` — generic enum call.
+                            self.bump();   // `[`
+                            let mut type_args = Vec::new();
+                            while !self.at(&TokenKind::RBracket) {
+                                type_args.push(self.parse_type()?);
+                                if !self.eat(&TokenKind::Comma) { break; }
+                            }
+                            self.expect(&TokenKind::RBracket, "`]`")?;
+                            self.expect(&TokenKind::ColonColon, "`::`")?;
+                            let variant = self.expect_ident()?;
+                            let mut args = Vec::new();
+                            let end_span = if self.eat(&TokenKind::LParen) {
+                                while !self.at(&TokenKind::RParen) {
+                                    args.push(self.parse_expr()?);
+                                    if !self.eat(&TokenKind::Comma) { break; }
+                                }
+                                self.expect(&TokenKind::RParen, "`)`")?.span
+                            } else {
+                                variant.span
+                            };
+                            return Ok(Expr {
+                                kind: ExprKind::GenericEnumCall {
+                                    enum_name: Ident { name: n, span: tok.span },
+                                    type_args,
+                                    variant,
+                                    args,
+                                },
+                                span: tok.span.merge(end_span),
+                            });
+                        }
+                    }
+                }
+                // Slice 7GEN.5c: generic struct literal `Pair[i32, i32] { ... }`
+                // in expression position. Distinguished from `arr[i]` indexing
+                // by peeking past the matching `]` for a `{`. If found, the
+                // brackets carry type args, not an index expression.
+                if !self.no_struct_lit && matches!(self.peek_kind(), TokenKind::LBracket) {
+                    if let Some(after_bracket) = self.scan_past_bracket() {
+                        if matches!(&self.tokens[after_bracket].kind, TokenKind::LBrace) {
+                            // Consume `[`, parse type args, consume `]`, then
+                            // bake the generic name and call struct-lit body.
+                            self.bump();   // `[`
+                            let mut args = Vec::new();
+                            while !self.at(&TokenKind::RBracket) {
+                                args.push(self.parse_type()?);
+                                if !self.eat(&TokenKind::Comma) { break; }
+                            }
+                            let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                            // Encode the generic name as a synthetic Ident
+                            // whose `name` field carries the mangled
+                            // post-monomorphize identifier — but we don't
+                            // yet know the mangled form at parse time.
+                            // Instead, embed a special marker the resolver
+                            // and sema will recognize: `__generic_lit__`
+                            // is a sentinel here is overkill. Cleaner:
+                            // extend ExprKind with a new variant.
+                            //
+                            // For 7GEN.5c MVP: synthesize the AST shape
+                            // by parsing the body, then wrap into a
+                            // dedicated generic-struct-lit form. We'll
+                            // add `ExprKind::GenericStructLit` for this.
+                            let name_ident = Ident { name: n, span: tok.span };
+                            let span = tok.span.merge(end);
+                            return self.parse_generic_struct_lit_body(name_ident, args, span);
+                        }
+                    }
                 }
                 // Struct literal: `Foo { field: value, ... }` — only outside
                 // the head of `if`/`while`/`for-in`, where `{` starts the body.
                 if !self.no_struct_lit && matches!(self.peek_kind(), TokenKind::LBrace) {
-                    self.bump(); // consume `{`
-                    let mut fields = Vec::new();
-                    while !self.at(&TokenKind::RBrace) {
-                        let fname = self.expect_ident()?;
-                        self.expect(&TokenKind::Colon, "`:`")?;
-                        let value = self.parse_expr()?;
-                        let span = fname.span.merge(value.span);
-                        fields.push(StructLitField { name: fname, value, span });
-                        if !self.eat(&TokenKind::Comma) { break; }
-                    }
-                    let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
-                    let span = tok.span.merge(end);
-                    return Ok(Expr {
-                        kind: ExprKind::StructLit {
-                            name: Ident { name: n, span: tok.span },
-                            fields,
-                        },
-                        span,
-                    });
+                    let name_ident = Ident { name: n, span: tok.span };
+                    return self.parse_struct_lit_body(name_ident, tok.span);
                 }
                 Ok(Expr { kind: ExprKind::Ident(n), span: tok.span })
             }
@@ -843,7 +1635,149 @@ impl Parser {
                 Ok(Expr { kind: ExprKind::Block(block), span })
             }
             TokenKind::If => self.parse_if_expr(),
+            TokenKind::Match => self.parse_match_expr(),
+            // Slice 10.FFI.3: `unsafe { ... }` block expression.
+            // Body parses like a regular block; the marker tells sema
+            // to allow pointer deref / extern calls / etc. inside.
+            TokenKind::Unsafe => {
+                let start = self.expect(&TokenKind::Unsafe, "`unsafe`")?.span;
+                let block = self.parse_block()?;
+                let span = start.merge(block.span);
+                Ok(Expr { kind: ExprKind::Unsafe(block), span })
+            }
             _ => Err(self.err_at_peek("expression")),
+        }
+    }
+
+    fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.expect(&TokenKind::Match, "`match`")?.span;
+        // Scrutinee parses with struct-lit disambiguation off (so `match x {`
+        // doesn't greedy-eat the brace as a struct literal). Same trick as
+        // `if`/`while`/`for` head parsing.
+        let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+        self.expect(&TokenKind::LBrace, "`{`")?;
+        let mut arms = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            arms.push(self.parse_match_arm()?);
+        }
+        let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        Ok(Expr {
+            kind: ExprKind::Match { scrutinee: Box::new(scrutinee), arms },
+            span: start.merge(end),
+        })
+    }
+
+    fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {
+        let pat = self.parse_pattern()?;
+        self.expect(&TokenKind::FatArrow, "`=>`")?;
+        // Two arm-body forms: `block` (no trailing `,` required) or
+        // `expr ,` (short form).
+        let (body, arm_end) = if matches!(self.peek_kind(), TokenKind::LBrace) {
+            let block = self.parse_block()?;
+            let span = block.span;
+            let expr = Expr { kind: ExprKind::Block(block), span };
+            // Optional trailing comma after block.
+            let _ = self.eat(&TokenKind::Comma);
+            (expr, span)
+        } else {
+            let expr = self.parse_expr()?;
+            let span = expr.span;
+            // Comma required between expr arms unless this is the last arm
+            // before `}`.
+            if !self.at(&TokenKind::RBrace) {
+                self.expect(&TokenKind::Comma, "`,`")?;
+            }
+            (expr, span)
+        };
+        let arm_span = pat.span.merge(arm_end);
+        Ok(MatchArm { pattern: pat, body, span: arm_span })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match self.peek_kind() {
+            TokenKind::Underscore => {
+                let tok = self.bump();
+                Ok(Pattern { kind: PatternKind::Wildcard, span: tok.span })
+            }
+            TokenKind::Ident(_) => {
+                // Either a bare binding `name`, a path `Enum::Variant`,
+                // a cross-file path `prefix::Enum::Variant`, or — slice
+                // 7GEN.5e — a generic-enum pattern `Option[i32]::Some(v)`.
+                let first = self.expect_ident()?;
+                // 7GEN.5e: optional `[type_args]` between the enum-name
+                // ident and the `::`. Patterns have no `[i]` indexing
+                // syntax, so `[` here is unambiguously a type-arg list.
+                let type_args: Vec<Type> = if self.at(&TokenKind::LBracket) {
+                    self.bump(); // `[`
+                    let mut args = Vec::new();
+                    while !self.at(&TokenKind::RBracket) {
+                        args.push(self.parse_type()?);
+                        if !self.eat(&TokenKind::Comma) { break; }
+                    }
+                    self.expect(&TokenKind::RBracket, "`]`")?;
+                    args
+                } else {
+                    Vec::new()
+                };
+                if self.eat(&TokenKind::ColonColon) {
+                    let second = self.expect_ident()?;
+                    // Three-segment shape: `prefix::Enum::Variant(...)`.
+                    // Collapse `prefix::Enum` into a single `enum_name`
+                    // string (mirroring how qualified type names live as
+                    // `prefix::Type` until the resolver rewrites them).
+                    // Cross-file generic-enum patterns are not yet
+                    // supported in this slice (would need to flow
+                    // type_args through the resolver's prefix
+                    // rewriting); guard with a parse error if a
+                    // user mixes the two forms.
+                    let (enum_ident, variant_name) = if self.eat(&TokenKind::ColonColon) {
+                        if !type_args.is_empty() {
+                            return Err(self.err_at_peek(
+                                "generic-enum patterns across module prefixes are not yet supported \
+                                 (write the variant without a module prefix or remove the type args)"
+                            ));
+                        }
+                        let third = self.expect_ident()?;
+                        let qualified = format!("{}::{}", first.name, second.name);
+                        let enum_span = first.span.merge(second.span);
+                        let enum_ident = Ident { name: qualified, span: enum_span };
+                        (enum_ident, third)
+                    } else {
+                        (first.clone(), second)
+                    };
+                    let payload = if self.eat(&TokenKind::LParen) {
+                        let mut pats = Vec::new();
+                        while !self.at(&TokenKind::RParen) {
+                            pats.push(self.parse_pattern()?);
+                            if !self.eat(&TokenKind::Comma) { break; }
+                        }
+                        self.expect(&TokenKind::RParen, "`)`")?;
+                        pats
+                    } else {
+                        Vec::new()
+                    };
+                    let span = first.span.merge(variant_name.span);
+                    Ok(Pattern {
+                        kind: PatternKind::Variant {
+                            enum_name: enum_ident,
+                            type_args,
+                            variant_name,
+                            payload,
+                        },
+                        span,
+                    })
+                } else if !type_args.is_empty() {
+                    // `Option[i32]` with no `::Variant` segment — not
+                    // a valid pattern shape.
+                    Err(self.err_at_peek(
+                        "expected `::Variant` after generic-enum name in pattern (e.g. `Option[i32]::Some(v)`)"
+                    ))
+                } else {
+                    let span = first.span;
+                    Ok(Pattern { kind: PatternKind::Binding(first), span })
+                }
+            }
+            _ => Err(self.err_at_peek("pattern")),
         }
     }
 
@@ -876,7 +1810,12 @@ impl Parser {
 // ---- helpers ----
 
 fn is_block_like(kind: &ExprKind) -> bool {
-    matches!(kind, ExprKind::Block(_) | ExprKind::If { .. })
+    matches!(kind,
+        ExprKind::Block(_)
+        | ExprKind::Unsafe(_)
+        | ExprKind::If { .. }
+        | ExprKind::Match { .. }
+    )
 }
 
 fn can_start_expr(kind: &TokenKind) -> bool {
@@ -884,12 +1823,15 @@ fn can_start_expr(kind: &TokenKind) -> bool {
         kind,
         TokenKind::Int(_, _)
             | TokenKind::Float(_, _)
+            | TokenKind::Str(_)
             | TokenKind::True
             | TokenKind::False
             | TokenKind::Ident(_)
             | TokenKind::LParen
             | TokenKind::LBrace
             | TokenKind::If
+            | TokenKind::Match
+            | TokenKind::Unsafe
             | TokenKind::Minus
             | TokenKind::Bang
             | TokenKind::Tilde
@@ -931,7 +1873,9 @@ fn tok_name(k: &TokenKind) -> &'static str {
     match k {
         TokenKind::Int(_, _) => "integer literal",
         TokenKind::Float(_, _) => "float literal",
+        TokenKind::Str(_) => "string literal",
         TokenKind::Ident(_) => "identifier",
+        TokenKind::Import => "`import`",
         TokenKind::Fn => "`fn`",
         TokenKind::Let => "`let`",
         TokenKind::Mut => "`mut`",
@@ -1067,7 +2011,7 @@ mod tests {
         let p = parse_src("fn main() -> i32 { let x: i32 = if true { 1 } else { 2 }; x }").unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else { panic!("expected fn"); };
         match &f.body.stmts[0].kind {
-            StmtKind::Let { init, .. } => match &init.kind {
+            StmtKind::Let { init: Some(init), .. } => match &init.kind {
                 ExprKind::If { .. } => {}
                 other => panic!("expected If in let init, got {other:?}"),
             },
@@ -1200,5 +2144,805 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn import_decl_parses() {
+        let p = parse_src(r#"import "math.cplus" as math; fn main() -> i32 { return 0; }"#).unwrap();
+        assert_eq!(p.imports.len(), 1);
+        assert_eq!(p.imports[0].path, "math.cplus");
+        assert_eq!(p.imports[0].as_name.name, "math");
+        assert_eq!(p.items.len(), 1);
+    }
+
+    #[test]
+    fn multiple_imports_parse_in_order() {
+        let src = r#"
+            import "a.cplus" as a;
+            import "sub/b.cplus" as b;
+            fn main() -> i32 { return 0; }
+        "#;
+        let p = parse_src(src).unwrap();
+        assert_eq!(p.imports.len(), 2);
+        assert_eq!(p.imports[0].as_name.name, "a");
+        assert_eq!(p.imports[1].path, "sub/b.cplus");
+    }
+
+    #[test]
+    fn import_without_as_clause_is_parse_error() {
+        let err = parse_src(r#"import "math.cplus"; fn main() -> i32 { return 0; }"#).unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn import_without_path_string_is_parse_error() {
+        let err = parse_src(r#"import math as math; fn main() -> i32 { return 0; }"#).unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn pub_fn_parses_with_flag() {
+        let p = parse_src("pub fn f() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        assert!(f.is_pub);
+    }
+
+    #[test]
+    fn private_fn_default_no_flag() {
+        let p = parse_src("fn f() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        assert!(!f.is_pub);
+    }
+
+    #[test]
+    fn pub_struct_with_mixed_field_visibility() {
+        let p = parse_src("pub struct S { pub x: i32, y: i32 }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!(); };
+        assert!(s.is_pub);
+        assert!(s.fields[0].is_pub);
+        assert!(!s.fields[1].is_pub);
+    }
+
+    #[test]
+    fn pub_enum_flag() {
+        let p = parse_src("pub enum C { A, B }").unwrap();
+        let ItemKind::Enum(e) = &p.items[0].kind else { panic!(); };
+        assert!(e.is_pub);
+    }
+
+    #[test]
+    fn pub_method_flag() {
+        let p = parse_src("struct S { x: i32 } impl S { pub fn f(self) -> i32 { return 0; } fn g(self) -> i32 { return 0; } }").unwrap();
+        let ItemKind::Impl(b) = &p.items[1].kind else { panic!(); };
+        assert!(b.methods[0].is_pub);
+        assert!(!b.methods[1].is_pub);
+    }
+
+    #[test]
+    fn pub_on_impl_block_rejected() {
+        let err = parse_src("pub impl S { }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    // ---- 6BC.5 — borrow REGION T syntax ----
+
+    #[test]
+    fn borrow_region_parses_in_param_and_return() {
+        let p = parse_src(
+            "fn longest(xs: borrow A string, ys: borrow A string) -> borrow A string { return xs; }"
+        ).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert_eq!(f.params.len(), 2);
+        assert!(matches!(&f.params[0].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
+        assert!(matches!(&f.params[1].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
+        let ret = f.return_type.as_ref().expect("has return type");
+        assert!(matches!(&ret.kind, TypeKind::Borrowed { region, .. } if region == "A"));
+    }
+
+    #[test]
+    fn borrow_region_parses_with_mut_marker() {
+        let p = parse_src(
+            "fn modify(mut x: borrow A B) -> borrow A B { return x; }"
+        ).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.params[0].mutable);
+        assert!(matches!(&f.params[0].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
+    }
+
+    #[test]
+    fn move_with_borrow_region_rejected() {
+        // `move x: borrow A T` is a parse error per §4.2: ownership
+        // transfer doesn't borrow, so the region annotation is
+        // meaningless on a `move`-parameter.
+        let err = parse_src("fn take(move x: borrow A B) { return; }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn borrow_region_in_struct_field() {
+        let p = parse_src(
+            "struct Cursor { buf: borrow A Buffer, pos: usize }"
+        ).unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!() };
+        assert!(matches!(&s.fields[0].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
+        assert!(matches!(&s.fields[1].ty.kind, TypeKind::Path(name) if name == "usize"));
+    }
+
+    #[test]
+    fn borrow_region_nests_into_array() {
+        let p = parse_src("fn f(xs: borrow A [B; 4]) { return; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        match &f.params[0].ty.kind {
+            TypeKind::Borrowed { region, inner } => {
+                assert_eq!(region, "A");
+                assert!(matches!(&inner.kind, TypeKind::Array { len: 4, .. }));
+            }
+            other => panic!("expected borrow region around array, got {other:?}"),
+        }
+    }
+
+    // ---- 7GEN.1 — generic function parsing ----
+
+    #[test]
+    fn non_generic_fn_has_empty_generic_params() {
+        let p = parse_src("fn main() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.generic_params.is_empty());
+    }
+
+    #[test]
+    fn generic_fn_single_param_no_bounds() {
+        let p = parse_src("fn id[T](x: T) -> T { return x; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert_eq!(f.generic_params.len(), 1);
+        assert_eq!(f.generic_params[0].name.name, "T");
+        assert!(f.generic_params[0].bounds.is_empty());
+    }
+
+    #[test]
+    fn generic_fn_multiple_params_no_bounds() {
+        let p = parse_src("fn pair[A, B](a: A, b: B) -> A { return a; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        let names: Vec<&str> = f.generic_params.iter().map(|p| p.name.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B"]);
+        for gp in &f.generic_params {
+            assert!(gp.bounds.is_empty());
+        }
+    }
+
+    #[test]
+    fn generic_fn_single_bound() {
+        let p = parse_src("fn max[T: Ord](a: T, b: T) -> T { return a; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert_eq!(f.generic_params.len(), 1);
+        let bounds: Vec<&str> = f.generic_params[0].bounds.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(bounds, vec!["Ord"]);
+    }
+
+    #[test]
+    fn generic_fn_multiple_bounds_plus_separated() {
+        let p = parse_src("fn sorted_max[T: Ord + Eq + Clone](xs: T) -> T { return xs; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        let bounds: Vec<&str> = f.generic_params[0].bounds.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(bounds, vec!["Ord", "Eq", "Clone"]);
+    }
+
+    #[test]
+    fn generic_fn_mixed_bounds_per_param() {
+        let p = parse_src("fn f[T: Ord, U, V: Eq + Clone](x: T) -> T { return x; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert_eq!(f.generic_params.len(), 3);
+        let bounds0: Vec<&str> = f.generic_params[0].bounds.iter().map(|b| b.name.as_str()).collect();
+        let bounds1: Vec<&str> = f.generic_params[1].bounds.iter().map(|b| b.name.as_str()).collect();
+        let bounds2: Vec<&str> = f.generic_params[2].bounds.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(bounds0, vec!["Ord"]);
+        assert!(bounds1.is_empty());
+        assert_eq!(bounds2, vec!["Eq", "Clone"]);
+    }
+
+    #[test]
+    fn generic_fn_with_pub_and_attributes() {
+        let p = parse_src("#[test]\npub fn id[T](x: T) -> T { return x; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_pub);
+        assert_eq!(f.attributes.len(), 1);
+        assert_eq!(f.generic_params.len(), 1);
+        assert_eq!(f.generic_params[0].name.name, "T");
+    }
+
+    #[test]
+    fn empty_generic_params_rejected() {
+        // `fn f[]() ...` is a parse error — empty brackets are
+        // syntactically ambiguous noise.
+        let err = parse_src("fn f[]() { return; }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn trailing_comma_in_generic_params_admitted() {
+        // Style flexibility — same as fn params.
+        let p = parse_src("fn f[T,](x: T) -> T { return x; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert_eq!(f.generic_params.len(), 1);
+    }
+
+    // ---- 7GEN.2 — generic struct / enum parsing ----
+
+    #[test]
+    fn generic_struct_single_param() {
+        let p = parse_src("struct Holder[T] { value: T }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!() };
+        assert_eq!(s.generic_params.len(), 1);
+        assert_eq!(s.generic_params[0].name.name, "T");
+    }
+
+    #[test]
+    fn generic_struct_multiple_params() {
+        let p = parse_src("struct Pair[A, B] { first: A, second: B }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!() };
+        let names: Vec<&str> = s.generic_params.iter().map(|p| p.name.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn generic_struct_with_bound() {
+        let p = parse_src("struct SortedList[T: Ord] { items: T }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!() };
+        let bounds: Vec<&str> = s.generic_params[0].bounds.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(bounds, vec!["Ord"]);
+    }
+
+    #[test]
+    fn non_generic_struct_has_empty_generic_params() {
+        let p = parse_src("struct Point { x: i32, y: i32 }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!() };
+        assert!(s.generic_params.is_empty());
+    }
+
+    #[test]
+    fn generic_enum_option_shape() {
+        let p = parse_src("enum Option[T] { Some(T), None }").unwrap();
+        let ItemKind::Enum(e) = &p.items[0].kind else { panic!() };
+        assert_eq!(e.generic_params.len(), 1);
+        assert_eq!(e.generic_params[0].name.name, "T");
+    }
+
+    #[test]
+    fn generic_enum_result_shape() {
+        let p = parse_src("enum Result[T, E] { Ok(T), Err(E) }").unwrap();
+        let ItemKind::Enum(e) = &p.items[0].kind else { panic!() };
+        let names: Vec<&str> = e.generic_params.iter().map(|p| p.name.name.as_str()).collect();
+        assert_eq!(names, vec!["T", "E"]);
+    }
+
+    #[test]
+    fn non_generic_enum_has_empty_generic_params() {
+        let p = parse_src("enum Color { Red, Green, Blue }").unwrap();
+        let ItemKind::Enum(e) = &p.items[0].kind else { panic!() };
+        assert!(e.generic_params.is_empty());
+    }
+
+    #[test]
+    fn generic_struct_pub_combo() {
+        let p = parse_src("pub struct Vec[T] { data: T }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!() };
+        assert!(s.is_pub);
+        assert_eq!(s.generic_params.len(), 1);
+    }
+
+    // ---- 7GEN.3 — interface declarations + impl Interface for Type ----
+
+    #[test]
+    fn interface_decl_parses_with_single_method() {
+        let p = parse_src("interface Ord { fn compare(self, other: i32) -> i32; }").unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else { panic!() };
+        assert_eq!(i.name.name, "Ord");
+        assert_eq!(i.methods.len(), 1);
+        assert_eq!(i.methods[0].name.name, "compare");
+        assert_eq!(i.methods[0].receiver, Some(Receiver::Read));
+        assert!(i.methods[0].return_type.is_some());
+    }
+
+    #[test]
+    fn interface_decl_multiple_methods() {
+        let p = parse_src(
+            "interface Eq {\n\
+                 fn eq(self, other: i32) -> bool;\n\
+                 fn ne(self, other: i32) -> bool;\n\
+             }"
+        ).unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else { panic!() };
+        let names: Vec<&str> = i.methods.iter().map(|m| m.name.name.as_str()).collect();
+        assert_eq!(names, vec!["eq", "ne"]);
+    }
+
+    #[test]
+    fn interface_method_with_no_return_type() {
+        let p = parse_src(
+            "interface Logger { fn log(self, msg: i32); }"
+        ).unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else { panic!() };
+        assert!(i.methods[0].return_type.is_none());
+    }
+
+    #[test]
+    fn interface_method_requires_semicolon_not_body() {
+        // Interface methods declare signatures, not implementations —
+        // they must end with `;`, not `{ ... }`.
+        let err = parse_src(
+            "interface X { fn f(self) -> i32 { return 0; } }"
+        ).unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn interface_pub_combo() {
+        let p = parse_src("pub interface Ord { fn compare(self, other: i32) -> i32; }").unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else { panic!() };
+        assert!(i.is_pub);
+    }
+
+    #[test]
+    fn impl_interface_for_target_parses() {
+        let p = parse_src(
+            "struct Point { x: i32, y: i32 }\n\
+             impl Ord for Point {\n\
+                 fn compare(self, other: Point) -> i32 { return 0; }\n\
+             }"
+        ).unwrap();
+        let ItemKind::Impl(b) = &p.items[1].kind else { panic!() };
+        assert_eq!(b.target.name, "Point");
+        assert!(b.interface_name.is_some());
+        assert_eq!(b.interface_name.as_ref().unwrap().name, "Ord");
+        assert_eq!(b.methods.len(), 1);
+    }
+
+    #[test]
+    fn plain_impl_target_still_works() {
+        // Inherent impl without `for Interface` continues to work — no
+        // interface_name set.
+        let p = parse_src(
+            "struct Point { x: i32 }\n\
+             impl Point { fn x(self) -> i32 { return self.x; } }"
+        ).unwrap();
+        let ItemKind::Impl(b) = &p.items[1].kind else { panic!() };
+        assert_eq!(b.target.name, "Point");
+        assert!(b.interface_name.is_none());
+    }
+
+    #[test]
+    fn interface_method_with_mut_self_receiver() {
+        let p = parse_src(
+            "interface Counter { fn inc(mut self) -> i32; }"
+        ).unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else { panic!() };
+        assert_eq!(i.methods[0].receiver, Some(Receiver::Mut));
+    }
+
+    #[test]
+    fn interface_associated_fn_no_receiver() {
+        // `fn default() -> Self;` — no `self` receiver, like Rust's
+        // `Default::default`.
+        let p = parse_src(
+            "interface Default { fn default() -> i32; }"
+        ).unwrap();
+        let ItemKind::Interface(i) = &p.items[0].kind else { panic!() };
+        assert_eq!(i.methods[0].receiver, None);
+    }
+
+    #[test]
+    fn qualified_struct_literal_parses() {
+        // `prefix::Type { ... }` should parse as a StructLit with the
+        // qualified name string (resolver splits on `::` and rewrites).
+        let p = parse_src(
+            r#"import "g.cplus" as g; fn main() -> i32 { let p = g::Point { x: 1, y: 2 }; return 0; }"#,
+        )
+        .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        // Walk to the `let` statement's init expression.
+        let StmtKind::Let { init: Some(init), .. } = &f.body.stmts[0].kind else { panic!(); };
+        let ExprKind::StructLit { name, fields } = &init.kind else {
+            panic!("expected StructLit, got {:?}", init.kind);
+        };
+        assert_eq!(name.name, "g::Point");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name.name, "x");
+        assert_eq!(fields[1].name.name, "y");
+    }
+
+    #[test]
+    fn qualified_struct_literal_suppressed_in_if_head() {
+        // In an `if EXPR { ... }` head, the trailing `{` opens the body —
+        // not a struct literal. `prefix::Type` should fall back to a Path
+        // expression in that position, same rule as the unqualified case.
+        let p = parse_src(
+            r#"import "g.cplus" as g; fn main() -> i32 { if g::flag { return 1; } return 0; }"#,
+        )
+        .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        // First stmt is the `if`-as-expression-statement; condition is a Path.
+        let StmtKind::Expr(e) = &f.body.stmts[0].kind else { panic!(); };
+        let ExprKind::If { cond, .. } = &e.kind else { panic!(); };
+        let ExprKind::Path { segments } = &cond.kind else {
+            panic!("expected Path, got {:?}", cond.kind);
+        };
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].name, "g");
+        assert_eq!(segments[1].name, "flag");
+    }
+
+    #[test]
+    fn qualified_type_path_parses() {
+        let p = parse_src(
+            r#"import "math.cplus" as math; fn use_it(p: math::Point) -> i32 { return 0; }"#,
+        )
+        .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        let TypeKind::Path(s) = &f.params[0].ty.kind else { panic!(); };
+        assert_eq!(s, "math::Point");
+    }
+
+    #[test]
+    fn import_after_item_is_parse_error() {
+        let err = parse_src(
+            r#"fn main() -> i32 { return 0; } import "math.cplus" as math;"#,
+        )
+        .unwrap_err();
+        // "expected item, found `import`" — the message text is brittle to
+        // assert directly; the variant is what we care about.
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    // ---- Phase 5 slice 5ATTR.1: attribute parsing ----
+
+    #[test]
+    fn bare_attribute_on_fn_parses() {
+        let p = parse_src("#[test] fn foo() { return; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        assert_eq!(f.attributes.len(), 1);
+        assert_eq!(f.attributes[0].path.name, "test");
+        assert!(f.attributes[0].args.is_empty());
+    }
+
+    #[test]
+    fn multiple_attributes_collect_in_order() {
+        let p = parse_src("#[foo] #[bar] fn f() { return; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        assert_eq!(f.attributes.len(), 2);
+        assert_eq!(f.attributes[0].path.name, "foo");
+        assert_eq!(f.attributes[1].path.name, "bar");
+    }
+
+    #[test]
+    fn attribute_with_ident_arg_parses() {
+        let p = parse_src("#[repr(C)] struct P { v: i32 }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!(); };
+        assert_eq!(s.attributes.len(), 1);
+        assert_eq!(s.attributes[0].args.len(), 1);
+        let AttrArg::Ident(id) = &s.attributes[0].args[0] else {
+            panic!("expected ident arg, got {:?}", s.attributes[0].args[0])
+        };
+        assert_eq!(id.name, "C");
+    }
+
+    #[test]
+    fn attribute_with_string_arg_parses() {
+        let p = parse_src(r#"#[deprecated("gone")] fn old() { return; }"#).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        let AttrArg::Str(s, _) = &f.attributes[0].args[0] else {
+            panic!("expected string arg")
+        };
+        assert_eq!(s, "gone");
+    }
+
+    #[test]
+    fn attribute_with_keyvalue_arg_parses() {
+        let p = parse_src(r#"#[link(name = "z")] fn f() { return; }"#).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        let AttrArg::KeyValue(key, AttrValue::Str(val, _)) = &f.attributes[0].args[0] else {
+            panic!("expected name=\"z\" key-value arg")
+        };
+        assert_eq!(key.name, "name");
+        assert_eq!(val, "z");
+    }
+
+    #[test]
+    fn attribute_on_method_parses() {
+        let p = parse_src(
+            "struct X { v: i32 }\n\
+             impl X { #[test] fn m(self) { return; } }"
+        ).unwrap();
+        let ItemKind::Impl(b) = &p.items[1].kind else { panic!(); };
+        assert_eq!(b.methods[0].attributes.len(), 1);
+        assert_eq!(b.methods[0].attributes[0].path.name, "test");
+    }
+
+    #[test]
+    fn attribute_on_struct_field_parses() {
+        let p = parse_src("struct X { #[hint] v: i32 }").unwrap();
+        let ItemKind::Struct(s) = &p.items[0].kind else { panic!(); };
+        assert_eq!(s.fields[0].attributes.len(), 1);
+        assert_eq!(s.fields[0].attributes[0].path.name, "hint");
+    }
+
+    #[test]
+    fn attribute_on_enum_variant_parses() {
+        let p = parse_src("enum E { #[note] A, B }").unwrap();
+        let ItemKind::Enum(e) = &p.items[0].kind else { panic!(); };
+        assert_eq!(e.variants[0].attributes.len(), 1);
+        assert_eq!(e.variants[0].attributes[0].path.name, "note");
+        assert!(e.variants[1].attributes.is_empty());
+    }
+
+    #[test]
+    fn attribute_before_pub_on_fn_parses() {
+        // Per the design note, attributes appear before `pub`. The parser
+        // accepts that ordering; the reverse (`pub #[test]`) is a parse
+        // error since `pub` consumes and then expects a keyword like
+        // `fn`/`struct`/`enum`, not `#`.
+        let p = parse_src("#[test] pub fn f() { return; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        assert!(f.is_pub);
+        assert_eq!(f.attributes.len(), 1);
+    }
+
+    #[test]
+    fn attribute_on_impl_block_itself_rejected() {
+        // The design note (§6 open question 6) defers impl-level attributes;
+        // we reject them at the parser to keep the option open.
+        let err = parse_src("#[test] impl X { }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    // ---- Phase 5 slice 5ATTR.3: `assert EXPR;` ----
+
+    #[test]
+    fn assert_stmt_parses() {
+        let p = parse_src("fn main() -> i32 { assert 1 == 1; return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!(); };
+        let StmtKind::Assert(e) = &f.body.stmts[0].kind else {
+            panic!("expected Assert stmt, got {:?}", f.body.stmts[0].kind);
+        };
+        // The expression is `1 == 1`.
+        let ExprKind::Binary { op, .. } = &e.kind else { panic!() };
+        assert!(matches!(op, BinOp::Eq));
+    }
+
+    #[test]
+    fn assert_stmt_requires_semicolon() {
+        // `assert EXPR` (no `;`) — sees `return` after and errors.
+        let err = parse_src("fn main() -> i32 { assert true return 0; }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    // ---- Phase 10 slice 10.FFI.1: extern fn + raw pointers ----
+
+    #[test]
+    fn extern_fn_parses() {
+        let p = parse_src("extern fn abs(x: i32) -> i32;").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_extern);
+        assert!(!f.is_pub);
+        assert_eq!(f.name.name, "abs");
+        assert_eq!(f.params.len(), 1);
+        assert!(f.body.stmts.is_empty());
+        assert!(f.body.tail.is_none());
+    }
+
+    #[test]
+    fn extern_fn_no_return_type_parses() {
+        let p = parse_src("extern fn free(p: i32);").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_extern);
+        assert!(f.return_type.is_none());
+    }
+
+    #[test]
+    fn extern_fn_with_body_rejected() {
+        // `;` required after the signature; a body block fails parsing.
+        let err = parse_src("extern fn abs(x: i32) -> i32 { return x; }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn extern_fn_with_pub_rejected() {
+        let err = parse_src("pub extern fn abs(x: i32) -> i32;").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn extern_fn_with_generic_params_rejected() {
+        let err = parse_src("extern fn ident[T](x: T) -> T;").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn raw_pointer_type_parses() {
+        let p = parse_src("extern fn strlen(s: *u8) -> usize;").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        let TypeKind::RawPtr(inner) = &f.params[0].ty.kind else {
+            panic!("expected RawPtr, got {:?}", f.params[0].ty.kind);
+        };
+        let TypeKind::Path(name) = &inner.kind else { panic!() };
+        assert_eq!(name, "u8");
+    }
+
+    #[test]
+    fn raw_pointer_nested_parses() {
+        // `**i32` = `*(*i32)`.
+        let p = parse_src("extern fn f(p: **i32) -> i32;").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        let TypeKind::RawPtr(outer) = &f.params[0].ty.kind else { panic!() };
+        let TypeKind::RawPtr(inner) = &outer.kind else { panic!("expected RawPtr inside RawPtr") };
+        let TypeKind::Path(name) = &inner.kind else { panic!() };
+        assert_eq!(name, "i32");
+    }
+
+    // ---- Phase 7 slice 7GEN.5e: generic-enum patterns ----
+
+    fn first_match_arms(p: &Program) -> &[MatchArm] {
+        let f = match &p.items[0].kind {
+            ItemKind::Function(f) => f,
+            _ => panic!("expected fn"),
+        };
+        let ret = match &f.body.stmts.last().unwrap().kind {
+            StmtKind::Return(Some(e)) => e,
+            _ => panic!("expected return"),
+        };
+        match &ret.kind {
+            ExprKind::Match { arms, .. } => arms,
+            _ => panic!("expected match"),
+        }
+    }
+
+    #[test]
+    fn generic_enum_pattern_with_type_args_parses() {
+        // `Option[i32]::Some(v)` in pattern position.
+        let p = parse_src(
+            "fn f(o: i32) -> i32 { \
+                return match o { \
+                    Option[i32]::Some(v) => v, \
+                    Option[i32]::None => 0, \
+                }; \
+            }",
+        ).unwrap();
+        let arms = first_match_arms(&p);
+        let PatternKind::Variant { enum_name, type_args, variant_name, payload } = &arms[0].pattern.kind else {
+            panic!("expected variant pattern, got {:?}", arms[0].pattern.kind);
+        };
+        assert_eq!(enum_name.name, "Option");
+        assert_eq!(type_args.len(), 1);
+        assert_eq!(variant_name.name, "Some");
+        assert_eq!(payload.len(), 1);
+        // Payload-less variant.
+        let PatternKind::Variant { type_args: ta2, payload: pl2, .. } = &arms[1].pattern.kind else {
+            panic!();
+        };
+        assert_eq!(ta2.len(), 1);
+        assert_eq!(pl2.len(), 0);
+    }
+
+    #[test]
+    fn generic_enum_pattern_two_type_args_parses() {
+        // `Result[i32, string]::Ok(v)` — multi-arg.
+        let p = parse_src(
+            "fn f(o: i32) -> i32 { \
+                return match o { \
+                    Result[i32, string]::Ok(v) => v, \
+                    _ => 0, \
+                }; \
+            }",
+        ).unwrap();
+        let arms = first_match_arms(&p);
+        let PatternKind::Variant { type_args, .. } = &arms[0].pattern.kind else { panic!() };
+        assert_eq!(type_args.len(), 2);
+    }
+
+    #[test]
+    fn unqualified_variant_pattern_keeps_empty_type_args() {
+        // `Option::Some(v)` — no `[...]`. Type-directed resolution
+        // happens in sema; parser leaves `type_args` empty.
+        let p = parse_src(
+            "fn f(o: i32) -> i32 { \
+                return match o { \
+                    Option::Some(v) => v, \
+                    _ => 0, \
+                }; \
+            }",
+        ).unwrap();
+        let arms = first_match_arms(&p);
+        let PatternKind::Variant { enum_name, type_args, .. } = &arms[0].pattern.kind else { panic!() };
+        assert_eq!(enum_name.name, "Option");
+        assert!(type_args.is_empty());
+    }
+
+    #[test]
+    fn impl_block_with_target_generic_params_parses() {
+        // Slice 7GEN.5e: `impl Vec[T] { ... }` parses, with `T`
+        // recorded on `target_generic_params`.
+        let p = parse_src("impl Vec[T] { fn len(self) -> usize { return 0; } }").unwrap();
+        let ItemKind::Impl(b) = &p.items[0].kind else { panic!() };
+        assert_eq!(b.target.name, "Vec");
+        assert_eq!(b.target_generic_params.len(), 1);
+        assert_eq!(b.target_generic_params[0].name.name, "T");
+        assert_eq!(b.methods.len(), 1);
+    }
+
+    #[test]
+    fn impl_block_with_two_target_generic_params_parses() {
+        let p = parse_src("impl Pair[A, B] { fn first(self) -> A { return self.a; } }").unwrap();
+        let ItemKind::Impl(b) = &p.items[0].kind else { panic!() };
+        assert_eq!(b.target_generic_params.len(), 2);
+        assert_eq!(b.target_generic_params[0].name.name, "A");
+        assert_eq!(b.target_generic_params[1].name.name, "B");
+    }
+
+    #[test]
+    fn impl_block_target_generic_param_with_bound_parses() {
+        let p = parse_src("impl Sorted[T: Ord] { fn len(self) -> usize { return 0; } }").unwrap();
+        let ItemKind::Impl(b) = &p.items[0].kind else { panic!() };
+        assert_eq!(b.target_generic_params.len(), 1);
+        assert_eq!(b.target_generic_params[0].bounds.len(), 1);
+        assert_eq!(b.target_generic_params[0].bounds[0].name, "Ord");
+    }
+
+    #[test]
+    fn impl_block_empty_target_generic_brackets_rejected() {
+        let err = parse_src("impl Vec[] { }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn method_call_turbofish_parses() {
+        // Slice 7GEN.5e: `v.method::[i32](x)` parses as a Call with
+        // a Field callee and non-empty type_args.
+        let p = parse_src(
+            "fn main() -> i32 { let p: Point = Point { x: 0, y: 0 }; return p.cast::[i32](7); }"
+        ).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        let StmtKind::Return(Some(e)) = &f.body.stmts.last().unwrap().kind else { panic!() };
+        let ExprKind::Call { callee, type_args, .. } = &e.kind else {
+            panic!("expected Call, got {:?}", e.kind);
+        };
+        assert_eq!(type_args.len(), 1);
+        assert!(matches!(callee.kind, ExprKind::Field { .. }),
+            "expected Field callee for method turbofish, got {:?}", callee.kind);
+    }
+
+    #[test]
+    fn assoc_call_turbofish_parses() {
+        // Slice 7GEN.5e: `Type::method::[i32](x)` parses as a Call
+        // with a Path callee and non-empty type_args.
+        let p = parse_src(
+            "fn main() -> i32 { return Vec::new::[i32](); }"
+        ).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        let StmtKind::Return(Some(e)) = &f.body.stmts.last().unwrap().kind else { panic!() };
+        let ExprKind::Call { callee, type_args, .. } = &e.kind else {
+            panic!("expected Call, got {:?}", e.kind);
+        };
+        assert_eq!(type_args.len(), 1);
+        let ExprKind::Path { segments } = &callee.kind else {
+            panic!("expected Path callee, got {:?}", callee.kind);
+        };
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].name, "Vec");
+        assert_eq!(segments[1].name, "new");
+    }
+
+    #[test]
+    fn generic_enum_pattern_without_variant_rejected() {
+        // `Option[i32]` alone in pattern position — must be followed
+        // by `::Variant`. Otherwise the parser errors.
+        let err = parse_src(
+            "fn f(o: i32) -> i32 { \
+                return match o { \
+                    Option[i32] => 0, \
+                    _ => 0, \
+                }; \
+            }",
+        ).unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }),
+            "expected parse error, got {:?}", err.kind);
     }
 }

@@ -1,0 +1,8 @@
+[package]
+name    = "calc"
+version = "0.1.0"
+edition = "2026"
+
+[[bin]]
+name = "calc"
+path = "src/main.cplus"

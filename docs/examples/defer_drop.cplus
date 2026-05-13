@@ -1,0 +1,30 @@
+// Phase 3 slice 3G — `defer` and Drop share the same LIFO scope-exit stack.
+//
+// Registration order:
+//   1. let a: Tracker  — registers Drop(a)
+//   2. defer println(100)
+//   3. let b: Tracker  — registers Drop(b)
+//   4. defer println(200)
+//
+// Scope exit (reverse): println(200), Drop(b) → -2, println(100), Drop(a) → -1.
+
+struct Tracker { id: i32 }
+
+impl Tracker {
+    fn new(id: i32) -> Tracker {
+        println(id);
+        return Tracker { id: id };
+    }
+    fn drop(mut self) {
+        println(0 -% self.id);
+    }
+}
+
+fn main() -> i32 {
+    let a: Tracker = Tracker::new(1);
+    defer println(100);
+    let b: Tracker = Tracker::new(2);
+    defer println(200);
+    return 0;
+    // Expected: 1, 2, 200, -2, 100, -1
+}

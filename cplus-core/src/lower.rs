@@ -1,0 +1,707 @@
+//! Slice 4A.5 — `if let` / `guard let` lowering.
+//!
+//! Pattern-binding sugar over slice-3I `match`. The parser produces
+//! `StmtKind::IfLet` / `StmtKind::GuardLet`; this pass:
+//!
+//! 1. Emits the slice-specific diagnostics:
+//!    - E0347: irrefutable `if let` pattern (use plain `let`)
+//!    - E0348: `guard let` else block must diverge (return / break / continue)
+//!    - E0349: `guard let` else complement is not exhaustive with the
+//!             success pattern (only fires when the user wrote an explicit
+//!             `else |Pat|` form — without a complement we synthesize `_`
+//!             which is trivially exhaustive)
+//!    - E0350: `guard let` complement overlaps the success pattern
+//!    - E0351: `guard let` requires the success pattern to bind at least
+//!             one value (else it's just an `if let` with side effects)
+//!    - E0352: multi-binding `guard let` patterns are deferred to a
+//!             follow-up slice
+//!
+//! 2. Rewrites each `IfLet` / `GuardLet` statement in place to an
+//!    equivalent form built from existing AST nodes (match expression for
+//!    `if let`; `let` + match expression for `guard let`). Sema and codegen
+//!    never see the original nodes — they hit a `panic!` arm in their
+//!    statement matches.
+//!
+//! No codegen changes; the desugar produces match IR that slice 3I already
+//! lowers. See `docs/design/phase4-pattern-let.md`.
+
+use crate::ast::*;
+use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};
+use crate::lexer::Span;
+use std::path::PathBuf;
+
+/// Run the lowering pass over a merged Program. Mutates `prog` so all
+/// `StmtKind::IfLet` / `StmtKind::GuardLet` nodes are replaced with
+/// equivalent match-using forms.
+pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
+    let mut cx = Lower { file: file.clone(), src: src.to_string(), diags: vec![] };
+    for it in &mut prog.items {
+        cx.lower_item(it);
+    }
+    cx.diags
+}
+
+struct Lower {
+    file: PathBuf,
+    src: String,
+    diags: Vec<Diagnostic>,
+}
+
+impl Lower {
+    fn err(&mut self, code: &'static str, message: String, span: Span) {
+        let lm = LineMap::new(&self.src);
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode(code),
+            message,
+            primary: lm.span(&self.file, span, &self.src),
+            labels: vec![],
+            notes: vec![],
+            suggestions: vec![],
+        });
+    }
+
+    fn lower_item(&mut self, it: &mut Item) {
+        match &mut it.kind {
+            ItemKind::Function(f) => self.lower_block(&mut f.body),
+            ItemKind::Impl(b) => {
+                for m in &mut b.methods {
+                    self.lower_block(&mut m.body);
+                }
+            }
+            // Slice 7GEN.3: interface declarations have no bodies to
+            // lower (method signatures only); pass through unchanged.
+            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) => {}
+        }
+    }
+
+    fn lower_block(&mut self, b: &mut Block) {
+        for s in &mut b.stmts {
+            self.lower_stmt(s);
+        }
+        if let Some(tail) = &mut b.tail {
+            self.lower_expr(tail);
+        }
+    }
+
+    fn lower_stmt(&mut self, s: &mut Stmt) {
+        // Walk *into* `if let` / `guard let` first so any nested
+        // pattern-lets in the bodies are rewritten before we rewrite the
+        // outer one. After the recursion, take the outer node and replace
+        // it with its match-using equivalent.
+        match &mut s.kind {
+            StmtKind::Let { init, .. } => {
+                if let Some(e) = init { self.lower_expr(e); }
+            }
+            StmtKind::Return(opt) => {
+                if let Some(e) = opt { self.lower_expr(e); }
+            }
+            StmtKind::While { cond, body } => {
+                self.lower_expr(cond);
+                self.lower_block(body);
+            }
+            StmtKind::For(fl) => match fl {
+                ForLoop::CStyle { init, cond, update, body } => {
+                    if let Some(init) = init { self.lower_stmt(init); }
+                    if let Some(c) = cond { self.lower_expr(c); }
+                    for u in update { self.lower_expr(u); }
+                    self.lower_block(body);
+                }
+                ForLoop::Range { iter, body, .. } => {
+                    self.lower_expr(iter);
+                    self.lower_block(body);
+                }
+            }
+            StmtKind::Expr(e) => self.lower_expr(e),
+            StmtKind::Defer(e) => self.lower_expr(e),
+            StmtKind::IfLet { body, else_body, scrutinee, .. } => {
+                self.lower_expr(scrutinee);
+                self.lower_block(body);
+                if let Some(eb) = else_body { self.lower_block(eb); }
+            }
+            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+                self.lower_expr(scrutinee);
+                self.lower_block(else_body);
+            }
+            StmtKind::Break | StmtKind::Continue => {
+                // Leaf control-flow markers — nothing to recurse into.
+            }
+            StmtKind::Assert(e) => self.lower_expr(e),
+            StmtKind::Loop(body) => {
+                self.lower_block(body);
+            }
+            StmtKind::WhileLet { scrutinee, body, .. } => {
+                self.lower_expr(scrutinee);
+                self.lower_block(body);
+            }
+        }
+        // Now rewrite the outer node, if it's an if-let / guard-let.
+        let stolen = std::mem::replace(
+            &mut s.kind,
+            StmtKind::Expr(Expr { kind: ExprKind::BoolLit(false), span: s.span }),
+        );
+        match stolen {
+            StmtKind::IfLet { pattern, scrutinee, body, else_body } => {
+                s.kind = self.lower_if_let(pattern, scrutinee, body, else_body, s.span);
+            }
+            StmtKind::GuardLet { pattern, scrutinee, complement, else_body } => {
+                s.kind = self.lower_guard_let(pattern, scrutinee, complement, else_body, s.span);
+            }
+            StmtKind::WhileLet { pattern, scrutinee, body } => {
+                s.kind = self.lower_while_let(pattern, scrutinee, body, s.span);
+            }
+            other => {
+                s.kind = other;
+            }
+        }
+    }
+
+    fn lower_expr(&mut self, e: &mut Expr) {
+        match &mut e.kind {
+            ExprKind::IntLit(..) | ExprKind::FloatLit(..) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_)
+            | ExprKind::Ident(_) => {}
+            ExprKind::Block(b) => self.lower_block(b),
+            ExprKind::Unsafe(b) => self.lower_block(b),
+            ExprKind::If { cond, then, else_branch } => {
+                self.lower_expr(cond);
+                self.lower_block(then);
+                if let Some(eb) = else_branch { self.lower_expr(eb); }
+            }
+            ExprKind::Call { callee, args, .. } => {
+                self.lower_expr(callee);
+                for a in args { self.lower_expr(a); }
+            }
+            ExprKind::Binary { lhs, rhs, .. } => { self.lower_expr(lhs); self.lower_expr(rhs); }
+            ExprKind::Unary { operand, .. } => self.lower_expr(operand),
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { self.lower_expr(s); }
+                if let Some(en) = end { self.lower_expr(en); }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                self.lower_expr(target);
+                self.lower_expr(value);
+            }
+            ExprKind::Cast { expr, .. } => self.lower_expr(expr),
+            ExprKind::Path { .. } => {}
+            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields { self.lower_expr(&mut f.value); }
+            }
+            ExprKind::Field { receiver, .. } => self.lower_expr(receiver),
+            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+                for el in elements { self.lower_expr(el); }
+            }
+            ExprKind::Index { receiver, index } => {
+                self.lower_expr(receiver);
+                self.lower_expr(index);
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.lower_expr(scrutinee);
+                for a in arms { self.lower_expr(&mut a.body); }
+            }
+        }
+    }
+
+    /// `if let PAT = E { B }` →  `match E { PAT => { B; }, _ => {} }`
+    /// `if let PAT = E { B } else { B2 }` → `match E { PAT => { B; }, _ => { B2; } }`
+    fn lower_if_let(
+        &mut self,
+        pattern: Pattern,
+        scrutinee: Expr,
+        mut body: Block,
+        else_body: Option<Block>,
+        stmt_span: Span,
+    ) -> StmtKind {
+        // E0347: pattern must be refutable. A bare binding or wildcard is
+        // irrefutable — `if let x = E { ... }` is just `let x = E;` plus
+        // some scope confusion. Variant patterns are refutable in C+
+        // because every `enum` has ≥ 1 variant and a Variant pattern
+        // names exactly one.
+        if !is_refutable(&pattern) {
+            self.err(
+                "E0347",
+                "`if let` pattern is irrefutable; use `let` instead".to_string(),
+                pattern.span,
+            );
+        }
+        // Normalize both arm bodies to unit-valued blocks so the synthetic
+        // match's two arms agree on type (statement-position).
+        body = into_unit_block(body);
+        let else_blk = match else_body {
+            Some(b) => into_unit_block(b),
+            None => Block { stmts: vec![], tail: None, span: stmt_span },
+        };
+        let success_arm = MatchArm {
+            pattern,
+            body: Expr { kind: ExprKind::Block(body.clone()), span: body.span },
+            span: body.span,
+        };
+        let else_arm_span = else_blk.span;
+        let fallthrough_arm = MatchArm {
+            pattern: Pattern { kind: PatternKind::Wildcard, span: else_arm_span },
+            body: Expr { kind: ExprKind::Block(else_blk.clone()), span: else_arm_span },
+            span: else_arm_span,
+        };
+        let match_expr = Expr {
+            kind: ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![success_arm, fallthrough_arm],
+            },
+            span: stmt_span,
+        };
+        StmtKind::Expr(match_expr)
+    }
+
+    /// `guard let PAT = E else { ELSE };`
+    ///   → `let X = match E { PAT => X, _ => { ELSE } };`
+    /// `guard let PAT = E else |COMP| { ELSE };`
+    ///   → `let X = match E { PAT => X, COMP => { ELSE } };`
+    /// (where `X` is the single binding extracted from `PAT`.)
+    fn lower_guard_let(
+        &mut self,
+        pattern: Pattern,
+        scrutinee: Expr,
+        complement: Option<Pattern>,
+        else_body: Block,
+        stmt_span: Span,
+    ) -> StmtKind {
+        // E0348: the else block must diverge.
+        if !block_diverges(&else_body) {
+            self.err(
+                "E0348",
+                "`guard let` else body must diverge (every path must `return`)".to_string(),
+                else_body.span,
+            );
+        }
+
+        // E0351 / E0352: single-binding constraint. Collect binding names
+        // from the pattern.
+        let bindings = collect_pattern_bindings(&pattern);
+        if bindings.is_empty() {
+            self.err(
+                "E0351",
+                "`guard let` requires the pattern to bind at least one value; use `if let` for inspection-only".to_string(),
+                pattern.span,
+            );
+            return placeholder_stmt(stmt_span);
+        }
+        if bindings.len() > 1 {
+            self.err(
+                "E0352",
+                "multi-binding `guard let` patterns are not yet supported; use one `guard let` per binding".to_string(),
+                pattern.span,
+            );
+            return placeholder_stmt(stmt_span);
+        }
+        let extracted = bindings.into_iter().next().unwrap();
+
+        // E0349 / E0350: complement (if user wrote `else |Pat|`) must
+        // exhaustively cover the scrutinee together with the success
+        // pattern AND must not overlap it. Without a complement we
+        // synthesize `_` which is trivially exhaustive and disjoint from
+        // any non-wildcard pattern.
+        let (else_arm_pattern, else_arm_span) = match complement {
+            Some(cp) => {
+                self.check_complement(&pattern, &cp);
+                let sp = cp.span;
+                (cp, sp)
+            }
+            None => (
+                Pattern { kind: PatternKind::Wildcard, span: else_body.span },
+                else_body.span,
+            ),
+        };
+
+        // Build the match. Success arm body is just the bound identifier;
+        // the pattern's binding scopes it.
+        let success_arm = MatchArm {
+            pattern: pattern.clone(),
+            body: Expr {
+                kind: ExprKind::Ident(extracted.name.clone()),
+                span: extracted.span,
+            },
+            span: pattern.span,
+        };
+        let else_arm = MatchArm {
+            pattern: else_arm_pattern,
+            body: Expr {
+                kind: ExprKind::Block(else_body.clone()),
+                span: else_body.span,
+            },
+            span: else_arm_span,
+        };
+        let match_expr = Expr {
+            kind: ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![success_arm, else_arm],
+            },
+            span: stmt_span,
+        };
+
+        StmtKind::Let {
+            mutable: false,
+            name: extracted,
+            ty: None,
+            init: Some(match_expr),
+        }
+    }
+
+    /// `while let PAT = E { BODY }`
+    ///   →  `loop { match E { PAT => { BODY; () }, _ => break, } }`
+    ///
+    /// Refutability of PAT is checked (E0347 — same as `if let`). The
+    /// fallback arm's `break` statement is what makes the loop
+    /// terminate; codegen sees an ordinary `loop` + `match` after
+    /// rewriting.
+    fn lower_while_let(
+        &mut self,
+        pattern: Pattern,
+        scrutinee: Expr,
+        body: Block,
+        stmt_span: Span,
+    ) -> StmtKind {
+        if !is_refutable(&pattern) {
+            self.err(
+                "E0347",
+                "`while let` pattern is irrefutable; use `loop` (or rewrite without `let`) instead".to_string(),
+                pattern.span,
+            );
+        }
+        // Normalize the body to unit-typed (drop any tail expression
+        // value) so the success and fallback arms both have type unit.
+        let body_block = into_unit_block(body);
+        let body_span = body_block.span;
+
+        // Success arm: run body.
+        let success_arm = MatchArm {
+            pattern,
+            body: Expr { kind: ExprKind::Block(body_block.clone()), span: body_span },
+            span: body_span,
+        };
+
+        // Fallback arm: `_ => break,` — a single break stmt inside a unit block.
+        let fallback_block = Block {
+            stmts: vec![Stmt { kind: StmtKind::Break, span: stmt_span }],
+            tail: None,
+            span: stmt_span,
+        };
+        let fallback_arm = MatchArm {
+            pattern: Pattern { kind: PatternKind::Wildcard, span: stmt_span },
+            body: Expr { kind: ExprKind::Block(fallback_block), span: stmt_span },
+            span: stmt_span,
+        };
+
+        let match_expr = Expr {
+            kind: ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![success_arm, fallback_arm],
+            },
+            span: stmt_span,
+        };
+        let loop_body = Block {
+            stmts: vec![Stmt { kind: StmtKind::Expr(match_expr), span: stmt_span }],
+            tail: None,
+            span: stmt_span,
+        };
+        StmtKind::Loop(loop_body)
+    }
+
+    fn check_complement(&mut self, success: &Pattern, complement: &Pattern) {
+        // The complement can always be a catch-all (wildcard / binding) —
+        // that is trivially exhaustive (together with the success pattern)
+        // and trivially disjoint, so accept and return.
+        match &complement.kind {
+            PatternKind::Wildcard | PatternKind::Binding(_) => return,
+            PatternKind::Variant { .. } => {}
+        }
+        // Otherwise: both patterns must be Variant. Reject overlap if they
+        // reference the same enum + same variant.
+        let (PatternKind::Variant { enum_name: s_enum, variant_name: s_var, .. },
+             PatternKind::Variant { enum_name: c_enum, variant_name: c_var, .. })
+            = (&success.kind, &complement.kind) else {
+            // Success is wildcard/binding and complement is a Variant — the
+            // success pattern is irrefutable (E0347 already fired) and the
+            // complement is unreachable. No further check needed.
+            return;
+        };
+        if s_enum.name == c_enum.name && s_var.name == c_var.name {
+            self.err(
+                "E0350",
+                format!(
+                    "complement pattern `{}::{}` overlaps the success pattern",
+                    c_enum.name, c_var.name,
+                ),
+                complement.span,
+            );
+        }
+        // Exhaustiveness against the full enum cannot be proven without
+        // sema's enum table here. We leave the deep check to slice 4B/4C
+        // when the lowering pass gets access to a sema context; in the
+        // meantime the synthesized match runs through slice-3I
+        // exhaustiveness check which will catch missing variants there
+        // (sema's E0343 instead of E0349). Accept E0343 as the surface
+        // error until the dedicated check moves in.
+    }
+}
+
+fn placeholder_stmt(span: Span) -> StmtKind {
+    // Returned in error paths so downstream sema doesn't trip on a fully
+    // malformed AST. The placeholder is a no-op expression statement.
+    StmtKind::Expr(Expr { kind: ExprKind::BoolLit(false), span })
+}
+
+fn is_refutable(p: &Pattern) -> bool {
+    match &p.kind {
+        PatternKind::Wildcard | PatternKind::Binding(_) => false,
+        PatternKind::Variant { .. } => true,
+    }
+}
+
+fn collect_pattern_bindings(p: &Pattern) -> Vec<Ident> {
+    fn walk(p: &Pattern, out: &mut Vec<Ident>) {
+        match &p.kind {
+            PatternKind::Wildcard => {}
+            PatternKind::Binding(i) => out.push(i.clone()),
+            PatternKind::Variant { payload, .. } => {
+                for sub in payload { walk(sub, out); }
+            }
+        }
+    }
+    let mut out = vec![];
+    walk(p, &mut out);
+    out
+}
+
+fn into_unit_block(b: Block) -> Block {
+    // Discard any tail expression so the block has type unit. Pushing the
+    // tail as a `Stmt::Expr` keeps its side effects.
+    let Block { mut stmts, tail, span } = b;
+    if let Some(tail_box) = tail {
+        let tail = *tail_box;
+        let tspan = tail.span;
+        stmts.push(Stmt { kind: StmtKind::Expr(tail), span: tspan });
+    }
+    Block { stmts, tail: None, span }
+}
+
+pub(crate) fn block_diverges(b: &Block) -> bool {
+    if let Some(tail) = &b.tail {
+        return expr_diverges(tail);
+    }
+    match b.stmts.last() {
+        Some(s) => stmt_diverges(s),
+        None => false,
+    }
+}
+
+pub(crate) fn stmt_diverges(s: &Stmt) -> bool {
+    match &s.kind {
+        StmtKind::Return(_) => true,
+        // `break` / `continue` unconditionally transfer control out of
+        // the current straight-line execution (to the loop exit / next
+        // iteration), so a guard-let `else` block ending in either of
+        // them is a valid divergence per slice 4A.5's diverge rule.
+        StmtKind::Break | StmtKind::Continue => true,
+        StmtKind::Expr(e) => expr_diverges(e),
+        _ => false,
+    }
+}
+
+pub(crate) fn expr_diverges(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) => block_diverges(b),
+        ExprKind::Unsafe(b) => block_diverges(b),
+        ExprKind::If { then, else_branch, .. } => {
+            let then_d = block_diverges(then);
+            let else_d = match else_branch {
+                Some(eb) => expr_diverges(eb),
+                None => false,
+            };
+            then_d && else_d
+        }
+        ExprKind::Match { arms, .. } => {
+            // Match diverges iff every arm body diverges.
+            !arms.is_empty() && arms.iter().all(|a| expr_diverges(&a.body))
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+    use crate::parser::parse;
+
+    fn run(src: &str) -> (Program, Vec<Diagnostic>) {
+        let toks = tokenize(src).expect("lex");
+        let mut prog = parse(toks).expect("parse");
+        let diags = lower(&mut prog, &PathBuf::from("test.cplus"), src);
+        (prog, diags)
+    }
+
+    fn first_codes(diags: &[Diagnostic]) -> Vec<&str> {
+        diags.iter().map(|d| d.code.0).collect()
+    }
+
+    #[test]
+    fn if_let_with_variant_pattern_lowers() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                if let Maybe::Some(v) = m {
+                    return v;
+                }
+                return 0;
+            }
+        "#;
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diags: {diags:?}");
+        // No IfLet should remain.
+        let any_iflet = walks_any_iflet(&prog);
+        assert!(!any_iflet, "expected if-let to be lowered");
+    }
+
+    #[test]
+    fn if_let_irrefutable_binding_rejected() {
+        let src = r#"
+            fn main() -> i32 {
+                if let x = 7 { return x; }
+                return 0;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0347"), "expected E0347, got {:?}", first_codes(&diags));
+    }
+
+    #[test]
+    fn if_let_wildcard_rejected_as_irrefutable() {
+        let src = r#"
+            fn main() -> i32 {
+                if let _ = 7 { return 1; }
+                return 0;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0347"));
+    }
+
+    #[test]
+    fn guard_let_basic_lowers() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard let Maybe::Some(v) = m else { return 0; };
+                return v;
+            }
+        "#;
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diags: {diags:?}");
+        // After lowering the guard-let becomes `let v = match ...;`.
+        let main_body = match &prog.items.iter().find_map(|it| match &it.kind {
+            ItemKind::Function(f) if f.name.name == "main" => Some(f),
+            _ => None,
+        }).unwrap().body.stmts[1].kind {
+            StmtKind::Let { name, init: Some(_), .. } => name.name.clone(),
+            other => panic!("expected let, got {other:?}"),
+        };
+        assert_eq!(main_body, "v");
+    }
+
+    #[test]
+    fn guard_let_non_diverging_else_rejected() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard let Maybe::Some(v) = m else { let x: i32 = 1; };
+                return v;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0348"));
+    }
+
+    #[test]
+    fn guard_let_with_diverging_match_in_else_accepted() {
+        // Else block ends with a match where every arm returns.
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard let Maybe::Some(v) = m else {
+                    match m {
+                        Maybe::Some(_) => { return 1; },
+                        Maybe::None => { return 0; },
+                    }
+                };
+                return v;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(!first_codes(&diags).contains(&"E0348"));
+    }
+
+    #[test]
+    fn guard_let_no_binding_rejected() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard let Maybe::None = m else { return 0; };
+                return 0;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0351"));
+    }
+
+    #[test]
+    fn guard_let_multi_binding_rejected() {
+        let src = r#"
+            enum Pair { Both(i32, i32) }
+            fn main() -> i32 {
+                let p: Pair = Pair::Both(1, 2);
+                guard let Pair::Both(a, b) = p else { return 0; };
+                return a;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0352"));
+    }
+
+    #[test]
+    fn guard_let_complement_overlap_rejected() {
+        let src = r#"
+            enum Maybe { Some(i32), None }
+            fn main() -> i32 {
+                let m: Maybe = Maybe::Some(7);
+                guard let Maybe::Some(v) = m else |Maybe::Some(_)| { return 0; };
+                return v;
+            }
+        "#;
+        let (_, diags) = run(src);
+        assert!(first_codes(&diags).contains(&"E0350"));
+    }
+
+    fn walks_any_iflet(prog: &Program) -> bool {
+        fn walk_block(b: &Block) -> bool {
+            for s in &b.stmts {
+                if matches!(s.kind, StmtKind::IfLet { .. } | StmtKind::GuardLet { .. }) {
+                    return true;
+                }
+                if let StmtKind::While { body, .. } = &s.kind {
+                    if walk_block(body) { return true; }
+                }
+            }
+            false
+        }
+        prog.items.iter().any(|it| match &it.kind {
+            ItemKind::Function(f) => walk_block(&f.body),
+            ItemKind::Impl(b) => b.methods.iter().any(|m| walk_block(&m.body)),
+            _ => false,
+        })
+    }
+}

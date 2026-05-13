@@ -1,0 +1,25 @@
+// Phase 3 slice 3I — tagged unions with multi-arg payloads.
+
+enum Shape {
+    Circle(i32),         // radius
+    Rectangle(i32, i32), // width, height
+    Square(i32),
+    Empty,
+}
+
+fn area_times_4(s: Shape) -> i32 {
+    return match s {
+        Shape::Circle(r) => r *% r *% 12,           // πr² ≈ 3r²; 4 * 3r² = 12r²
+        Shape::Rectangle(w, h) => w *% h *% 4,
+        Shape::Square(s) => s *% s *% 4,
+        Shape::Empty => 0,
+    };
+}
+
+fn main() -> i32 {
+    println(area_times_4(Shape::Circle(2)));        // 48
+    println(area_times_4(Shape::Rectangle(3, 5)));  // 60
+    println(area_times_4(Shape::Square(4)));        // 64
+    println(area_times_4(Shape::Empty));            // 0
+    return 0;
+}

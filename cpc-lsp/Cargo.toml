@@ -1,0 +1,26 @@
+[package]
+name = "cpc-lsp"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "cpc-lsp"
+path = "src/main.rs"
+
+[dependencies]
+cplus-core = { path = "../cplus-core" }
+# rust-analyzer's framework crates. `lsp-server` handles JSON-RPC framing
+# over stdio with a synchronous dispatch loop (no tokio); `lsp-types`
+# provides the LSP protocol type definitions.
+lsp-server = "0.7"
+lsp-types = "0.95"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+# Tests drive the server over stdio with framed JSON-RPC; reuse the
+# protocol-types crate so they don't redo the framing by hand.
+lsp-server = "0.7"
+lsp-types = "0.95"
+serde_json = "1"

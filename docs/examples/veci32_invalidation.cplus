@@ -1,0 +1,32 @@
+// Phase 6 exit-criterion demo: iterator invalidation rejected at compile time.
+//
+// `VecI32` is a fixed-capacity inline analogue of a growable vector
+// (full heap-allocated `Vec[T]` waits on Phase 7's generics + heap
+// primitives). The shape is enough to exercise the Phase-6 borrow
+// checker's exclusive-borrow rule on method calls:
+//
+//   - `cursor(self)` returns a shared borrow of `self` (Rule E2).
+//   - `push(mut self, x)` requires exclusive access to `self`.
+//
+// Calling `push` while a cursor is alive is the canonical
+// iterator-invalidation pattern — Phase 6 rejects it as **E0381**
+// without any annotation. Uncomment the `v.push(...)` line below to
+// see the diagnostic; with the line commented out the file builds.
+
+struct VecI32 {
+    data: [i32; 8],
+    len: usize,
+}
+
+impl VecI32 {
+    fn drop(mut self) { return; }
+    fn cursor(self) -> VecI32 { return self; }
+    fn push(mut self, x: i32) { return; }
+}
+
+fn main() -> i32 {
+    let mut v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
+    let cur: VecI32 = v.cursor();
+    // v.push(42);    // E0381 — iterator invalidation rejected
+    return 0;
+}

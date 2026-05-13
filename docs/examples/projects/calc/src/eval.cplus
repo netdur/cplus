@@ -1,0 +1,16 @@
+// `eval.cplus` — the evaluator. Imports both `expr` (for the Expr enum)
+// and `ops` (for the arithmetic primitives). Cross-file `match` arms
+// reference imported enum variants via the `expr::` prefix; sema's
+// pattern resolution (slice 4-end carry-forward) accepts them.
+
+import "expr.cplus" as expr;
+import "ops.cplus" as ops;
+
+pub fn evaluate(e: expr::Expr) -> i32 {
+    return match e {
+        expr::Expr::Lit(v) => v,
+        expr::Expr::Add(a, b) => ops::add(a, b),
+        expr::Expr::Mul(a, b) => ops::mul(a, b),
+        expr::Expr::Neg(v) => ops::neg(v),
+    };
+}

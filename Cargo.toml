@@ -1,5 +1,5 @@
 [workspace]
-members = ["cplus-core", "cpc"]
+members = ["cplus-core", "cpc", "cpc-lsp"]
 resolver = "2"
 
 [workspace.package]

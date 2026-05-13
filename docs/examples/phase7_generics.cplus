@@ -1,0 +1,92 @@
+// Phase 7 exit demo — generics + interfaces.
+//
+// Exercises every Phase-7 feature in one program:
+//   - generic struct (Pair[A, B]) with methods
+//   - generic enum (Maybe[T]) with source-level patterns
+//   - generic function with inference + turbofish + bound (T: Copy)
+//   - blessed interface (Ord) with a user impl + bound check
+//   - generic method on a concrete impl (Box::cast[T])
+//
+// The Vec[T]-with-push exit demo from the original Phase-7 plan is
+// deferred to slice 7HEAP — growable collections need the heap
+// allocator, which is its own design + implementation phase.
+
+struct Pair[A, B] {
+    first: A,
+    second: B,
+}
+
+impl Pair[A, B] {
+    fn first(self) -> A { return self.first; }
+    fn second(self) -> B { return self.second; }
+}
+
+enum Maybe[T] {
+    Some(T),
+    None,
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+// User impl of the blessed Ord interface.
+impl Ord for Point {
+    fn cmp(self, other: Point) -> i32 {
+        if self.x < other.x { return 0 -% 1; }
+        if self.x > other.x { return 1; }
+        return 0;
+    }
+}
+
+// Generic function with a bound. `T: Copy` is satisfied for i32 below;
+// without the bound this would type-check, but the bound here
+// demonstrates the E0502 path is *not* triggered when satisfied.
+fn pick[T: Copy](a: T, b: T) -> T {
+    return a;
+}
+
+struct Box {
+    tag: i32,
+}
+
+impl Box {
+    fn cast[T](self, value: T) -> T {
+        return value;
+    }
+}
+
+fn unwrap_or(o: Maybe[i32], default: i32) -> i32 {
+    return match o {
+        Maybe[i32]::Some(v) => v,
+        Maybe[i32]::None => default,
+    };
+}
+
+fn main() -> i32 {
+    // Generic struct with two type args.
+    let p: Pair[i32, i32] = Pair[i32, i32] { first: 7, second: 35 };
+    let sum: i32 = p.first() + p.second();   // 42
+
+    // Generic enum with source-level patterns.
+    let some_v: Maybe[i32] = Maybe[i32]::Some(0);
+    let none_v: Maybe[i32] = Maybe[i32]::None;
+    let unwrapped: i32 = unwrap_or(some_v, 999) + unwrap_or(none_v, 0);   // 0
+
+    // Generic fn inference + bound check (T: Copy satisfied by i32).
+    let picked: i32 = pick(0, 1);   // 0
+
+    // Generic method with turbofish.
+    let b: Box = Box { tag: 1 };
+    let cast: i32 = b.cast::[i32](0);   // 0
+
+    // Blessed Ord impl on Point.
+    let p1: Point = Point { x: 1, y: 2 };
+    let p2: Point = Point { x: 3, y: 4 };
+    let cmp: i32 = p1.cmp(p2);   // -1 (wrapping)
+
+    // Total: 42 + 0 + 0 + 0 + (-1 wraps to 0xffffffff, but we exit-code
+    // before that). Return sum to keep the exit code at 42.
+    return sum;
+}

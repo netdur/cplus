@@ -1,0 +1,22 @@
+// Phase 3 slice 3F — Drop basics. Two Trackers are created, then drop at
+// scope exit in reverse declaration order. The destructor prints the
+// negated id so the trace shows construction vs destruction clearly.
+
+struct Tracker { id: i32 }
+
+impl Tracker {
+    fn new(id: i32) -> Tracker {
+        println(id);
+        return Tracker { id: id };
+    }
+    fn drop(mut self) {
+        println(0 -% self.id);
+    }
+}
+
+fn main() -> i32 {
+    let a: Tracker = Tracker::new(1);
+    let b: Tracker = Tracker::new(2);
+    return 0;
+    // scope exit: b drops (prints -2), then a drops (prints -1)
+}

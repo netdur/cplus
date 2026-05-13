@@ -1,0 +1,227 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "C+",
+  "scopeName": "source.cplus",
+  "fileTypes": ["cplus"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#attributes" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.cplus",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.cplus",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [
+            { "include": "#comments" }
+          ]
+        }
+      ]
+    },
+
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.cplus",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.cplus",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "Hex / octal / binary integer literal with optional type suffix.",
+          "name": "constant.numeric.integer.cplus",
+          "match": "\\b(0x[0-9a-fA-F_]+|0o[0-7_]+|0b[01_]+)(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize)?\\b"
+        },
+        {
+          "comment": "Float literal (with optional exponent and type suffix).",
+          "name": "constant.numeric.float.cplus",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?(f32|f64)?\\b"
+        },
+        {
+          "comment": "Integer literal with type suffix.",
+          "name": "constant.numeric.integer.cplus",
+          "match": "\\b[0-9][0-9_]*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64)?\\b"
+        }
+      ]
+    },
+
+    "attributes": {
+      "patterns": [
+        {
+          "comment": "Future-attribute syntax (#[test], #[derive(...)]); rendered as a single span so it's visually distinct.",
+          "name": "meta.attribute.cplus",
+          "begin": "#\\[",
+          "end": "\\]",
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#identifiers" }
+          ]
+        }
+      ]
+    },
+
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "Function definition — color the name after `fn`.",
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.cplus" },
+            "2": { "name": "entity.name.function.cplus" }
+          }
+        },
+        {
+          "comment": "Struct / enum / impl declaration — color the name as a type.",
+          "match": "\\b(struct|enum|impl)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.cplus" },
+            "2": { "name": "entity.name.type.cplus" }
+          }
+        },
+        {
+          "comment": "import \"path\" as NAME; — color the alias as a namespace.",
+          "match": "\\b(import)\\b\\s*(\"[^\"]*\")\\s*\\b(as)\\b\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.cplus" },
+            "2": { "name": "string.quoted.double.cplus" },
+            "3": { "name": "keyword.other.cplus" },
+            "4": { "name": "entity.name.namespace.cplus" }
+          }
+        }
+      ]
+    },
+
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.cplus",
+          "match": "\\b(if|else|while|for|in|return|match|break|continue|loop|defer|guard)\\b"
+        },
+        {
+          "name": "keyword.declaration.cplus",
+          "match": "\\b(fn|let|struct|enum|trait|impl|use|mod|import|pub|union)\\b"
+        },
+        {
+          "name": "storage.modifier.cplus",
+          "match": "\\b(mut|move|const|extern|unsafe)\\b"
+        },
+        {
+          "name": "keyword.other.cplus",
+          "match": "\\b(as|try)\\b"
+        }
+      ]
+    },
+
+    "types": {
+      "patterns": [
+        {
+          "comment": "Built-in scalar / primitive types — colored as types.",
+          "name": "storage.type.builtin.cplus",
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|f32|f64|bool|string|cstring)\\b"
+        },
+        {
+          "comment": "Conventional PascalCase identifier — treat as a user type when it appears bare.",
+          "name": "entity.name.type.cplus",
+          "match": "\\b([A-Z][A-Za-z0-9_]*)\\b"
+        }
+      ]
+    },
+
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.cplus",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "variable.language.self.cplus",
+          "match": "\\b(self|Self)\\b"
+        }
+      ]
+    },
+
+    "operators": {
+      "patterns": [
+        {
+          "comment": "Path/namespace separator. Tight on both sides per §2.8a; we tag it for theming.",
+          "name": "punctuation.accessor.cplus",
+          "match": "::"
+        },
+        {
+          "comment": "Range operators.",
+          "name": "keyword.operator.range.cplus",
+          "match": "\\.\\.=?"
+        },
+        {
+          "name": "keyword.operator.arrow.cplus",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.wrapping.cplus",
+          "match": "\\+%|-%|\\*%"
+        },
+        {
+          "name": "keyword.operator.comparison.cplus",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.cplus",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.bitwise.cplus",
+          "match": "<<=?|>>=?|[&|^~]"
+        },
+        {
+          "name": "keyword.operator.assignment.cplus",
+          "match": "\\+=|-=|\\*=|/=|%=|="
+        },
+        {
+          "name": "keyword.operator.arithmetic.cplus",
+          "match": "[+\\-*/%]"
+        }
+      ]
+    },
+
+    "identifiers": {
+      "patterns": [
+        {
+          "comment": "Function-call site: identifier immediately followed by `(`.",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.call.cplus" }
+          }
+        },
+        {
+          "comment": "Bare identifier; fall back to variable. Color theme decides whether to highlight.",
+          "name": "variable.other.cplus",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

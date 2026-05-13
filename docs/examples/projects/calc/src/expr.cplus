@@ -1,0 +1,10 @@
+// `expr.cplus` — the expression tree. A tagged enum that other files
+// can pattern-match on. Exports the type and its variants (every variant
+// is pub via the enum's `pub` per design note §2.3).
+
+pub enum Expr {
+    Lit(i32),
+    Add(i32, i32),
+    Mul(i32, i32),
+    Neg(i32),
+}

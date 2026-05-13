@@ -1,0 +1,16 @@
+// Phase 4 slice 4A/4B — first cross-file sample.
+//
+// `math.cplus` exports `square` to be called from `main.cplus`. Items are
+// private by default (slice 4B); the `pub` prefix makes them reachable
+// through the importer's `as`-prefix. A non-`pub` helper here is invisible
+// outside this file and would produce E0403 if `main.cplus` tried to call
+// it through `math::`.
+
+pub fn square(n: i32) -> i32 {
+    return n * n;
+}
+
+// Private — only this file can call it.
+fn double(n: i32) -> i32 {
+    return n + n;
+}

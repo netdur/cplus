@@ -1,0 +1,27 @@
+// Phase 4 slice 4A.5 — `if let` pattern-binding sugar over `match`.
+//
+// `if let Pat = Expr { Body }` runs Body when the scrutinee matches Pat,
+// binding pattern bindings in Body. With `else { ... }` it adds a fallback
+// arm. Pure desugar: the parser produces an `if let` AST node and an
+// early lowering pass rewrites it to an equivalent `match`. Sema and
+// codegen are unchanged; bindings consumers see plain match IR.
+//
+// Refutability is required (E0347 if not): `if let x = e { ... }` is just
+// `let x = e;` plus scope confusion.
+
+enum Maybe { Some(i32), None }
+
+fn unwrap_or(m: Maybe, default: i32) -> i32 {
+    if let Maybe::Some(v) = m {
+        return v;
+    }
+    return default;
+}
+
+fn main() -> i32 {
+    let a: Maybe = Maybe::Some(42);
+    let b: Maybe = Maybe::None;
+    println(unwrap_or(a, 0));  // 42
+    println(unwrap_or(b, 7));  //  7
+    return 0;
+}

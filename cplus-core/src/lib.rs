@@ -5,8 +5,16 @@
 //! the language lives.
 
 pub mod ast;
+pub mod attrs;
+pub mod borrowck;
 pub mod codegen;
 pub mod diagnostics;
+pub mod doctest;
+pub mod fmt;
 pub mod lexer;
+pub mod lower;
+pub mod manifest;
+pub mod monomorphize;
 pub mod parser;
+pub mod resolver;
 pub mod sema;

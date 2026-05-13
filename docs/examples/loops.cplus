@@ -1,0 +1,58 @@
+// Phase 4 slice end: `break`, `continue`, `loop`, `while let`.
+//
+// `loop { ... }` is the unconditional loop primitive. `break` exits;
+// `continue` jumps to the next iteration. `while let PAT = E { ... }`
+// is sugar over `loop { match E { PAT => ..., _ => break, } }`.
+
+enum Drain { Take(i32), Empty }
+
+fn take_until_zero(seed: i32) -> Drain {
+    if seed == 0 {
+        return Drain::Empty;
+    }
+    return Drain::Take(seed);
+}
+
+fn sum_with_loop(start: i32) -> i32 {
+    let mut total: i32 = 0;
+    let mut cur: i32 = start;
+    loop {
+        if cur == 0 {
+            break;
+        }
+        total = total + cur;
+        cur = cur - 1;
+    }
+    return total;
+}
+
+fn skip_evens_under(n: i32) -> i32 {
+    let mut total: i32 = 0;
+    let mut i: i32 = 0;
+    while i < n {
+        i = i + 1;
+        if (i - (i / 2) * 2) == 0 {
+            continue;
+        }
+        total = total + i;
+    }
+    return total;
+}
+
+fn drain_with_while_let() -> i32 {
+    // Drain decreasing values until take_until_zero returns Empty.
+    let mut total: i32 = 0;
+    let mut next: i32 = 4;
+    while let Drain::Take(v) = take_until_zero(next) {
+        total = total + v;
+        next = next - 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    println(sum_with_loop(5));        // 5+4+3+2+1 = 15
+    println(skip_evens_under(6));     // 1+3+5 = 9
+    println(drain_with_while_let());  // 4+3+2+1 = 10
+    return 0;
+}

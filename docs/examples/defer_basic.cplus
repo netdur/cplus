@@ -1,0 +1,18 @@
+// Phase 3 slice 3G — `defer` registers a scope-exit hook.
+//
+// Lexical scoping: each `defer EXPR;` adds EXPR to the enclosing scope's
+// LIFO scope-exit stack. The expression fires at scope exit, regardless of
+// whether the scope exits by falling off the end or by an early `return`.
+// `defer` shares its LIFO stack with Drop calls — see
+// `docs/design/phase3-drop.md` §4.4.
+
+fn main() -> i32 {
+    println(1);
+    defer println(2);
+    defer println(3);
+    defer println(4);
+    println(5);
+    return 0;
+    // Scope exit (in LIFO registration order): 4, then 3, then 2.
+    // Expected output: 1, 5, 4, 3, 2
+}

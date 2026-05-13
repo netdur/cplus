@@ -1,0 +1,8 @@
+[package]
+name    = "hello_mods"
+version = "0.1.0"
+edition = "2026"
+
+[[bin]]
+name = "hello_mods"
+path = "src/main.cplus"

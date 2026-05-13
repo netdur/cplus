@@ -1,0 +1,47 @@
+// Phase 4 slice 4A.5 — `guard let` chains.
+//
+// `guard let Pat = Expr else { Diverge };` binds Pat's payload into the
+// enclosing scope past the statement, on the proven assumption that the
+// else block diverges (return / break / continue). The win: chained
+// fallible operations stay flat instead of pyramid-of-doom nesting under
+// `match`.
+//
+// This sample replaces a three-level match chain with three flat `guard
+// let` statements. The success path reads top-to-bottom; the failure
+// path is in the else clauses where it belongs.
+
+enum Step { Ok(i32), Bad }
+
+fn step_a(input: i32) -> Step {
+    if input > 0 {
+        return Step::Ok(input * 2);
+    }
+    return Step::Bad;
+}
+
+fn step_b(input: i32) -> Step {
+    if input < 1000 {
+        return Step::Ok(input + 5);
+    }
+    return Step::Bad;
+}
+
+fn step_c(input: i32) -> Step {
+    if input != 0 {
+        return Step::Ok(input - 1);
+    }
+    return Step::Bad;
+}
+
+fn pipeline(input: i32) -> i32 {
+    guard let Step::Ok(a) = step_a(input) else { return 0 -% 1; };
+    guard let Step::Ok(b) = step_b(a) else { return 0 -% 2; };
+    guard let Step::Ok(c) = step_c(b) else { return 0 -% 3; };
+    return c;
+}
+
+fn main() -> i32 {
+    println(pipeline(10));      // step_a → 20, step_b → 25, step_c → 24
+    println(pipeline(0 -% 5));  // step_a fails immediately → -1
+    return 0;
+}

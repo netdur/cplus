@@ -1,0 +1,66 @@
+// Phase 8 + 10.FFI demo: an owned, growable string type implemented
+// entirely at the user level on top of `extern fn malloc/free/memcpy`
+// (10.FFI.1) and raw pointer operations (10.FFI.2). All FFI calls and
+// pointer dereferences are wrapped in `unsafe { ... }` blocks per
+// 10.FFI.3 — the explicit marker makes dangerous code grep-able.
+//
+// Why this is here: the original Phase-8 plan had `string` as a
+// compiler-blessed built-in type. After 10.FFI.1 / .2 / .3 landed,
+// it became expressible directly in C+ source — no compiler magic
+// required. The language gives you the FFI primitives + pointer ops
+// + Drop / move semantics + `unsafe` gating; a "stdlib string" type
+// sits on top.
+//
+// The three str-side intrinsics used here are compiler-known:
+//   - `str_ptr(s)` extracts the internal `*u8` field of a `str` (safe)
+//   - `str_len(s)` extracts the internal `usize` length (safe)
+//   - `str_from_raw_parts(p, n)` builds a `str` from raw parts (unsafe)
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+
+struct OwnedString {
+    ptr: *u8,
+    len: usize,
+    cap: usize,
+}
+
+impl OwnedString {
+    fn with_capacity(cap: usize) -> OwnedString {
+        return OwnedString {
+            ptr: unsafe { malloc(cap) },
+            len: 0 as usize,
+            cap: cap,
+        };
+    }
+
+    fn push_str(mut self, s: str) {
+        // str_ptr / str_len are safe — they only read the fat-pointer
+        // fields, no UB possible. The memcpy and pointer arithmetic
+        // are unsafe and must be wrapped.
+        let src: *u8 = str_ptr(s);
+        let n: usize = str_len(s);
+        unsafe {
+            let dest: *u8 = self.ptr + self.len;
+            memcpy(dest, src, n);
+        }
+        self.len = self.len +% n;
+    }
+
+    fn as_str(self) -> str {
+        return unsafe { str_from_raw_parts(self.ptr, self.len) };
+    }
+
+    fn drop(mut self) {
+        unsafe { free(self.ptr) };
+    }
+}
+
+fn main() -> i32 {
+    let mut greeting: OwnedString = OwnedString::with_capacity(32 as usize);
+    greeting.push_str("Hello, ");
+    greeting.push_str("world!");
+    println(greeting.as_str());
+    return greeting.len as i32;
+}

@@ -189,6 +189,11 @@ pub fn from_lex(err: &LexError, file: &PathBuf, lm: &LineMap, src: &str) -> Diag
             // We don't know where the user wanted to close it; skip suggestion.
             Vec::new(),
         ),
+        LexErrorKind::UnterminatedString => (
+            DiagCode("E0005"),
+            "unterminated string literal".to_string(),
+            Vec::new(),
+        ),
         LexErrorKind::InvalidNumber(s) => (
             DiagCode("E0003"),
             format!("invalid number literal: {s}"),

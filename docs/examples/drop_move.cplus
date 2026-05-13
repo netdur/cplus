@@ -1,0 +1,25 @@
+// Phase 3 slice 3F — Drop interacts with moves.
+//
+// `take(move h: Handle)` transfers ownership. Inside `take`, h drops at
+// the end of take's scope (prints `-7`). main's drop for h is suppressed
+// — its flag was flipped to false when h was passed by `move`.
+
+struct Handle { id: i32 }
+
+impl Handle {
+    fn new(id: i32) -> Handle { return Handle { id: id }; }
+    fn drop(mut self) { println(0 -% self.id); }
+}
+
+fn take(move h: Handle) -> i32 {
+    let id: i32 = h.id;
+    return id;
+    // h drops at end of take's scope -> prints -7
+}
+
+fn main() -> i32 {
+    let h: Handle = Handle::new(7);
+    let id: i32 = take(h);   // h is moved; main's scope-exit drop is suppressed
+    println(id);
+    return 0;
+}

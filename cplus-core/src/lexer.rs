@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Span {
     pub start: u32,
     pub end: u32,
@@ -32,14 +32,35 @@ pub enum TokenKind {
     // literals
     Int(u64, NumSuffix),
     Float(f64, NumSuffix),
+    /// Double-quoted string literal. Phase 4: used for `import "path" as name;`
+    /// path strings. Payload is the unescaped contents (currently no escape
+    /// sequences are processed — path strings don't need them).
+    Str(String),
     Ident(String),
+    /// `// ...` line comment. Payload excludes the `//` marker and the
+    /// terminating newline. Only emitted by `tokenize_with_trivia`; the
+    /// default `tokenize` filters these out so existing consumers see
+    /// the same token stream as before. Used by `cpc fmt` (slice 4D) to
+    /// preserve comments in the formatted output.
+    LineComment(String),
+    /// `/* ... */` block comment. Payload includes the interior verbatim
+    /// (including any internal newlines and surrounding whitespace).
+    /// Same trivia-mode rule as `LineComment`.
+    BlockComment(String),
 
     // keywords (active in Phase 1)
     Fn, Let, Mut, Const, If, Else, While, For, In, Return,
     True, False, As, Unsafe, Extern,
     // keywords (reserved for future phases)
-    Struct, Enum, Union, Match, Trait, Impl, Pub, Use, Mod,
-    SelfLower, SelfUpper, Defer, Try, Break, Continue, Loop, Move,
+    Struct, Enum, Union, Match, Trait, Impl, Pub, Use, Mod, Import,
+    SelfLower, SelfUpper, Defer, Try, Break, Continue, Loop, Move, Guard, Assert,
+    /// Slice 6BC.5: `borrow` keyword. Opens a region-annotated borrow
+    /// type: `borrow A T` (shared) or `mut x: borrow A T` (exclusive).
+    Borrow,
+    /// Slice 7GEN.3: `interface` keyword — opens an interface
+    /// declaration `interface Name { fn ... }`. Phase 7's bounded-
+    /// polymorphism surface.
+    Interface,
 
     // wildcard
     Underscore,
@@ -47,6 +68,8 @@ pub enum TokenKind {
     // single-char punctuation
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Comma, Semi, Colon, Dot,
+    /// `#` — opens an attribute (`#[...]`). Phase 5 slice 5ATTR.1.
+    Pound,
 
     // operators
     Plus, Minus, Star, Slash, Percent,
@@ -60,6 +83,10 @@ pub enum TokenKind {
     Arrow,        // ->
     FatArrow,     // =>
     DotDot, DotDotEq,
+    /// Slice 10.FFI.4: `...` for varargs in extern fn signatures.
+    /// `extern fn printf(fmt: *u8, ...) -> i32;`. Lexed greedily after
+    /// `..`: a third `.` upgrades DotDot to Ellipsis.
+    Ellipsis,
     ColonColon,
 
     Eof,
@@ -75,6 +102,7 @@ pub struct LexError {
 pub enum LexErrorKind {
     UnexpectedChar(char),
     UnterminatedBlockComment,
+    UnterminatedString,
     InvalidNumber(String),
     InvalidNumSuffix(String),
 }
@@ -84,6 +112,7 @@ impl fmt::Display for LexError {
         match &self.kind {
             LexErrorKind::UnexpectedChar(c) => write!(f, "unexpected character '{c}'"),
             LexErrorKind::UnterminatedBlockComment => write!(f, "unterminated block comment"),
+            LexErrorKind::UnterminatedString => write!(f, "unterminated string literal"),
             LexErrorKind::InvalidNumber(s) => write!(f, "invalid number literal: {s}"),
             LexErrorKind::InvalidNumSuffix(s) => write!(f, "invalid numeric type suffix: {s}"),
         }
@@ -91,7 +120,21 @@ impl fmt::Display for LexError {
 }
 
 pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
+    tokenize_inner(src, false)
+}
+
+/// Like `tokenize`, but emits `LineComment` and `BlockComment` tokens
+/// instead of silently discarding comments. Used by `cpc fmt` (slice 4D)
+/// to preserve comments while reformatting. Whitespace is still
+/// discarded — the formatter recovers newline placement by inspecting
+/// byte gaps between consecutive token spans against the original source.
+pub fn tokenize_with_trivia(src: &str) -> Result<Vec<Token>, LexError> {
+    tokenize_inner(src, true)
+}
+
+fn tokenize_inner(src: &str, keep_comments: bool) -> Result<Vec<Token>, LexError> {
     let mut lx = Lexer::new(src);
+    lx.keep_comments = keep_comments;
     let mut out = Vec::new();
     loop {
         match lx.next_token()? {
@@ -107,11 +150,15 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
 struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,
+    /// Slice 4D: when true, `//` and `/* */` produce `LineComment` /
+    /// `BlockComment` tokens instead of being silently skipped. Default
+    /// false to preserve the existing token-stream contract.
+    keep_comments: bool,
 }
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0 }
+        Self { src: src.as_bytes(), pos: 0, keep_comments: false }
     }
 
     fn peek(&self, off: usize) -> Option<u8> {
@@ -128,35 +175,47 @@ impl<'a> Lexer<'a> {
         Span::new(start as u32, self.pos as u32)
     }
 
+    /// Skip whitespace and (when `keep_comments` is false) comments.
+    /// When `keep_comments` is true, this only skips whitespace — comments
+    /// are returned to `next_token` so they can be emitted as tokens.
     fn skip_trivia(&mut self) -> Result<(), LexError> {
         loop {
             match (self.peek(0), self.peek(1)) {
                 (Some(b' ' | b'\t' | b'\n' | b'\r'), _) => { self.pos += 1; }
-                (Some(b'/'), Some(b'/')) => {
+                (Some(b'/'), Some(b'/')) if !self.keep_comments => {
                     while let Some(c) = self.peek(0) {
                         if c == b'\n' { break; }
                         self.pos += 1;
                     }
                 }
-                (Some(b'/'), Some(b'*')) => {
-                    let start = self.pos;
-                    self.pos += 2;
-                    let mut depth: u32 = 1;
-                    while depth > 0 {
-                        match (self.peek(0), self.peek(1)) {
-                            (Some(b'/'), Some(b'*')) => { self.pos += 2; depth += 1; }
-                            (Some(b'*'), Some(b'/')) => { self.pos += 2; depth -= 1; }
-                            (Some(_), _) => { self.pos += 1; }
-                            (None, _) => return Err(LexError {
-                                kind: LexErrorKind::UnterminatedBlockComment,
-                                span: Span::new(start as u32, self.pos as u32),
-                            }),
-                        }
-                    }
+                (Some(b'/'), Some(b'*')) if !self.keep_comments => {
+                    self.skip_block_comment()?;
                 }
                 _ => return Ok(()),
             }
         }
+    }
+
+    /// Consume a block comment, returning Ok with cursor positioned past
+    /// the closing `*/`. Errors on unterminated input. Used in both
+    /// trivia-skipping and trivia-keeping modes; in the latter, the
+    /// caller captures the body span before calling.
+    fn skip_block_comment(&mut self) -> Result<(), LexError> {
+        let start = self.pos;
+        self.pos += 2;   // consume `/*`
+        let mut depth: u32 = 1;
+        while depth > 0 {
+            match (self.peek(0), self.peek(1)) {
+                (Some(b'/'), Some(b'*')) => { self.pos += 2; depth += 1; }
+                (Some(b'*'), Some(b'/')) => { self.pos += 2; depth -= 1; }
+                (Some(_), _) => { self.pos += 1; }
+                (None, _) => return Err(LexError {
+                    kind: LexErrorKind::UnterminatedBlockComment,
+                    span: Span::new(start as u32, self.pos as u32),
+                }),
+            }
+        }
+        Ok(())
     }
 
     fn next_token(&mut self) -> Result<Token, LexError> {
@@ -165,6 +224,33 @@ impl<'a> Lexer<'a> {
         let Some(c) = self.peek(0) else {
             return Ok(Token { kind: TokenKind::Eof, span: self.span_from(start) });
         };
+
+        // Comments — only reachable in trivia-keeping mode; `skip_trivia`
+        // consumes them silently otherwise.
+        if self.keep_comments && c == b'/' && self.peek(1) == Some(b'/') {
+            self.pos += 2;
+            let body_start = self.pos;
+            while let Some(c) = self.peek(0) {
+                if c == b'\n' { break; }
+                self.pos += 1;
+            }
+            let body = std::str::from_utf8(&self.src[body_start..self.pos]).unwrap_or("").to_string();
+            return Ok(Token {
+                kind: TokenKind::LineComment(body),
+                span: self.span_from(start),
+            });
+        }
+        if self.keep_comments && c == b'/' && self.peek(1) == Some(b'*') {
+            let body_start = start + 2;
+            self.skip_block_comment()?;
+            // body excludes the opening `/*` and closing `*/`.
+            let body_end = self.pos - 2;
+            let body = std::str::from_utf8(&self.src[body_start..body_end]).unwrap_or("").to_string();
+            return Ok(Token {
+                kind: TokenKind::BlockComment(body),
+                span: self.span_from(start),
+            });
+        }
 
         // identifiers / keywords / `_`
         if is_ident_start(c) {
@@ -176,8 +262,67 @@ impl<'a> Lexer<'a> {
             return self.lex_number(start);
         }
 
+        // strings
+        if c == b'"' {
+            return self.lex_string(start);
+        }
+
         // operators / punctuation
         self.lex_op_or_punct(start)
+    }
+
+    fn lex_string(&mut self, start: usize) -> Result<Token, LexError> {
+        // Slice 4A: minimal string literal — used for `import "path" as name;`.
+        // No escape sequences yet; the contents must be a path-friendly subset
+        // (no double quotes, no newlines, no backslashes). We reject backslash
+        // explicitly so a future escape-aware version doesn't silently change
+        // the meaning of existing strings.
+        self.pos += 1; // opening "
+        // Phase 8 slice 8.STR.1: process escape sequences. The token's
+        // payload is the *decoded* UTF-8 bytes (any `\n` etc. already
+        // replaced with the corresponding byte). For Phase-4 import
+        // paths there are no escapes in practice, so this is
+        // backwards-compatible.
+        let mut decoded: Vec<u8> = Vec::new();
+        loop {
+            match self.peek(0) {
+                None | Some(b'\n') => {
+                    return Err(LexError {
+                        kind: LexErrorKind::UnterminatedString,
+                        span: self.span_from(start),
+                    });
+                }
+                Some(b'\\') => {
+                    self.pos += 1;
+                    match self.peek(0) {
+                        Some(b'n')  => { decoded.push(b'\n'); self.pos += 1; }
+                        Some(b't')  => { decoded.push(b'\t'); self.pos += 1; }
+                        Some(b'r')  => { decoded.push(b'\r'); self.pos += 1; }
+                        Some(b'\\') => { decoded.push(b'\\'); self.pos += 1; }
+                        Some(b'"')  => { decoded.push(b'"');  self.pos += 1; }
+                        Some(b'0')  => { decoded.push(b'\0'); self.pos += 1; }
+                        Some(other) => {
+                            return Err(LexError {
+                                kind: LexErrorKind::UnexpectedChar(other as char),
+                                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                            });
+                        }
+                        None => {
+                            return Err(LexError {
+                                kind: LexErrorKind::UnterminatedString,
+                                span: self.span_from(start),
+                            });
+                        }
+                    }
+                }
+                Some(b'"') => {
+                    let body = String::from_utf8(decoded).unwrap_or_default();
+                    self.pos += 1; // closing "
+                    return Ok(Token { kind: TokenKind::Str(body), span: self.span_from(start) });
+                }
+                Some(b) => { decoded.push(b); self.pos += 1; }
+            }
+        }
     }
 
     fn lex_ident(&mut self, start: usize) -> Token {
@@ -211,6 +356,7 @@ impl<'a> Lexer<'a> {
             "pub" => TokenKind::Pub,
             "use" => TokenKind::Use,
             "mod" => TokenKind::Mod,
+            "import" => TokenKind::Import,
             "self" => TokenKind::SelfLower,
             "Self" => TokenKind::SelfUpper,
             "defer" => TokenKind::Defer,
@@ -219,6 +365,10 @@ impl<'a> Lexer<'a> {
             "continue" => TokenKind::Continue,
             "loop" => TokenKind::Loop,
             "move" => TokenKind::Move,
+            "guard" => TokenKind::Guard,
+            "assert" => TokenKind::Assert,
+            "borrow" => TokenKind::Borrow,
+            "interface" => TokenKind::Interface,
             _ => TokenKind::Ident(text.to_string()),
         };
         Token { kind, span: self.span_from(start) }
@@ -355,7 +505,9 @@ impl<'a> Lexer<'a> {
             b'.' => match self.peek(0) {
                 Some(b'.') => {
                     self.pos += 1;
-                    if self.peek(0) == Some(b'=') { self.pos += 1; TokenKind::DotDotEq }
+                    // Slice 10.FFI.4: `...` → Ellipsis.
+                    if self.peek(0) == Some(b'.') { self.pos += 1; TokenKind::Ellipsis }
+                    else if self.peek(0) == Some(b'=') { self.pos += 1; TokenKind::DotDotEq }
                     else { TokenKind::DotDot }
                 }
                 _ => TokenKind::Dot,
@@ -417,6 +569,7 @@ impl<'a> Lexer<'a> {
             },
             b'^' => if self.peek(0) == Some(b'=') { self.pos += 1; TokenKind::CaretEq }
                     else { TokenKind::Caret },
+            b'#' => TokenKind::Pound,
             other => return Err(LexError {
                 kind: LexErrorKind::UnexpectedChar(other as char),
                 span: self.span_from(start),
@@ -585,9 +738,130 @@ mod tests {
     }
 
     #[test]
+    fn string_literal_basic() {
+        assert_eq!(
+            kinds(r#""hello""#),
+            vec![TokenKind::Str("hello".into()), TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn string_literal_with_path() {
+        assert_eq!(
+            kinds(r#""util/strings.cplus""#),
+            vec![TokenKind::Str("util/strings.cplus".into()), TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn string_empty() {
+        assert_eq!(kinds(r#""""#), vec![TokenKind::Str(String::new()), TokenKind::Eof]);
+    }
+
+    #[test]
+    fn string_unterminated_eof_errors() {
+        assert!(matches!(
+            tokenize(r#""oops"#).unwrap_err().kind,
+            LexErrorKind::UnterminatedString
+        ));
+    }
+
+    #[test]
+    fn string_unterminated_newline_errors() {
+        assert!(matches!(
+            tokenize("\"oops\n\"").unwrap_err().kind,
+            LexErrorKind::UnterminatedString
+        ));
+    }
+
+    #[test]
+    fn string_escapes_decoded() {
+        // Phase 8 slice 8.STR.1: `\n`, `\t`, `\r`, `\\`, `\"`, `\0` decode
+        // to the corresponding bytes inside the token payload.
+        let toks = tokenize(r#""a\nb\t\\""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("a\nb\t\\".to_string()));
+        let toks = tokenize(r#""\"""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("\"".to_string()));
+        let toks = tokenize(r#""\0""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("\0".to_string()));
+    }
+
+    #[test]
+    fn string_invalid_escape_rejected() {
+        // Unknown escape character is a lex error.
+        assert!(matches!(
+            tokenize(r#""\q""#).unwrap_err().kind,
+            LexErrorKind::UnexpectedChar('q')
+        ));
+    }
+
+    #[test]
+    fn import_keyword() {
+        assert_eq!(
+            kinds("import"),
+            vec![TokenKind::Import, TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn guard_keyword() {
+        assert_eq!(kinds("guard"), vec![TokenKind::Guard, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn import_decl_shape_lexes() {
+        // Whole-statement lexing sanity check for `import "p" as n;`.
+        let ks = kinds(r#"import "math.cplus" as math;"#);
+        assert_eq!(ks, vec![
+            TokenKind::Import,
+            TokenKind::Str("math.cplus".into()),
+            TokenKind::As,
+            TokenKind::Ident("math".into()),
+            TokenKind::Semi,
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
     fn span_tracks_position() {
         let toks = tokenize("fn  foo").unwrap();
         assert_eq!(toks[0].span, Span::new(0, 2));
         assert_eq!(toks[1].span, Span::new(4, 7));
+    }
+
+    // ---- Phase 5 slice 5ATTR.1: `#` token for attributes ----
+
+    #[test]
+    fn pound_alone_lexes() {
+        assert_eq!(kinds("#"), vec![TokenKind::Pound, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn attribute_opener_token_sequence() {
+        // `#[test]` lexes as Pound, LBracket, Ident("test"), RBracket.
+        assert_eq!(kinds("#[test]"), vec![
+            TokenKind::Pound,
+            TokenKind::LBracket,
+            TokenKind::Ident("test".into()),
+            TokenKind::RBracket,
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn assert_keyword() {
+        // Phase 5 slice 5ATTR.3 — `assert` is a reserved keyword.
+        assert_eq!(kinds("assert"), vec![TokenKind::Assert, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn borrow_keyword() {
+        // Phase 6 slice 6BC.5 — `borrow` is a reserved keyword opening
+        // a region-annotated borrow type: `borrow A T`.
+        assert_eq!(
+            kinds("borrow A string"),
+            vec![TokenKind::Borrow, TokenKind::Ident("A".into()),
+                 TokenKind::Ident("string".into()), TokenKind::Eof]
+        );
     }
 }

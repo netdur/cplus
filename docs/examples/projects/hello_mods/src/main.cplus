@@ -1,0 +1,14 @@
+// Phase 4 slice 4A — first cross-file sample.
+//
+// `import "PATH" as NAME;` is mandatory at the top of any file that
+// references another file. The `as` prefix is the only way to reach an
+// imported item — there is no narrowing or glob form. Items in the
+// imported file are accessed as `prefix::Item`.
+
+import "math.cplus" as math;
+
+fn main() -> i32 {
+    let r: i32 = math::square(7);
+    println(r);                       // 49
+    return 0;
+}

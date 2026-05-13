@@ -1,0 +1,32 @@
+// Phase 3 slice 3I — tagged unions + match.
+// Maybe is C+'s Option-equivalent (Phase-3, before generics).
+
+enum Maybe {
+    Some(i32),
+    None,
+}
+
+fn first_positive(a: i32, b: i32) -> Maybe {
+    if a > 0 {
+        return Maybe::Some(a);
+    }
+    if b > 0 {
+        return Maybe::Some(b);
+    }
+    return Maybe::None;
+}
+
+fn unwrap_or(m: Maybe, default: i32) -> i32 {
+    return match m {
+        Maybe::Some(v) => v,
+        Maybe::None => default,
+    };
+}
+
+fn main() -> i32 {
+    let r1: Maybe = first_positive(0, 7);
+    let r2: Maybe = first_positive(0 -% 1, 0 -% 1);
+    println(unwrap_or(r1, 0 -% 1));    // 7
+    println(unwrap_or(r2, 0 -% 1));    // -1
+    return 0;
+}

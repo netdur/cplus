@@ -1,0 +1,42 @@
+// Phase 4 slice 4A.5 — `guard let ... else |Pat| { ... }` complement form.
+//
+// The optional `|COMP|` binds the value when the success pattern doesn't
+// match, so the else block can inspect / wrap / rethrow it. This is the
+// motivating "wrap-and-rethrow" use case for fallible chains: the
+// caller's error type may differ from the callee's, and the complement
+// pattern lets you destructure the callee's error and build the wrapper
+// inline without a second match.
+//
+// Slice 4A.5 enforces non-overlap (E0350) between the success and
+// complement patterns; full enum exhaustiveness is delegated to slice 3I
+// match-arm exhaustiveness (E0343) on the synthesized match.
+
+enum InnerResult { Ok(i32), Err(i32) }
+enum OuterResult { Ok(i32), Wrapped(i32) }
+
+fn run(seed: i32) -> InnerResult {
+    if seed > 0 {
+        return InnerResult::Ok(seed + 100);
+    }
+    return InnerResult::Err(seed -% 1);
+}
+
+fn translate(seed: i32) -> OuterResult {
+    guard let InnerResult::Ok(v) = run(seed) else |InnerResult::Err(code)| {
+        return OuterResult::Wrapped(code);
+    };
+    return OuterResult::Ok(v);
+}
+
+fn report(r: OuterResult) -> i32 {
+    return match r {
+        OuterResult::Ok(v) => v,
+        OuterResult::Wrapped(c) => 0 -% c,
+    };
+}
+
+fn main() -> i32 {
+    println(report(translate(5)));       //  Ok(105) → 105
+    println(report(translate(0 -% 3)));  //  Wrapped(-4) → 4
+    return 0;
+}
