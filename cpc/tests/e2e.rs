@@ -4455,6 +4455,63 @@ fn phase11_doc_help_in_subcommand_help() {
         "subcommand help should be doc-specific: {stdout}");
 }
 
+// Phase 11 polish (2026-05-14): owned `string` Drop integration.
+// Strings allocated via `string::with_capacity` / `s.clone()` /
+// `to_string()` / interpolation literals get freed at scope exit.
+// Verified via ASan — without Drop, the runtime would report leaks.
+// (LeakSanitizer is part of `-fsanitize=address` on macOS/Linux.)
+
+#[test]
+fn phase11_string_drop_no_leaks_under_asan() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("nl.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let s: string = string::with_capacity(64 as usize);\n\
+             let n: i32 = 42;\n\
+             let g: string = \"n is ${n}\";\n\
+             let t: string = n.to_string();\n\
+             return s.len() as i32 +% t.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("nl");
+    let out = Command::new(cpc).arg("--asan").arg(&src).arg("-o").arg(&bin)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "asan build should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).output().expect("run binary");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    // ASan reports leaks on exit. If Drop is wired, stderr is clean.
+    assert!(!stderr.contains("LeakSanitizer"),
+        "ASan reported a leak — string Drop not freeing: stderr={stderr}");
+    assert!(!stderr.contains("AddressSanitizer"),
+        "ASan reported a bug: stderr={stderr}");
+}
+
+#[test]
+fn phase11_string_drop_handles_empty_string_new_safely() {
+    // `string::new()` stores ptr=null. free(null) is a libc no-op so
+    // Drop on an empty string must not crash.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("en.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let s: string = string::new();\n\
+             return s.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("en");
+    let out = Command::new(cpc).arg("--asan").arg(&src).arg("-o").arg(&bin)
+        .output().expect("invoke cpc");
+    assert!(out.status.success());
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(0));
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

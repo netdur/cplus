@@ -1575,13 +1575,27 @@ struct DropEntry {
     binding_name: String,
     value_slot: String,
     flag_slot: String,
-    struct_id: StructId,
+    /// Phase 8 slice 8.STR.3 follow-up (2026-05-14): which kind of
+    /// Drop are we registering? `Struct(id)` is the original case —
+    /// emits `call @<type>.drop(ptr)`. `String` is the owned-string
+    /// case — loads the `ptr` field and emits `call @free(ptr)`.
+    kind: DropKind,
     /// Slice 6BC.opt: static drop-flag specialization. When `Always`,
     /// emit an unconditional drop call at scope exit (no flag-load, no
     /// branch). `Runtime` is the Phase-5 default — the load + branch on
     /// the per-binding flag handles the MaybePartial case where the
     /// binding may or may not have been moved on different paths.
     disposition: DropDisposition,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DropKind {
+    Struct(StructId),
+    /// Phase 8 slice 8.STR.3 follow-up: owned `string`. The drop body
+    /// loads the `ptr` field from the value slot and calls `@free(ptr)`.
+    /// `@free(null)` is a libc no-op so `string::new()` (which stores
+    /// `null`) drops cleanly without a separate null-check.
+    String,
 }
 
 /// Slice 6BC.opt: per-Drop-binding lowering choice.
@@ -1799,6 +1813,18 @@ impl<'a> FnState<'a> {
     /// that flip the flag via `find_drop_flag` would skip dropped
     /// bindings naturally — but the precondition is no moves happen).
     fn register_drop(&mut self, binding_name: &str, value_slot: &str, struct_id: StructId) -> String {
+        self.register_drop_kind(binding_name, value_slot, DropKind::Struct(struct_id))
+    }
+
+    /// Phase 8 slice 8.STR.3 follow-up (2026-05-14): register a scope-
+    /// exit free for an owned `string` local. Same flag mechanism as
+    /// `register_drop`; the only difference is the lowered IR (load
+    /// the ptr field, call free, no struct-drop dispatch).
+    fn register_string_drop(&mut self, binding_name: &str, value_slot: &str) -> String {
+        self.register_drop_kind(binding_name, value_slot, DropKind::String)
+    }
+
+    fn register_drop_kind(&mut self, binding_name: &str, value_slot: &str, kind: DropKind) -> String {
         let disposition = if self.moved_bindings.contains(binding_name) {
             DropDisposition::Runtime
         } else {
@@ -1813,9 +1839,6 @@ impl<'a> FnState<'a> {
                 s
             }
             DropDisposition::Always => {
-                // Placeholder — never used. Format matches the live
-                // slot so anyone who looks at it in test dumps sees
-                // an obvious sentinel.
                 format!("%{}.drop_flag.unused", sanitize(binding_name))
             }
         };
@@ -1823,7 +1846,7 @@ impl<'a> FnState<'a> {
             binding_name: binding_name.to_string(),
             value_slot: value_slot.to_string(),
             flag_slot: flag_slot.clone(),
-            struct_id,
+            kind,
             disposition,
         }));
         flag_slot
@@ -1870,11 +1893,33 @@ impl<'a> FnState<'a> {
     ///   arm, fall through. The Phase-5 default for bindings that
     ///   may have been moved on some paths.
     fn emit_conditional_drop(&mut self, entry: &DropEntry) {
-        let struct_name = self.types.struct_defs[entry.struct_id.0 as usize].name.clone();
-        let mangled = format!("{struct_name}.drop");
+        // Build the drop-body emitter once; the disposition switch only
+        // decides whether to gate it on the flag.
+        let body = |state: &mut Self| {
+            match entry.kind {
+                DropKind::Struct(struct_id) => {
+                    let struct_name = state.types.struct_defs[struct_id.0 as usize].name.clone();
+                    let mangled = format!("{struct_name}.drop");
+                    state.emit(&format!("call void @{mangled}(ptr {})", entry.value_slot));
+                }
+                DropKind::String => {
+                    // Load the `ptr` field (offset 0 in the {ptr, i64,
+                    // i64} aggregate) and free it. free(null) is a libc
+                    // no-op so `string::new()`'s null ptr is safe.
+                    let pp = state.next_tmp();
+                    state.emit(&format!(
+                        "{pp} = getelementptr {{ ptr, i64, i64 }}, ptr {}, i32 0, i32 0",
+                        entry.value_slot
+                    ));
+                    let pv = state.next_tmp();
+                    state.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                    state.emit(&format!("call void @free(ptr {pv})"));
+                }
+            }
+        };
         match entry.disposition {
             DropDisposition::Always => {
-                self.emit(&format!("call void @{mangled}(ptr {})", entry.value_slot));
+                body(self);
             }
             DropDisposition::Runtime => {
                 let flag_val = self.next_tmp();
@@ -1885,7 +1930,7 @@ impl<'a> FnState<'a> {
                     "br i1 {flag_val}, label %{drop_lbl}, label %{skip_lbl}"
                 ));
                 self.open_block(&drop_lbl);
-                self.emit(&format!("call void @{mangled}(ptr {})", entry.value_slot));
+                body(self);
                 self.open_block(&skip_lbl);
             }
         }
@@ -1978,10 +2023,14 @@ impl<'a> FnState<'a> {
                             "store {} {}, ptr {}",
                             self.lty(&val_ty), val, slot
                         ));
-                        if let Ty::Struct(id) = &val_ty {
-                            if self.types.struct_defs[id.0 as usize].is_drop {
+                        match &val_ty {
+                            Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_drop => {
                                 self.register_drop(&name.name, &slot, *id);
                             }
+                            Ty::String => {
+                                self.register_string_drop(&name.name, &slot);
+                            }
+                            _ => {}
                         }
                         self.bind(&name.name, slot, val_ty);
                         return;
@@ -1999,10 +2048,14 @@ impl<'a> FnState<'a> {
                 // uninitialized Drop binding this is currently safe because
                 // sema rejects any path that would read it before it's
                 // assigned — so drop only runs after assignment.
-                if let Ty::Struct(id) = &var_ty {
-                    if self.types.struct_defs[id.0 as usize].is_drop {
+                match &var_ty {
+                    Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_drop => {
                         self.register_drop(&name.name, &slot, *id);
                     }
+                    Ty::String => {
+                        self.register_string_drop(&name.name, &slot);
+                    }
+                    _ => {}
                 }
                 self.bind(&name.name, slot, var_ty);
             }
