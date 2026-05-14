@@ -243,7 +243,7 @@ Test count: **102 tests passing** (89 library + 13 e2e), zero warnings.
 
 **Exit met:** all four sample programs compile and run end-to-end via `cpc FILE -o OUT`; sema rejects every design-note §7.2 case with a structured diagnostic; runtime overflow traps in debug, wraps in release; runtime division-by-zero traps in both modes; CI green at 102 tests.
 
-### Phase 2 — Aggregates and full primitive types · 4–8 weeks · ✅ done (slice 2E deferred)
+### Phase 2 — Aggregates and full primitive types · 4–8 weeks · ✅ done (raw pointers shipped in Phase 10; slice types `T[]` still deferred)
 
 Structured as three slices:
 
@@ -334,15 +334,15 @@ Scope decision: this slice handles **fixed-size arrays only**. Raw pointers `*T`
 
 **LLVM features used:** `[N x T]` array type; `getelementptr` for indexing (two-step: base GEP then element GEP); `icmp uge` + `br` + `call void @llvm.trap()` + `unreachable` for runtime bounds-check; array-as-aggregate parameter and return types.
 
-#### Slice 2E — Slices + raw pointers · deferred to Phase 3 / 5
+#### Slice 2E — Slices + raw pointers · ✅ partially shipped (raw pointers in Phase 10; slices `T[]` still deferred)
 
-The original Phase-2 plan bundled raw pointers `*T` and slices `T[]` with arrays. After implementing arrays we realized: both depend on the borrow-tracking machinery that Phase 5/6 brings in. Doing them in Phase 2 means designing the pointer story twice. Deferred to land naturally alongside borrow checking. (Note: C+ never grew `&T` / `&mut T` reference types — borrowing is expressed via parameter form, per §2.9.)
+The original Phase-2 plan bundled raw pointers `*T` and slices `T[]` with arrays. After implementing arrays we realized: both depend on the borrow-tracking machinery that Phase 5/6 brings in. Doing them in Phase 2 means designing the pointer story twice. **Raw pointers landed in Phase 10** (slice 10.FFI.1 — `*T`, deref / index / arithmetic, all gated on `unsafe { }`). **Slice types `T[]` (fat-pointer view of a contiguous run) are still deferred** — no in-tree need has surfaced (Vec[T] + arrays cover the use cases). (Note: C+ never grew `&T` / `&mut T` reference types — borrowing is expressed via parameter form, per §2.9.)
 
-**Phase 2 exit:** ✅ met — sample programs walk arrays of structs ([array_struct.cplus](docs/examples/array_struct.cplus)). Linked lists via raw pointers deferred to Phase 3/5 with the borrow-checker rollout.
+**Phase 2 exit:** ✅ met — sample programs walk arrays of structs ([array_struct.cplus](docs/examples/array_struct.cplus)). Raw-pointer use cases (e.g. owned strings, ObjC FFI) shipped in Phase 10.
 
 ### Phase 3 — Core safety + move semantics · 4–8 weeks · ✅ done
 
-Structured as slices 3A–3J plus the bench sanity check. All landed; **the only Phase-3 work deferred is `?*T` and slices, both blocked on raw-pointer / borrow-checker machinery that arrives in Phase 5/6.**
+Structured as slices 3A–3J plus the bench sanity check. All landed. **Phase-3 deferrals:** `?*T` (nullable raw pointers) was killed by §2.1 / locked null-handling principle — FFI null is spelled `0 as *T` inside `unsafe`, never as `?*T`. Slice types `T[]` are still deferred (see Phase 2 / Slice 2E note); no in-tree need yet.
 
 #### Slice 3A — Ownership surface syntax + move tracking · ✅ done
 
@@ -1135,8 +1135,8 @@ Design notes needed before their phase (per §6):
 - [x] Phase 6: `docs/design/phase6-borrow-exclusive.md` — exclusive-borrow tracking (`mut x: T` / `mut self` on non-`Copy`); aliasing-XOR-mutability; explicit lifetime annotation surface (spelling deferred to slice 6BC.5 — three candidates enumerated); `noalias` codegen; partial-place activation; drop-flag specialization. See [docs/design/phase6-borrow-exclusive.md](docs/design/phase6-borrow-exclusive.md). Reserves error codes E0380–E0386 (E0374 is the Phase-5-reserved partial-place code that activates here). Implementation in 5–7 sub-slices (6BC.1–6BC.5 + 6BC.codegen + 6BC.opt).
 - [x] Phase 7: `docs/design/phase7-generics.md` — parametric polymorphism via `[T]` brackets; bounded polymorphism via `T: Ord + Eq`; `interface Name { ... }` declarations + `impl Interface for Type { ... }` blocks; `Self` keyword; monomorphization at codegen; coherence (orphan rule); reserved error codes E0500–E0511. Implementation in 7–8 sub-slices (7GEN.1–6 + 7HEAP + 7EXIT). Explicitly out of scope for Phase 7 first cut: dynamic dispatch / `dyn Interface`, associated types, higher-kinded types, const generics, specialization, auto-derive attributes. See [docs/design/phase7-generics.md](docs/design/phase7-generics.md) §1–§9.
 - [x] Phase 6: lifetime annotation spelling. **`borrow REGION T`** at type position (parameter / field / return). New reserved keyword `borrow`. Composes orthogonally with `mut` / `move` parameter markers. Region names are ordinary identifiers, local to one signature. Picked over the Rust-shaped apostrophe-prefix form (which imports the tick-letter cosmetic and a separate `<'a>` declaration list) and over the `where return borrows ...` clause form (which separates constraint from parameters and risks confusion with Phase-7 generic constraints). Reasoning: §2.8c "verbosity exposes hidden rules" — `borrow A T` reads top-to-bottom and tells a reader-without-context exactly what the annotation means, where `'a` is opaque until learned. See [phase6-borrow-exclusive.md](docs/design/phase6-borrow-exclusive.md) §4.2.
-- [ ] Phase 7+ (speculative): effect tracking syntax (`fn pure`, `fn allocates`, etc.) — Koka/Roc/OCaml 5 references
-- [ ] Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references
+- [x] ~~Phase 7+ (speculative): effect tracking syntax (`fn pure`, `fn allocates`, etc.) — Koka/Roc/OCaml 5 references~~ **rejected 2026-05-14** (see resolved-log entry "Effect tracking + built-in contracts both rejected"). Error codes E0900–E0910 reserved in case a future contributor revisits with a concrete proposal.
+- [x] ~~Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references~~ **rejected 2026-05-14** (see resolved-log entry). Error codes E0911–E0920 reserved.
 
 Resolved (kept for history):
 - **Phase 11 polish: doc generator (2026-05-14):** new `cpc doc FILE` subcommand lifts every `pub` item with a preceding `///` doc block into Markdown. Reuses the same `///` surface as the Phase-5 doctest extractor (slice 5DOC) — so fenced code blocks in user docs are the same code that `cpc test` executes. **Coordinated changes:**
