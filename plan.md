@@ -833,6 +833,7 @@ The deeper reason: **TypeScript's surface syntax is inseparable from its object-
 - Sanitizer flags `--asan` / `--ubsan` / `--tsan` / `--msan` — plumb `-fsanitize=...` to clang + attach the matching `sanitize_*` function attribute to every `define` in cpc-emitted IR. **✅ shipped 2026-05-13** — see resolved-log entry below.
 - Borrow-checker diagnostics polish: every borrow-conflict diagnostic now surfaces a secondary "borrowed here" / "moved here" / "sibling read of X here" label so users see both ends of the conflict. **✅ shipped 2026-05-13** — see resolved-log entry below.
 - CLI niceties: `--version` / `-V`, `cpc check FILE`, subcommand-aware `--help`, `--help` documents the previously-undocumented `-g` / `--asan` / `--ubsan` / `--tsan` / `--msan` flags. **✅ shipped 2026-05-14** — see resolved-log entry below.
+- Doc generator (`cpc doc FILE`) — extracts every `pub` item with a preceding `///` doc block and emits Markdown to `target/doc/<basename>.md`. Reuses the same `///` surface as the doctest extractor (slice 5DOC) so fenced code blocks in docs are the same code blocks `cpc test` runs. **✅ shipped 2026-05-14** — see resolved-log entry below.
 - Better error messages (continuous; borrow-checker diagnostics are the long pole)
 - Debugger support (DWARF — largely free from LLVM via `!DIFile` / `!DISubprogram` / `!DILocation` metadata; ideally wired up earlier so source positions don't have to be retrofitted)
 - Sanitizer flags (`cpc --asan` / `--ubsan` / `--tsan` / `--msan`) — instrumented user binaries via LLVM's existing pass infrastructure
@@ -1138,6 +1139,17 @@ Design notes needed before their phase (per §6):
 - [ ] Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references
 
 Resolved (kept for history):
+- **Phase 11 polish: doc generator (2026-05-14):** new `cpc doc FILE` subcommand lifts every `pub` item with a preceding `///` doc block into Markdown. Reuses the same `///` surface as the Phase-5 doctest extractor (slice 5DOC) — so fenced code blocks in user docs are the same code that `cpc test` executes. **Coordinated changes:**
+  - **`cplus-core/src/docgen.rs`** — new module. `extract(src) -> Vec<DocItem>` walks source for `///` blocks immediately preceding `pub fn` / `pub struct` / `pub enum` / `pub interface` / `pub type` / `impl` items. `render_markdown(file_label, items) -> String` emits a table-of-contents + per-item sections with the signature in a code block, "Defined at line N", and the doc prose. Source-based (mirrors the doctest extractor) rather than AST-based — fast, no new AST surface, signatures rendered as the literal source line up to the `{` or `;`.
+  - **Impl-block methods** get qualified names: `pub fn new` inside `impl Point` renders as `Point::new`. `impl Display for Counter` uses the implementing type (`Counter`) as the prefix.
+  - **Private items skipped.** `pub` items without docs are also skipped — the generated reference is the project's *documented stable surface*, not a structural dump.
+  - **Fenced doctests preserved** as Markdown code blocks. Users get the same examples in the docs that `cpc test` validates.
+  - **`cpc doc FILE`** CLI subcommand. Writes to `./target/doc/<basename>.md`, creates the directory if missing, prints the destination path to stdout (so scripts can pipe it into a browser / pager). `cpc doc --help` returns the subcommand-specific slice.
+  - **10 new unit tests + 4 new e2e tests** covering: no-docs case, ignore-non-pub, signature extraction, struct/enum/type extraction, impl-method qualification, impl-for qualification, Markdown TOC + sections, empty-input rendering, attribute-skipping between doc + item, file write + path printing, fenced-doctest preservation, no-arg error, subcommand help. **Test total: 917** (692 library + 214 e2e + 11 LSP), 0 warnings.
+  - **Deferred** (documented):
+    - Project mode (`cpc doc` no-arg, reading Cplus.toml + walking imports). Single-file mode ships first; project mode is a follow-up slice once the docgen API is exercised on real input.
+    - HTML rendering. Markdown was picked for v1: it renders on GitHub, doesn't need styling, doesn't need JavaScript. HTML (with search / cross-linking / type-aware signature rendering via `cpc fmt`) is a future polish slice.
+    - AST-driven signature rendering. Today the signature line is the raw source up to `{`/`;`. Future: parse the item, run it through `cpc fmt` so the signature is canonical regardless of source whitespace.
 - **Phase 11 polish: CLI niceties (2026-05-14):** four concrete gaps closed.
   - **`--version` / `-V`** prints `cpc {CARGO_PKG_VERSION}`. Used to fail with "unknown flag".
   - **`cpc check FILE`** — promised in SKILL.md as the "fast feedback loop" command but never wired. Now actually exists: runs lex → parse → attrs → lower → sema → borrowck on a single file and exits 0 if clean, 1 on any error. No codegen, no clang, no binary artifact.

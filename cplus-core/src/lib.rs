@@ -10,6 +10,7 @@ pub mod borrowck;
 pub mod codegen;
 pub mod diagnostics;
 pub mod doctest;
+pub mod docgen;
 pub mod fmt;
 pub mod lexer;
 pub mod lower;

@@ -16,6 +16,8 @@ usage:
   cpc FILE [-o OUT]                 compile single-file FILE.cplus to a binary (default OUT: ./a.out)
   cpc build [-o OUT]                multi-file build: reads ./Cplus.toml, walks imports
   cpc check FILE                    parse + sema + borrowck FILE, no codegen (fast feedback loop)
+  cpc doc FILE                      extract `pub` items + `///` docs from FILE, emit
+                                    Markdown to ./target/doc/<basename>.md
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
                                     if FILE is given; project mode (reads ./Cplus.toml)
                                     otherwise. `--json` emits one JSON object per test
@@ -71,6 +73,18 @@ cpc check FILE
 Parse + sema + borrowck FILE. No codegen, no clang, no binary. Same
 diagnostics you'd get from `cpc FILE -o BIN`, but faster — the editor /
 LSP / pre-commit-hook use case. Exits 0 if clean, 1 on any error.
+",
+        Some(Subcommand::Doc) => "\
+cpc doc FILE
+
+Extract every `pub` item with a preceding `///` doc block from FILE
+and emit Markdown to `./target/doc/<basename>.md`. Each item gets a
+section with its signature, a `defined at line N` link, and the doc
+prose. Fenced code blocks inside `///` are preserved as Markdown code
+blocks — the same blocks `cpc test` runs as doctests.
+
+Private items (and `pub` items without docs) are skipped to keep the
+reference focused on the project's stable surface.
 ",
         Some(Subcommand::Test) => "\
 cpc test [FILE] [--json]
@@ -254,6 +268,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::Check);
                 i += 1;
             }
+            Some("doc") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Doc);
+                i += 1;
+            }
             Some("lsp") if subcommand.is_none() && input.is_none() => {
                 subcommand = Some(Subcommand::Lsp);
                 i += 1;
@@ -342,6 +360,11 @@ fn main() -> ExitCode {
             eprintln!("cpc: `check` requires a FILE argument");
             ExitCode::FAILURE
         }
+        (Some(Subcommand::Doc), Some(path)) => run_doc(path),
+        (Some(Subcommand::Doc), None) => {
+            eprintln!("cpc: `doc` requires a FILE argument");
+            ExitCode::FAILURE
+        }
         (None, Some(path)) => compile_file(
             path,
             out.unwrap_or_else(|| PathBuf::from("a.out")),
@@ -365,6 +388,10 @@ enum Subcommand {
     /// borrowck on a single file, no codegen. Promised in SKILL.md as
     /// the "fast feedback loop" command but never wired until now.
     Check,
+    /// Phase 11 polish (2026-05-14): `cpc doc FILE` — extract `pub`
+    /// items + their `///` docs from a source file, emit Markdown to
+    /// `target/doc/<basename>.md`.
+    Doc,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -941,6 +968,39 @@ fn run_check(path: PathBuf, mode: DiagMode) -> ExitCode {
         Ok(_ir) => ExitCode::SUCCESS,
         Err(code) => code,
     }
+}
+
+/// Phase 11 polish (2026-05-14): `cpc doc FILE` — extract `pub` items
+/// + their `///` docs from FILE, emit Markdown to
+/// `target/doc/<basename>.md`. Output directory is created if needed.
+/// Prints the destination path to stdout so users + scripts can find
+/// the result.
+fn run_doc(path: PathBuf) -> ExitCode {
+    let src = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cpc: read {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let basename = path.file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("source.cplus");
+    let items = cplus_core::docgen::extract(&src);
+    let md = cplus_core::docgen::render_markdown(basename, &items);
+    let out_dir = PathBuf::from("target/doc");
+    if let Err(e) = fs::create_dir_all(&out_dir) {
+        eprintln!("cpc: mkdir {}: {e}", out_dir.display());
+        return ExitCode::FAILURE;
+    }
+    let out_name = basename.strip_suffix(".cplus").unwrap_or(basename);
+    let out_path = out_dir.join(format!("{out_name}.md"));
+    if let Err(e) = fs::write(&out_path, &md) {
+        eprintln!("cpc: write {}: {e}", out_path.display());
+        return ExitCode::FAILURE;
+    }
+    println!("{}", out_path.display());
+    ExitCode::SUCCESS
 }
 
 fn run_lsp(args: Vec<OsString>) -> ExitCode {

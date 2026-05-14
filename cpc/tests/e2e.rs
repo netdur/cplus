@@ -4382,6 +4382,79 @@ fn phase11_cli_help_documents_sanitizer_and_debuginfo_flags() {
     assert!(stdout.contains("cpc check FILE"), "--help should document `check`: {stdout}");
 }
 
+// Phase 11 polish (2026-05-14): doc generator.
+
+#[test]
+fn phase11_doc_generator_writes_markdown() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("demo.cplus");
+    std::fs::write(&src, "\
+/// A point in 2D space.
+pub struct Point { pub x: i32, pub y: i32 }
+
+/// Sum two integers, wrapping on overflow.
+pub fn add(a: i32, b: i32) -> i32 { return a +% b; }
+
+/// Internal helper — not documented (and not pub).
+fn private(n: i32) -> i32 { return n; }
+").unwrap();
+    let out = Command::new(cpc).current_dir(&dir).arg("doc").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "doc should succeed: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let md_path_rel = stdout.trim();
+    assert!(md_path_rel.ends_with("demo.md"), "stdout: {stdout}");
+    let md_path = dir.join(md_path_rel);
+    let md = std::fs::read_to_string(&md_path).expect("read generated md");
+    assert!(md.contains("# `demo.cplus`"));
+    assert!(md.contains("`struct Point`"));
+    assert!(md.contains("`fn add`"));
+    assert!(!md.contains("private"), "private item should not appear: {md}");
+}
+
+#[test]
+fn phase11_doc_generator_preserves_fenced_doctests() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("d.cplus");
+    std::fs::write(&src, "\
+/// Adds two integers.
+///
+/// ```
+/// assert add(2, 3) == 5;
+/// ```
+pub fn add(a: i32, b: i32) -> i32 { return a +% b; }
+").unwrap();
+    let out = Command::new(cpc).current_dir(&dir).arg("doc").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success());
+    let md_path_rel = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let md = std::fs::read_to_string(dir.join(&md_path_rel)).expect("read md");
+    assert!(md.contains("assert add(2, 3) == 5"),
+        "fenced doctest body should appear in output: {md}");
+}
+
+#[test]
+fn phase11_doc_generator_no_arg_errors() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("doc").output().expect("invoke cpc");
+    assert!(!out.status.success(), "no-arg `doc` should error");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("requires a FILE"), "stderr: {stderr}");
+}
+
+#[test]
+fn phase11_doc_help_in_subcommand_help() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("doc").arg("--help").output().expect("invoke cpc");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.starts_with("cpc doc FILE"),
+        "subcommand help should be doc-specific: {stdout}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
