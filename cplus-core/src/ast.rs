@@ -351,6 +351,13 @@ pub enum TypeKind {
     /// the bare identifier in an expected-FnPtr context resolves to
     /// the symbol's address. No closures, no environment capture.
     FnPtr { params: Vec<Type>, return_type: Option<Box<Type>> },
+    /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
+    /// view `{ptr, len}` over a contiguous run of `T`. Copy semantics
+    /// (a view, not an owner). Constructed via `slice_from_raw_parts`
+    /// (unsafe) or — pending follow-up — via an array→slice conversion.
+    /// Indexing `s[i]` is bounds-checked at runtime; element access
+    /// via `slice_ptr(s)` / `slice_len(s)` intrinsics is safe.
+    Slice(Box<Type>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

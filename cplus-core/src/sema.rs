@@ -70,6 +70,12 @@ pub enum Ty {
     /// `string::new()`, `string::with_capacity(n)`, and (slice 8.STR.B)
     /// the `"...${expr}..."` interpolation literal.
     String,
+    /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
+    /// view `{ptr: *T, len: usize}`. 16 bytes on 64-bit. Copy semantics
+    /// (a view, not an owner). The pointee `T` is preserved at the
+    /// sema level (used by indexing + `slice_ptr` return type); LLVM
+    /// sees only `{ ptr, i64 }` since `ptr` is opaque.
+    Slice(Box<Ty>),
     /// Slice 10.FFI.1: raw pointer `*T`. Lowered to LLVM `ptr` (opaque,
     /// 8 bytes on 64-bit). Copy semantics. No borrow checking; the
     /// caller is responsible for lifetime and aliasing. Deref / index /
@@ -110,6 +116,7 @@ impl Ty {
             Ty::Unit => "()",
             Ty::Str => "str",
             Ty::String => "string",
+            Ty::Slice(_) => "slice",
             Ty::RawPtr(_) => "raw-pointer",
             Ty::FnPtr { .. } => "fn-pointer",
             Ty::Enum(_) => "enum",
@@ -148,6 +155,7 @@ impl Ty {
             | Ty::F32 | Ty::F64
             | Ty::Bool | Ty::Unit
             | Ty::Str
+            | Ty::Slice(_)
             | Ty::RawPtr(_)
             | Ty::FnPtr { .. }
             | Ty::Error => true,
@@ -3090,6 +3098,62 @@ impl SemaCx<'_> {
             }
             return Ty::Str;
         }
+        // Phase 11 polish (2026-05-14): slice intrinsics. Same shape as
+        // the str intrinsics but generic over the slice's element type.
+        // `slice_ptr(s: T[]) -> *T` — extract ptr.
+        // `slice_len(s: T[]) -> usize` — extract len.
+        // `slice_from_raw_parts(p: *T, n: usize) -> T[]` — unsafe, build
+        // a slice from a raw pointer + length. Element type inferred
+        // from the pointer's pointee type.
+        if name == "slice_ptr" && args.len() == 1 {
+            let arg_ty = self.check_expr(&args[0], None);
+            if let Ty::Slice(elem) = &arg_ty {
+                return Ty::RawPtr(elem.clone());
+            }
+            if !matches!(arg_ty, Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`slice_ptr` requires a slice argument (e.g. `i32[]`), got `{}`", ty_display(&arg_ty)),
+                    args[0].span,
+                );
+            }
+            return Ty::Error;
+        }
+        if name == "slice_len" && args.len() == 1 {
+            let arg_ty = self.check_expr(&args[0], None);
+            if !matches!(arg_ty, Ty::Slice(_) | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`slice_len` requires a slice argument (e.g. `i32[]`), got `{}`", ty_display(&arg_ty)),
+                    args[0].span,
+                );
+            }
+            return Ty::Usize;
+        }
+        if name == "slice_from_raw_parts" && args.len() == 2 {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    "`slice_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                    call_span,
+                );
+            }
+            let p_ty = self.check_expr(&args[0], None);
+            let _ = self.check_expr(&args[1], Some(Ty::Usize));
+            let elem = match &p_ty {
+                Ty::RawPtr(inner) => (**inner).clone(),
+                Ty::Error => return Ty::Error,
+                _ => {
+                    self.err(
+                        "E0302",
+                        format!("`slice_from_raw_parts` first arg must be a raw pointer `*T`, got `{}`", ty_display(&p_ty)),
+                        args[0].span,
+                    );
+                    return Ty::Error;
+                }
+            };
+            return Ty::Slice(Box::new(elem));
+        }
         let Some(sig) = self.fns.get(name).cloned() else {
             self.err("E0300", format!("undefined function `{name}`"), callee.span);
             for a in args { let _ = self.check_expr(a, None); }
@@ -4120,6 +4184,11 @@ impl SemaCx<'_> {
                 };
                 return Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) };
             }
+            // Phase 11 polish (2026-05-14): slice type `T[]`.
+            TypeKind::Slice(inner) => {
+                let inner_ty = self.resolve_type(inner);
+                return Ty::Slice(Box::new(inner_ty));
+            }
         };
         match name.as_str() {
             "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
@@ -4528,6 +4597,10 @@ impl SemaCx<'_> {
                 };
                 Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) }
             }
+            TypeKind::Slice(inner) => {
+                let inner_ty = self.resolve_field_type_with_subst(inner, subst);
+                Ty::Slice(Box::new(inner_ty))
+            }
         }
     }
 
@@ -4775,6 +4848,7 @@ fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type 
             params: params.iter().map(|p| substitute_param_in_type_ast(p, subst)).collect(),
             return_type: return_type.as_ref().map(|rt| Box::new(substitute_param_in_type_ast(rt, subst))),
         },
+        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(substitute_param_in_type_ast(inner, subst))),
     };
     Type { kind, span: ty.span }
 }
@@ -4791,6 +4865,7 @@ fn ty_to_source_name(ty: &Ty) -> String {
         Ty::Bool => "bool".into(), Ty::Unit => "()".into(),
         Ty::Str => "str".into(),
         Ty::String => "string".into(),
+        Ty::Slice(_) => "<slice>".into(),
         Ty::RawPtr(_) => "<raw-ptr>".into(),
         Ty::FnPtr { .. } => "<fn-ptr>".into(),
         // For struct / enum, return a synthetic placeholder. This path
@@ -4829,6 +4904,7 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
         Ty::String => "string".into(),
+        Ty::Slice(inner) => format!("slice_{}", mangle_ty_for_name(inner, structs, enums)),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty_for_name(inner, structs, enums)),
         Ty::FnPtr { params, return_type } => {
             let mut s = String::from("fn");

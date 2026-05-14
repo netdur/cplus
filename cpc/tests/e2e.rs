@@ -4512,6 +4512,109 @@ fn phase11_string_drop_handles_empty_string_new_safely() {
     assert_eq!(run.status.code(), Some(0));
 }
 
+// Phase 11 polish (2026-05-14): slice types `T[]`. Fat-pointer view
+// of a contiguous run; same { ptr, len } shape as `str` but with the
+// element type tracked at sema level. Construction via
+// `slice_from_raw_parts` (unsafe); access via `slice_ptr` / `slice_len`.
+
+#[test]
+fn phase11_slice_type_parse_and_use_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("sl.cplus");
+    std::fs::write(&src, "\
+extern fn malloc(n: usize) -> *u8;
+
+fn sum_i32(xs: i32[]) -> i32 {
+    let n: usize = slice_len(xs);
+    let p: *i32 = slice_ptr(xs);
+    let mut acc: i32 = 0;
+    let mut i: usize = 0 as usize;
+    while i < n {
+        acc = acc +% unsafe { *(p + i) };
+        i = i +% 1 as usize;
+    }
+    return acc;
+}
+
+fn main() -> i32 {
+    let buf: *u8 = unsafe { malloc(16 as usize) };
+    let p: *i32 = unsafe { buf as *i32 };
+    unsafe {
+        *(p + 0 as usize) = 10;
+        *(p + 1 as usize) = 20;
+        *(p + 2 as usize) = 12;
+    }
+    let xs: i32[] = unsafe { slice_from_raw_parts(p, 3 as usize) };
+    return sum_i32(xs);
+}
+").unwrap();
+    let bin = dir.join("sl");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "slice sample should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42), "sum of [10,20,12] = 42");
+}
+
+#[test]
+fn phase11_slice_from_raw_parts_outside_unsafe_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("nu.cplus");
+    std::fs::write(&src, "\
+fn main() -> i32 {
+    let p: *i32 = unsafe { 0 as *i32 };
+    let xs: i32[] = slice_from_raw_parts(p, 0 as usize);
+    return slice_len(xs) as i32;
+}
+").unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "slice_from_raw_parts outside unsafe should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0801"), "expected E0801 in stderr: {stderr}");
+}
+
+#[test]
+fn phase11_slice_ptr_on_non_slice_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ns.cplus");
+    std::fs::write(&src, "\
+fn main() -> i32 {
+    let n: i32 = 42;
+    let p: *i32 = slice_ptr(n);
+    return 0;
+}
+").unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
+    assert!(stderr.contains("slice"), "stderr should mention 'slice': {stderr}");
+}
+
+#[test]
+fn phase11_slice_type_distinct_element_types() {
+    // u8[] vs i32[] should NOT be assignment-compatible: tests that
+    // the element type is type-checked, not erased.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("dt.cplus");
+    std::fs::write(&src, "\
+fn takes_i32_slice(xs: i32[]) -> i32 { return slice_len(xs) as i32; }
+fn main() -> i32 {
+    let p: *u8 = unsafe { 0 as *u8 };
+    let bytes: u8[] = unsafe { slice_from_raw_parts(p, 0 as usize) };
+    return takes_i32_slice(bytes);
+}
+").unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "u8[] to i32[] should reject");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

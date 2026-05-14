@@ -378,6 +378,8 @@ impl CopyOracle {
             TypeKind::RawPtr(_) => false,
             // Slice 11.FN_PTR: function pointers are Copy (atomic).
             TypeKind::FnPtr { .. } => false,
+            // Phase 11 polish: slice type — fat-pointer view, Copy.
+            TypeKind::Slice(_) => false,
         }
     }
 
@@ -396,6 +398,8 @@ impl CopyOracle {
             // is determined after monomorphize substitutes args into the
             // template's fields.
             TypeKind::Generic { .. } => false,
+            // Phase 11 polish: slice type — fat pointer, Copy.
+            TypeKind::Slice(_) => true,
         }
     }
 }

@@ -334,15 +334,15 @@ Scope decision: this slice handles **fixed-size arrays only**. Raw pointers `*T`
 
 **LLVM features used:** `[N x T]` array type; `getelementptr` for indexing (two-step: base GEP then element GEP); `icmp uge` + `br` + `call void @llvm.trap()` + `unreachable` for runtime bounds-check; array-as-aggregate parameter and return types.
 
-#### Slice 2E — Slices + raw pointers · ✅ partially shipped (raw pointers in Phase 10; slices `T[]` still deferred)
+#### Slice 2E — Slices + raw pointers · ✅ done (raw pointers in Phase 10, slice types `T[]` in Phase 11)
 
-The original Phase-2 plan bundled raw pointers `*T` and slices `T[]` with arrays. After implementing arrays we realized: both depend on the borrow-tracking machinery that Phase 5/6 brings in. Doing them in Phase 2 means designing the pointer story twice. **Raw pointers landed in Phase 10** (slice 10.FFI.1 — `*T`, deref / index / arithmetic, all gated on `unsafe { }`). **Slice types `T[]` (fat-pointer view of a contiguous run) are still deferred** — no in-tree need has surfaced (Vec[T] + arrays cover the use cases). (Note: C+ never grew `&T` / `&mut T` reference types — borrowing is expressed via parameter form, per §2.9.)
+The original Phase-2 plan bundled raw pointers `*T` and slices `T[]` with arrays. After implementing arrays we realized: both depend on the borrow-tracking machinery that Phase 5/6 brings in. Doing them in Phase 2 means designing the pointer story twice. **Raw pointers landed in Phase 10** (slice 10.FFI.1 — `*T`, deref / index / arithmetic, all gated on `unsafe { }`). **Slice types `T[]` landed 2026-05-14 as a Phase 11 polish** — fat-pointer view `{ptr, len}`, Copy semantics, intrinsics `slice_ptr` / `slice_len` / `slice_from_raw_parts` (the third is unsafe). (Note: C+ never grew `&T` / `&mut T` reference types — borrowing is expressed via parameter form, per §2.9.)
 
-**Phase 2 exit:** ✅ met — sample programs walk arrays of structs ([array_struct.cplus](docs/examples/array_struct.cplus)). Raw-pointer use cases (e.g. owned strings, ObjC FFI) shipped in Phase 10.
+**Phase 2 exit:** ✅ met — sample programs walk arrays of structs ([array_struct.cplus](docs/examples/array_struct.cplus)). Raw-pointer use cases (e.g. owned strings, ObjC FFI) shipped in Phase 10. Slice types shipped in Phase 11.
 
 ### Phase 3 — Core safety + move semantics · 4–8 weeks · ✅ done
 
-Structured as slices 3A–3J plus the bench sanity check. All landed. **Phase-3 deferrals:** `?*T` (nullable raw pointers) was killed by §2.1 / locked null-handling principle — FFI null is spelled `0 as *T` inside `unsafe`, never as `?*T`. Slice types `T[]` are still deferred (see Phase 2 / Slice 2E note); no in-tree need yet.
+Structured as slices 3A–3J plus the bench sanity check. All landed. **Phase-3 deferrals (both closed 2026-05-14):** `?*T` (nullable raw pointers) was killed by §2.1 / locked null-handling principle — FFI null is spelled `0 as *T` inside `unsafe`, never as `?*T`. Slice types `T[]` shipped as a Phase-11 polish (see Phase 2 / Slice 2E note).
 
 #### Slice 3A — Ownership surface syntax + move tracking · ✅ done
 
@@ -835,6 +835,7 @@ The deeper reason: **TypeScript's surface syntax is inseparable from its object-
 - CLI niceties: `--version` / `-V`, `cpc check FILE`, subcommand-aware `--help`, `--help` documents the previously-undocumented `-g` / `--asan` / `--ubsan` / `--tsan` / `--msan` flags. **✅ shipped 2026-05-14** — see resolved-log entry below.
 - Doc generator (`cpc doc FILE`) — extracts every `pub` item with a preceding `///` doc block and emits Markdown to `target/doc/<basename>.md`. Reuses the same `///` surface as the doctest extractor (slice 5DOC) so fenced code blocks in docs are the same code blocks `cpc test` runs. **✅ shipped 2026-05-14** — see resolved-log entry below.
 - Owned `string` Drop integration — frees the buffer at scope exit via the same flag-tracked machinery struct Drop uses. **✅ shipped 2026-05-14** — see resolved-log entry below.
+- Slice types `T[]` (the long-deferred slice-2E item, originally bundled with raw pointers in Phase 2). Fat-pointer view; intrinsics `slice_ptr` / `slice_len` / `slice_from_raw_parts`. **✅ shipped 2026-05-14** — see resolved-log entry below.
 - Better error messages (continuous; borrow-checker diagnostics are the long pole)
 - Debugger support (DWARF — largely free from LLVM via `!DIFile` / `!DISubprogram` / `!DILocation` metadata; ideally wired up earlier so source positions don't have to be retrofitted)
 - Sanitizer flags (`cpc --asan` / `--ubsan` / `--tsan` / `--msan`) — instrumented user binaries via LLVM's existing pass infrastructure
@@ -1140,6 +1141,17 @@ Design notes needed before their phase (per §6):
 - [x] ~~Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references~~ **rejected 2026-05-14** (see resolved-log entry). Error codes E0911–E0920 reserved.
 
 Resolved (kept for history):
+- **Phase 11 polish: slice types `T[]` (2026-05-14):** closes the longest-running deferral in the project — Phase 2's "slice 2E" item that lived through Phase 3, 5, 6, 7, 8, 10, 11. Fat-pointer view of a contiguous run, mirroring `str` shape but with the element type tracked at the sema level. **Coordinated changes:**
+  - **AST**: new `TypeKind::Slice(Box<Type>)`. Threaded through every TypeKind match site (resolver, monomorphize × 3, borrowck × 2, sema × 3, codegen).
+  - **Sema**: new `Ty::Slice(Box<Ty>)`. Copy semantics (a view, not an owner — same as `str`). `name()` returns `"slice"`. Element type preserved for the intrinsics' return-type inference.
+  - **Parser**: `T[]` (empty brackets after an identifier) → `TypeKind::Slice(T)`. `T[args]` (non-empty) stays `TypeKind::Generic`. Cleanest disambiguation since the existing path already branched on `LBracket` after an ident.
+  - **Codegen**: `llvm_ty(Ty::Slice(_)) = "{ ptr, i64 }"` — same shape as `str`, since LLVM `ptr` is opaque.
+  - **Three new intrinsics** (parallel to the existing `str_*` family):
+    - `slice_ptr(s: T[]) -> *T` — safe; extract field 0 via `extractvalue`. Element type propagated.
+    - `slice_len(s: T[]) -> usize` — safe; extract field 1.
+    - `slice_from_raw_parts(p: *T, n: usize) -> T[]` — **unsafe** (fires E0801 outside an `unsafe` block, same as `str_from_raw_parts`); composes a slice via two `insertvalue`s. Element type inferred from the pointer's pointee.
+  - **What's deferred (documented but not in the way of any in-tree code today):** array→slice coercion (`arr as T[]`), slice indexing `s[i]` with bounds-check (today users go via `slice_ptr` + raw-pointer arithmetic inside `unsafe`), slice mutation. Real use cases drive them when motivated.
+  - **4 new e2e tests**: end-to-end parse + sum (exits 42), unsafe gate (E0801), wrong-arg-type rejection (E0302 on `slice_ptr(i32)`), element-type distinctness (`u8[]` is not assignable to `i32[]` — E0302). **Test total: 923** (692 library + 220 e2e + 11 LSP), 0 warnings.
 - **Phase 11 polish: owned `string` Drop integration (2026-05-14):** closes the v1 leak shipped with slice 8.STR.3. Owned strings now have their buffer freed at scope exit via the same flag-tracked machinery struct Drop already uses. **Coordinated changes:**
   - **`DropEntry.kind: DropKind`** — new field. `DropKind::Struct(StructId)` is the original case (emits `call @<Type>.drop(ptr)`); `DropKind::String` is the new case (loads the `ptr` field from the {ptr, i64, i64} aggregate and emits `call @free(ptr)`). One scope-exit walker handles both via a closure-bound body emitter.
   - **`register_string_drop(name, slot)`** — thin wrapper over the existing `register_drop_kind` helper. Same Always/Runtime disposition rules as struct Drop; same flag mechanism; same `find_drop_flag` lookup.

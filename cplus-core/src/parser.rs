@@ -919,8 +919,24 @@ impl Parser {
                 // Slice 7GEN.5c: `Name[T1, T2]` — generic-type instantiation
                 // in type position. Disambiguates from array `[T; N]` by
                 // virtue of being suffix to an ident; arrays start at `[`.
+                //
+                // Phase 11 polish (2026-05-14): `Name[]` (empty brackets)
+                // is a *slice type* — a fat-pointer view of an unknown-
+                // length contiguous run. Same surface position as Generic
+                // but distinguished by the absence of args.
                 if matches!(self.peek_kind(), TokenKind::LBracket) {
                     self.bump();
+                    if self.at(&TokenKind::RBracket) {
+                        let end = self.bump().span;
+                        let elem = Type {
+                            kind: TypeKind::Path(name),
+                            span: tok.span.merge(end_span),
+                        };
+                        return Ok(Type {
+                            kind: TypeKind::Slice(Box::new(elem)),
+                            span: tok.span.merge(end),
+                        });
+                    }
                     let mut args = Vec::new();
                     while !self.at(&TokenKind::RBracket) {
                         args.push(self.parse_type()?);

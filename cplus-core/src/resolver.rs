@@ -1038,6 +1038,7 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
             for p in params.iter_mut() { rewrite_type(p, ctx)?; }
             if let Some(rt) = return_type.as_mut() { rewrite_type(rt, ctx)?; }
         }
+        TypeKind::Slice(inner) => rewrite_type(inner, ctx)?,
     }
     Ok(())
 }

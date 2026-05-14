@@ -249,6 +249,7 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::Unit => TypeKind::Path("()".into()),
         Ty::Str => TypeKind::Path("str".into()),
         Ty::String => TypeKind::Path("string".into()),
+        Ty::Slice(inner) => TypeKind::Slice(Box::new(ty_to_type_ast(inner, type_name_of))),
         Ty::RawPtr(inner) => TypeKind::RawPtr(Box::new(ty_to_type_ast(inner, type_name_of))),
         Ty::FnPtr { params, return_type } => TypeKind::FnPtr {
             params: params.iter().map(|p| ty_to_type_ast(p, type_name_of)).collect(),
@@ -365,6 +366,7 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
             params: params.iter().map(|p| rewrite_self_in_type(p, mangled_name)).collect(),
             return_type: return_type.as_ref().map(|rt| Box::new(rewrite_self_in_type(rt, mangled_name))),
         },
+        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(rewrite_self_in_type(inner, mangled_name))),
     };
     Type { kind, span: ty.span }
 }
@@ -610,6 +612,7 @@ fn subst_type_ast(
             return_type: return_type.as_ref()
                 .map(|rt| Box::new(subst_type_ast(rt, subst, type_name_of, struct_lookup))),
         },
+        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(subst_type_ast(inner, subst, type_name_of, struct_lookup))),
     };
     Type { kind, span: ty.span }
 }
@@ -1047,6 +1050,7 @@ fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String,
         TypeKind::Generic { args, .. } => {
             for a in args { rewrite_alias_type(a, aliases); }
         }
+        TypeKind::Slice(inner) => rewrite_alias_type(inner, aliases),
     }
 }
 
@@ -1173,6 +1177,7 @@ fn mangle_type_ast_arg(t: &Type) -> String {
             }
             s
         }
+        TypeKind::Slice(inner) => format!("slice_{}", mangle_type_ast_arg(inner)),
     }
 }
 
@@ -1189,6 +1194,7 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
         Ty::String => "string".into(),
+        Ty::Slice(inner) => format!("slice_{}", mangle_ty(inner, type_name_of)),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty(inner, type_name_of)),
         Ty::FnPtr { params, return_type } => {
             let mut s = String::from("fn");

@@ -677,6 +677,7 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
         | Ty::Usize | Ty::Isize
         | Ty::F32 | Ty::F64
         | Ty::Str
+        | Ty::Slice(_)
         | Ty::RawPtr(_)
         | Ty::FnPtr { .. } => true,
         Ty::Array(elem, _) => is_copy_ty(elem, t),
@@ -926,6 +927,11 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             };
             return Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) };
         }
+        // Phase 11 polish (2026-05-14): slice type.
+        TypeKind::Slice(inner) => {
+            let inner_ty = ty_from(inner, types);
+            return Ty::Slice(Box::new(inner_ty));
+        }
     };
     match name.as_str() {
         "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
@@ -981,6 +987,10 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         // codegen ever sees per-call, but the cap field is what `drop`
         // reads when freeing the buffer.
         Ty::String => "{ ptr, i64, i64 }".to_string(),
+        // Phase 11 polish (2026-05-14): slice type `T[]` is a fat
+        // pointer { ptr, len } — same shape as `str`. The element type
+        // `T` is sema-only; LLVM sees just the pair.
+        Ty::Slice(_) => "{ ptr, i64 }".to_string(),
         Ty::Error => panic!("codegen reached Ty::Error — sema should have rejected the program"),
         // Slice 7GEN.4: `Ty::Param` must not reach codegen. Until
         // monomorphization (slice 7GEN.5) lowers generic items, the
@@ -3330,6 +3340,38 @@ impl<'a> FnState<'a> {
             self.emit(&format!("{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"));
             self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
             return Some((t2, Ty::Str));
+        }
+        // Phase 11 polish (2026-05-14): slice intrinsics. Lower exactly
+        // like the str equivalents — same `{ ptr, i64 }` aggregate
+        // shape — but propagate the element type for the returned Ty.
+        if name == "slice_ptr" {
+            let (av, ty) = self.gen_expr(&args[0]).expect("slice_ptr arg");
+            let elem_ty = match ty {
+                Ty::Slice(inner) => *inner,
+                _ => unreachable!("sema validated slice_ptr arg type"),
+            };
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
+            return Some((r, Ty::RawPtr(Box::new(elem_ty))));
+        }
+        if name == "slice_len" {
+            let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
+            return Some((r, Ty::Usize));
+        }
+        if name == "slice_from_raw_parts" {
+            let (p_val, p_ty) = self.gen_expr(&args[0]).expect("slice_from_raw_parts ptr");
+            let (n_val, _) = self.gen_expr(&args[1]).expect("slice_from_raw_parts len");
+            let elem_ty = match p_ty {
+                Ty::RawPtr(inner) => *inner,
+                _ => unreachable!("sema validated slice_from_raw_parts ptr type"),
+            };
+            let t1 = self.next_tmp();
+            let t2 = self.next_tmp();
+            self.emit(&format!("{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"));
+            self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
+            return Some((t2, Ty::Slice(Box::new(elem_ty))));
         }
         // Phase 11 slice 11.LAYOUT: `size_of[T]()` and `align_of[T]()`.
         // The GEP-null trick gives a constant the LLVM optimizer folds
