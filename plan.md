@@ -837,8 +837,8 @@ The deeper reason: **TypeScript's surface syntax is inseparable from its object-
 - Sanitizer flags (`cpc --asan` / `--ubsan` / `--tsan` / `--msan`) — instrumented user binaries via LLVM's existing pass infrastructure
 - Package manager (dependency resolution, registry — extends Phase 4 manifest)
 - Documentation generator (extends Phase 5 doctests)
-- Effect tracking design exploration (deferred speculative feature; see §11)
-- Built-in contracts design exploration (deferred speculative feature; see §11)
+- ~~Effect tracking design exploration~~ — **rejected 2026-05-14**, see §11 resolved-log entry.
+- ~~Built-in contracts design exploration~~ — **rejected 2026-05-14**, see §11 resolved-log entry.
 - CLI niceties
 
 ---
@@ -1137,6 +1137,23 @@ Design notes needed before their phase (per §6):
 - [ ] Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references
 
 Resolved (kept for history):
+- **Effect tracking + built-in contracts both rejected (2026-05-14):** the two speculative Phase-11 items from the §11 open-questions list were considered as a "design-only" slice and **closed without notes**, following the Phase-9 pattern. Reasoning recorded below; reserving error-code blocks **E0900–E0910** (effects) and **E0911–E0920** (contracts) for future use, but no design notes will be written and no implementation is planned.
+
+  **Memory-safety analogy is decisive.** Memory safety pays for itself on every program — even users who never read compiler errors get fewer crashes. Effects and contracts only pay off when *someone reads the signature*. Their value is audit ergonomics, but adding 20 chars to every signature in service of being easier to audit is self-defeating if the 20 chars themselves make signatures harder to skim. The user explicitly evaluated this trade-off and voted against.
+
+  **Effects — concrete reasons rejected:**
+  - Every signature pays the syntax cost. Trivial helpers (`fn add(a, b)`) either get noisy or — if elision is allowed — split into "pure-looking-but-maybe-effectful" vs "explicitly tagged", which is two ways to do one thing (§2.8c violation).
+  - Higher-order effect propagation requires effect *polymorphism*, where Koka / Effekt / Roc research lives and where every implementation makes trade-offs that bleed into the rest of the type system.
+  - No mainstream systems language ships them. Rust didn't; the world hasn't asked. Strong market signal.
+  - The audit benefit is better delivered by C+'s already-present features: **explicit imports with mandatory aliases** make capability use visually obvious at the call site (`fs::read(...)` in source is a giveaway), and **good module boundaries** carry the same information without per-signature cost.
+
+  **Contracts — concrete reasons rejected:**
+  - Runtime-check version is notational reshuffling of `assert(...)` at function entry, which C+ has had since Phase 5.
+  - Static-verification version (SMT proofs) is the genuinely big idea, but Dafny — the gold standard — needs careful annotation work and doesn't scale to arbitrary programs. Building this for C+ would be a full research project, not a feature.
+  - The "self-documenting boundary" benefit is mostly served by good types + a comment. Both already exist.
+
+  **What was reserved:** error code blocks E0900–E0920, in case a future contributor revisits with a concrete proposal that overcomes the above. No surface syntax, no parser shape, no semantic-checking machinery has been committed to.
+
 - **Phase 11 polish: borrow-checker diagnostics now carry secondary labels (2026-05-13):** every borrow-conflict diagnostic surfaces a "borrowed here" / "moved here" / "sibling read of X here" partner span. Users see both ends of the conflict in one diagnostic — the previous form pointed at the offending operation but never at the conflicting borrow's establishment site. **Coordinated changes:**
   - **`live_borrows` map** in `Analyzer` upgraded from `BTreeMap<Place, BTreeSet<String>>` to `BTreeMap<Place, BTreeMap<String, Span>>` — each borrower remembers the `let`-site span where the borrow was established. `acquire_borrows` takes a `borrower_span: Span` parameter; callers pass the `let` binding's name span.
   - **`RawDiag.label: Option<(Span, String)>`** — new optional secondary span. Populated at the borrow-check error sites: E0370/E0381 cite the sibling argument span (`"shared read of X here"`); E0380 cites the *first* `mut X` arg; E0382 cites the `move X` arg. E0383/E0381 (cross-statement, read-while-borrowed) and E0372 (move-while-borrowed) look up the borrower's establishment span from `live_borrows` and label it as `"`{borrower}` borrows here"`.
