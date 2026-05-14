@@ -4303,6 +4303,85 @@ fn main() -> i32 {
     assert!(stderr.contains("borrows `a` here"), "stderr: {stderr}");
 }
 
+// Phase 11 polish (2026-05-14): CLI niceties.
+
+#[test]
+fn phase11_cli_version_flag_works() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for flag in &["--version", "-V"] {
+        let out = Command::new(cpc).arg(flag).output().expect("invoke cpc");
+        assert!(out.status.success(), "{flag} should succeed");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.starts_with("cpc "), "{flag} stdout: {stdout}");
+    }
+}
+
+#[test]
+fn phase11_cli_check_subcommand_on_clean_file_exits_zero() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("clean.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success(),
+        "check on clean file should exit 0: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn phase11_cli_check_subcommand_on_broken_file_exits_nonzero() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("broken.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return foo; }\n").unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "check on broken file should fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0300"), "stderr: {stderr}");
+}
+
+#[test]
+fn phase11_cli_check_subcommand_no_codegen_artifact() {
+    // `cpc check` should never produce a binary even when the source
+    // compiles cleanly. Verify by giving it a file that would produce
+    // `a.out` if it ran through the full pipeline.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ok.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let cwd = dir.clone();
+    let out = Command::new(cpc).current_dir(&cwd).arg("check").arg(&src)
+        .output().expect("invoke cpc");
+    assert!(out.status.success());
+    let aout = cwd.join("a.out");
+    assert!(!aout.exists(), "`check` should not create a.out");
+}
+
+#[test]
+fn phase11_cli_subcommand_help_returns_only_relevant_slice() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("test").arg("--help").output().expect("invoke cpc");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.starts_with("cpc test"),
+        "`cpc test --help` should print only the test usage: {stdout}");
+    assert!(!stdout.contains("cpc build"),
+        "subcommand help should NOT include other subcommands: {stdout}");
+}
+
+#[test]
+fn phase11_cli_help_documents_sanitizer_and_debuginfo_flags() {
+    // Regression — these landed earlier but weren't in --help until
+    // the CLI polish pass.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("--help").output().expect("invoke cpc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for flag in &["--asan", "--ubsan", "--tsan", "--msan", "-g", "--debug-info"] {
+        assert!(stdout.contains(flag), "--help should document {flag}: {stdout}");
+    }
+    assert!(stdout.contains("cpc check FILE"), "--help should document `check`: {stdout}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

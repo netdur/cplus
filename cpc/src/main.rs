@@ -15,6 +15,7 @@ cpc — C+ compiler
 usage:
   cpc FILE [-o OUT]                 compile single-file FILE.cplus to a binary (default OUT: ./a.out)
   cpc build [-o OUT]                multi-file build: reads ./Cplus.toml, walks imports
+  cpc check FILE                    parse + sema + borrowck FILE, no codegen (fast feedback loop)
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
                                     if FILE is given; project mode (reads ./Cplus.toml)
                                     otherwise. `--json` emits one JSON object per test
@@ -27,15 +28,85 @@ usage:
                                     (delegates to the `cpc-lsp` binary on PATH or
                                     next to this binary)
   cpc [-o OUT]                      with no FILE: emit the Phase-0 hello-world demo
-  cpc --release [...]               release mode: no overflow checks on `+ - *` (default: debug, checked)
+
+build flags (apply to `cpc FILE` and `cpc build`):
+  --release                         -O2, no overflow checks on `+ - *` (default: debug, checked)
+  --debug                           -O0 with overflow traps (the default)
+  -g | --debug-info                 emit DWARF debug metadata + pass -g to clang
+  --asan | --ubsan | --tsan | --msan
+                                    enable the matching LLVM sanitizer (asan/tsan/msan are
+                                    mutually exclusive; ubsan composes with any)
+
+debug / introspection (single-file):
   cpc --emit-ir                     print the frozen Phase-0 LLVM IR to stdout
-  cpc --tokens FILE                 lex FILE and print the token stream (debug)
-  cpc --ast FILE                    lex+parse FILE and print the AST (debug)
+  cpc --tokens FILE                 lex FILE and print the token stream
+  cpc --ast FILE                    lex+parse FILE and print the AST
   cpc --emit-ll FILE                lex+parse+sema+codegen FILE and print the .ll IR
   cpc --emit-ll-project             multi-file: print the merged IR to stdout (uses ./Cplus.toml)
-  cpc --diagnostics=MODE [...]      diagnostics output: human (default) | short | json
-  cpc -h | --help                   show this message
+
+other:
+  --diagnostics=MODE                diagnostics output: human (default) | short | json
+  -V | --version                    print compiler version
+  -h | --help                       show this message
 ";
+
+/// Phase 11 polish (2026-05-14): subcommand-aware `--help`. Once a
+/// subcommand has been seen on the CLI, `--help` returns just the
+/// relevant slice instead of the full usage dump.
+fn subcommand_help(sub: Option<Subcommand>) -> &'static str {
+    match sub {
+        None => USAGE,
+        Some(Subcommand::Build) => "\
+cpc build [-o OUT] [--release] [-g] [--asan|--ubsan|--tsan|--msan]
+
+Multi-file build. Reads ./Cplus.toml at the current directory, walks the
+declared imports, lowers + sema + borrowck + codegen the whole project,
+and writes the linked binary to `target/{debug,release}/<name>` (or to
+OUT if `-o` is given). The manifest names the project; the entry file
+must define `fn main() -> i32`.
+",
+        Some(Subcommand::Check) => "\
+cpc check FILE
+
+Parse + sema + borrowck FILE. No codegen, no clang, no binary. Same
+diagnostics you'd get from `cpc FILE -o BIN`, but faster — the editor /
+LSP / pre-commit-hook use case. Exits 0 if clean, 1 on any error.
+",
+        Some(Subcommand::Test) => "\
+cpc test [FILE] [--json]
+
+Discover and run every `#[test]` function in the project (or in FILE if
+given). Each test compiles into the test driver and runs sequentially.
+Doctests embedded in `///` comments are extracted into synthesized
+`#[test]` functions before running. With `--json`, emits one JSON object
+per test plus a final summary line — for tool consumption.
+",
+        Some(Subcommand::Fmt) => "\
+cpc fmt FILE|DIR [...]
+
+Format C+ source. By default rewrites each file in place. Flags:
+  --check    don't write; exit 1 if any file would change (CI mode)
+  --emit     print formatted output to stdout, leave file alone
+  --stdin    read source from stdin, write to stdout, no file arg
+
+Multiple paths accepted; directories are walked recursively for
+`.cplus` files.
+",
+        Some(Subcommand::Lsp) => "\
+cpc lsp [--log PATH]
+
+Start the C+ language server on stdin/stdout (delegates to the
+`cpc-lsp` binary on PATH or next to this binary). All args after `lsp`
+are forwarded.
+",
+        Some(Subcommand::EmitLlProject) => "\
+cpc --emit-ll-project
+
+Multi-file: run the build pipeline as `cpc build` would, but print the
+merged LLVM IR to stdout instead of invoking clang. Uses ./Cplus.toml.
+",
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum DiagMode { Human, Short, Json }
@@ -153,7 +224,16 @@ fn main() -> ExitCode {
                 i += 1;
             }
             Some("-h" | "--help") => {
-                print!("{USAGE}");
+                // Subcommand-aware: if we've already seen `cpc test`,
+                // `cpc fmt`, etc., print just that subcommand's slice
+                // of the usage. Falls back to the full usage when no
+                // subcommand is active.
+                let slice = subcommand_help(subcommand);
+                print!("{slice}");
+                return ExitCode::SUCCESS;
+            }
+            Some("-V" | "--version") => {
+                println!("cpc {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
             // `build` / `fmt` are positional subcommands. They must
@@ -168,6 +248,10 @@ fn main() -> ExitCode {
             }
             Some("test") if subcommand.is_none() && input.is_none() => {
                 subcommand = Some(Subcommand::Test);
+                i += 1;
+            }
+            Some("check") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Check);
                 i += 1;
             }
             Some("lsp") if subcommand.is_none() && input.is_none() => {
@@ -253,6 +337,11 @@ fn main() -> ExitCode {
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => run_test(test_input, test_opts, diag_mode, build_mode),
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
+        (Some(Subcommand::Check), Some(path)) => run_check(path, diag_mode),
+        (Some(Subcommand::Check), None) => {
+            eprintln!("cpc: `check` requires a FILE argument");
+            ExitCode::FAILURE
+        }
         (None, Some(path)) => compile_file(
             path,
             out.unwrap_or_else(|| PathBuf::from("a.out")),
@@ -272,6 +361,10 @@ enum Subcommand {
     Fmt,
     Test,
     Lsp,
+    /// Phase 11 polish (2026-05-14): `cpc check FILE` — parse + sema +
+    /// borrowck on a single file, no codegen. Promised in SKILL.md as
+    /// the "fast feedback loop" command but never wired until now.
+    Check,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -826,6 +919,30 @@ fn build_program(file: &Path, src: &str, mode: DiagMode) -> Result<cplus_core::a
 /// of argv. Looks in the same directory as `cpc` first (handles the
 /// in-tree `cargo run` and `cargo install` cases where both binaries
 /// live side by side), then falls back to PATH. Slice 4E.1.
+/// Phase 11 polish (2026-05-14): `cpc check FILE` — parse + sema +
+/// borrowck, no codegen. The advertised "fast feedback loop" command:
+/// runs the same diagnostic pipeline as a full compile but stops short
+/// of LLVM emission, so it's significantly faster on large files. Exit
+/// code matches diagnostics: 0 if clean, 1 if any error emitted.
+fn run_check(path: PathBuf, mode: DiagMode) -> ExitCode {
+    let src = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cpc: read {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    // Reuse the same build pipeline up through borrowck. `build_ir`
+    // already handles lex/parse/attrs/lower/sema/borrowck and returns
+    // either the IR string (which we discard) or an ExitCode on any
+    // error. No need to invoke clang. `debug_info=false`, no sanitizers
+    // — `check` is purely diagnostic.
+    match build_ir(&path, &src, mode, BuildMode::Debug, false, &[]) {
+        Ok(_ir) => ExitCode::SUCCESS,
+        Err(code) => code,
+    }
+}
+
 fn run_lsp(args: Vec<OsString>) -> ExitCode {
     let cpc_lsp = find_cpc_lsp();
     let Some(bin) = cpc_lsp else {

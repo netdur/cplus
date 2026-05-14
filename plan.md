@@ -832,6 +832,7 @@ The deeper reason: **TypeScript's surface syntax is inseparable from its object-
 - DWARF debug info via `-g` flag — function-level v1 (DICompileUnit, DIFile, DISubprogram + DILocation per fn). **✅ shipped 2026-05-13** — see resolved-log entry below. Per-instruction `!DILocation` and DILocalVariable are follow-ups.
 - Sanitizer flags `--asan` / `--ubsan` / `--tsan` / `--msan` — plumb `-fsanitize=...` to clang + attach the matching `sanitize_*` function attribute to every `define` in cpc-emitted IR. **✅ shipped 2026-05-13** — see resolved-log entry below.
 - Borrow-checker diagnostics polish: every borrow-conflict diagnostic now surfaces a secondary "borrowed here" / "moved here" / "sibling read of X here" label so users see both ends of the conflict. **✅ shipped 2026-05-13** — see resolved-log entry below.
+- CLI niceties: `--version` / `-V`, `cpc check FILE`, subcommand-aware `--help`, `--help` documents the previously-undocumented `-g` / `--asan` / `--ubsan` / `--tsan` / `--msan` flags. **✅ shipped 2026-05-14** — see resolved-log entry below.
 - Better error messages (continuous; borrow-checker diagnostics are the long pole)
 - Debugger support (DWARF — largely free from LLVM via `!DIFile` / `!DISubprogram` / `!DILocation` metadata; ideally wired up earlier so source positions don't have to be retrofitted)
 - Sanitizer flags (`cpc --asan` / `--ubsan` / `--tsan` / `--msan`) — instrumented user binaries via LLVM's existing pass infrastructure
@@ -1137,6 +1138,12 @@ Design notes needed before their phase (per §6):
 - [ ] Phase 7+ (speculative): contracts syntax (`requires`, `ensures`) — Eiffel/Dafny references
 
 Resolved (kept for history):
+- **Phase 11 polish: CLI niceties (2026-05-14):** four concrete gaps closed.
+  - **`--version` / `-V`** prints `cpc {CARGO_PKG_VERSION}`. Used to fail with "unknown flag".
+  - **`cpc check FILE`** — promised in SKILL.md as the "fast feedback loop" command but never wired. Now actually exists: runs lex → parse → attrs → lower → sema → borrowck on a single file and exits 0 if clean, 1 on any error. No codegen, no clang, no binary artifact.
+  - **`--help` rewrite**: documents the previously-undocumented `-g` / `--debug-info`, `--asan` / `--ubsan` / `--tsan` / `--msan`, and `--debug` flags. Reorganized into "build flags", "debug / introspection", and "other" sections so the layout matches what users actually want to look up.
+  - **Subcommand-aware `--help`**: `cpc test --help` now prints just the test-command slice; same for `build` / `check` / `fmt` / `lsp` / `emit-ll-project`. The full usage only appears for bare `--help`. New `subcommand_help(sub) -> &str` switch holds the per-command text.
+  - **6 new e2e tests** pinning each gap. **Test total: 903** (682 library + 210 e2e + 11 LSP), 0 warnings. Deferred (out of scope for this slice): ANSI-colored diagnostic output.
 - **Effect tracking + built-in contracts both rejected (2026-05-14):** the two speculative Phase-11 items from the §11 open-questions list were considered as a "design-only" slice and **closed without notes**, following the Phase-9 pattern. Reasoning recorded below; reserving error-code blocks **E0900–E0910** (effects) and **E0911–E0920** (contracts) for future use, but no design notes will be written and no implementation is planned.
 
   **Memory-safety analogy is decisive.** Memory safety pays for itself on every program — even users who never read compiler errors get fewer crashes. Effects and contracts only pay off when *someone reads the signature*. Their value is audit ergonomics, but adding 20 chars to every signature in service of being easier to audit is self-defeating if the 20 chars themselves make signatures harder to skim. The user explicitly evaluated this trade-off and voted against.
