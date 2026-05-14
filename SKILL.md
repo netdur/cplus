@@ -664,6 +664,48 @@ Every diagnostic carries a span (line/col) and often a machine-applicable sugges
 
 ## 9. Tooling
 
+The `cpc` binary lives at `/Users/adel/Workspace/C+/target/debug/cpc`
+(the debug build of this repo). If `cpc` is not already on your `PATH`,
+invoke it by absolute path or prepend that directory to `PATH`:
+
+```bash
+export PATH="/Users/adel/Workspace/C+/target/debug:$PATH"
+# or just:
+/Users/adel/Workspace/C+/target/debug/cpc build
+```
+
+To build it from source (only if the binary above is missing):
+
+```bash
+cargo build --manifest-path /Users/adel/Workspace/C+/cpc/Cargo.toml
+```
+
+`cpc build` reads `./Cplus.toml` in the current directory and writes the
+final executable to `./target/debug/<bin-name>` (cargo-style layout). The
+`<bin-name>` is the `name` field in the `[[bin]]` table of `Cplus.toml`.
+
+### Linking against Apple frameworks (Cocoa / AppKit / Foundation / ...)
+
+`cpc build` does **not** yet know about Apple framework search paths or
+the ObjC runtime library — those are linker-level concerns. For any
+program that needs `-framework X` or `-lobjc`, the workflow is:
+
+```bash
+# 1. Emit LLVM IR via cpc.
+cpc --emit-ll src/main.cplus > out.ll
+# 2. Hand off to clang for linking, with framework + library flags.
+clang out.ll \
+    -framework Cocoa \
+    -lobjc \
+    -Wno-override-module \
+    -o my_binary
+```
+
+The `-Wno-override-module` silences a benign warning about clang seeing IR
+that names a target triple it would have chosen anyway. Substitute the
+framework you need (`Foundation`, `AppKit`, etc.). This is exactly the
+pattern used by `objc-c-interop/cocoa-min/build.sh` in the parent project.
+
 ```bash
 cpc build              # multi-file project (reads Cplus.toml)
 cpc FILE.cplus -o BIN  # single-file build
