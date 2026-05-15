@@ -1,8 +1,8 @@
 // `main.cplus` — entry binary. Wires the imports into a small program:
 //   (3 + 4) * (-2)  ==  -14
 
-import "eval.cplus" as eval;
-import "util.cplus" as util;
+import "./eval" as eval;
+import "./util" as util;
 
 fn main() -> i32 {
     let inner: i32 = eval::evaluate(util::add_lit(3, 4));    // 7

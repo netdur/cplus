@@ -2,7 +2,7 @@
 // reach into `expr`'s namespace twice. Demonstrates a file that
 // re-exposes another file's variants behind a friendlier API surface.
 
-import "expr.cplus" as expr;
+import "./expr" as expr;
 
 pub fn add_lit(a: i32, b: i32) -> expr::Expr {
     return expr::Expr::Add(a, b);

@@ -1,0 +1,13 @@
+// tiny_artifact — C+ side of a bundled-artifact package.
+//
+// The implementation lives in C (see `upstream/tiny_artifact.c`); the
+// shipped form is `src/lib/<host-triple>/libtiny_artifact.a`. C+ callers
+// see only the `pub fn` below — the `extern fn` declaration matches the
+// C symbol name and signature exactly, and the safe wrapper hides the
+// `unsafe { ... }` block at the FFI boundary.
+
+extern fn tiny_artifact_double(n: i32) -> i32;
+
+pub fn double(n: i32) -> i32 {
+    return unsafe { tiny_artifact_double(n) };
+}

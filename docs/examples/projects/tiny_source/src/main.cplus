@@ -1,0 +1,12 @@
+// tiny_source — Phase 2 Slice 2D smoke test: pure-C+ vendor package.
+//
+// The `[dependencies] tiny = "*"` line in Cplus.toml lets us name `tiny`
+// as the first segment of an import path; `tiny/lib` then resolves to
+// `vendor/tiny/src/lib.cplus`. No binaries involved, no `[link]` table —
+// this is the simplest legal package shape.
+
+import "tiny/lib" as tiny;
+
+fn main() -> i32 {
+    return tiny::echo(42);
+}

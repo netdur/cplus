@@ -1,0 +1,4 @@
+target/
+# The bundled .a is host-specific; CI runs `vendor/tiny_artifact/upstream/build.sh`
+# to regenerate it for the current host. Keep the source tree free of stale binaries.
+vendor/tiny_artifact/src/lib/

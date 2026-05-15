@@ -1,0 +1,8 @@
+[package]
+name    = "argv_parse"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "argv_parse"
+path = "src/main.cplus"

@@ -14,7 +14,7 @@ If you find yourself wanting more detail:
 
 C+ is a systems language. LLVM backend. Manual memory management, no GC. Rust-level memory safety via a borrow checker. ABI-compatible with C (one-way: C+ emits standard object files, but `.c` files don't compile). Designed to be **easy for LLMs to write correctly** — explicit beats clever, locality of reasoning is paramount, the type system is load-bearing.
 
-File extension: `.cplus`. Compiler: `cpc`. Multi-file project layout: `Cplus.toml` manifest at the project root, source in `src/`. Imports are explicit path strings with a mandatory alias: `import "math.cplus" as math;` then `math::function()`.
+File extension: `.cplus`. Compiler: `cpc`. Multi-file project layout: `Cplus.toml` manifest at the project root, source in `src/`. Imports are explicit path strings with a mandatory alias, **no `.cplus` extension**. Local files start with `./`: `import "./math" as math;` then `math::function()`. Vendored packages start with the dep name declared in `[dependencies]`: `import "stdlib/io" as io;` resolves under `vendor/stdlib/src/io.cplus`. Bare paths (no `./`, no matching dep) are rejected — every import must declare whether it's local or vendored.
 
 ---
 
@@ -748,11 +748,12 @@ cpc -V                 # print version (alias: --version)
 
 In rough priority order:
 
-1. **Read an example.** Every file in [docs/examples/](docs/examples/) compiles and runs. The simplest sample that exercises the feature you're unsure about is more authoritative than this document.
-2. **Read the design note.** [docs/design/](docs/design/) has per-phase deep dives. Recent additions: phase11-fn-pointers, phase10 FFI work, phase5 borrow-shared (the borrow checker is the most subtle part of the language).
-3. **Run `cpc fmt`.** If the source doesn't round-trip through the formatter, something is syntactically off.
-4. **Read the diagnostic.** Every error code has a precise meaning. The compiler is the source of truth; this document is a summary.
-5. **Check the locked principles in §2.** If you're about to suggest a feature, scan §2 first. If it's there, the answer is no.
-6. **Consult plan.md §11.** The resolved-questions log records why settled decisions are settled. New requests that retread settled ground get the same answer.
+1. **Read a recipe.** [docs/examples/recipes/](docs/examples/recipes/) ships ten task-oriented `.cplus` programs (file I/O, stdin parsing, hash map, TCP client / server, JSON parser, HTTP GET, argv, env vars). Each is a complete `cpc build` project — the closest thing to "how do I do X" that exists. The 03-hello-appkit benchmark proved that a near-complete reference is worth more than a paragraph of prose; the recipes generalize that.
+2. **Read an example.** Every file in [docs/examples/](docs/examples/) compiles and runs. The simplest sample that exercises the feature you're unsure about is more authoritative than this document.
+3. **Read the design note.** [docs/design/](docs/design/) has per-phase deep dives. Recent additions: phase11-fn-pointers, phase10 FFI work, phase5 borrow-shared (the borrow checker is the most subtle part of the language), phase2-packages-mvp.
+4. **Run `cpc fmt`.** If the source doesn't round-trip through the formatter, something is syntactically off.
+5. **Read the diagnostic.** Every error code has a precise meaning. The compiler is the source of truth; this document is a summary.
+6. **Check the locked principles in §2.** If you're about to suggest a feature, scan §2 first. If it's there, the answer is no.
+7. **Consult plan.md §11.** The resolved-questions log records why settled decisions are settled. New requests that retread settled ground get the same answer.
 
 The codebase is small. Reading it is feasible. **Don't guess; check.**

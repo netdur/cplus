@@ -1,0 +1,110 @@
+// tcp_server — bind to 127.0.0.1:<argv[1]>, accept one connection,
+// echo every received byte back, then close.
+// libc symbols: socket, setsockopt, bind, listen, accept, read, write,
+//               close, atoi, malloc, memset, free, _NSGetArgc, _NSGetArgv.
+//
+// One-shot by design — accepts a single client, echoes until EOF on
+// that connection, then exits. Smoke tests can pair it with the
+// `tcp_client` recipe (or netcat) for a round-trip.
+
+extern fn _NSGetArgc() -> *i32;
+extern fn _NSGetArgv() -> ***u8;
+extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
+extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
+extern fn bind(fd: i32, addr: *u8, len: u32) -> i32;
+extern fn listen(fd: i32, backlog: i32) -> i32;
+extern fn accept(fd: i32, addr: *u8, len: *u32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+extern fn atoi(s: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn write_all(fd: i32, p: *u8, n: usize) -> bool {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { return false; }
+        written = written +% (w as usize);
+    }
+    return true;
+}
+
+fn main() -> i32 {
+    let argc: i32 = unsafe { *_NSGetArgc() };
+    if argc < (2 as i32) {
+        let u: str = "usage: tcp_server <port>\n";
+        write_all(2 as i32, str_ptr(u), str_len(u));
+        return 1;
+    }
+    let argv: **u8 = unsafe { *_NSGetArgv() };
+    let port_s: *u8 = unsafe { *(argv + (1 as usize)) };
+    let port: u16 = unsafe { atoi(port_s) } as u16;
+
+    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) { return 2; }
+
+    // SO_REUSEADDR (level=SOL_SOCKET=0xffff on macOS, optname=0x4).
+    let one: *u8 = unsafe { malloc(4 as usize) };
+    unsafe {
+        one[0 as usize] = 1 as u8; one[1 as usize] = 0 as u8;
+        one[2 as usize] = 0 as u8; one[3 as usize] = 0 as u8;
+    }
+    unsafe { setsockopt(fd, 0xffff as i32, 0x4 as i32, one, 4 as u32); }
+    unsafe { free(one); }
+
+    let sa: *u8 = unsafe { malloc(16 as usize) };
+    unsafe {
+        memset(sa, 0 as i32, 16 as usize);
+        sa[0 as usize] = 16 as u8;       // sin_len
+        sa[1 as usize] = 2 as u8;        // AF_INET
+        sa[2 as usize] = ((port >> (8 as u32)) & (0xff as u16)) as u8;
+        sa[3 as usize] = (port & (0xff as u16)) as u8;
+        // sin_addr = 127.0.0.1 = 0x7f000001 — bytes in network order (high
+        // byte first in memory: 127, 0, 0, 1).
+        sa[4 as usize] = 127 as u8;
+        sa[5 as usize] = 0 as u8;
+        sa[6 as usize] = 0 as u8;
+        sa[7 as usize] = 1 as u8;
+    }
+
+    let brc: i32 = unsafe { bind(fd, sa, 16 as u32) };
+    unsafe { free(sa); }
+    if brc != (0 as i32) {
+        unsafe { close(fd); }
+        return 3;
+    }
+    if unsafe { listen(fd, 1 as i32) } != (0 as i32) {
+        unsafe { close(fd); }
+        return 4;
+    }
+
+    // Accept (blocking) — pass null addr/addrlen since we don't care
+    // about the peer's address here.
+    let cfd: i32 = unsafe {
+        let null_addr: *u8 = 0 as *u8;
+        let null_len: *u32 = 0 as *u32;
+        accept(fd, null_addr, null_len)
+    };
+    if cfd < (0 as i32) {
+        unsafe { close(fd); }
+        return 5;
+    }
+
+    // Echo until EOF.
+    let bufcap: usize = 4096 as usize;
+    let buf: *u8 = unsafe { malloc(bufcap) };
+    loop {
+        let n: isize = unsafe { read(cfd, buf, bufcap) };
+        if n <= (0 as isize) { break; }
+        write_all(cfd, buf, n as usize);
+    }
+    unsafe { free(buf); }
+    unsafe { close(cfd); }
+    unsafe { close(fd); }
+    return 0;
+}

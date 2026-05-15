@@ -32,9 +32,60 @@ pub struct Manifest {
     /// `.a` and/or `.dylib`/`.so` instead of an executable, and the codegen
     /// path skips the test-driver `@main` injection.
     pub lib: Option<LibTarget>,
+    /// Phase 2 (v0.0.2) — package system MVP. Vendor packages declare
+    /// their linker requirements in a top-level `[link]` table; the
+    /// consumer's build driver walks the dep graph and forwards each
+    /// dep's `[link]` to its own clang invocation. Consumers typically
+    /// don't populate this directly — they use `[[bin]] frameworks`/
+    /// `libs` for their own binary's link surface. Both sources of
+    /// link args are merged at build time.
+    pub link: Option<LinkSpec>,
+    /// Phase 2 (v0.0.2) — consumer's declared dependencies. Each entry
+    /// names a directory expected to exist at `vendor/<name>/` with a
+    /// matching `Cplus.toml`. Version strings parse but are unused at
+    /// resolution time (MVP). Empty for vendor packages and standalone
+    /// programs.
+    pub dependencies: Vec<Dependency>,
     /// Directory containing the manifest file. All bin `path` entries are
     /// resolved relative to this directory.
     pub root: PathBuf,
+}
+
+/// Phase 2 (v0.0.2) — top-level `[link]` table on a vendor package's
+/// `Cplus.toml`. Declares the linker requirements the package wants its
+/// consumer to honor when building anything that depends on it.
+///
+/// The manifest is the single source of truth: the build driver
+/// verifies the filesystem matches what's declared, and refuses to
+/// link anything else. See plan.md §"Phase 2 — Manifest = single
+/// source of truth" for the E0860-E0863 error codes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LinkSpec {
+    /// macOS / iOS frameworks. Each entry becomes `-framework <name>`
+    /// on the link line. Platform-gated by clang.
+    pub frameworks: Vec<String>,
+    /// System libraries — expected on the consumer's machine. Each
+    /// entry becomes `-l<name>` on the link line.
+    pub libs: Vec<String>,
+    /// Bundled binaries — shipped by THIS package, located at
+    /// `src/lib/<host-triple>/<basename>`. Each entry is a basename
+    /// (no path component); the file must exist for every triple in
+    /// `triples`. Missing file → E0860; orphan file → E0861.
+    pub bundled: Vec<String>,
+    /// Host triples this package's bundled binaries are built for.
+    /// Required when `bundled` is non-empty (E0863); the consumer's
+    /// host must appear here (E0862) or the package can't link.
+    pub triples: Vec<String>,
+}
+
+/// Phase 2 (v0.0.2) — one entry in `[dependencies]`. Today carries
+/// just (name, version-string). Resolution is presence-check only:
+/// `cpc build` verifies `vendor/<name>/Cplus.toml` exists and is
+/// valid. SemVer resolution is forward-compat work for `cpc fetch`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dependency {
+    pub name: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +144,14 @@ pub enum ManifestError {
     BinAndLibConflict { path: PathBuf },
     /// Phase 5 (E0412): `crate-type` value not in `{staticlib, cdylib, both}`.
     UnsupportedCrateType { path: PathBuf, found: String },
+    /// Phase 2 (E0857): `[dependencies]` key fails the lowercase-ident
+    /// rule. Dep names must match `[a-z][a-z0-9_]*` so the import path's
+    /// first segment is unambiguous.
+    InvalidDependencyName { path: PathBuf, found: String },
+    /// Phase 2 (E0863): `[link].bundled` is non-empty but `[link].triples`
+    /// is empty. The build driver can't know what hosts the bundled
+    /// binaries are built for without a declared triples list.
+    BundledRequiresTriples { path: PathBuf },
 }
 
 impl fmt::Display for ManifestError {
@@ -116,6 +175,12 @@ impl fmt::Display for ManifestError {
             ManifestError::UnsupportedCrateType { path, found } => {
                 write!(f, "manifest {}: unsupported `crate-type` value `{found}` (must be one of `staticlib`, `cdylib`, `both`)", path.display())
             }
+            ManifestError::InvalidDependencyName { path, found } => {
+                write!(f, "manifest {}: dependency name `{found}` must be a lowercase identifier (`[a-z][a-z0-9_]*`)", path.display())
+            }
+            ManifestError::BundledRequiresTriples { path } => {
+                write!(f, "manifest {}: `[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples the binaries are built for", path.display())
+            }
         }
     }
 }
@@ -134,7 +199,9 @@ impl ManifestError {
             | ManifestError::MissingField { path, .. }
             | ManifestError::UnsupportedEdition { path, .. }
             | ManifestError::BinAndLibConflict { path }
-            | ManifestError::UnsupportedCrateType { path, .. } => path.clone(),
+            | ManifestError::UnsupportedCrateType { path, .. }
+            | ManifestError::InvalidDependencyName { path, .. }
+            | ManifestError::BundledRequiresTriples { path } => path.clone(),
         };
         let primary = SourceSpan {
             file: path.clone(),
@@ -177,6 +244,14 @@ impl ManifestError {
                 "E0412",
                 format!("unsupported `crate-type` value `{found}` (expected one of `staticlib`, `cdylib`, `both`)"),
             ),
+            ManifestError::InvalidDependencyName { found, .. } => (
+                "E0857",
+                format!("dependency name `{found}` must match `[a-z][a-z0-9_]*` (no dots, slashes, or uppercase — the first segment of an import path must be unambiguous)"),
+            ),
+            ManifestError::BundledRequiresTriples { .. } => (
+                "E0863",
+                "`[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples your bundled binaries are built for (e.g. `triples = [\"aarch64-apple-darwin\"]`)".to_string(),
+            ),
         };
         Diagnostic {
             severity: Severity::Error,
@@ -199,6 +274,27 @@ struct RawManifest {
     bin: Vec<RawBin>,
     #[serde(default)]
     lib: Option<RawLib>,
+    /// Phase 2: top-level `[link]` table on a vendor package's manifest.
+    #[serde(default)]
+    link: Option<RawLinkSpec>,
+    /// Phase 2: `[dependencies]` table — `name = "version-string"` pairs.
+    /// Toml's `serde` integration deserializes this as a string-keyed map.
+    /// Iteration order matches insertion order via `BTreeMap` (lexicographic
+    /// — fine for MVP; consumers shouldn't depend on dep ordering).
+    #[serde(default)]
+    dependencies: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLinkSpec {
+    #[serde(default)]
+    frameworks: Vec<String>,
+    #[serde(default)]
+    libs: Vec<String>,
+    #[serde(default)]
+    bundled: Vec<String>,
+    #[serde(default)]
+    triples: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -332,12 +428,65 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         }).collect()
     };
 
+    // Phase 2: convert raw `[link]` to LinkSpec + enforce
+    // bundled-requires-triples. The pure-source-package case (no [link]
+    // table at all) yields `link = None`; an empty [link] table still
+    // round-trips as `Some(LinkSpec::default())` which is harmless.
+    let link = match raw.link {
+        None => None,
+        Some(rl) => {
+            if !rl.bundled.is_empty() && rl.triples.is_empty() {
+                return Err(ManifestError::BundledRequiresTriples {
+                    path: manifest_path.to_path_buf(),
+                });
+            }
+            Some(LinkSpec {
+                frameworks: rl.frameworks,
+                libs: rl.libs,
+                bundled: rl.bundled,
+                triples: rl.triples,
+            })
+        }
+    };
+
+    // Phase 2: validate every dep name against the lowercase-ident rule
+    // so the first segment of an import path is unambiguous. Iterate in
+    // BTreeMap order so any failure is deterministic.
+    let mut dependencies: Vec<Dependency> = Vec::with_capacity(raw.dependencies.len());
+    for (dep_name, dep_version) in raw.dependencies {
+        if !is_valid_dep_name(&dep_name) {
+            return Err(ManifestError::InvalidDependencyName {
+                path: manifest_path.to_path_buf(),
+                found: dep_name,
+            });
+        }
+        dependencies.push(Dependency {
+            name: dep_name,
+            version: dep_version,
+        });
+    }
+
     Ok(Manifest {
         package: Package { name, version, edition },
         bins,
         lib,
+        link,
+        dependencies,
         root,
     })
+}
+
+/// Phase 2: dep names must match `[a-z][a-z0-9_]*` so the first segment
+/// of an import path (e.g. `stdlib/io`) is an unambiguous identifier.
+/// Rejects `Stdlib`, `stdlib/vec`, `std.lib`, and the empty string.
+fn is_valid_dep_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        None => return false,
+        Some(c) if !c.is_ascii_lowercase() => return false,
+        _ => {}
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 #[cfg(test)]
@@ -552,5 +701,204 @@ mod tests {
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
         assert_eq!(m.bins[0].name, "myapp");
+    }
+
+    // ---- Phase 2 Slice 2A: [dependencies] + top-level [link] ----
+
+    #[test]
+    fn dependencies_table_parses() {
+        let text = r#"
+            [package]
+            name = "consumer"
+
+            [dependencies]
+            stdlib = "*"
+            tiny   = "0.1.0"
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert_eq!(m.dependencies.len(), 2);
+        // BTreeMap → lexicographic order.
+        assert_eq!(m.dependencies[0].name, "stdlib");
+        assert_eq!(m.dependencies[0].version, "*");
+        assert_eq!(m.dependencies[1].name, "tiny");
+        assert_eq!(m.dependencies[1].version, "0.1.0");
+    }
+
+    #[test]
+    fn dependencies_absent_yields_empty_vec() {
+        let text = r#"
+            [package]
+            name = "x"
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert!(m.dependencies.is_empty());
+    }
+
+    #[test]
+    fn invalid_dep_name_uppercase_rejected_e0857() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [dependencies]
+            Stdlib = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::InvalidDependencyName { ref found, .. } if found == "Stdlib"),
+            "expected InvalidDependencyName for `Stdlib`, got: {err:?}");
+    }
+
+    #[test]
+    fn invalid_dep_name_slash_rejected_e0857() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [dependencies]
+            "stdlib/vec" = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::InvalidDependencyName { .. }),
+            "expected InvalidDependencyName for `stdlib/vec`, got: {err:?}");
+    }
+
+    #[test]
+    fn invalid_dep_name_dot_rejected_e0857() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [dependencies]
+            "std.lib" = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::InvalidDependencyName { .. }));
+    }
+
+    #[test]
+    fn invalid_dep_name_leading_digit_rejected_e0857() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [dependencies]
+            "1stplace" = "*"
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::InvalidDependencyName { .. }));
+    }
+
+    #[test]
+    fn dep_name_with_underscore_and_digit_accepted() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [dependencies]
+            stdlib_v2 = "*"
+            tiny0     = "*"
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert_eq!(m.dependencies.len(), 2);
+    }
+
+    #[test]
+    fn top_level_link_table_parses() {
+        let text = r#"
+            [package]
+            name = "appkit"
+
+            [link]
+            frameworks = ["Cocoa"]
+            libs       = ["objc"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let link = m.link.expect("expected [link]");
+        assert_eq!(link.frameworks, vec!["Cocoa".to_string()]);
+        assert_eq!(link.libs, vec!["objc".to_string()]);
+        assert!(link.bundled.is_empty());
+        assert!(link.triples.is_empty());
+    }
+
+    #[test]
+    fn top_level_link_with_bundled_and_triples_parses() {
+        let text = r#"
+            [package]
+            name = "curl_bindings"
+
+            [link]
+            bundled = ["curl.a"]
+            triples = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]
+            libs    = ["z"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let link = m.link.expect("expected [link]");
+        assert_eq!(link.bundled, vec!["curl.a".to_string()]);
+        assert_eq!(link.triples.len(), 2);
+        assert_eq!(link.libs, vec!["z".to_string()]);
+    }
+
+    #[test]
+    fn bundled_without_triples_rejected_e0863() {
+        // The manifest-as-truth principle: a package that ships
+        // binaries must declare which triples it supports.
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+            bundled = ["foo.a"]
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(matches!(err, ManifestError::BundledRequiresTriples { .. }));
+    }
+
+    #[test]
+    fn triples_without_bundled_accepted() {
+        // A package that DECLARES triples but ships no binaries is
+        // weird but harmless — maybe they intend to add binaries later.
+        // We don't reject this; the Slice 2C build-driver path is the
+        // arbiter of whether anything actually gets linked.
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+            triples = ["aarch64-apple-darwin"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let link = m.link.unwrap();
+        assert!(link.bundled.is_empty());
+        assert_eq!(link.triples, vec!["aarch64-apple-darwin".to_string()]);
+    }
+
+    #[test]
+    fn empty_link_table_parses_as_some_default() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let link = m.link.unwrap();
+        assert!(link.frameworks.is_empty());
+        assert!(link.libs.is_empty());
+        assert!(link.bundled.is_empty());
+        assert!(link.triples.is_empty());
+    }
+
+    #[test]
+    fn is_valid_dep_name_unit_cases() {
+        assert!(super::is_valid_dep_name("stdlib"));
+        assert!(super::is_valid_dep_name("tiny0"));
+        assert!(super::is_valid_dep_name("a_b_c"));
+        assert!(!super::is_valid_dep_name(""));
+        assert!(!super::is_valid_dep_name("Stdlib"));
+        assert!(!super::is_valid_dep_name("0std"));
+        assert!(!super::is_valid_dep_name("std-lib"));
+        assert!(!super::is_valid_dep_name("std.lib"));
+        assert!(!super::is_valid_dep_name("std/lib"));
+        assert!(!super::is_valid_dep_name(" std"));
     }
 }

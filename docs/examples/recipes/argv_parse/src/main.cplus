@@ -1,0 +1,43 @@
+// argv_parse — print each command-line argument on its own line.
+// libc symbols: _NSGetArgc, _NSGetArgv (macOS), strlen, write.
+//
+// C+'s `fn main` is lowered to `define i32 @main()` — no argc/argv
+// parameters reach user code. On macOS the runtime exposes them via
+// `_NSGetArgc()` (returns `int *`) and `_NSGetArgv()` (returns
+// `char ***`). On Linux the equivalent recipe uses `getauxval` or
+// `/proc/self/cmdline`; this file is the macOS path.
+//
+// Pointer arithmetic on `**u8` advances by pointer-sized steps, so
+// `argv + i` walks the array; `*pp` then loads the i-th `char *`.
+
+extern fn _NSGetArgc() -> *i32;
+extern fn _NSGetArgv() -> ***u8;
+extern fn strlen(s: *u8) -> usize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { break; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+fn main() -> i32 {
+    let argc: i32 = unsafe { *_NSGetArgc() };
+    let argv: **u8 = unsafe { *_NSGetArgv() };
+    let mut i: i32 = 0 as i32;
+    while i < argc {
+        let pp: **u8 = unsafe { argv + (i as usize) };
+        let arg: *u8 = unsafe { *pp };
+        let n: usize = unsafe { strlen(arg) };
+        write_all(1 as i32, arg, n);
+        write_all(1 as i32, str_ptr("\n"), 1 as usize);
+        i = i +% (1 as i32);
+    }
+    return 0;
+}

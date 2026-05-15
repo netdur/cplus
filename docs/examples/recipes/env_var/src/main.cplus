@@ -1,0 +1,47 @@
+// env_var — read environment variable with fallback.
+// libc symbols: getenv, strlen, write.
+//
+// Prints `HOME=<value>` if HOME is set, otherwise `HOME=<unset>`.
+// `getenv` returns NULL when the variable is not in the environment;
+// in C+ a raw `*u8` from FFI is checked against `0 as *u8` (we never
+// write the word `null` in C+ source).
+//
+// String literals are NUL-terminated in their underlying buffer, so
+// `str_ptr(s)` is safe to pass anywhere C wants a `const char *`.
+
+extern fn getenv(name: *u8) -> *u8;
+extern fn strlen(s: *u8) -> usize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { break; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+fn write_str(fd: i32, s: str) {
+    write_all(fd, str_ptr(s), str_len(s));
+    return;
+}
+
+fn main() -> i32 {
+    let name: str = "HOME";
+    let val: *u8 = unsafe { getenv(str_ptr(name)) };
+    let null: *u8 = unsafe { 0 as *u8 };
+    write_str(1 as i32, name);
+    write_str(1 as i32, "=");
+    if val == null {
+        write_str(1 as i32, "<unset>\n");
+    } else {
+        let n: usize = unsafe { strlen(val) };
+        write_all(1 as i32, val, n);
+        write_str(1 as i32, "\n");
+    }
+    return 0;
+}

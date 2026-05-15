@@ -1,0 +1,8 @@
+[package]
+name    = "stdin_lines"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "stdin_lines"
+path = "src/main.cplus"

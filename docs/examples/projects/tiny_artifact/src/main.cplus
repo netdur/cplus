@@ -1,0 +1,15 @@
+// tiny_artifact — Phase 2 Slice 2D smoke test: vendor package that ships
+// a prebuilt static archive instead of C+ source for the implementation.
+//
+// The dependency `tiny_artifact = "*"` resolves under `vendor/tiny_artifact/`,
+// whose Cplus.toml declares `[link] bundled = ["libtiny_artifact.a"] triples
+// = [...]`. The build driver verifies the archive is present at
+// `vendor/tiny_artifact/src/lib/<host-triple>/libtiny_artifact.a` and splices
+// it into the clang link line. The C+ side of the package supplies a thin
+// `extern fn` wrapper so callers don't have to know they're invoking C.
+
+import "tiny_artifact/api" as ta;
+
+fn main() -> i32 {
+    return ta::double(21);
+}

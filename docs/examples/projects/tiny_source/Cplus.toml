@@ -1,0 +1,11 @@
+[package]
+name    = "tiny_source"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "tiny_source"
+path = "src/main.cplus"
+
+[dependencies]
+tiny = "*"

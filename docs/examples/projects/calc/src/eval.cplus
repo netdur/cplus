@@ -3,8 +3,8 @@
 // reference imported enum variants via the `expr::` prefix; sema's
 // pattern resolution (slice 4-end carry-forward) accepts them.
 
-import "expr.cplus" as expr;
-import "ops.cplus" as ops;
+import "./expr" as expr;
+import "./ops" as ops;
 
 pub fn evaluate(e: expr::Expr) -> i32 {
     return match e {

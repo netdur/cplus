@@ -1,0 +1,7 @@
+// stdlib_smoke
+
+import "stdlib/result" as result;
+
+fn main() -> i32 {
+    return 0;
+}

@@ -1,0 +1,11 @@
+[package]
+name    = "stdlib_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "stdlib_smoke"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"

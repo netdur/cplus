@@ -1,0 +1,8 @@
+[package]
+name    = "env_var"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "env_var"
+path = "src/main.cplus"

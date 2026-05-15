@@ -1,0 +1,11 @@
+[package]
+name    = "tiny_artifact"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "tiny_artifact"
+path = "src/main.cplus"
+
+[dependencies]
+tiny_artifact = "*"

@@ -92,6 +92,41 @@ pub enum ResolveError {
         path: PathBuf,
         source: crate::lexer::LexError,
     },
+    /// Phase 2 (E0852): a vendor import's first segment isn't a declared
+    /// dependency in `Cplus.toml`. Example: `import "stdlib/io"` when
+    /// `[dependencies]` contains no `stdlib` entry.
+    UnknownPackage {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+        package: String,
+    },
+    /// Phase 2 (E0853): a bare path that isn't `./`/`../`-prefixed AND
+    /// whose first segment isn't a declared dependency. Either the user
+    /// forgot the `./` (local-file case) or forgot the dependency
+    /// declaration (vendor-package case). The diagnostic suggests both.
+    BareImport {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+    },
+    /// Phase 2: the import path carries a `.cplus` extension. Slice 2B
+    /// canonicalizes import paths to extension-less form so the same
+    /// string works for both local and vendor modes. The migration is
+    /// mechanical: drop the trailing `.cplus`.
+    StaleExtension {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+    },
+    /// Phase 2: a vendor import contains a `..` segment that would
+    /// escape `vendor/<pkg>/src/`. Security: a package can't reach
+    /// outside its own directory via static imports.
+    VendorEscape {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -145,6 +180,34 @@ impl std::fmt::Display for ResolveError {
             ResolveError::Lex { path, source } => {
                 write!(f, "{}: {source}", path.display())
             }
+            ResolveError::UnknownPackage { importing_file, requested, package, .. } => {
+                write!(
+                    f,
+                    "[E0852] {}: import `{requested}` — first segment `{package}` is not a declared dependency in `Cplus.toml`",
+                    importing_file.display(),
+                )
+            }
+            ResolveError::BareImport { importing_file, requested, .. } => {
+                write!(
+                    f,
+                    "[E0853] {}: bare import `{requested}` — paths must start with `./`/`../` for file-relative or match a declared `[dependencies]` entry",
+                    importing_file.display(),
+                )
+            }
+            ResolveError::StaleExtension { importing_file, requested, .. } => {
+                write!(
+                    f,
+                    "[E0858] {}: import `{requested}` has a `.cplus` extension — drop the extension (Phase 2 imports are extension-less)",
+                    importing_file.display(),
+                )
+            }
+            ResolveError::VendorEscape { importing_file, requested, .. } => {
+                write!(
+                    f,
+                    "[E0859] {}: vendor import `{requested}` contains `..` — packages cannot reach outside their own `src/` directory",
+                    importing_file.display(),
+                )
+            }
         }
     }
 }
@@ -174,7 +237,34 @@ pub fn load_project_with_mode(
     manifest_root: &Path,
     is_lib: bool,
 ) -> Result<LoadedProject, LoadFailure> {
-    let mut loader = Loader::new(manifest_root.to_path_buf());
+    // Pre-2B compat: `None` → single-file mode (file-relative imports).
+    load_project_full(entry_path, manifest_root, is_lib, None)
+}
+
+/// Phase 2 Slice 2B: full-fledged entry point taking the consumer's
+/// declared `[dependencies]` names. Vendor imports (`stdlib/io` etc.)
+/// resolve under `<manifest_root>/vendor/<name>/src/`; imports whose
+/// first segment isn't in `deps` fail with E0852/E0853 depending on
+/// shape. Source-only callers that don't know about deps yet can pass
+/// `&[]` to get the pre-Slice-2B behavior (everything is local-relative
+/// and `.cplus` extensions are still allowed for backward compat).
+pub fn load_project_full(
+    entry_path: &Path,
+    manifest_root: &Path,
+    is_lib: bool,
+    deps: Option<&[String]>,
+) -> Result<LoadedProject, LoadFailure> {
+    // `None` = legacy single-file mode (no manifest); bare imports fall
+    // through to file-relative for backward compat. `Some([])` = project
+    // mode with no deps; the strict vendor rules apply so bare paths
+    // immediately surface E0853 instead of silently scanning for files.
+    let (dep_set, project_mode): (BTreeSet<String>, bool) = match deps {
+        None => (BTreeSet::new(), false),
+        Some(d) => (d.iter().cloned().collect(), true),
+    };
+    let loader_deps_snapshot = dep_set.clone();
+    let mut loader = Loader::with_deps(manifest_root.to_path_buf(), dep_set);
+    loader.project_mode = project_mode;
     let entry_file_id = match loader.load_recursive(entry_path, None, None) {
         Ok(id) => id,
         Err(e) => return Err(LoadFailure::new(e, &loader)),
@@ -199,7 +289,7 @@ pub fn load_project_with_mode(
         .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
         .collect();
 
-    let merged = match merge(files, &entry_file_id, is_lib) {
+    let merged = match merge(files, &entry_file_id, is_lib, manifest_root, &loader_deps_snapshot, project_mode) {
         Ok(p) => p,
         Err(e) => return Err(LoadFailure { error: e, sources: sources_by_path }),
     };
@@ -244,6 +334,10 @@ impl LoadFailure {
             ResolveError::Parse { path, .. } => Some(path),
             ResolveError::Lex { path, .. } => Some(path),
             ResolveError::Io { path, .. } => Some(path),
+            ResolveError::UnknownPackage { importing_file, .. } => Some(importing_file),
+            ResolveError::BareImport { importing_file, .. } => Some(importing_file),
+            ResolveError::StaleExtension { importing_file, .. } => Some(importing_file),
+            ResolveError::VendorEscape { importing_file, .. } => Some(importing_file),
         }
     }
 
@@ -377,6 +471,56 @@ impl LoadFailure {
                 let primary = span_in(path, source.span);
                 ("E00XX", format!("{source}"), primary)
             }
+            ResolveError::UnknownPackage { importing_file, import_span, requested, package } => {
+                notes.push(format!(
+                    "add `{package} = \"*\"` to `[dependencies]` in `Cplus.toml`, or change the import to `./{requested}` for a file-relative path"
+                ));
+                (
+                    "E0852",
+                    format!("import `{requested}`: first segment `{package}` is not a declared dependency"),
+                    span_in(importing_file, *import_span),
+                )
+            }
+            ResolveError::BareImport { importing_file, import_span, requested } => {
+                suggestions.push(Suggestion {
+                    description: "use `./` for a file-relative import".to_string(),
+                    span: span_in(importing_file, *import_span),
+                    replacement: format!("\"./{requested}\""),
+                    applicability: Applicability::MaybeIncorrect,
+                });
+                notes.push(
+                    "or add the package to `[dependencies]` in `Cplus.toml` if you intended a vendor import".to_string()
+                );
+                (
+                    "E0853",
+                    format!("bare import `{requested}` is not `./`/`../`-prefixed and `{requested}`'s first segment isn't a declared dependency"),
+                    span_in(importing_file, *import_span),
+                )
+            }
+            ResolveError::StaleExtension { importing_file, import_span, requested } => {
+                let stripped = requested.trim_end_matches(".cplus");
+                suggestions.push(Suggestion {
+                    description: "drop the `.cplus` extension".to_string(),
+                    span: span_in(importing_file, *import_span),
+                    replacement: format!("\"{stripped}\""),
+                    applicability: Applicability::MachineApplicable,
+                });
+                (
+                    "E0858",
+                    format!("import `{requested}` has a `.cplus` extension — Phase 2 imports are extension-less"),
+                    span_in(importing_file, *import_span),
+                )
+            }
+            ResolveError::VendorEscape { importing_file, import_span, requested } => {
+                notes.push(
+                    "packages cannot reach files outside their own `src/` directory via static imports".to_string()
+                );
+                (
+                    "E0859",
+                    format!("vendor import `{requested}` contains `..`"),
+                    span_in(importing_file, *import_span),
+                )
+            }
         };
 
         Diagnostic {
@@ -402,13 +546,19 @@ impl LoadFailure {
 fn closest_cplus(importing_file: &Path, requested: &str) -> Option<String> {
     let want = Path::new(requested);
     let want_basename = want.file_name()?.to_string_lossy().to_string();
+    // Phase 2: import paths are extension-less. Strip a stale `.cplus`
+    // (if the user wrote it) so the edit-distance comparison against
+    // on-disk basenames (which keep the extension) is symmetric.
+    let want_stem = want_basename.strip_suffix(".cplus").unwrap_or(&want_basename).to_string();
     let dir = importing_file.parent()?;
-    // Try the immediate directory and one level down.
     let mut candidates: Vec<(String, String)> = Vec::new();
     push_cplus_files(dir, dir, &mut candidates, 0);
     let mut best: Option<(usize, String)> = None;
     for (rel, basename) in &candidates {
-        let d = edit_distance(&want_basename, basename);
+        // Compare stem-to-stem so the distance reflects what the user
+        // would re-type, not the on-disk extension.
+        let basename_stem = basename.strip_suffix(".cplus").unwrap_or(basename);
+        let d = edit_distance(&want_stem, basename_stem);
         if d > 2 { continue; }
         match &best {
             None => best = Some((d, rel.clone())),
@@ -474,6 +624,17 @@ struct Loader {
     files: BTreeMap<String, FileUnit>,           // file_id → unit
     by_canonical: BTreeMap<PathBuf, String>,     // canonical_path → file_id
     edges: BTreeMap<String, Vec<String>>,        // file_id → imported file_ids
+    /// Phase 2 Slice 2B: declared dependencies (consumer's `[dependencies]`).
+    /// Used to classify vendor imports — bare paths whose first segment is
+    /// in this set resolve under `vendor/<name>/src/`; others fail with
+    /// E0852/E0853 depending on shape.
+    deps: BTreeSet<String>,
+    /// Phase 2 Slice 2B: `true` when a `Cplus.toml` exists and the
+    /// caller has threaded its (possibly empty) `[dependencies]` list.
+    /// Drives strict vendor-mode classification — bare imports become
+    /// E0853 instead of falling through to file-relative resolution.
+    /// `false` for single-file mode (`cpc FILE.cplus -o BIN`).
+    project_mode: bool,
 }
 
 struct LoaderState {
@@ -483,11 +644,17 @@ struct LoaderState {
 
 impl Loader {
     fn new(manifest_root: PathBuf) -> Self {
+        Self::with_deps(manifest_root, BTreeSet::new())
+    }
+
+    fn with_deps(manifest_root: PathBuf, deps: BTreeSet<String>) -> Self {
         Self {
             manifest_root,
             files: BTreeMap::new(),
             by_canonical: BTreeMap::new(),
             edges: BTreeMap::new(),
+            deps,
+            project_mode: false,
         }
     }
 
@@ -559,7 +726,7 @@ impl Loader {
         let import_dir = canonical.parent().map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
         for imp in &program.imports {
-            let target_path = import_dir.join(&imp.path);
+            let target_path = self.classify_import_path(&imp.path, &import_dir, &canonical, imp.span)?;
             let target_id = self.load_recursive(
                 &target_path,
                 Some(&canonical),
@@ -570,6 +737,125 @@ impl Loader {
 
         Ok(file_id)
     }
+
+    fn classify_import_path(
+        &self,
+        path_str: &str,
+        import_dir: &Path,
+        importing_canonical: &Path,
+        span: Span,
+    ) -> Result<PathBuf, ResolveError> {
+        classify_import_path(
+            path_str, import_dir, importing_canonical, span,
+            &self.manifest_root, &self.deps, self.project_mode,
+        )
+    }
+}
+
+/// Phase 2 Slice 2B: classify an `import "..."` path string and map it
+/// to a filesystem path. Three shapes:
+///
+/// - `./foo` or `../foo` → file-relative under `import_dir`.
+/// - `<dep>/...` where `<dep>` ∈ `deps` → vendor;
+///   resolves to `<manifest_root>/vendor/<dep>/src/<rest>.cplus`.
+/// - Anything else → E0853 (bare path not matching any rule). If the
+///   first segment looks like a dep name but isn't declared, E0852 fires
+///   instead with the more specific "did you forget a `[dependencies]`
+///   entry?" diagnostic.
+///
+/// Phase 2 import paths are extension-less; a trailing `.cplus` fires
+/// E0858. `..` segments inside a vendor path fire E0859 (security).
+///
+/// Backward compat: when `deps` is empty (pre-Slice-2B callers passing
+/// `&[]`), bare paths fall through to file-relative behavior and the
+/// `.cplus` extension is permitted. This is the single-file
+/// `cpc FILE.cplus -o BIN` path that doesn't have a manifest.
+fn classify_import_path(
+    path_str: &str,
+    import_dir: &Path,
+    importing_canonical: &Path,
+    span: Span,
+    manifest_root: &Path,
+    deps: &BTreeSet<String>,
+    project_mode: bool,
+) -> Result<PathBuf, ResolveError> {
+    let extensionless = if let Some(stripped) = path_str.strip_suffix(".cplus") {
+        if project_mode {
+            return Err(ResolveError::StaleExtension {
+                importing_file: importing_canonical.to_path_buf(),
+                import_span: span,
+                requested: path_str.to_string(),
+            });
+        }
+        stripped.to_string()
+    } else {
+        path_str.to_string()
+    };
+
+    if extensionless.starts_with("./") || extensionless.starts_with("../") {
+        let mut p = import_dir.join(&extensionless);
+        if p.extension().is_none() {
+            p.set_extension("cplus");
+        }
+        return Ok(p);
+    }
+
+    if !project_mode {
+        // Pre-Slice-2B compat: single-file mode (no manifest). Treat as
+        // file-relative so older callers keep working.
+        let mut p = import_dir.join(&extensionless);
+        if p.extension().is_none() {
+            p.set_extension("cplus");
+        }
+        return Ok(p);
+    }
+
+    let mut segments = extensionless.split('/');
+    let first = segments.next().unwrap_or("");
+    let rest: Vec<&str> = segments.collect();
+
+    if first.is_empty() {
+        return Err(ResolveError::BareImport {
+            importing_file: importing_canonical.to_path_buf(),
+            import_span: span,
+            requested: path_str.to_string(),
+        });
+    }
+
+    if !deps.contains(first) {
+        return Err(if rest.is_empty() {
+            ResolveError::BareImport {
+                importing_file: importing_canonical.to_path_buf(),
+                import_span: span,
+                requested: path_str.to_string(),
+            }
+        } else {
+            ResolveError::UnknownPackage {
+                importing_file: importing_canonical.to_path_buf(),
+                import_span: span,
+                requested: path_str.to_string(),
+                package: first.to_string(),
+            }
+        });
+    }
+
+    if rest.iter().any(|seg| *seg == ".." || seg.is_empty()) {
+        return Err(ResolveError::VendorEscape {
+            importing_file: importing_canonical.to_path_buf(),
+            import_span: span,
+            requested: path_str.to_string(),
+        });
+    }
+
+    let mut p = manifest_root.to_path_buf();
+    p.push("vendor");
+    p.push(first);
+    p.push("src");
+    for seg in &rest {
+        p.push(seg);
+    }
+    p.set_extension("cplus");
+    Ok(p)
 }
 
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
@@ -647,7 +933,14 @@ fn detect_cycle(
 
 // ----- merge / rewrite -----
 
-fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str, is_lib_entry: bool) -> Result<Program, ResolveError> {
+fn merge(
+    files: BTreeMap<String, FileUnit>,
+    entry_file_id: &str,
+    is_lib_entry: bool,
+    manifest_root: &Path,
+    deps: &BTreeSet<String>,
+    project_mode: bool,
+) -> Result<Program, ResolveError> {
     // Pre-pass: collect each file's local item names (used by the
     // rewriter to qualify unqualified references) AND its **public**
     // surface (slice 4B: gates cross-file access via E0403).
@@ -745,11 +1038,15 @@ fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str, is_lib_entry: b
             }
             // Resolve to the target file's file_id. The loader already
             // recorded each canonical path → file_id; redo the resolution
-            // here so the imports_map keys match what the loader saw.
+            // here through the same Phase 2 classifier so vendor and
+            // local imports map to the same files the loader saw.
             let import_dir = unit.canonical_path.parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("."));
-            let target_path = import_dir.join(&imp.path);
+            let target_path = classify_import_path(
+                &imp.path, &import_dir, &unit.canonical_path, imp.span,
+                manifest_root, deps, project_mode,
+            )?;
             let target_canon = std::fs::canonicalize(&target_path)
                 .unwrap_or(target_path);
             // Find the file_id whose canonical_path equals target_canon.

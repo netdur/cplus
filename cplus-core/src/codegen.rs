@@ -1601,6 +1601,11 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                 }
             }
             StmtKind::Defer(e) => walk_expr(e, table, next_id, out),
+            // Phase 3B follow-up (2026-05-15): plain `loop { ... }` blocks
+            // were silently skipped by the str-literal pre-pass, so any
+            // literal inside a `loop` body tripped a codegen `expect`. Walk
+            // the body the same way as `while` / `for`.
+            StmtKind::Loop(body) => walk_block(body, table, next_id, out),
             _ => {}
         }
     }
@@ -5190,6 +5195,18 @@ mod tests {
         // Bytes plus NUL: 2 + 1 = 3.
         assert!(ir.contains("[3 x i8] c\"hi\\00\""),
             "expected NUL-terminated payload, got:\n{ir}");
+    }
+
+    #[test]
+    fn str_literal_inside_loop_block_collected() {
+        // Phase 3B regression guard (2026-05-15): the str-literal pre-pass
+        // used to skip plain `loop { ... }` statements, so any literal
+        // inside one tripped a codegen `expect` at use time. Walk it.
+        let ir = gen_src(
+            "fn main() -> i32 { loop { let s: str = \"x\"; break; } return 0; }"
+        );
+        assert!(ir.contains("@.str.0 = private unnamed_addr constant"),
+            "expected @.str.0 to be emitted for the loop-body literal, got:\n{ir}");
     }
 
     #[test]

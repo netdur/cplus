@@ -478,6 +478,230 @@ struct TestOpts {
     json: bool,
 }
 
+/// Phase 2 Slice 2C: detect the host triple via `clang -print-target-triple`.
+/// Used by the dep walker to look up bundled binary paths in each vendor
+/// package's `src/lib/<triple>/`. Each build calls this once.
+fn detect_host_triple() -> Result<String, ExitCode> {
+    let output = match Command::new("clang").arg("-print-target-triple").output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("cpc: invoking `clang -print-target-triple`: {e}");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    if !output.status.success() {
+        eprintln!("cpc: `clang -print-target-triple` exited with {:?}", output.status.code());
+        return Err(ExitCode::FAILURE);
+    }
+    let triple = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if triple.is_empty() {
+        eprintln!("cpc: `clang -print-target-triple` produced no output");
+        return Err(ExitCode::FAILURE);
+    }
+    Ok(triple)
+}
+
+/// Phase 2 Slice 2C: build a `Diagnostic` anchored at a manifest file.
+/// Manifest-level driver errors (E0854/E0855/E0860/E0861/E0862) don't
+/// have meaningful byte spans yet; the primary location is the file at
+/// position 1:1.
+fn manifest_diag(
+    code: &'static str,
+    path: &Path,
+    message: String,
+    notes: Vec<String>,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Error,
+        code: diag::DiagCode(code),
+        message,
+        primary: diag::SourceSpan {
+            file: path.to_path_buf(),
+            start: diag::Position { line: 1, col: 1, byte: 0 },
+            end: diag::Position { line: 1, col: 1, byte: 0 },
+        },
+        labels: Vec::new(),
+        notes,
+        suggestions: Vec::new(),
+    }
+}
+
+/// Phase 2 Slice 2C: walk the consumer's `[dependencies]`, validate each
+/// vendor package against the manifest-is-truth contract, and accumulate
+/// linker arguments. The build driver appends these after the consumer's
+/// own `[[bin]].frameworks`/`libs` (or `[lib]`'s equivalents) so the order
+/// is: consumer-first, then each dep in declared order.
+///
+/// Per-dep validation:
+///   - `vendor/<name>/Cplus.toml` exists (E0854) and parses cleanly.
+///   - Vendor manifest's `[package].name == <name>` (E0855).
+///   - For each name in `[link].bundled`:
+///       host triple is in `[link].triples` (E0862),
+///       `vendor/<name>/src/lib/<host-triple>/<basename>` exists (E0860).
+///   - No `.a`/`.dylib`/`.so` files under any
+///     `vendor/<name>/src/lib/<triple>/` that aren't in `[link].bundled`
+///     (E0861). Applies even when a package declares no `[link]` table —
+///     orphan binaries are a manifest bug, never a graceful-degradation
+///     case.
+///
+/// On any failure: a structured diagnostic is emitted via `emit_diag` and
+/// `Err(ExitCode::FAILURE)` is returned before codegen / linking can run.
+fn collect_dep_link_args(
+    m: &manifest::Manifest,
+    diag_mode: DiagMode,
+) -> Result<Vec<String>, ExitCode> {
+    if m.dependencies.is_empty() {
+        return Ok(Vec::new());
+    }
+    let host_triple = detect_host_triple()?;
+    let mut link_args: Vec<String> = Vec::new();
+    for dep in &m.dependencies {
+        let vendor_dir = m.root.join("vendor").join(&dep.name);
+        let vendor_manifest = vendor_dir.join("Cplus.toml");
+        if !vendor_manifest.is_file() {
+            let d = manifest_diag(
+                "E0854",
+                &vendor_manifest,
+                format!(
+                    "vendor package `{}` is missing `Cplus.toml` (expected at `{}`)",
+                    dep.name, vendor_manifest.display()
+                ),
+                vec![format!(
+                    "declared in `[dependencies]` of {}",
+                    m.root.join("Cplus.toml").display()
+                )],
+            );
+            emit_diag(&d, diag_mode, "");
+            return Err(ExitCode::FAILURE);
+        }
+        let vm = match manifest::load(&vendor_manifest) {
+            Ok(v) => v,
+            Err(e) => {
+                emit_diag(&e.to_diagnostic(), diag_mode, "");
+                return Err(ExitCode::FAILURE);
+            }
+        };
+        if vm.package.name != dep.name {
+            let d = manifest_diag(
+                "E0855",
+                &vendor_manifest,
+                format!(
+                    "package `Cplus.toml` declares name `{}` but lives in `vendor/{}/`",
+                    vm.package.name, dep.name
+                ),
+                vec![
+                    "a vendor package's `[package].name` must match its directory name".to_string(),
+                ],
+            );
+            emit_diag(&d, diag_mode, "");
+            return Err(ExitCode::FAILURE);
+        }
+        let lib_root = vendor_dir.join("src").join("lib");
+        let bundled: &[String] = vm.link.as_ref().map(|l| l.bundled.as_slice()).unwrap_or(&[]);
+        let triples: &[String] = vm.link.as_ref().map(|l| l.triples.as_slice()).unwrap_or(&[]);
+        if !bundled.is_empty() {
+            if !triples.iter().any(|t| t == &host_triple) {
+                let supported = if triples.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    triples.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")
+                };
+                let d = manifest_diag(
+                    "E0862",
+                    &vendor_manifest,
+                    format!(
+                        "package `{}` does not ship a build for host triple `{}` (supports: {})",
+                        dep.name, host_triple, supported
+                    ),
+                    vec![
+                        "add the host triple to `[link].triples` and ship the matching binaries, or build the package from source on this host".to_string(),
+                    ],
+                );
+                emit_diag(&d, diag_mode, "");
+                return Err(ExitCode::FAILURE);
+            }
+            let host_lib_dir = lib_root.join(&host_triple);
+            for basename in bundled {
+                let p = host_lib_dir.join(basename);
+                if !p.is_file() {
+                    let d = manifest_diag(
+                        "E0860",
+                        &vendor_manifest,
+                        format!(
+                            "package `{}` declares bundled `{}` but `src/lib/{}/{}` is not present (the package manifest says you ship it for this triple, but the file is missing)",
+                            dep.name, basename, host_triple, basename
+                        ),
+                        vec![
+                            format!("expected at `{}`", p.display()),
+                            format!("either add the file or remove `{}` from `[link].bundled`", basename),
+                        ],
+                    );
+                    emit_diag(&d, diag_mode, "");
+                    return Err(ExitCode::FAILURE);
+                }
+            }
+        }
+        // Orphan-file check: every binary under `src/lib/<triple>/` (any
+        // triple, not just the host's) must be declared in `[link].bundled`.
+        // Applies even when bundled is empty — a source-only package with a
+        // stray `.a` is a manifest bug.
+        if lib_root.is_dir() {
+            if let Ok(triple_iter) = fs::read_dir(&lib_root) {
+                for triple_entry in triple_iter.flatten() {
+                    let triple_dir = triple_entry.path();
+                    if !triple_dir.is_dir() { continue; }
+                    let Ok(file_iter) = fs::read_dir(&triple_dir) else { continue };
+                    for entry in file_iter.flatten() {
+                        let fname_os = entry.file_name();
+                        let fname = fname_os.to_string_lossy().to_string();
+                        let is_binary = fname.ends_with(".a")
+                            || fname.ends_with(".dylib")
+                            || fname.ends_with(".so")
+                            || fname.ends_with(".lib");
+                        if !is_binary { continue; }
+                        if !bundled.iter().any(|b| b == &fname) {
+                            let triple_name = triple_dir
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("?");
+                            let d = manifest_diag(
+                                "E0861",
+                                &vendor_manifest,
+                                format!(
+                                    "package `{}` ships `src/lib/{}/{}` but the manifest doesn't declare it; the manifest is the single source of truth",
+                                    dep.name, triple_name, fname
+                                ),
+                                vec![format!(
+                                    "either add `{}` to `[link].bundled` or delete the file", fname
+                                )],
+                            );
+                            emit_diag(&d, diag_mode, "");
+                            return Err(ExitCode::FAILURE);
+                        }
+                    }
+                }
+            }
+        }
+        // Splice this dep's validated link contributions into the line.
+        // Bundled artifacts go in as full paths (not `-l<name>` — they're
+        // not on the linker's search path).
+        if let Some(ls) = &vm.link {
+            for fw in &ls.frameworks {
+                link_args.push("-framework".to_string());
+                link_args.push(fw.clone());
+            }
+            for l in &ls.libs {
+                link_args.push(format!("-l{l}"));
+            }
+            for basename in &ls.bundled {
+                let p = lib_root.join(&host_triple).join(basename);
+                link_args.push(p.to_string_lossy().to_string());
+            }
+        }
+    }
+    Ok(link_args)
+}
+
 /// Multi-file project build (Phase 4 slice 4A). Looks for `Cplus.toml`
 /// in the current working directory, walks the import graph from the
 /// declared binary entry, and produces a single linked binary at
@@ -524,7 +748,11 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         return ExitCode::FAILURE;
     }
 
-    let (program, _entry_file_id) = match load_and_check_project(&bin.path, &m.root, diag_mode) {
+    // Phase 2 Slice 2B: thread the manifest's [dependencies] names into
+    // the resolver so vendor imports (`utils/math`) resolve under
+    // vendor/<dep>/src/. The consumer's bin path is the entry.
+    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let (program, _entry_file_id) = match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -556,6 +784,13 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
     }
     for lib in &bin.libs {
         link_args.push(format!("-l{lib}"));
+    }
+    // Phase 2 Slice 2C: walk dependencies, validate each vendor package's
+    // manifest-is-truth contract, and append their `[link]` contributions
+    // after the consumer's own. Errors abort the build before clang runs.
+    match collect_dep_link_args(&m, diag_mode) {
+        Ok(mut extra) => link_args.append(&mut extra),
+        Err(code) => return code,
     }
     let status = run_clang(&tmp, &out_path, build_mode, false, &[], &link_args);
     let _ = fs::remove_file(&tmp);
@@ -598,8 +833,19 @@ fn build_lib_project(
         emit_diag(&d, diag_mode, "");
         return ExitCode::FAILURE;
     }
-    let (program, _entry_file_id) = match load_and_check_project_with_mode(&lib.path, &m.root, diag_mode, true) {
+    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let (program, _entry_file_id) = match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names)) {
         Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    // Phase 2 Slice 2C: dep walk runs even for library targets — a `.dylib`
+    // baked from a package that itself depends on something must record
+    // those link args. Static archives can't carry link metadata, but we
+    // still validate the dep graph here so any contract violation surfaces
+    // at lib build time rather than ambushing the consumer later.
+    let dep_link_args: Vec<String> = match collect_dep_link_args(m, diag_mode) {
+        Ok(v) => v,
         Err(code) => return code,
     };
 
@@ -725,6 +971,12 @@ fn build_lib_project(
         for ll in &lib.libs {
             cmd.arg(format!("-l{ll}"));
         }
+        // Phase 2 Slice 2C: forward each transitive dep's link args to the
+        // .dylib link line. (Static archives don't carry these — consumers
+        // re-walk the graph.)
+        for arg in &dep_link_args {
+            cmd.arg(arg);
+        }
         let dylib_status = cmd.arg(&obj_path).arg("-o").arg(&dylib_path).status();
         match dylib_status {
             Ok(s) if s.success() => {}
@@ -759,7 +1011,13 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let bin = &m.bins[0];
-    let (program, _) = match load_and_check_project(&bin.path, &m.root, diag_mode) {
+    // Phase 2 Slice 2C: surface dep walk errors before codegen — the same
+    // E0854/E0855/E0860-E0862 checks fire on `--emit-ll-project`, even
+    // though no link step runs here. Catches manifest-is-truth violations
+    // in CI loops that exercise this flag.
+    if let Err(code) = collect_dep_link_args(&m, diag_mode) { return code; }
+    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let (program, _) = match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
         Ok(p) => p,
         Err(code) => return code,
     };
@@ -776,7 +1034,9 @@ fn load_and_check_project(
     root: &Path,
     diag_mode: DiagMode,
 ) -> Result<(cplus_core::ast::Program, String), ExitCode> {
-    load_and_check_project_with_mode(entry, root, diag_mode, false)
+    // Legacy single-file path: no manifest, no dep list. `None` keeps
+    // pre-Slice-2B file-relative resolution semantics.
+    load_and_check_project_full(entry, root, diag_mode, false, None)
 }
 
 /// Phase 5 Slice 5.A: variant that passes `is_lib` to the resolver so
@@ -788,7 +1048,21 @@ fn load_and_check_project_with_mode(
     diag_mode: DiagMode,
     is_lib: bool,
 ) -> Result<(cplus_core::ast::Program, String), ExitCode> {
-    let mut loaded = match resolver::load_project_with_mode(entry, root, is_lib) {
+    load_and_check_project_full(entry, root, diag_mode, is_lib, None)
+}
+
+/// Phase 2 Slice 2B: variant that passes the consumer's declared
+/// `[dependencies]` to the resolver so vendor-mode imports work.
+/// `deps = Some(...)` enables strict vendor mode (every bare import
+/// must be a declared dep); `None` is legacy single-file mode.
+fn load_and_check_project_full(
+    entry: &Path,
+    root: &Path,
+    diag_mode: DiagMode,
+    is_lib: bool,
+    deps: Option<&[String]>,
+) -> Result<(cplus_core::ast::Program, String), ExitCode> {
+    let mut loaded = match resolver::load_project_full(entry, root, is_lib, deps) {
         Ok(l) => l,
         Err(failure) => {
             // Slice 4C tail: render the resolver error as a structured
@@ -1108,7 +1382,13 @@ fn run_test(
                 return ExitCode::FAILURE;
             }
             let bin = &m.bins[0];
-            let (program, _) = match load_and_check_project(&bin.path, &m.root, diag_mode) {
+            // Phase 2 Slice 2C: validate the dep graph before sema. Tests
+            // share the consumer's `[dependencies]`, so a misdeclared
+            // vendor package must fail here too — silent success would let
+            // bad packages ride into a passing test run.
+            if let Err(code) = collect_dep_link_args(&m, diag_mode) { return code; }
+            let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+            let (program, _) = match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
                 Ok(p) => p,
                 Err(code) => return code,
             };

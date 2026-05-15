@@ -1,0 +1,126 @@
+// stdin_lines — read stdin line-by-line, prefix each with its number,
+// echo to stdout. EOF terminates cleanly.
+// libc symbols: read, write, malloc, realloc, free.
+//
+// Buffers raw bytes into a growing heap region and scans for '\n'. A
+// CR before LF is stripped so DOS line endings produce clean output.
+// Lines longer than the buffer cause a doubled-capacity realloc.
+
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { break; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+// Print a non-negative integer in decimal (no newline). u32 max takes
+// 10 digits; size the buffer generously and trim with len.
+fn print_u32(n: u32) {
+    let buf: *u8 = unsafe { malloc(16 as usize) };
+    let mut len: usize = 0 as usize;
+    let mut x: u32 = n;
+    if x == (0 as u32) {
+        unsafe { buf[0 as usize] = 48 as u8; }
+        len = 1 as usize;
+    } else {
+        // Emit digits LSB-first then reverse.
+        while x > (0 as u32) {
+            let d: u8 = ((x % (10 as u32)) as u8) +% (48 as u8);
+            unsafe { buf[len] = d; }
+            len = len +% (1 as usize);
+            x = x / (10 as u32);
+        }
+        let mut i: usize = 0 as usize;
+        let mut j: usize = len -% (1 as usize);
+        while i < j {
+            let t: u8 = unsafe { buf[i] };
+            unsafe { buf[i] = buf[j]; }
+            unsafe { buf[j] = t; }
+            i = i +% (1 as usize);
+            j = j -% (1 as usize);
+        }
+    }
+    write_all(1 as i32, buf, len);
+    unsafe { free(buf); }
+    return;
+}
+
+fn main() -> i32 {
+    let mut cap: usize = 4096 as usize;
+    let mut buf: *u8 = unsafe { malloc(cap) };
+    let mut len: usize = 0 as usize;
+    let mut line_no: u32 = 1 as u32;
+
+    loop {
+        // Grow if the buffer is full and we still haven't seen a newline.
+        if len == cap {
+            cap = cap *% (2 as usize);
+            buf = unsafe { realloc(buf, cap) };
+        }
+        let space: usize = cap -% len;
+        let p: *u8 = unsafe { buf + len };
+        let n: isize = unsafe { read(0 as i32, p, space) };
+        if n <= (0 as isize) {
+            // EOF (or error) — flush any pending partial line.
+            if len > (0 as usize) {
+                print_u32(line_no);
+                write_all(1 as i32, str_ptr(": "), 2 as usize);
+                write_all(1 as i32, buf, len);
+                write_all(1 as i32, str_ptr("\n"), 1 as usize);
+            }
+            break;
+        }
+        len = len +% (n as usize);
+
+        // Drain any complete lines from the buffer.
+        loop {
+            let mut nl: usize = len;
+            let mut j: usize = 0 as usize;
+            let mut found: bool = false;
+            while j < len {
+                let b: u8 = unsafe { buf[j] };
+                if b == (10 as u8) { nl = j; found = true; break; }
+                j = j +% (1 as usize);
+            }
+            if !found { break; }
+
+            // Emit "<line_no>: <line>\n" (CR stripped).
+            let mut line_end: usize = nl;
+            if line_end > (0 as usize) {
+                let prev: u8 = unsafe { buf[line_end -% (1 as usize)] };
+                if prev == (13 as u8) {
+                    line_end = line_end -% (1 as usize);
+                }
+            }
+            print_u32(line_no);
+            write_all(1 as i32, str_ptr(": "), 2 as usize);
+            write_all(1 as i32, buf, line_end);
+            write_all(1 as i32, str_ptr("\n"), 1 as usize);
+            line_no = line_no +% (1 as u32);
+
+            // Shift remaining bytes (after '\n') to the front.
+            let consumed: usize = nl +% (1 as usize);
+            let leftover: usize = len -% consumed;
+            let mut k: usize = 0 as usize;
+            while k < leftover {
+                let src: u8 = unsafe { buf[consumed +% k] };
+                unsafe { buf[k] = src; }
+                k = k +% (1 as usize);
+            }
+            len = leftover;
+        }
+    }
+    unsafe { free(buf); }
+    return 0;
+}

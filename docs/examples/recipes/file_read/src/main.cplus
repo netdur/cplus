@@ -1,0 +1,67 @@
+// file_read — read a file path from argv[1], dump its contents to stdout.
+// libc symbols: open, read, close, write, malloc, realloc, free,
+//               _NSGetArgc, _NSGetArgv (macOS argv access).
+//
+// Open with O_RDONLY (0). Reads into a growing buffer; doubles capacity
+// when full. Exits 1 if argv is missing the path, 2 if open() fails.
+// `open` is the libc symbol on darwin; on Linux it's also `open` (POSIX).
+
+extern fn _NSGetArgc() -> *i32;
+extern fn _NSGetArgv() -> ***u8;
+extern fn open(path: *u8, flags: i32, ...) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { break; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+fn main() -> i32 {
+    let argc: i32 = unsafe { *_NSGetArgc() };
+    if argc < (2 as i32) {
+        write_all(2 as i32, str_ptr("usage: file_read <path>\n"), str_len("usage: file_read <path>\n"));
+        return 1;
+    }
+    let argv: **u8 = unsafe { *_NSGetArgv() };
+    let path_pp: **u8 = unsafe { argv + (1 as usize) };
+    let path: *u8 = unsafe { *path_pp };
+
+    // O_RDONLY = 0. `open` is variadic; for read-only no mode is needed.
+    let fd: i32 = unsafe { open(path, 0 as i32) };
+    if fd < (0 as i32) {
+        write_all(2 as i32, str_ptr("open failed\n"), str_len("open failed\n"));
+        return 2;
+    }
+
+    let mut cap: usize = 4096 as usize;
+    let mut len: usize = 0 as usize;
+    let mut buf: *u8 = unsafe { malloc(cap) };
+    loop {
+        if len == cap {
+            cap = cap *% (2 as usize);
+            buf = unsafe { realloc(buf, cap) };
+        }
+        let p: *u8 = unsafe { buf + len };
+        let want: usize = cap -% len;
+        let n: isize = unsafe { read(fd, p, want) };
+        if n <= (0 as isize) { break; }
+        len = len +% (n as usize);
+    }
+    unsafe { close(fd); }
+
+    write_all(1 as i32, buf, len);
+    unsafe { free(buf); }
+    return 0;
+}

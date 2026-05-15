@@ -844,7 +844,7 @@ fn cross_file_private_fn_emits_e0403() {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"math.cplus\" as math;\nfn main() -> i32 { return math::square(7); }\n",
+        "import \"./math\" as math;\nfn main() -> i32 { return math::square(7); }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -879,7 +879,7 @@ fn cross_file_sema_error_renders_in_imported_file() {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"math.cplus\" as math;\nfn main() -> i32 { return math::square(7); }\n",
+        "import \"./math\" as math;\nfn main() -> i32 { return math::square(7); }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -915,7 +915,7 @@ fn cross_file_private_field_read_emits_e0403() {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"geom.cplus\" as g;\nfn main() -> i32 { let p: g::Point = g::Point::new(1, 2); return p.y; }\n",
+        "import \"./geom\" as g;\nfn main() -> i32 { let p: g::Point = g::Point::new(1, 2); return p.y; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -943,7 +943,7 @@ fn cross_file_public_field_read_works() {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"geom.cplus\" as g;\nfn main() -> i32 { let p: g::Point = g::Point::new(3, 4); return p.x; }\n",
+        "import \"./geom\" as g;\nfn main() -> i32 { let p: g::Point = g::Point::new(3, 4); return p.x; }\n",
     )
     .unwrap();
     let status = Command::new(cpc)
@@ -972,7 +972,7 @@ fn cross_file_struct_literal_private_field_emits_e0403() {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"geom.cplus\" as g;\nfn main() -> i32 { let p = g::Point { x: 1, y: 2 }; return 0; }\n",
+        "import \"./geom\" as g;\nfn main() -> i32 { let p = g::Point { x: 1, y: 2 }; return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -1083,7 +1083,7 @@ fn e0401_json_shape() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"missing.cplus\" as m;\nfn main() -> i32 { return 0; }\n",
+        "import \"./missing\" as m;\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -1120,7 +1120,7 @@ fn e0401_did_you_mean() {
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"maths.cplus\" as m;\nfn main() -> i32 { return 0; }\n",
+        "import \"./maths\" as m;\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -1169,7 +1169,7 @@ fn import_not_found_emits_e0401() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"nope.cplus\" as nope;\nfn main() -> i32 { return 0; }\n",
+        "import \"./nope\" as nope;\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -1191,17 +1191,17 @@ fn cyclic_imports_emit_e0404() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/a.cplus"),
-        "import \"b.cplus\" as b;\nfn from_a() -> i32 { return 1; }\n",
+        "import \"./b\" as b;\nfn from_a() -> i32 { return 1; }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("src/b.cplus"),
-        "import \"a.cplus\" as a;\nfn from_b() -> i32 { return 2; }\n",
+        "import \"./a\" as a;\nfn from_b() -> i32 { return 2; }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"a.cplus\" as a;\nfn main() -> i32 { return 0; }\n",
+        "import \"./a\" as a;\nfn main() -> i32 { return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -4814,6 +4814,462 @@ fn emit_ll_opt_preserves_slice_1a_attrs() {
         "expected `noundef` attr to survive clang round-trip, got:\n{s}");
 }
 
+// ---- Phase 2 Slices 2A/2B: package system MVP ----
+//
+// Manifest declares `[dependencies]`; resolver routes `<dep>/<module>`
+// imports under `vendor/<dep>/src/`. Bare paths and stale `.cplus`
+// extensions fail with structured E08xx diagnostics.
+
+#[test]
+fn vendor_import_round_trips_end_to_end() {
+    // Smoke test the full Slice 2A+2B path: consumer declares a dep,
+    // resolver routes `utils/math` to `vendor/utils/src/math.cplus`,
+    // and the resulting binary returns the right value.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nutils = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/Cplus.toml"),
+        "[package]\nname = \"utils\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/src/math.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"utils/math\" as math;\n\
+         fn main() -> i32 { return math::add(20, 22); }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/app");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected 42 from math::add(20, 22)");
+}
+
+#[test]
+fn undeclared_vendor_package_emits_e0852() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"nope/foo\" as f;\nfn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0852"), "expected E0852, got: {stderr}");
+    assert!(stderr.contains("not a declared dependency"),
+        "diagnostic should explain the cause: {stderr}");
+}
+
+#[test]
+fn stale_cplus_extension_in_import_emits_e0858() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/Cplus.toml"),
+        "[package]\nname = \"utils\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/src/math.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"utils/math.cplus\" as math;\nfn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0858"), "expected E0858, got: {stderr}");
+}
+
+#[test]
+fn vendor_escape_emits_e0859() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/Cplus.toml"),
+        "[package]\nname = \"utils\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/src/math.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"utils/../escape\" as e;\nfn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0859"), "expected E0859, got: {stderr}");
+}
+
+#[test]
+fn bare_import_emits_e0853() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/Cplus.toml"),
+        "[package]\nname = \"utils\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/src/math.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"bare\" as b;\nfn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0853"), "expected E0853, got: {stderr}");
+}
+
+#[test]
+fn local_relative_imports_still_work_with_deps_declared() {
+    // Regression guard: declaring a `[dependencies]` entry must not
+    // break existing local-relative imports inside the consumer.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/Cplus.toml"),
+        "[package]\nname = \"utils\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("vendor/utils/src/_dummy.cplus"),
+        "pub fn unused() -> i32 { return 0; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/helper.cplus"),
+        "pub fn local() -> i32 { return 7; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./helper\" as helper;\n\
+         fn main() -> i32 { return helper::local(); }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "local import broke after introducing deps");
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(7));
+}
+
+// ---- Phase 2 Slice 2C: build driver dep walk + bundled-binary verification ----
+//
+// `cpc build` walks the consumer's `[dependencies]`, loads each vendor's
+// `Cplus.toml`, verifies the manifest-is-truth contract, and splices each
+// dep's `[link]` contributions into the clang link line. Misuse fires
+// distinct E08xx diagnostics with no graceful-degradation fallbacks.
+
+/// Helper: ask the same `clang -print-target-triple` that cpc asks. Tests
+/// that probe bundled-binary paths need to match cpc's host triple lookup
+/// exactly — falsehood about the host is the difference between exercising
+/// E0860 (file missing on host) and E0862 (host unsupported).
+fn host_triple_for_test() -> String {
+    let out = Command::new("clang")
+        .arg("-print-target-triple")
+        .output()
+        .expect("invoke clang -print-target-triple");
+    assert!(out.status.success(), "clang -print-target-triple failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn dep_link_table_libs_flow_through_to_linker() {
+    // Vendor declares `[link] libs = ["m"]`; consumer's binary should link
+    // against libm via the dep walk. Use a pure-source vendor package so
+    // we don't need a bundled artifact.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nmathy = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\n\n[link]\nlibs = [\"m\"]\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/api.cplus"),
+        "pub fn answer() -> i32 { return 42; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mathy/api\" as m;\nfn main() -> i32 { return m::answer(); }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "dep with [link].libs should still build");
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(42));
+}
+
+#[test]
+fn dep_walk_links_bundled_static_lib_end_to_end() {
+    // Full bundled-artifact path: vendor ships a real `.a` at
+    // `src/lib/<host>/libtiny.a`; consumer's C+ source declares an extern
+    // fn matching the C symbol, calls it, and the dep walk wires the
+    // archive into the link line.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+
+    // 1. Build a tiny static archive from C, deposit at the vendor path.
+    let lib_dir = dir.join("vendor/tiny/src/lib").join(&host);
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    let c_src = dir.join("tiny_src.c");
+    std::fs::write(&c_src, "int tiny_double(int n) { return n * 2; }\n").unwrap();
+    let obj = dir.join("tiny.o");
+    let cc = Command::new("clang")
+        .arg("-c").arg(&c_src)
+        .arg("-o").arg(&obj)
+        .status().expect("invoke clang -c");
+    assert!(cc.success(), "clang -c on tiny.c failed");
+    let archive = lib_dir.join("libtiny.a");
+    let ar = Command::new("ar")
+        .arg("rcs").arg(&archive).arg(&obj)
+        .status().expect("invoke ar");
+    assert!(ar.success(), "ar rcs failed");
+    let _ = std::fs::remove_file(&obj);
+    let _ = std::fs::remove_file(&c_src);
+
+    // 2. Vendor manifest declares the artifact.
+    std::fs::write(
+        dir.join("vendor/tiny/Cplus.toml"),
+        format!(
+            "[package]\nname = \"tiny\"\n\n[link]\nbundled = [\"libtiny.a\"]\ntriples = [\"{host}\"]\n"
+        ),
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/tiny/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/tiny/src/api.cplus"),
+        "pub fn double(n: i32) -> i32 { return unsafe { tiny_double(n) }; }\n\
+         extern fn tiny_double(n: i32) -> i32;\n",
+    ).unwrap();
+
+    // 3. Consumer.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ntiny = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"tiny/api\" as tiny;\nfn main() -> i32 { return tiny::double(21); }\n",
+    ).unwrap();
+
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "bundled-artifact build failed");
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected tiny::double(21) == 42");
+}
+
+#[test]
+fn missing_vendor_manifest_emits_e0854() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nghost = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    // vendor/ghost/ exists as a dir but no Cplus.toml inside.
+    std::fs::create_dir_all(dir.join("vendor/ghost/src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0854"), "expected E0854, got: {stderr}");
+    assert!(stderr.contains("is missing `Cplus.toml`"), "diagnostic should explain: {stderr}");
+}
+
+#[test]
+fn vendor_name_dir_mismatch_emits_e0855() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    // Vendor lives in vendor/foo/ but its Cplus.toml claims name = "bar".
+    std::fs::write(
+        dir.join("vendor/foo/Cplus.toml"),
+        "[package]\nname = \"bar\"\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0855"), "expected E0855, got: {stderr}");
+    assert!(stderr.contains("must match its directory name"),
+        "diagnostic should explain: {stderr}");
+}
+
+#[test]
+fn bundled_declared_but_file_missing_emits_e0860() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    // The triples list includes the host so we route past the E0862
+    // check; the file at the expected path is absent → E0860.
+    std::fs::write(
+        dir.join("vendor/foo/Cplus.toml"),
+        format!("[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libmissing.a\"]\ntriples = [\"{host}\"]\n"),
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0860"), "expected E0860, got: {stderr}");
+    assert!(stderr.contains("libmissing.a"), "diagnostic should name the file: {stderr}");
+}
+
+#[test]
+fn orphan_static_lib_emits_e0861() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let host = host_triple_for_test();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    // Vendor declares NO `[link]` at all but has an .a file sitting under
+    // src/lib/<host>/ — orphan, manifest-is-truth violation.
+    std::fs::write(
+        dir.join("vendor/foo/Cplus.toml"),
+        "[package]\nname = \"foo\"\n",
+    ).unwrap();
+    let lib_dir = dir.join("vendor/foo/src/lib").join(&host);
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    // The orphan-detection is filesystem-presence only, no content read.
+    std::fs::write(lib_dir.join("liborphan.a"), b"not a real archive").unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0861"), "expected E0861, got: {stderr}");
+    assert!(stderr.contains("liborphan.a"), "diagnostic should name the file: {stderr}");
+}
+
+#[test]
+fn host_triple_unsupported_emits_e0862() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    // Package only supports an alien triple. (`not-a-real-triple` is
+    // deliberately nonsensical so this test stays host-agnostic — both
+    // x86 and arm CI machines run it correctly.)
+    std::fs::write(
+        dir.join("vendor/foo/Cplus.toml"),
+        "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libfoo.a\"]\ntriples = [\"not-a-real-triple\"]\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
+    assert!(stderr.contains("not-a-real-triple"),
+        "diagnostic should list the package's supported triples: {stderr}");
+}
+
+#[test]
+fn bundled_without_triples_emits_e0863_via_build() {
+    // E0863 is enforced at manifest-parse time, but a `cpc build` that
+    // touches a malformed vendor manifest must still surface it through
+    // the dep walk — this test pins the integration path so future
+    // refactors can't silently swallow the diagnostic.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/foo/Cplus.toml"),
+        "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libfoo.a\"]\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0863"), "expected E0863, got: {stderr}");
+}
+
 // ---- Phase 5 Slice 5.A: library targets + object emission ----
 //
 // `[lib]` in Cplus.toml produces `.a` and `.dylib`/`.so` instead of an
@@ -5728,6 +6184,216 @@ fn shift_count_widths_compose() {
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(0));
+}
+
+// ---- Phase 3B: reference programs smoke tests ----
+//
+// Each recipe under `docs/examples/recipes/<name>/` is a tiny `cpc build`
+// project. The tests below copy each recipe to a tempdir (so we don't
+// pollute the source tree with `target/` directories), build it, and
+// exercise the resulting binary against a representative input. Recipes
+// that use macOS-only APIs (argv via `_NSGetArgv`, etc.) are
+// `#[cfg(target_os = "macos")]`-gated; the simpler recipes run cross-
+// platform.
+//
+// For network recipes, we either use 127.0.0.1 with a short-lived
+// netcat-style helper or skip the runtime check and verify compile-only.
+
+#[cfg(test)]
+fn copy_recipe_to_tempdir(name: &str) -> std::path::PathBuf {
+    let dir = tempdir();
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap()
+        .join("docs/examples/recipes").join(name);
+    let src_dir = manifest_path.join("src");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::copy(manifest_path.join("Cplus.toml"), dir.join("Cplus.toml")).unwrap();
+    for entry in std::fs::read_dir(&src_dir).expect("recipe src/ exists") {
+        let e = entry.unwrap();
+        let dest = dir.join("src").join(e.file_name());
+        std::fs::copy(e.path(), dest).unwrap();
+    }
+    dir
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_env_var_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("env_var");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "env_var build failed");
+    let out = Command::new(dir.join("target/debug/env_var"))
+        .env("HOME", "/tmp/recipe-test")
+        .output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("HOME=/tmp/recipe-test"), "got: {stdout}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_argv_parse_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("argv_parse");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "argv_parse build failed");
+    let out = Command::new(dir.join("target/debug/argv_parse"))
+        .args(["alpha", "beta", "gamma"]).output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // argv[0] is the binary path; check the three custom args appear.
+    assert!(stdout.contains("alpha\n"), "got: {stdout}");
+    assert!(stdout.contains("beta\n"), "got: {stdout}");
+    assert!(stdout.contains("gamma\n"), "got: {stdout}");
+}
+
+#[test]
+fn recipe_stdin_lines_runs() {
+    use std::io::Write;
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("stdin_lines");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "stdin_lines build failed");
+    let mut child = std::process::Command::new(dir.join("target/debug/stdin_lines"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn().expect("spawn");
+    child.stdin.as_mut().unwrap()
+        .write_all(b"alpha\nbeta\ngamma\n").unwrap();
+    let out = child.wait_with_output().expect("wait");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "1: alpha\n2: beta\n3: gamma\n", "got: {stdout}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_file_read_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("file_read");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "file_read build failed");
+    let test_file = dir.join("payload.txt");
+    std::fs::write(&test_file, "the quick brown fox\n").unwrap();
+    let out = Command::new(dir.join("target/debug/file_read"))
+        .arg(&test_file).output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "the quick brown fox\n", "got: {stdout}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_file_write_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("file_write");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "file_write build failed");
+    let test_file = dir.join("out.txt");
+    let st = Command::new(dir.join("target/debug/file_write"))
+        .arg(&test_file).arg("written by file_write").status().expect("run");
+    assert!(st.success(), "file_write exited non-zero");
+    let contents = std::fs::read_to_string(&test_file).expect("output exists");
+    assert_eq!(contents, "written by file_write");
+}
+
+#[test]
+fn recipe_hash_table_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("hash_table");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "hash_table build failed");
+    let out = Command::new(dir.join("target/debug/hash_table")).output().expect("run");
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("4/4 ok"), "expected 4/4 ok, got: {stdout}");
+}
+
+#[test]
+fn recipe_json_parse_runs() {
+    use std::io::Write;
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("json_parse");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "json_parse build failed");
+    let mut child = std::process::Command::new(dir.join("target/debug/json_parse"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn().expect("spawn");
+    child.stdin.as_mut().unwrap()
+        .write_all(br#"{"k":[1,true,null]}"#).unwrap();
+    let out = child.wait_with_output().expect("wait");
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("obj\n"), "got: {stdout}");
+    assert!(stdout.contains("key \"k\"\n"), "got: {stdout}");
+    assert!(stdout.contains("arr\n"), "got: {stdout}");
+    assert!(stdout.contains("num 1\n"), "got: {stdout}");
+    assert!(stdout.contains("bool true\n"), "got: {stdout}");
+    assert!(stdout.contains("null\n"), "got: {stdout}");
+}
+
+#[test]
+fn recipe_json_parse_rejects_malformed() {
+    use std::io::Write;
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("json_parse");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success());
+    let mut child = std::process::Command::new(dir.join("target/debug/json_parse"))
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn().expect("spawn");
+    child.stdin.as_mut().unwrap().write_all(b"{bad:1}").unwrap();
+    let out = child.wait_with_output().expect("wait");
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_tcp_client_compiles() {
+    // Compile-only: a full round-trip would need a server up — covered
+    // by the tcp_server recipe below. This guards the build path.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("tcp_client");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "tcp_client build failed");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_tcp_server_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    // Build both server and client into the same workflow.
+    let server_dir = copy_recipe_to_tempdir("tcp_server");
+    let client_dir = copy_recipe_to_tempdir("tcp_client");
+    assert!(Command::new(cpc).arg("build").current_dir(&server_dir).status().unwrap().success());
+    assert!(Command::new(cpc).arg("build").current_dir(&client_dir).status().unwrap().success());
+
+    // Pick a high-numbered ephemeral port — collisions are unlikely
+    // across parallel test runs, and the test exits even on failure
+    // so a stuck server only leaks for the kernel-cleanup window.
+    let port = 19200 + (std::process::id() % 2000);
+    let server_bin = server_dir.join("target/debug/tcp_server");
+    let client_bin = client_dir.join("target/debug/tcp_client");
+    let mut server = Command::new(&server_bin)
+        .arg(port.to_string())
+        .spawn().expect("spawn server");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let out = Command::new(&client_bin)
+        .args(["127.0.0.1", &port.to_string(), "hello, server!"])
+        .output().expect("run client");
+    let _ = server.wait();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "hello, server!", "got: {stdout}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_http_get_compiles() {
+    // Compile-only — DNS / network reachability not assumed in CI.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("http_get");
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "http_get build failed");
 }
 
 fn tempdir() -> std::path::PathBuf {

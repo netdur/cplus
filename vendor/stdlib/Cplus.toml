@@ -3,7 +3,7 @@ name    = "stdlib"
 version = "0.0.0"
 edition = "2026"
 
-# stdlib is pure C+ source — no [link] section is needed today. Modules
+# stdlib is pure C+ source today — no [link] section is needed. Modules
 # that bind libc (io, fs, net, env) call `extern fn` directly; libc is
 # already linked by clang as part of every C+ binary, so no `libs = [...]`
 # entry is required to make those symbols resolve.
@@ -14,3 +14,16 @@ edition = "2026"
 #     [link]
 #     libs       = ["pthread"]      # → -lpthread
 #     frameworks = ["Foundation"]   # → -framework Foundation  (macOS only)
+#
+# Future binary-mode (see README "Distribution modes"): the manifest is
+# the single source of truth. To ship prebuilt artifacts, declare them
+# explicitly:
+#
+#     [link]
+#     bundled = ["stdlib.a"]
+#     triples = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]
+#
+# Phase 2's build driver verifies that every declared file is present
+# under src/lib/<triple>/, and rejects orphan files that aren't declared
+# (E0861). The presence-of-a-file in the filesystem never opts a package
+# into binary mode behind the manifest's back.

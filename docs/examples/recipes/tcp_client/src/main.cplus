@@ -1,0 +1,108 @@
+// tcp_client — connect to argv[1]:argv[2], send argv[3], read response,
+// dump bytes to stdout.
+// libc symbols: socket, connect, read, write, close, inet_addr, atoi,
+//               strlen, malloc, memset, free, _NSGetArgc, _NSGetArgv.
+//
+// Builds a sockaddr_in for IPv4 manually — this is the platform-portable
+// `sockaddr` shape on macOS arm64 (16 bytes): sin_len, sin_family, sin_port
+// (network order), sin_addr, then 8 bytes of zero padding.
+// Exits non-zero with a distinct code for each failure stage so smoke
+// tests can assert specific behavior.
+
+extern fn _NSGetArgc() -> *i32;
+extern fn _NSGetArgv() -> ***u8;
+extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
+extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+extern fn shutdown(fd: i32, how: i32) -> i32;
+extern fn inet_addr(s: *u8) -> u32;
+extern fn atoi(s: *u8) -> i32;
+extern fn strlen(s: *u8) -> usize;
+extern fn malloc(n: usize) -> *u8;
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn write_all(fd: i32, p: *u8, n: usize) -> bool {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { return false; }
+        written = written +% (w as usize);
+    }
+    return true;
+}
+
+fn main() -> i32 {
+    let argc: i32 = unsafe { *_NSGetArgc() };
+    if argc < (4 as i32) {
+        let u: str = "usage: tcp_client <ip> <port> <data>\n";
+        write_all(2 as i32, str_ptr(u), str_len(u));
+        return 1;
+    }
+    let argv: **u8 = unsafe { *_NSGetArgv() };
+    let ip: *u8 = unsafe { *(argv + (1 as usize)) };
+    let port_s: *u8 = unsafe { *(argv + (2 as usize)) };
+    let data: *u8 = unsafe { *(argv + (3 as usize)) };
+    let data_len: usize = unsafe { strlen(data) };
+
+    let port: u16 = unsafe { atoi(port_s) } as u16;
+    let addr: u32 = unsafe { inet_addr(ip) };
+
+    // sockaddr_in (16 bytes, macOS).
+    let sa: *u8 = unsafe { malloc(16 as usize) };
+    unsafe {
+        memset(sa, 0 as i32, 16 as usize);
+        sa[0 as usize] = 16 as u8;        // sin_len
+        sa[1 as usize] = 2 as u8;         // AF_INET
+        // sin_port in network byte order (high byte first).
+        sa[2 as usize] = ((port >> (8 as u32)) & (0xff as u16)) as u8;
+        sa[3 as usize] = (port & (0xff as u16)) as u8;
+        // sin_addr — inet_addr returns network-order u32; copy bytes
+        // straight through (low byte first matches the IP octets).
+        sa[4 as usize] = (addr & (0xff as u32)) as u8;
+        sa[5 as usize] = ((addr >> (8 as u32)) & (0xff as u32)) as u8;
+        sa[6 as usize] = ((addr >> (16 as u32)) & (0xff as u32)) as u8;
+        sa[7 as usize] = ((addr >> (24 as u32)) & (0xff as u32)) as u8;
+    }
+
+    // AF_INET=2, SOCK_STREAM=1.
+    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) {
+        unsafe { free(sa); }
+        return 2;
+    }
+    let crc: i32 = unsafe { connect(fd, sa, 16 as u32) };
+    if crc != (0 as i32) {
+        unsafe { close(fd); }
+        unsafe { free(sa); }
+        return 3;
+    }
+    unsafe { free(sa); }
+
+    // Send the payload.
+    if !write_all(fd, data, data_len) {
+        unsafe { close(fd); }
+        return 4;
+    }
+    // Half-close the write side so the peer sees EOF and stops trying
+    // to read more. Without this, a simple echo server deadlocks: it
+    // waits for our EOF before closing, and we wait for its EOF before
+    // exiting. SHUT_WR = 1 on darwin / linux.
+    unsafe { shutdown(fd, 1 as i32); }
+
+    // Read until EOF and dump to stdout.
+    let bufcap: usize = 4096 as usize;
+    let buf: *u8 = unsafe { malloc(bufcap) };
+    loop {
+        let n: isize = unsafe { read(fd, buf, bufcap) };
+        if n <= (0 as isize) { break; }
+        write_all(1 as i32, buf, n as usize);
+    }
+    unsafe { free(buf); }
+    unsafe { close(fd); }
+    return 0;
+}

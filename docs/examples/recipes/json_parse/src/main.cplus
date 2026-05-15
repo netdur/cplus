@@ -1,0 +1,289 @@
+// json_parse — minimal recursive-descent JSON parser. Reads stdin,
+// prints a flat token stream:
+//   obj      / end-obj
+//   arr      / end-arr
+//   key "..."
+//   str "..."
+//   num <integer-or-float-digits-as-typed>
+//   bool true | bool false
+//   null
+// Exits 0 on success, 1 on syntax error.
+// libc symbols: read, write, malloc, realloc, free.
+//
+// Supported: null, true, false, integer / decimal numbers (no
+// scientific notation), strings with `\n` `\t` `\r` `\\` `\"` escapes,
+// arrays, objects. Comments and unicode escapes are out of scope.
+//
+// Parser state is two mutable globals (`buf`, `pos`, `len`) passed
+// through every recursive call — keeps the recipe small without
+// pulling in a Box/struct allocator.
+
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+struct Parser {
+    buf: *u8,
+    pos: usize,
+    len: usize,
+    err: bool,
+}
+
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, n -% written) };
+        if w <= (0 as isize) { return; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+fn print_str(s: str) {
+    write_all(1 as i32, str_ptr(s), str_len(s));
+    return;
+}
+
+fn err_at(p: Parser) {
+    let m: str = "parse error\n";
+    write_all(2 as i32, str_ptr(m), str_len(m));
+    return;
+}
+
+fn slurp_stdin() -> Parser {
+    let mut cap: usize = 4096 as usize;
+    let mut len: usize = 0 as usize;
+    let mut buf: *u8 = unsafe { malloc(cap) };
+    loop {
+        if len == cap {
+            cap = cap *% (2 as usize);
+            buf = unsafe { realloc(buf, cap) };
+        }
+        let q: *u8 = unsafe { buf + len };
+        let n: isize = unsafe { read(0 as i32, q, cap -% len) };
+        if n <= (0 as isize) { break; }
+        len = len +% (n as usize);
+    }
+    return Parser { buf: buf, pos: 0 as usize, len: len, err: false };
+}
+
+fn peek(p: Parser) -> u8 {
+    if p.pos >= p.len { return 0 as u8; }
+    return unsafe { p.buf[p.pos] };
+}
+
+fn skip_ws(p: Parser) -> Parser {
+    let mut q: Parser = p;
+    while q.pos < q.len {
+        let c: u8 = unsafe { q.buf[q.pos] };
+        if c == (0x20 as u8) || c == (0x09 as u8) || c == (0x0a as u8) || c == (0x0d as u8) {
+            q.pos = q.pos +% (1 as usize);
+        } else {
+            break;
+        }
+    }
+    return q;
+}
+
+// Match a fixed ASCII keyword starting at p.pos. Returns advanced parser
+// on match, original on no-match.
+fn match_kw(p: Parser, kw: str) -> Parser {
+    let kl: usize = str_len(kw);
+    let kp: *u8 = str_ptr(kw);
+    if p.pos +% kl > p.len { return p; }
+    let mut i: usize = 0 as usize;
+    while i < kl {
+        let a: u8 = unsafe { p.buf[p.pos +% i] };
+        let b: u8 = unsafe { kp[i] };
+        if a != b { return p; }
+        i = i +% (1 as usize);
+    }
+    return Parser { buf: p.buf, pos: p.pos +% kl, len: p.len, err: false };
+}
+
+// Print one decoded character to stdout, handling JSON escapes.
+fn emit_str_char(c: u8) -> bool {
+    // Returns true if c was an opening byte for an escape that needs the
+    // caller to skip an extra byte. (We handle escapes inline here.)
+    write_all(1 as i32, str_ptr(" "), 1 as usize);  // placeholder, never called
+    return false;
+}
+
+// Parse + emit a string literal. Caller has already consumed the opening
+// '"'. Emits the raw decoded body inside `"..."` and consumes the
+// closing '"'. Returns the advanced parser on success; on error, sets
+// pos = len so callers detect the failure.
+fn parse_string(p: Parser, label: str) -> Parser {
+    print_str(label);
+    print_str(" \"");
+    let mut q: Parser = p;
+    loop {
+        if q.pos >= q.len {
+            print_str("\"\n");
+            return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+        }
+        let c: u8 = unsafe { q.buf[q.pos] };
+        if c == (34 as u8) {            // closing '"'
+        q.pos = q.pos +% (1 as usize);
+        print_str("\"\n");
+        return q;
+        }
+        if c == (92 as u8) {            // backslash
+        if q.pos +% (1 as usize) >= q.len {
+            print_str("\"\n");
+            return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+        }
+        let e: u8 = unsafe { q.buf[q.pos +% (1 as usize)] };
+        let mut out: u8 = e;
+        if e == (110 as u8) { out = 10 as u8; }   // n -> LF
+        else if e == (116 as u8) { out = 9 as u8; }   // t -> TAB
+        else if e == (114 as u8) { out = 13 as u8; }   // r -> CR
+        else if e == (92 as u8) { out = 92 as u8; }   // \\
+        else if e == (34 as u8) { out = 34 as u8; }   // \"
+        // Any other escape is passed through verbatim — good enough
+        // for the recipe.
+        write_all(1 as i32, str_ptr("X"), 0 as usize); // no-op anchor
+        let buf: *u8 = unsafe { malloc(1 as usize) };
+        unsafe { buf[0 as usize] = out; }
+        write_all(1 as i32, buf, 1 as usize);
+        unsafe { free(buf); }
+        q.pos = q.pos +% (2 as usize);
+        } else {
+            let buf: *u8 = unsafe { malloc(1 as usize) };
+            unsafe { buf[0 as usize] = c; }
+            write_all(1 as i32, buf, 1 as usize);
+            unsafe { free(buf); }
+            q.pos = q.pos +% (1 as usize);
+        }
+    }
+    return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+}
+
+// Print "num <digits>\n" for the number starting at p.pos. Consumes the
+// digit run (with optional leading '-' and a '.' fraction).
+fn parse_number(p: Parser) -> Parser {
+    print_str("num ");
+    let mut q: Parser = p;
+    // Optional sign.
+    let first: u8 = unsafe { q.buf[q.pos] };
+    if first == (45 as u8) {           // '-'
+    let buf: *u8 = unsafe { malloc(1 as usize) };
+    unsafe { buf[0 as usize] = 45 as u8; }
+    write_all(1 as i32, buf, 1 as usize);
+    unsafe { free(buf); }
+    q.pos = q.pos +% (1 as usize);
+    }
+    while q.pos < q.len {
+        let c: u8 = unsafe { q.buf[q.pos] };
+        let is_digit: bool = (c >= (48 as u8)) && (c <= (57 as u8));
+        let is_dot: bool = c == (46 as u8);
+        if !(is_digit || is_dot) { break; }
+        let buf: *u8 = unsafe { malloc(1 as usize) };
+        unsafe { buf[0 as usize] = c; }
+        write_all(1 as i32, buf, 1 as usize);
+        unsafe { free(buf); }
+        q.pos = q.pos +% (1 as usize);
+    }
+    print_str("\n");
+    return q;
+}
+
+fn parse_value(p: Parser) -> Parser {
+    let q0: Parser = skip_ws(p);
+    if q0.pos >= q0.len {
+        return Parser { buf: q0.buf, pos: q0.len, len: q0.len, err: true };
+    }
+    let c: u8 = unsafe { q0.buf[q0.pos] };
+
+    if c == (34 as u8) {                       // '"' — string
+    let q1: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
+    return parse_string(q1, "str");
+    }
+    if c == (123 as u8) {                      // '{'  — object
+    print_str("obj\n");
+    let mut q: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
+    q = skip_ws(q);
+    if peek(q) == (125 as u8) {            // empty object '}'
+    print_str("end-obj\n");
+    return Parser { buf: q.buf, pos: q.pos +% (1 as usize), len: q.len, err: false };
+    }
+    loop {
+        q = skip_ws(q);
+        if peek(q) != (34 as u8) {         // expected key string
+        err_at(q);
+        return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+        }
+        q.pos = q.pos +% (1 as usize);
+        q = parse_string(q, "key");
+        q = skip_ws(q);
+        if peek(q) != (58 as u8) {         // ':'
+        err_at(q);
+        return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+        }
+        q.pos = q.pos +% (1 as usize);
+        q = parse_value(q);
+        q = skip_ws(q);
+        let nc: u8 = peek(q);
+        if nc == (44 as u8) {              // ','
+        q.pos = q.pos +% (1 as usize);
+        } else if nc == (125 as u8) {      // '}'
+        print_str("end-obj\n");
+        return Parser { buf: q.buf, pos: q.pos +% (1 as usize), len: q.len, err: false };
+        } else {
+            err_at(q);
+            return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+        }
+    }
+    }
+    if c == (91 as u8) {                       // '[' — array
+    print_str("arr\n");
+    let mut q: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
+    q = skip_ws(q);
+    if peek(q) == (93 as u8) {             // empty array ']'
+    print_str("end-arr\n");
+    return Parser { buf: q.buf, pos: q.pos +% (1 as usize), len: q.len, err: false };
+    }
+    loop {
+        q = parse_value(q);
+        q = skip_ws(q);
+        let nc: u8 = peek(q);
+        if nc == (44 as u8) {              // ','
+        q.pos = q.pos +% (1 as usize);
+        } else if nc == (93 as u8) {       // ']'
+        print_str("end-arr\n");
+        return Parser { buf: q.buf, pos: q.pos +% (1 as usize), len: q.len, err: false };
+        } else {
+            err_at(q);
+            return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
+        }
+    }
+    }
+    // Literals
+    let mq: Parser = match_kw(q0, "null");
+    if mq.pos != q0.pos { print_str("null\n"); return mq; }
+    let tq: Parser = match_kw(q0, "true");
+    if tq.pos != q0.pos { print_str("bool true\n"); return tq; }
+    let fq: Parser = match_kw(q0, "false");
+    if fq.pos != q0.pos { print_str("bool false\n"); return fq; }
+    // Number — sign or digit.
+    let is_digit: bool = (c >= (48 as u8)) && (c <= (57 as u8));
+    if is_digit || c == (45 as u8) {
+        return parse_number(q0);
+    }
+    err_at(q0);
+    return Parser { buf: q0.buf, pos: q0.len, len: q0.len, err: true };
+}
+
+fn main() -> i32 {
+    let p: Parser = slurp_stdin();
+    let after: Parser = parse_value(p);
+    let trail: Parser = skip_ws(after);
+    // Success ⇔ no error flag AND no trailing garbage past the value.
+    let ok: bool = !after.err && trail.pos == trail.len;
+    unsafe { free(p.buf); }
+    if !ok { return 1; }
+    return 0;
+}

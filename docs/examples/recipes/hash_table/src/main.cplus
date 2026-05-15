@@ -1,0 +1,179 @@
+// hash_table — minimal `str → i32` map. Open addressing, linear probing.
+// libc symbols: malloc, free, memcpy, write.
+//
+// Demonstrates: heap-allocated typed pointer arrays via reinterpret cast
+// (`*u8 as **u8` / `as *usize` / `as *i32`), FNV-1a hash, linear probe,
+// and a runtime self-check. No generics — this is a concrete reference
+// for the eventual `stdlib/hash_map.cplus`.
+//
+// Layout: three parallel arrays of `cap` entries each:
+//   - keys[i]:  *u8       — heap-owned copy of the i-th key's bytes (0 == empty)
+//   - klens[i]: usize     — byte length of the i-th key
+//   - vals[i]:  i32       — value associated with the i-th key
+//
+// The C+ way to keep a pointer-typed array is to malloc(N * sizeof(T))
+// and reinterpret as the typed pointer; indexing then does the right
+// pointer-step arithmetic.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { break; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+// FNV-1a 64-bit.
+fn fnv1a(bytes: *u8, len: usize) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325 as u64;
+    let mut i: usize = 0 as usize;
+    while i < len {
+        let b: u8 = unsafe { bytes[i] };
+        h = h ^ (b as u64);
+        h = h *% (0x100000001b3 as u64);
+        i = i +% (1 as usize);
+    }
+    return h;
+}
+
+struct Table {
+    keys: **u8,
+    klens: *usize,
+    vals: *i32,
+    cap: usize,
+}
+
+fn table_new(cap: usize) -> Table {
+    // 8 bytes per pointer (aarch64) and per usize; 4 bytes per i32.
+    let keys_bytes: usize = cap *% (8 as usize);
+    let lens_bytes: usize = cap *% (8 as usize);
+    let vals_bytes: usize = cap *% (4 as usize);
+    let keys_raw: *u8 = unsafe { malloc(keys_bytes) };
+    let klens_raw: *u8 = unsafe { malloc(lens_bytes) };
+    let vals_raw: *u8 = unsafe { malloc(vals_bytes) };
+    // Zero the entire keys + klens regions byte-by-byte so every slot
+    // reads as `(klen=0, key=null)` = empty.
+    let mut i: usize = 0 as usize;
+    while i < keys_bytes { unsafe { keys_raw[i] = 0 as u8; } i = i +% (1 as usize); }
+    i = 0 as usize;
+    while i < lens_bytes { unsafe { klens_raw[i] = 0 as u8; } i = i +% (1 as usize); }
+    return Table {
+        keys: unsafe { keys_raw as **u8 },
+        klens: unsafe { klens_raw as *usize },
+        vals: unsafe { vals_raw as *i32 },
+        cap: cap,
+    };
+}
+
+fn keys_equal(a: *u8, alen: usize, b: *u8, blen: usize) -> bool {
+    if alen != blen { return false; }
+    let mut i: usize = 0 as usize;
+    while i < alen {
+        let x: u8 = unsafe { a[i] };
+        let y: u8 = unsafe { b[i] };
+        if x != y { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+fn table_insert(t: Table, key: *u8, klen: usize, val: i32) {
+    let h: u64 = fnv1a(key, klen);
+    let start: usize = (h as usize) % t.cap;
+    let mut slot: usize = start;
+    loop {
+        let existing_len: usize = unsafe { t.klens[slot] };
+        if existing_len == (0 as usize) {
+            let owned: *u8 = unsafe { malloc(klen) };
+            unsafe { memcpy(owned, key, klen); }
+            unsafe { t.keys[slot] = owned; }
+            unsafe { t.klens[slot] = klen; }
+            unsafe { t.vals[slot] = val; }
+            return;
+        }
+        let existing_key: *u8 = unsafe { t.keys[slot] };
+        if keys_equal(existing_key, existing_len, key, klen) {
+            unsafe { t.vals[slot] = val; }
+            return;
+        }
+        slot = (slot +% (1 as usize)) % t.cap;
+        if slot == start { break; } // table full — caller should resize
+    }
+    return;
+}
+
+// Returns -1 on miss (acceptable for an i32-valued demo).
+fn table_get(t: Table, key: *u8, klen: usize) -> i32 {
+    let h: u64 = fnv1a(key, klen);
+    let start: usize = (h as usize) % t.cap;
+    let mut slot: usize = start;
+    loop {
+        let existing_len: usize = unsafe { t.klens[slot] };
+        if existing_len == (0 as usize) { break; }
+        let existing_key: *u8 = unsafe { t.keys[slot] };
+        if keys_equal(existing_key, existing_len, key, klen) {
+            return unsafe { t.vals[slot] };
+        }
+        slot = (slot +% (1 as usize)) % t.cap;
+        if slot == start { break; }
+    }
+    return - 1 as i32;
+}
+
+fn table_free(t: Table) {
+    let mut i: usize = 0 as usize;
+    while i < t.cap {
+        let l: usize = unsafe { t.klens[i] };
+        if l != (0 as usize) {
+            let k: *u8 = unsafe { t.keys[i] };
+            unsafe { free(k); }
+        }
+        i = i +% (1 as usize);
+    }
+    unsafe { free(t.keys as *u8); }
+    unsafe { free(t.klens as *u8); }
+    unsafe { free(t.vals as *u8); }
+    return;
+}
+
+fn put_str(t: Table, key: str, val: i32) {
+    table_insert(t, str_ptr(key), str_len(key), val);
+    return;
+}
+
+fn get_str(t: Table, key: str) -> i32 {
+    return table_get(t, str_ptr(key), str_len(key));
+}
+
+fn main() -> i32 {
+    let t: Table = table_new(16 as usize);
+    put_str(t, "apple", 1 as i32);
+    put_str(t, "banana", 2 as i32);
+    put_str(t, "cherry", 3 as i32);
+    put_str(t, "apple", 10 as i32);  // overwrite
+
+    let mut fails: i32 = 0 as i32;
+    if get_str(t, "apple") != (10 as i32) { fails = fails +% (1 as i32); }
+    if get_str(t, "banana") != (2 as i32) { fails = fails +% (1 as i32); }
+    if get_str(t, "cherry") != (3 as i32) { fails = fails +% (1 as i32); }
+    if get_str(t, "grape") != (- 1 as i32) { fails = fails +% (1 as i32); }
+
+    if fails == (0 as i32) {
+        let ok: str = "hash_table: 4/4 ok\n";
+        write_all(1 as i32, str_ptr(ok), str_len(ok));
+    } else {
+        let fail: str = "hash_table: FAIL\n";
+        write_all(2 as i32, str_ptr(fail), str_len(fail));
+    }
+    table_free(t);
+    return fails;
+}
