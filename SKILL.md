@@ -235,10 +235,28 @@ let c: i32 = 10 / 3;           // div-by-zero traps in both modes
 let d: u8 = 250u8 +% 10u8;     // 4 (wraps)
 let e: i8 = 100i8 *% 3i8;      // overflow, wraps
 
+// Bitwise + shifts on any integer width. Right shift on signed types
+// is arithmetic (sign-preserving); on unsigned, logical (zero-fill).
+let h: i32 = 0xff & 0x0f;      // 15
+let i: i32 = 0xf0 | 0x0f;      // 255
+let j: i32 = 0xff ^ 0xaa;      // 85
+let k: i32 = 1 << 8;           // 256
+let l: i32 = 256 >> 2;         // 64
+let m: u32 = ~(0 as u32);      // 0xffffffff
+
+// Byte-swap intrinsics (built-in, no FFI declaration needed).
+// htons / htonl convert host-order → network-order on every C+ target.
+let port_be: u16 = htons(8080 as u16);  // 0x901f on LE
+let n32: u32    = bswap32(0x12345678 as u32);  // 0x78563412
+
 // Comparisons return bool.
 let f: bool = a < b;
 let g: bool = a == b;          // strict equality, no coercion
 ```
+
+**Raw-pointer arithmetic uses plain `+` / `-` (not `+%`).** `p + 1` advances
+by one element width. `p +% 1` is a sema error — pointer offsets don't
+participate in the wrapping-operator family.
 
 ### 3.5 Control flow
 
@@ -714,9 +732,12 @@ cpc fmt FILE           # canonical format in place
 cpc fmt --check DIR    # CI mode — exit 1 on drift
 cpc test               # run #[test] functions + doctests
 cpc lsp                # start the language server
-cpc --emit-ll FILE     # dump LLVM IR for inspection
+cpc --emit-ll FILE     # pre-pass LLVM IR (what cpc emitted)
+cpc --emit-ll-opt FILE # post-pass LLVM IR (after clang's optimizer)
+cpc --emit-asm FILE    # native assembly (after clang's optimizer)
 cpc --diagnostics=json # structured diagnostic output
 cpc --release          # -O2 (default is debug -O0 with overflow traps)
+cpc -V                 # print version (alias: --version)
 ```
 
 **Test pattern:** every new feature lands with at least three test cases — positive (program compiles and runs as expected), negative-with-code (program rejects with the specific Exxxx code), and an e2e test that drives `cpc build` end-to-end. See [cpc/tests/e2e.rs](cpc/tests/e2e.rs) for the canonical shape.

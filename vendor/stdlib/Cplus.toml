@@ -1,0 +1,16 @@
+[package]
+name    = "stdlib"
+version = "0.0.0"
+edition = "2026"
+
+# stdlib is pure C+ source — no [link] section is needed today. Modules
+# that bind libc (io, fs, net, env) call `extern fn` directly; libc is
+# already linked by clang as part of every C+ binary, so no `libs = [...]`
+# entry is required to make those symbols resolve.
+#
+# When/if a module needs a non-libc system lib (none anticipated for the
+# Phase 3 scope), add it here:
+#
+#     [link]
+#     libs       = ["pthread"]      # → -lpthread
+#     frameworks = ["Foundation"]   # → -framework Foundation  (macOS only)

@@ -1,0 +1,56 @@
+// stdlib/hash_map.cplus — open-addressing hash map.
+//
+// Skeleton: API only. Bodies fill in during Phase 3.
+//
+// Open addressing with linear probing; doubles capacity at 0.7 load
+// factor. Single-threaded; no concurrent mutation. The reference
+// implementation lands as Slice 3B (`docs/examples/recipes/hash_table.cplus`)
+// and gets promoted to this stable surface in Slice 3C.
+
+import "./result.cplus" as result;
+
+pub struct HashMap[K, V] {
+    // TODO: Phase 3 — buckets buffer + len + cap + tombstone-mask.
+    // Placeholder fields keep the struct parseable in the skeleton.
+    _len: usize,
+    _cap: usize,
+}
+
+impl [K, V] HashMap[K, V] {
+    pub fn new() -> HashMap[K, V] {
+        return HashMap[K, V] { _len: 0 as usize, _cap: 0 as usize };
+    }
+
+    pub fn with_capacity(n: usize) -> HashMap[K, V] {
+        return HashMap[K, V] { _len: 0 as usize, _cap: n };
+    }
+
+    // Insert (k, v); return Some(old) if k existed, None otherwise.
+    // Phase 3 may pick `Result` or a dedicated `Option`-like; final
+    // shape pinned during impl.
+    pub fn insert(mut self, k: K, v: V) {
+        // TODO: Phase 3 — hash k, probe, write or replace.
+        return;
+    }
+
+    // Look up by key. Returns None when absent.
+    pub fn get(self, k: K) -> result::Result[V, result::IoError] {
+        // TODO: Phase 3 — replace IoError with a dedicated NotFound enum.
+        return result::Result::Err(result::IoError::NotFound);
+    }
+
+    // Remove a key. Tombstone slot until next resize.
+    pub fn remove(mut self, k: K) -> bool {
+        // TODO: Phase 3 — find slot, mark tombstone, len -= 1.
+        return false;
+    }
+
+    pub fn len(self) -> usize {
+        return self._len;
+    }
+
+    fn drop(mut self) {
+        // TODO: Phase 3 — drop each live (k, v); free buckets buffer.
+        return;
+    }
+}

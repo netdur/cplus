@@ -10,8 +10,98 @@
 
 use crate::ast::*;
 use crate::sema::{EnumId, StructId, Ty};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt::Write;
+
+/// Slice 1B (v0.0.2): module-level metadata table. `!range` nodes need
+/// module-unique IDs and must appear outside any function definition.
+/// `register_range` allocates an ID, records the definition, and returns
+/// the ID so codegen can splice `, !range !N` onto the relevant load/call.
+///
+/// IDs start at 100_000 to leave the 0..6 + 6.. range untouched for the
+/// DWARF metadata block (see `emit_dwarf_metadata`). The two allocators do
+/// not interleave because DWARF emits at module-end after codegen, and the
+/// DWARF range never reaches 100_000 — that would require ~50k functions
+/// in one module.
+#[derive(Default)]
+struct ModuleMetadata {
+    next_id: Cell<u32>,
+    nodes: RefCell<Vec<String>>,
+    /// Cache so equal (lo, hi, ty_str) tuples share one MD node.
+    cache: RefCell<HashMap<(i64, i64, &'static str), u32>>,
+}
+
+impl ModuleMetadata {
+    fn new() -> Self {
+        Self {
+            next_id: Cell::new(100_000),
+            ..Self::default()
+        }
+    }
+    /// Allocate a `!N = !{<ty> <lo>, <ty> <hi>}` range metadata node and
+    /// return `N`. `hi` is exclusive per LLVM convention.
+    fn register_range(&self, lo: i64, hi: i64, ty: &'static str) -> u32 {
+        if let Some(&id) = self.cache.borrow().get(&(lo, hi, ty)) {
+            return id;
+        }
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        self.nodes.borrow_mut().push(format!("!{id} = !{{{ty} {lo}, {ty} {hi}}}"));
+        self.cache.borrow_mut().insert((lo, hi, ty), id);
+        id
+    }
+
+    /// Slice 1C: allocate a self-referential `!alias.scope` domain node.
+    /// Each function that has >= 2 noalias pointer params gets one domain.
+    /// IR form: `!N = distinct !{!N, !"label"}` — the self-reference makes
+    /// it distinct from any other domain even if labels collide.
+    fn register_alias_domain(&self, label: &str) -> u32 {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        self.nodes.borrow_mut().push(
+            format!("!{id} = distinct !{{!{id}, !\"{label}\"}}")
+        );
+        id
+    }
+
+    /// Slice 1C: allocate a self-referential scope node tied to `domain_id`.
+    /// IR form: `!N = distinct !{!N, !D, !"label"}`.
+    fn register_alias_scope(&self, domain_id: u32, label: &str) -> u32 {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        self.nodes.borrow_mut().push(
+            format!("!{id} = distinct !{{!{id}, !{domain_id}, !\"{label}\"}}")
+        );
+        id
+    }
+
+    /// Slice 1C: allocate a list of scope ids used by `!alias.scope` or
+    /// `!noalias`. Both clauses take a list of scope refs.
+    /// IR form: `!N = !{!S1, !S2, ...}`. Empty list returns the "empty
+    /// scope-list" id, which has no effect — caller should skip emitting
+    /// the attribute entirely in that case.
+    fn register_alias_scope_list(&self, scopes: &[u32]) -> u32 {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        let items: Vec<String> = scopes.iter().map(|s| format!("!{s}")).collect();
+        self.nodes.borrow_mut().push(
+            format!("!{id} = !{{{}}}", items.join(", "))
+        );
+        id
+    }
+
+    /// Drain the accumulated metadata definitions into the output. Must be
+    /// called once at module-end, after all function bodies are emitted.
+    fn emit_into(&self, out: &mut String) {
+        let nodes = self.nodes.borrow();
+        if nodes.is_empty() { return; }
+        for line in nodes.iter() {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+}
 
 /// Build mode controls overflow checking on plain `+ - *`. Division-by-zero
 /// trapping is emitted regardless of mode (per plan §2.3).
@@ -27,7 +117,20 @@ pub enum BuildMode {
 /// Generate LLVM IR for a sema-validated program. Caller must run sema first;
 /// codegen will panic on unresolvable references that sema would have caught.
 pub fn generate(program: &Program, mode: BuildMode) -> String {
-    generate_inner(program, mode, None, None, &[])
+    generate_inner(program, mode, None, None, &[], false)
+}
+
+/// Phase 5 Slice 5.B: generate IR for a library target. Non-`pub` items
+/// get `internal` linkage so LTO can strip unused implementation detail
+/// from the final `.dylib` / `.a`. `pub` items keep external linkage and
+/// form the C-callable public ABI.
+///
+/// Distinct from `generate` so existing executable builds (and the
+/// substring-pinned test suite that goes with them) keep their current
+/// linkage exactly. Eventually the bin path can share this rule too —
+/// internal linkage is correct everywhere — but ship + verify first.
+pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
+    generate_inner(program, mode, None, None, &[], true)
 }
 
 /// Phase 11 polish (2026-05-13): emit LLVM IR with DWARF debug
@@ -36,7 +139,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
 /// (for line-by-line stepping) is a follow-up. lldb can still identify
 /// function symbols in stack traces and set breakpoints by name.
 pub fn generate_with_debug(program: &Program, mode: BuildMode, source_file: &std::path::Path) -> String {
-    generate_inner(program, mode, None, Some(source_file), &[])
+    generate_inner(program, mode, None, Some(source_file), &[], false)
 }
 
 /// Phase 11 polish (2026-05-13): emit LLVM IR with sanitizer function
@@ -50,7 +153,7 @@ pub fn generate_with_options(
     source_file: Option<&std::path::Path>,
     sanitizers: &[&str],
 ) -> String {
-    generate_inner(program, mode, None, source_file, sanitizers)
+    generate_inner(program, mode, None, source_file, sanitizers, false)
 }
 
 /// Slice 5ATTR.4: emit a test-runner binary. The output IR contains every
@@ -75,7 +178,7 @@ pub fn generate_test_binary(
     tests: &[crate::attrs::TestFn],
     json: bool,
 ) -> String {
-    generate_inner(program, mode, Some(TestDriverConfig { tests, json }), None, &[])
+    generate_inner(program, mode, Some(TestDriverConfig { tests, json }), None, &[], false)
 }
 
 struct TestDriverConfig<'a> {
@@ -89,11 +192,16 @@ fn generate_inner(
     test_cfg: Option<TestDriverConfig<'_>>,
     debug_source: Option<&std::path::Path>,
     sanitizers: &[&str],
+    is_lib: bool,
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
     let test_mode = test_cfg.is_some();
     let mut out = String::new();
+    // Slice 1B: module-level `!range` metadata table. Allocated as we
+    // codegen each function; flushed to `out` after every function body is
+    // written and before DWARF (which has its own ID range).
+    let md = ModuleMetadata::new();
     write_preamble(&mut out);
     if test_mode {
         // Shared per-test failure flag — written by `assert` in any function
@@ -120,7 +228,7 @@ fn generate_inner(
                 // Slice 7GEN.4: generic functions don't emit pre-monomorphization.
                 // Slice 7GEN.5 will walk a work-queue of instantiations.
                 if !f.generic_params.is_empty() { continue; }
-                gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode, &mut emitted_extern_symbols);
+                gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode, &mut emitted_extern_symbols, &md, is_lib);
             }
             ItemKind::Impl(b) => {
                 let Some(&id) = types.struct_by_name.get(&b.target.name) else { continue; };
@@ -130,7 +238,7 @@ fn generate_inner(
                     // signatures and bodies are emitted as concrete
                     // copies by the monomorphize pass.
                     if !m.generic_params.is_empty() { continue; }
-                    gen_method(&mut out, id, m, &sigs, &types, &str_lits, mode, test_mode);
+                    gen_method(&mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md, is_lib);
                 }
             }
             // Slice 7GEN.3: interface declarations have no runtime
@@ -148,6 +256,10 @@ fn generate_inner(
     if let Some(cfg) = test_cfg {
         emit_test_driver_main(&mut out, cfg.tests, cfg.json);
     }
+    // Slice 1B: flush the accumulated `!N = !{...}` range metadata table
+    // before DWARF (which writes its own metadata block). DWARF allocates
+    // IDs starting at 0; our range table starts at 100_000 — disjoint.
+    md.emit_into(&mut out);
     // Phase 11 polish (2026-05-13): DWARF debug metadata. v1 emits
     // module flags + DICompileUnit + DIFile + one DISubprogram per
     // function (named, line-numbered). Per-instruction DILocation is
@@ -713,19 +825,311 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> b
     matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
 }
 
-/// Slice 6BC.codegen: LLVM parameter attribute prefix for the borrow flavor.
-/// Pairs with `param_passes_by_ptr` — the attribute applies only when the
-/// parameter is pointer-passed. Returns:
-/// - `"noalias "` for `mut x: T` non-Copy — the borrow checker proves
-///   uniqueness, so no other pointer in scope aliases this one.
-/// - `"readonly "` for `x: T` non-Copy (shared) — the callee cannot mutate
-///   through the pointer (sema rejects writes; Drop is not registered on
-///   borrowed params). Multiple shared pointers may alias (per §2.9), so
-///   `noalias` would be unsound — `readonly` is the sound subset.
-/// - `""` otherwise.
-fn param_attr_prefix(move_: bool, mutable: bool) -> &'static str {
-    if move_ { return ""; }
-    if mutable { "noalias " } else { "readonly " }
+/// Slice 1A: full parameter attribute set (v0.0.2 LLVM information dividend).
+///
+/// Supersedes the original `param_attr_prefix` (which returned just
+/// `noalias`/`readonly`). Composes every attribute the frontend has already
+/// proven sound:
+/// - **Pointer-passed (non-Copy struct, by §2.9 borrow ABI):**
+///   - `noalias` (`mut`/`move`) or `readonly` (shared `self`/`x: T`) — the
+///     borrow checker proves disjointness for the first, write-freeness for
+///     the second.
+///   - `nonnull` — C+ has no null in safe code (cross-ref
+///     [feedback_cplus_no_null.md]); the address always comes from an
+///     `alloca` or a previously-typed place.
+///   - `noundef` — definite-assignment (sema slice 3J) guarantees the bytes
+///     reachable through the pointer are fully defined.
+///   - `dereferenceable(N)` + `align A` — `(N, A)` come from `static_layout`,
+///     keyed on the slice-11.LAYOUT type table. Exact, not lower bounds.
+/// - **Value-passed scalar (integers, bool, floats, raw `*T`, fn-pointer,
+///   plain enum `iN'`):** `noundef` alone. Definite assignment justifies it
+///   and LLVM's `-O2` uses `noundef` to fold redundant freeze/select
+///   patterns.
+/// - **Value-passed aggregate (`str`, `string`, `T[]`, Copy struct, tagged
+///   enum):** no attributes. Padding bytes are LLVM-`poison` after
+///   `insertvalue` construction, so `noundef` would be unsound at the
+///   aggregate level.
+///
+/// Returned string has no trailing space; callers append a separator before
+/// the SSA name (e.g. `"ptr {attrs} %{i}"`).
+fn param_attrs(
+    ty: &Ty,
+    move_: bool,
+    mutable: bool,
+    pointer_passed: bool,
+    types: &TypeTable,
+) -> String {
+    if pointer_passed {
+        let mut s = String::new();
+        s.push_str(if move_ || mutable { "noalias" } else { "readonly" });
+        s.push_str(" nonnull noundef");
+        if let Some((sz, al)) = static_layout(ty, types) {
+            if sz > 0 {
+                let _ = write!(s, " dereferenceable({sz})");
+            }
+            let _ = write!(s, " align {al}");
+        }
+        s
+    } else if is_scalar_ty(ty, types) {
+        "noundef".to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Slice 1D (v0.0.2): decide whether the return value should use the LLVM
+/// `sret` calling convention instead of a value-returned aggregate.
+///
+/// The plan describes `sret` for "non-Copy structs, slices, owned strings,
+/// or any aggregate exceeding a target-specific size threshold (start with
+/// > 16 bytes)". This implementation ships the **narrow** version: only
+/// owned `string` (24 bytes, has Drop, the canonical case where copy
+/// elision matters most). Generic non-Copy struct sret is deferred — it
+/// has substantial test-surface impact and the wins for small aggregates
+/// (≤ 16 bytes) are negligible at -O2 because LLVM already lowers them
+/// through ABI-appropriate registers.
+///
+/// `extern fn` boundaries are never sret-modified — those keep the C ABI
+/// the user declared. The callers of this predicate check `is_extern`
+/// before calling.
+/// Phase 5 Slice 5.D: classify a `pub extern fn` parameter or return type
+/// against the platform C ABI. Today we target aarch64-apple-darwin —
+/// the AArch64 Procedure Call Standard — and treat all aggregates as
+/// integer-class (no HFA detection; the plan defers float-class to v2).
+///
+/// The rule is:
+/// - Scalar (primitive, raw `*T`, fn-ptr, plain enum): pass unchanged.
+/// - Aggregate ≤ 8 bytes: coerce to `i64`. Caller packs into a single GPR;
+///   callee re-interprets the bits via an alloca'd buffer.
+/// - Aggregate 9..=16 bytes: coerce to `[2 x i64]`. Two GPRs.
+/// - Aggregate > 16 bytes: pass indirectly via a pointer. Return via
+///   `sret(<ty>)` to a caller-allocated slot.
+///
+/// `Indirect` returns are handled in tandem with Slice 1D's `sret` path —
+/// the function signature drops the value return and gains a `ptr sret(...)`
+/// first parameter. Indirect *args* are bare `ptr` (no `byval` on
+/// aarch64-darwin; the caller-callee contract owns the memory layout).
+#[derive(Debug, Clone, PartialEq)]
+enum CAbiClass {
+    /// Pass as-is; no coercion needed.
+    Direct,
+    /// Coerce to the given LLVM type. The coerced size is ≥ the original
+    /// size and is required for the alloca's storage so the coerced
+    /// store doesn't overflow into adjacent memory.
+    Coerce { llvm_ty: String, size: u64, align: u64 },
+    /// Pass indirectly via a hidden pointer (param side) / `sret` (return).
+    Indirect,
+}
+
+fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
+    // Aggregates only need ABI coercion. Everything else is a single
+    // register class and passes through cleanly.
+    let is_aggregate = match ty {
+        // Plain enums lower to i32 (scalar). Tagged enums are aggregates —
+        // but sema's 5.C predicate rejects them at the `pub extern fn`
+        // boundary, so we never see one here. Defensively handle anyway:
+        // a tagged enum reaching codegen for an extern fn would still
+        // need coercion (and a future spec for the layout); treat as
+        // aggregate-by-size.
+        Ty::Enum(id) => types.enum_defs[id.0 as usize].is_tagged,
+        Ty::Struct(_)
+        | Ty::Array(_, _)
+        | Ty::Str
+        | Ty::String
+        | Ty::Slice(_) => true,
+        _ => false,
+    };
+    if !is_aggregate {
+        return CAbiClass::Direct;
+    }
+    let Some((size, _align)) = static_layout(ty, types) else {
+        return CAbiClass::Direct;
+    };
+    if size == 0 {
+        return CAbiClass::Direct;
+    }
+    if size <= 8 {
+        CAbiClass::Coerce { llvm_ty: "i64".to_string(), size: 8, align: 8 }
+    } else if size <= 16 {
+        CAbiClass::Coerce { llvm_ty: "[2 x i64]".to_string(), size: 16, align: 8 }
+    } else {
+        CAbiClass::Indirect
+    }
+}
+
+fn return_passes_by_sret(ty: &Ty) -> bool {
+    matches!(ty, Ty::String)
+}
+
+/// Compute static (size, align) in bytes. Matches LLVM's default natural
+/// layout for the 64-bit targets C+ supports (x86_64, arm64).
+///
+/// Returns `None` only for non-codegen types (`Ty::Error`, `Ty::Param`) —
+/// those should never reach codegen anyway. Callers can `.unwrap_or` the
+/// dereferenceable/align attrs away when the layout is unknown.
+fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
+    fn align_up(off: u64, al: u64) -> u64 { (off + al - 1) & !(al - 1) }
+    match ty {
+        Ty::I8 | Ty::U8 | Ty::Bool => Some((1, 1)),
+        Ty::I16 | Ty::U16 => Some((2, 2)),
+        Ty::I32 | Ty::U32 | Ty::F32 => Some((4, 4)),
+        Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => Some((8, 8)),
+        Ty::RawPtr(_) | Ty::FnPtr { .. } => Some((8, 8)),
+        // Fat pointers (Phase 8 / 11): { ptr, i64 } and { ptr, i64, i64 }.
+        Ty::Str | Ty::Slice(_) => Some((16, 8)),
+        Ty::String => Some((24, 8)),
+        Ty::Unit => Some((0, 1)),
+        Ty::Array(elem, n) => {
+            let (esz, ea) = static_layout(elem, types)?;
+            // No trailing pad on arrays — LLVM lays out [N x T] as N * size(T).
+            Some((esz.saturating_mul(*n as u64), ea))
+        }
+        Ty::Struct(id) => {
+            let info = &types.struct_defs[id.0 as usize];
+            let mut off: u64 = 0;
+            let mut max_al: u64 = 1;
+            for (_, fty) in &info.fields {
+                let (sz, al) = static_layout(fty, types)?;
+                if al > max_al { max_al = al; }
+                off = align_up(off, al);
+                off = off.saturating_add(sz);
+            }
+            // Pad to struct alignment.
+            let total = if max_al == 0 { off } else { align_up(off, max_al) };
+            Some((total, max_al.max(1)))
+        }
+        Ty::Enum(id) => {
+            let info = &types.enum_defs[id.0 as usize];
+            if !info.is_tagged {
+                // Plain enum: bare i32.
+                Some((4, 4))
+            } else {
+                // Tagged enum: { i32 tag, [N x i64] payload } — align 8.
+                let payload_bytes = info.payload_slots as u64 * 8;
+                // tag is i32, padded up to 8 before the array.
+                let size = 8u64.saturating_add(payload_bytes);
+                Some((size, 8))
+            }
+        }
+        Ty::Error | Ty::Param(_) => None,
+    }
+}
+
+/// Slice 1C: scoped `!alias.scope` / `!noalias` metadata publication.
+///
+/// The borrow checker proves that for every pointer-passed `mut`/`move`
+/// param (the ones that carried `noalias` from Slice 1A), no other live
+/// pointer in the same function reaches the same memory. That fact is
+/// already encoded as the `noalias` parameter attribute — but parameter
+/// attrs degrade after inlining. Scoped alias metadata survives inlining
+/// because the inliner imports the callee's scopes into the caller's
+/// metadata universe.
+///
+/// This function does a single linear pass over the emitted function body
+/// running a mini-dataflow:
+///   1. Seed: each scoped param's SSA name (`%0`, `%1`, ...) → scope id.
+///   2. On `getelementptr ..., ptr %src, ...` → propagate %src's scope
+///      to the GEP's result.
+///   3. On `load .., ptr %src` / `store .., ptr %src` → if %src has a
+///      scope, append `, !alias.scope !L, !noalias !O` to the line.
+///
+/// Returns the rewritten body. `scope_idx_for_ssa` maps the param SSA name
+/// to an index into `this_lists`/`other_lists`; both lists are indexed by
+/// scope index so callers don't have to re-thread which scope is which.
+fn annotate_alias_scope_metadata(
+    body: &str,
+    seed: &HashMap<String, usize>,
+    this_lists: &[u32],
+    other_lists: &[u32],
+) -> String {
+    let mut scope_map: HashMap<String, usize> = seed.clone();
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines() {
+        out.push_str(&annotate_one_line(line, &mut scope_map, this_lists, other_lists));
+        out.push('\n');
+    }
+    out
+}
+
+fn annotate_one_line(
+    line: &str,
+    scope_map: &mut HashMap<String, usize>,
+    this_lists: &[u32],
+    other_lists: &[u32],
+) -> String {
+    // Split on " = " to find an SSA def (load / GEP / etc.). Stores have
+    // no LHS — handle separately below.
+    let trimmed = line.trim_start();
+    if let Some(eq_idx) = trimmed.find(" = ") {
+        let lhs = &trimmed[..eq_idx];
+        let rhs = &trimmed[eq_idx + 3..];
+        if lhs.starts_with('%') {
+            if rhs.starts_with("getelementptr ") {
+                // GEP: find `, ptr %src` and propagate that scope to lhs.
+                if let Some(src) = extract_ptr_operand(rhs) {
+                    if let Some(&s) = scope_map.get(&src) {
+                        scope_map.insert(lhs.to_string(), s);
+                    }
+                }
+                return line.to_string();
+            }
+            if rhs.starts_with("load ") {
+                if let Some(src) = extract_ptr_operand(rhs) {
+                    if let Some(&s) = scope_map.get(&src) {
+                        return format!(
+                            "{line}, !alias.scope !{}, !noalias !{}",
+                            this_lists[s], other_lists[s]
+                        );
+                    }
+                }
+                return line.to_string();
+            }
+            // bitcast / ptrtoint / inttoptr / select / phi etc. — could
+            // propagate but the current language rarely generates these
+            // for our scope-source ptrs. Leave conservative.
+        }
+    } else if trimmed.starts_with("store ") {
+        if let Some(src) = extract_ptr_operand(trimmed) {
+            if let Some(&s) = scope_map.get(&src) {
+                return format!(
+                    "{line}, !alias.scope !{}, !noalias !{}",
+                    this_lists[s], other_lists[s]
+                );
+            }
+        }
+    }
+    line.to_string()
+}
+
+/// Find the first `, ptr %X` operand in `s` and return `"%X"`. Used by
+/// `annotate_one_line` to locate the address operand of load/store/GEP.
+fn extract_ptr_operand(s: &str) -> Option<String> {
+    let key = ", ptr ";
+    let idx = s.find(key)?;
+    let rest = &s[idx + key.len()..];
+    if !rest.starts_with('%') { return None; }
+    let end = rest.find(|c: char| c == ',' || c == ')' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    Some(rest[..end].to_string())
+}
+
+/// True iff `ty` lowers to a single LLVM scalar (one register class).
+/// Aggregates (`str`, `string`, `T[]`, structs, tagged enums) are not
+/// scalars even when small. Used to decide whether `noundef` is sound on a
+/// value-passed parameter — aggregates carry `poison` padding so the
+/// whole-value `noundef` would be unsound.
+fn is_scalar_ty(ty: &Ty, types: &TypeTable) -> bool {
+    match ty {
+        Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
+        | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
+        | Ty::Isize | Ty::Usize
+        | Ty::F32 | Ty::F64
+        | Ty::Bool
+        | Ty::RawPtr(_) | Ty::FnPtr { .. } => true,
+        // Plain enums lower to `i32` (scalar); tagged enums to a struct.
+        Ty::Enum(id) => !types.enum_defs[id.0 as usize].is_tagged,
+        _ => false,
+    }
 }
 
 
@@ -1053,6 +1457,22 @@ fn write_preamble(out: &mut String) {
     out.push_str("@.bool_false = private unnamed_addr constant [5 x i8] c\"false\", align 1\n");
     // Trap intrinsic — used for both overflow (debug) and divide-by-zero (always).
     out.push_str("declare void @llvm.trap()\n");
+    // Slice 1B (v0.0.2): assume intrinsic — used to publish facts the
+    // frontend has proven (bounds-check success, slice-length non-negative)
+    // so `-O2`'s ConstraintElimination/InstCombine can elide downstream
+    // redundant checks. At -O0 this is a no-op call.
+    out.push_str("declare void @llvm.assume(i1 noundef)\n");
+    // Phase 3A (v0.0.2): byte-swap intrinsics. Used by `bswap16/32/64`
+    // and `htons`/`htonl`/`ntohs`/`ntohl` aliases. All declared so DCE
+    // can strip the unused widths.
+    out.push_str("declare i16 @llvm.bswap.i16(i16)\n");
+    out.push_str("declare i32 @llvm.bswap.i32(i32)\n");
+    out.push_str("declare i64 @llvm.bswap.i64(i64)\n");
+    // Phase 5 Slice 5.D: memset intrinsic for zero-initializing C-ABI
+    // return coercion slots. Used so tail bytes (beyond the original
+    // struct's footprint) read as 0 instead of poison when packed into
+    // the coerced integer-class return register.
+    out.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
     // Checked-arithmetic intrinsics used in debug mode for signed integers
     // of every supported width. Always declared; LLVM drops unused ones.
     for op in ["sadd", "ssub", "smul"] {
@@ -1332,6 +1752,8 @@ fn gen_function(
     mode: BuildMode,
     test_mode: bool,
     emitted_extern_symbols: &mut std::collections::HashSet<String>,
+    md: &ModuleMetadata,
+    is_lib: bool,
 ) {
     // Builtin name: codegen never emits a definition for it; clang links printf.
     if f.name.name == "println" {
@@ -1345,7 +1767,14 @@ fn gen_function(
     // and no body. LLVM matches against the platform C ABI at link time.
     // Param attributes (noalias/readonly) are skipped — they're only sound
     // on C+ fns whose call sites the borrow checker has analyzed.
-    if f.is_extern {
+    //
+    // Phase 5 Slice 5.C: `pub extern fn name(...) { body }` is the export
+    // form (definition). Parser sets `is_pub` only on that shape. Fall
+    // through to normal `define` emission for those — they're regular
+    // function bodies that happen to commit to a stable C-callable
+    // name. Slice 5.D will adjust the LLVM signature to match the
+    // platform C ABI for value-passed aggregates.
+    if f.is_extern && !f.is_pub {
         // Slice 10.FFI.4: some C symbols are already declared in the
         // codegen preamble (printf for `println`, memcmp for `str ==`).
         // Re-declaring them would clash at link time; skip if the
@@ -1391,37 +1820,158 @@ fn gen_function(
     // lower to `ptr readonly` — pointer-pass avoids the byte-copy and the
     // callee provably can't write through the pointer (sema rejects).
     // Everything else stays value-passed.
-    write!(out, "define {} @{}(", llvm_ty(&return_ty, types), f.name.name).unwrap();
+    //
+    // Slice 1D: when the return type triggers `return_passes_by_sret`
+    // (currently: owned `string` only), rewrite the signature so the
+    // result lands at a caller-provided slot. The sret pointer is the
+    // first param (%0), and the user-declared params shift by one. The
+    // function returns `void`.
+    // Phase 5 Slice 5.D: classify return + params against the C ABI when
+    // this is a `pub extern fn` export. Indirect returns flow through the
+    // existing Slice 1D `sret` path; ≤16-byte aggregate returns coerce
+    // to integer-class types; scalar returns pass through.
+    let is_c_export = f.is_extern && f.is_pub;
+    let ret_abi = if is_c_export { classify_c_abi(&return_ty, types) } else { CAbiClass::Direct };
+    let param_abis: Vec<CAbiClass> = if is_c_export {
+        sig.params.iter().map(|(pty, _, _)| classify_c_abi(pty, types)).collect()
+    } else {
+        vec![CAbiClass::Direct; sig.params.len()]
+    };
+
+    // Existing Slice 1D path: owned `string` returns use sret. 5.D adds
+    // sret for any C-export with an Indirect-class return (>16 bytes).
+    let uses_sret = return_passes_by_sret(&return_ty)
+        || matches!(ret_abi, CAbiClass::Indirect);
+    let coerce_ret_ty: Option<String> = if let CAbiClass::Coerce { llvm_ty, .. } = &ret_abi {
+        Some(llvm_ty.clone())
+    } else {
+        None
+    };
+    let sig_return_ty: String = if uses_sret {
+        "void".to_string()
+    } else if let Some(t) = &coerce_ret_ty {
+        t.clone()
+    } else {
+        llvm_ty(&return_ty, types)
+    };
+    let ret_ty_str = llvm_ty(&return_ty, types); // raw underlying type (e.g. for sret(...))
+    let sret_param_offset: u32 = if uses_sret { 1 } else { 0 };
+    // Phase 5 Slice 5.B: in library builds, non-`pub` items get
+    // `internal` linkage so LTO can strip them out of the final
+    // `.dylib` / `.a`. Executable builds keep external linkage (matches
+    // pre-5.B behavior; the existing test substring assertions pin that).
+    // `main` is the linker entry point and always external. `pub` items
+    // form the public ABI and stay external in lib mode.
+    let linkage = if !is_lib || f.name.name == "main" || f.is_pub { "" } else { "internal " };
+    write!(out, "define {}{} @{}(", linkage, sig_return_ty, f.name.name).unwrap();
+    if uses_sret {
+        // sret slot: caller-allocated, callee-writable, exact size + align.
+        let (sz, al) = static_layout(&return_ty, types)
+            .expect("sret return type must have a known layout");
+        write!(
+            out,
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %0",
+            ret_ty_str, sz, al
+        ).unwrap();
+        if !f.params.is_empty() { out.push_str(", "); }
+    }
     for (i, (_param, (pty, move_flag, mut_flag))) in f.params.iter().zip(sig.params.iter()).enumerate() {
         if i > 0 { out.push_str(", "); }
-        let llvm_param = if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
-            format!("ptr {}", param_attr_prefix(*move_flag, *mut_flag)).trim_end().to_string()
-        } else {
-            llvm_ty(pty, types)
-        };
-        write!(out, "{} %{}", llvm_param, i).unwrap();
+        let llvm_idx = i as u32 + sret_param_offset;
+        // Phase 5 Slice 5.D: when this fn is a C-ABI export, override the
+        // LLVM signature for value-passed aggregates per the platform PCS:
+        //   ≤8 bytes → i64
+        //   9..16   → [2 x i64]
+        //   >16     → ptr (caller-allocated; no `byval` on aarch64-darwin)
+        //
+        // Pointer-passed `mut`/`move` params are not C-ABI exportable
+        // anyway (sema 5.C rejects non-Copy aggregates that aren't
+        // `#[repr(C)]` and rejects Drop entirely), so the `param_passes_by_ptr`
+        // path doesn't co-occur with non-Direct ABI classes here.
+        match &param_abis[i] {
+            CAbiClass::Coerce { llvm_ty, .. } => {
+                write!(out, "{} %{}", llvm_ty, llvm_idx).unwrap();
+            }
+            CAbiClass::Indirect => {
+                // Caller's by-value slot. No `byval` on aarch64-darwin;
+                // the callee may freely mutate (it's a copy for this call).
+                write!(out, "ptr %{}", llvm_idx).unwrap();
+            }
+            CAbiClass::Direct => {
+                let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+                let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+                let base_ty = if by_ptr { "ptr".to_string() } else { llvm_ty(pty, types) };
+                if attrs.is_empty() {
+                    write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+                } else {
+                    write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+                }
+            }
+        }
     }
     out.push_str(") {\n");
     out.push_str("entry:\n");
 
     // Build the function body
-    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode);
+    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md);
     state.collect_moved_bindings(&f.body);
+    // Slice 1E: record this fn's parameter types so the Return-statement
+    // predicate can check musttail signature equality against the callee.
+    state.enclosing_params = sig.params.iter().map(|(t, _, _)| t.clone()).collect();
+    state.tail_call_eligible = true;
+    // Slice 1D: if this fn uses sret, remember the slot's SSA name (%0) so
+    // StmtKind::Return can store-into it before `ret void`.
+    if uses_sret {
+        state.sret_slot = Some("%0".to_string());
+    }
+    // Phase 5 Slice 5.D: coerced returns flow through StmtKind::Return.
+    state.coerce_ret = coerce_ret_ty.clone();
 
     // Bind params. Pointer-passed params (`mut x: T` non-Copy) bind directly
     // to the SSA argument — no alloca, no initial store — exactly like
     // receivers. Value-passed params copy into an alloca; `move`-marked Drop
     // params register a scope-exit drop. Non-`move` value-passed params are
     // left unregistered to avoid double-free of the caller's value.
+    //
+    // Slice 1D: when sret is in effect, the user-declared params are at
+    // SSA indices 1..N instead of 0..N-1 — the sret slot occupies %0.
+    //
+    // Phase 5 Slice 5.D: `pub extern fn` exports apply C-ABI param
+    // coercions per `param_abis`:
+    //   - Coerce: alloca a slot sized for the coerced type (≥ struct size,
+    //     so the coerced store doesn't overflow), store the coerced SSA
+    //     value into it, bind as the original struct type — subsequent
+    //     field GEPs use the original-type's offsets and read valid bytes.
+    //   - Indirect: the SSA arg IS a pointer to the C caller's slot.
+    //     Bind directly; gen_field GEPs off it like any other place.
     for (i, (param, (pty, move_flag, mut_flag))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let llvm_idx = i as u32 + sret_param_offset;
+        // C-ABI coerced param: alloca with coerced size, store the coerced
+        // value, bind as original struct type. The alloca uses the
+        // coerced LLVM type because it dominates the size + align needed.
+        if let CAbiClass::Coerce { llvm_ty: clty, align, .. } = &param_abis[i] {
+            let slot = state.alloca_named_raw(&param.name.name, clty, *align);
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                clty, llvm_idx, slot
+            ));
+            state.bind(&param.name.name, slot, pty.clone());
+            continue;
+        }
+        // C-ABI indirect param: the SSA arg is a pointer to the caller's
+        // by-value slot. Bind directly; no alloca, no initial copy.
+        if matches!(param_abis[i], CAbiClass::Indirect) {
+            state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
+            continue;
+        }
         if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
-            state.bind(&param.name.name, format!("%{i}"), pty.clone());
+            state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
             continue;
         }
         let slot = state.alloca_named(&param.name.name, pty.clone());
         state.body.push_str(&format!(
             "  store {} %{}, ptr {}\n",
-            llvm_ty(pty, types), i, slot
+            llvm_ty(pty, types), llvm_idx, slot
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
         if *move_flag {
@@ -1444,6 +1994,31 @@ fn gen_function(
             // `unreachable` so the IR validates if we slip through.
             _ => state.emit_terminator("unreachable"),
         }
+    }
+
+    // Slice 1C: scoped alias metadata for noalias-shaped params. Run the
+    // dataflow over `state.body` (allocas in `state.allocas` never touch
+    // these ptrs — they're fresh slots, not derived from a param).
+    let noalias_params: Vec<u32> = f.params.iter().zip(sig.params.iter()).enumerate()
+        .filter_map(|(i, (_, (pty, mv, mu)))|
+            (param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu)).then_some(i as u32)
+        ).collect();
+    if noalias_params.len() >= 2 {
+        let domain = md.register_alias_domain(&f.name.name);
+        let scopes: Vec<u32> = noalias_params.iter().enumerate()
+            .map(|(i, _)| md.register_alias_scope(domain, &format!("p{i}"))).collect();
+        let this_lists: Vec<u32> = scopes.iter()
+            .map(|&s| md.register_alias_scope_list(&[s])).collect();
+        let other_lists: Vec<u32> = (0..scopes.len()).map(|i| {
+            let others: Vec<u32> = scopes.iter().enumerate()
+                .filter(|(j, _)| *j != i).map(|(_, &s)| s).collect();
+            md.register_alias_scope_list(&others)
+        }).collect();
+        let mut seed: HashMap<String, usize> = HashMap::new();
+        for (idx, &param_ssa) in noalias_params.iter().enumerate() {
+            seed.insert(format!("%{param_ssa}"), idx);
+        }
+        state.body = annotate_alias_scope_metadata(&state.body, &seed, &this_lists, &other_lists);
     }
 
     // Glue: allocas first (in entry), then body
@@ -1469,6 +2044,8 @@ fn gen_method(
     str_lits: &StrLitTable,
     mode: BuildMode,
     test_mode: bool,
+    md: &ModuleMetadata,
+    is_lib: bool,
 ) {
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
     let sig = types.struct_defs[struct_id.0 as usize]
@@ -1481,31 +2058,64 @@ fn gen_method(
     // Function header. Both `self` and `mut self` lower to a `ptr` parameter
     // (the struct's address). The receiver kind only affects sema-level
     // mutability checks, not the LLVM signature.
-    write!(out, "define {} @{}(", llvm_ty(&return_ty, types), mangled).unwrap();
+    //
+    // Slice 1F (v0.0.2): destructors are compiler-synthesized cold paths.
+    // Apply `preserve_nonecc` (no callee-save register saves at the call
+    // boundary) plus `cold` (the optimizer biases hot paths away from
+    // them). Drop runs once per object at scope exit — it's the canonical
+    // cold helper. `preserve_nonecc` requires clang/LLVM 17+; macOS
+    // shipped that in Xcode 15.3 (Feb 2024).
+    let is_drop_method = m.name.name == "drop";
+    let cc_prefix = if is_drop_method { "preserve_nonecc " } else { "" };
+    let fn_attrs = if is_drop_method { " cold" } else { "" };
+    // Phase 5 Slice 5.B: in library builds, non-`pub` methods get
+    // `internal` linkage. `drop` is compiler-synthesized infrastructure —
+    // not part of the public C-ABI surface even when `pub`; always
+    // internal in lib mode. Executable builds keep external linkage on
+    // every method (matches pre-5.B behavior).
+    let linkage = if !is_lib || (m.is_pub && !is_drop_method) { "" } else { "internal " };
+    write!(out, "define {}{}{} @{}(", linkage, cc_prefix, llvm_ty(&return_ty, types), mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
-    if sig.receiver.is_some() {
-        write!(out, "ptr %{llvm_idx}").unwrap();
+    if let Some(rcv) = sig.receiver {
+        // Slice 1A: receiver gets the full pointer attr set. Map Receiver
+        // kind onto (move_, mutable) for `param_attrs`:
+        //   Read => (false, false) → readonly
+        //   Mut  => (false, true)  → noalias
+        //   Move => (true,  true)  → noalias (callee owns; exclusive)
+        let (mv, mu) = match rcv {
+            Receiver::Read => (false, false),
+            Receiver::Mut  => (false, true),
+            Receiver::Move => (true,  true),
+        };
+        let attrs = param_attrs(&struct_ty, mv, mu, true, types);
+        if attrs.is_empty() {
+            write!(out, "ptr %{llvm_idx}").unwrap();
+        } else {
+            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+        }
         llvm_idx += 1;
         first = false;
     }
     for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
         if !first { out.push_str(", "); }
-        let llvm_param = if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
-            // Slice 6BC.codegen: tag with `noalias` (exclusive) or
-            // `readonly` (shared). See `param_attr_prefix`.
-            format!("ptr {}", param_attr_prefix(*move_flag, *mut_flag)).trim_end().to_string()
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let base_ty = if by_ptr { "ptr".to_string() } else { llvm_ty(pty, types) };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
         } else {
-            llvm_ty(pty, types)
-        };
-        write!(out, "{} %{}", llvm_param, llvm_idx).unwrap();
+            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+        }
         llvm_idx += 1;
         first = false;
     }
-    out.push_str(") {\n");
+    out.push_str(")");
+    out.push_str(fn_attrs);
+    out.push_str(" {\n");
     out.push_str("entry:\n");
 
-    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode);
+    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md);
     state.collect_moved_bindings(&m.body);
     // Destructors don't auto-drop their receiver — we *are* the destructor.
     if m.name.name == "drop" {
@@ -1564,6 +2174,40 @@ fn gen_method(
             Ty::Unit => state.emit_terminator("ret void"),
             _ => state.emit_terminator("unreachable"),
         }
+    }
+
+    // Slice 1C: scoped alias metadata. The receiver counts as a noalias
+    // param when it's `mut self` or `move self`; `self` (Read) is
+    // `readonly` and does NOT participate in the scope set (two shared
+    // refs may alias).
+    let mut noalias_ssas: Vec<u32> = Vec::new();
+    if let Some(rcv) = sig.receiver {
+        if matches!(rcv, Receiver::Mut | Receiver::Move) {
+            noalias_ssas.push(0);
+        }
+    }
+    for (i, (_, (pty, mv, mu))) in m.params.iter().zip(sig.params.iter()).enumerate() {
+        let idx = next_idx + i as u32;
+        if param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu) {
+            noalias_ssas.push(idx);
+        }
+    }
+    if noalias_ssas.len() >= 2 {
+        let domain = md.register_alias_domain(&mangled);
+        let scopes: Vec<u32> = noalias_ssas.iter().enumerate()
+            .map(|(i, _)| md.register_alias_scope(domain, &format!("p{i}"))).collect();
+        let this_lists: Vec<u32> = scopes.iter()
+            .map(|&s| md.register_alias_scope_list(&[s])).collect();
+        let other_lists: Vec<u32> = (0..scopes.len()).map(|i| {
+            let others: Vec<u32> = scopes.iter().enumerate()
+                .filter(|(j, _)| *j != i).map(|(_, &s)| s).collect();
+            md.register_alias_scope_list(&others)
+        }).collect();
+        let mut seed: HashMap<String, usize> = HashMap::new();
+        for (idx_in_set, &ssa_idx) in noalias_ssas.iter().enumerate() {
+            seed.insert(format!("%{ssa_idx}"), idx_in_set);
+        }
+        state.body = annotate_alias_scope_metadata(&state.body, &seed, &this_lists, &other_lists);
     }
 
     for line in &state.allocas {
@@ -1644,6 +2288,9 @@ struct FnState<'a> {
     scopes: Vec<HashMap<String, (String, Ty)>>,
     /// Phase 8 slice 8.STR.1: shared lookup of string-literal globals.
     str_lits: &'a StrLitTable,
+    /// Slice 1B: module-level metadata table. Codegen registers `!range`
+    /// nodes here; the table emits its accumulated definitions at module-end.
+    md: &'a ModuleMetadata,
     /// Parallel stack to `scopes`. Each frame collects scope-exit hooks
     /// (Drop bindings + `defer` statements) in registration order. At scope
     /// close codegen walks the frame in reverse and dispatches each entry.
@@ -1675,10 +2322,38 @@ struct FnState<'a> {
     /// to `continue_label` (the loop's back-edge / cond-check / increment
     /// trampoline). Pushed when entering a loop body, popped on exit.
     loop_labels: Vec<(String, String)>,
+    /// Slice 1E (v0.0.2): single-use hint set by `StmtKind::Return` when the
+    /// statement is `return foo(args);` and the call qualifies for
+    /// `musttail` (return type matches enclosing fn; no Drop/defer entries
+    /// pending; non-variadic; default CC). gen_named_call consults this
+    /// flag, emits `musttail call`, and clears it.
+    pending_musttail: bool,
+    /// Slice 1E: enclosing function's parameter types in declaration order.
+    /// `musttail` requires the *caller*'s parameter signature to match the
+    /// *callee*'s — LLVM's verifier rejects musttail across mismatched
+    /// arities. Filled in by `gen_function` before body codegen.
+    enclosing_params: Vec<Ty>,
+    /// Slice 1E: true iff this body is a free function (eligible for
+    /// `musttail`). Methods carry a receiver in their LLVM signature, so
+    /// even matching the call's arg list isn't enough — the receiver
+    /// position would mismatch. Disable musttail in method bodies to keep
+    /// the predicate simple. Set by `gen_function`; defaults false.
+    tail_call_eligible: bool,
+    /// Slice 1D (v0.0.2): SSA name of this fn's sret parameter (the
+    /// caller-allocated result slot) when `return_passes_by_sret` fires.
+    /// `StmtKind::Return` consults it: `Some(slot)` → store the value to
+    /// the slot and `ret void`; `None` → emit `ret <ty> <val>` as usual.
+    sret_slot: Option<String>,
+    /// Phase 5 Slice 5.D: when emitting a `pub extern fn` whose return
+    /// type lowers to a coerced C-ABI integer class (≤8 → i64, 9..16 →
+    /// `[2 x i64]`), `StmtKind::Return` packs the value through an
+    /// alloca and emits `ret <coerced>` instead of `ret <original>`.
+    /// `None` means no coercion is needed (Direct return).
+    coerce_ret: Option<String>,
 }
 
 impl<'a> FnState<'a> {
-    fn new(return_ty: Ty, sigs: &'a HashMap<String, FnSig>, types: &'a TypeTable, str_lits: &'a StrLitTable, mode: BuildMode, test_mode: bool) -> Self {
+    fn new(return_ty: Ty, sigs: &'a HashMap<String, FnSig>, types: &'a TypeTable, str_lits: &'a StrLitTable, mode: BuildMode, test_mode: bool, md: &'a ModuleMetadata) -> Self {
         Self {
             body: String::new(),
             allocas: Vec::new(),
@@ -1688,6 +2363,7 @@ impl<'a> FnState<'a> {
             sigs,
             types,
             str_lits,
+            md,
             mode,
             moved_bindings: std::collections::HashSet::new(),
             tmp_counter: 0,
@@ -1696,6 +2372,11 @@ impl<'a> FnState<'a> {
             in_destructor: false,
             test_mode,
             loop_labels: Vec::new(),
+            pending_musttail: false,
+            enclosing_params: Vec::new(),
+            tail_call_eligible: false,
+            sret_slot: None,
+            coerce_ret: None,
         }
     }
 
@@ -1769,6 +2450,19 @@ impl<'a> FnState<'a> {
         self.tmp_counter += 1;
         let slot = format!("%a{}", self.tmp_counter);
         self.allocas.push(format!("{slot} = alloca {}", self.lty(&ty)));
+        slot
+    }
+
+    /// Phase 5 Slice 5.D: alloca a slot whose LLVM type is given as a raw
+    /// string (e.g. `i64`, `[2 x i64]`) with an explicit alignment. Used
+    /// by C-ABI param coercion where the alloca's size + align must
+    /// match the *coerced* type (which is at least as large as the
+    /// original struct), even though the binding's logical type is the
+    /// original C+ struct.
+    fn alloca_named_raw(&mut self, name_hint: &str, llvm_ty_str: &str, align: u64) -> String {
+        self.tmp_counter += 1;
+        let slot = format!("%{}.addr{}", sanitize(name_hint), self.tmp_counter);
+        self.allocas.push(format!("{slot} = alloca {llvm_ty_str}, align {align}"));
         slot
     }
 
@@ -1910,7 +2604,11 @@ impl<'a> FnState<'a> {
                 DropKind::Struct(struct_id) => {
                     let struct_name = state.types.struct_defs[struct_id.0 as usize].name.clone();
                     let mangled = format!("{struct_name}.drop");
-                    state.emit(&format!("call void @{mangled}(ptr {})", entry.value_slot));
+                    // Slice 1F: matching `preserve_nonecc` on the call site
+                    // — caller and callee must agree on CC. (The function
+                    // attribute `cold` is callee-only and has no caller
+                    // syntax mirror.)
+                    state.emit(&format!("call preserve_nonecc void @{mangled}(ptr {})", entry.value_slot));
                 }
                 DropKind::String => {
                     // Load the `ptr` field (offset 0 in the {ptr, i64,
@@ -2071,12 +2769,62 @@ impl<'a> FnState<'a> {
             }
             StmtKind::Return(value) => {
                 let ret_ty = self.return_ty.clone();
+                // Slice 1E (v0.0.2): musttail eligibility for direct calls.
+                // The statement must be `return foo(args);` where:
+                //   - foo is a known named function (Ident callee in `sigs`)
+                //   - foo's return type matches the enclosing fn's return type
+                //   - foo is non-variadic (musttail demands matching arity)
+                //   - no Drop/defer entries are pending — musttail requires
+                //     the ret to immediately follow the call, with nothing
+                //     between (the LLVM verifier rejects otherwise)
+                //   - foo is not a builtin (`println` lowers to printf)
+                // Methods, indirect (FnPtr) calls, and assoc-fn calls are not
+                // currently handled (small surface; revisit if measured).
+                if self.tail_call_eligible {
+                    if let Some(e) = value {
+                        if let ExprKind::Call { callee, args: _, .. } = &e.kind {
+                            if let ExprKind::Ident(name) = &callee.kind {
+                                let pending_drops = self.scope_exits.iter().any(|frame| !frame.is_empty());
+                                if !pending_drops {
+                                    if let Some(sig) = self.sigs.get(name) {
+                                        let callee_params: Vec<&Ty> =
+                                            sig.params.iter().map(|(t, _, _)| t).collect();
+                                        let enclosing: Vec<&Ty> =
+                                            self.enclosing_params.iter().collect();
+                                        if !sig.is_variadic
+                                            && sig.return_type == self.return_ty
+                                            && callee_params == enclosing
+                                            && name != "println"
+                                        {
+                                            self.pending_musttail = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Evaluate the return value first so any moves it triggers
                 // (e.g. `return f(move_x)`) flip drop flags before scope drops.
+                //
+                // Slice 1D: when `gen_expr` lowers a musttail+sret call, it
+                // emits `ret void` itself (the caller's sret slot is the
+                // callee's sret slot, so the value has already landed by
+                // the time control returns) and sets `self.terminated`.
+                // Don't `.expect` a value in that case — gen_expr returned
+                // None *because* it terminated the block early.
                 let ret_val = match value {
-                    Some(e) => Some(self.gen_expr(e).expect("non-Unit return value").0),
+                    Some(e) => {
+                        let v = self.gen_expr(e);
+                        if self.terminated { return; }
+                        Some(v.expect("non-Unit return value").0)
+                    }
                     None => None,
                 };
+                // Defensive: clear the flag in case gen_expr didn't reach
+                // gen_named_call (e.g. ExprKind::Call routed through a
+                // different lowering path).
+                self.pending_musttail = false;
                 // Run destructors for all live Drop bindings in every scope
                 // before the `ret`. The conditional drop respects each
                 // binding's flag, so values moved into the return expr are
@@ -2085,7 +2833,48 @@ impl<'a> FnState<'a> {
                 if self.terminated { return; }
                 match (ret_val, &ret_ty) {
                     (Some(v), _) => {
-                        self.emit_terminator(&format!("ret {} {}", self.lty(&ret_ty), v));
+                        // Slice 1D: when this fn uses sret, the result
+                        // lands in the caller-provided slot — store the
+                        // value there and return void.
+                        // Phase 5 Slice 5.D: when this fn is a C-ABI export
+                        // with a coerced return (≤16 byte aggregate
+                        // packed into i64 / [2 x i64]), stage the value
+                        // through a temp alloca and reload as the coerced
+                        // type before returning.
+                        if let Some(slot) = self.sret_slot.clone() {
+                            let lty = self.lty(&ret_ty);
+                            self.emit(&format!("store {lty} {v}, ptr {slot}"));
+                            self.emit_terminator("ret void");
+                        } else if let Some(coerced) = self.coerce_ret.clone() {
+                            // Stage the original-typed value through a
+                            // stack slot, then reload via the coerced
+                            // LLVM type. The slot must be sized for the
+                            // coerced type (which is ≥ the original) so
+                            // the wide load doesn't read OOB. Bytes
+                            // beyond the original size are caller-side
+                            // undefined per the C ABI — `0`-initializing
+                            // them keeps the load deterministic for the
+                            // common scalar-output case.
+                            let lty = self.lty(&ret_ty);
+                            // Use coerce_ret's name to size the alloca.
+                            // Convention: i64 → 8 bytes align 8; [2 x i64] → 16/8.
+                            let (sz, al) = if coerced == "i64" { (8u64, 8u64) }
+                                else if coerced.contains("[2 x i64]") { (16, 8) }
+                                else { (8, 8) };
+                            let tmp = self.alloca_named_raw("ret.coerce", &coerced, al);
+                            // Zero-initialize so unused tail bytes are 0,
+                            // not poison. memset via i8 store is cheap;
+                            // -O2 will fold it together with the user store.
+                            self.emit(&format!(
+                                "call void @llvm.memset.p0.i64(ptr {tmp}, i8 0, i64 {sz}, i1 false)"
+                            ));
+                            self.emit(&format!("store {lty} {v}, ptr {tmp}"));
+                            let coerced_v = self.next_tmp();
+                            self.emit(&format!("{coerced_v} = load {coerced}, ptr {tmp}"));
+                            self.emit_terminator(&format!("ret {coerced} {coerced_v}"));
+                        } else {
+                            self.emit_terminator(&format!("ret {} {}", self.lty(&ret_ty), v));
+                        }
                     }
                     (None, &Ty::Unit) => self.emit_terminator("ret void"),
                     (None, _) => unreachable!("sema should reject return-without-value for non-Unit"),
@@ -2497,6 +3286,12 @@ impl<'a> FnState<'a> {
         self.emit("call void @llvm.trap()");
         self.emit_terminator("unreachable");
         self.open_block(&ok_lbl);
+        // Slice 1B: publish the post-bounds-check fact `idx < N` via
+        // `llvm.assume`. -O2's ConstraintElimination uses this to drop
+        // redundant checks on subsequent uses of `idx` against `n`.
+        let in_bounds = self.next_tmp();
+        self.emit(&format!("{in_bounds} = icmp ult i64 {idx_val}, {n}"));
+        self.emit(&format!("call void @llvm.assume(i1 {in_bounds})"));
         // GEP and load.
         let ptr = self.next_tmp();
         self.emit(&format!("{ptr} = getelementptr {llvm_arr}, ptr {recv_ptr}, i64 0, i64 {idx_val}"));
@@ -2604,6 +3399,10 @@ impl<'a> FnState<'a> {
                 self.emit("call void @llvm.trap()");
                 self.emit_terminator("unreachable");
                 self.open_block(&ok_lbl);
+                // Slice 1B: publish post-check fact `idx < N` via assume.
+                let in_bounds = self.next_tmp();
+                self.emit(&format!("{in_bounds} = icmp ult i64 {idx_val}, {n}"));
+                self.emit(&format!("call void @llvm.assume(i1 {in_bounds})"));
                 let ptr = self.next_tmp();
                 self.emit(&format!("{ptr} = getelementptr {llvm_arr}, ptr {recv_slot}, i64 0, i64 {idx_val}"));
                 (ptr, (*elem).clone())
@@ -2638,7 +3437,7 @@ impl<'a> FnState<'a> {
             _ => {}
         }
         let (l, lt) = self.gen_expr(lhs).expect("binary lhs has value");
-        let (r, _rt) = self.gen_expr(rhs).expect("binary rhs has value");
+        let (r, rt) = self.gen_expr(rhs).expect("binary rhs has value");
         // Slice 10.FFI.2: pointer arithmetic `p + n` / `p - n`.
         // Lowers to `getelementptr inbounds T, ptr %p, i64 %n` where
         // T is the pointee. Subtract negates the index first.
@@ -2753,8 +3552,61 @@ impl<'a> FnState<'a> {
                 (v, lt)
             }
             BinOp::And | BinOp::Or => unreachable!("handled above"),
-            _ => unreachable!("sema rejects bitwise/shift"),
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                // Phase 3A: plain LLVM `and` / `or` / `xor` on integers.
+                // No overflow / range checks — bit ops can't overflow.
+                let v = self.next_tmp();
+                let iop = match op {
+                    BinOp::BitAnd => "and",
+                    BinOp::BitOr  => "or",
+                    BinOp::BitXor => "xor",
+                    _ => unreachable!(),
+                };
+                self.emit(&format!("{v} = {iop} {} {l}, {r}", self.lty(&lt)));
+                (v, lt)
+            }
+            BinOp::Shl | BinOp::Shr => {
+                // Phase 3A: `shl` for left shift; right shift picks
+                // `ashr` for signed (arithmetic — preserves sign bit) or
+                // `lshr` for unsigned (logical — fills with zero).
+                //
+                // Shift count: sema allows any integer type. LLVM
+                // requires both operands to have the same type, so we
+                // truncate / zero-extend the RHS to the LHS width here
+                // using the real evaluated RHS type.
+                let lhs_t = self.lty(&lt);
+                let coerced_r = self.coerce_int_to_width(&r, &rt, &lt);
+                let v = self.next_tmp();
+                let iop = match (op, lt.is_signed_int()) {
+                    (BinOp::Shl, _) => "shl",
+                    (BinOp::Shr, true)  => "ashr",
+                    (BinOp::Shr, false) => "lshr",
+                    _ => unreachable!(),
+                };
+                self.emit(&format!("{v} = {iop} {lhs_t} {l}, {coerced_r}"));
+                (v, lt)
+            }
         }
+    }
+
+    /// Phase 3A: coerce an SSA integer `val` of type `from_ty` to the width
+    /// of `to_ty`. Used by shift codegen, which lets the RHS be any
+    /// integer type but LLVM `shl/lshr/ashr` requires same-width operands.
+    /// Zero-extends widening, truncates narrowing. Returns the SSA name of
+    /// the coerced value (the original `val` when widths already match).
+    fn coerce_int_to_width(&mut self, val: &str, from_ty: &Ty, to_ty: &Ty) -> String {
+        let from_bits = ty_bit_width(from_ty);
+        let to_bits   = ty_bit_width(to_ty);
+        if from_bits == to_bits { return val.to_string(); }
+        let from_lt = self.lty(from_ty);
+        let to_lt   = self.lty(to_ty);
+        let r = self.next_tmp();
+        // Shift counts are inherently unsigned. zext is the right widening
+        // even for signed sema types: i8 -> i64 with zext keeps the count
+        // semantically equal (shift amounts >= 0 in valid programs).
+        let op = if from_bits < to_bits { "zext" } else { "trunc" };
+        self.emit(&format!("{r} = {op} {from_lt} {val} to {to_lt}"));
+        r
     }
 
     /// Emit a debug-mode checked signed `+ - *` using the
@@ -2887,7 +3739,15 @@ impl<'a> FnState<'a> {
                 self.emit(&format!("{r} = load {inner_lt}, ptr {v}"));
                 (r, inner)
             }
-            _ => unreachable!("sema rejects ~ / & / &mut in Phase 1"),
+            UnaryOp::BitNot => {
+                // Phase 3A: `~v` lowers to `xor v, -1` (all-bits-set
+                // constant), the standard LLVM idiom. Works on every
+                // integer width; LLVM picks the right `-1` from the
+                // operand type.
+                self.emit(&format!("{r} = xor {} {v}, -1", self.lty(&ty)));
+                (r, ty)
+            }
+            _ => unreachable!("sema rejects & / &mut in Phase 1"),
         }
     }
 
@@ -2986,7 +3846,12 @@ impl<'a> FnState<'a> {
         // we emit the request, so creating it mid-function is fine.)
         let mut result_slot: Option<(String, Ty)> = None;
 
-        // Load the tag once.
+        // Load the tag once. Slice 1B: publish the tag's `[0, N)` range
+        // metadata so `-O2`'s switch-simplifier and ConstraintElimination
+        // can drop the default arm when sema's exhaustiveness check
+        // already covered every variant.
+        let n_variants = info.variants.len() as i64;
+        let range_md = self.md.register_range(0, n_variants, "i32");
         let tag_val = {
             if info.is_tagged {
                 let tag_ptr = self.next_tmp();
@@ -2994,12 +3859,12 @@ impl<'a> FnState<'a> {
                     "{tag_ptr} = getelementptr {llvm_enum}, ptr {scr_ptr}, i32 0, i32 0"
                 ));
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = load i32, ptr {tag_ptr}"));
+                self.emit(&format!("{v} = load i32, ptr {tag_ptr}, !range !{range_md}"));
                 v
             } else {
                 // Plain enum: scrutinee is already an i32 tag value.
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = load i32, ptr {scr_ptr}"));
+                self.emit(&format!("{v} = load i32, ptr {scr_ptr}, !range !{range_md}"));
                 v
             }
         };
@@ -3354,10 +4219,36 @@ impl<'a> FnState<'a> {
             self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
             return Some((r, Ty::RawPtr(Box::new(elem_ty))));
         }
+        // Phase 3A: byte-swap intrinsics. `bswap{16,32,64}` lower directly
+        // to `llvm.bswap.i{16,32,64}`. `htons`/`htonl`/`ntohs`/`ntohl` are
+        // aliases — on little-endian targets (every C+ target today) they
+        // bswap; on a future big-endian target we'd lower as identity.
+        if let Some((bits, ret_ty)) = match name {
+            "bswap16" | "htons" | "ntohs" => Some((16u32, Ty::U16)),
+            "bswap32" | "htonl" | "ntohl" => Some((32u32, Ty::U32)),
+            "bswap64"                     => Some((64u32, Ty::U64)),
+            _ => None,
+        } {
+            let (av, _) = self.gen_expr(&args[0]).expect("bswap arg");
+            let r = self.next_tmp();
+            self.emit(&format!(
+                "{r} = call i{bits} @llvm.bswap.i{bits}(i{bits} {av})"
+            ));
+            return Some((r, ret_ty));
+        }
         if name == "slice_len" {
             let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
             let r = self.next_tmp();
             self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
+            // Slice 1B: publish the proven invariant that slice lengths are
+            // non-negative (signed). LLVM `!range` metadata is only legal
+            // on `load`/`call`/`invoke`/`atomicrmw`/`cmpxchg` — not on
+            // `extractvalue` — so we publish the fact via `llvm.assume`
+            // instead. At -O2 the optimizer rewrites this into range
+            // metadata after the value is rematerialized through a load.
+            let nn = self.next_tmp();
+            self.emit(&format!("{nn} = icmp sge i64 {r}, 0"));
+            self.emit(&format!("call void @llvm.assume(i1 {nn})"));
             return Some((r, Ty::Usize));
         }
         if name == "slice_from_raw_parts" {
@@ -3458,14 +4349,69 @@ impl<'a> FnState<'a> {
         // call resolves to the same C symbol as the user wrote in the
         // attribute, not the C+ source-level name.
         let symbol: &str = sig.link_name.as_deref().unwrap_or(name);
+        // Slice 1E: tail-call optimization. `pending_musttail` is set by
+        // `StmtKind::Return` when this call is the last expression before
+        // a return and the signatures match. LLVM's verifier rejects
+        // `musttail` IR that doesn't truly qualify (e.g. variadic
+        // mismatch), so the predicate in StmtKind::Return is conservative.
+        let want_musttail = self.pending_musttail;
+        self.pending_musttail = false;
+        // Slice 1D: detect sret callee. Only applies when the callee is
+        // user-defined (sig has no link_name pointing at a C symbol and
+        // the callee is non-variadic) and the return type triggers the
+        // predicate. The current narrow predicate fires only for `string`
+        // returns (24-byte aggregate with Drop).
+        let uses_sret = !sig.is_variadic
+            && sig.link_name.is_none()
+            && return_passes_by_sret(&sig.return_type);
+        if uses_sret {
+            // musttail + sret would require the caller's own sret slot to
+            // be forwarded as the callee's sret arg. Supported when caller
+            // and callee both use sret with matching types; the predicate
+            // in StmtKind::Return already verified return-type equality.
+            let ret = sig.return_type.clone();
+            let lty = self.lty(&ret);
+            if want_musttail {
+                if let Some(caller_slot) = self.sret_slot.clone() {
+                    // Forward caller's sret slot into the callee. After
+                    // `musttail call void @foo(ptr %caller_slot, ...)` the
+                    // function's `ret void` will see the value already
+                    // landed at the caller's caller's slot.
+                    let mut head = format!("ptr {caller_slot}");
+                    if !arg_str.is_empty() { head.push_str(", "); head.push_str(&arg_str); }
+                    self.emit(&format!("musttail call void{type_prefix} @{symbol}({head})"));
+                    // Return type signaled to upstream — but musttail in
+                    // tail position is always followed by `ret void`
+                    // emitted by StmtKind::Return. We must NOT supply a
+                    // value; emit the terminator now and return None so
+                    // StmtKind::Return's value path becomes a no-op.
+                    // (StmtKind::Return reads `ret_val` only — passing it
+                    // None lands in the (None, Ty::Unit) arm... but
+                    // ret_ty is `string`, not Unit. Simpler: emit the
+                    // terminator + signal terminated.)
+                    self.emit_terminator("ret void");
+                    return None;
+                }
+                // No caller sret — can't forward. Fall through to
+                // non-musttail sret call.
+            }
+            let slot = self.alloca_anon(ret.clone());
+            let mut head = format!("ptr {slot}");
+            if !arg_str.is_empty() { head.push_str(", "); head.push_str(&arg_str); }
+            self.emit(&format!("call void{type_prefix} @{symbol}({head})"));
+            let v = self.next_tmp();
+            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            return Some((v, ret));
+        }
+        let call_kind = if want_musttail { "musttail call" } else { "call" };
         match sig.return_type {
             Ty::Unit => {
-                self.emit(&format!("call void{type_prefix} @{symbol}({arg_str})"));
+                self.emit(&format!("{call_kind} void{type_prefix} @{symbol}({arg_str})"));
                 None
             }
             ret => {
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = call {}{type_prefix} @{symbol}({arg_str})", self.lty(&ret)));
+                self.emit(&format!("{v} = {call_kind} {}{type_prefix} @{symbol}({arg_str})", self.lty(&ret)));
                 Some((v, ret))
             }
         }
@@ -4044,11 +4990,13 @@ fn expr_value_ty(e: &Expr) -> Option<Ty> {
         ExprKind::If { then, .. } => block_value_ty(then),
         ExprKind::Binary { op, lhs, .. } => match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
-            | BinOp::AddWrap | BinOp::SubWrap | BinOp::MulWrap => expr_value_ty(lhs),
+            | BinOp::AddWrap | BinOp::SubWrap | BinOp::MulWrap
+            | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
+            | BinOp::Shl | BinOp::Shr => expr_value_ty(lhs),
             _ => Some(Ty::Bool),
         },
         ExprKind::Unary { op, operand } => match op {
-            UnaryOp::Neg => expr_value_ty(operand),
+            UnaryOp::Neg | UnaryOp::BitNot => expr_value_ty(operand),
             UnaryOp::Not => Some(Ty::Bool),
             _ => None,
         },
@@ -4981,5 +5929,1416 @@ mod tests {
             ir.contains("call void @Tool.poke(ptr "),
             "expected call to method to pass ptr args, got: {ir}"
         );
+    }
+
+    // ---- Phase v0.0.2 Slice 1A: LLVM information dividend ----
+    //
+    // Verifies that every fact the frontend has already proven is published
+    // as an LLVM parameter attribute: noalias/readonly (existing), nonnull,
+    // noundef, dereferenceable(N), align A on pointer-passed params; noundef
+    // on value-passed scalar primitives.
+
+    #[test]
+    fn static_layout_primitives() {
+        let t = TypeTable::default();
+        assert_eq!(static_layout(&Ty::I8, &t),   Some((1, 1)));
+        assert_eq!(static_layout(&Ty::U8, &t),   Some((1, 1)));
+        assert_eq!(static_layout(&Ty::Bool, &t), Some((1, 1)));
+        assert_eq!(static_layout(&Ty::I16, &t),  Some((2, 2)));
+        assert_eq!(static_layout(&Ty::U32, &t),  Some((4, 4)));
+        assert_eq!(static_layout(&Ty::F32, &t),  Some((4, 4)));
+        assert_eq!(static_layout(&Ty::I64, &t),  Some((8, 8)));
+        assert_eq!(static_layout(&Ty::Usize, &t),Some((8, 8)));
+        assert_eq!(static_layout(&Ty::F64, &t),  Some((8, 8)));
+        assert_eq!(static_layout(&Ty::RawPtr(Box::new(Ty::U8)), &t), Some((8, 8)));
+        // Fat pointers.
+        assert_eq!(static_layout(&Ty::Str, &t),                Some((16, 8)));
+        assert_eq!(static_layout(&Ty::Slice(Box::new(Ty::I32)), &t), Some((16, 8)));
+        assert_eq!(static_layout(&Ty::String, &t),             Some((24, 8)));
+        // Fixed-size array.
+        assert_eq!(static_layout(&Ty::Array(Box::new(Ty::I32), 4), &t), Some((16, 4)));
+    }
+
+    #[test]
+    fn static_layout_struct_with_padding() {
+        // struct S { a: i8, b: i32, c: i8 } → size 12, align 4.
+        // Layout: a at 0, pad to 4, b at 4..8, c at 8, pad to align 4 → 12.
+        let src = "struct S { a: i8, b: i32, c: i8 }\nfn main() -> i32 { return 0; }";
+        let toks = tokenize(src).unwrap();
+        let prog = parse(toks).unwrap();
+        let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.is_empty());
+        let types = collect_types(&prog);
+        let id = types.struct_by_name["S"];
+        assert_eq!(static_layout(&Ty::Struct(id), &types), Some((12, 4)));
+    }
+
+    #[test]
+    fn is_scalar_ty_distinguishes_scalars_from_aggregates() {
+        let t = TypeTable::default();
+        assert!(is_scalar_ty(&Ty::I32, &t));
+        assert!(is_scalar_ty(&Ty::Bool, &t));
+        assert!(is_scalar_ty(&Ty::RawPtr(Box::new(Ty::U8)), &t));
+        assert!(!is_scalar_ty(&Ty::Str, &t));
+        assert!(!is_scalar_ty(&Ty::String, &t));
+        assert!(!is_scalar_ty(&Ty::Slice(Box::new(Ty::I32)), &t));
+        assert!(!is_scalar_ty(&Ty::Array(Box::new(Ty::I32), 4), &t));
+        // Plain enum (no payloads) is scalar (i32); tagged enum is aggregate.
+        let src = "enum Plain { A, B, C }\nenum Tagged { S(i32), N }\n\
+                   fn main() -> i32 { return 0; }";
+        let toks = tokenize(src).unwrap();
+        let prog = parse(toks).unwrap();
+        let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
+        assert!(diags.is_empty());
+        let types = collect_types(&prog);
+        let plain = Ty::Enum(types.enum_by_name["Plain"]);
+        let tagged = Ty::Enum(types.enum_by_name["Tagged"]);
+        assert!(is_scalar_ty(&plain, &types));
+        assert!(!is_scalar_ty(&tagged, &types));
+    }
+
+    #[test]
+    fn primitive_value_param_gets_noundef() {
+        // Definite-assignment + scalar → noundef.
+        let ir = gen_src(
+            "fn double(x: i32) -> i32 { return x + x; }\n\
+             fn main() -> i32 { return double(21); }"
+        );
+        assert!(
+            ir.contains("define i32 @double(i32 noundef %0)"),
+            "expected i32 param to carry noundef, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn aggregate_value_param_does_not_get_noundef() {
+        // `str` is an aggregate ({ ptr, i64 }) — noundef at aggregate level
+        // would be unsound because padding/components may carry poison
+        // through `insertvalue` chains. Skip noundef on aggregates.
+        let ir = gen_src(
+            "fn echo(s: str) -> str { return s; }\n\
+             fn main() -> i32 { let r: str = echo(\"hi\"); return 0; }"
+        );
+        assert!(
+            !ir.contains("{ ptr, i64 } noundef"),
+            "value-passed aggregate must not carry noundef, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn mut_param_noncopy_struct_emits_full_attr_set() {
+        // `mut t: Tag` (non-Copy) gets the full pointer-attribute set:
+        // noalias nonnull noundef dereferenceable(N) align A.
+        // Tag = { i32 v } → size 4, align 4.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
+        );
+        assert!(
+            ir.contains("define void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            "expected full attr set on mut ptr param, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn shared_param_noncopy_struct_emits_readonly_attr_set() {
+        // Shared `t: Tag` (non-Copy) gets readonly (not noalias) plus the
+        // rest. Two shared params may legally point at the same place, so
+        // noalias would be unsound.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn peek(t: Tag) -> i32 { return t.v; }\n\
+             fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }"
+        );
+        assert!(
+            ir.contains("define i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
+            "expected readonly+rest on shared ptr param, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn method_receiver_emits_receiver_attrs() {
+        // Self / mut self / move self map to readonly / noalias / noalias.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T {\n\
+               fn drop(mut self) { return; }\n\
+               fn read(self) -> i32 { return self.v; }\n\
+               fn bump(mut self) { self.v = self.v + 1; return; }\n\
+               fn into(move self) -> i32 { return self.v; }\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let mut a: T = T { v: 1 }; a.bump();\n\
+               let b: T = T { v: 2 }; let _r: i32 = b.read();\n\
+               let c: T = T { v: 3 }; let _n: i32 = c.into();\n\
+               return 0;\n\
+             }"
+        );
+        // `self` (Read)  → readonly
+        assert!(
+            ir.contains("define i32 @T.read(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
+            "T.read receiver attrs missing, got:\n{ir}"
+        );
+        // `mut self` (Mut) → noalias
+        assert!(
+            ir.contains("define void @T.bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            "T.bump receiver attrs missing, got:\n{ir}"
+        );
+        // `move self` (Move) → noalias (callee owns; exclusive)
+        assert!(
+            ir.contains("define i32 @T.into(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            "T.into receiver attrs missing, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn dereferenceable_size_matches_type_layout() {
+        // Struct with mixed-size fields: { i8, i32 } → size 8, align 4.
+        // (i8 at 0, padding to 4, i32 at 4..8.)
+        let ir = gen_src(
+            "struct Big { tag: i8, n: i32 }\n\
+             impl Big { fn drop(mut self) { return; } }\n\
+             fn use_it(b: Big) -> i32 { return b.n; }\n\
+             fn main() -> i32 { let x: Big = Big { tag: 1, n: 42 }; return use_it(x); }"
+        );
+        assert!(
+            ir.contains("ptr readonly nonnull noundef dereferenceable(8) align 4"),
+            "expected dereferenceable(8) align 4 for Big, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn raw_pointer_param_intptr_does_not_get_nonnull() {
+        // Slice 1A negative: a `*T` value-passed param (Copy, by-value) is
+        // a scalar — it gets `noundef` but NOT `nonnull`/`dereferenceable`.
+        // Raw pointers may be null in `unsafe` (slice 11.INTPTR via `0 as *T`).
+        let ir = gen_src(
+            "fn take(p: *u8) -> i32 { return 0; }\n\
+             fn main() -> i32 { return take(unsafe { 0 as *u8 }); }"
+        );
+        // Look for the @take signature line; it must say `ptr noundef` but
+        // not the pointer-target attribute set.
+        let line = ir.lines().find(|l| l.starts_with("define i32 @take("))
+            .expect("@take must be emitted");
+        assert!(line.contains("ptr noundef"), "expected noundef on *u8 param: {line}");
+        assert!(!line.contains("nonnull"),       "*u8 param must not carry nonnull: {line}");
+        assert!(!line.contains("dereferenceable"),"*u8 param must not carry dereferenceable: {line}");
+    }
+
+    #[test]
+    fn copy_struct_value_param_no_aggregate_noundef() {
+        // Copy struct stays value-passed; aggregate value → no noundef.
+        let ir = gen_src(
+            "struct P { v: i32 }\n\
+             fn use_p(p: P) -> i32 { return p.v; }\n\
+             fn main() -> i32 { let q: P = P { v: 5 }; return use_p(q); }"
+        );
+        let line = ir.lines().find(|l| l.starts_with("define i32 @use_p("))
+            .expect("@use_p must be emitted");
+        assert!(line.contains("%P "), "expected by-value P param: {line}");
+        assert!(!line.contains("noundef"),
+            "value-passed aggregate must not carry noundef: {line}");
+    }
+
+    // ---- Phase v0.0.2 Slice 1B: !range / llvm.assume publication ----
+    //
+    // The borrow checker, exhaustiveness check, and bounds-check lowering
+    // already prove tag-in-range / length-non-negative / index-in-bounds.
+    // Slice 1B publishes those facts to LLVM as `!range` metadata and
+    // `llvm.assume` calls so `-O2`'s ConstraintElimination / InstCombine
+    // can fold redundant checks downstream.
+
+    #[test]
+    fn preamble_declares_assume_intrinsic() {
+        // Used by both slice-len and bounds-check publication. Declared in
+        // the preamble so unused programs drop it via DCE.
+        let ir = gen_src("fn main() -> i32 { return 0; }");
+        assert!(
+            ir.contains("declare void @llvm.assume(i1 noundef)"),
+            "missing llvm.assume declaration in preamble:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn enum_tag_load_carries_range_metadata() {
+        let ir = gen_src(
+            "enum Color { Red, Green, Blue }\n\
+             fn main() -> i32 {\n\
+               let c: Color = Color::Green;\n\
+               let r: i32 = match c { Color::Red => 1, Color::Green => 2, Color::Blue => 3 };\n\
+               return r;\n\
+             }"
+        );
+        // The tag is loaded with `, !range !N`.
+        assert!(
+            ir.contains("load i32, ptr") && ir.contains(", !range !"),
+            "expected tag load with !range, got:\n{ir}"
+        );
+        // The metadata node is `!{i32 0, i32 3}` for the 3-variant enum.
+        assert!(
+            ir.contains("= !{i32 0, i32 3}"),
+            "expected !{{i32 0, i32 3}} for 3-variant enum, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn tagged_enum_tag_load_carries_range_metadata() {
+        // Tagged enum (Option-like): match dispatch on the payload-bearing
+        // variant. The tag GEP + load pattern is different from a plain
+        // enum, but the `!range` attachment should still happen.
+        let ir = gen_src(
+            "enum Opt { Some(i32), None }\n\
+             fn main() -> i32 {\n\
+               let o: Opt = Opt::Some(7);\n\
+               let r: i32 = match o { Opt::Some(v) => v, Opt::None => 0 };\n\
+               return r;\n\
+             }"
+        );
+        assert!(
+            ir.contains("load i32, ptr") && ir.contains(", !range !"),
+            "expected tagged-enum tag load with !range, got:\n{ir}"
+        );
+        assert!(
+            ir.contains("= !{i32 0, i32 2}"),
+            "expected !{{i32 0, i32 2}} for 2-variant Opt, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn slice_len_emits_nonneg_assume() {
+        // `slice_len` extractvalue gets a paired `icmp sge + llvm.assume`
+        // because `!range` doesn't apply to extractvalue. -O2 propagates
+        // the assume into range metadata downstream.
+        let ir = gen_src(
+            "extern fn malloc(n: usize) -> *u8;\n\
+             fn main() -> i32 {\n\
+               let buf: *u8 = unsafe { malloc(16 as usize) };\n\
+               let p: *i32 = unsafe { buf as *i32 };\n\
+               let s: i32[] = unsafe { slice_from_raw_parts(p, 3 as usize) };\n\
+               let n: usize = slice_len(s);\n\
+               return n as i32;\n\
+             }"
+        );
+        assert!(
+            ir.contains("icmp sge i64") && ir.contains("call void @llvm.assume(i1"),
+            "expected slice_len followed by assume(sge ..., 0), got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn bounds_check_emits_in_bounds_assume() {
+        // After the bounds-check branch lands in the ok-block, codegen
+        // emits `assume(idx < N)` so -O2 can drop downstream redundant
+        // checks. The IR contains BOTH the trap path and the assume.
+        let ir = gen_src(
+            "fn main() -> i32 {\n\
+               let arr: [i32; 3] = [10, 20, 30];\n\
+               let i: usize = 1 as usize;\n\
+               return arr[i];\n\
+             }"
+        );
+        // Trap path preserved.
+        assert!(ir.contains("icmp uge i64"), "expected trap-side uge, got:\n{ir}");
+        assert!(ir.contains("call void @llvm.trap()"), "expected trap, got:\n{ir}");
+        // Assume on the ok side.
+        assert!(ir.contains("icmp ult i64"), "expected ok-side ult, got:\n{ir}");
+        assert!(
+            ir.contains("call void @llvm.assume(i1"),
+            "expected llvm.assume after bounds check, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn module_metadata_ids_start_at_high_offset() {
+        // The range MD table uses `!100000+` to avoid colliding with
+        // DWARF's `!0..!5` reserved + `!6..` function block. A program
+        // that has any !range emission should have `!100000` defined.
+        let ir = gen_src(
+            "enum E { A, B }\n\
+             fn main() -> i32 { let e: E = E::A; let _r: i32 = match e { E::A => 0, E::B => 1 }; return 0; }"
+        );
+        assert!(
+            ir.contains("!100000 = !{"),
+            "expected !100000 range MD node, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn no_range_metadata_when_no_match_or_slice_or_index() {
+        // Negative: a trivial program that never matches, never indexes
+        // an array, never queries slice_len shouldn't emit any !range or
+        // assume calls. (The `declare void @llvm.assume(...)` lives in
+        // the preamble unconditionally — DCE handles it.)
+        let ir = gen_src("fn main() -> i32 { return 0; }");
+        assert!(
+            !ir.contains("!range "),
+            "trivial program must not carry !range, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("call void @llvm.assume("),
+            "trivial program must not call assume, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn range_metadata_cache_reuses_node_id() {
+        // Two matches on the same 3-variant enum should share one MD
+        // node (the `register_range` cache key is (lo, hi, ty)).
+        let ir = gen_src(
+            "enum E { A, B, C }\n\
+             fn main() -> i32 {\n\
+               let a: E = E::A;\n\
+               let b: E = E::B;\n\
+               let r1: i32 = match a { E::A => 1, E::B => 2, E::C => 3 };\n\
+               let r2: i32 = match b { E::A => 4, E::B => 5, E::C => 6 };\n\
+               return r1 + r2;\n\
+             }"
+        );
+        // Both match loads reference the same MD id (!100000).
+        let occurrences = ir.matches(", !range !100000").count();
+        assert!(
+            occurrences >= 2,
+            "expected MD id to be shared across two matches on same enum, got {occurrences}\n{ir}"
+        );
+        // Only one definition of !100000.
+        let defs = ir.matches("!100000 = !{").count();
+        assert_eq!(defs, 1, "expected one definition of !100000, got {defs}\n{ir}");
+    }
+
+    // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
+    //
+    // Borrowck proves that for every pointer-passed `mut`/`move` non-Copy
+    // param, no other live pointer in the same function reaches the same
+    // memory. Slice 1A encodes this as the `noalias` param attribute —
+    // which degrades after inlining. Scoped alias metadata survives
+    // inlining and feeds the loop vectorizer.
+
+    #[test]
+    fn two_mut_noncopy_params_emit_domain_and_scopes() {
+        // `swap(mut a: Tag, mut b: Tag)` has two noalias-shaped pointers.
+        // The function gets one domain MD node and two scope nodes.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn swap(mut a: Tag, mut b: Tag) {\n\
+               let ta: i32 = a.v;\n\
+               let tb: i32 = b.v;\n\
+               a.v = tb;\n\
+               b.v = ta;\n\
+               return;\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let mut x: Tag = Tag { v: 1 };\n\
+               let mut y: Tag = Tag { v: 2 };\n\
+               swap(x, y);\n\
+               return x.v;\n\
+             }"
+        );
+        // Domain (self-referential, labeled with fn name).
+        assert!(
+            ir.contains("distinct !{") && ir.contains("\"swap\""),
+            "expected swap domain MD node, got:\n{ir}"
+        );
+        // Two scopes labeled `p0` and `p1`.
+        assert!(ir.contains("\"p0\""), "expected scope p0, got:\n{ir}");
+        assert!(ir.contains("\"p1\""), "expected scope p1, got:\n{ir}");
+        // Loads through the params carry alias.scope+noalias.
+        assert!(
+            ir.contains(", !alias.scope ") && ir.contains(", !noalias !"),
+            "expected alias-scope annotated loads/stores, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn scope_propagates_through_gep_to_field_loads() {
+        // A direct field read on a `mut` non-Copy param GEPs off the param's
+        // SSA, then loads. The post-pass should propagate the scope from the
+        // GEP source to the load.
+        let ir = gen_src(
+            "struct P { v: i32 }\n\
+             impl P { fn drop(mut self) { return; } }\n\
+             fn pair(mut a: P, mut b: P) -> i32 { return a.v + b.v; }\n\
+             fn main() -> i32 {\n\
+               let p: P = P { v: 1 };\n\
+               let q: P = P { v: 2 };\n\
+               return pair(p, q);\n\
+             }"
+        );
+        // Both loads (one per param) must be annotated.
+        let load_count = ir.lines()
+            .filter(|l| l.contains("load i32") && l.contains("!alias.scope"))
+            .count();
+        assert!(
+            load_count >= 2,
+            "expected >=2 scope-tagged loads, got {load_count}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn single_mut_param_does_not_emit_scope_metadata() {
+        // With only one noalias-shaped param, no aliasing-pair exists, so
+        // there's nothing useful to publish — skip the metadata to keep IR
+        // small.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
+        );
+        // The function body must not carry alias.scope on its loads.
+        let body_start = ir.find("define void @bump(").expect("@bump emitted");
+        let body_end = ir[body_start..].find("\n}\n").expect("@bump close");
+        let body = &ir[body_start..body_start + body_end];
+        assert!(
+            !body.contains("!alias.scope"),
+            "single-mut-param fn should not carry alias.scope, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn shared_params_do_not_participate_in_scope_set() {
+        // Shared (`x: T`, non-Copy) is `readonly` — two shared params may
+        // legally alias each other (§2.9). They MUST NOT show up as
+        // alias-scope sources.
+        let ir = gen_src(
+            "struct P { v: i32 }\n\
+             impl P { fn drop(mut self) { return; } }\n\
+             fn both_shared(a: P, b: P) -> i32 { return a.v + b.v; }\n\
+             fn main() -> i32 {\n\
+               let p: P = P { v: 1 };\n\
+               let q: P = P { v: 2 };\n\
+               return both_shared(p, q);\n\
+             }"
+        );
+        let body_start = ir.find("define i32 @both_shared(").expect("@both_shared emitted");
+        let body_end = ir[body_start..].find("\n}\n").expect("@both_shared close");
+        let body = &ir[body_start..body_start + body_end];
+        assert!(
+            !body.contains("!alias.scope"),
+            "shared (readonly) params must not get alias.scope, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn method_receiver_and_mut_param_participate_in_scope_set() {
+        // `mut self` is pointer-passed-and-exclusive; combined with a
+        // separate `mut other: T` param, we have two scopes.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T {\n\
+               fn drop(mut self) { return; }\n\
+               fn merge(mut self, mut other: T) {\n\
+                 self.v = self.v + other.v;\n\
+                 other.v = 0;\n\
+                 return;\n\
+               }\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let mut a: T = T { v: 10 };\n\
+               let mut b: T = T { v: 20 };\n\
+               a.merge(b);\n\
+               return a.v;\n\
+             }"
+        );
+        assert!(
+            ir.contains("\"T.merge\""),
+            "expected T.merge domain MD, got:\n{ir}"
+        );
+        // Both p0 (self) and p1 (other) scopes present.
+        assert!(ir.contains("\"p0\""), "expected p0 (self) scope, got:\n{ir}");
+        assert!(ir.contains("\"p1\""), "expected p1 (other) scope, got:\n{ir}");
+        // Annotated load+store pairs in body.
+        assert!(
+            ir.lines().any(|l| l.contains("load") && l.contains("!alias.scope")),
+            "expected scope-tagged load in T.merge, got:\n{ir}"
+        );
+        assert!(
+            ir.lines().any(|l| l.contains("store") && l.contains("!alias.scope")),
+            "expected scope-tagged store in T.merge, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn shared_self_receiver_does_not_get_scope() {
+        // `self` (Read) is readonly, NOT noalias. A method with `self` +
+        // a mut param has only one noalias-shaped pointer → no metadata.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T {\n\
+               fn drop(mut self) { return; }\n\
+               fn read_and_bump(self, mut other: T) -> i32 {\n\
+                 other.v = self.v;\n\
+                 return self.v;\n\
+               }\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let a: T = T { v: 5 };\n\
+               let mut b: T = T { v: 0 };\n\
+               return a.read_and_bump(b);\n\
+             }"
+        );
+        let body_start = ir.find("define i32 @T.read_and_bump(").expect("emitted");
+        let body_end = ir[body_start..].find("\n}\n").expect("close");
+        let body = &ir[body_start..body_start + body_end];
+        assert!(
+            !body.contains("!alias.scope"),
+            "self (Read) + one mut param = one noalias only → no scope metadata, got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn extract_ptr_operand_basic() {
+        // Hand the helper a synthetic instruction; verify it pulls out
+        // the pointer operand.
+        let p = extract_ptr_operand("load i32, ptr %t5, align 4");
+        assert_eq!(p.as_deref(), Some("%t5"));
+        let p = extract_ptr_operand("getelementptr inbounds %T, ptr %0, i32 0, i32 1");
+        assert_eq!(p.as_deref(), Some("%0"));
+        let p = extract_ptr_operand("store i32 7, ptr %dst");
+        assert_eq!(p.as_deref(), Some("%dst"));
+        // No `, ptr` operand → None.
+        let p = extract_ptr_operand("add i32 %a, %b");
+        assert!(p.is_none());
+    }
+
+    #[test]
+    fn alias_scope_dataflow_propagates_through_chained_gep() {
+        // GEPs feed off other GEPs (nested struct access). The dataflow
+        // should propagate the scope along the chain so the final load is
+        // annotated.
+        let ir = gen_src(
+            "struct Inner { x: i32 }\n\
+             struct Outer { inner: Inner, tag: i32 }\n\
+             impl Outer { fn drop(mut self) { return; } }\n\
+             fn touch_both(mut a: Outer, mut b: Outer) -> i32 {\n\
+               return a.inner.x + b.tag;\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let p: Outer = Outer { inner: Inner { x: 7 }, tag: 1 };\n\
+               let q: Outer = Outer { inner: Inner { x: 3 }, tag: 2 };\n\
+               return touch_both(p, q);\n\
+             }"
+        );
+        // Nested load (a.inner.x) must carry alias.scope.
+        assert!(
+            ir.lines().any(|l| l.contains("load i32") && l.contains("!alias.scope")),
+            "expected nested-load scope annotation, got:\n{ir}"
+        );
+    }
+
+    // ---- Phase v0.0.2 Slice 1F: cold + preserve_nonecc on drop glue ----
+    //
+    // Destructors are compiler-synthesized cold-path helpers. Marking them
+    // `preserve_nonecc cold` lets the optimizer skip callee-save register
+    // saves at the call boundary and biases hot paths away from drops.
+
+    #[test]
+    fn drop_method_emits_cold_and_preserve_none_cc() {
+        let ir = gen_src(
+            "struct R { v: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }"
+        );
+        // `define preserve_nonecc void @R.drop(...) cold {`
+        assert!(
+            ir.contains("define preserve_nonecc void @R.drop("),
+            "expected preserve_nonecc on drop definition, got:\n{ir}"
+        );
+        // The `cold` attribute lands after the param list, before `{`.
+        let drop_line = ir.lines()
+            .find(|l| l.contains("@R.drop("))
+            .expect("drop definition emitted");
+        assert!(
+            drop_line.ends_with(") cold {"),
+            "drop definition must carry `cold`, got: {drop_line}"
+        );
+    }
+
+    #[test]
+    fn drop_call_sites_match_callee_cc() {
+        // LLVM rejects IR where the call site's CC disagrees with the
+        // callee's. The Always-disposition path emits the call.
+        let ir = gen_src(
+            "struct R { v: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }"
+        );
+        assert!(
+            ir.contains("call preserve_nonecc void @R.drop("),
+            "drop call site must match preserve_nonecc CC, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn non_drop_methods_keep_default_cc() {
+        // Only `drop` methods get the cold CC. Regular methods continue
+        // to use the default C calling convention.
+        let ir = gen_src(
+            "struct R { v: i32 }\n\
+             impl R {\n\
+               fn drop(mut self) { return; }\n\
+               fn bump(mut self) -> i32 { self.v = self.v + 1; return self.v; }\n\
+             }\n\
+             fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }"
+        );
+        // R.bump must NOT have preserve_nonecc or `) cold {`.
+        let bump_line = ir.lines()
+            .find(|l| l.contains("@R.bump("))
+            .expect("@R.bump emitted");
+        assert!(
+            !bump_line.contains("preserve_nonecc"),
+            "non-drop method must not get preserve_nonecc, got: {bump_line}"
+        );
+        assert!(
+            !bump_line.contains("cold"),
+            "non-drop method must not get cold, got: {bump_line}"
+        );
+    }
+
+    #[test]
+    fn non_drop_call_sites_have_no_cc_prefix() {
+        let ir = gen_src(
+            "struct R { v: i32 }\n\
+             impl R {\n\
+               fn drop(mut self) { return; }\n\
+               fn bump(mut self) -> i32 { self.v = self.v + 1; return self.v; }\n\
+             }\n\
+             fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }"
+        );
+        // R.bump call must be plain `call i32 @R.bump(...)`, no CC.
+        assert!(
+            ir.contains("call i32 @R.bump("),
+            "expected default-CC call to R.bump, got:\n{ir}"
+        );
+    }
+
+    // ---- Phase v0.0.2 Slice 1E: musttail on tail-position direct calls ----
+    //
+    // `return foo(args);` where caller and callee have matching signature
+    // can be a guaranteed tail call. LLVM's verifier rejects musttail when
+    // the param-count/type signature doesn't match exactly, so the
+    // predicate is conservative.
+
+    #[test]
+    fn recursive_tail_call_uses_musttail() {
+        // `sum_to(n, acc)` recurses with `return sum_to(n-1, acc+n)`. The
+        // caller and callee have identical signatures, so musttail fires.
+        let ir = gen_src(
+            "fn sum_to(n: i32, acc: i32) -> i32 {\n\
+               if n == 0 { return acc; }\n\
+               return sum_to(n - 1, acc + n);\n\
+             }\n\
+             fn main() -> i32 { return sum_to(10, 0); }"
+        );
+        // The recursive call must be musttail.
+        let line = ir.lines()
+            .find(|l| l.contains("call i32 @sum_to") && l.contains("musttail"))
+            .expect("expected musttail recursive call");
+        assert!(line.contains("musttail call i32 @sum_to"), "got: {line}");
+    }
+
+    #[test]
+    fn entry_call_with_mismatched_signature_does_not_use_musttail() {
+        // `main() -> i32` returning `sum_to(args) -> i32` doesn't qualify:
+        // caller has 0 params, callee has 2. LLVM would reject; the
+        // predicate must bail.
+        let ir = gen_src(
+            "fn sum_to(n: i32, acc: i32) -> i32 {\n\
+               if n == 0 { return acc; }\n\
+               return sum_to(n - 1, acc + n);\n\
+             }\n\
+             fn main() -> i32 { return sum_to(10, 0); }"
+        );
+        // The main's call must be a plain `call`, not `musttail`.
+        let main_start = ir.find("define i32 @main()").expect("@main emitted");
+        let main_end = ir[main_start..].find("\n}\n").expect("@main close");
+        let main_body = &ir[main_start..main_start + main_end];
+        assert!(
+            main_body.contains("call i32 @sum_to"),
+            "expected call to sum_to in main: {main_body}"
+        );
+        assert!(
+            !main_body.contains("musttail"),
+            "main → sum_to (mismatched sig) must not be musttail: {main_body}"
+        );
+    }
+
+    #[test]
+    fn mismatched_return_type_does_not_use_musttail() {
+        // Caller returns i32, callee returns i64 → no musttail.
+        let ir = gen_src(
+            "fn long_id(n: i64) -> i64 { return n; }\n\
+             fn short_id(n: i32) -> i32 { return n; }\n\
+             fn caller(n: i32) -> i32 { return short_id(n); }\n\
+             fn main() -> i32 { return caller(0); }"
+        );
+        // caller → short_id: same signature, same return → musttail.
+        assert!(
+            ir.contains("musttail call i32 @short_id"),
+            "expected matching-sig musttail, got:\n{ir}"
+        );
+        // long_id is never tail-called.
+        assert!(
+            !ir.contains("musttail call i64 @long_id"),
+            "i64 fn must not appear as musttail from i32-returning caller, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn return_with_no_call_does_not_set_musttail_flag() {
+        // Plain `return x;` (not a call) should produce a plain `ret`.
+        let ir = gen_src("fn id(n: i32) -> i32 { return n + 1; }");
+        assert!(!ir.contains("musttail"), "no call → no musttail, got:\n{ir}");
+        assert!(ir.contains("ret i32"), "expected ret i32: {ir}");
+    }
+
+    #[test]
+    fn methods_do_not_emit_musttail() {
+        // Method bodies carry an implicit receiver, so even if the body
+        // does `return helper()`, the receiver-vs-no-receiver mismatch
+        // would make musttail invalid. The eligibility flag suppresses.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             fn helper() -> i32 { return 1; }\n\
+             impl T {\n\
+               fn get(self) -> i32 { return helper(); }\n\
+             }\n\
+             fn main() -> i32 { let t: T = T { v: 0 }; return t.get(); }"
+        );
+        // T.get must NOT use musttail.
+        let m_start = ir.find("define i32 @T.get(").expect("T.get emitted");
+        let m_end = ir[m_start..].find("\n}\n").expect("T.get close");
+        let m_body = &ir[m_start..m_start + m_end];
+        assert!(
+            !m_body.contains("musttail"),
+            "method body must not emit musttail (receiver shape would mismatch): {m_body}"
+        );
+    }
+
+    #[test]
+    fn return_drop_value_does_not_use_musttail() {
+        // A Drop-bound local creates a pending scope-exit. musttail
+        // requires the ret to immediately follow the call (no drop
+        // emission between), so the predicate must bail.
+        let ir = gen_src(
+            "struct R { v: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             fn id(n: i32) -> i32 { return n; }\n\
+             fn caller(n: i32) -> i32 {\n\
+               let r: R = R { v: 1 };\n\
+               return id(n);\n\
+             }\n\
+             fn main() -> i32 { return caller(5); }"
+        );
+        // caller's body has a Drop binding, so its `return id(n)` cannot
+        // be musttail (drop runs between the call and the ret).
+        let c_start = ir.find("define i32 @caller(").expect("caller emitted");
+        let c_end = ir[c_start..].find("\n}\n").expect("caller close");
+        let c_body = &ir[c_start..c_start + c_end];
+        assert!(
+            !c_body.contains("musttail"),
+            "pending Drop must suppress musttail in caller: {c_body}"
+        );
+    }
+
+    // ---- Phase v0.0.2 Slice 1D: sret for owned-string returns ----
+    //
+    // Owned `string` is the canonical sret case: 24-byte aggregate with
+    // Drop. Returning by value forces LLVM to copy through registers +
+    // memory; `sret` collapses to a single write into the caller's slot.
+    // The narrow scope (string only) bounds the ABI-change blast radius.
+
+    #[test]
+    fn return_passes_by_sret_predicate() {
+        // Today only Ty::String triggers sret; primitives and slices stay
+        // value-returned. Generic non-Copy struct sret is deferred.
+        assert!(return_passes_by_sret(&Ty::String));
+        assert!(!return_passes_by_sret(&Ty::I32));
+        assert!(!return_passes_by_sret(&Ty::Str));
+        assert!(!return_passes_by_sret(&Ty::Slice(Box::new(Ty::I32))));
+        assert!(!return_passes_by_sret(&Ty::Unit));
+    }
+
+    #[test]
+    fn string_returning_fn_uses_sret_definition() {
+        let ir = gen_src(
+            "fn greet() -> string { return \"hi\".to_string(); }\n\
+             fn main() -> i32 { let s: string = greet(); return 0; }"
+        );
+        // The function returns void and takes a sret pointer as %0.
+        assert!(
+            ir.contains("define void @greet(ptr sret({ ptr, i64, i64 }) noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
+            "expected sret definition, got:\n{ir}"
+        );
+        // The body stores into %0 then returns void.
+        assert!(
+            ir.contains("store { ptr, i64, i64 }") && ir.contains(", ptr %0"),
+            "expected store-to-sret-slot, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn string_returning_fn_call_site_uses_sret_slot() {
+        // The caller allocates a 24-byte slot, passes it as the sret
+        // arg, and loads the result back for value-semantics consumers.
+        let ir = gen_src(
+            "fn greet() -> string { return \"hi\".to_string(); }\n\
+             fn main() -> i32 { let s: string = greet(); return 0; }"
+        );
+        assert!(
+            ir.contains("call void @greet(ptr "),
+            "expected void-returning call to greet, got:\n{ir}"
+        );
+        // After the call, the caller loads the value back from the slot.
+        assert!(
+            ir.contains("load { ptr, i64, i64 }, ptr"),
+            "expected load-from-slot after sret call, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn extern_fn_returning_string_keeps_value_abi() {
+        // sret is a C+ convention; extern fns keep the C ABI the user
+        // declared. (No real C fn returns a `string` aggregate, but the
+        // ABI invariant must hold.)
+        let ir = gen_src(
+            "extern fn make_str() -> string;\n\
+             fn main() -> i32 { let s: string = unsafe { make_str() }; return 0; }"
+        );
+        // The declare line must use the value-return form, not sret.
+        assert!(
+            ir.contains("declare { ptr, i64, i64 } @make_str()"),
+            "extern fn must keep value ABI, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("declare void @make_str(ptr sret"),
+            "extern fn must not be sret-converted, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn primitive_returning_fn_keeps_value_abi() {
+        // Slice 1D narrow scope: only `string` triggers sret. i32 returns
+        // continue to use the value form.
+        let ir = gen_src(
+            "fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+             fn main() -> i32 { return add(2, 3); }"
+        );
+        assert!(
+            ir.contains("define i32 @add("),
+            "primitive return must keep value form, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("sret"),
+            "no sret on primitive-return fn, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn string_sret_with_args_shifts_param_indices() {
+        // With sret, the user-declared params live at %1, %2, ... rather
+        // than %0, %1, .... Verify the body references the shifted SSA.
+        let ir = gen_src(
+            "fn pick(n: i32) -> string { return \"x\".to_string(); }\n\
+             fn main() -> i32 { let s: string = pick(7); return 0; }"
+        );
+        // Definition: %0 is sret, %1 is `n`.
+        assert!(
+            ir.contains("define void @pick(ptr sret") && ir.contains(", i32 noundef %1)"),
+            "expected sret-then-i32 param indices, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn musttail_with_sret_forwards_caller_slot() {
+        // Caller's sret slot can be forwarded to callee on a tail call.
+        // `caller() -> string` returning `helper()` (both sret) should
+        // not need an intermediate slot+load — forward the caller's slot.
+        let ir = gen_src(
+            "fn helper() -> string { return \"hi\".to_string(); }\n\
+             fn caller() -> string { return helper(); }\n\
+             fn main() -> i32 { let s: string = caller(); return 0; }"
+        );
+        // Caller's body must musttail-call helper using its own sret slot.
+        let c_start = ir.find("define void @caller(").expect("caller emitted");
+        let c_end = ir[c_start..].find("\n}\n").expect("caller close");
+        let c_body = &ir[c_start..c_start + c_end];
+        assert!(
+            c_body.contains("musttail call void @helper(ptr %0)"),
+            "expected musttail call forwarding caller's sret slot, got:\n{c_body}"
+        );
+    }
+
+    // ---- Phase 3A: bitwise + shift + byte-swap ----
+
+    #[test]
+    fn bitand_emits_llvm_and() {
+        let ir = gen_src("fn main() -> i32 { return 0xff & 0x0f; }");
+        assert!(ir.contains(" = and i32 "),
+            "expected `and i32`, got:\n{ir}");
+    }
+
+    #[test]
+    fn bitor_emits_llvm_or() {
+        let ir = gen_src("fn main() -> i32 { return 0xff | 0x0f; }");
+        assert!(ir.contains(" = or i32 "),
+            "expected `or i32`, got:\n{ir}");
+    }
+
+    #[test]
+    fn bitxor_emits_llvm_xor() {
+        let ir = gen_src("fn main() -> i32 { return 0xff ^ 0x0f; }");
+        assert!(ir.contains(" = xor i32 "),
+            "expected `xor i32`, got:\n{ir}");
+    }
+
+    #[test]
+    fn bit_not_emits_xor_minus_one() {
+        // Phase 3A: `~x` lowers to `xor x, -1` per LLVM idiom.
+        let ir = gen_src("fn main() -> i32 { let x: i32 = 5; return ~x; }");
+        assert!(ir.contains("xor i32 ") && ir.contains(", -1"),
+            "expected `xor i32 ..., -1`, got:\n{ir}");
+    }
+
+    #[test]
+    fn shl_emits_llvm_shl() {
+        let ir = gen_src("fn main() -> i32 { return 1 << 3; }");
+        assert!(ir.contains(" = shl i32 "),
+            "expected `shl i32`, got:\n{ir}");
+    }
+
+    #[test]
+    fn signed_shr_emits_arithmetic_shift() {
+        // i32 is signed → `ashr` (preserves sign bit).
+        let ir = gen_src("fn main() -> i32 { let x: i32 = -8; return x >> 2; }");
+        assert!(ir.contains(" = ashr i32 "),
+            "expected `ashr` for signed shift right, got:\n{ir}");
+    }
+
+    #[test]
+    fn unsigned_shr_emits_logical_shift() {
+        // u32 is unsigned → `lshr` (zero-fill).
+        let ir = gen_src(
+            "fn main() -> i32 { let x: u32 = 8 as u32; let y: u32 = x >> (2 as u32); return 0; }"
+        );
+        assert!(ir.contains(" = lshr i32 "),
+            "expected `lshr` for unsigned shift right, got:\n{ir}");
+    }
+
+    #[test]
+    fn shift_count_different_width_gets_coerced() {
+        // `i64 << u8` — RHS gets zext from i8 to i64 before the shift.
+        let ir = gen_src(
+            "fn main() -> i32 {\n\
+               let x: i64 = 1 as i64;\n\
+               let n: u8 = 3 as u8;\n\
+               let y: i64 = x << n;\n\
+               return 0;\n\
+             }"
+        );
+        // zext from i8 to i64 of the count, followed by shl i64.
+        assert!(ir.contains(" = zext i8 ") && ir.contains(" to i64"),
+            "expected zext i8 -> i64, got:\n{ir}");
+        assert!(ir.contains(" = shl i64 "),
+            "expected `shl i64`, got:\n{ir}");
+    }
+
+    #[test]
+    fn bswap16_emits_intrinsic_call() {
+        let ir = gen_src("fn main() -> i32 { let p: u16 = 0x1234 as u16; let q: u16 = bswap16(p); return 0; }");
+        assert!(ir.contains("call i16 @llvm.bswap.i16(i16 "),
+            "expected llvm.bswap.i16 call, got:\n{ir}");
+    }
+
+    #[test]
+    fn bswap32_emits_intrinsic_call() {
+        let ir = gen_src("fn main() -> i32 { let p: u32 = 0x12345678 as u32; let q: u32 = bswap32(p); return 0; }");
+        assert!(ir.contains("call i32 @llvm.bswap.i32(i32 "),
+            "expected llvm.bswap.i32 call, got:\n{ir}");
+    }
+
+    #[test]
+    fn bswap64_emits_intrinsic_call() {
+        let ir = gen_src("fn main() -> i32 { let p: u64 = 1 as u64; let q: u64 = bswap64(p); return 0; }");
+        assert!(ir.contains("call i64 @llvm.bswap.i64(i64 "),
+            "expected llvm.bswap.i64 call, got:\n{ir}");
+    }
+
+    #[test]
+    fn htons_aliases_bswap16() {
+        // htons/htonl/ntohs/ntohl are aliases that lower to bswap on LE.
+        let ir = gen_src("fn main() -> i32 { let p: u16 = 8080 as u16; let q: u16 = htons(p); return 0; }");
+        assert!(ir.contains("call i16 @llvm.bswap.i16(i16 "),
+            "expected htons to lower to llvm.bswap.i16, got:\n{ir}");
+    }
+
+    #[test]
+    fn htonl_aliases_bswap32() {
+        let ir = gen_src("fn main() -> i32 { let p: u32 = 1 as u32; let q: u32 = htonl(p); return 0; }");
+        assert!(ir.contains("call i32 @llvm.bswap.i32(i32 "),
+            "expected htonl to lower to llvm.bswap.i32, got:\n{ir}");
+    }
+
+    #[test]
+    fn preamble_declares_bswap_intrinsics() {
+        let ir = gen_src("fn main() -> i32 { return 0; }");
+        assert!(ir.contains("declare i16 @llvm.bswap.i16(i16)"));
+        assert!(ir.contains("declare i32 @llvm.bswap.i32(i32)"));
+        assert!(ir.contains("declare i64 @llvm.bswap.i64(i64)"));
+    }
+
+    #[test]
+    // ---- Phase 5 Slice 5.D: C-ABI aggregate coercion ----
+
+    #[test]
+    fn classify_c_abi_scalars_pass_direct() {
+        let t = TypeTable::default();
+        assert_eq!(classify_c_abi(&Ty::I32, &t), CAbiClass::Direct);
+        assert_eq!(classify_c_abi(&Ty::U64, &t), CAbiClass::Direct);
+        assert_eq!(classify_c_abi(&Ty::Bool, &t), CAbiClass::Direct);
+        assert_eq!(classify_c_abi(&Ty::F32, &t), CAbiClass::Direct);
+        assert_eq!(classify_c_abi(&Ty::RawPtr(Box::new(Ty::U8)), &t), CAbiClass::Direct);
+    }
+
+    #[test]
+    fn classify_c_abi_small_struct_coerces_to_i64() {
+        // `#[repr(C)] struct Point { x: i32, y: i32 }` is 8 bytes.
+        let src = "#[repr(C)] struct Point { x: i32, y: i32 }\n\
+                   fn main() -> i32 { return 0; }";
+        let toks = tokenize(src).unwrap();
+        let prog = parse(toks).unwrap();
+        let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
+        assert!(diags.is_empty());
+        let types = collect_types(&prog);
+        let id = types.struct_by_name["Point"];
+        let abi = classify_c_abi(&Ty::Struct(id), &types);
+        match abi {
+            CAbiClass::Coerce { llvm_ty, size, align } => {
+                assert_eq!(llvm_ty, "i64");
+                assert_eq!(size, 8);
+                assert_eq!(align, 8);
+            }
+            _ => panic!("expected Coerce(i64), got {abi:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_c_abi_mid_struct_coerces_to_array_i64() {
+        let src = "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
+                   fn main() -> i32 { return 0; }";
+        let toks = tokenize(src).unwrap();
+        let prog = parse(toks).unwrap();
+        let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
+        assert!(diags.is_empty());
+        let types = collect_types(&prog);
+        let id = types.struct_by_name["Pair"];
+        match classify_c_abi(&Ty::Struct(id), &types) {
+            CAbiClass::Coerce { llvm_ty, size, .. } => {
+                assert_eq!(llvm_ty, "[2 x i64]");
+                assert_eq!(size, 16);
+            }
+            other => panic!("expected Coerce([2 x i64]), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_c_abi_large_struct_passes_indirect() {
+        let src = "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
+                   fn main() -> i32 { return 0; }";
+        let toks = tokenize(src).unwrap();
+        let prog = parse(toks).unwrap();
+        let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
+        assert!(diags.is_empty());
+        let types = collect_types(&prog);
+        let id = types.struct_by_name["Triple"];
+        assert_eq!(classify_c_abi(&Ty::Struct(id), &types), CAbiClass::Indirect);
+    }
+
+    #[test]
+    fn pub_extern_fn_with_small_struct_param_coerces_to_i64() {
+        // Codegen-level: the LLVM signature must use `i64` for the
+        // 8-byte `Point` param (matching clang's aarch64-darwin output).
+        let ir = gen_src(
+            "#[repr(C)] struct Point { x: i32, y: i32 }\n\
+             pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }"
+        );
+        // Look for the @square define with coerced i64 param.
+        assert!(
+            ir.contains("define i32 @square(i64"),
+            "expected `define i32 @square(i64 ...)`, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_small_struct_return_coerces_to_i64() {
+        let ir = gen_src(
+            "#[repr(C)] struct Point { x: i32, y: i32 }\n\
+             pub extern fn make(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }"
+        );
+        // 8-byte struct return: `define i64 @make(...)` with packed coerce on ret.
+        assert!(
+            ir.contains("define i64 @make("),
+            "expected `define i64 @make(...)`, got:\n{ir}"
+        );
+        // The Return statement should stage through alloca + load-as-i64.
+        assert!(
+            ir.contains("load i64, ptr") && ir.contains("ret i64"),
+            "expected coerce-on-return path emitted, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_mid_struct_param_coerces_to_array_i64() {
+        let ir = gen_src(
+            "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
+             pub extern fn sum(p: Pair) -> i64 { return p.a + p.b; }"
+        );
+        assert!(
+            ir.contains("define i64 @sum([2 x i64]"),
+            "expected `define i64 @sum([2 x i64] ...)`, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_large_struct_param_passes_indirect() {
+        let ir = gen_src(
+            "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
+             pub extern fn sum(t: Triple) -> i64 { return t.a + t.b + t.c; }"
+        );
+        // >16 byte struct param: bare `ptr` (no byval on aarch64-darwin).
+        assert!(
+            ir.contains("define i64 @sum(ptr"),
+            "expected `define i64 @sum(ptr ...)`, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_large_struct_return_uses_sret() {
+        // >16-byte aggregate returns go through Slice 1D's sret path —
+        // generalized in 5.D from `Ty::String` only to any Indirect class.
+        let ir = gen_src(
+            "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
+             pub extern fn make() -> Triple { return Triple { a: 1 as i64, b: 2 as i64, c: 3 as i64 }; }"
+        );
+        assert!(
+            ir.contains("define void @make(ptr sret("),
+            "expected sret-form return for >16 byte struct, got:\n{ir}"
+        );
+        assert!(
+            ir.contains("ret void"),
+            "expected `ret void` for sret path, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn non_extern_fn_unaffected_by_5d() {
+        // Regression guard: 5.D coercion fires ONLY on `pub extern fn`.
+        // A regular C+ fn `fn use_p(p: Point) -> i32` keeps the C+ ABI
+        // (LLVM first-class aggregate, `%Point %0`).
+        let ir = gen_src(
+            "#[repr(C)] struct Point { x: i32, y: i32 }\n\
+             fn use_p(p: Point) -> i32 { return p.x; }\n\
+             fn main() -> i32 { let q: Point = Point { x: 1, y: 2 }; return use_p(q); }"
+        );
+        // The non-extern path keeps `%Point %0` (Copy struct, by-value).
+        assert!(
+            ir.contains("define i32 @use_p(%Point"),
+            "non-extern fn must keep C+ ABI, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_scalar_args_no_coercion() {
+        // Pure-scalar signatures don't trigger any coercion machinery —
+        // the C ABI and C+ ABI agree on scalar passing.
+        let ir = gen_src(
+            "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }"
+        );
+        assert!(
+            ir.contains("define i32 @add(i32 noundef") && !ir.contains("@add(i64"),
+            "scalar-only export must not coerce, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn existing_substring_checks_still_match() {
+        // Backward-compat: pre-1A tests assert on substrings like
+        // `define void @bump(ptr noalias ` — confirm those still hold after
+        // the attr set widened (the noalias prefix is still left-anchored).
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
+        );
+        assert!(ir.contains("define void @bump(ptr noalias "));
+    }
+
+    // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
+    //
+    // For every pointer-passed `mut`/`move` param (the ones already
+    // carrying `noalias` from Slice 1A), publish a unique scope inside a
+    // per-function domain. Loads/stores derived from each param carry
+    // `!alias.scope` of their own scope and `!noalias` of all other
+    // function-local scopes. Survives -O2 inlining where `noalias` would
+    // be lost.
+
+    #[test]
+    fn two_mut_params_get_distinct_alias_scopes() {
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T { fn drop(mut self) { return; } }\n\
+             fn swap_bump(mut a: T, mut b: T) {\n\
+               let tmp: i32 = a.v;\n\
+               a.v = b.v;\n\
+               b.v = tmp;\n\
+               return;\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let mut x: T = T { v: 1 };\n\
+               let mut y: T = T { v: 2 };\n\
+               swap_bump(x, y);\n\
+               return x.v + y.v;\n\
+             }"
+        );
+        // One domain, two scopes for the function.
+        assert!(
+            ir.contains("distinct !{!100000, !\"swap_bump\"}"),
+            "expected swap_bump domain, got:\n{ir}"
+        );
+        assert!(
+            ir.contains(", !100000, !\"p0\"}") && ir.contains(", !100000, !\"p1\"}"),
+            "expected p0 and p1 scopes tied to the domain, got:\n{ir}"
+        );
+        // Loads/stores through both params carry alias.scope + noalias.
+        let scope_lines = ir.lines()
+            .filter(|l| l.contains("!alias.scope") && l.contains("!noalias"))
+            .count();
+        assert!(scope_lines >= 4,
+            "expected at least 4 annotated load/store lines (2 loads + 2 stores), got {scope_lines}:\n{ir}");
+    }
+
+    #[test]
+    fn single_mut_param_no_alias_scope() {
+        // With only one noalias-capable param, there's nothing to be
+        // disjoint *from*; emitting alias.scope wastes IR space without
+        // a payoff. Confirm the optimization is gated on count >= 2.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T { fn drop(mut self) { return; } }\n\
+             fn bump(mut t: T) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { let mut x: T = T { v: 1 }; bump(x); return x.v; }"
+        );
+        assert!(
+            !ir.contains("!alias.scope"),
+            "single mut param shouldn't trigger alias.scope, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn shared_params_do_not_participate_in_alias_scope() {
+        // Two `t: T` shared params get `readonly`, not `noalias`. The
+        // borrow checker doesn't prove they're disjoint, so we don't
+        // publish alias.scope (would be unsound — two shared refs may
+        // legally alias).
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T { fn drop(mut self) { return; } }\n\
+             fn sum(a: T, b: T) -> i32 { return a.v + b.v; }\n\
+             fn main() -> i32 {\n\
+               let x: T = T { v: 1 };\n\
+               let y: T = T { v: 2 };\n\
+               return sum(x, y);\n\
+             }"
+        );
+        assert!(
+            !ir.contains("!alias.scope"),
+            "two readonly shared params must not trigger alias.scope, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn method_mut_self_plus_mut_param_get_scopes() {
+        // `mut self` (Receiver::Mut → noalias-shaped, idx 0) and a
+        // non-Copy mut param both participate.
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T {\n\
+               fn drop(mut self) { return; }\n\
+               fn merge(mut self, mut other: T) {\n\
+                 self.v = self.v + other.v;\n\
+                 other.v = 0;\n\
+                 return;\n\
+               }\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let mut a: T = T { v: 1 };\n\
+               let mut b: T = T { v: 2 };\n\
+               a.merge(b);\n\
+               return a.v;\n\
+             }"
+        );
+        // Method-mangled domain.
+        assert!(
+            ir.contains("distinct !{") && ir.contains("\"T.merge\"}"),
+            "expected T.merge domain, got:\n{ir}"
+        );
+        // Loads/stores annotated.
+        let scope_lines = ir.lines()
+            .filter(|l| l.contains("!alias.scope") && l.contains("!noalias"))
+            .count();
+        assert!(scope_lines >= 2,
+            "expected at least 2 annotated load/store lines in T.merge, got {scope_lines}:\n{ir}");
+    }
+
+    #[test]
+    fn alias_scope_propagates_through_gep_chain() {
+        // gen_field GEPs off the param's slot. The post-pass dataflow
+        // should propagate the scope through the GEP so the eventual
+        // load carries it.
+        let ir = gen_src(
+            "struct Inner { n: i32 }\n\
+             struct Outer { inner: Inner, tag: i32 }\n\
+             impl Outer { fn drop(mut self) { return; } }\n\
+             fn touch(mut a: Outer, mut b: Outer) -> i32 {\n\
+               a.inner.n = b.tag;\n\
+               return a.inner.n + b.tag;\n\
+             }\n\
+             fn main() -> i32 {\n\
+               let mut x: Outer = Outer { inner: Inner { n: 0 }, tag: 7 };\n\
+               let mut y: Outer = Outer { inner: Inner { n: 0 }, tag: 9 };\n\
+               return touch(x, y);\n\
+             }"
+        );
+        // Two-level GEP chain (Outer → Inner → n) — both loads/stores
+        // through the chain should carry scope metadata.
+        let touched = ir.lines()
+            .filter(|l| l.contains("!alias.scope") && l.contains("!noalias"))
+            .count();
+        assert!(touched >= 2,
+            "expected at least 2 scope-annotated loads/stores through GEP chains, got {touched}:\n{ir}");
+    }
+
+    #[test]
+    fn extract_ptr_operand_finds_address_arg() {
+        // White-box: confirm the parser used by annotate_one_line picks
+        // off the `, ptr %X` operand from load/store/GEP forms.
+        assert_eq!(
+            extract_ptr_operand("load i32, ptr %t2, align 4").as_deref(),
+            Some("%t2"),
+        );
+        assert_eq!(
+            extract_ptr_operand("getelementptr inbounds %T, ptr %0, i32 0, i32 0").as_deref(),
+            Some("%0"),
+        );
+        assert_eq!(
+            extract_ptr_operand("store i32 7, ptr %slot").as_deref(),
+            Some("%slot"),
+        );
+        // No address operand → None.
+        assert_eq!(extract_ptr_operand("add i32 1, 2"), None);
     }
 }

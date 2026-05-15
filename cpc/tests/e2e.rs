@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
@@ -744,6 +745,70 @@ fn hello_mods_project_builds_and_runs() {
     let out = Command::new(&bin).output().expect("run binary");
     assert!(out.status.success(), "binary exited non-zero: {}", out.status);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "49\n");
+}
+
+/// v0.0.2 AppKit-via-Cplus.toml: a manifest declaring `frameworks` and
+/// `libs` produces a binary linked against those frameworks/libraries.
+///
+/// Test strategy: build a tiny project that uses `objc_getClass` from
+/// libobjc (a Darwin-stable symbol). Without `libs = ["objc"]` the link
+/// fails; with it, the link succeeds and the binary runs. Skipped on
+/// non-macOS because `-lobjc` only resolves on Apple platforms.
+#[test]
+#[cfg(target_os = "macos")]
+fn manifest_libs_links_libobjc() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"objc_smoke\"\n\n[[bin]]\nname = \"objc_smoke\"\npath = \"src/main.cplus\"\nlibs = [\"objc\"]\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "extern fn objc_getClass(name: *u8) -> *u8;\n\
+         fn main() -> i32 {\n\
+           let cstr: str = \"NSObject\";\n\
+           let p: *u8 = unsafe { str_ptr(cstr) };\n\
+           let cls: *u8 = unsafe { objc_getClass(p) };\n\
+           return 0;\n\
+         }\n",
+    ).unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build with libs failed: {status}");
+    let bin = dir.join("target/debug/objc_smoke");
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+}
+
+/// v0.0.2 AppKit-via-Cplus.toml: `frameworks` flows to `clang -framework`.
+/// Build a manifest that asks for Foundation; the build must succeed.
+#[test]
+#[cfg(target_os = "macos")]
+fn manifest_frameworks_passes_dash_framework() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fw\"\n\n[[bin]]\nname = \"fw\"\npath = \"src/main.cplus\"\nframeworks = [\"Foundation\"]\nlibs = [\"objc\"]\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    // The body doesn't have to use Foundation — we only need to prove the
+    // -framework flag is accepted (linker would silently ignore an unused
+    // framework, but a typo or unknown framework name will fail link).
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build with frameworks failed: {status}");
 }
 
 /// `cpc build` without a `Cplus.toml` in cwd should fail with a manifest
@@ -1841,9 +1906,11 @@ fn main() -> i32 {
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(!ir.contains("%x.drop_flag"),
         "drop flag should be elided when binding is never moved; got: {ir}");
-    // Direct unconditional drop call must still appear.
-    assert!(ir.contains("call void @B.drop(ptr %x"),
-        "expected unconditional drop call; got: {ir}");
+    // Direct unconditional drop call must still appear. Slice 1F changed
+    // the call to use `preserve_nonecc` to match the cold-path CC on the
+    // drop method's `define` line.
+    assert!(ir.contains("call preserve_nonecc void @B.drop(ptr %x"),
+        "expected unconditional drop call (preserve_nonecc); got: {ir}");
 }
 
 #[test]
@@ -4613,6 +4680,1054 @@ fn main() -> i32 {
     assert!(!out.status.success(), "u8[] to i32[] should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
+}
+
+// ---- Phase v0.0.2 Slice 1G: --emit-ll-opt and --emit-asm ----
+//
+// These flags pipe cpc's IR through clang to inspect post-optimization IR
+// (for validating !range / !alias.scope survives -O2) or native assembly
+// (for spot-checking hot-loop bounds-check elision). They are supporting
+// infrastructure for slices 1B/1C — without them those slices cannot be
+// validated, only emitted.
+
+#[test]
+fn emit_ll_opt_prints_post_pass_ir() {
+    // The post-pass IR should still contain a `define` for main and should
+    // carry attribute markup that LLVM adds during -O0 (e.g.
+    // `local_unnamed_addr`, `target triple`).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 42; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll-opt")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "cpc --emit-ll-opt exited non-zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("define"), "missing define in post-pass IR: {s}");
+    assert!(s.contains("@main"), "missing @main: {s}");
+    // The clang round-trip always inserts a `target triple` line, which is
+    // a reliable marker that we passed through `-S -emit-llvm` rather than
+    // bypassing it.
+    assert!(s.contains("target triple"), "missing target triple: {s}");
+}
+
+#[test]
+fn emit_ll_opt_release_runs_optimization() {
+    // At -O2 LLVM constant-folds `1+2+3` into a literal `ret i32 6`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fold.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 1 + 2 + 3; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--release")
+        .arg("--emit-ll-opt")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("ret i32 6"),
+        "expected constant-folded `ret i32 6` at -O2, got:\n{s}");
+}
+
+#[test]
+fn emit_asm_prints_assembly() {
+    // Native assembly should contain a label for `main` (with target-
+    // dependent leading underscore on macOS).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 42; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-asm")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "cpc --emit-asm exited non-zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    // Either `_main:` (Mach-O) or `main:` (ELF). Both contain `main:`.
+    assert!(s.contains("main:") || s.contains("main "),
+        "missing main label in asm: {s}");
+}
+
+#[test]
+fn emit_ll_opt_without_file_arg_fails() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("--emit-ll-opt").output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure without FILE arg");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--emit-ll-opt requires a FILE argument"),
+        "missing diagnostic, got: {stderr}");
+}
+
+#[test]
+fn emit_asm_without_file_arg_fails() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("--emit-asm").output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure without FILE arg");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--emit-asm requires a FILE argument"),
+        "missing diagnostic, got: {stderr}");
+}
+
+#[test]
+fn emit_ll_opt_propagates_sema_errors() {
+    // Negative: bad source still fails at sema, before clang is invoked.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return \"not an int\"; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll-opt")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected sema failure to propagate");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0302") || stderr.contains("error"),
+        "expected sema diagnostic, got: {stderr}");
+}
+
+#[test]
+fn emit_ll_opt_preserves_slice_1a_attrs() {
+    // End-to-end check that Slice 1A's `noundef` survives the clang round
+    // trip. (LLVM keeps the attribute in `define` lines even at -O0.)
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("attr.cplus");
+    std::fs::write(&src,
+        "fn double(x: i32) -> i32 { return x + x; }\n\
+         fn main() -> i32 { return double(21); }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll-opt")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("noundef"),
+        "expected `noundef` attr to survive clang round-trip, got:\n{s}");
+}
+
+// ---- Phase 5 Slice 5.A: library targets + object emission ----
+//
+// `[lib]` in Cplus.toml produces `.a` and `.dylib`/`.so` instead of an
+// executable. A C consumer can `#include` a hand-written header, link
+// against the artifact, and call any C-callable function. The e2e tests
+// here build a tiny library, link it from C, and verify the runtime
+// answer — the same shape as the AppKit-via-Cplus.toml slice's tests.
+
+#[test]
+fn lib_target_produces_staticlib() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed: {st}");
+    let a_path = dir.join("target/debug/libmathlib.a");
+    assert!(a_path.is_file(), "expected libmathlib.a at {}", a_path.display());
+}
+
+#[test]
+fn lib_target_produces_dylib_or_so() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"cdylib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed: {st}");
+    let ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    let dyn_path = dir.join(format!("target/debug/libmathlib.{ext}"));
+    assert!(dyn_path.is_file(), "expected libmathlib.{ext} at {}", dyn_path.display());
+}
+
+#[test]
+fn lib_target_both_produces_a_and_dylib() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"both\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+    assert!(dir.join("target/debug/libmathlib.a").is_file());
+    let ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    assert!(dir.join(format!("target/debug/libmathlib.{ext}")).is_file());
+}
+
+#[test]
+fn lib_target_exposes_pub_symbols_unmangled() {
+    // The key property for C-consumability: `pub fn add` in src/lib.cplus
+    // ends up as the bare `_add` (Mach-O) / `add` (ELF) symbol — not the
+    // path-mangled `_src.lib.add` that the resolver normally produces.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+    let nm = Command::new("nm")
+        .arg("-g")
+        .arg(dir.join("target/debug/libmathlib.a"))
+        .output()
+        .expect("invoke nm");
+    let out = String::from_utf8_lossy(&nm.stdout);
+    let has_bare = out.contains(" _add") || out.contains(" T add");
+    assert!(has_bare, "expected unmangled `add` in libmathlib.a; got:\n{out}");
+    // And the mangled form must NOT appear.
+    assert!(!out.contains("src.lib.add"),
+        "expected `pub fn add` to skip path-mangling; got mangled form in:\n{out}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn c_consumer_links_static_and_dynamic() {
+    // Full round-trip: build a C+ lib, write a C consumer, link both
+    // statically and dynamically, run, check exit code matches the
+    // arithmetic. The most important end-to-end signal that the slice
+    // really delivers C-callable libraries.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"both\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         pub fn sub(a: i32, b: i32) -> i32 { return a - b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         extern int32_t add(int32_t, int32_t);\n\
+         extern int32_t sub(int32_t, int32_t);\n\
+         int main(void) { return add(2, 3) - sub(10, 4); /* 5 - 6 = -1 → 255 */ }\n",
+    ).unwrap();
+
+    // Static link.
+    let static_bin = dir.join("c_user_static");
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L").arg(dir.join("target/debug"))
+        .arg("-lmathlib")
+        .arg("-o").arg(&static_bin)
+        .status().expect("clang static link");
+    assert!(st.success(), "static link failed");
+    let run = Command::new(&static_bin).status().expect("run static-linked");
+    assert_eq!(run.code(), Some(255), "5 - 6 = -1 → 255 (u8) from static link");
+
+    // Dynamic link.
+    let dyn_bin = dir.join("c_user_dyn");
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L").arg(dir.join("target/debug"))
+        .arg("-lmathlib")
+        .arg("-Wl,-rpath,@executable_path/target/debug")
+        .arg("-o").arg(&dyn_bin)
+        .status().expect("clang dynamic link");
+    assert!(st.success(), "dynamic link failed");
+    let run = Command::new(&dyn_bin).current_dir(&dir).status().expect("run dynamic-linked");
+    assert_eq!(run.code(), Some(255), "5 - 6 = -1 → 255 (u8) from dynamic link");
+}
+
+#[test]
+fn lib_target_rejects_fn_main_with_e0409() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"badlib\"\n\n[lib]\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         fn main() -> i32 { return 0; }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure on lib + fn main");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0409"), "expected E0409, got: {stderr}");
+}
+
+#[test]
+fn bin_and_lib_in_one_manifest_emit_e0408() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"both\"\n\n[[bin]]\nname = \"exe\"\n\n[lib]\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure on bin+lib");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0408"), "expected E0408, got: {stderr}");
+}
+
+#[test]
+fn emit_obj_produces_relocatable_object() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("foo.cplus");
+    std::fs::write(&src, "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n").unwrap();
+    let out = dir.join("foo.o");
+    let st = Command::new(cpc).arg("--emit-obj").arg(&src)
+        .arg("-o").arg(&out).status().expect("invoke cpc");
+    assert!(st.success(), "cpc --emit-obj failed: {st}");
+    assert!(out.is_file(), "expected {}", out.display());
+    // File magic: 0xfeedfacf on Mach-O 64, ELF starts with 0x7f 'E' 'L' 'F'.
+    let bytes = std::fs::read(&out).unwrap();
+    let is_macho = bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]) || bytes.starts_with(&[0xce, 0xfa, 0xed, 0xfe]);
+    let is_elf   = bytes.starts_with(&[0x7f, b'E', b'L', b'F']);
+    assert!(is_macho || is_elf, "expected Mach-O or ELF object; first bytes: {:?}", &bytes[..4.min(bytes.len())]);
+}
+
+#[test]
+fn lib_target_non_pub_fns_get_internal_linkage() {
+    // Phase 5 Slice 5.B: only `pub` items expose external symbols. A
+    // private helper called by a pub fn must NOT appear in `nm -g` output
+    // of the resulting `.a`. `-O2` may inline it away entirely, which is
+    // also fine (the assertion accepts either absent or internal).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"linkage\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn pub_api(x: i32) -> i32 { return helper(x); }\n\
+         fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
+    ).unwrap();
+    // Use release so -O2 + internal-linkage lets LTO fold helper away.
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let nm = Command::new("nm")
+        .arg("-g")
+        .arg(dir.join("target/release/liblinkage.a"))
+        .output()
+        .expect("invoke nm");
+    let out = String::from_utf8_lossy(&nm.stdout);
+    // `pub_api` must be exported.
+    assert!(out.contains(" _pub_api") || out.contains(" T pub_api"),
+        "expected `pub_api` in nm -g output:\n{out}");
+    // `helper` must NOT be a globally-visible symbol — either inlined
+    // away by LTO or carrying internal linkage.
+    assert!(!out.contains(" _helper") && !out.contains(" T helper"),
+        "private `helper` leaked into nm -g output:\n{out}");
+}
+
+#[test]
+fn lib_target_non_pub_methods_get_internal_linkage() {
+    // Same property for `impl` block methods: only `pub fn` exposes
+    // external symbols. Private methods used by pub ones stay internal.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"meth\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub struct Counter { v: i32 }\n\
+         impl Counter {\n\
+           pub fn make() -> Counter { return Counter { v: 0 }; }\n\
+           pub fn value(self) -> i32 { return self.v; }\n\
+           fn priv_bump(mut self) -> Counter { return Counter { v: self.v +% (1 as i32) }; }\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let nm = Command::new("nm")
+        .arg("-g")
+        .arg(dir.join("target/release/libmeth.a"))
+        .output()
+        .expect("invoke nm");
+    let out = String::from_utf8_lossy(&nm.stdout);
+    assert!(!out.contains("priv_bump"),
+        "private method `priv_bump` leaked into nm -g output:\n{out}");
+}
+
+// ---- Phase 5 Slice 5.F: reference example + design note ----
+
+/// Drive the full `docs/examples/c_consumer/` workflow as a single CI test:
+/// build the C+ library, compile + link the C consumer, run it, expect
+/// `0 failure(s)` exit code. This is the closing-arc verification that
+/// the whole user-facing story (5.A → 5.E) holds together.
+#[test]
+#[cfg(target_os = "macos")]
+fn c_consumer_reference_example_runs_clean() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // CARGO_MANIFEST_DIR for this crate is `cpc/`. The reference example
+    // lives at `<repo>/docs/examples/c_consumer/`.
+    let example_root = manifest_dir.parent().unwrap()
+        .join("docs/examples/c_consumer");
+    let mathlib_dir = example_root.join("mathlib");
+    let c_user_dir = example_root.join("c_user");
+    assert!(mathlib_dir.is_dir(), "expected reference mathlib at {}", mathlib_dir.display());
+    assert!(c_user_dir.is_dir(),  "expected reference c_user at {}",  c_user_dir.display());
+
+    // Clean any leftover artifacts so the test is hermetic.
+    let _ = std::fs::remove_dir_all(mathlib_dir.join("target"));
+    let _ = std::fs::remove_file(c_user_dir.join("c_user"));
+    let _ = std::fs::remove_file(c_user_dir.join("c_user_dyn"));
+
+    // 1. Build the library via cpc.
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&mathlib_dir)
+        .status().expect("invoke cpc");
+    assert!(st.success(), "cpc build of reference mathlib failed");
+
+    // The build must have written all three artifacts: .a, .dylib, .h.
+    let release_dir = mathlib_dir.join("target/release");
+    assert!(release_dir.join("libmathlib.a").is_file(),     "missing libmathlib.a");
+    assert!(release_dir.join("libmathlib.dylib").is_file(), "missing libmathlib.dylib");
+    assert!(release_dir.join("mathlib.h").is_file(),        "missing mathlib.h");
+
+    // 2. Compile + link the C consumer against the static lib.
+    let c_user_bin = c_user_dir.join("c_user");
+    let st = Command::new("clang")
+        .arg("-Wall").arg("-Wextra")
+        .arg("-I").arg(&release_dir)
+        .arg(c_user_dir.join("c_user.c"))
+        .arg(release_dir.join("libmathlib.a"))
+        .arg("-o").arg(&c_user_bin)
+        .status().expect("clang link");
+    assert!(st.success(), "linking C consumer against libmathlib.a failed");
+
+    // 3. Run it. The binary returns the number of failures; expect 0.
+    let run = Command::new(&c_user_bin).output().expect("run c_user");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("0 failure(s)"),
+        "reference example reported failures:\nstdout=\n{stdout}\nstderr=\n{}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(run.status.code(), Some(0), "c_user exited non-zero");
+
+    // 4. Also try the dynamic-link path for parity.
+    let c_user_dyn = c_user_dir.join("c_user_dyn");
+    let st = Command::new("clang")
+        .arg("-Wall").arg("-Wextra")
+        .arg("-I").arg(&release_dir)
+        .arg(c_user_dir.join("c_user.c"))
+        .arg("-L").arg(&release_dir).arg("-lmathlib")
+        .arg(format!("-Wl,-rpath,{}", release_dir.display()))
+        .arg("-o").arg(&c_user_dyn)
+        .status().expect("clang link dynamic");
+    assert!(st.success(), "linking C consumer against libmathlib.dylib failed");
+    let run = Command::new(&c_user_dyn).status().expect("run c_user_dyn");
+    assert_eq!(run.code(), Some(0));
+
+    // 5. Leave the directory clean — keeps CI re-runs deterministic.
+    let _ = std::fs::remove_file(&c_user_bin);
+    let _ = std::fs::remove_file(&c_user_dyn);
+    let _ = std::fs::remove_dir_all(mathlib_dir.join("target"));
+}
+
+// ---- Phase 5 Slice 5.E: --emit-header for auto-generated C declarations ----
+
+#[test]
+fn emit_header_basic_round_trip() {
+    // The generated header must parse as valid C, contain a prototype
+    // for each pub fn, and use the right C type names for primitives.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("lib.cplus");
+    std::fs::write(&src,
+        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         pub extern fn noop() { return; }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success(), "--emit-header failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+    let h = String::from_utf8_lossy(&out.stdout);
+    assert!(h.contains("#pragma once"));
+    assert!(h.contains("#include <stdint.h>"));
+    assert!(h.contains("int32_t add(int32_t a, int32_t b);"),
+        "missing add prototype in:\n{h}");
+    assert!(h.contains("void noop(void);"),
+        "missing noop prototype in:\n{h}");
+}
+
+#[test]
+fn emit_header_renders_repr_c_struct() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("lib.cplus");
+    std::fs::write(&src,
+        "#[repr(C)]\n\
+         pub struct Point { pub x: i32, pub y: i32 }\n\
+         pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success());
+    let h = String::from_utf8_lossy(&out.stdout);
+    assert!(h.contains("typedef struct Point"));
+    assert!(h.contains("int32_t x;"));
+    assert!(h.contains("int32_t y;"));
+    assert!(h.contains("} Point;"));
+    assert!(h.contains("int32_t square(Point p);"));
+}
+
+#[test]
+fn emit_header_renders_plain_enum() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("lib.cplus");
+    std::fs::write(&src,
+        "pub enum Color { Red, Green, Blue }\n\
+         pub extern fn first() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success());
+    let h = String::from_utf8_lossy(&out.stdout);
+    assert!(h.contains("enum Color"), "missing enum in:\n{h}");
+    assert!(h.contains("Color_Red = 0"));
+    assert!(h.contains("Color_Green = 1"));
+    assert!(h.contains("Color_Blue = 2"));
+}
+
+#[test]
+fn emit_header_skips_non_pub_items() {
+    // Non-`pub` fns must not appear in the header.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("lib.cplus");
+    std::fs::write(&src,
+        "pub extern fn pub_api(x: i32) -> i32 { return helper(x); }\n\
+         fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success());
+    let h = String::from_utf8_lossy(&out.stdout);
+    assert!(h.contains("int32_t pub_api(int32_t x);"));
+    assert!(!h.contains("helper("),
+        "non-pub `helper` leaked into header:\n{h}");
+}
+
+#[test]
+fn emit_header_skips_extern_import_declarations() {
+    // `extern fn foo(...);` is an import (not an export). It should
+    // not appear in the generated header — the header is what THIS
+    // library exposes, not what it imports.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("lib.cplus");
+    std::fs::write(&src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         pub extern fn my_alloc(n: usize) -> *u8 { return unsafe { malloc(n) }; }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success());
+    let h = String::from_utf8_lossy(&out.stdout);
+    assert!(h.contains("uint8_t * my_alloc(size_t n);"),
+        "missing my_alloc; got:\n{h}");
+    assert!(!h.contains("uint8_t * malloc"),
+        "import `malloc` leaked into header:\n{h}");
+}
+
+#[test]
+fn emit_header_passes_clang_syntax_check() {
+    // Round-trip: the generated header must compile cleanly through
+    // clang's syntax check (`-fsyntax-only`). Catches typos in the
+    // type-mapping table.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("lib.cplus");
+    std::fs::write(&src,
+        "#[repr(C)]\n\
+         pub struct Vec3 { pub x: f32, pub y: f32, pub z: f32 }\n\
+         pub enum Shape { Circle, Square, Triangle }\n\
+         pub extern fn norm(v: Vec3) -> f32 {\n\
+           return v.x * v.x + v.y * v.y + v.z * v.z;\n\
+         }\n\
+         pub extern fn area(s: Shape, side: f64) -> f64 { return side; }\n\
+         pub extern fn buf_ptr(n: usize) -> *u8 { unsafe { return 0 as *u8; } }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success());
+    let h_path = dir.join("lib.h");
+    std::fs::write(&h_path, &out.stdout).unwrap();
+
+    // Wrap the header in a translation unit and ask clang to parse it.
+    let tu_path = dir.join("tu.c");
+    std::fs::write(&tu_path,
+        format!("#include \"{}\"\n", h_path.display())).unwrap();
+    let clang = Command::new("clang")
+        .arg("-fsyntax-only")
+        .arg("-Wall").arg("-Wextra").arg("-Werror")
+        .arg("-x").arg("c")
+        .arg(&tu_path)
+        .output()
+        .expect("invoke clang");
+    assert!(clang.status.success(),
+        "clang rejected generated header:\nheader=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&clang.stderr),
+    );
+}
+
+#[test]
+fn lib_build_writes_libname_h_alongside_artifacts() {
+    // `cpc build` on a [lib] manifest emits target/<mode>/<libname>.h
+    // alongside the .a / .dylib so consumers can `#include` it directly.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hdrgen\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+    let h_path = dir.join("target/debug/hdrgen.h");
+    assert!(h_path.is_file(), "expected generated header at {}", h_path.display());
+    let h = std::fs::read_to_string(&h_path).unwrap();
+    assert!(h.contains("int32_t add(int32_t a, int32_t b);"),
+        "header missing add prototype:\n{h}");
+}
+
+#[test]
+fn emit_header_requires_file_argument() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc).arg("--emit-header").output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure without FILE");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("requires a FILE argument"),
+        "missing diagnostic, got: {stderr}");
+}
+
+// ---- Phase 5 Slice 5.D: aggregate ABI coercion at the C boundary ----
+
+#[test]
+#[cfg(target_os = "macos")]
+fn aggregate_param_8_bytes_round_trips() {
+    // 8-byte struct (Point) — aarch64 PCS passes in a single GPR (i64).
+    // Before 5.D, calling `square({3,4})` from C returned garbage; after,
+    // it returns 25.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"abi8\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "#[repr(C)] struct Point { x: i32, y: i32 }\n\
+         pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(&c_src,
+        "#include <stdint.h>\n\
+         typedef struct { int32_t x; int32_t y; } Point;\n\
+         extern int32_t square(Point);\n\
+         int main(void) { Point p = {3, 4}; return square(p); /* 9 + 16 = 25 */ }\n").unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang").arg(&c_src)
+        .arg("-L").arg(dir.join("target/release"))
+        .arg("-labi8")
+        .arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(25), "expected 25 = 3^2 + 4^2");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn aggregate_param_16_bytes_round_trips() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"abi16\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
+         pub extern fn sum_pair(p: Pair) -> i64 { return p.a + p.b; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(&c_src,
+        "#include <stdint.h>\n\
+         typedef struct { int64_t a; int64_t b; } Pair;\n\
+         extern int64_t sum_pair(Pair);\n\
+         int main(void) { Pair p = {10, 20}; return (int)sum_pair(p); /* 30 */ }\n").unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang").arg(&c_src)
+        .arg("-L").arg(dir.join("target/release"))
+        .arg("-labi16")
+        .arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(30));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn aggregate_param_24_bytes_indirect_round_trips() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"abi24\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
+         pub extern fn sum_triple(t: Triple) -> i64 { return t.a + t.b + t.c; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(&c_src,
+        "#include <stdint.h>\n\
+         typedef struct { int64_t a; int64_t b; int64_t c; } Triple;\n\
+         extern int64_t sum_triple(Triple);\n\
+         int main(void) { Triple t = {100, 200, 300}; return (int)sum_triple(t); /* 600 */ }\n").unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang").arg(&c_src)
+        .arg("-L").arg(dir.join("target/release"))
+        .arg("-labi24")
+        .arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(600 - 256 - 256));  // u8 truncation of 600 → 88
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn aggregate_return_8_bytes_coerces() {
+    // 8-byte struct return: aarch64 PCS packs into a single i64 register.
+    // Verified by C caller reconstructing the struct from the returned bits.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"retc8\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "#[repr(C)] struct Point { x: i32, y: i32 }\n\
+         pub extern fn make_point(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(&c_src,
+        "#include <stdint.h>\n\
+         typedef struct { int32_t x; int32_t y; } Point;\n\
+         extern Point make_point(int32_t, int32_t);\n\
+         int main(void) {\n\
+           Point p = make_point(7, 11);\n\
+           if (p.x != 7) return 1;\n\
+           if (p.y != 11) return 2;\n\
+           return 0;\n\
+         }\n").unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang").arg(&c_src)
+        .arg("-L").arg(dir.join("target/release"))
+        .arg("-lretc8")
+        .arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn aggregate_return_24_bytes_sret() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"retc24\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
+         pub extern fn make_triple() -> Triple { return Triple { a: 11 as i64, b: 22 as i64, c: 33 as i64 }; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success());
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(&c_src,
+        "#include <stdint.h>\n\
+         typedef struct { int64_t a; int64_t b; int64_t c; } Triple;\n\
+         extern Triple make_triple(void);\n\
+         int main(void) {\n\
+           Triple t = make_triple();\n\
+           if (t.a != 11) return 1;\n\
+           if (t.b != 22) return 2;\n\
+           if (t.c != 33) return 3;\n\
+           return 0;\n\
+         }\n").unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang").arg(&c_src)
+        .arg("-L").arg(dir.join("target/release"))
+        .arg("-lretc24")
+        .arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0));
+}
+
+// ---- Phase 5 Slice 5.C: `pub extern fn body` C-callable exports ----
+
+#[test]
+#[cfg(target_os = "macos")]
+fn pub_extern_fn_round_trips_through_c() {
+    // Full end-to-end: build a C+ lib that exports `pub extern fn` definitions,
+    // link from C, run, check return value.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cexport\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub extern fn cab_add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         pub extern fn cab_neg(x: i32) -> i32 { return -x; }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--release")
+        .current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+
+    let c_src = dir.join("c_user.c");
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         extern int32_t cab_add(int32_t, int32_t);\n\
+         extern int32_t cab_neg(int32_t);\n\
+         int main(void) {\n\
+           int r = cab_add(20, 22);  /* 42 */\n\
+           if (cab_neg(r) != -42) return 1;\n\
+           return r;\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("c_user");
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L").arg(dir.join("target/release"))
+        .arg("-lcexport")
+        .arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success(), "C link against pub extern fn lib failed");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected 42 from cab_add(20, 22)");
+}
+
+#[test]
+fn pub_extern_fn_with_str_param_is_rejected_e0410() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(&src, "pub extern fn echo(s: str) -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected sema failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0410"), "expected E0410, got: {stderr}");
+    assert!(stderr.contains("fat pointer"), "diagnostic should mention the fat-pointer reason: {stderr}");
+}
+
+#[test]
+fn exec_target_linkage_unchanged_by_5b() {
+    // Regression guard: 5.B's `internal` linkage rule is gated on lib
+    // mode. An executable build must not change symbol visibility for
+    // non-pub helpers — the change is opt-in via `[lib]`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("exe.cplus");
+    std::fs::write(&src,
+        "fn double(x: i32) -> i32 { return x +% x; }\n\
+         fn main() -> i32 { return double(21); }\n").unwrap();
+    let bin = dir.join("exe");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42));
+    // The IR for the exe path must NOT mark `double` as internal —
+    // that's a 5.B-only behavior gated on lib mode.
+    let ll_out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("emit-ll");
+    let ir = String::from_utf8_lossy(&ll_out.stdout);
+    assert!(ir.contains("define i32 @double("),
+        "executable mode must not apply `internal` to `double`; got:\n{ir}");
+    assert!(!ir.contains("define internal i32 @double("),
+        "executable mode must not apply `internal` to `double`; got:\n{ir}");
+}
+
+#[test]
+fn emit_obj_requires_output_path() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("foo.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc).arg("--emit-obj").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected failure without `-o`");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("requires `-o"), "missing diagnostic, got: {stderr}");
+}
+
+// ---- Phase 3A: bitshifts, bitwise ops, byte-swap intrinsics ----
+//
+// End-to-end smoke tests. The compiler emits IR; clang produces a binary;
+// the runtime answer is byte-checked. Catches LLVM-rejected IR (mismatched
+// shift widths, etc.) that pure codegen unit tests don't.
+
+#[test]
+fn bitshifts_and_bitwise_run_correctly() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bits.cplus");
+    std::fs::write(&src,
+        "fn main() -> i32 {\n\
+           let port: u16 = 8080 as u16;\n\
+           let hi: u16 = (port >> 8) & (0xff as u16);\n\
+           let lo: u16 = port & (0xff as u16);\n\
+           if hi != (31 as u16) { return 10; }\n\
+           if lo != (144 as u16) { return 11; }\n\
+           let xor: i32 = 0xf0 ^ 0x0f;\n\
+           if xor != 0xff { return 12; }\n\
+           let mask: u32 = ~(0 as u32);\n\
+           if mask != (0xffffffff as u32) { return 13; }\n\
+           return 0;\n\
+         }\n").unwrap();
+    let bin = dir.join("bits");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status()
+        .expect("invoke cpc");
+    assert!(st.success(), "compile failed");
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(0), "binary returned {}, expected 0", run.code().unwrap_or(-1));
+}
+
+#[test]
+fn htons_round_trips_to_bswap() {
+    // htons(0x1234) on LE → 0x3412. Verify the binary's runtime answer.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("hs.cplus");
+    std::fs::write(&src,
+        "fn main() -> i32 {\n\
+           let p: u16 = 0x1234 as u16;\n\
+           let s: u16 = htons(p);\n\
+           if s != (0x3412 as u16) { return 1; }\n\
+           // round-trip: htons(htons(x)) == x.\n\
+           let r: u16 = htons(s);\n\
+           if r != p { return 2; }\n\
+           return 0;\n\
+         }\n").unwrap();
+    let bin = dir.join("hs");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(0));
+}
+
+#[test]
+fn bswap32_byte_reverses_correctly() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bs.cplus");
+    std::fs::write(&src,
+        "fn main() -> i32 {\n\
+           let p: u32 = 0x12345678 as u32;\n\
+           let s: u32 = bswap32(p);\n\
+           if s != (0x78563412 as u32) { return 1; }\n\
+           return 0;\n\
+         }\n").unwrap();
+    let bin = dir.join("bs");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(0));
+}
+
+#[test]
+fn shift_count_widths_compose() {
+    // i64 << u8 generated zext'd shift count. Verify runtime answer to
+    // catch any IR-level type mismatches that LLVM would reject.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("sh.cplus");
+    std::fs::write(&src,
+        "fn main() -> i32 {\n\
+           let x: i64 = 1 as i64;\n\
+           let n: u8 = 8 as u8;\n\
+           let y: i64 = x << n;\n\
+           if y != (256 as i64) { return 1; }\n\
+           return 0;\n\
+         }\n").unwrap();
+    let bin = dir.join("sh");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success());
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(0));
 }
 
 fn tempdir() -> std::path::PathBuf {

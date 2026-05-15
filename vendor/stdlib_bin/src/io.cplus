@@ -1,0 +1,40 @@
+// stdlib_bin/io — declarations only. Bodies live in ../lib/<arch>/stdlib_bin.a.
+
+import "./result" as result;
+
+// C-ABI entry points exported by stdlib_bin.a. Symbol naming convention:
+// stdlib_<module>_<function>. All take owned-or-borrowed buffers as (ptr, len)
+// pairs so the C ABI is stable across `string` / `str` layout decisions.
+
+extern fn stdlib_io_print(ptr: *u8, len: usize);
+extern fn stdlib_io_println(ptr: *u8, len: usize);
+extern fn stdlib_io_eprintln(ptr: *u8, len: usize);
+extern fn stdlib_io_read_stdin_line(out_ptr: *u8, out_cap: usize, out_len: *usize) -> i32;
+
+pub fn print(s: str) {
+    let p: *u8 = unsafe { str_ptr(s) };
+    let n: usize = unsafe { str_len(s) };
+    unsafe { stdlib_io_print(p, n); }
+    return;
+}
+
+pub fn println(s: str) {
+    let p: *u8 = unsafe { str_ptr(s) };
+    let n: usize = unsafe { str_len(s) };
+    unsafe { stdlib_io_println(p, n); }
+    return;
+}
+
+pub fn eprintln(s: str) {
+    let p: *u8 = unsafe { str_ptr(s) };
+    let n: usize = unsafe { str_len(s) };
+    unsafe { stdlib_io_eprintln(p, n); }
+    return;
+}
+
+// TODO: wire read_stdin_line through to an owned `string` once the buffer
+// strategy is pinned (the .a needs to either alloc + hand back ownership or
+// fill a caller-provided buffer).
+pub fn read_stdin_line() -> result::Result[string, result::IoError] {
+    return result::Result::Err(result::IoError::Other);
+}

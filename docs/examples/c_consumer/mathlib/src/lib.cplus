@@ -1,0 +1,154 @@
+// mathlib — a Phase 5 reference C+ library, exporting one fn per C-ABI
+// class so a consumer can verify every shape works on their platform.
+//
+// Build:    cpc build --release
+// Outputs:  target/release/libmathlib.a        (static)
+//           target/release/libmathlib.dylib    (dynamic, macOS)
+//           target/release/libmathlib.so       (dynamic, Linux — when built there)
+//           target/release/mathlib.h           (auto-generated C header)
+//
+// Consume:  see ../c_user/c_user.c + Makefile.
+
+// ---- Types crossing the C boundary ----
+//
+// Every aggregate that appears in a `pub extern fn` signature must be
+// `#[repr(C)]` (C-compatible layout) and free of `drop` destructors
+// (no cross-language Drop). Sema enforces both via E0410.
+
+#[repr(C)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[repr(C)]
+pub struct Pair {
+    pub a: i64,
+    pub b: i64,
+}
+
+#[repr(C)]
+pub struct Triple {
+    pub a: i64,
+    pub b: i64,
+    pub c: i64,
+}
+
+// Plain (untagged) enum — lowers to `i32`, exported as a C enum.
+pub enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+// ---- Scalar args / scalar return ----
+//
+// The C and C+ ABIs agree on scalars, so the LLVM signature is unchanged.
+// `add` and `negate` show up in `mathlib.h` as plain C functions.
+
+pub extern fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+pub extern fn negate(x: i32) -> i32 {
+    return - x;
+}
+
+// ---- ≤8-byte aggregate (Point: 2×i32 = 8 bytes) ----
+//
+// Per the AArch64 PCS this passes in a single GPR. cpc emits
+// `define i32 @square(i64 %0)`; the prologue stores the i64 into an
+// 8-byte slot and field accesses read p.x at offset 0, p.y at offset 4.
+//
+// The Phase-1-closeout hand-test that exposed this gap is this function:
+// before Slice 5.D it returned garbage; now it returns 25 for {3,4}.
+
+pub extern fn square(p: Point) -> i32 {
+    return p.x * p.x + p.y * p.y;
+}
+
+// Return form: cpc emits `define i64 @make_point(...)`; the body builds
+// the struct on a stack slot, reloads it as i64, and returns the
+// register-packed value. C callers reconstruct the Point fields from
+// the bits.
+
+pub extern fn make_point(x: i32, y: i32) -> Point {
+    return Point { x: x, y: y };
+}
+
+// ---- 9..16-byte aggregate (Pair: 2×i64 = 16 bytes) ----
+//
+// Passes in TWO GPRs. cpc emits `define i64 @sum_pair([2 x i64] %0)`.
+
+pub extern fn sum_pair(p: Pair) -> i64 {
+    return p.a + p.b;
+}
+
+pub extern fn make_pair(a: i64, b: i64) -> Pair {
+    return Pair { a: a, b: b };
+}
+
+// ---- >16-byte aggregate (Triple: 3×i64 = 24 bytes) ----
+//
+// Too large for register passing. The caller allocates a stack slot
+// and passes a pointer (indirect). cpc emits `define i64 @sum_triple(ptr %0)`.
+
+pub extern fn sum_triple(t: Triple) -> i64 {
+    return t.a + t.b + t.c;
+}
+
+// Return: too large to coerce. Caller pre-allocates the result slot
+// and passes its address as a hidden first parameter. cpc emits
+// `define void @make_triple(ptr sret(...) align 8 %0)`.
+
+pub extern fn make_triple(a: i64, b: i64, c: i64) -> Triple {
+    return Triple { a: a, b: b, c: c };
+}
+
+// ---- Plain enum across the boundary ----
+//
+// Lowers to `i32` — single register, no special handling. Consumers see
+// `Color_Red = 0`, `Color_Green = 1`, `Color_Blue = 2` in mathlib.h.
+
+pub extern fn color_index(c: Color) -> i32 {
+    return match c {
+        Color::Red => 0,
+        Color::Green => 1,
+        Color::Blue => 2,
+    };
+}
+
+// ---- Raw pointer (out-parameter pattern) ----
+//
+// `*i32` exports as `int32_t *`. Writing through it inside an `unsafe`
+// block mutates the caller's storage. The C side allocates the int and
+// passes its address; the C+ side fills it.
+
+pub extern fn fill_with(out: *i32, value: i32) {
+    unsafe { *out = value; }
+    return;
+}
+
+// ---- Function pointer parameter ----
+//
+// `fn(i32) -> i32` exports as `int32_t (*)(int32_t)`. The C consumer can
+// pass a C callback through. Inside the C+ body, the fn-ptr is just a
+// callable value.
+
+pub extern fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x);
+}
+
+// ---- Private helper (internal linkage in lib mode) ----
+//
+// `pub` is intentionally absent — Slice 5.B marks non-`pub` items as
+// `internal` LLVM linkage in `[lib]` builds, so this name doesn't
+// appear in `nm -g libmathlib.a`. `-O2` LTO may inline it away entirely.
+
+fn helper(x: i32) -> i32 {
+    return x +% (1 as i32);
+}
+
+pub extern fn use_helper(x: i32) -> i32 {
+    return helper(x);
+}

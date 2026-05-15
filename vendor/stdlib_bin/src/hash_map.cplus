@@ -1,0 +1,47 @@
+// stdlib_bin/hash_map — declarations only. Bodies live in ../lib/<arch>/stdlib_bin.a.
+//
+// Same generics caveat as `vec`: per-(K, V)-instantiation symbols, shipped set
+// pinned in Phase 3+.
+
+import "./result" as result;
+
+extern fn stdlib_hash_map_drop(map: *u8);
+
+pub struct HashMap[K, V] {
+    _len: usize,
+    _cap: usize,
+}
+
+impl [K, V] HashMap[K, V] {
+    pub fn new() -> HashMap[K, V] {
+        return HashMap[K, V] { _len: 0 as usize, _cap: 0 as usize };
+    }
+
+    pub fn with_capacity(n: usize) -> HashMap[K, V] {
+        return HashMap[K, V] { _len: 0 as usize, _cap: n };
+    }
+
+    pub fn insert(mut self, k: K, v: V) {
+        // TODO: dispatch to stdlib_hash_map_<K>_<V>_insert.
+        return;
+    }
+
+    pub fn get(self, k: K) -> result::Result[V, result::IoError] {
+        // TODO: dispatch to stdlib_hash_map_<K>_<V>_get.
+        return result::Result::Err(result::IoError::NotFound);
+    }
+
+    pub fn remove(mut self, k: K) -> bool {
+        // TODO: dispatch to stdlib_hash_map_<K>_<V>_remove.
+        return false;
+    }
+
+    pub fn len(self) -> usize {
+        return self._len;
+    }
+
+    fn drop(mut self) {
+        // TODO: dispatch to stdlib_hash_map_<K>_<V>_drop.
+        return;
+    }
+}

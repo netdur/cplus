@@ -1,0 +1,32 @@
+// stdlib/result.cplus — fallible computation type.
+//
+// Skeleton: API only. Bodies fill in during Phase 3.
+//
+// All fallible stdlib APIs return `Result[T, E]`. The `Ok` variant carries
+// the success value; `Err` carries a structured error (commonly `IoError`).
+// Sema's exhaustiveness check forces every consumer to handle both arms.
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+// IoError is the shared error type for io / fs / net so Result chains
+// compose across module boundaries. Variants are added as the
+// implementation lands — Phase 3 may grow this enum.
+pub enum IoError {
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    Interrupted,
+    UnexpectedEof,
+    InvalidInput,
+    InvalidData,
+    WouldBlock,
+    ConnectionRefused,
+    ConnectionReset,
+    AddrInUse,
+    BrokenPipe,
+    TimedOut,
+    Other,
+}

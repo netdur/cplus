@@ -1,0 +1,73 @@
+// stdlib/net.cplus — TCP networking.
+//
+// Skeleton: API only. Bodies fill in during Phase 3.
+//
+// Built on libc socket(2)/connect(2)/bind(2)/listen(2)/accept(2)/read(2)/
+// write(2)/close(2). Mirrors File's owned-descriptor + Drop pattern.
+
+import "./result.cplus" as result;
+import "./vec.cplus" as vec;
+
+// Owned client-side TCP socket.
+pub struct TcpStream {
+    fd: i32,
+}
+
+impl TcpStream {
+    // Connect to `host:port`. `host` may be a numeric IP or a hostname
+    // (Phase 3 may start with numeric-only and add resolution later).
+    pub fn connect(host: str, port: u16) -> result::Result[TcpStream, result::IoError] {
+        // TODO: Phase 3 — socket(AF_INET, SOCK_STREAM, 0), inet_addr/getaddrinfo,
+        // connect(); package into a TcpStream.
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    pub fn read(mut self, buf: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+        // TODO: Phase 3 — libc read; map errno → IoError.
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    pub fn write(mut self, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+        // TODO: Phase 3 — libc write; map errno → IoError.
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    pub fn close(move self) {
+        // TODO: Phase 3 — libc close; disarm Drop.
+        return;
+    }
+
+    fn drop(mut self) {
+        // TODO: Phase 3 — if fd != -1: close(fd).
+        return;
+    }
+}
+
+// Owned server-side TCP listener.
+pub struct TcpListener {
+    fd: i32,
+}
+
+impl TcpListener {
+    // Bind to a local port and start listening. `backlog` defaults to 128.
+    pub fn bind(host: str, port: u16) -> result::Result[TcpListener, result::IoError] {
+        // TODO: Phase 3 — socket(), setsockopt(SO_REUSEADDR), bind(), listen().
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    // Block until an incoming connection lands; return the accepted stream.
+    pub fn accept(mut self) -> result::Result[TcpStream, result::IoError] {
+        // TODO: Phase 3 — accept(fd, ...); wrap returned fd in TcpStream.
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    pub fn close(move self) {
+        // TODO: Phase 3 — libc close; disarm Drop.
+        return;
+    }
+
+    fn drop(mut self) {
+        // TODO: Phase 3 — if fd != -1: close(fd).
+        return;
+    }
+}

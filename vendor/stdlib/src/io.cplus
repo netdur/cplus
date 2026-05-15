@@ -1,0 +1,33 @@
+// stdlib/io.cplus — process-level stdin/stdout/stderr I/O.
+//
+// Skeleton: API only. Bodies fill in during Phase 3.
+//
+// Built on libc `printf` / `fputs` / `fgets` via `extern fn`. Users never
+// see `extern fn` — they just call `print` / `println` / etc.
+
+import "./result.cplus" as result;
+
+// Write `s` to stdout, no trailing newline.
+pub fn print(s: str) {
+    // TODO: Phase 3 — printf("%.*s", len, ptr) via fat-pointer split.
+    return;
+}
+
+// Write `s` to stdout, followed by '\n'.
+pub fn println(s: str) {
+    // TODO: Phase 3 — printf("%.*s\n", len, ptr).
+    return;
+}
+
+// Write `s` to stderr, followed by '\n'.
+pub fn eprintln(s: str) {
+    // TODO: Phase 3 — fprintf(stderr, "%.*s\n", len, ptr).
+    return;
+}
+
+// Read one line from stdin (up to and excluding the trailing '\n').
+// Returns Err(IoError::UnexpectedEof) on EOF before any byte.
+pub fn read_stdin_line() -> result::Result[string, result::IoError] {
+    // TODO: Phase 3 — fgets into a growing buffer; trim trailing '\n'.
+    return result::Result::Err(result::IoError::Other);
+}

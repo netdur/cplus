@@ -1,0 +1,62 @@
+// stdlib/vec.cplus — growable, heap-backed buffer.
+//
+// Skeleton: API only. Bodies fill in during Phase 3.
+//
+// A reference implementation already exists at
+// [docs/examples/phase11_vec_allocator.cplus](../phase11_vec_allocator.cplus) —
+// Phase 3C's job is to promote that into a stable surface here, document
+// the invariants, and write the test matrix.
+
+pub struct Vec[T] {
+    ptr: *T,
+    len: usize,
+    cap: usize,
+}
+
+impl [T] Vec[T] {
+    // Empty Vec, no allocation.
+    pub fn new() -> Vec[T] {
+        // TODO: Phase 3 — Vec { ptr: 0 as *T, len: 0, cap: 0 }.
+        return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: 0 as usize };
+    }
+
+    // Pre-allocate room for `n` elements without changing `len`.
+    pub fn with_capacity(n: usize) -> Vec[T] {
+        // TODO: Phase 3 — malloc(n * size_of[T]()).
+        return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: n };
+    }
+
+    // Append. Doubles capacity when full (1 → 2 → 4 → ...).
+    pub fn push(mut self, x: T) {
+        // TODO: Phase 3 — if len == cap: grow; write x; len += 1.
+        return;
+    }
+
+    // Remove the last element if any.
+    pub fn pop(mut self) -> bool {
+        // TODO: Phase 3 — if len > 0: drop element at len-1; len -= 1; return true.
+        return false;
+    }
+
+    // Number of elements currently stored.
+    pub fn len(self) -> usize {
+        return self.len;
+    }
+
+    // Allocated capacity in elements.
+    pub fn capacity(self) -> usize {
+        return self.cap;
+    }
+
+    // Borrow the underlying storage as a slice.
+    pub fn as_slice(self) -> T[] {
+        // TODO: Phase 3 — slice_from_raw_parts(self.ptr, self.len).
+        return unsafe { slice_from_raw_parts(self.ptr, self.len) };
+    }
+
+    // Destructor: free the heap buffer.
+    fn drop(mut self) {
+        // TODO: Phase 3 — if cap > 0: drop each element, then free(ptr).
+        return;
+    }
+}

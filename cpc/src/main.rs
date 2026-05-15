@@ -44,6 +44,13 @@ debug / introspection (single-file):
   cpc --tokens FILE                 lex FILE and print the token stream
   cpc --ast FILE                    lex+parse FILE and print the AST
   cpc --emit-ll FILE                lex+parse+sema+codegen FILE and print the .ll IR
+  cpc --emit-ll-opt FILE            post-optimization IR (cpc → clang -S -emit-llvm
+                                    at the build mode's -O level; see --release / --debug)
+  cpc --emit-asm FILE               native assembly (cpc → clang -S at the build mode's -O level)
+  cpc --emit-obj FILE -o OUT.o      relocatable object (cpc → clang -c). Used by the
+                                    library-build pipeline; -o OUT.o is required.
+  cpc --emit-header FILE            C header for every C-ABI-representable `pub` item
+                                    in FILE. Prints to stdout; redirect with `> out.h`.
   cpc --emit-ll-project             multi-file: print the merged IR to stdout (uses ./Cplus.toml)
 
 other:
@@ -149,6 +156,10 @@ fn main() -> ExitCode {
     // the `-fsanitize=...` flag through to clang.
     let mut sanitizers: Vec<&'static str> = Vec::new();
     let mut subcommand: Option<Subcommand> = None;
+    // Phase 5 Slice 5.A: deferred-dispatch input for `--emit-obj FILE`.
+    // Order-independent with `-o OUT.o` because the FILE may appear before
+    // or after the flag in the user's command line.
+    let mut emit_obj_input: Option<PathBuf> = None;
     let mut fmt_opts = FmtOpts::default();
     let mut fmt_inputs: Vec<PathBuf> = Vec::new();
     let mut test_opts = TestOpts::default();
@@ -204,6 +215,56 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 };
                 return dump_ll(PathBuf::from(v), diag_mode, build_mode, emit_debug_info, &sanitizers);
+            }
+            Some("--emit-ll-opt") => {
+                // Slice 1G: post-pass LLVM IR. Runs clang with
+                // `-S -emit-llvm` at the build_mode's optimization level so
+                //1B's !range / 1C's !alias.scope can be inspected after
+                // inlining + InstCombine.
+                let Some(v) = args.get(i + 1) else {
+                    eprintln!("cpc: --emit-ll-opt requires a FILE argument");
+                    return ExitCode::FAILURE;
+                };
+                return dump_ll_or_asm(
+                    PathBuf::from(v), diag_mode, build_mode, ClangOutputKind::LlvmIr,
+                );
+            }
+            Some("--emit-asm") => {
+                // Slice 1G: native assembly via `clang -S` at the
+                // build_mode's optimization level. Used to verify hot-loop
+                // bounds-check elision and other -O2 wins.
+                let Some(v) = args.get(i + 1) else {
+                    eprintln!("cpc: --emit-asm requires a FILE argument");
+                    return ExitCode::FAILURE;
+                };
+                return dump_ll_or_asm(
+                    PathBuf::from(v), diag_mode, build_mode, ClangOutputKind::Assembly,
+                );
+            }
+            Some("--emit-header") => {
+                // Phase 5 Slice 5.E: emit a C header (`.h`) declaring
+                // every `pub` item that's C-ABI representable. Prints to
+                // stdout; redirect with `> out.h`.
+                let Some(v) = args.get(i + 1) else {
+                    eprintln!("cpc: --emit-header requires a FILE argument");
+                    return ExitCode::FAILURE;
+                };
+                return dump_header(PathBuf::from(v), None, diag_mode);
+            }
+            Some("--emit-obj") => {
+                // Phase 5 (v0.0.2 Slice 5.A): emit a relocatable object
+                // (`.o`) file. Drives `clang -c <opt>` on the IR cpc
+                // emits. The library-build path uses this to feed
+                // `ar` / `ld -shared`. Requires `-o OUT.o`; FILE may
+                // come either before or after the flag, so we defer
+                // dispatch to end-of-args.
+                let Some(v) = args.get(i + 1) else {
+                    eprintln!("cpc: --emit-obj requires a FILE argument");
+                    return ExitCode::FAILURE;
+                };
+                emit_obj_input = Some(PathBuf::from(v));
+                i += 2;
+                continue;
             }
             Some("--emit-ll-project") => {
                 subcommand = Some(Subcommand::EmitLlProject);
@@ -349,6 +410,17 @@ fn main() -> ExitCode {
         _ => Vec::new(),
     };
 
+    // Phase 5 Slice 5.A: `--emit-obj FILE -o OUT.o` runs before any
+    // subcommand dispatch. Both args must be present; both can be in any
+    // order on the command line because we deferred them here.
+    if let Some(obj_in) = emit_obj_input {
+        let Some(obj_out) = out else {
+            eprintln!("cpc: --emit-obj requires `-o OUT.o`");
+            return ExitCode::FAILURE;
+        };
+        return dump_obj(obj_in, obj_out, diag_mode, build_mode);
+    }
+
     match (subcommand, input) {
         (Some(Subcommand::Build), _) => build_project(out, diag_mode, build_mode),
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode),
@@ -419,6 +491,14 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
             return ExitCode::FAILURE;
         }
     };
+    // Phase 5 Slice 5.A: a `[lib]` manifest dispatches to the library
+    // build path (object → archive / shared-library) instead of the
+    // executable path. Mutual exclusion with `[[bin]]` is enforced at
+    // manifest-parse time (E0408), so reaching here with `lib` set
+    // means no `[[bin]]` declared.
+    if let Some(lib) = m.lib.clone() {
+        return build_lib_project(&m, &lib, out, diag_mode, build_mode);
+    }
     if m.bins.len() != 1 {
         eprintln!("cpc: Phase 4 slice 4A supports exactly one [[bin]]; found {}", m.bins.len());
         return ExitCode::FAILURE;
@@ -465,9 +545,201 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out_path, build_mode, false, &[]);
+    // v0.0.2 (AppKit-via-Cplus.toml): expand the manifest's `frameworks`
+    // and `libs` lists into `-framework <name>` / `-l<name>` linker args.
+    // `frameworks` is macOS/iOS-specific (no-op elsewhere because clang's
+    // `-framework` flag is platform-gated), `-l` is cross-platform.
+    let mut link_args: Vec<String> = Vec::with_capacity(bin.frameworks.len() * 2 + bin.libs.len());
+    for fw in &bin.frameworks {
+        link_args.push("-framework".to_string());
+        link_args.push(fw.clone());
+    }
+    for lib in &bin.libs {
+        link_args.push(format!("-l{lib}"));
+    }
+    let status = run_clang(&tmp, &out_path, build_mode, false, &[], &link_args);
     let _ = fs::remove_file(&tmp);
     status
+}
+
+/// Phase 5 Slice 5.A: library-build path. Produces `lib<name>.a` and/or
+/// `lib<name>.{dylib,so}` in `target/<mode>/`. Mutually exclusive with
+/// the executable build via the manifest's `[[bin]]` vs `[lib]` choice.
+///
+/// Pipeline (mirrors the bin path's structure):
+///   1. Load + sema-check the lib root source (via `load_and_check_project`).
+///   2. Reject `fn main` if defined (E0409) — libraries don't have entry points.
+///   3. Emit IR; write IR to temp `.ll`; run `clang -c` → `target/<mode>/<name>.o`.
+///   4. For `staticlib` / `both`: `ar rcs target/<mode>/lib<name>.a <name>.o`.
+///   5. For `cdylib`   / `both`: `clang -shared <opts> -o target/<mode>/lib<name>.<ext> <name>.o`.
+///   6. Manifest `frameworks` / `libs` are forwarded only at the cdylib link
+///      step — they don't get into the static archive (consumers re-state them).
+fn build_lib_project(
+    m: &manifest::Manifest,
+    lib: &manifest::LibTarget,
+    out_override: Option<PathBuf>,
+    diag_mode: DiagMode,
+    build_mode: BuildMode,
+) -> ExitCode {
+    if !lib.path.is_file() {
+        let d = diag::Diagnostic {
+            severity: Severity::Error,
+            code: diag::DiagCode("E0407"),
+            message: format!("library entry `{}` does not exist", lib.path.display()),
+            primary: diag::SourceSpan {
+                file: lib.path.clone(),
+                start: diag::Position { line: 1, col: 1, byte: 0 },
+                end: diag::Position { line: 1, col: 1, byte: 0 },
+            },
+            labels: Vec::new(),
+            notes: vec!["declared in Cplus.toml".to_string()],
+            suggestions: Vec::new(),
+        };
+        emit_diag(&d, diag_mode, "");
+        return ExitCode::FAILURE;
+    }
+    let (program, _entry_file_id) = match load_and_check_project_with_mode(&lib.path, &m.root, diag_mode, true) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+
+    // Phase 5 Slice 5.A.4: reject `fn main` in a library target. A
+    // library has no entry point; declaring one means the user probably
+    // meant `[[bin]]` instead. E0409 — sema-level gate enforced here at
+    // build-time because sema itself doesn't know about manifest mode.
+    for item in &program.items {
+        if let cplus_core::ast::ItemKind::Function(f) = &item.kind {
+            if f.name.name == "main" && !f.is_extern {
+                let d = diag::Diagnostic {
+                    severity: Severity::Error,
+                    code: diag::DiagCode("E0409"),
+                    message: "library targets must not define `fn main`".to_string(),
+                    primary: diag::SourceSpan {
+                        file: lib.path.clone(),
+                        start: diag::Position { line: 1, col: 1, byte: 0 },
+                        end: diag::Position { line: 1, col: 1, byte: 0 },
+                    },
+                    labels: Vec::new(),
+                    notes: vec![
+                        "this manifest declares `[lib]`; a `fn main` would conflict with the consumer's entry point".to_string(),
+                        "if you meant to build an executable, use `[[bin]]` instead of `[lib]`".to_string(),
+                    ],
+                    suggestions: Vec::new(),
+                };
+                emit_diag(&d, diag_mode, "");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let ir = codegen::generate_lib(&program, build_mode);
+
+    let mode_subdir = match build_mode { BuildMode::Debug => "debug", BuildMode::Release => "release" };
+    let target_dir = out_override
+        .as_ref()
+        .and_then(|p| p.parent().map(|x| x.to_path_buf()))
+        .unwrap_or_else(|| m.root.join("target").join(mode_subdir));
+    if let Err(e) = fs::create_dir_all(&target_dir) {
+        eprintln!("cpc: creating {}: {e}", target_dir.display());
+        return ExitCode::FAILURE;
+    }
+
+    // Phase 5 Slice 5.E: emit `target/<mode>/<libname>.h` alongside the
+    // build artifacts so consumers can `#include` the generated C
+    // declarations without a separate `cpc --emit-header` step.
+    let header = render_c_header(&program, &lib.name);
+    let header_path = target_dir.join(format!("{}.h", lib.name));
+    if let Err(e) = fs::write(&header_path, &header) {
+        eprintln!("cpc: writing header to {}: {e}", header_path.display());
+        return ExitCode::FAILURE;
+    }
+
+    // Step 3: IR → temp .ll → clang -c → <name>.o.
+    let tmp_ll = env::temp_dir().join(format!("cpc-lib-{}.ll", std::process::id()));
+    if let Err(e) = fs::write(&tmp_ll, &ir) {
+        eprintln!("cpc: writing IR to {}: {e}", tmp_ll.display());
+        return ExitCode::FAILURE;
+    }
+    let obj_path = target_dir.join(format!("{}.o", lib.name));
+    let opt = match build_mode { BuildMode::Debug => "-O0", BuildMode::Release => "-O2" };
+    let obj_status = Command::new("clang")
+        .arg(opt)
+        .arg("-Wno-override-module")
+        .arg("-c")
+        .arg(&tmp_ll)
+        .arg("-o")
+        .arg(&obj_path)
+        .status();
+    let _ = fs::remove_file(&tmp_ll);
+    match obj_status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!("cpc: clang -c exited with {s}");
+            return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
+        }
+        Err(e) => {
+            eprintln!("cpc: failed to invoke clang: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // Step 4 (staticlib): ar rcs libNAME.a NAME.o.
+    let want_static = matches!(lib.crate_type, manifest::CrateType::Staticlib | manifest::CrateType::Both);
+    let want_shared = matches!(lib.crate_type, manifest::CrateType::Cdylib    | manifest::CrateType::Both);
+    if want_static {
+        let a_path = target_dir.join(format!("lib{}.a", lib.name));
+        // `r` replace + `c` create-if-missing + `s` index. ar quietly
+        // overwrites a previous archive of the same name.
+        let _ = fs::remove_file(&a_path);  // ar refuses to add a duplicate entry across runs
+        let ar_status = Command::new("ar")
+            .arg("rcs")
+            .arg(&a_path)
+            .arg(&obj_path)
+            .status();
+        match ar_status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("cpc: ar exited with {s}");
+                return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
+            }
+            Err(e) => {
+                eprintln!("cpc: failed to invoke ar: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Step 5 (cdylib): clang -shared -o libNAME.<ext> NAME.o + manifest frameworks/libs.
+    if want_shared {
+        // Platform-correct extension: .dylib on macOS, .so on Linux/other.
+        // (Cross-compilation is out of scope; we use host triple via cfg.)
+        let dylib_ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+        let dylib_path = target_dir.join(format!("lib{}.{}", lib.name, dylib_ext));
+        let mut cmd = Command::new("clang");
+        cmd.arg("-shared")
+           .arg(opt)
+           .arg("-Wno-override-module");
+        for fw in &lib.frameworks {
+            cmd.arg("-framework").arg(fw);
+        }
+        for ll in &lib.libs {
+            cmd.arg(format!("-l{ll}"));
+        }
+        let dylib_status = cmd.arg(&obj_path).arg("-o").arg(&dylib_path).status();
+        match dylib_status {
+            Ok(s) if s.success() => {}
+            Ok(s) => {
+                eprintln!("cpc: clang -shared exited with {s}");
+                return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
+            }
+            Err(e) => {
+                eprintln!("cpc: failed to invoke clang -shared: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 /// `--emit-ll-project`: project build, but emit IR to stdout instead of
@@ -504,7 +776,19 @@ fn load_and_check_project(
     root: &Path,
     diag_mode: DiagMode,
 ) -> Result<(cplus_core::ast::Program, String), ExitCode> {
-    let mut loaded = match resolver::load_project(entry, root) {
+    load_and_check_project_with_mode(entry, root, diag_mode, false)
+}
+
+/// Phase 5 Slice 5.A: variant that passes `is_lib` to the resolver so
+/// library-entry items skip name qualification (exposed as bare C-callable
+/// symbols).
+fn load_and_check_project_with_mode(
+    entry: &Path,
+    root: &Path,
+    diag_mode: DiagMode,
+    is_lib: bool,
+) -> Result<(cplus_core::ast::Program, String), ExitCode> {
+    let mut loaded = match resolver::load_project_with_mode(entry, root, is_lib) {
         Ok(l) => l,
         Err(failure) => {
             // Slice 4C tail: render the resolver error as a structured
@@ -848,7 +1132,7 @@ fn run_test(
         return ExitCode::FAILURE;
     }
     let bin_out = env::temp_dir().join(format!("cpc-test-{}.bin", std::process::id()));
-    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[]);
+    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[], &[]);
     let _ = fs::remove_file(&tmp);
     if !matches!(clang_status, ExitCode::SUCCESS) {
         let _ = fs::remove_file(&bin_out);
@@ -1056,7 +1340,7 @@ fn phase0_hello(out: PathBuf) -> ExitCode {
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out, BuildMode::Debug, false, &[]);
+    let status = run_clang(&tmp, &out, BuildMode::Debug, false, &[], &[]);
     let _ = fs::remove_file(&tmp);
     status
 }
@@ -1078,7 +1362,7 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
         eprintln!("cpc: writing IR to {}: {e}", tmp.display());
         return ExitCode::FAILURE;
     }
-    let status = run_clang(&tmp, &out, build_mode, debug_info, sanitizers);
+    let status = run_clang(&tmp, &out, build_mode, debug_info, sanitizers, &[]);
     let _ = fs::remove_file(&tmp);
     status
 }
@@ -1156,7 +1440,7 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug
     }
 }
 
-fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> ExitCode {
+fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, sanitizers: &[&str], link_args: &[String]) -> ExitCode {
     // Pass the LLVM optimization level alongside our own build-mode choice:
     //   Debug   -> `-O0`. Keeps the overflow-check intrinsics, leaves divs
     //              and branches in source order, debuggable IR.
@@ -1181,6 +1465,13 @@ fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, san
         cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
         // Better stack traces in sanitizer reports.
         cmd.arg("-fno-omit-frame-pointer");
+    }
+    // v0.0.2 (AppKit-via-Cplus.toml): manifest-driven linker args. Each
+    // entry was generated by `build_project` from `[[bin]] frameworks`
+    // (`-framework X`) and `libs` (`-lX`). Empty for everything except
+    // project builds whose manifest declares them.
+    for arg in link_args {
+        cmd.arg(arg);
     }
     let status = cmd
         .arg(input_ll)
@@ -1235,6 +1526,399 @@ fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: boo
     match build_ir(&path, &src, mode, build_mode, debug_info, sanitizers) {
         Ok(ir) => { print!("{ir}"); ExitCode::SUCCESS }
         Err(code) => code,
+    }
+}
+
+/// Slice 1G: post-optimization IR or assembly inspection.
+///
+/// `--emit-ll-opt FILE` and `--emit-asm FILE` route through here. They
+/// generate the same pre-LLVM IR as `--emit-ll` but feed it to clang with
+/// `-S -emit-llvm` (post-pass IR) or `-S` (assembly), at the optimization
+/// level matching `--debug` (`-O0`) or `--release` (`-O2`). The slice exists
+/// because slices 1B/1C cannot be validated without seeing what `-O2`
+/// actually does with the metadata — `--emit-ll` shows only what cpc
+/// emitted, not what LLVM keeps after inlining and InstCombine.
+///
+/// `output_kind` is "ll" for post-pass LLVM IR or "asm" for native assembly.
+/// Phase 5 Slice 5.A: produce a relocatable object file (`.o`).
+///
+/// Builds the IR for `input` (skipping the `@main` injection if the
+/// upstream sema marked this a library — see `build_ir_with_options`),
+/// writes it to a temp `.ll`, runs `clang -c -O<level>` to produce the
+/// object, and writes the result to `out`. Used both by the explicit
+/// `cpc --emit-obj` flag and as the first step inside the `cpc build`
+/// library pipeline (5.A.3 below).
+/// Phase 5 Slice 5.E: emit a C header for a `.cplus` source. Walks the
+/// program's top-level items, emits a C declaration for every `pub` item
+/// whose signature is C-ABI-compatible (Slice 5.C's predicate). Items
+/// that aren't representable in C (non-`#[repr(C)]` structs, Drop types,
+/// tagged enums, generics) are skipped silently — sema's E0410 already
+/// rejects them in `pub extern fn` signatures, so they can only reach
+/// the header path via plain `pub fn` / `pub struct` declarations and
+/// will be silently dropped from the header surface.
+///
+/// The generated header is hand-readable and idiomatic C99:
+/// - `#pragma once` for include-guard simplicity.
+/// - `#include <stdbool.h>` + `<stddef.h>` + `<stdint.h>` for the
+///   primitive type aliases.
+/// - Struct definitions before fn declarations so signatures can
+///   reference them. Order: pub structs / enums / type aliases first,
+///   then pub fn declarations.
+///
+/// `lib_name` shapes the include-guard fallback when `#pragma once`
+/// isn't honored by the consumer toolchain (very rare today).
+fn dump_header(input: PathBuf, lib_name: Option<&str>, diag_mode: DiagMode) -> ExitCode {
+    let src = match fs::read_to_string(&input) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cpc: read {}: {e}", input.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    // Reuse build_ir's front-end gauntlet, but only for sema validation —
+    // we don't actually need the IR. If sema fails, the error message is
+    // already emitted; abort the header build with the same exit.
+    let toks = match cplus_core::lexer::tokenize(&src) {
+        Ok(t) => t,
+        Err(e) => {
+            let lm = diag::LineMap::new(&src);
+            let d = diag::from_lex(&e, &input.to_path_buf(), &lm, &src);
+            emit_diag(&d, diag_mode, &src);
+            return ExitCode::FAILURE;
+        }
+    };
+    let prog = match cplus_core::parser::parse(toks) {
+        Ok(p) => p,
+        Err(e) => {
+            let lm = diag::LineMap::new(&src);
+            let d = diag::from_parse(&e, &input.to_path_buf(), &lm, &src);
+            emit_diag(&d, diag_mode, &src);
+            return ExitCode::FAILURE;
+        }
+    };
+    let header = render_c_header(&prog, lib_name.unwrap_or("cplus_lib"));
+    print!("{header}");
+    ExitCode::SUCCESS
+}
+
+/// Phase 5 Slice 5.E: render a C header for `program`'s `pub` surface.
+/// Public so the library build pipeline (5.A) can call it alongside the
+/// `.a` / `.dylib` artifact emission.
+fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String {
+    use cplus_core::ast::{ItemKind, TypeKind};
+    let mut out = String::new();
+    out.push_str(&format!("// Generated by cpc — public C ABI for `{lib_name}`. Do not edit.\n"));
+    out.push_str("#pragma once\n\n");
+    out.push_str("#include <stdbool.h>\n");
+    out.push_str("#include <stddef.h>\n");
+    out.push_str("#include <stdint.h>\n\n");
+    out.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
+
+    // Pass 1: pub `#[repr(C)]` structs and pub plain enums (definitions
+    // that fn signatures may reference). Tagged enums and non-repr-C
+    // structs are skipped silently — sema's 5.C predicate already
+    // rejects them in `pub extern fn` signatures, so any fn that would
+    // need them in the header would have failed before reaching here.
+    for item in &program.items {
+        match &item.kind {
+            ItemKind::Struct(s) if s.is_pub => {
+                let is_repr_c = s.attributes.iter().any(|a| a.path.name == "repr");
+                if !is_repr_c { continue; }
+                // Drop check: a struct with a `drop` method isn't safe to
+                // expose by value. The user's `pub extern fn` would have
+                // failed sema (5.C) if they tried; here we just skip.
+                // We can't easily check drop without sema state, so emit
+                // the struct definition and rely on consumers not to use
+                // it across a value boundary if it had Drop (5.C catches
+                // it at the actual use site).
+                if let Some(decl) = render_struct_decl(s) {
+                    out.push_str(&decl);
+                    out.push('\n');
+                }
+            }
+            ItemKind::Enum(e) if e.is_pub => {
+                let is_tagged = e.variants.iter().any(|v| !v.payload.is_empty());
+                if is_tagged { continue; }
+                // `typedef enum Foo { ... } Foo;` lets consumers use the
+                // bare name as a type — matches what we do for structs.
+                out.push_str(&format!("typedef enum {} {{\n", e.name.name));
+                for (i, v) in e.variants.iter().enumerate() {
+                    let sep = if i + 1 == e.variants.len() { "" } else { "," };
+                    out.push_str(&format!("    {}_{} = {}{}\n", e.name.name, v.name.name, i, sep));
+                }
+                out.push_str(&format!("}} {};\n\n", e.name.name));
+            }
+            _ => {}
+        }
+    }
+
+    // Pass 2: pub fn declarations. Both `pub fn` (C+-callable from inside
+    // the library; scalar-only ones are accidentally C-callable too) and
+    // `pub extern fn ... { body }` (Slice 5.C: explicit C-ABI export).
+    // Any signature element that fails the C-mapping (e.g. `str`, slice,
+    // tagged enum) makes us skip the whole fn — that's sound because the
+    // consumer couldn't write a matching signature anyway.
+    for item in &program.items {
+        if let ItemKind::Function(f) = &item.kind {
+            if !f.is_pub { continue; }
+            // Skip the parser-collapsed body for extern declarations
+            // (no body, decl form): those are imports, not exports.
+            if f.is_extern && f.body.stmts.is_empty() && f.body.tail.is_none() {
+                continue;
+            }
+            if !f.generic_params.is_empty() { continue; }
+            let Some(decl) = render_fn_decl(f) else { continue; };
+            out.push_str(&decl);
+            out.push('\n');
+        }
+    }
+
+    out.push_str("\n#ifdef __cplusplus\n} // extern \"C\"\n#endif\n");
+    out
+}
+
+/// Render a `#[repr(C)] pub struct Foo { ... }` as a C declaration.
+/// Returns None if any field's type isn't C-representable.
+fn render_struct_decl(s: &cplus_core::ast::StructDecl) -> Option<String> {
+    let mut out = format!("typedef struct {} {{\n", s.name.name);
+    for f in &s.fields {
+        let c_ty = type_to_c(&f.ty)?;
+        out.push_str(&format!("    {} {};\n", c_ty, f.name.name));
+    }
+    out.push_str(&format!("}} {};\n", s.name.name));
+    Some(out)
+}
+
+/// Render a `pub fn` (or `pub extern fn`) as a C prototype. Returns
+/// None when any param or return type isn't C-representable.
+fn render_fn_decl(f: &cplus_core::ast::Function) -> Option<String> {
+    let ret = match &f.return_type {
+        Some(t) => type_to_c(t)?,
+        None => "void".to_string(),
+    };
+    let mut out = format!("{} {}(", ret, f.name.name);
+    if f.params.is_empty() && !f.is_variadic {
+        out.push_str("void");
+    } else {
+        for (i, p) in f.params.iter().enumerate() {
+            if i > 0 { out.push_str(", "); }
+            out.push_str(&render_param_decl(&p.ty, &p.name.name)?);
+        }
+        if f.is_variadic {
+            if !f.params.is_empty() { out.push_str(", "); }
+            out.push_str("...");
+        }
+    }
+    out.push_str(");\n");
+    Some(out)
+}
+
+/// Render a single C parameter declarator `<type> <name>` with the C
+/// quirk that function-pointer params embed the name *inside* the
+/// declarator: `R (*name)(args)` instead of `R (*)(args) name`.
+fn render_param_decl(t: &cplus_core::ast::Type, name: &str) -> Option<String> {
+    use cplus_core::ast::TypeKind;
+    if let TypeKind::FnPtr { params, return_type } = &t.kind {
+        let ret = match return_type {
+            Some(t) => type_to_c(t)?,
+            None => "void".to_string(),
+        };
+        let mut s = format!("{} (*{})(", ret, name);
+        if params.is_empty() {
+            s.push_str("void");
+        } else {
+            for (i, p) in params.iter().enumerate() {
+                if i > 0 { s.push_str(", "); }
+                s.push_str(&type_to_c(p)?);
+            }
+        }
+        s.push(')');
+        return Some(s);
+    }
+    let c_ty = type_to_c(t)?;
+    Some(format!("{} {}", c_ty, name))
+}
+
+/// Map a C+ surface `Type` to the C type that has the same ABI. Returns
+/// None if the C+ type has no clean C counterpart (sema's 5.C predicate
+/// would already reject these in extern signatures; the header emitter
+/// uses None to mean "skip this declaration").
+fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
+    use cplus_core::ast::TypeKind;
+    Some(match &t.kind {
+        TypeKind::Path(name) => match name.as_str() {
+            "i8" => "int8_t".to_string(),
+            "i16" => "int16_t".to_string(),
+            "i32" => "int32_t".to_string(),
+            "i64" => "int64_t".to_string(),
+            "u8" => "uint8_t".to_string(),
+            "u16" => "uint16_t".to_string(),
+            "u32" => "uint32_t".to_string(),
+            "u64" => "uint64_t".to_string(),
+            "isize" => "intptr_t".to_string(),
+            "usize" => "size_t".to_string(),
+            "f32" => "float".to_string(),
+            "f64" => "double".to_string(),
+            "bool" => "bool".to_string(),
+            // Non-C surface types — don't appear in valid exports.
+            "str" | "string" => return None,
+            // Anything else: assume it's a user-defined `#[repr(C)]`
+            // struct or plain enum. Bare name. If it's actually a
+            // non-C type (tagged enum, etc.), the consumer's compile
+            // will fail — which is the right signal.
+            other => other.to_string(),
+        },
+        TypeKind::RawPtr(inner) => {
+            // `*u8` → `uint8_t *`. For nested fn pointers fall through to
+            // the FnPtr arm; for everything else, append a star.
+            let inner_c = type_to_c(inner)?;
+            format!("{} *", inner_c)
+        }
+        TypeKind::FnPtr { params, return_type } => {
+            let ret = match return_type {
+                Some(t) => type_to_c(t)?,
+                None => "void".to_string(),
+            };
+            let mut s = String::from(ret.as_str());
+            s.push_str(" (*)(");
+            if params.is_empty() {
+                s.push_str("void");
+            } else {
+                for (i, p) in params.iter().enumerate() {
+                    if i > 0 { s.push_str(", "); }
+                    s.push_str(&type_to_c(p)?);
+                }
+            }
+            s.push(')');
+            s
+        }
+        TypeKind::Array { elem, len } => {
+            // In a parameter position, `T[N]` decays to `T*` in C —
+            // technically the same ABI. We render the array form anyway
+            // since the user's intent is "fixed-size buffer" and clang
+            // treats `T arr[N]` and `T *arr` interchangeably in proto.
+            let elem_c = type_to_c(elem)?;
+            format!("{}[{}]", elem_c, len)
+        }
+        // Generics, borrows, slices — not C-representable.
+        TypeKind::Generic { .. }
+        | TypeKind::Borrowed { .. }
+        | TypeKind::Slice(_) => return None,
+    })
+}
+
+fn dump_obj(input: PathBuf, out: PathBuf, diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+    let src = match fs::read_to_string(&input) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cpc: read {}: {e}", input.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let ir = match build_ir(&input, &src, diag_mode, build_mode, false, &[]) {
+        Ok(ir) => ir,
+        Err(code) => return code,
+    };
+    let tmp = env::temp_dir().join(format!("cpc-obj-{}.ll", std::process::id()));
+    if let Err(e) = fs::write(&tmp, &ir) {
+        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
+        return ExitCode::FAILURE;
+    }
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!("cpc: creating {}: {e}", parent.display());
+                let _ = fs::remove_file(&tmp);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let opt = match build_mode {
+        BuildMode::Debug => "-O0",
+        BuildMode::Release => "-O2",
+    };
+    let status = Command::new("clang")
+        .arg(opt)
+        .arg("-Wno-override-module")
+        .arg("-c")
+        .arg(&tmp)
+        .arg("-o")
+        .arg(&out)
+        .status();
+    let _ = fs::remove_file(&tmp);
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(s) => {
+            eprintln!("cpc: clang -c exited with {s}");
+            ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8)
+        }
+        Err(e) => {
+            eprintln!("cpc: failed to invoke clang: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn dump_ll_or_asm(
+    path: PathBuf,
+    mode: DiagMode,
+    build_mode: BuildMode,
+    output_kind: ClangOutputKind,
+) -> ExitCode {
+    let src = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cpc: read {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let ir = match build_ir(&path, &src, mode, build_mode, false, &[]) {
+        Ok(ir) => ir,
+        Err(code) => return code,
+    };
+    let tmp = env::temp_dir().join(format!("cpc-emit-{}.ll", std::process::id()));
+    if let Err(e) = fs::write(&tmp, &ir) {
+        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
+        return ExitCode::FAILURE;
+    }
+    let code = run_clang_to_stdout(&tmp, build_mode, output_kind);
+    let _ = fs::remove_file(&tmp);
+    code
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClangOutputKind {
+    /// `clang -S -emit-llvm` → post-pass LLVM IR text.
+    LlvmIr,
+    /// `clang -S`           → native assembly.
+    Assembly,
+}
+
+/// Invoke clang to transform IR through the optimization pipeline and print
+/// the result on stdout. Matches `run_clang`'s `-O0`/`-O2` selection so the
+/// `--debug` / `--release` flags compose with `--emit-ll-opt` and
+/// `--emit-asm` consistently.
+fn run_clang_to_stdout(input_ll: &Path, mode: BuildMode, kind: ClangOutputKind) -> ExitCode {
+    let opt = match mode {
+        BuildMode::Debug => "-O0",
+        BuildMode::Release => "-O2",
+    };
+    let mut cmd = Command::new("clang");
+    cmd.arg(opt).arg("-Wno-override-module").arg("-S");
+    if matches!(kind, ClangOutputKind::LlvmIr) {
+        cmd.arg("-emit-llvm");
+    }
+    cmd.arg(input_ll).arg("-o").arg("-");
+    match cmd.status() {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(s) => {
+            eprintln!("cpc: clang exited with {s}");
+            ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8)
+        }
+        Err(e) => {
+            eprintln!("cpc: failed to invoke clang: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 

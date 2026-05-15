@@ -1877,10 +1877,25 @@ impl SemaCx<'_> {
     }
 
     fn check_function(&mut self, f: &Function) {
-        // Slice 10.FFI.1: `extern fn` declarations have no body to check.
-        // Signature is already in `fns` from `collect_functions`; calls
-        // type-check against it like any other fn.
-        if f.is_extern { return; }
+        // Phase 5 Slice 5.C: `pub extern fn name(...) { body }` is a
+        // C-callable export definition (not an import declaration). Its
+        // signature must use only C-ABI-compatible types; the body
+        // type-checks normally like any other fn. Plain `extern fn ...;`
+        // is an import declaration — no body, no signature check beyond
+        // the standard "types resolve" pass already done in collection.
+        if f.is_extern {
+            // Parser invariant: `is_pub` on an extern fn marks it as the
+            // export form (with body); plain `extern fn ...;` always
+            // parses with `is_pub = false`. So `is_extern && is_pub` is
+            // exactly the export case.
+            if f.is_pub {
+                self.check_extern_export_signature(f);
+                // Fall through to the normal body-checking path below.
+            } else {
+                // Import declaration: nothing more to check here.
+                return;
+            }
+        }
         let sig = self.fns.get(&f.name.name).cloned();
         let Some(sig) = sig else { return; }; // duplicate def already errored
         // Phase 5 slice 5ATTR.2 — sema rules specific to `#[test]` fns.
@@ -1911,6 +1926,136 @@ impl SemaCx<'_> {
     /// Function body: must produce a value matching the return type, OR end
     /// with an explicit `return`. Phase-1 heuristic; full divergence analysis
     /// is Phase 3 work.
+    /// Phase 5 Slice 5.C: validate that every type in a `pub extern fn`
+    /// signature is C-ABI-compatible. Each rejected type emits E0410 at
+    /// the parameter's (or return-type's) span, with the unsupported
+    /// type named in the message + a suggestion for the conventional
+    /// workaround. Body type-checking continues afterward.
+    fn check_extern_export_signature(&mut self, f: &Function) {
+        // Re-resolve each surface type so we can diagnose against the
+        // structural `Ty`. (Sema also cached these in `self.fns` during
+        // collection — we use resolve_type here for span fidelity.)
+        for p in &f.params {
+            let pty = self.resolve_type(&p.ty);
+            if let Some(reason) = self.c_exportable_diagnosis(&pty, /*is_return=*/false) {
+                self.err(
+                    "E0410",
+                    format!(
+                        "type `{}` in `pub extern fn` parameter is not C-ABI compatible: {reason}",
+                        ty_display(&pty),
+                    ),
+                    p.span,
+                );
+            }
+        }
+        if let Some(rt) = &f.return_type {
+            let ret_ty = self.resolve_type(rt);
+            if let Some(reason) = self.c_exportable_diagnosis(&ret_ty, /*is_return=*/true) {
+                self.err(
+                    "E0410",
+                    format!(
+                        "type `{}` in `pub extern fn` return position is not C-ABI compatible: {reason}",
+                        ty_display(&ret_ty),
+                    ),
+                    rt.span,
+                );
+            }
+        }
+    }
+
+    /// Returns `Some(reason)` if `ty` is NOT representable across a C
+    /// function-call ABI, `None` if it is. The reason string is the
+    /// human-readable explanation appended to E0410.
+    ///
+    /// `is_return = true` allows `Ty::Unit` (a fn returning nothing);
+    /// `is_return = false` rejects it (no such thing as a `void` param).
+    fn c_exportable_diagnosis(&self, ty: &Ty, is_return: bool) -> Option<String> {
+        match ty {
+            // Primitives, raw pointers, function pointers — all single-
+            // register classes that match the C ABI on every target.
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
+            | Ty::Isize | Ty::Usize
+            | Ty::F32 | Ty::F64
+            | Ty::Bool
+            | Ty::RawPtr(_) => None,
+            Ty::FnPtr { params, return_type } => {
+                for p in params {
+                    if let Some(r) = self.c_exportable_diagnosis(p, false) {
+                        return Some(format!("function-pointer parameter type `{}` is not C-ABI compatible ({r})", ty_display(p)));
+                    }
+                }
+                if let Some(r) = self.c_exportable_diagnosis(return_type, true) {
+                    return Some(format!("function-pointer return type `{}` is not C-ABI compatible ({r})", ty_display(return_type)));
+                }
+                None
+            }
+            Ty::Unit => {
+                if is_return { None } else {
+                    Some("the unit type `()` has no C-ABI representation as a parameter".to_string())
+                }
+            }
+            Ty::Str => Some(
+                "`str` is a fat pointer with no C-ABI counterpart; pass a `*u8` and a `usize` length instead".to_string()
+            ),
+            Ty::String => Some(
+                "owned `string` has Drop and a 3-word layout that no C ABI describes; pass a `*u8` and a `usize` length (and document the ownership convention)".to_string()
+            ),
+            Ty::Slice(_) => Some(
+                "slice `T[]` is a fat pointer with no C-ABI counterpart; pass a `*T` and a `usize` length instead".to_string()
+            ),
+            Ty::Enum(id) => {
+                let def = &self.enums[id.0 as usize];
+                if def.is_tagged {
+                    Some(format!(
+                        "tagged enum `{}` has no C-ABI counterpart; flatten to a struct with explicit tag + payload union, or expose individual variant constructors",
+                        def.name,
+                    ))
+                } else {
+                    // Plain (untagged) enum lowers to `i32` — a fine C ABI shape.
+                    None
+                }
+            }
+            Ty::Struct(id) => {
+                let def = &self.structs[id.0 as usize];
+                if def.is_drop {
+                    return Some(format!(
+                        "struct `{}` has a `drop` destructor; cross-boundary `Drop` is undefined (no destructor would run on the C side). Expose via opaque pointer + paired `*_free(*T)` instead",
+                        def.name,
+                    ));
+                }
+                if !def.is_repr_c {
+                    return Some(format!(
+                        "struct `{}` is not `#[repr(C)]`; layout is unspecified across the C boundary. Add `#[repr(C)]` to commit to C-compatible field layout",
+                        def.name,
+                    ));
+                }
+                // All fields must themselves be C-exportable. Fields
+                // carry a third element (pub flag) which we ignore here.
+                for (fname, fty, _is_pub) in &def.fields {
+                    if let Some(r) = self.c_exportable_diagnosis(fty, false) {
+                        return Some(format!(
+                            "field `{}` of `{}` has non-C-ABI type `{}` ({r})",
+                            fname, def.name, ty_display(fty),
+                        ));
+                    }
+                }
+                None
+            }
+            Ty::Array(elem, _n) => {
+                // `[T; N]` is layout-compatible with C `T[N]` when T is.
+                if let Some(r) = self.c_exportable_diagnosis(elem, false) {
+                    return Some(format!("array element type `{}` is not C-ABI compatible ({r})", ty_display(elem)));
+                }
+                None
+            }
+            Ty::Param(name) => Some(format!(
+                "generic type parameter `{name}` cannot appear in a `pub extern fn` signature; monomorphize manually by exposing one concrete overload per type",
+            )),
+            Ty::Error => None,  // Type already errored; don't double-report.
+        }
+    }
+
     fn check_function_body(&mut self, body: &Block, expected: Ty, body_span: ByteSpan) {
         // Push the body scope.
         self.scopes.push(HashMap::new());
@@ -3119,6 +3264,29 @@ impl SemaCx<'_> {
             }
             return Ty::Error;
         }
+        // Phase 3A: byte-swap intrinsics. Built-in for network byte order
+        // and other endian-flipping needs. `bswapN(x: uN) -> uN` for
+        // N ∈ {16, 32, 64}; htons/htonl/ntohs/ntohl are aliases that
+        // expand to bswap on little-endian targets (every C+ target today
+        // is LE — x86_64, arm64-darwin, arm64-linux).
+        if let Some(bswap_ty) = match name.as_str() {
+            "bswap16" | "htons" | "ntohs" => Some(Ty::U16),
+            "bswap32" | "htonl" | "ntohl" => Some(Ty::U32),
+            "bswap64"                     => Some(Ty::U64),
+            _ => None,
+        } {
+            if args.len() != 1 {
+                self.err(
+                    "E0501",
+                    format!("`{name}` takes exactly 1 argument, got {}", args.len()),
+                    call_span,
+                );
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Error;
+            }
+            let _ = self.check_expr(&args[0], Some(bswap_ty.clone()));
+            return bswap_ty;
+        }
         if name == "slice_len" && args.len() == 1 {
             let arg_ty = self.check_expr(&args[0], None);
             if !matches!(arg_ty, Ty::Slice(_) | Ty::Error) {
@@ -3964,15 +4132,63 @@ impl SemaCx<'_> {
                 let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
                 lhs_ty
             }
-            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                self.err(
-                    "E0312",
-                    "bitwise and shift operators are not yet supported".to_string(),
-                    span,
-                );
-                let _ = self.check_expr(lhs, None);
-                let _ = self.check_expr(rhs, None);
-                Ty::Error
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                // Phase 3A: bitwise ops are defined on every integer type
+                // (signed + unsigned, every width). Floats, bool, ptrs are
+                // rejected — there's no surface-language meaning for
+                // bit-twiddling those. `bool & bool` uses `&&` instead.
+                let lhs_ty = self.check_expr(lhs, None);
+                if lhs_ty == Ty::Error {
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Error;
+                }
+                if !lhs_ty.is_int() {
+                    self.err(
+                        "E0302",
+                        format!("`{}` requires integer operands, found `{}`", op_str(op), lhs_ty.name()),
+                        span,
+                    );
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Error;
+                }
+                // RHS must be the same integer type as LHS. Coerce
+                // unsuffixed integer literals to match.
+                let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                lhs_ty
+            }
+            BinOp::Shl | BinOp::Shr => {
+                // Phase 3A: shift result type is the LHS's integer type.
+                // The shift count is an integer; it does NOT have to match
+                // the LHS width (C lets `i64 << u8`; same here). Signed
+                // LHS uses arithmetic shift right; unsigned uses logical.
+                // Codegen picks `ashr` vs `lshr` from the LHS signedness.
+                let lhs_ty = self.check_expr(lhs, None);
+                if lhs_ty == Ty::Error {
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Error;
+                }
+                if !lhs_ty.is_int() {
+                    self.err(
+                        "E0302",
+                        format!("`{}` requires an integer left operand, found `{}`", op_str(op), lhs_ty.name()),
+                        span,
+                    );
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Error;
+                }
+                // Shift count: integer, any width. Don't constrain to a
+                // specific type — let any int through and let codegen
+                // narrow/widen to the LHS width.
+                let rhs_ty = self.check_expr(rhs, None);
+                if rhs_ty != Ty::Error && !rhs_ty.is_int() {
+                    self.err(
+                        "E0302",
+                        format!("shift count must be an integer, found `{}`", rhs_ty.name()),
+                        span,
+                    );
+                    return Ty::Error;
+                }
+                lhs_ty
             }
         }
     }
@@ -4002,9 +4218,19 @@ impl SemaCx<'_> {
             }
             UnaryOp::Not => { self.check_expr(operand, Some(Ty::Bool)); Ty::Bool }
             UnaryOp::BitNot => {
-                self.err("E0312", "bitwise not (`~`) is not yet supported".to_string(), span);
-                let _ = self.check_expr(operand, None);
-                Ty::Error
+                // Phase 3A: bitwise NOT is defined on every integer type.
+                // Codegen lowers via `xor i<N> v, -1` per LLVM idiom.
+                let t = self.check_expr(operand, None);
+                if t == Ty::Error { return Ty::Error; }
+                if !t.is_int() {
+                    self.err(
+                        "E0302",
+                        format!("`~` requires an integer operand, found `{}`", t.name()),
+                        span,
+                    );
+                    return Ty::Error;
+                }
+                t
             }
             UnaryOp::Ref { .. } => {
                 self.err("E0312", "references are not yet supported (Phase 5/6)".to_string(), span);
@@ -5168,8 +5394,50 @@ mod tests {
     }
 
     #[test]
-    fn bitwise_not_supported_e0312() {
-        assert_only_code("fn main() -> i32 { return 1 & 2; }", "E0312");
+    fn bitwise_ops_now_supported() {
+        // Phase 3A: bitwise + shift on every integer width.
+        assert_clean("fn main() -> i32 { return (1 & 2) | (4 ^ 8); }");
+        assert_clean("fn main() -> i32 { return 1 << 2 >> 1; }");
+        assert_clean("fn main() -> i32 { return ~0; }");
+    }
+
+    #[test]
+    fn bitwise_on_float_e0302() {
+        let codes = errors("fn main() -> i32 { let x: f64 = 1.0; let y: f64 = x & 1.0; return 0; }");
+        assert!(codes.contains(&"E0302"), "expected E0302 on float &, got: {codes:?}");
+    }
+
+    #[test]
+    fn bitwise_on_bool_e0302() {
+        let codes = errors("fn main() -> i32 { let b: bool = true | false; return 0; }");
+        assert!(codes.contains(&"E0302"), "expected E0302 on bool |, got: {codes:?}");
+    }
+
+    #[test]
+    fn bit_not_on_float_e0302() {
+        let codes = errors("fn main() -> i32 { let x: f64 = 1.0; let y: f64 = ~x; return 0; }");
+        assert!(codes.contains(&"E0302"), "expected E0302 on ~f64, got: {codes:?}");
+    }
+
+    #[test]
+    fn shift_count_can_be_different_int_width() {
+        // C lets `i64 << u8`; same here. Shift count is just an integer.
+        assert_clean(
+            "fn main() -> i32 {\n\
+               let x: i64 = 1 as i64;\n\
+               let n: u8 = 3 as u8;\n\
+               let y: i64 = x << n;\n\
+               return 0;\n\
+             }"
+        );
+    }
+
+    #[test]
+    fn shift_count_must_be_integer_e0302() {
+        let codes = errors(
+            "fn main() -> i32 { let x: i64 = 1 as i64; let y: i64 = x << 1.0; return 0; }"
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
     #[test]
@@ -7477,5 +7745,132 @@ mod tests {
             "fn typed_alloc[T](n: usize) -> usize { return n *% size_of::[T](); } \
              fn main() -> i32 { let bytes: usize = typed_alloc::[i32](10 as usize); return 0; }",
         );
+    }
+
+    // ---- Phase 5 Slice 5.C: `pub extern fn body` export signature gates ----
+
+    #[test]
+    fn pub_extern_fn_with_scalar_args_clean() {
+        assert_clean(
+            "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_raw_pointer_clean() {
+        assert_clean(
+            "pub extern fn load(p: *i32) -> i32 { return unsafe { *p }; }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_repr_c_struct_clean() {
+        assert_clean(
+            "#[repr(C)]\n\
+             struct Point { x: i32, y: i32 }\n\
+             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_str_rejected_e0410() {
+        let codes = errors("pub extern fn echo(s: str) -> i32 { return 0; }");
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_string_return_rejected_e0410() {
+        let codes = errors("pub extern fn make() -> string { return string::new(); }");
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_slice_rejected_e0410() {
+        let codes = errors("pub extern fn len(s: i32[]) -> i32 { return 0; }");
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_tagged_enum_rejected_e0410() {
+        let codes = errors(
+            "enum Opt { Some(i32), None }\n\
+             pub extern fn take(o: Opt) -> i32 { return 0; }"
+        );
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_plain_enum_clean() {
+        // Plain (untagged) enum lowers to i32 — fine across the C ABI.
+        assert_clean(
+            "enum Color { Red, Green, Blue }\n\
+             pub extern fn pick(c: Color) -> i32 { return 0; }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_non_repr_c_struct_rejected_e0410() {
+        let codes = errors(
+            "struct Point { x: i32, y: i32 }\n\
+             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }"
+        );
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_drop_struct_rejected_e0410() {
+        let codes = errors(
+            "#[repr(C)]\n\
+             struct R { fd: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             pub extern fn use_it(r: R) -> i32 { return r.fd; }"
+        );
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_unit_return_clean() {
+        // Unit return is fine — maps to C `void`.
+        assert_clean(
+            "pub extern fn noop() { return; }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_array_clean() {
+        // Fixed-size array of C-compatible element is layout-compatible
+        // with C `T[N]`.
+        assert_clean(
+            "pub extern fn first(xs: [i32; 4]) -> i32 { return xs[0 as usize]; }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_fn_ptr_clean() {
+        // Function-pointer params/returns work when their own signatures
+        // are C-exportable.
+        assert_clean(
+            "pub extern fn invoke(f: fn(i32) -> i32, x: i32) -> i32 { return f(x); }"
+        );
+    }
+
+    #[test]
+    fn pub_extern_fn_with_fn_ptr_of_slice_rejected_e0410() {
+        // A fn-ptr whose param uses a non-C type propagates the rejection.
+        let codes = errors(
+            "pub extern fn bad(f: fn(i32[]) -> i32) -> i32 { return 0; }"
+        );
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    #[test]
+    fn pub_extern_fn_with_non_repr_c_field_in_struct_rejected_e0410() {
+        // A `#[repr(C)]` struct still must have C-exportable fields.
+        let codes = errors(
+            "#[repr(C)]\n\
+             struct Outer { inner: str }\n\
+             pub extern fn use_it(o: Outer) -> i32 { return 0; }"
+        );
+        assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 }

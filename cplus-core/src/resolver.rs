@@ -162,6 +162,18 @@ pub fn load_project(
     entry_path: &Path,
     manifest_root: &Path,
 ) -> Result<LoadedProject, LoadFailure> {
+    load_project_with_mode(entry_path, manifest_root, false)
+}
+
+/// Phase 5 Slice 5.A: like `load_project` but allows the caller to mark
+/// this project as a library target. When `is_lib = true`, top-level
+/// items in the entry file keep unqualified names so a C consumer can
+/// link against them by their source-level identifier.
+pub fn load_project_with_mode(
+    entry_path: &Path,
+    manifest_root: &Path,
+    is_lib: bool,
+) -> Result<LoadedProject, LoadFailure> {
     let mut loader = Loader::new(manifest_root.to_path_buf());
     let entry_file_id = match loader.load_recursive(entry_path, None, None) {
         Ok(id) => id,
@@ -187,7 +199,7 @@ pub fn load_project(
         .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
         .collect();
 
-    let merged = match merge(files, &entry_file_id) {
+    let merged = match merge(files, &entry_file_id, is_lib) {
         Ok(p) => p,
         Err(e) => return Err(LoadFailure { error: e, sources: sources_by_path }),
     };
@@ -635,7 +647,7 @@ fn detect_cycle(
 
 // ----- merge / rewrite -----
 
-fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str) -> Result<Program, ResolveError> {
+fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str, is_lib_entry: bool) -> Result<Program, ResolveError> {
     // Pre-pass: collect each file's local item names (used by the
     // rewriter to qualify unqualified references) AND its **public**
     // surface (slice 4B: gates cross-file access via E0403).
@@ -758,6 +770,7 @@ fn merge(files: BTreeMap<String, FileUnit>, entry_file_id: &str) -> Result<Progr
             self_file_id: fid.clone(),
             self_file_path: unit.canonical_path.clone(),
             entry_file_id: entry_file_id.to_string(),
+            is_lib_entry,
             imports: imports_map,
             local_items: local_items.get(fid).cloned().unwrap_or_default(),
             local_enums: local_enums.clone(),
@@ -783,6 +796,12 @@ struct RewriteCtx {
     self_file_id: String,
     self_file_path: PathBuf,
     entry_file_id: String,
+    /// Phase 5 Slice 5.A: this project's root file is the entry of a
+    /// `[lib]` target. Top-level items in `entry_file_id` skip mangling
+    /// so C consumers can link against `pub fn add` as the bare `_add`
+    /// symbol. Files imported by the entry stay qualified normally —
+    /// they're not part of the public C ABI.
+    is_lib_entry: bool,
     /// Map of `as`-prefix → target file id.
     imports: BTreeMap<String, String>,
     /// Top-level item names declared in this file.
@@ -810,9 +829,18 @@ struct RewriteCtx {
 impl RewriteCtx {
     /// Qualified name for an item `name` declared in this file. The entry
     /// binary's `main` keeps its bare name so the linker entry point works.
+    ///
+    /// Phase 5 Slice 5.A: when this is a library target's entry file,
+    /// every top-level name skips qualification — the bare names ARE the
+    /// public ABI. Internal helpers also stay unqualified for MVP; Slice
+    /// 5.B will mark non-`pub` items with `internal` linkage so they
+    /// don't leak as exported symbols.
     fn qualify_local(&self, name: &str) -> String {
         if name == "main" && self.self_file_id == self.entry_file_id {
             return "main".to_string();
+        }
+        if self.is_lib_entry && self.self_file_id == self.entry_file_id {
+            return name.to_string();
         }
         format!("{}.{}", self.self_file_id, name)
     }
@@ -821,6 +849,9 @@ impl RewriteCtx {
     fn qualify_external(&self, target_id: &str, name: &str) -> String {
         if name == "main" && target_id == self.entry_file_id {
             return "main".to_string();
+        }
+        if self.is_lib_entry && target_id == self.entry_file_id {
+            return name.to_string();
         }
         format!("{target_id}.{name}")
     }

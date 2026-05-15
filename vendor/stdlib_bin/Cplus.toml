@@ -1,0 +1,15 @@
+[package]
+name    = "stdlib_bin"
+version = "0.0.0"
+edition = "2026"
+
+# Same public API surface as the `stdlib` package, but distributed as a
+# precompiled static library. The `src/*.cplus` files contain only the
+# C+-side declarations (extern fn + thin `pub` wrappers); the actual
+# implementations live in `lib/<arch>/stdlib_bin.a`, built upstream by the
+# stdlib's release pipeline.
+#
+# No [link] entries: the bundled .a is self-contained against libc, which
+# clang links implicitly. If a future stdlib_bin release depends on a
+# non-libc system framework (e.g. SystemConfiguration on macOS for IPv6
+# resolution), declare it here.

@@ -667,11 +667,6 @@ impl Parser {
     /// at the link level).
     fn parse_extern_fn(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
         let start = self.peek().span;
-        if is_pub {
-            return Err(self.err_at_peek(
-                "extern fn — `pub` is not meaningful on extern declarations; the C symbol is always reachable",
-            ));
-        }
         // Phase 11 / ObjC interop: attributes are now allowed on extern fns
         // (motivated by `#[link_name = "..."]`). Attribute-shape validation
         // runs in attrs::check; sema enforces extern-only semantic constraints
@@ -713,23 +708,61 @@ impl Parser {
         } else {
             None
         };
-        let semi = self.expect(&TokenKind::Semi, "`;` (extern fns have no body)")?;
-        // Synthesize an empty block for the body field so every existing
-        // AST-walking site keeps working without an Option<Block> migration.
-        let body = Block { stmts: Vec::new(), tail: None, span: semi.span };
+        // Phase 5 Slice 5.C: `pub extern fn NAME(...) { body }` defines an
+        // export with C ABI. The two shapes are mutually exclusive:
+        //   - `extern fn name(...);`       → import (declaration, no body)
+        //   - `pub extern fn name(...) {}` → export (definition, has body)
+        // Non-`pub extern fn ... {}` is rejected — the `pub` flag is what
+        // distinguishes an export from an accidental body on an import.
+        // Variadic + body is rejected because C+ has no `va_list` API to
+        // walk the extra args; `printf`-style varargs is import-only.
+        let (body, end_span, is_extern_def) = if self.at(&TokenKind::LBrace) {
+            if !is_pub {
+                return Err(self.err_at_peek(
+                    "extern fn — only `pub extern fn` may have a body (exports a C-callable definition); plain `extern fn` is a declaration ending in `;`",
+                ));
+            }
+            if is_variadic {
+                return Err(self.err_at_peek(
+                    "extern fn — variadic exports are not supported (C+ has no va_list); use `extern fn` with `;` to import a variadic C symbol instead",
+                ));
+            }
+            let body = self.parse_block()?;
+            let span = body.span;
+            (body, span, true)
+        } else {
+            // Plain declaration form: `extern fn name(...);`. `pub` is
+            // meaningful only on definitions (5.C exports). If the user
+            // wrote `pub extern fn name(...);` they likely forgot a body.
+            if is_pub {
+                return Err(self.err_at_peek(
+                    "extern fn — `pub` introduces a C-callable export and requires a body `{ ... }`; a declaration ends in `;` and must not be `pub`",
+                ));
+            }
+            let semi = self.expect(&TokenKind::Semi, "`;` (extern declarations have no body; use `pub extern fn name(...) { body }` to define a C-callable export)")?;
+            // Synthesize an empty block for the body field so every existing
+            // AST-walking site keeps working without an Option<Block> migration.
+            let body = Block { stmts: Vec::new(), tail: None, span: semi.span };
+            (body, semi.span, false)
+        };
         Ok(Item {
             kind: ItemKind::Function(Function {
                 name,
                 params,
                 return_type,
                 body,
-                is_pub: false,
+                // `pub` is meaningful when defining an export (5.C); it has
+                // no effect on an import declaration (the C symbol is
+                // always reachable). We preserve it on definitions so
+                // sema can route the export-only checks, and on
+                // declarations we drop it (pre-5.C behavior).
+                is_pub: is_extern_def,
                 is_extern: true,
                 is_variadic,
                 attributes,
                 generic_params: Vec::new(),
             }),
-            span: start.merge(semi.span),
+            span: start.merge(end_span),
             origin_file: None,
         })
     }
@@ -2877,15 +2910,39 @@ mod tests {
     }
 
     #[test]
-    fn extern_fn_with_body_rejected() {
-        // `;` required after the signature; a body block fails parsing.
+    fn extern_fn_with_body_requires_pub() {
+        // Phase 5 Slice 5.C: a plain `extern fn` is an import declaration
+        // and must end in `;`. Bodies require `pub` (export form).
         let err = parse_src("extern fn abs(x: i32) -> i32 { return x; }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
     #[test]
-    fn extern_fn_with_pub_rejected() {
+    fn extern_fn_decl_with_pub_rejected() {
+        // Phase 5 Slice 5.C: `pub` on a declaration (no body) is rejected
+        // — the user likely forgot the body block. The diagnostic
+        // suggests the export form.
         let err = parse_src("pub extern fn abs(x: i32) -> i32;").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn pub_extern_fn_with_body_parses() {
+        // Phase 5 Slice 5.C: the C-callable export form.
+        let p = parse_src("pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_pub, "expected is_pub on the export");
+        assert!(f.is_extern, "expected is_extern on the export");
+        assert!(!f.is_variadic);
+        assert_eq!(f.params.len(), 2);
+        assert!(!f.body.stmts.is_empty(), "expected a non-empty body");
+    }
+
+    #[test]
+    fn pub_extern_fn_variadic_with_body_rejected() {
+        // No `va_list` API in C+, so variadic exports can't be defined
+        // (only imported). Variadic + body is a parser-level reject.
+        let err = parse_src("pub extern fn p(x: i32, ...) { return; }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 

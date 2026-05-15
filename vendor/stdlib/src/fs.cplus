@@ -1,0 +1,53 @@
+// stdlib/fs.cplus — file system access.
+//
+// Skeleton: API only. Bodies fill in during Phase 3.
+//
+// Built on libc open(2)/read(2)/write(2)/close(2) via `extern fn`. File
+// has a Drop destructor that calls close() on scope exit — opening a file
+// without explicitly closing it is safe.
+
+import "./result.cplus" as result;
+import "./vec.cplus" as vec;
+
+// Owned file handle. `fd` is the libc descriptor; -1 means "already closed".
+pub struct File {
+    fd: i32,
+}
+
+impl File {
+    // Open `path` for reading. Returns Err on missing/permission/etc.
+    pub fn open(path: str) -> result::Result[File, result::IoError] {
+        // TODO: Phase 3 — extern fn open(path: *u8, flags: i32) -> i32.
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    // Open `path` for writing, creating + truncating it if missing.
+    pub fn create(path: str) -> result::Result[File, result::IoError] {
+        // TODO: Phase 3 — open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644).
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    // Drain the file's remaining bytes into a heap-allocated buffer.
+    pub fn read_to_end(mut self) -> result::Result[vec::Vec[u8], result::IoError] {
+        // TODO: Phase 3 — loop fread into a Vec[u8].
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    // Write all of `data` to the file. Loops on short writes.
+    pub fn write_all(mut self, data: vec::Vec[u8]) -> result::Result[(), result::IoError] {
+        // TODO: Phase 3 — while remaining > 0: write(fd, ptr, remaining).
+        return result::Result::Err(result::IoError::Other);
+    }
+
+    // Explicit close. Setting fd to -1 prevents double-close from Drop.
+    pub fn close(move self) {
+        // TODO: Phase 3 — call libc close(); zero fd to disarm Drop.
+        return;
+    }
+
+    // Destructor: closes the file if `close` wasn't called explicitly.
+    fn drop(mut self) {
+        // TODO: Phase 3 — if fd != -1: close(fd).
+        return;
+    }
+}
