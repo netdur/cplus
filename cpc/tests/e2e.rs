@@ -1980,7 +1980,7 @@ fn main() -> i32 {
     assert!(out.status.success(),
         "expected clean emit; stderr: {}", String::from_utf8_lossy(&out.stderr));
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("define i32 @bump(ptr noalias "),
+    assert!(ir.contains("i32 @bump(ptr noalias "),
         "expected `mut b: B` to lower to `ptr noalias`; got: {ir}");
 }
 
@@ -2002,7 +2002,7 @@ fn main() -> i32 {
     assert!(out.status.success(),
         "expected clean emit; stderr: {}", String::from_utf8_lossy(&out.stderr));
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("define i32 @peek(ptr readonly "),
+    assert!(ir.contains("i32 @peek(ptr readonly "),
         "expected shared `b: B` to lower to `ptr readonly`; got: {ir}");
     // And NOT `noalias` — shared borrows can alias per §2.9.
     assert!(!ir.contains("@peek(ptr noalias"),
@@ -2027,7 +2027,7 @@ fn main() -> i32 {
     let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("define i32 @shift(%Point "),
+    assert!(ir.contains("i32 @shift(%Point "),
         "Copy struct should stay struct-by-value; got: {ir}");
 }
 
@@ -2916,7 +2916,7 @@ fn phase10_extern_fn_emits_declare_not_define() {
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(ir.contains("declare i32 @abs(i32)"),
         "expected `declare i32 @abs(i32)`, got IR:\n{ir}");
-    assert!(!ir.contains("define i32 @abs("),
+    assert!(!ir.contains("define i32 @abs(") && !ir.contains("define internal i32 @abs("),
         "extern fn must not emit a body, got IR:\n{ir}");
     // Call site uses the literal symbol name (no module prefix).
     assert!(ir.contains("call i32 @abs(i32"),
@@ -4187,7 +4187,7 @@ fn phase11_debuginfo_g_emits_di_metadata() {
         "missing DISubprogram for helper: {ir}");
     assert!(ir.contains("!DILocation"), "missing DILocation: {ir}");
     // define lines should reference !dbg.
-    assert!(ir.contains("define i32 @main()") && ir.contains("!dbg "),
+    assert!(ir.contains("i32 @main()") && ir.contains("!dbg "),
         "main define should carry !dbg: {ir}");
 }
 
@@ -4242,7 +4242,7 @@ fn phase11_asan_attaches_function_attr() {
         .output().expect("invoke cpc");
     assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("define i32 @main() sanitize_address"),
+    assert!(ir.contains("i32 @main() sanitize_address"),
         "main should carry sanitize_address attr: {ir}");
 }
 
@@ -5181,6 +5181,721 @@ fn bundled_declared_but_file_missing_emits_e0860() {
     assert!(stderr.contains("libmissing.a"), "diagnostic should name the file: {stderr}");
 }
 
+// ---- v0.0.3 Slice 1A: stdlib/io end-to-end ----
+
+/// A project that declares `stdlib = "*"` and imports `stdlib/io` can call
+/// `io::print` / `io::println` / `io::eprintln`. Verifies the new bodies in
+/// vendor/stdlib/src/io.cplus produce the expected bytes on stdout/stderr.
+#[test]
+fn stdlib_io_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"io_smoke\"\n\n[[bin]]\nname = \"io_smoke\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/io.cplus"), io_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         fn main() -> i32 {\n\
+             io::print(\"hello \");\n\
+             io::println(\"world\");\n\
+             io::eprintln(\"to stderr\");\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/io_smoke");
+    let out = Command::new(&bin).output().expect("run io_smoke");
+    assert!(out.status.success(), "binary exited non-zero: {}", out.status);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hello world\n",
+        "stdout mismatch"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "to stderr\n",
+        "stderr mismatch"
+    );
+}
+
+/// v0.0.3 Phase 2 (CWE-377 regression): two concurrent `cpc` invocations
+/// on identical input must not collide on a predictable temp path. Before
+/// the tempfile migration both invocations wrote to `cpc-<pid>.ll` — if
+/// the PIDs happened to match (across containers, or on a wraparound),
+/// one would overwrite the other's IR mid-compile. With tempfile-crate
+/// random suffixes, paths are statistically unique even under collision.
+#[test]
+fn concurrent_cpc_invocations_no_temp_collision() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("a.cplus"),
+        "fn main() -> i32 { return 7; }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("b.cplus"),
+        "fn main() -> i32 { return 11; }\n",
+    ).unwrap();
+
+    let cpc_a = cpc.to_string();
+    let dir_a = dir.clone();
+    let h_a = std::thread::spawn(move || {
+        let out = dir_a.join("a.out");
+        let st = Command::new(&cpc_a)
+            .arg(dir_a.join("a.cplus"))
+            .arg("-o").arg(&out)
+            .status()
+            .expect("invoke cpc a");
+        assert!(st.success(), "cpc a failed");
+        let run = Command::new(&out).status().expect("run a");
+        assert_eq!(run.code(), Some(7), "a should exit 7");
+    });
+    let cpc_b = cpc.to_string();
+    let dir_b = dir.clone();
+    let h_b = std::thread::spawn(move || {
+        let out = dir_b.join("b.out");
+        let st = Command::new(&cpc_b)
+            .arg(dir_b.join("b.cplus"))
+            .arg("-o").arg(&out)
+            .status()
+            .expect("invoke cpc b");
+        assert!(st.success(), "cpc b failed");
+        let run = Command::new(&out).status().expect("run b");
+        assert_eq!(run.code(), Some(11), "b should exit 11");
+    });
+    h_a.join().expect("thread a");
+    h_b.join().expect("thread b");
+}
+
+/// v0.0.3 Slice 1E: stdlib/env reads the PATH variable (universally set).
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_env_var_into() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"envt\"\n\n[[bin]]\nname = \"envt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    for name in &["vec", "env"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        ).unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/env\" as env;\n\
+         import \"stdlib/vec\" as vec;\n\
+         fn main() -> i32 {\n\
+             let buf: vec::Vec[u8] = vec::new::[u8]();\n\
+             if !env::var_into(\"PATH\", buf) { return 1; }\n\
+             if !env::has_var(\"PATH\") { return 2; }\n\
+             if env::argc() < (1 as usize) { return 3; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/envt");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "env smoke failed");
+}
+
+/// v0.0.3 Phase 4: cpc-bindgen reads a small C header and emits a
+/// `.cplus` file that (a) parses through cpc cleanly and (b) links
+/// against the original C source's compiled object. Round-trips
+/// scalars, raw pointers, fixed-width integers via stdint.h aliases.
+#[test]
+#[cfg(target_os = "macos")]
+fn cpc_bindgen_round_trips_via_c_library() {
+    // cpc-bindgen is a sibling workspace crate; locate its binary
+    // relative to this test's deps/ directory.
+    let exe = std::env::current_exe().expect("current_exe");
+    let mut target_dir = exe.parent().unwrap(); // .../deps
+    target_dir = target_dir.parent().unwrap(); // .../<mode>
+    let bindgen = target_dir.join("cpc-bindgen");
+    assert!(bindgen.is_file(), "cpc-bindgen binary not built at {}", bindgen.display());
+    let bindgen = bindgen.to_string_lossy().to_string();
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    // Tiny C library: 4 fns covering scalar return, scalar args, pointer
+    // args, and a double round-trip.
+    let header = dir.join("api.h");
+    std::fs::write(&header,
+        "int add_ints(int a, int b);\n\
+         unsigned int max_u32(unsigned int a, unsigned int b);\n\
+         long count_bytes(const char *s);\n\
+         double area_of_rect(double w, double h);\n",
+    ).unwrap();
+    let c_src = dir.join("api.c");
+    std::fs::write(&c_src,
+        "#include \"api.h\"\n\
+         int add_ints(int a, int b) { return a + b; }\n\
+         unsigned int max_u32(unsigned int a, unsigned int b) { return a > b ? a : b; }\n\
+         long count_bytes(const char *s) { long n = 0; while (s[n]) n++; return n; }\n\
+         double area_of_rect(double w, double h) { return w * h; }\n",
+    ).unwrap();
+    // Compile + archive the C source into libtiny.a.
+    let c_obj = dir.join("api.o");
+    let st = Command::new("clang")
+        .arg("-c").arg(&c_src).arg("-o").arg(&c_obj)
+        .status().expect("invoke clang");
+    assert!(st.success(), "clang -c failed");
+    let lib = dir.join("libtiny.a");
+    let st = Command::new("ar").arg("rcs").arg(&lib).arg(&c_obj).status().expect("invoke ar");
+    assert!(st.success(), "ar failed");
+
+    // Run cpc-bindgen to produce the C+ bindings.
+    let bg_out = Command::new(bindgen).arg(&header).output().expect("invoke cpc-bindgen");
+    assert!(bg_out.status.success(),
+        "cpc-bindgen failed: {}", String::from_utf8_lossy(&bg_out.stderr));
+    let bindings = String::from_utf8_lossy(&bg_out.stdout);
+    assert!(bindings.contains("extern fn add_ints(a: i32, b: i32) -> i32;"));
+    assert!(bindings.contains("extern fn max_u32(a: u32, b: u32) -> u32;"));
+    assert!(bindings.contains("extern fn count_bytes(s: *i8) -> i64;"));
+    assert!(bindings.contains("extern fn area_of_rect(w: f64, h: f64) -> f64;"));
+
+    // Write a `.cplus` driver that uses the bindings and asserts results.
+    let cplus = dir.join("main.cplus");
+    let driver = format!(
+        "{bindings}\n\
+         fn main() -> i32 {{\n\
+             let s: str = \"hello\\0\";\n\
+             let n: i64 = unsafe {{ count_bytes(str_ptr(s) as *i8) }};\n\
+             if n != (5 as i64) {{ return 1; }}\n\
+             let sum: i32 = unsafe {{ add_ints(20 as i32, 22 as i32) }};\n\
+             if sum != (42 as i32) {{ return 2; }}\n\
+             let m: u32 = unsafe {{ max_u32(7 as u32, 11 as u32) }};\n\
+             if m != (11 as u32) {{ return 3; }}\n\
+             let a: f64 = unsafe {{ area_of_rect(3.0 as f64, 4.0 as f64) }};\n\
+             if a != (12.0 as f64) {{ return 4; }}\n\
+             return 0;\n\
+         }}\n");
+    std::fs::write(&cplus, driver).unwrap();
+
+    // cpc → .o, then clang to link with libtiny.a.
+    let cplus_obj = dir.join("main.o");
+    let st = Command::new(cpc)
+        .arg("--emit-obj").arg(&cplus).arg("-o").arg(&cplus_obj)
+        .status().expect("invoke cpc --emit-obj");
+    assert!(st.success(), "cpc --emit-obj failed");
+    let bin = dir.join("smoke");
+    let st = Command::new("clang")
+        .arg(&cplus_obj).arg(&lib).arg("-o").arg(&bin)
+        .status().expect("clang link");
+    assert!(st.success(), "clang link failed");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "bindgen round-trip should exit 0");
+}
+
+/// v0.0.3 Slice 3A: compound assignment operators run correctly. Tests
+/// every variant: arithmetic (+= -= *= /= %=), bitwise (&= |= ^=), and
+/// shifts (<<= >>=) on both signed and unsigned integers.
+#[test]
+fn compound_assigns_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ca.cplus");
+    std::fs::write(&src,
+        "fn main() -> i32 {\n\
+             let mut x: i32 = 10 as i32;\n\
+             x += 5 as i32;            // 15\n\
+             x -= 2 as i32;            // 13\n\
+             x *= 2 as i32;            // 26\n\
+             x /= 3 as i32;            // 8\n\
+             x %= 5 as i32;            // 3\n\
+             let mut b: u32 = 0xff as u32;\n\
+             b &= 0x0f as u32;         // 0x0f\n\
+             b |= 0xa0 as u32;         // 0xaf\n\
+             b ^= 0x20 as u32;         // 0x8f\n\
+             b <<= 1 as u32;           // 0x11e\n\
+             b >>= 2 as u32;           // 0x47 = 71\n\
+             return x +% (b as i32);   // 3 + 71 = 74\n\
+         }\n",
+    ).unwrap();
+    let bin = dir.join("ca");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(74), "compound-assigns should produce 74");
+}
+
+/// v0.0.3 Slice 1D': stdlib/hash_map StrIntMap — insert + get + overwrite + miss.
+#[test]
+fn stdlib_hash_map_str_int() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hm\"\n\n[[bin]]\nname = \"hm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    for name in &["result", "hash_map"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        ).unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/hash_map\" as map;\n\
+         import \"stdlib/result\" as result;\n\
+         fn main() -> i32 {\n\
+             let mut m: map::StrIntMap = map::new_str_int_map();\n\
+             m.insert(\"apple\",  1 as i32);\n\
+             m.insert(\"banana\", 2 as i32);\n\
+             m.insert(\"cherry\", 3 as i32);\n\
+             m.insert(\"apple\",  10 as i32);\n\
+             let mut fails: i32 = 0 as i32;\n\
+             guard let result::Result[i32, result::IoError]::Ok(v1) = m.get(\"apple\")\n\
+                 else { return 50; };\n\
+             if v1 != (10 as i32) { fails = fails +% (1 as i32); }\n\
+             guard let result::Result[i32, result::IoError]::Ok(v2) = m.get(\"banana\")\n\
+                 else { return 51; };\n\
+             if v2 != (2 as i32) { fails = fails +% (1 as i32); }\n\
+             if m.contains_key(\"grape\") { fails = fails +% (1 as i32); }\n\
+             if m.len() != (3 as usize) { fails = fails +% (1 as i32); }\n\
+             return fails;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/hm");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "hash_map round-trip failed");
+}
+
+/// v0.0.3 Slice 1C: stdlib/net round-trip — fork() a server, parent acts
+/// as client, send "HELLO" (5 bytes), receive echo, assert len.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_net_tcp_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"netrt\"\n\n[[bin]]\nname = \"netrt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    for name in &["result", "vec", "net", "io"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        ).unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    // Pick a port that's almost certainly unused on the test runner.
+    // Using a per-test-pid offset keeps parallel test runs from colliding.
+    let port: u16 = 41000 + (std::process::id() as u16 & 0x0fff);
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        format!(
+            "import \"stdlib/net\" as net;\n\
+             import \"stdlib/vec\" as vec;\n\
+             import \"stdlib/result\" as result;\n\
+             extern fn fork() -> i32;\n\
+             extern fn waitpid(pid: i32, status: *i32, options: i32) -> i32;\n\
+             extern fn sleep(secs: u32) -> u32;\n\
+             extern fn _exit(code: i32);\n\
+             fn run_server() -> i32 {{\n\
+                 guard let result::Result[net::TcpListener, result::IoError]::Ok(lis) = net::listen_tcp({port} as u16)\n\
+                     else {{ return 1; }};\n\
+                 let mut listener: net::TcpListener = lis;\n\
+                 guard let result::Result[net::TcpStream, result::IoError]::Ok(client) = listener.accept()\n\
+                     else {{ return 2; }};\n\
+                 let mut stream: net::TcpStream = client;\n\
+                 guard let result::Result[vec::Vec[u8], result::IoError]::Ok(data) = stream.read_to_end()\n\
+                     else {{ return 3; }};\n\
+                 guard let result::Result[usize, result::IoError]::Ok(w) = stream.write_all(data)\n\
+                     else {{ return 4; }};\n\
+                 if w == (0 as usize) {{ return 5; }}\n\
+                 return 0;\n\
+             }}\n\
+             fn run_client() -> usize {{\n\
+                 unsafe {{ sleep(1 as u32); }}\n\
+                 guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp(\"127.0.0.1\", {port} as u16)\n\
+                     else {{ return 0 as usize; }};\n\
+                 let mut stream: net::TcpStream = s;\n\
+                 let mut payload: vec::Vec[u8] = vec::new::[u8]();\n\
+                 payload.push(72 as u8); payload.push(73 as u8);\n\
+                 guard let result::Result[usize, result::IoError]::Ok(w) = stream.write_all(payload)\n\
+                     else {{ return 0 as usize; }};\n\
+                 if w == (0 as usize) {{ return 0 as usize; }}\n\
+                 stream.shutdown_write();\n\
+                 guard let result::Result[vec::Vec[u8], result::IoError]::Ok(got) = stream.read_to_end()\n\
+                     else {{ return 0 as usize; }};\n\
+                 return got.len();\n\
+             }}\n\
+             fn main() -> i32 {{\n\
+                 let pid: i32 = unsafe {{ fork() }};\n\
+                 if pid < (0 as i32) {{ return 9; }}\n\
+                 if pid == (0 as i32) {{\n\
+                     let rc: i32 = run_server();\n\
+                     unsafe {{ _exit(rc); }}\n\
+                     return rc;\n\
+                 }}\n\
+                 let n: usize = run_client();\n\
+                 let null_status: *i32 = unsafe {{ 0 as *i32 }};\n\
+                 unsafe {{ waitpid(pid, null_status, 0 as i32); }}\n\
+                 if n != (2 as usize) {{ return 1; }}\n\
+                 return 0;\n\
+             }}\n"
+        ),
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/netrt");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "tcp round-trip failed");
+}
+
+/// v0.0.3 drop-tracking: a non-Copy aggregate (Vec[u8]) wrapped in a
+/// Result and returned across a module boundary must not double-free its
+/// heap allocation. Five compiler fixes coordinate to make this work:
+/// (1) `scan_moves` recognizes `return v;`, `let v = src;`, and Path-callee
+/// args as moves; (2) `mark_moved` fires at each of those codegen sites;
+/// (3) enum `payload_slots` is computed from byte size, not type count;
+/// (4) `return_passes_by_sret_widened` covers non-Copy structs + enums;
+/// (5) method signatures use sret when the return type qualifies.
+#[test]
+fn cross_module_vec_in_result_no_double_free() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"dtrk\"\n\n[[bin]]\nname = \"dtrk\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    for name in &["vec", "result"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        ).unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    // helper module that constructs the Vec + wraps in Result, lives in
+    // its own file so the move crosses a module boundary.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/maker.cplus"),
+        "import \"./vec\" as vec;\n\
+         import \"./result\" as result;\n\
+         pub fn make_three_bytes() -> result::Result[vec::Vec[u8], result::IoError] {\n\
+             let mut v: vec::Vec[u8] = vec::new::[u8]();\n\
+             v.push(7 as u8);\n\
+             v.push(8 as u8);\n\
+             v.push(9 as u8);\n\
+             return result::io_ok::[vec::Vec[u8]](v);\n\
+         }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/result\" as result;\n\
+         import \"stdlib/maker\" as maker;\n\
+         fn main() -> i32 {\n\
+             guard let result::Result[vec::Vec[u8], result::IoError]::Ok(got) =\n\
+                 maker::make_three_bytes()\n\
+                 else {{ return 1; }};\n\
+             return got.len() as i32;\n\
+         }\n".replace("{{ return 1; }}", "{ return 1; }").as_str(),
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/dtrk");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(3), "Vec[u8] len after cross-module Result move must be 3");
+}
+
+/// v0.0.3 Slice 1B: stdlib/fs round-trip — write 3 bytes via fs::create +
+/// File::write_all; read them back via fs::open_read + File::read_to_end;
+/// verify the byte count matches.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_fs_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fsrt\"\n\n[[bin]]\nname = \"fsrt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    for name in &["result", "vec", "fs", "io"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        ).unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    let tmp_file = dir.join("fsrt.txt");
+    let tmp_path = tmp_file.to_string_lossy().to_string();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        format!(
+            "import \"stdlib/fs\" as fs;\n\
+             import \"stdlib/vec\" as vec;\n\
+             import \"stdlib/result\" as result;\n\
+             fn write_data(path: str) -> bool {{\n\
+                 let mut data: vec::Vec[u8] = vec::new::[u8]();\n\
+                 data.push(72 as u8);\n\
+                 data.push(73 as u8);\n\
+                 data.push(33 as u8);\n\
+                 guard let result::Result[fs::File, result::IoError]::Ok(w) = fs::create(path)\n\
+                     else {{ return false; }};\n\
+                 let mut writer: fs::File = w;\n\
+                 guard let result::Result[usize, result::IoError]::Ok(wrote) = writer.write_all(data)\n\
+                     else {{ return false; }};\n\
+                 if wrote == (0 as usize) {{ return false; }}\n\
+                 writer.close();\n\
+                 return true;\n\
+             }}\n\
+             fn read_len(path: str) -> usize {{\n\
+                 guard let result::Result[fs::File, result::IoError]::Ok(r) = fs::open_read(path)\n\
+                     else {{ return 0 as usize; }};\n\
+                 let mut reader: fs::File = r;\n\
+                 guard let result::Result[vec::Vec[u8], result::IoError]::Ok(got) = reader.read_to_end()\n\
+                     else {{ return 0 as usize; }};\n\
+                 return got.len();\n\
+             }}\n\
+             fn main() -> i32 {{\n\
+                 let path: str = \"{tmp_path}\";\n\
+                 if !write_data(path) {{ return 1; }}\n\
+                 let n: usize = read_len(path);\n\
+                 if n != (3 as usize) {{ return 2; }}\n\
+                 return 0;\n\
+             }}\n"
+        ),
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/fsrt");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "fs round-trip failed");
+}
+
+/// v0.0.3 Slice 1P.3: turbofish call to a generic free function in another
+/// module with a qualified type-arg (`mod::other::T`). Before the fix,
+/// Call's type_args weren't rewritten by the resolver, so cross-module
+/// turbofish failed at sema with "unknown type `other::T`".
+#[test]
+fn stdlib_cross_module_turbofish_with_qualified_type_arg() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tbf\"\n\n[[bin]]\nname = \"tbf\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/result\" as result;\n\
+         fn main() -> i32 {\n\
+             let r: result::Result[i32, result::IoError] =\n\
+                 result::ok::[i32, result::IoError](42 as i32);\n\
+             return match r {\n\
+                 result::Result[i32, result::IoError]::Ok(v) => v,\n\
+                 result::Result[i32, result::IoError]::Err(_) => 0 -% 1 as i32,\n\
+             };\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/tbf");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected 42 from Ok branch");
+}
+
+/// v0.0.3 Slice 1P.2: a method defined in `impl Vec[T] { fn push(...) }`
+/// inside `stdlib/vec` is reachable on a `Vec[u8]` constructed from a
+/// consumer that imports both `stdlib/vec` and an unrelated module
+/// `stdlib/other`. Before the two-phase collect_methods fix, importing a
+/// downstream module whose impl methods returned `Vec[u8]` caused method
+/// table population to race with instantiation, leaving Vec[u8] methodless.
+#[test]
+fn stdlib_cross_module_generic_method_propagation() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"xmm\"\n\n[[bin]]\nname = \"xmm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    // `other` module uses `vec::Vec[u8]` in its method's return type —
+    // this is what triggered the pre-fix bug.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/other.cplus"),
+        "import \"./vec\" as vec;\n\
+         pub struct Maker { _x: i32 }\n\
+         pub fn make_maker() -> Maker { return Maker { _x: 0 as i32 }; }\n\
+         impl Maker {\n\
+             pub fn make_buf(self) -> vec::Vec[u8] {\n\
+                 let mut buf: vec::Vec[u8] = vec::new::[u8]();\n\
+                 buf.push(7 as u8);\n\
+                 return buf;\n\
+             }\n\
+         }\n",
+    ).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/other\" as other;\n\
+         fn main() -> i32 {\n\
+             let mut v: vec::Vec[u8] = vec::new::[u8]();\n\
+             v.push(1 as u8);\n\
+             v.push(2 as u8);\n\
+             return v.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/xmm");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(2), "expected v.len() = 2");
+}
+
+/// v0.0.3 Slice 1P.1: cross-module generic enum construction
+/// `result::Result[i32, i32]::Ok(42)` and the matching pattern
+/// `result::Result[i32, i32]::Ok(v)` work end-to-end.
+#[test]
+fn stdlib_qualified_generic_enum_construct_and_match() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"qge\"\n\n[[bin]]\nname = \"qge\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/result\" as result;\n\
+         fn main() -> i32 {\n\
+             let r: result::Result[i32, i32] = result::Result[i32, i32]::Ok(42 as i32);\n\
+             return match r {\n\
+                 result::Result[i32, i32]::Ok(v) => v,\n\
+                 result::Result[i32, i32]::Err(_) => 0 -% 1 as i32,\n\
+             };\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/qge");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected 42");
+}
+
+/// A project that depends on `stdlib` can `import "stdlib/vec"` and use the
+/// free-function constructors `vec::new::[T]()` + `vec::with_capacity::[T](n)`.
+/// Exercises push, len, get, drop end-to-end.
+#[test]
+fn stdlib_vec_push_and_get() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vec_smoke\"\n\n[[bin]]\nname = \"vec_smoke\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         fn main() -> i32 {\n\
+             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             let mut i: i32 = 1;\n\
+             while i <= 8 {\n\
+                 v.push(i);\n\
+                 i = i +% 1;\n\
+             }\n\
+             let mut total: i32 = 0;\n\
+             let mut j: usize = 0 as usize;\n\
+             while j < v.len() {\n\
+                 total = total +% v.get(j);\n\
+                 j = j +% (1 as usize);\n\
+             }\n\
+             return total;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/vec_smoke");
+    let run = Command::new(&bin).status().expect("run");
+    // 1+2+3+4+5+6+7+8 = 36.
+    assert_eq!(run.code(), Some(36), "expected sum of 1..=8 = 36");
+}
+
 #[test]
 fn orphan_static_lib_emits_e0861() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -6068,14 +6783,15 @@ fn exec_target_linkage_unchanged_by_5b() {
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(42));
-    // The IR for the exe path must NOT mark `double` as internal —
-    // that's a 5.B-only behavior gated on lib mode.
+    // v0.0.3 Slice 3D: non-pub fns now get `internal` linkage in
+    // executable builds too (was lib-only in Slice 5.B). LTO can strip
+    // unused helpers from the final binary.
     let ll_out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("emit-ll");
     let ir = String::from_utf8_lossy(&ll_out.stdout);
-    assert!(ir.contains("define i32 @double("),
-        "executable mode must not apply `internal` to `double`; got:\n{ir}");
-    assert!(!ir.contains("define internal i32 @double("),
-        "executable mode must not apply `internal` to `double`; got:\n{ir}");
+    assert!(
+        ir.contains("define internal i32 @double("),
+        "non-pub `double` must get `internal` linkage in exe mode (3D); got:\n{ir}"
+    );
 }
 
 #[test]
@@ -6396,18 +7112,139 @@ fn recipe_http_get_compiles() {
     assert!(st.success(), "http_get build failed");
 }
 
+/// v0.0.3 Phase 2 (CWE-377 hardening): use `tempfile::TempDir` so each
+/// test gets a cryptographically random directory with secure mode bits,
+/// not the predictable `cpc-test-<pid>-<nanos>-<counter>` shape. The
+/// TempDir auto-cleans on drop, but we leak it via `Box::leak` so the
+/// returned `PathBuf` stays valid for the rest of the test (matches the
+/// pre-fix contract that returned a plain `PathBuf`).
+/// v0.0.3 Slice 3E: CI lint that scans every `.cplus` source under
+/// `docs/examples/projects/`, `docs/examples/recipes/`, and
+/// `proves/benchmark/programs/<n>/cplus*/` for `import "..."` statements
+/// and verifies each path follows v0.0.2 Slice 2B's rules:
+///   - `./foo` or `../foo` → file-relative (always OK)
+///   - `<dep>/<rest>` where `<dep>` is declared in the project's Cplus.toml
+///   - no bare unqualified paths, no stale `.cplus` extension
+///
+/// Catches drift before it surfaces as user-build failures.
+#[test]
+fn ci_lint_imports_match_declared_deps() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let project_roots: Vec<std::path::PathBuf> = {
+        let mut roots = Vec::new();
+        // Project-mode trees we care about.
+        let candidate_parents = [
+            root.join("docs/examples/projects"),
+            root.join("docs/examples/recipes"),
+            root.join("proves/benchmark/programs"),
+        ];
+        for parent in candidate_parents {
+            if !parent.is_dir() { continue; }
+            // Walk one level: each immediate subdirectory MAY be a project.
+            // For proves/benchmark/programs/<N>/, projects sit one level
+            // deeper (e.g. `04-curl-lite/cplus`, `04-curl-lite/cplus-stdlib`).
+            for entry in std::fs::read_dir(&parent).unwrap().flatten() {
+                let p = entry.path();
+                if !p.is_dir() { continue; }
+                if p.join("Cplus.toml").is_file() {
+                    roots.push(p.clone());
+                    continue;
+                }
+                // Recurse one level for proves-style trees.
+                if let Ok(rd) = std::fs::read_dir(&p) {
+                    for sub in rd.flatten() {
+                        let sp = sub.path();
+                        if sp.is_dir() && sp.join("Cplus.toml").is_file() {
+                            roots.push(sp);
+                        }
+                    }
+                }
+            }
+        }
+        roots
+    };
+
+    let mut errors: Vec<String> = Vec::new();
+    for proj in &project_roots {
+        let manifest = std::fs::read_to_string(proj.join("Cplus.toml")).unwrap();
+        // Cheap parse: gather `[dependencies]` table names.
+        let mut declared_deps: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut in_deps = false;
+        for line in manifest.lines() {
+            let t = line.trim();
+            if t.starts_with('[') {
+                in_deps = t == "[dependencies]";
+                continue;
+            }
+            if in_deps {
+                if let Some((name, _)) = t.split_once('=') {
+                    let name = name.trim();
+                    if !name.is_empty() && !name.starts_with('#') {
+                        declared_deps.insert(name.to_string());
+                    }
+                }
+            }
+        }
+        // Walk every .cplus under this project's src/.
+        let src_dir = proj.join("src");
+        if !src_dir.is_dir() { continue; }
+        let mut stack = vec![src_dir];
+        while let Some(d) = stack.pop() {
+            for entry in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = entry.path();
+                if p.is_dir() { stack.push(p); continue; }
+                if p.extension().and_then(|e| e.to_str()) != Some("cplus") { continue; }
+                let body = std::fs::read_to_string(&p).unwrap();
+                for (lineno, line) in body.lines().enumerate() {
+                    let t = line.trim();
+                    if !t.starts_with("import ") { continue; }
+                    // Pull the quoted path out: import "..." as ...;
+                    let Some(start) = t.find('"') else { continue; };
+                    let after = &t[start + 1..];
+                    let Some(end) = after.find('"') else { continue; };
+                    let path = &after[..end];
+                    if path.ends_with(".cplus") {
+                        errors.push(format!(
+                            "{}:{}: stale `.cplus` extension in `import \"{path}\"` (drop it)",
+                            p.display(), lineno + 1
+                        ));
+                        continue;
+                    }
+                    if path.starts_with("./") || path.starts_with("../") {
+                        // file-relative, always OK
+                        continue;
+                    }
+                    if let Some(slash) = path.find('/') {
+                        let first = &path[..slash];
+                        if !declared_deps.contains(first) {
+                            errors.push(format!(
+                                "{}:{}: bare import `\"{path}\"` first segment `{first}` not in [dependencies] of {}",
+                                p.display(), lineno + 1, proj.join("Cplus.toml").display(),
+                            ));
+                        }
+                    } else if !declared_deps.contains(path) {
+                        errors.push(format!(
+                            "{}:{}: bare unqualified import `\"{path}\"` — add `./` for file-relative or declare it as a dependency",
+                            p.display(), lineno + 1,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if !errors.is_empty() {
+        panic!("CI lint found {} import drift(s):\n{}", errors.len(), errors.join("\n"));
+    }
+}
+
 fn tempdir() -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let p = std::env::temp_dir().join(format!(
-        "cpc-test-{}-{}-{n}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos(),
-    ));
-    std::fs::create_dir_all(&p).unwrap();
-    p
+    let dir = tempfile::Builder::new()
+        .prefix("cpc-test-")
+        .tempdir()
+        .expect("tempdir creation");
+    // Leak intentionally: tests run in parallel and the returned PathBuf
+    // outlives the test fn's scope (passed into Command::new, etc.).
+    // OS cleans /tmp on reboot; tests use distinct paths so no collisions.
+    let leaked: &'static tempfile::TempDir = Box::leak(Box::new(dir));
+    leaked.path().to_path_buf()
 }

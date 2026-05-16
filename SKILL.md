@@ -627,13 +627,33 @@ let v: str = unsafe { str_from_raw_parts(p, n) };  // unsafe: caller asserts val
 
 ---
 
-## 7. The standard library reality
+## 7. The standard library
 
-**There is no stdlib yet.** §2.6 of plan.md is explicit: a stdlib is necessary for real programs but is a separate follow-on project, written *in* C+ once the language compiles.
+**v0.0.3 Phase 1 (in progress):** `vendor/stdlib/` ships modules consumable via Phase 2's package resolution. The preferred way to print in a project-mode program is:
 
-What exists today as compiler intrinsics (not user-overloadable):
-- `println(n: i32)` — prints integer + newline
-- `println(s: str)` — prints string + newline
+```cplus
+import "stdlib/io" as io;
+
+fn main() -> i32 {
+    io::println("hello, world");
+    io::eprintln("to stderr");
+    return 0;
+}
+```
+
+A project declares `stdlib = "*"` in `[dependencies]`; the consumer's `vendor/stdlib/` is a symlink or copy of the in-tree `vendor/stdlib/` package (Phase 2 MVP — no fetch tool yet).
+
+**Available stdlib modules** (Phase 1 is filling these in incrementally):
+- `stdlib/io` — `print(s)`, `println(s)`, `eprintln(s)`. ✓ shipped 2026-05-16.
+- `stdlib/result` — `Result[T, E]` and `IoError` enums. (API only; consumers can construct/match.)
+- `stdlib/fs` — `File` with open/read/write/close + Drop. (Bodies pending Slice 1B.)
+- `stdlib/net` — `TcpStream`, `TcpListener`. (Bodies pending Slice 1C.)
+- `stdlib/vec` — `Vec[T]`. (Surface polish pending Slice 1D.)
+- `stdlib/hash_map` — `HashMap[K, V]`. (Bodies pending Slice 1D.)
+- `stdlib/env` — `var`, `args`. (Bodies pending Slice 1E.)
+
+**Compiler intrinsics that still exist** (single-file-mode fallbacks, plus low-level building blocks the stdlib itself uses):
+- `println(n: i32)` / `println(s: str)` — magic intrinsic for **single-file mode** only. In project mode, prefer `stdlib/io::println` for one-canonical-way alignment.
 - `str_ptr(s: str) -> *u8`
 - `str_len(s: str) -> usize`
 - `str_from_raw_parts(p: *u8, n: usize) -> str` — unsafe
@@ -641,9 +661,9 @@ What exists today as compiler intrinsics (not user-overloadable):
 - `align_of::[T]() -> usize`
 - `assert EXPR;` (in `#[test]` builds — sets failure flag; in regular builds — traps)
 
-There is **no** owned `string` type. There is **no** `Vec[T]`. There is **no** `HashMap`. There is **no** `Result`. These can be written today as user-level libraries on top of `extern fn malloc/free/memcpy` + `size_of[T]()` + raw pointers + generics + Drop. The reference example for owned strings: [docs/examples/owned_string.cplus](docs/examples/owned_string.cplus).
+**Decision rule:** if you're writing a single-file demo (`cpc file.cplus -o bin`), use the intrinsic `println`. If you're writing a project (`cpc build`), import `stdlib/io` — the project shape gives you cleaner error chains, drop integration, and forward-compatible idioms. Don't mix both in one project.
 
-When the user asks for a missing stdlib type, the right answer is usually: "Here's the user-level implementation pattern" (with `extern fn` + raw pointers + `Drop`), not "We need to add it to the language."
+For types not yet in stdlib (`Option`, advanced collections, etc.), the user-level pattern still works: `extern fn malloc/free/memcpy` + `size_of[T]()` + raw pointers + generics + Drop. The reference example for owned strings: [docs/examples/owned_string.cplus](docs/examples/owned_string.cplus).
 
 ---
 

@@ -1697,6 +1697,70 @@ impl Parser {
                         let name_ident = Ident { name: qualified, span };
                         return self.parse_struct_lit_body(name_ident, tok.span);
                     }
+                    // v0.0.3 1P.1: qualified generic constructor —
+                    // `mod::Enum[A, B]::Variant(args)` (enum) or
+                    // `mod::Struct[A, B] { ... }` (struct lit). After
+                    // collecting all `::`-segments (last is the enum/struct
+                    // name), peek past the matching `]` for `::` (enum) or
+                    // `{` (struct lit). Mirrors the bare-Ident paths at
+                    // lines 1707 and 1816 below; they only triggered on
+                    // unqualified names before this slice.
+                    if matches!(self.peek_kind(), TokenKind::LBracket) {
+                        if let Some(after_bracket) = self.scan_past_bracket() {
+                            if matches!(&self.tokens[after_bracket].kind, TokenKind::ColonColon) {
+                                self.bump();   // `[`
+                                let mut type_args = Vec::new();
+                                while !self.at(&TokenKind::RBracket) {
+                                    type_args.push(self.parse_type()?);
+                                    if !self.eat(&TokenKind::Comma) { break; }
+                                }
+                                self.expect(&TokenKind::RBracket, "`]`")?;
+                                self.expect(&TokenKind::ColonColon, "`::`")?;
+                                let variant = self.expect_ident()?;
+                                let mut args = Vec::new();
+                                let end_span = if self.eat(&TokenKind::LParen) {
+                                    while !self.at(&TokenKind::RParen) {
+                                        args.push(self.parse_expr()?);
+                                        if !self.eat(&TokenKind::Comma) { break; }
+                                    }
+                                    self.expect(&TokenKind::RParen, "`)`")?.span
+                                } else {
+                                    variant.span
+                                };
+                                let qualified: String = segments.iter()
+                                    .map(|s| s.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("::");
+                                return Ok(Expr {
+                                    kind: ExprKind::GenericEnumCall {
+                                        enum_name: Ident { name: qualified, span },
+                                        type_args,
+                                        variant,
+                                        args,
+                                    },
+                                    span: tok.span.merge(end_span),
+                                });
+                            }
+                            if !self.no_struct_lit
+                                && matches!(&self.tokens[after_bracket].kind, TokenKind::LBrace)
+                            {
+                                self.bump();   // `[`
+                                let mut type_args = Vec::new();
+                                while !self.at(&TokenKind::RBracket) {
+                                    type_args.push(self.parse_type()?);
+                                    if !self.eat(&TokenKind::Comma) { break; }
+                                }
+                                let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                                let qualified: String = segments.iter()
+                                    .map(|s| s.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("::");
+                                let name_ident = Ident { name: qualified, span };
+                                let lit_span = tok.span.merge(end);
+                                return self.parse_generic_struct_lit_body(name_ident, type_args, lit_span);
+                            }
+                        }
+                    }
                     return Ok(Expr { kind: ExprKind::Path { segments }, span });
                 }
                 // Slice 7GEN.5d: generic enum constructor `Option[i32]::Some(7)`
@@ -1875,11 +1939,16 @@ impl Parser {
                 // Either a bare binding `name`, a path `Enum::Variant`,
                 // a cross-file path `prefix::Enum::Variant`, or — slice
                 // 7GEN.5e — a generic-enum pattern `Option[i32]::Some(v)`.
+                // v0.0.3 1P.1 extends to `mod::Enum[args]::Variant(...)`.
                 let first = self.expect_ident()?;
-                // 7GEN.5e: optional `[type_args]` between the enum-name
-                // ident and the `::`. Patterns have no `[i]` indexing
-                // syntax, so `[` here is unambiguously a type-arg list.
-                let type_args: Vec<Type> = if self.at(&TokenKind::LBracket) {
+                // Read optional `[type_args]` between the *outermost*
+                // ident and `::`. Pattern position has no `[i]` indexing,
+                // so `[` is unambiguously a type-arg list. The collected
+                // args belong to whichever ident immediately preceded
+                // them — usually the enum, but it might be the module
+                // alias if the user mistakenly wrote `mod[T]::Enum::...`
+                // (which is malformed; sema will reject).
+                let mut type_args: Vec<Type> = if self.at(&TokenKind::LBracket) {
                     self.bump(); // `[`
                     let mut args = Vec::new();
                     while !self.at(&TokenKind::RBracket) {
@@ -1893,22 +1962,26 @@ impl Parser {
                 };
                 if self.eat(&TokenKind::ColonColon) {
                     let second = self.expect_ident()?;
-                    // Three-segment shape: `prefix::Enum::Variant(...)`.
-                    // Collapse `prefix::Enum` into a single `enum_name`
-                    // string (mirroring how qualified type names live as
-                    // `prefix::Type` until the resolver rewrites them).
-                    // Cross-file generic-enum patterns are not yet
-                    // supported in this slice (would need to flow
-                    // type_args through the resolver's prefix
-                    // rewriting); guard with a parse error if a
-                    // user mixes the two forms.
-                    let (enum_ident, variant_name) = if self.eat(&TokenKind::ColonColon) {
-                        if !type_args.is_empty() {
-                            return Err(self.err_at_peek(
-                                "generic-enum patterns across module prefixes are not yet supported \
-                                 (write the variant without a module prefix or remove the type args)"
-                            ));
+                    // After the second ident, look for *its* `[type_args]`
+                    // (the `mod::Enum[T]` shape: type args attach to the
+                    // enum, not the module alias). Only consume if
+                    // `type_args` is still empty — pre-fix users wrote
+                    // `Enum[T]::Variant` with args before the `::`.
+                    if type_args.is_empty() && self.at(&TokenKind::LBracket) {
+                        self.bump(); // `[`
+                        let mut args = Vec::new();
+                        while !self.at(&TokenKind::RBracket) {
+                            args.push(self.parse_type()?);
+                            if !self.eat(&TokenKind::Comma) { break; }
                         }
+                        self.expect(&TokenKind::RBracket, "`]`")?;
+                        type_args = args;
+                    }
+                    // Three-segment shape: `prefix::Enum::Variant(...)` or
+                    // `prefix::Enum[args]::Variant(...)`. Collapse
+                    // `prefix::Enum` into one `enum_name` string so the
+                    // resolver can rewrite it via the import-alias path.
+                    let (enum_ident, variant_name) = if self.eat(&TokenKind::ColonColon) {
                         let third = self.expect_ident()?;
                         let qualified = format!("{}::{}", first.name, second.name);
                         let enum_span = first.span.merge(second.span);

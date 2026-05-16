@@ -692,7 +692,15 @@ fn collect_types(p: &Program) -> TypeTable {
     }
     // Second-and-a-half pass: resolve enum variant payload types now that
     // every struct and enum name is registered. Also compute payload_slots
-    // for tagged enums (max of variant payload arities).
+    // for tagged enums.
+    //
+    // **v0.0.3 drop-tracking fix**: payload_slots used to be a COUNT of
+    // payload types (1 slot per type, 8 bytes per slot). That broke for
+    // any variant carrying an aggregate >8 bytes — e.g. `Result[Vec[u8], E]`
+    // allocated only 1×i64 for the Ok payload, but `Vec[u8]` is 24 bytes.
+    // Storing the Vec into the enum stomped past its allocation; loading
+    // it back truncated to 8 bytes. We now compute slots from actual
+    // payload byte size, rounded up to i64 alignment.
     for item in &p.items {
         let ItemKind::Enum(e) = &item.kind else { continue; };
         if !e.generic_params.is_empty() { continue; }
@@ -701,7 +709,16 @@ fn collect_types(p: &Program) -> TypeTable {
         let mut payloads: Vec<Vec<Ty>> = Vec::with_capacity(e.variants.len());
         for v in &e.variants {
             let p: Vec<Ty> = v.payload.iter().map(|ty| ty_from(ty, &t)).collect();
-            max_slots = max_slots.max(p.len() as u32);
+            // Sum payload bytes; round up to i64-aligned slot count.
+            let mut bytes: u64 = 0;
+            for ty in &p {
+                if let Some((sz, _al)) = static_layout(ty, &t) {
+                    // Pad each value up to 8 bytes (i64-aligned slots).
+                    bytes += (sz + 7) & !7;
+                }
+            }
+            let slots = ((bytes + 7) / 8) as u32;
+            max_slots = max_slots.max(slots);
             payloads.push(p);
         }
         t.enum_defs[id.0 as usize].variant_payloads = payloads;
@@ -948,10 +965,20 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     if size == 0 {
         return CAbiClass::Direct;
     }
+    // v0.0.3 Slice 3F: pick the per-platform coercion shape for 9..16-byte
+    // aggregates. aarch64-darwin's AAPCS uses `[2 x i64]` (HFA-aware but
+    // we treat all as integer-class). x86_64-sysv uses `{i64, i64}` —
+    // distinct LLVM type at the IR level so clang's backend assigns each
+    // member to its own register. >16 bytes go indirect on both.
     if size <= 8 {
         CAbiClass::Coerce { llvm_ty: "i64".to_string(), size: 8, align: 8 }
     } else if size <= 16 {
-        CAbiClass::Coerce { llvm_ty: "[2 x i64]".to_string(), size: 16, align: 8 }
+        let llvm_ty = if cfg!(target_arch = "x86_64") {
+            "{ i64, i64 }".to_string()
+        } else {
+            "[2 x i64]".to_string()
+        };
+        CAbiClass::Coerce { llvm_ty, size: 16, align: 8 }
     } else {
         CAbiClass::Indirect
     }
@@ -959,6 +986,30 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
 
 fn return_passes_by_sret(ty: &Ty) -> bool {
     matches!(ty, Ty::String)
+}
+
+/// Like `return_passes_by_sret` but with access to struct flags so we can
+/// widen to non-Copy structs without breaking C-ABI exports (which need
+/// the byval/register coercion path, not sret) or small Copy POD returns.
+///
+/// **v0.0.3 Slice 1P** widens beyond v0.0.2's `Ty::String`-only path.
+/// Without this, returning a `Vec[T]` (or any user-defined non-Copy
+/// struct) across a module boundary triggers a drop-after-move: the
+/// LLVM "first-class aggregate" return path copies the struct verbatim,
+/// leaving the source's drop pointing at the same heap allocation as
+/// the destination's. The sret path constructs the value in the caller's
+/// slot directly, sidestepping the copy.
+fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
+    if return_passes_by_sret(ty) { return true; }
+    if let Ty::Struct(id) = ty {
+        let def = &types.struct_defs[id.0 as usize];
+        if !def.is_copy { return true; }
+    }
+    if let Ty::Enum(id) = ty {
+        let def = &types.enum_defs[id.0 as usize];
+        if !def.is_copy { return true; }
+    }
+    false
 }
 
 /// Compute static (size, align) in bytes. Matches LLVM's default natural
@@ -1157,10 +1208,27 @@ fn scan_moves_in_stmt(
 ) {
     match &s.kind {
         StmtKind::Let { init, .. } => {
-            if let Some(e) = init { scan_moves_in_expr(e, sigs, types, set); }
+            // v0.0.3 drop-tracking: `let v = some_ident;` moves the source
+            // binding (for non-Copy types). Pre-register so codegen's
+            // mark_moved has a flag to flip.
+            if let Some(e) = init {
+                if let ExprKind::Ident(n) = &e.kind {
+                    set.insert(n.clone());
+                }
+                scan_moves_in_expr(e, sigs, types, set);
+            }
         }
-        StmtKind::Return(Some(e))
-        | StmtKind::Expr(e)
+        StmtKind::Return(Some(e)) => {
+            // v0.0.3 drop-tracking: `return <ident>;` for a non-Copy
+            // binding moves the value out. Pre-mark so the runtime
+            // drop flag gets allocated; codegen's mark_moved at the
+            // Return site flips it before scope-exit drops fire.
+            if let ExprKind::Ident(n) = &e.kind {
+                set.insert(n.clone());
+            }
+            scan_moves_in_expr(e, sigs, types, set);
+        }
+        StmtKind::Expr(e)
         | StmtKind::Defer(e)
         | StmtKind::Assert(e) => scan_moves_in_expr(e, sigs, types, set),
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
@@ -1203,6 +1271,18 @@ fn scan_moves_in_expr(
                         if *move_flag {
                             if let ExprKind::Ident(n) = &arg.kind { set.insert(n.clone()); }
                         }
+                    }
+                }
+            }
+            // v0.0.3 drop-tracking: Call with a Path callee = associated-fn
+            // call (enum variant construction `Result::Ok(v)`, or
+            // struct assoc fn). Any non-Copy ident arg gets moved into the
+            // constructed value; pre-register so codegen's `mark_moved`
+            // call later has a drop flag to flip.
+            if matches!(&callee.kind, ExprKind::Path { .. }) {
+                for a in args {
+                    if let ExprKind::Ident(n) = &a.kind {
+                        set.insert(n.clone());
                     }
                 }
             }
@@ -1845,8 +1925,13 @@ fn gen_function(
 
     // Existing Slice 1D path: owned `string` returns use sret. 5.D adds
     // sret for any C-export with an Indirect-class return (>16 bytes).
-    let uses_sret = return_passes_by_sret(&return_ty)
-        || matches!(ret_abi, CAbiClass::Indirect);
+    // v0.0.3 Slice 1P widens to non-Copy structs for non-C-export fns
+    // (cross-module heap-owning struct return drop-after-move).
+    let uses_sret = if is_c_export {
+        return_passes_by_sret(&return_ty) || matches!(ret_abi, CAbiClass::Indirect)
+    } else {
+        return_passes_by_sret_widened(&return_ty, types)
+    };
     let coerce_ret_ty: Option<String> = if let CAbiClass::Coerce { llvm_ty, .. } = &ret_abi {
         Some(llvm_ty.clone())
     } else {
@@ -1867,7 +1952,11 @@ fn gen_function(
     // pre-5.B behavior; the existing test substring assertions pin that).
     // `main` is the linker entry point and always external. `pub` items
     // form the public ABI and stay external in lib mode.
-    let linkage = if !is_lib || f.name.name == "main" || f.is_pub { "" } else { "internal " };
+    // v0.0.3 Slice 3D: roll lib-mode internal linkage out to executable
+    // builds. `main` and `pub` items stay external (linker entry +
+    // public ABI); everything else is `internal` so LTO can strip
+    // unused helpers. The `is_lib` parameter no longer gates this rule.
+    let linkage = if f.name.name == "main" || f.is_pub { "" } else { "internal " };
     write!(out, "define {}{} @{}(", linkage, sig_return_ty, f.name.name).unwrap();
     if uses_sret {
         // sret slot: caller-allocated, callee-writable, exact size + align.
@@ -1898,9 +1987,18 @@ fn gen_function(
                 write!(out, "{} %{}", llvm_ty, llvm_idx).unwrap();
             }
             CAbiClass::Indirect => {
-                // Caller's by-value slot. No `byval` on aarch64-darwin;
-                // the callee may freely mutate (it's a copy for this call).
-                write!(out, "ptr %{}", llvm_idx).unwrap();
+                // v0.0.3 Slice 3F: x86_64-sysv requires `byval(<ty>) align <A>`
+                // on indirect args so the backend knows to materialize a
+                // caller-side copy that the callee can mutate. aarch64-darwin
+                // doesn't use byval — caller and callee implicitly share
+                // the layout via the bare pointer.
+                if cfg!(target_arch = "x86_64") {
+                    let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
+                    let inner = llvm_ty(pty, types);
+                    write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
+                } else {
+                    write!(out, "ptr %{}", llvm_idx).unwrap();
+                }
             }
             CAbiClass::Direct => {
                 let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
@@ -2004,14 +2102,28 @@ fn gen_function(
     // Slice 1C: scoped alias metadata for noalias-shaped params. Run the
     // dataflow over `state.body` (allocas in `state.allocas` never touch
     // these ptrs — they're fresh slots, not derived from a param).
+    //
+    // v0.0.3 Slice 3C: extended to include non-Copy local allocas. Each
+    // gets its own scope; the borrow checker proves locals are disjoint
+    // from each other AND from noalias params (otherwise we'd have a
+    // double-ownership E0335/E0370). After-inlining this metadata still
+    // applies to the loads/stores it tags, which is exactly the case
+    // where param attrs degrade.
     let noalias_params: Vec<u32> = f.params.iter().zip(sig.params.iter()).enumerate()
         .filter_map(|(i, (_, (pty, mv, mu)))|
             (param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu)).then_some(i as u32)
         ).collect();
-    if noalias_params.len() >= 2 {
+    let local_slots = state.noalias_local_slots.clone();
+    let total_scopes = noalias_params.len() + local_slots.len();
+    if total_scopes >= 2 {
         let domain = md.register_alias_domain(&f.name.name);
-        let scopes: Vec<u32> = noalias_params.iter().enumerate()
-            .map(|(i, _)| md.register_alias_scope(domain, &format!("p{i}"))).collect();
+        let mut scopes: Vec<u32> = Vec::with_capacity(total_scopes);
+        for i in 0..noalias_params.len() {
+            scopes.push(md.register_alias_scope(domain, &format!("p{i}")));
+        }
+        for i in 0..local_slots.len() {
+            scopes.push(md.register_alias_scope(domain, &format!("l{i}")));
+        }
         let this_lists: Vec<u32> = scopes.iter()
             .map(|&s| md.register_alias_scope_list(&[s])).collect();
         let other_lists: Vec<u32> = (0..scopes.len()).map(|i| {
@@ -2022,6 +2134,9 @@ fn gen_function(
         let mut seed: HashMap<String, usize> = HashMap::new();
         for (idx, &param_ssa) in noalias_params.iter().enumerate() {
             seed.insert(format!("%{param_ssa}"), idx);
+        }
+        for (idx, slot) in local_slots.iter().enumerate() {
+            seed.insert(slot.clone(), noalias_params.len() + idx);
         }
         state.body = annotate_alias_scope_metadata(&state.body, &seed, &this_lists, &other_lists);
     }
@@ -2078,10 +2193,31 @@ fn gen_method(
     // not part of the public C-ABI surface even when `pub`; always
     // internal in lib mode. Executable builds keep external linkage on
     // every method (matches pre-5.B behavior).
-    let linkage = if !is_lib || (m.is_pub && !is_drop_method) { "" } else { "internal " };
-    write!(out, "define {}{}{} @{}(", linkage, cc_prefix, llvm_ty(&return_ty, types), mangled).unwrap();
+    // v0.0.3 Slice 3D: methods also pick up internal linkage in bin
+    // builds. `pub` methods stay external; `drop` (synthesized) stays
+    // internal regardless of `pub`-ness.
+    let linkage = if m.is_pub && !is_drop_method { "" } else { "internal " };
+    // v0.0.3 Slice 1P: method signatures use sret when their return type
+    // is a non-Copy aggregate (matches gen_method_call's call-site logic).
+    // Without this, the signature returns by value but call sites pass a
+    // sret slot → ABI mismatch → SIGSEGV / wrong values at runtime.
+    let uses_sret = return_passes_by_sret_widened(&return_ty, types);
+    let return_ty_str = if uses_sret { "void".to_string() } else { llvm_ty(&return_ty, types) };
+    write!(out, "define {}{}{} @{}(", linkage, cc_prefix, return_ty_str, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
+    if uses_sret {
+        let (sz, al) = static_layout(&return_ty, types)
+            .expect("sret return type has layout");
+        let ret_ty_inner = llvm_ty(&return_ty, types);
+        write!(
+            out,
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
+            ret_ty_inner, sz, al, llvm_idx
+        ).unwrap();
+        llvm_idx += 1;
+        first = false;
+    }
     if let Some(rcv) = sig.receiver {
         // Slice 1A: receiver gets the full pointer attr set. Map Receiver
         // kind onto (move_, mutable) for `param_attrs`:
@@ -2093,6 +2229,7 @@ fn gen_method(
             Receiver::Mut  => (false, true),
             Receiver::Move => (true,  true),
         };
+        if !first { out.push_str(", "); }
         let attrs = param_attrs(&struct_ty, mv, mu, true, types);
         if attrs.is_empty() {
             write!(out, "ptr %{llvm_idx}").unwrap();
@@ -2126,12 +2263,18 @@ fn gen_method(
     if m.name.name == "drop" {
         state.in_destructor = true;
     }
+    // v0.0.3 Slice 1P: when the method uses sret, %0 is the sret slot and
+    // the receiver shifts to %1.
+    let mut next_idx: u32 = 0;
+    if uses_sret {
+        state.sret_slot = Some("%0".to_string());
+        next_idx = 1;
+    }
 
     // Bind the receiver: `self` is the pointer parameter directly.
-    let mut next_idx: u32 = 0;
     if let Some(rcv) = sig.receiver {
-        state.bind("self", "%0".to_string(), struct_ty.clone());
-        next_idx = 1;
+        let recv_name = format!("%{}", next_idx);
+        state.bind("self", recv_name.clone(), struct_ty.clone());
         // `move self` consumes the receiver: the method body owns it, so
         // we register a scope-exit drop for `self` (unless we *are* the
         // destructor — see `in_destructor` above). For `self` / `mut self`
@@ -2139,10 +2282,11 @@ fn gen_method(
         if matches!(rcv, Receiver::Move) && !state.in_destructor {
             if let Ty::Struct(id) = struct_ty {
                 if types.struct_defs[id.0 as usize].is_drop {
-                    state.register_drop("self", "%0", id);
+                    state.register_drop("self", &recv_name, id);
                 }
             }
         }
+        next_idx += 1;
     }
 
     // Bind non-receiver params. Pointer-passed (`mut x: T` non-Copy) bind
@@ -2309,6 +2453,12 @@ struct FnState<'a> {
     /// construction. A binding name not in this set is provably never
     /// moved, so `register_drop` picks `DropDisposition::Always`.
     moved_bindings: std::collections::HashSet<String>,
+    /// v0.0.3 Slice 3C: SSA slot names of `let mut` bindings holding
+    /// non-Copy types. Each gets its own `!alias.scope` after body
+    /// generation, paired with the param-shape scopes from Slice 1C.
+    /// The borrow checker proves these locals are disjoint by virtue of
+    /// being separate allocas with single-ownership lifetimes.
+    noalias_local_slots: Vec<String>,
     tmp_counter: u32,
     block_counter: u32,
     terminated: bool,
@@ -2371,6 +2521,7 @@ impl<'a> FnState<'a> {
             md,
             mode,
             moved_bindings: std::collections::HashSet::new(),
+            noalias_local_slots: Vec::new(),
             tmp_counter: 0,
             block_counter: 0,
             terminated: false,
@@ -2736,6 +2887,18 @@ impl<'a> FnState<'a> {
                             "store {} {}, ptr {}",
                             self.lty(&val_ty), val, slot
                         ));
+                        // v0.0.3 Slice 3C: non-Copy local allocas get
+                        // their own alias scope after body generation.
+                        if !is_copy_ty(&val_ty, self.types) {
+                            self.noalias_local_slots.push(slot.clone());
+                        }
+                        // v0.0.3 drop-tracking: `let v = some_local;` for a
+                        // non-Copy type moves the value into the new binding.
+                        if !is_copy_ty(&val_ty, self.types) {
+                            if let ExprKind::Ident(src) = &init_expr.kind {
+                                self.mark_moved(src);
+                            }
+                        }
                         match &val_ty {
                             Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_drop => {
                                 self.register_drop(&name.name, &slot, *id);
@@ -2751,9 +2914,24 @@ impl<'a> FnState<'a> {
                     (None, None) => unreachable!("sema rejected uninit `let` without annotation"),
                 };
                 let slot = self.alloca_named(&name.name, var_ty.clone());
+                // v0.0.3 Slice 3C: non-Copy local allocas get their own
+                // alias scope after body generation, regardless of whether
+                // the binding is initialized at let or assigned later.
+                if !is_copy_ty(&var_ty, self.types) {
+                    self.noalias_local_slots.push(slot.clone());
+                }
                 if let Some(init_expr) = init {
                     let (val, _) = self.gen_expr(init_expr).expect("let init produces a value");
                     self.emit(&format!("store {} {}, ptr {}", self.lty(&var_ty), val, slot));
+                    // v0.0.3 drop-tracking: `let v = some_local;` for a
+                    // non-Copy type moves the value into the new binding.
+                    // Disarm the source's drop so it doesn't fire on the
+                    // shared heap allocation at scope exit.
+                    if !is_copy_ty(&var_ty, self.types) {
+                        if let ExprKind::Ident(src) = &init_expr.kind {
+                            self.mark_moved(src);
+                        }
+                    }
                 }
                 // If the type carries a destructor, register a scope-exit
                 // drop hook before binding the name (so the flag exists by
@@ -2822,6 +3000,15 @@ impl<'a> FnState<'a> {
                     Some(e) => {
                         let v = self.gen_expr(e);
                         if self.terminated { return; }
+                        // v0.0.3 drop-tracking: `return <ident>;` moves the
+                        // named binding out of the function. Without this
+                        // mark, the scope-exit drop chain would free the
+                        // heap allocation while the SSA value still holds
+                        // the (now-dangling) pointer that gets stored into
+                        // the caller's sret slot.
+                        if let ExprKind::Ident(name) = &e.kind {
+                            self.mark_moved(name);
+                        }
                         Some(v.expect("non-Unit return value").0)
                     }
                     None => None,
@@ -3211,8 +3398,8 @@ impl<'a> FnState<'a> {
 
             ExprKind::Unary { op, operand } => Some(self.gen_unary(*op, operand)),
 
-            ExprKind::Assign { target, value, .. } => {
-                self.gen_assign(target, value);
+            ExprKind::Assign { target, value, op } => {
+                self.gen_assign(*op, target, value);
                 None
             }
 
@@ -4366,9 +4553,13 @@ impl<'a> FnState<'a> {
         // the callee is non-variadic) and the return type triggers the
         // predicate. The current narrow predicate fires only for `string`
         // returns (24-byte aggregate with Drop).
+        // v0.0.3 Slice 1P: widen sret to non-Copy struct returns from
+        // non-extern user functions, matching the widened predicate in
+        // emit_function_signature. Variadic / link_name'd (extern) callees
+        // stay on the value-return path.
         let uses_sret = !sig.is_variadic
             && sig.link_name.is_none()
-            && return_passes_by_sret(&sig.return_type);
+            && return_passes_by_sret_widened(&sig.return_type, self.types);
         if uses_sret {
             // musttail + sret would require the caller's own sret slot to
             // be forwarded as the callee's sret arg. Supported when caller
@@ -4476,6 +4667,20 @@ impl<'a> FnState<'a> {
             }
         }
 
+        // v0.0.3 Slice 1P: method-call sret. Same logic as gen_named_call
+        // — non-Copy struct returns flow through a caller-allocated slot
+        // so cross-module returns don't double-drop the heap buffer.
+        if return_passes_by_sret_widened(&info.return_type, self.types) {
+            let ret = info.return_type.clone();
+            let lty = self.lty(&ret);
+            let slot = self.alloca_anon(ret.clone());
+            let mut head = format!("ptr {slot}");
+            if !arg_str.is_empty() { head.push_str(", "); head.push_str(&arg_str); }
+            self.emit(&format!("call void @{mangled}({head})"));
+            let v = self.next_tmp();
+            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            return Some((v, ret));
+        }
         match info.return_type {
             Ty::Unit => {
                 self.emit(&format!("call void @{mangled}({arg_str})"));
@@ -4506,6 +4711,16 @@ impl<'a> FnState<'a> {
             let mut payload_vals: Vec<(String, Ty)> = Vec::new();
             for a in args {
                 let (v, t) = self.gen_expr(a).expect("variant payload has value");
+                // v0.0.3 drop-tracking fix: when a non-Copy value is consumed
+                // by a variant constructor (`Result::Ok(local_vec)`), the
+                // source binding's drop must be disarmed — the new enum value
+                // now owns the heap allocation. Without this, both the
+                // source local and the enum's payload free at scope exit.
+                if !is_copy_ty(&t, self.types) {
+                    if let ExprKind::Ident(name) = &a.kind {
+                        self.mark_moved(name);
+                    }
+                }
                 payload_vals.push((v, t));
             }
             let (v, ty) = self.gen_tagged_construct(enum_id, tag, &payload_vals);
@@ -4532,6 +4747,21 @@ impl<'a> FnState<'a> {
             }
         }
         let arg_str = arg_parts.join(", ");
+        // v0.0.3 Slice 1P: static (assoc-fn) calls also need sret-aware
+        // dispatch when the method's return type is non-Copy aggregate.
+        // The method's `define` signature uses sret (per gen_method's
+        // uses_sret branch); the call must match.
+        if return_passes_by_sret_widened(&info.return_type, self.types) {
+            let ret = info.return_type.clone();
+            let lty = self.lty(&ret);
+            let slot = self.alloca_anon(ret.clone());
+            let mut head = format!("ptr {slot}");
+            if !arg_str.is_empty() { head.push_str(", "); head.push_str(&arg_str); }
+            self.emit(&format!("call void @{mangled}({head})"));
+            let v = self.next_tmp();
+            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            return Some((v, ret));
+        }
         match info.return_type {
             Ty::Unit => {
                 self.emit(&format!("call void @{mangled}({arg_str})"));
@@ -4628,12 +4858,101 @@ impl<'a> FnState<'a> {
         result
     }
 
-    fn gen_assign(&mut self, target: &Expr, value: &Expr) {
+    fn gen_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr) {
         // Compute the place slot (Ident or Field chain). gen_place returns
         // a pointer that we can store to directly.
         let (slot, target_ty) = self.gen_place(target);
-        let (v, _) = self.gen_expr(value).expect("assigned value");
-        self.emit(&format!("store {} {v}, ptr {slot}", self.lty(&target_ty)));
+        let (rhs_v, _) = self.gen_expr(value).expect("assigned value");
+        let lty = self.lty(&target_ty);
+        // v0.0.3 Slice 3A: compound assigns. For `a OP= b`, lower as
+        // load + binary op + store. Plain `=` is just store.
+        let to_store = if matches!(op, AssignOp::Assign) {
+            rhs_v
+        } else {
+            let cur = self.next_tmp();
+            self.emit(&format!("{cur} = load {lty}, ptr {slot}"));
+            self.gen_compound_op(op, &target_ty, &cur, &rhs_v)
+        };
+        self.emit(&format!("store {lty} {to_store}, ptr {slot}"));
+    }
+
+    /// Lower one compound-assign binary op given pre-evaluated SSA values.
+    /// `+=`/`-=`/`*=` use the same debug-overflow path as the plain
+    /// `+`/`-`/`*` binary ops; `/=`/`%=` use the zero-check path; bitwise
+    /// + shift assigns lower to single LLVM instructions.
+    fn gen_compound_op(&mut self, op: AssignOp, ty: &Ty, l: &str, r: &str) -> String {
+        let lty = self.lty(ty);
+        match op {
+            AssignOp::AddAssign | AssignOp::SubAssign | AssignOp::MulAssign => {
+                if ty.is_float() {
+                    let v = self.next_tmp();
+                    let fop = match op {
+                        AssignOp::AddAssign => "fadd",
+                        AssignOp::SubAssign => "fsub",
+                        AssignOp::MulAssign => "fmul",
+                        _ => unreachable!(),
+                    };
+                    self.emit(&format!("{v} = {fop} {lty} {l}, {r}"));
+                    return v;
+                }
+                let bin = match op {
+                    AssignOp::AddAssign => BinOp::Add,
+                    AssignOp::SubAssign => BinOp::Sub,
+                    AssignOp::MulAssign => BinOp::Mul,
+                    _ => unreachable!(),
+                };
+                if ty.is_signed_int() && self.mode == BuildMode::Debug {
+                    return self.arith_with_overflow_check(bin, ty, l, r);
+                }
+                let v = self.next_tmp();
+                let iop = match op {
+                    AssignOp::AddAssign => "add",
+                    AssignOp::SubAssign => "sub",
+                    AssignOp::MulAssign => "mul",
+                    _ => unreachable!(),
+                };
+                self.emit(&format!("{v} = {iop} {lty} {l}, {r}"));
+                v
+            }
+            AssignOp::DivAssign => {
+                if ty.is_float() {
+                    let v = self.next_tmp();
+                    self.emit(&format!("{v} = fdiv {lty} {l}, {r}"));
+                    return v;
+                }
+                self.divide_with_zero_check(BinOp::Div, ty, l, r)
+            }
+            AssignOp::ModAssign => {
+                self.divide_with_zero_check(BinOp::Mod, ty, l, r)
+            }
+            AssignOp::BitAndAssign => {
+                let v = self.next_tmp();
+                self.emit(&format!("{v} = and {lty} {l}, {r}"));
+                v
+            }
+            AssignOp::BitOrAssign => {
+                let v = self.next_tmp();
+                self.emit(&format!("{v} = or {lty} {l}, {r}"));
+                v
+            }
+            AssignOp::BitXorAssign => {
+                let v = self.next_tmp();
+                self.emit(&format!("{v} = xor {lty} {l}, {r}"));
+                v
+            }
+            AssignOp::ShlAssign => {
+                let v = self.next_tmp();
+                self.emit(&format!("{v} = shl {lty} {l}, {r}"));
+                v
+            }
+            AssignOp::ShrAssign => {
+                let v = self.next_tmp();
+                let op_str = if ty.is_signed_int() { "ashr" } else { "lshr" };
+                self.emit(&format!("{v} = {op_str} {lty} {l}, {r}"));
+                v
+            }
+            AssignOp::Assign => unreachable!("plain assign handled in gen_assign"),
+        }
     }
 
     // ---------- Phase 8 slice 8.STR.B.2: interpolation codegen ----------
@@ -5084,7 +5403,7 @@ mod tests {
     #[test]
     fn main_returns_int_literal() {
         let ir = gen_src("fn main() -> i32 { return 42; }");
-        assert!(ir.contains("define i32 @main()"));
+        assert!(ir.contains("i32 @main()"));
         assert!(ir.contains("ret i32 42"));
     }
 
@@ -5174,7 +5493,7 @@ mod tests {
         let ir = gen_src(
             "fn double(x: i32) -> i32 { return x + x; }\nfn main() -> i32 { return double(21); }"
         );
-        assert!(ir.contains("define i32 @double"));
+        assert!(ir.contains("i32 @double"));
         assert!(ir.contains("call i32 @double"));
     }
 
@@ -5278,15 +5597,15 @@ mod tests {
     fn factorial_compiles_to_ir() {
         let src = include_str!("../../docs/examples/factorial.cplus");
         let ir = gen_src(src);
-        assert!(ir.contains("define i32 @factorial(i32"));
-        assert!(ir.contains("define i32 @main()"));
+        assert!(ir.contains("i32 @factorial(i32"));
+        assert!(ir.contains("i32 @main()"));
     }
 
     #[test]
     fn fibonacci_compiles_to_ir() {
         let src = include_str!("../../docs/examples/fibonacci.cplus");
         let ir = gen_src(src);
-        assert!(ir.contains("define i32 @fib(i32"));
+        assert!(ir.contains("i32 @fib(i32"));
     }
 
     #[test]
@@ -5505,7 +5824,7 @@ mod tests {
     #[test]
     fn enum_passed_as_argument_uses_i32() {
         let ir = gen_src(include_str!("../../docs/examples/direction.cplus"));
-        assert!(ir.contains("define i32 @opposite(i32"));
+        assert!(ir.contains("i32 @opposite(i32"));
     }
 
     // ---- Phase 2 slice 2B: structs ----
@@ -5557,7 +5876,7 @@ mod tests {
     #[test]
     fn struct_passed_by_value_in_signature() {
         let ir = gen_src(include_str!("../../docs/examples/point.cplus"));
-        assert!(ir.contains("define i32 @distance_squared(%Point"));
+        assert!(ir.contains("i32 @distance_squared(%Point"));
     }
 
     #[test]
@@ -5595,7 +5914,7 @@ mod tests {
              impl P { fn new(x: i32) -> P { return P { x: x }; } }\n\
              fn main() -> i32 { let _p: P = P::new(5); return 0; }"
         );
-        assert!(ir.contains("define %P @P.new(i32 "), "expected mangled name: {ir}");
+        assert!(ir.contains("%P @P.new(i32 "), "expected mangled name: {ir}");
         assert!(ir.contains("call %P @P.new("), "expected mangled call: {ir}");
     }
 
@@ -5606,7 +5925,7 @@ mod tests {
              impl P { fn get(self) -> i32 { return self.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }"
         );
-        assert!(ir.contains("define i32 @P.get(ptr "), "expected ptr param for self: {ir}");
+        assert!(ir.contains("i32 @P.get(ptr "), "expected ptr param for self: {ir}");
     }
 
     #[test]
@@ -5616,7 +5935,7 @@ mod tests {
              impl P { fn set(mut self, v: i32) { self.x = v; } }\n\
              fn main() -> i32 { let mut p: P = P { x: 0 }; p.set(5); return 0; }"
         );
-        assert!(ir.contains("define void @P.set(ptr "), "expected void+ptr for mut self: {ir}");
+        assert!(ir.contains("void @P.set(ptr "), "expected void+ptr for mut self: {ir}");
         // Body should store through the ptr (GEP then store).
         assert!(ir.contains("getelementptr %P"));
     }
@@ -5676,7 +5995,7 @@ mod tests {
             "fn first(xs: [i32; 3]) -> i32 { return xs[0 as usize]; }\n\
              fn main() -> i32 { return first([1, 2, 3]); }"
         );
-        assert!(ir.contains("define i32 @first([3 x i32]"));
+        assert!(ir.contains("i32 @first([3 x i32]"));
     }
 
     #[test]
@@ -5710,7 +6029,7 @@ mod tests {
         // still declares the intrinsics for plain ops elsewhere, so we
         // can't just grep for "with.overflow" anywhere in the IR — instead
         // check that the body of `main` doesn't *call* the intrinsic.)
-        let main_body_start = ir.find("define i32 @main()").unwrap();
+        let main_body_start = ir.find("i32 @main()").unwrap();
         let main_body = &ir[main_body_start..];
         assert!(
             !main_body.contains("call {i32, i1} @llvm.sadd.with.overflow"),
@@ -5787,7 +6106,7 @@ mod tests {
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
         );
         assert!(
-            ir.contains("define void @bump(ptr noalias "),
+            ir.contains("void @bump(ptr noalias "),
             "expected `mut t: Tag` to lower to `ptr noalias` param, got: {ir}"
         );
         // Call site still passes a pointer, not a struct value.
@@ -5810,7 +6129,7 @@ mod tests {
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }"
         );
         assert!(
-            ir.contains("define i32 @peek(ptr readonly "),
+            ir.contains("i32 @peek(ptr readonly "),
             "expected `t: Tag` to lower to `ptr readonly` param, got: {ir}"
         );
         assert!(
@@ -5831,7 +6150,7 @@ mod tests {
              fn main() -> i32 { let x: Tag = Tag { v: 9 }; return take(x); }"
         );
         assert!(
-            ir.contains("define i32 @take(%Tag "),
+            ir.contains("i32 @take(%Tag "),
             "expected `move t: Tag` to stay struct-by-value, got: {ir}"
         );
     }
@@ -5847,7 +6166,7 @@ mod tests {
              fn main() -> i32 { let q: P = P { v: 5 }; return bump(q); }"
         );
         assert!(
-            ir.contains("define i32 @bump(%P "),
+            ir.contains("i32 @bump(%P "),
             "expected `mut p: P` on Copy struct to stay struct-by-value, got: {ir}"
         );
     }
@@ -5865,7 +6184,7 @@ mod tests {
              fn main() -> i32 { let mut x: Tag = Tag { v: 0 }; bump(x); return x.v; }"
         );
         // Find the @bump body and confirm it has no `alloca %Tag` inside.
-        let body_start = ir.find("define void @bump(").expect("@bump must be emitted");
+        let body_start = ir.find("void @bump(").expect("@bump must be emitted");
         let body_tail = &ir[body_start..];
         let body_end = body_tail.find("\n}\n").expect("function close");
         let bump_body = &body_tail[..body_end];
@@ -5885,7 +6204,7 @@ mod tests {
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 0 }; bump(x); return x.v; }"
         );
-        let body_start = ir.find("define void @bump(").expect("@bump must be emitted");
+        let body_start = ir.find("void @bump(").expect("@bump must be emitted");
         let body_tail = &ir[body_start..];
         let body_end = body_tail.find("\n}\n").expect("function close");
         let bump_body = &body_tail[..body_end];
@@ -5917,7 +6236,7 @@ mod tests {
             "#[test] fn ok() { assert 2 == 2; return; }\n\
              fn main() -> i32 { return 0; }"
         );
-        assert!(ir.contains("define void @ok("), "expected @ok defined: {ir}");
+        assert!(ir.contains("void @ok("), "expected @ok defined: {ir}");
         assert!(ir.contains("call void @llvm.trap()"));
     }
 
@@ -5938,7 +6257,7 @@ mod tests {
         );
         // Tool.poke signature: receiver ptr, mut param ptr.
         assert!(
-            ir.contains("define void @Tool.poke(ptr "),
+            ir.contains("void @Tool.poke(ptr "),
             "expected method to declare `mut t: Tag` as ptr param, got: {ir}"
         );
         // Two `ptr ` arguments at the call site (receiver + mut param).
@@ -6022,7 +6341,7 @@ mod tests {
              fn main() -> i32 { return double(21); }"
         );
         assert!(
-            ir.contains("define i32 @double(i32 noundef %0)"),
+            ir.contains("i32 @double(i32 noundef %0)"),
             "expected i32 param to carry noundef, got:\n{ir}"
         );
     }
@@ -6054,7 +6373,7 @@ mod tests {
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
         );
         assert!(
-            ir.contains("define void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
             "expected full attr set on mut ptr param, got:\n{ir}"
         );
     }
@@ -6071,7 +6390,7 @@ mod tests {
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }"
         );
         assert!(
-            ir.contains("define i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
             "expected readonly+rest on shared ptr param, got:\n{ir}"
         );
     }
@@ -6096,17 +6415,17 @@ mod tests {
         );
         // `self` (Read)  → readonly
         assert!(
-            ir.contains("define i32 @T.read(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("i32 @T.read(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.read receiver attrs missing, got:\n{ir}"
         );
         // `mut self` (Mut) → noalias
         assert!(
-            ir.contains("define void @T.bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("void @T.bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.bump receiver attrs missing, got:\n{ir}"
         );
         // `move self` (Move) → noalias (callee owns; exclusive)
         assert!(
-            ir.contains("define i32 @T.into(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            ir.contains("i32 @T.into(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
             "T.into receiver attrs missing, got:\n{ir}"
         );
     }
@@ -6138,7 +6457,7 @@ mod tests {
         );
         // Look for the @take signature line; it must say `ptr noundef` but
         // not the pointer-target attribute set.
-        let line = ir.lines().find(|l| l.starts_with("define i32 @take("))
+        let line = ir.lines().find(|l| l.contains("i32 @take("))
             .expect("@take must be emitted");
         assert!(line.contains("ptr noundef"), "expected noundef on *u8 param: {line}");
         assert!(!line.contains("nonnull"),       "*u8 param must not carry nonnull: {line}");
@@ -6153,7 +6472,7 @@ mod tests {
              fn use_p(p: P) -> i32 { return p.v; }\n\
              fn main() -> i32 { let q: P = P { v: 5 }; return use_p(q); }"
         );
-        let line = ir.lines().find(|l| l.starts_with("define i32 @use_p("))
+        let line = ir.lines().find(|l| l.contains("i32 @use_p("))
             .expect("@use_p must be emitted");
         assert!(line.contains("%P "), "expected by-value P param: {line}");
         assert!(!line.contains("noundef"),
@@ -6406,7 +6725,7 @@ mod tests {
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
         );
         // The function body must not carry alias.scope on its loads.
-        let body_start = ir.find("define void @bump(").expect("@bump emitted");
+        let body_start = ir.find("void @bump(").expect("@bump emitted");
         let body_end = ir[body_start..].find("\n}\n").expect("@bump close");
         let body = &ir[body_start..body_start + body_end];
         assert!(
@@ -6430,7 +6749,7 @@ mod tests {
                return both_shared(p, q);\n\
              }"
         );
-        let body_start = ir.find("define i32 @both_shared(").expect("@both_shared emitted");
+        let body_start = ir.find("i32 @both_shared(").expect("@both_shared emitted");
         let body_end = ir[body_start..].find("\n}\n").expect("@both_shared close");
         let body = &ir[body_start..body_start + body_end];
         assert!(
@@ -6497,7 +6816,7 @@ mod tests {
                return a.read_and_bump(b);\n\
              }"
         );
-        let body_start = ir.find("define i32 @T.read_and_bump(").expect("emitted");
+        let body_start = ir.find("i32 @T.read_and_bump(").expect("emitted");
         let body_end = ir[body_start..].find("\n}\n").expect("close");
         let body = &ir[body_start..body_start + body_end];
         assert!(
@@ -6559,9 +6878,10 @@ mod tests {
              impl R { fn drop(mut self) { return; } }\n\
              fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }"
         );
-        // `define preserve_nonecc void @R.drop(...) cold {`
+        // `define [internal ]preserve_nonecc void @R.drop(...) cold {`
+        // After Slice 3D, drop methods get `internal` linkage in exe mode.
         assert!(
-            ir.contains("define preserve_nonecc void @R.drop("),
+            ir.contains("preserve_nonecc void @R.drop("),
             "expected preserve_nonecc on drop definition, got:\n{ir}"
         );
         // The `cold` attribute lands after the param list, before `{`.
@@ -6670,7 +6990,7 @@ mod tests {
              fn main() -> i32 { return sum_to(10, 0); }"
         );
         // The main's call must be a plain `call`, not `musttail`.
-        let main_start = ir.find("define i32 @main()").expect("@main emitted");
+        let main_start = ir.find("i32 @main()").expect("@main emitted");
         let main_end = ir[main_start..].find("\n}\n").expect("@main close");
         let main_body = &ir[main_start..main_start + main_end];
         assert!(
@@ -6726,7 +7046,7 @@ mod tests {
              fn main() -> i32 { let t: T = T { v: 0 }; return t.get(); }"
         );
         // T.get must NOT use musttail.
-        let m_start = ir.find("define i32 @T.get(").expect("T.get emitted");
+        let m_start = ir.find("i32 @T.get(").expect("T.get emitted");
         let m_end = ir[m_start..].find("\n}\n").expect("T.get close");
         let m_body = &ir[m_start..m_start + m_end];
         assert!(
@@ -6752,7 +7072,7 @@ mod tests {
         );
         // caller's body has a Drop binding, so its `return id(n)` cannot
         // be musttail (drop runs between the call and the ret).
-        let c_start = ir.find("define i32 @caller(").expect("caller emitted");
+        let c_start = ir.find("i32 @caller(").expect("caller emitted");
         let c_end = ir[c_start..].find("\n}\n").expect("caller close");
         let c_body = &ir[c_start..c_start + c_end];
         assert!(
@@ -6787,7 +7107,7 @@ mod tests {
         );
         // The function returns void and takes a sret pointer as %0.
         assert!(
-            ir.contains("define void @greet(ptr sret({ ptr, i64, i64 }) noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
+            ir.contains("void @greet(ptr sret({ ptr, i64, i64 }) noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
             "expected sret definition, got:\n{ir}"
         );
         // The body stores into %0 then returns void.
@@ -6845,7 +7165,7 @@ mod tests {
              fn main() -> i32 { return add(2, 3); }"
         );
         assert!(
-            ir.contains("define i32 @add("),
+            ir.contains("i32 @add("),
             "primitive return must keep value form, got:\n{ir}"
         );
         assert!(
@@ -6864,7 +7184,7 @@ mod tests {
         );
         // Definition: %0 is sret, %1 is `n`.
         assert!(
-            ir.contains("define void @pick(ptr sret") && ir.contains(", i32 noundef %1)"),
+            ir.contains("void @pick(ptr sret") && ir.contains(", i32 noundef %1)"),
             "expected sret-then-i32 param indices, got:\n{ir}"
         );
     }
@@ -6880,7 +7200,7 @@ mod tests {
              fn main() -> i32 { let s: string = caller(); return 0; }"
         );
         // Caller's body must musttail-call helper using its own sret slot.
-        let c_start = ir.find("define void @caller(").expect("caller emitted");
+        let c_start = ir.find("void @caller(").expect("caller emitted");
         let c_end = ir[c_start..].find("\n}\n").expect("caller close");
         let c_body = &ir[c_start..c_start + c_end];
         assert!(
@@ -7084,7 +7404,7 @@ mod tests {
         );
         // Look for the @square define with coerced i64 param.
         assert!(
-            ir.contains("define i32 @square(i64"),
+            ir.contains("i32 @square(i64"),
             "expected `define i32 @square(i64 ...)`, got:\n{ir}"
         );
     }
@@ -7141,7 +7461,7 @@ mod tests {
              pub extern fn make() -> Triple { return Triple { a: 1 as i64, b: 2 as i64, c: 3 as i64 }; }"
         );
         assert!(
-            ir.contains("define void @make(ptr sret("),
+            ir.contains("void @make(ptr sret("),
             "expected sret-form return for >16 byte struct, got:\n{ir}"
         );
         assert!(
@@ -7162,7 +7482,7 @@ mod tests {
         );
         // The non-extern path keeps `%Point %0` (Copy struct, by-value).
         assert!(
-            ir.contains("define i32 @use_p(%Point"),
+            ir.contains("i32 @use_p(%Point"),
             "non-extern fn must keep C+ ABI, got:\n{ir}"
         );
     }
@@ -7175,7 +7495,7 @@ mod tests {
             "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }"
         );
         assert!(
-            ir.contains("define i32 @add(i32 noundef") && !ir.contains("@add(i64"),
+            ir.contains("i32 @add(i32 noundef") && !ir.contains("@add(i64"),
             "scalar-only export must not coerce, got:\n{ir}"
         );
     }
@@ -7191,7 +7511,7 @@ mod tests {
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }"
         );
-        assert!(ir.contains("define void @bump(ptr noalias "));
+        assert!(ir.contains("void @bump(ptr noalias "));
     }
 
     // ---- Phase v0.0.2 Slice 1C: scoped !alias.scope / !noalias ----
@@ -7256,11 +7576,35 @@ mod tests {
     }
 
     #[test]
+    fn non_copy_locals_get_alias_scope() {
+        // v0.0.3 Slice 3C: two `let mut` non-Copy locals in a function
+        // produce two `!alias.scope` annotations on their loads/stores.
+        // Domain is per-function, scopes are `l0`/`l1` (locals only,
+        // no noalias params in main).
+        let ir = gen_src(
+            "struct T { v: i32 }\n\
+             impl T { fn drop(mut self) { return; } }\n\
+             fn main() -> i32 {\n\
+               let mut x: T = T { v: 1 };\n\
+               let mut y: T = T { v: 2 };\n\
+               x.v = 3;\n\
+               y.v = 4;\n\
+               return x.v + y.v;\n\
+             }"
+        );
+        assert!(
+            ir.contains("!alias.scope"),
+            "non-Copy locals should publish alias.scope metadata, got:\n{ir}"
+        );
+    }
+
+    #[test]
     fn shared_params_do_not_participate_in_alias_scope() {
         // Two `t: T` shared params get `readonly`, not `noalias`. The
-        // borrow checker doesn't prove they're disjoint, so we don't
-        // publish alias.scope (would be unsound — two shared refs may
-        // legally alias).
+        // borrow checker doesn't prove they're disjoint, so the *sum*
+        // function itself doesn't publish alias.scope on its params.
+        // (Locals + mut/move params still get scopes per Slice 1C/3C —
+        // we scope this test to the sum function's IR.)
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T { fn drop(mut self) { return; } }\n\
@@ -7271,9 +7615,14 @@ mod tests {
                return sum(x, y);\n\
              }"
         );
+        // Pull out @sum's body and verify no alias.scope appears INSIDE it.
+        let sum_start = ir.find("@sum(").expect("@sum defined");
+        let body = &ir[sum_start..];
+        let sum_end = body.find("\n}\n").map(|i| sum_start + i + 2).unwrap_or(ir.len());
+        let sum_body = &ir[sum_start..sum_end];
         assert!(
-            !ir.contains("!alias.scope"),
-            "two readonly shared params must not trigger alias.scope, got:\n{ir}"
+            !sum_body.contains("!alias.scope"),
+            "two readonly shared params must not trigger alias.scope in their function, got:\n{sum_body}"
         );
     }
 

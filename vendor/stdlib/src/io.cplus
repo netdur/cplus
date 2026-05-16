@@ -1,33 +1,39 @@
 // stdlib/io.cplus — process-level stdin/stdout/stderr I/O.
 //
-// Skeleton: API only. Bodies fill in during Phase 3.
-//
-// Built on libc `printf` / `fputs` / `fgets` via `extern fn`. Users never
-// see `extern fn` — they just call `print` / `println` / etc.
+// Built on libc `write` via `extern fn`. Users never see `extern fn` —
+// they just call `print` / `println` / etc.
 
-import "./result.cplus" as result;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+// Loop until all `n` bytes from `p` are written to `fd` (or write errors).
+fn write_all(fd: i32, p: *u8, n: usize) {
+    let mut written: usize = 0 as usize;
+    while written < n {
+        let remaining: usize = n -% written;
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, remaining) };
+        if w <= (0 as isize) { return; }
+        written = written +% (w as usize);
+    }
+    return;
+}
 
 // Write `s` to stdout, no trailing newline.
 pub fn print(s: str) {
-    // TODO: Phase 3 — printf("%.*s", len, ptr) via fat-pointer split.
+    write_all(1 as i32, str_ptr(s), str_len(s));
     return;
 }
 
 // Write `s` to stdout, followed by '\n'.
 pub fn println(s: str) {
-    // TODO: Phase 3 — printf("%.*s\n", len, ptr).
+    write_all(1 as i32, str_ptr(s), str_len(s));
+    write_all(1 as i32, str_ptr("\n"), 1 as usize);
     return;
 }
 
 // Write `s` to stderr, followed by '\n'.
 pub fn eprintln(s: str) {
-    // TODO: Phase 3 — fprintf(stderr, "%.*s\n", len, ptr).
+    write_all(2 as i32, str_ptr(s), str_len(s));
+    write_all(2 as i32, str_ptr("\n"), 1 as usize);
     return;
-}
-
-// Read one line from stdin (up to and excluding the trailing '\n').
-// Returns Err(IoError::UnexpectedEof) on EOF before any byte.
-pub fn read_stdin_line() -> result::Result[string, result::IoError] {
-    // TODO: Phase 3 — fgets into a growing buffer; trim trailing '\n'.
-    return result::Result::Err(result::IoError::Other);
 }

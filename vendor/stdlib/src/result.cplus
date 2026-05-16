@@ -1,19 +1,10 @@
-// stdlib/result.cplus — fallible computation type.
-//
-// Skeleton: API only. Bodies fill in during Phase 3.
-//
-// All fallible stdlib APIs return `Result[T, E]`. The `Ok` variant carries
-// the success value; `Err` carries a structured error (commonly `IoError`).
-// Sema's exhaustiveness check forces every consumer to handle both arms.
+// stdlib/result.cplus
 
 pub enum Result[T, E] {
     Ok(T),
     Err(E),
 }
 
-// IoError is the shared error type for io / fs / net so Result chains
-// compose across module boundaries. Variants are added as the
-// implementation lands — Phase 3 may grow this enum.
 pub enum IoError {
     NotFound,
     PermissionDenied,
@@ -29,4 +20,24 @@ pub enum IoError {
     BrokenPipe,
     TimedOut,
     Other,
+}
+
+// Generic constructors. T and E must be supplied via turbofish at the call
+// site (sema can't infer E from the arg alone when E doesn't appear in the
+// arg position).
+pub fn ok[T, E](move v: T) -> Result[T, E] {
+    return Result[T, E]::Ok(v);
+}
+
+pub fn err[T, E](move e: E) -> Result[T, E] {
+    return Result[T, E]::Err(e);
+}
+
+// Convenience constructors for the common `Result[T, IoError]` shape.
+pub fn io_ok[T](move v: T) -> Result[T, IoError] {
+    return Result[T, IoError]::Ok(v);
+}
+
+pub fn io_err[T](e: IoError) -> Result[T, IoError] {
+    return Result[T, IoError]::Err(e);
 }

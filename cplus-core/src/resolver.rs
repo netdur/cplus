@@ -860,8 +860,9 @@ fn classify_import_path(
 
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
     // Try to express canonical as a path relative to manifest_root. If that
-    // fails (file lives outside the project), fall back to the basename
-    // chain — better than nothing.
+    // fails (file lives outside the project — e.g. a vendor symlink resolving
+    // outside the consumer's tree), fall back to the basename chain — better
+    // than nothing.
     let canonical_root = std::fs::canonicalize(manifest_root)
         .unwrap_or_else(|_| manifest_root.to_path_buf());
     let rel = canonical.strip_prefix(&canonical_root).unwrap_or(canonical);
@@ -879,10 +880,21 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
             _ => {}
         }
     }
-    if parts.is_empty() {
-        return "root".to_string();
-    }
-    parts.join(".")
+    let joined = if parts.is_empty() {
+        "root".to_string()
+    } else {
+        parts.join(".")
+    };
+    // Sanitize for LLVM identifier shape. Path components can contain any
+    // POSIX-filename byte; LLVM `define @<name>` only accepts a narrow set.
+    // Keep `[A-Za-z0-9_.]` (dot is our segment separator); map everything
+    // else to `_`. Notably this catches `+` in directory names — the C+
+    // project literally lives at a path containing `+`, and without this
+    // step every fallback file_id would be unlinkable.
+    joined
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '.' { c } else { '_' })
+        .collect()
 }
 
 fn detect_cycle(
@@ -1523,9 +1535,13 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
             rewrite_block(then, ctx, scope)?;
             if let Some(eb) = else_branch { rewrite_expr(eb, ctx, scope)?; }
         }
-        ExprKind::Call { callee, args, .. } => {
+        ExprKind::Call { callee, args, type_args } => {
             rewrite_expr(callee, ctx, scope)?;
             for a in args { rewrite_expr(a, ctx, scope)?; }
+            // v0.0.3 Slice 1P.3: turbofish type-args carry their own type
+            // references (`foo::[mod::T, other::U](...)`); qualify them
+            // the same way as types in declared positions.
+            for ta in type_args.iter_mut() { rewrite_type(ta, ctx)?; }
         }
         ExprKind::Binary { lhs, rhs, .. } => {
             rewrite_expr(lhs, ctx, scope)?;
@@ -1633,8 +1649,23 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
             for f in fields { rewrite_expr(&mut f.value, ctx, scope)?; }
         }
         ExprKind::Field { receiver, .. } => rewrite_expr(receiver, ctx, scope)?,
-        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+        ExprKind::ArrayLit { elements } => {
             for el in elements { rewrite_expr(el, ctx, scope)?; }
+        }
+        // v0.0.3 1P.1: qualify the enum_name for cross-module generic enum
+        // constructors (`mod::Enum[T, E]::Variant(args)`). Pattern mirrors
+        // GenericStructLit above. Also rewrite type-args + arg expressions.
+        ExprKind::GenericEnumCall { enum_name, type_args, args, .. } => {
+            if ctx.local_items.contains(&enum_name.name) {
+                enum_name.name = ctx.qualify_local(&enum_name.name);
+            } else if let Some((prefix, rest)) = enum_name.name.clone().split_once("::").map(|(a, b)| (a.to_string(), b.to_string())) {
+                if let Some(target_id) = ctx.imports.get(&prefix) {
+                    ctx.check_pub_item(target_id, &rest, enum_name.span)?;
+                    enum_name.name = ctx.qualify_external(target_id, &rest);
+                }
+            }
+            for ta in type_args.iter_mut() { rewrite_type(ta, ctx)?; }
+            for el in args { rewrite_expr(el, ctx, scope)?; }
         }
         ExprKind::Index { receiver, index } => {
             rewrite_expr(receiver, ctx, scope)?;
@@ -1708,13 +1739,17 @@ mod tests {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn tmpdir() -> PathBuf {
-        // Tests run in parallel within the same process — give each its own
-        // unique dir so file writes don't clobber each other.
-        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("cpc-resolver-{}-{}", std::process::id(), n));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+        // v0.0.3 Phase 2: secure random tempdir via `tempfile` crate. The
+        // TempDir auto-cleans on drop; we leak it via `Box::leak` so the
+        // returned `PathBuf` outlives the test's scope (it gets passed
+        // into helper fns that run after this returns).
+        let _ = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = tempfile::Builder::new()
+            .prefix("cpc-resolver-")
+            .tempdir()
+            .expect("tempdir creation");
+        let leaked: &'static tempfile::TempDir = Box::leak(Box::new(dir));
+        leaked.path().to_path_buf()
     }
 
     #[test]

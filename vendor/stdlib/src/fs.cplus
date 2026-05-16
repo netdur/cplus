@@ -1,53 +1,119 @@
 // stdlib/fs.cplus — file system access.
 //
-// Skeleton: API only. Bodies fill in during Phase 3.
-//
-// Built on libc open(2)/read(2)/write(2)/close(2) via `extern fn`. File
-// has a Drop destructor that calls close() on scope exit — opening a file
-// without explicitly closing it is safe.
+// Built on libc open/read/write/close via `extern fn`. `File` is an owned
+// handle; Drop closes the fd on scope exit, so opening without explicit
+// close is safe.
 
-import "./result.cplus" as result;
-import "./vec.cplus" as vec;
+import "./result" as result;
+import "./vec" as vec;
 
-// Owned file handle. `fd` is the libc descriptor; -1 means "already closed".
+// `open` is variadic in libc — mode is only consumed when O_CREAT is in
+// flags. The variadic decl matches the platform ABI exactly (on
+// aarch64-darwin a fixed third arg lands in a register but libc's
+// implementation reads it via `va_arg`, which expects stack passing).
+extern fn open(path: *u8, flags: i32, ...) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
 pub struct File {
     fd: i32,
 }
 
+// Open `path` for reading. macOS + Linux: O_RDONLY = 0.
+pub fn open_read(path: str) -> result::Result[File, result::IoError] {
+    let fd: i32 = unsafe { open(str_ptr(path), 0 as i32, 0 as i32) };
+    if fd < (0 as i32) {
+        return result::io_err::[File](result::IoError::NotFound);
+    }
+    return result::io_ok::[File](File { fd: fd });
+}
+
+// Open `path` for writing, creating + truncating if missing. Mode 0o644.
+//
+// macOS flags: O_WRONLY = 0x001, O_CREAT = 0x200, O_TRUNC = 0x400.
+// Combined: 0x601 = 1537. (Linux numbers differ — Linux build is a Phase 1
+// stretch; see plan.md non-goals.)
+pub fn create(path: str) -> result::Result[File, result::IoError] {
+    let flags: i32 = 1537 as i32;
+    let mode: i32 = 420 as i32;
+    let fd: i32 = unsafe { open(str_ptr(path), flags, mode) };
+    if fd < (0 as i32) {
+        return result::io_err::[File](result::IoError::PermissionDenied);
+    }
+    return result::io_ok::[File](File { fd: fd });
+}
+
 impl File {
-    // Open `path` for reading. Returns Err on missing/permission/etc.
-    pub fn open(path: str) -> result::Result[File, result::IoError] {
-        // TODO: Phase 3 — extern fn open(path: *u8, flags: i32) -> i32.
-        return result::Result::Err(result::IoError::Other);
-    }
-
-    // Open `path` for writing, creating + truncating it if missing.
-    pub fn create(path: str) -> result::Result[File, result::IoError] {
-        // TODO: Phase 3 — open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644).
-        return result::Result::Err(result::IoError::Other);
-    }
-
-    // Drain the file's remaining bytes into a heap-allocated buffer.
+    // Drain remaining bytes into a fresh heap-allocated buffer. Returns
+    // the Vec inside Result::Ok on success, or an IoError on failure.
     pub fn read_to_end(mut self) -> result::Result[vec::Vec[u8], result::IoError] {
-        // TODO: Phase 3 — loop fread into a Vec[u8].
-        return result::Result::Err(result::IoError::Other);
+        let mut buf: vec::Vec[u8] = vec::new::[u8]();
+        if self.fd < (0 as i32) {
+            return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
+        }
+        let chunk_size: usize = 4096 as usize;
+        let chunk: *u8 = unsafe { malloc(chunk_size) };
+        loop {
+            let n: isize = unsafe { read(self.fd, chunk, chunk_size) };
+            if n < (0 as isize) {
+                unsafe { free(chunk); }
+                return result::io_err::[vec::Vec[u8]](result::IoError::Other);
+            }
+            if n == (0 as isize) {
+                unsafe { free(chunk); }
+                return result::io_ok::[vec::Vec[u8]](buf);
+            }
+            let count: usize = n as usize;
+            let mut k: usize = 0 as usize;
+            while k < count {
+                let byte_p: *u8 = unsafe { chunk + k };
+                buf.push(unsafe { *byte_p });
+                k = k +% (1 as usize);
+            }
+        }
+        return result::io_err::[vec::Vec[u8]](result::IoError::Other);
     }
 
-    // Write all of `data` to the file. Loops on short writes.
-    pub fn write_all(mut self, data: vec::Vec[u8]) -> result::Result[(), result::IoError] {
-        // TODO: Phase 3 — while remaining > 0: write(fd, ptr, remaining).
-        return result::Result::Err(result::IoError::Other);
+    // Write `data`. Loops on short writes. On success returns bytes written
+    // (always == data.len()); errors return Err.
+    pub fn write_all(mut self, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+        if self.fd < (0 as i32) {
+            return result::io_err::[usize](result::IoError::InvalidInput);
+        }
+        let n: usize = data.len();
+        let slice: u8[] = data.as_slice();
+        let p: *u8 = unsafe { slice_ptr(slice) };
+        let mut written: usize = 0 as usize;
+        while written < n {
+            let remaining: usize = n -% written;
+            let q: *u8 = unsafe { p + written };
+            let w: isize = unsafe { write(self.fd, q, remaining) };
+            if w <= (0 as isize) {
+                return result::io_err::[usize](result::IoError::BrokenPipe);
+            }
+            written = written +% (w as usize);
+        }
+        return result::io_ok::[usize](written);
     }
 
-    // Explicit close. Setting fd to -1 prevents double-close from Drop.
-    pub fn close(move self) {
-        // TODO: Phase 3 — call libc close(); zero fd to disarm Drop.
+    // Explicit close. Disarms Drop by setting fd to -1.
+    pub fn close(mut self) {
+        if self.fd >= (0 as i32) {
+            unsafe { close(self.fd); }
+            self.fd = 0 -% 1 as i32;
+        }
         return;
     }
 
-    // Destructor: closes the file if `close` wasn't called explicitly.
+    // Destructor: close the fd if not already closed.
     fn drop(mut self) {
-        // TODO: Phase 3 — if fd != -1: close(fd).
+        if self.fd >= (0 as i32) {
+            unsafe { close(self.fd); }
+        }
         return;
     }
 }

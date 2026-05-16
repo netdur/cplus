@@ -1,73 +1,215 @@
 // stdlib/net.cplus — TCP networking.
 //
-// Skeleton: API only. Bodies fill in during Phase 3.
+// Built on libc socket/connect/bind/listen/accept/read/write/close via
+// `extern fn`. `TcpStream` and `TcpListener` are owned fd handles; Drop
+// closes them on scope exit.
 //
-// Built on libc socket(2)/connect(2)/bind(2)/listen(2)/accept(2)/read(2)/
-// write(2)/close(2). Mirrors File's owned-descriptor + Drop pattern.
+// v0.0.3 scope: IPv4 + numeric IP addresses only. DNS resolution (via
+// `gethostbyname` or `getaddrinfo`) is a follow-up — for now, callers
+// pass an IP string like "127.0.0.1". The `gethostbyname` recipe lives
+// at [docs/examples/recipes/http_get/](../../../docs/examples/recipes/http_get/)
+// for programs that need DNS today.
 
-import "./result.cplus" as result;
-import "./vec.cplus" as vec;
+import "./result" as result;
+import "./vec" as vec;
 
-// Owned client-side TCP socket.
+extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
+extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
+extern fn bind(fd: i32, addr: *u8, len: u32) -> i32;
+extern fn listen(fd: i32, backlog: i32) -> i32;
+extern fn accept(fd: i32, addr: *u8, len: *u32) -> i32;
+extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
+extern fn shutdown(fd: i32, how: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+extern fn inet_addr(s: *u8) -> u32;
+extern fn malloc(n: usize) -> *u8;
+extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
+extern fn free(p: *u8);
+
 pub struct TcpStream {
     fd: i32,
 }
 
-impl TcpStream {
-    // Connect to `host:port`. `host` may be a numeric IP or a hostname
-    // (Phase 3 may start with numeric-only and add resolution later).
-    pub fn connect(host: str, port: u16) -> result::Result[TcpStream, result::IoError] {
-        // TODO: Phase 3 — socket(AF_INET, SOCK_STREAM, 0), inet_addr/getaddrinfo,
-        // connect(); package into a TcpStream.
-        return result::Result::Err(result::IoError::Other);
-    }
-
-    pub fn read(mut self, buf: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
-        // TODO: Phase 3 — libc read; map errno → IoError.
-        return result::Result::Err(result::IoError::Other);
-    }
-
-    pub fn write(mut self, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
-        // TODO: Phase 3 — libc write; map errno → IoError.
-        return result::Result::Err(result::IoError::Other);
-    }
-
-    pub fn close(move self) {
-        // TODO: Phase 3 — libc close; disarm Drop.
-        return;
-    }
-
-    fn drop(mut self) {
-        // TODO: Phase 3 — if fd != -1: close(fd).
-        return;
-    }
-}
-
-// Owned server-side TCP listener.
 pub struct TcpListener {
     fd: i32,
 }
 
-impl TcpListener {
-    // Bind to a local port and start listening. `backlog` defaults to 128.
-    pub fn bind(host: str, port: u16) -> result::Result[TcpListener, result::IoError] {
-        // TODO: Phase 3 — socket(), setsockopt(SO_REUSEADDR), bind(), listen().
-        return result::Result::Err(result::IoError::Other);
+// Build a `sockaddr_in` for IPv4 in a fresh malloc'd buffer (16 bytes,
+// macOS layout). Caller owns the buffer.
+fn build_sockaddr(ip_dotted: str, port: u16) -> *u8 {
+    let addr: u32 = unsafe { inet_addr(str_ptr(ip_dotted)) };
+    let sa: *u8 = unsafe { malloc(16 as usize) };
+    unsafe {
+        memset(sa, 0 as i32, 16 as usize);
+        sa[0 as usize] = 16 as u8;        // sin_len
+        sa[1 as usize] = 2 as u8;         // AF_INET
+        // sin_port in network byte order (high byte first).
+        sa[2 as usize] = ((port >> (8 as u32)) & (0xff as u16)) as u8;
+        sa[3 as usize] = (port & (0xff as u16)) as u8;
+        sa[4 as usize] = (addr & (0xff as u32)) as u8;
+        sa[5 as usize] = ((addr >> (8 as u32)) & (0xff as u32)) as u8;
+        sa[6 as usize] = ((addr >> (16 as u32)) & (0xff as u32)) as u8;
+        sa[7 as usize] = ((addr >> (24 as u32)) & (0xff as u32)) as u8;
+    }
+    return sa;
+}
+
+// Connect to `ip:port` over TCP. `ip` is a dotted-quad string ("127.0.0.1");
+// DNS resolution is out of scope for v0.0.3.
+pub fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError] {
+    // AF_INET=2, SOCK_STREAM=1.
+    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) {
+        return result::io_err::[TcpStream](result::IoError::Other);
+    }
+    let sa: *u8 = build_sockaddr(ip, port);
+    let crc: i32 = unsafe { connect(fd, sa, 16 as u32) };
+    unsafe { free(sa); }
+    if crc != (0 as i32) {
+        unsafe { close(fd); }
+        return result::io_err::[TcpStream](result::IoError::ConnectionRefused);
+    }
+    return result::io_ok::[TcpStream](TcpStream { fd: fd });
+}
+
+// Bind a listener to 127.0.0.1:port and start listening. Sets SO_REUSEADDR
+// so quick test restarts don't hit EADDRINUSE.
+pub fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
+    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) {
+        return result::io_err::[TcpListener](result::IoError::Other);
+    }
+    // SO_REUSEADDR. macOS: level=SOL_SOCKET=0xffff, optname=SO_REUSEADDR=0x4.
+    let one: *u8 = unsafe { malloc(4 as usize) };
+    unsafe {
+        one[0 as usize] = 1 as u8; one[1 as usize] = 0 as u8;
+        one[2 as usize] = 0 as u8; one[3 as usize] = 0 as u8;
+    }
+    unsafe { setsockopt(fd, 0xffff as i32, 0x4 as i32, one, 4 as u32); }
+    unsafe { free(one); }
+
+    let sa: *u8 = build_sockaddr("127.0.0.1", port);
+    let brc: i32 = unsafe { bind(fd, sa, 16 as u32) };
+    unsafe { free(sa); }
+    if brc != (0 as i32) {
+        unsafe { close(fd); }
+        return result::io_err::[TcpListener](result::IoError::AddrInUse);
+    }
+    let lrc: i32 = unsafe { listen(fd, 16 as i32) };
+    if lrc != (0 as i32) {
+        unsafe { close(fd); }
+        return result::io_err::[TcpListener](result::IoError::Other);
+    }
+    return result::io_ok::[TcpListener](TcpListener { fd: fd });
+}
+
+impl TcpStream {
+    // Drain all remaining bytes from the peer (until EOF or error).
+    pub fn read_to_end(mut self) -> result::Result[vec::Vec[u8], result::IoError] {
+        let mut buf: vec::Vec[u8] = vec::new::[u8]();
+        if self.fd < (0 as i32) {
+            return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
+        }
+        let chunk_size: usize = 4096 as usize;
+        let chunk: *u8 = unsafe { malloc(chunk_size) };
+        loop {
+            let n: isize = unsafe { read(self.fd, chunk, chunk_size) };
+            if n < (0 as isize) {
+                unsafe { free(chunk); }
+                return result::io_err::[vec::Vec[u8]](result::IoError::ConnectionReset);
+            }
+            if n == (0 as isize) {
+                unsafe { free(chunk); }
+                return result::io_ok::[vec::Vec[u8]](buf);
+            }
+            let count: usize = n as usize;
+            let mut k: usize = 0 as usize;
+            while k < count {
+                let byte_p: *u8 = unsafe { chunk + k };
+                buf.push(unsafe { *byte_p });
+                k = k +% (1 as usize);
+            }
+        }
+        return result::io_err::[vec::Vec[u8]](result::IoError::Other);
     }
 
-    // Block until an incoming connection lands; return the accepted stream.
-    pub fn accept(mut self) -> result::Result[TcpStream, result::IoError] {
-        // TODO: Phase 3 — accept(fd, ...); wrap returned fd in TcpStream.
-        return result::Result::Err(result::IoError::Other);
+    // Write `data` to the peer. Loops on short writes.
+    pub fn write_all(mut self, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+        if self.fd < (0 as i32) {
+            return result::io_err::[usize](result::IoError::InvalidInput);
+        }
+        let n: usize = data.len();
+        let slice: u8[] = data.as_slice();
+        let p: *u8 = unsafe { slice_ptr(slice) };
+        let mut written: usize = 0 as usize;
+        while written < n {
+            let remaining: usize = n -% written;
+            let q: *u8 = unsafe { p + written };
+            let w: isize = unsafe { write(self.fd, q, remaining) };
+            if w <= (0 as isize) {
+                return result::io_err::[usize](result::IoError::BrokenPipe);
+            }
+            written = written +% (w as usize);
+        }
+        return result::io_ok::[usize](written);
     }
 
-    pub fn close(move self) {
-        // TODO: Phase 3 — libc close; disarm Drop.
+    // Half-close the write side so the peer sees EOF. Pairs with a remote
+    // `read_to_end` that would otherwise block forever waiting for more.
+    pub fn shutdown_write(self) {
+        if self.fd >= (0 as i32) {
+            unsafe { shutdown(self.fd, 1 as i32); }
+        }
+        return;
+    }
+
+    pub fn close(mut self) {
+        if self.fd >= (0 as i32) {
+            unsafe { close(self.fd); }
+            self.fd = 0 -% 1 as i32;
+        }
         return;
     }
 
     fn drop(mut self) {
-        // TODO: Phase 3 — if fd != -1: close(fd).
+        if self.fd >= (0 as i32) {
+            unsafe { close(self.fd); }
+        }
+        return;
+    }
+}
+
+impl TcpListener {
+    // Block until a client connects, return the accepted stream.
+    pub fn accept(mut self) -> result::Result[TcpStream, result::IoError] {
+        if self.fd < (0 as i32) {
+            return result::io_err::[TcpStream](result::IoError::InvalidInput);
+        }
+        // We don't expose the peer's address (would need another allocation
+        // + caller-side parsing). Pass NULL pointers so accept skips it.
+        let null_ptr: *u8 = unsafe { 0 as *u8 };
+        let null_len: *u32 = unsafe { 0 as *u32 };
+        let cfd: i32 = unsafe { accept(self.fd, null_ptr, null_len) };
+        if cfd < (0 as i32) {
+            return result::io_err::[TcpStream](result::IoError::Other);
+        }
+        return result::io_ok::[TcpStream](TcpStream { fd: cfd });
+    }
+
+    pub fn close(mut self) {
+        if self.fd >= (0 as i32) {
+            unsafe { close(self.fd); }
+            self.fd = 0 -% 1 as i32;
+        }
+        return;
+    }
+
+    fn drop(mut self) {
+        if self.fd >= (0 as i32) {
+            unsafe { close(self.fd); }
+        }
         return;
     }
 }

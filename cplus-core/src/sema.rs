@@ -1214,15 +1214,26 @@ impl SemaCx<'_> {
     /// are fully typed so methods can reference any type by name. Reports
     /// E0325 (unknown / non-struct impl target) and E0326 (duplicate method).
     fn collect_methods(&mut self, p: &Program) {
+        // v0.0.3 Slice 1P.2 — two-phase: register every generic-impl-method
+        // template BEFORE resolving any concrete impl method signature.
+        // Otherwise, an `impl Foo { fn bar() -> vec::Vec[u8] { ... } }` in
+        // a downstream file triggers `Vec[u8]` instantiation while
+        // `vec.cplus`'s `impl Vec[T] { ... }` hasn't been collected yet —
+        // the new struct ends up methodless and `buf.push(...)` fires
+        // E0324 even though sema sees the generic impl right there.
         for item in &p.items {
             self.current_file = item.origin_file.clone();
             let ItemKind::Impl(b) = &item.kind else { continue; };
-            // Slice 7GEN.5e step 3: generic-typed impl (`impl Vec[T] { ... }`)
-            // gets routed into `generic_impl_methods` — there's no
-            // concrete StructDef to register against yet; methods are
-            // materialized lazily at each Vec[i32]-style instantiation.
             if !b.target_generic_params.is_empty() {
                 self.collect_generic_impl_methods(b);
+            }
+        }
+        self.current_file = None;
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            let ItemKind::Impl(b) = &item.kind else { continue; };
+            // Generic impls were handled in phase 1 above.
+            if !b.target_generic_params.is_empty() {
                 continue;
             }
             // Slice 7GEN.4: skip impls whose target is an interface — those
@@ -1800,6 +1811,14 @@ impl SemaCx<'_> {
                 continue;
             }
             if self.fns.contains_key(&f.name.name) || self.fns_generic.contains_key(&f.name.name) {
+                // Phase 1 stdlib note: when both declarations are `extern fn`
+                // they target the same external symbol; allow the duplicate
+                // silently (e.g. multiple stdlib modules declaring `extern fn
+                // write` to reach libc::write). The first declaration wins
+                // and stays in `self.fns`. Non-extern duplicates still error.
+                if f.is_extern && self.extern_fns.contains(&f.name.name) {
+                    continue;
+                }
                 self.err(
                     "E0301",
                     format!("duplicate function definition `{}`", f.name.name),
@@ -4266,42 +4285,33 @@ impl SemaCx<'_> {
     }
 
     fn check_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr, span: ByteSpan) -> Ty {
-        if !matches!(op, AssignOp::Assign) {
-            self.err(
-                "E0312",
-                "compound assignment operators are not yet supported in Phase 1".to_string(),
-                span,
-            );
-            let _ = self.check_expr(target, None);
-            let _ = self.check_expr(value, None);
-            return Ty::Error;
-        }
         // Special case: first write to an unassigned binding via a direct
         // Ident target. This is the initialization site of a `let x: T;`
         // — allowed regardless of `mut` (it's the binding's first value,
         // not a reassignment). After this, the binding is marked assigned
         // and any further writes require the binding to be `mut`.
-        if let ExprKind::Ident(name) = &target.kind {
-            let unassigned = self.lookup_local(name)
-                .map(|info| !info.assigned)
-                .unwrap_or(false);
-            if unassigned {
-                // Type-check the value first (so cascading errors surface).
-                let target_ty = self.lookup_local(name).map(|i| i.ty.clone()).unwrap_or(Ty::Error);
-                if target_ty != Ty::Error {
-                    self.check_expr(value, Some(target_ty));
-                } else {
-                    let _ = self.check_expr(value, None);
-                }
-                // Mark the binding assigned. Find it in the scope stack —
-                // matches `lookup_local`'s innermost-first walk.
-                for scope in self.scopes.iter_mut().rev() {
-                    if let Some(info) = scope.get_mut(name) {
-                        info.assigned = true;
-                        break;
+        // Compound assigns can't init (no prior value to read), so only
+        // plain `=` takes this path.
+        if matches!(op, AssignOp::Assign) {
+            if let ExprKind::Ident(name) = &target.kind {
+                let unassigned = self.lookup_local(name)
+                    .map(|info| !info.assigned)
+                    .unwrap_or(false);
+                if unassigned {
+                    let target_ty = self.lookup_local(name).map(|i| i.ty.clone()).unwrap_or(Ty::Error);
+                    if target_ty != Ty::Error {
+                        self.check_expr(value, Some(target_ty));
+                    } else {
+                        let _ = self.check_expr(value, None);
                     }
+                    for scope in self.scopes.iter_mut().rev() {
+                        if let Some(info) = scope.get_mut(name) {
+                            info.assigned = true;
+                            break;
+                        }
+                    }
+                    return Ty::Unit;
                 }
-                return Ty::Unit;
             }
         }
         // Regular case: target must be a place rooted at a mutable local.
@@ -4310,10 +4320,47 @@ impl SemaCx<'_> {
             return Ty::Error;
         }
         let target_ty = self.check_expr(target, None);
-        if target_ty != Ty::Error {
-            self.check_expr(value, Some(target_ty));
-        } else {
-            let _ = self.check_expr(value, None);
+        // v0.0.3 Slice 3A: compound assigns (`+=`, `-=`, `*=`, `/=`, `%=`,
+        // `&=`, `|=`, `^=`, `<<=`, `>>=`). Each is `a OP= b` ≡ `a = a OP b`;
+        // type-check the equivalent binary expr to enforce the same
+        // type-rules as the standalone binary op. The +%/-%/*%/etc. wrapping
+        // variants are NOT covered — wrapping ops don't have compound forms
+        // in C+ (use `a = a +% b` explicitly).
+        let value_ty = self.check_expr(value, if target_ty == Ty::Error { None } else { Some(target_ty.clone()) });
+        if !matches!(op, AssignOp::Assign) && target_ty != Ty::Error && value_ty != Ty::Error {
+            // Check the op is type-compatible with target_ty. For arithmetic
+            // ops (+=, -=, *=, /=, %=) — operand must be a numeric type
+            // (and float for /% is rejected). For bitwise/shift — operand
+            // must be an integer.
+            let (op_label, is_arith, is_bitwise) = match op {
+                AssignOp::AddAssign => ("`+=`", true, false),
+                AssignOp::SubAssign => ("`-=`", true, false),
+                AssignOp::MulAssign => ("`*=`", true, false),
+                AssignOp::DivAssign => ("`/=`", true, false),
+                AssignOp::ModAssign => ("`%=`", true, false),
+                AssignOp::BitAndAssign => ("`&=`", false, true),
+                AssignOp::BitOrAssign  => ("`|=`", false, true),
+                AssignOp::BitXorAssign => ("`^=`", false, true),
+                AssignOp::ShlAssign    => ("`<<=`", false, true),
+                AssignOp::ShrAssign    => ("`>>=`", false, true),
+                AssignOp::Assign => unreachable!(),
+            };
+            let int_ok = target_ty.is_signed_int() || target_ty.is_unsigned_int();
+            let arith_ok = int_ok || matches!(target_ty, Ty::F32 | Ty::F64);
+            if is_arith && !arith_ok {
+                self.err(
+                    "E0302",
+                    format!("{op_label} requires a numeric type, got `{}`", ty_display(&target_ty)),
+                    span,
+                );
+            }
+            if is_bitwise && !int_ok {
+                self.err(
+                    "E0302",
+                    format!("{op_label} requires an integer type, got `{}`", ty_display(&target_ty)),
+                    span,
+                );
+            }
         }
         Ty::Unit
     }
@@ -4650,6 +4697,12 @@ impl SemaCx<'_> {
         match ty {
             Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
             Ty::Array(elem, len) => Ty::Array(Box::new(self.subst_ty_deep(elem, subst)), *len),
+            // v0.0.3 1P.2 follow-up: slice element types need substitution too.
+            // Without this, `impl Vec[T] { fn as_slice(self) -> T[] }`
+            // monomorphizes to a function still returning `T[]` (with T as
+            // a Param), so consumers calling `.as_slice()` on a `Vec[u8]`
+            // got a slice-of-Param instead of `u8[]`.
+            Ty::Slice(elem) => Ty::Slice(Box::new(self.subst_ty_deep(elem, subst))),
             Ty::RawPtr(inner) => Ty::RawPtr(Box::new(self.subst_ty_deep(inner, subst))),
             Ty::FnPtr { params, return_type } => {
                 let params = params.iter().map(|p| self.subst_ty_deep(p, subst)).collect();
@@ -5472,8 +5525,20 @@ mod tests {
     }
 
     #[test]
-    fn compound_assign_not_supported_e0312() {
-        assert_only_code("fn main() -> i32 { let mut x = 1; x += 1; return x; }", "E0312");
+    fn compound_assign_supported_clean() {
+        // v0.0.3 Slice 3A: `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`
+        // all type-check cleanly on appropriate types.
+        assert_clean("fn main() -> i32 { let mut x = 1; x += 2; x -= 1; x *= 3; return x; }");
+        assert_clean("fn main() -> i32 { let mut b: u32 = 0xff as u32; b &= 0x0f as u32; b |= 0x10 as u32; b ^= 0x01 as u32; b <<= 1 as u32; b >>= 2 as u32; return b as i32; }");
+    }
+
+    #[test]
+    fn compound_bitwise_assign_on_float_e0302() {
+        // Bitwise compound assigns require integer types.
+        assert_only_code(
+            "fn main() -> i32 { let mut x: f32 = 1.0 as f32; x &= 2.0 as f32; return 0; }",
+            "E0302",
+        );
     }
 
     #[test]

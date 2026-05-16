@@ -562,14 +562,14 @@ fn definition_on_keyword_returns_empty() {
 
 // ---- helpers ----
 
+/// v0.0.3 Phase 2 (CWE-377 hardening): use `tempfile::TempDir` for secure
+/// random paths instead of the predictable PID-based shape. See the
+/// matching helper in `cpc/tests/e2e.rs` for the leak rationale.
 fn tempdir() -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    let p = std::env::temp_dir().join(format!(
-        "cpc-lsp-test-{}-{}-{}",
-        std::process::id(), n, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-    ));
-    std::fs::create_dir_all(&p).unwrap();
-    p
+    let dir = tempfile::Builder::new()
+        .prefix("cpc-lsp-test-")
+        .tempdir()
+        .expect("tempdir creation");
+    let leaked: &'static tempfile::TempDir = Box::leak(Box::new(dir));
+    leaked.path().to_path_buf()
 }

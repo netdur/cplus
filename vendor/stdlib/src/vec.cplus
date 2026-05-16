@@ -1,11 +1,19 @@
 // stdlib/vec.cplus — growable, heap-backed buffer.
 //
-// Skeleton: API only. Bodies fill in during Phase 3.
+// `Vec[T]` owns its allocation; Drop frees it. `push` doubles capacity on
+// overflow (1 → 2 → 4 → ...). `as_slice` borrows the live region as a `T[]`.
 //
-// A reference implementation already exists at
-// [docs/examples/phase11_vec_allocator.cplus](../phase11_vec_allocator.cplus) —
-// Phase 3C's job is to promote that into a stable surface here, document
-// the invariants, and write the test matrix.
+// API note: the v0.0.3 stdlib exposes constructors as **free functions**
+// (`vec::new[T]()`, `vec::with_capacity[T](n)`) rather than associated
+// functions (`Vec[T]::new()`). The latter is blocked on a Phase-7 polish
+// item — module-qualified generic associated-fn calls (`mod::Type[args]::method()`)
+// don't yet resolve. Free functions avoid the limitation cleanly and
+// match Zig/Go conventions. The associated-fn shape lands when the
+// resolver-side support is wired.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
 
 pub struct Vec[T] {
     ptr: *T,
@@ -13,50 +21,73 @@ pub struct Vec[T] {
     cap: usize,
 }
 
-impl [T] Vec[T] {
-    // Empty Vec, no allocation.
-    pub fn new() -> Vec[T] {
-        // TODO: Phase 3 — Vec { ptr: 0 as *T, len: 0, cap: 0 }.
-        return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: 0 as usize };
-    }
+// Empty Vec, no allocation. Drop's free is a no-op when `cap == 0`.
+pub fn new[T]() -> Vec[T] {
+    return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: 0 as usize };
+}
 
-    // Pre-allocate room for `n` elements without changing `len`.
-    pub fn with_capacity(n: usize) -> Vec[T] {
-        // TODO: Phase 3 — malloc(n * size_of[T]()).
-        return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: n };
-    }
+// Pre-allocate room for `n` elements (len stays 0).
+pub fn with_capacity[T](n: usize) -> Vec[T] {
+    let bytes: usize = n *% size_of::[T]();
+    let raw: *u8 = unsafe { malloc(bytes) };
+    return Vec[T] { ptr: unsafe { raw as *T }, len: 0 as usize, cap: n };
+}
 
-    // Append. Doubles capacity when full (1 → 2 → 4 → ...).
+impl Vec[T] {
+    // Append one element. Doubles capacity when full (0 → 1 → 2 → 4 → ...).
     pub fn push(mut self, x: T) {
-        // TODO: Phase 3 — if len == cap: grow; write x; len += 1.
+        if self.len == self.cap {
+            let mut new_cap: usize = self.cap *% (2 as usize);
+            if new_cap == (0 as usize) {
+                new_cap = 1 as usize;
+            }
+            let new_bytes: usize = new_cap *% size_of::[T]();
+            let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
+            self.ptr = unsafe { raw as *T };
+            self.cap = new_cap;
+        }
+        let slot: *T = unsafe { self.ptr + self.len };
+        unsafe { *slot = x; }
+        self.len = self.len +% (1 as usize);
         return;
     }
 
-    // Remove the last element if any.
+    // Drop the last element (no return). Use `get(len - 1)` first if needed.
+    // Returns true iff something was popped.
     pub fn pop(mut self) -> bool {
-        // TODO: Phase 3 — if len > 0: drop element at len-1; len -= 1; return true.
-        return false;
+        if self.len == (0 as usize) {
+            return false;
+        }
+        self.len = self.len -% (1 as usize);
+        return true;
     }
 
-    // Number of elements currently stored.
     pub fn len(self) -> usize {
         return self.len;
     }
 
-    // Allocated capacity in elements.
     pub fn capacity(self) -> usize {
         return self.cap;
     }
 
-    // Borrow the underlying storage as a slice.
+    // Read element `i`. Bounds check is the caller's job for now.
+    pub fn get(self, i: usize) -> T {
+        let p: *T = unsafe { self.ptr + i };
+        return unsafe { *p };
+    }
+
+    // Borrow the live region as a slice.
     pub fn as_slice(self) -> T[] {
-        // TODO: Phase 3 — slice_from_raw_parts(self.ptr, self.len).
         return unsafe { slice_from_raw_parts(self.ptr, self.len) };
     }
 
-    // Destructor: free the heap buffer.
+    // Destructor: free the heap buffer. Element drop is the caller's job
+    // (Vec doesn't recursively drop T) — generic-method-invoked drop-glue
+    // lands when the per-T glue can be invoked from generic body context.
     fn drop(mut self) {
-        // TODO: Phase 3 — if cap > 0: drop each element, then free(ptr).
+        if self.cap > (0 as usize) {
+            unsafe { free(self.ptr as *u8); }
+        }
         return;
     }
 }

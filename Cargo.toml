@@ -1,7 +1,13 @@
 [workspace]
-members = ["cplus-core", "cpc", "cpc-lsp"]
+members = ["cplus-core", "cpc", "cpc-lsp", "cpc-bindgen"]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.75"
+
+[workspace.dependencies]
+# v0.0.3 Phase 2 (CWE-377 hardening): use the `tempfile` crate for all
+# temporary file + directory creation so paths get cryptographically
+# random suffixes and secure mode bits, not predictable PID-based names.
+tempfile = "3"

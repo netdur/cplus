@@ -1,7 +1,33 @@
-// stdlib_smoke
+// stdlib_smoke — hash_map: insert + get + overwrite + miss
 
+import "stdlib/io" as io;
+import "stdlib/hash_map" as map;
 import "stdlib/result" as result;
 
 fn main() -> i32 {
-    return 0;
+    let mut m: map::StrIntMap = map::new_str_int_map();
+    m.insert("apple", 1 as i32);
+    m.insert("banana", 2 as i32);
+    m.insert("cherry", 3 as i32);
+    m.insert("apple", 10 as i32);  // overwrite
+
+    let mut fails: i32 = 0 as i32;
+    guard let result::Result[i32, result::IoError]::Ok(v1) = m.get("apple")
+        else { return 50; };
+    if v1 != (10 as i32) { fails = fails +% (1 as i32); }
+    guard let result::Result[i32, result::IoError]::Ok(v2) = m.get("banana")
+        else { return 51; };
+    if v2 != (2 as i32) { fails = fails +% (1 as i32); }
+    guard let result::Result[i32, result::IoError]::Ok(v3) = m.get("cherry")
+        else { return 52; };
+    if v3 != (3 as i32) { fails = fails +% (1 as i32); }
+    if m.contains_key("grape") { fails = fails +% (1 as i32); }
+    if m.len() != (3 as usize) { fails = fails +% (1 as i32); }
+
+    if fails == (0 as i32) {
+        io::println("hash_map: 5/5 ok");
+    } else {
+        io::eprintln("hash_map: FAIL");
+    }
+    return fails;
 }

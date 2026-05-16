@@ -4,10 +4,31 @@ use cplus_core::{attrs, borrowck, codegen, doctest, fmt as cpfmt, lexer, lower, 
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use tempfile::NamedTempFile;
 
 const HELLO_LL: &str = include_str!("hello.ll");
+
+/// v0.0.3 Phase 2 (CWE-377 hardening): create a secure temp file with the
+/// given content and a stable suffix so clang sees `cpc-<rand>.ll` (etc.)
+/// rather than the predictable `cpc-<pid>.ll` shape. The returned
+/// `NamedTempFile` cleans up on drop — callers don't `fs::remove_file`.
+///
+/// The previous shape (`env::temp_dir().join(format!("cpc-{pid}.ll"))`)
+/// allowed a local attacker to pre-create the path as a symlink to a
+/// victim file; running `cpc` would then overwrite the attacker's chosen
+/// target with the LLVM IR.
+fn make_temp_file(prefix: &str, suffix: &str, content: &[u8]) -> std::io::Result<NamedTempFile> {
+    let mut handle = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(suffix)
+        .tempfile()?;
+    handle.write_all(content)?;
+    handle.flush()?;
+    Ok(handle)
+}
 
 const USAGE: &str = "\
 cpc — C+ compiler
@@ -768,11 +789,14 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
             return ExitCode::FAILURE;
         }
     }
-    let tmp = env::temp_dir().join(format!("cpc-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp, &ir) {
-        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
-        return ExitCode::FAILURE;
-    }
+    let tmp_handle = match make_temp_file("cpc-", ".ll", ir.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp = tmp_handle.path().to_path_buf();
     // v0.0.2 (AppKit-via-Cplus.toml): expand the manifest's `frameworks`
     // and `libs` lists into `-framework <name>` / `-l<name>` linker args.
     // `frameworks` is macOS/iOS-specific (no-op elsewhere because clang's
@@ -793,7 +817,7 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         Err(code) => return code,
     }
     let status = run_clang(&tmp, &out_path, build_mode, false, &[], &link_args);
-    let _ = fs::remove_file(&tmp);
+    drop(tmp_handle); // explicit cleanup on the secure temp path
     status
 }
 
@@ -901,11 +925,14 @@ fn build_lib_project(
     }
 
     // Step 3: IR → temp .ll → clang -c → <name>.o.
-    let tmp_ll = env::temp_dir().join(format!("cpc-lib-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp_ll, &ir) {
-        eprintln!("cpc: writing IR to {}: {e}", tmp_ll.display());
-        return ExitCode::FAILURE;
-    }
+    let tmp_ll_handle = match make_temp_file("cpc-lib-", ".ll", ir.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp_ll = tmp_ll_handle.path().to_path_buf();
     let obj_path = target_dir.join(format!("{}.o", lib.name));
     let opt = match build_mode { BuildMode::Debug => "-O0", BuildMode::Release => "-O2" };
     let obj_status = Command::new("clang")
@@ -916,7 +943,7 @@ fn build_lib_project(
         .arg("-o")
         .arg(&obj_path)
         .status();
-    let _ = fs::remove_file(&tmp_ll);
+    drop(tmp_ll_handle);
     match obj_status {
         Ok(s) if s.success() => {}
         Ok(s) => {
@@ -1406,23 +1433,37 @@ fn run_test(
         return ExitCode::SUCCESS;
     }
     let ir = codegen::generate_test_binary(&program, build_mode, &tests, opts.json);
-    let tmp = env::temp_dir().join(format!("cpc-test-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp, &ir) {
-        eprintln!("cpc test: writing IR to {}: {e}", tmp.display());
-        return ExitCode::FAILURE;
-    }
-    let bin_out = env::temp_dir().join(format!("cpc-test-{}.bin", std::process::id()));
+    let tmp_handle = match make_temp_file("cpc-test-", ".ll", ir.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc test: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp = tmp_handle.path().to_path_buf();
+    let bin_out_handle = match tempfile::Builder::new()
+        .prefix("cpc-test-")
+        .suffix(".bin")
+        .tempfile()
+    {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc test: creating temp binary path: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let bin_out = bin_out_handle.path().to_path_buf();
     let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[], &[]);
-    let _ = fs::remove_file(&tmp);
+    drop(tmp_handle);
     if !matches!(clang_status, ExitCode::SUCCESS) {
-        let _ = fs::remove_file(&bin_out);
+        drop(bin_out_handle);
         return clang_status;
     }
     // Run the test binary. Its stdout is what `cpc test` prints; its exit
     // code equals the number of failing tests (clamped into [0, 255] so the
     // process-exit-code-as-u8 convention still fits).
     let status = Command::new(&bin_out).status();
-    let _ = fs::remove_file(&bin_out);
+    drop(bin_out_handle);
     match status {
         Ok(s) => {
             // The driver `main` returns the failure count. Map any non-zero
@@ -1615,13 +1656,16 @@ fn find_cpc_lsp() -> Option<PathBuf> {
 }
 
 fn phase0_hello(out: PathBuf) -> ExitCode {
-    let tmp = env::temp_dir().join(format!("cpc-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp, HELLO_LL) {
-        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
-        return ExitCode::FAILURE;
-    }
+    let tmp_handle = match make_temp_file("cpc-", ".ll", HELLO_LL.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp = tmp_handle.path().to_path_buf();
     let status = run_clang(&tmp, &out, BuildMode::Debug, false, &[], &[]);
-    let _ = fs::remove_file(&tmp);
+    drop(tmp_handle);
     status
 }
 
@@ -1637,13 +1681,16 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
         Ok(ir) => ir,
         Err(code) => return code,
     };
-    let tmp = env::temp_dir().join(format!("cpc-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp, &ir) {
-        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
-        return ExitCode::FAILURE;
-    }
+    let tmp_handle = match make_temp_file("cpc-", ".ll", ir.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp = tmp_handle.path().to_path_buf();
     let status = run_clang(&tmp, &out, build_mode, debug_info, sanitizers, &[]);
-    let _ = fs::remove_file(&tmp);
+    drop(tmp_handle);
     status
 }
 
@@ -2099,16 +2146,19 @@ fn dump_obj(input: PathBuf, out: PathBuf, diag_mode: DiagMode, build_mode: Build
         Ok(ir) => ir,
         Err(code) => return code,
     };
-    let tmp = env::temp_dir().join(format!("cpc-obj-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp, &ir) {
-        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
-        return ExitCode::FAILURE;
-    }
+    let tmp_handle = match make_temp_file("cpc-obj-", ".ll", ir.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp = tmp_handle.path().to_path_buf();
     if let Some(parent) = out.parent() {
         if !parent.as_os_str().is_empty() {
             if let Err(e) = fs::create_dir_all(parent) {
                 eprintln!("cpc: creating {}: {e}", parent.display());
-                let _ = fs::remove_file(&tmp);
+                drop(tmp_handle);
                 return ExitCode::FAILURE;
             }
         }
@@ -2125,7 +2175,7 @@ fn dump_obj(input: PathBuf, out: PathBuf, diag_mode: DiagMode, build_mode: Build
         .arg("-o")
         .arg(&out)
         .status();
-    let _ = fs::remove_file(&tmp);
+    drop(tmp_handle);
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(s) => {
@@ -2156,13 +2206,16 @@ fn dump_ll_or_asm(
         Ok(ir) => ir,
         Err(code) => return code,
     };
-    let tmp = env::temp_dir().join(format!("cpc-emit-{}.ll", std::process::id()));
-    if let Err(e) = fs::write(&tmp, &ir) {
-        eprintln!("cpc: writing IR to {}: {e}", tmp.display());
-        return ExitCode::FAILURE;
-    }
+    let tmp_handle = match make_temp_file("cpc-emit-", ".ll", ir.as_bytes()) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cpc: writing IR to temp file: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let tmp = tmp_handle.path().to_path_buf();
     let code = run_clang_to_stdout(&tmp, build_mode, output_kind);
-    let _ = fs::remove_file(&tmp);
+    drop(tmp_handle);
     code
 }
 
