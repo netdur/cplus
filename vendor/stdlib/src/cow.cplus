@@ -1,0 +1,77 @@
+// stdlib/cow.cplus — clone-on-write wrapper for `string`-ish data.
+//
+// `CowStr` is the "string-literal default, only allocate if mutated"
+// pattern collapsed into one type. Useful as a function return type when
+// the function *sometimes* needs to allocate (e.g. case normalisation,
+// prefix-stripping, escaping) — callers can read uniformly and the
+// allocation only happens on demand.
+//
+// **Scope: string-flavoured Cow only.** Rust's `Cow<'a, T>` is generic
+// over T; the value-add comes from the borrow form (`&'a T`) being
+// distinct from the owned form. C+ has no `&T` references, so a generic
+// Cow degenerates to "either of two unrelated types" — `Either[A, B]`
+// without the read-uniform behaviour Cow gives. The actual stdlib use
+// case is string-shaped data: a fat-pointer view (`str`) of a static
+// or caller-owned buffer vs. an owned `string`. Cow for `Vec[T]` /
+// `T[]` can land as a separate `CowSlice[T]` if a real workload demands.
+//
+// **API shape: free functions, not methods.** v0.0.4 sema rejects
+// `impl` blocks on enum types (E0325 — "Phase 2 supports inherent
+// methods on structs only"), so the read/consume operations are
+// module-level free fns. Callers write `cow::as_str(c)` rather than
+// `c.as_str()`. When `impl Enum` lands, this re-exports as methods
+// trivially.
+//
+// **Lifetime contract for the `View` variant.** `View(s: str)` borrows
+// the underlying bytes — the caller is responsible for ensuring those
+// bytes outlive every `CowStr` that points at them. The canonical safe
+// case is a string literal (program lifetime). Stuffing a `str` derived
+// from a heap allocation that goes out of scope before the Cow does is
+// a use-after-free. No compile-time enforcement until lifetime
+// annotations land more thoroughly; for now: prefer `Owned` if in doubt.
+
+pub enum CowStr {
+    // Borrowed view of someone else's storage. Caller asserts the
+    // backing bytes outlive every CowStr that wraps them.
+    View(str),
+    // Heap-allocated owned string. Drop releases it.
+    Owned(string),
+}
+
+// Wrap a `str` (caller-owned-or-static bytes) as a Cow.
+pub fn from_view(s: str) -> CowStr {
+    return CowStr::View(s);
+}
+
+// Wrap an owned `string` as a Cow. The Cow now owns the buffer.
+pub fn from_owned(move s: string) -> CowStr {
+    return CowStr::Owned(s);
+}
+
+// Whether the wrapped data is owned (true) or borrowed (false). Mostly
+// for diagnostics + tests.
+pub fn is_owned(c: CowStr) -> bool {
+    return match c {
+        CowStr::View(_) => false,
+        CowStr::Owned(_) => true,
+    };
+}
+
+// Length in bytes (works for both variants).
+pub fn len(c: CowStr) -> usize {
+    return match c {
+        CowStr::View(s) => str_len(s),
+        CowStr::Owned(s) => s.len(),
+    };
+}
+
+// Consume the Cow; produce an owned `string`. View variant → allocate
+// and copy the bytes (`str::to_string()` does the malloc + memcpy).
+// Owned variant → unwrap and return the existing buffer (no extra
+// allocation, no copy).
+pub fn into_owned(move c: CowStr) -> string {
+    return match c {
+        CowStr::View(s) => s.to_string(),
+        CowStr::Owned(s) => s,
+    };
+}

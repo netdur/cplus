@@ -6498,6 +6498,55 @@ fn stdlib_channel_mpmc_stress() {
     }
 }
 
+/// v0.0.4 Phase 2 Slice 2G: `CowStr` — clone-on-write string wrapper.
+///
+/// Two variants: View(str) borrows caller's bytes; Owned(string) owns
+/// a heap buffer. `into_owned(move c)` allocates+copies on the View
+/// path; hands over the buffer on the Owned path. ASan-clean.
+#[test]
+fn stdlib_cow_str_view_and_owned_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cowr\"\n\n[[bin]]\nname = \"cowr\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let cow_src = include_str!("../../vendor/stdlib/src/cow.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/cow.cplus"), cow_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/cow\" as cow;\n\
+         fn main() -> i32 {\n\
+             let c1 = cow::from_view(\"hello\");\n\
+             if cow::is_owned(c1) { return 1; }\n\
+             if cow::len(c1) != (5 as usize) { return 2; }\n\
+             let initial = \"world\".to_string();\n\
+             let c2 = cow::from_owned(initial);\n\
+             if !cow::is_owned(c2) { return 3; }\n\
+             if cow::len(c2) != (5 as usize) { return 4; }\n\
+             let c3 = cow::from_view(\"abc\");\n\
+             let s3 = cow::into_owned(c3);\n\
+             if s3.len() != (3 as usize) { return 5; }\n\
+             let init2 = \"xyzpq\".to_string();\n\
+             let c4 = cow::from_owned(init2);\n\
+             let s4 = cow::into_owned(c4);\n\
+             if s4.len() != (5 as usize) { return 6; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 2G CowStr regression?)");
+    let bin = dir.join("target/debug/cowr");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected all CowStr checks to pass");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

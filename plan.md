@@ -266,9 +266,32 @@ Buffer is **shift-on-grow** (not ring): when `tail == capacity`, if `head > 0` w
 - Caller bug: `send` after `close()` succeeds silently. No enforcement yet.
 - Inner T's Drop on channel-drop-with-buffered-values not invoked automatically (same v0.0.4 stdlib limitation).
 
-#### Slice 2G — `Cow[T]` · S
+#### Slice 2G — `CowStr` · ✅ shipped 2026-05-17
 
-Copy-on-write borrow. Useful for stdlib hot paths (e.g., `str` operations that may or may not need to allocate).
+**Reframed during implementation:** ships as `CowStr` (string-specific), not generic `Cow[T]`. Rust's `Cow<'a, T>` derives its value-add from the borrow form (`&'a T`) being distinct from the owned form. C+ has no `&T` references — a generic Cow would degenerate to "either of two unrelated types" with no read-uniform behaviour. The real stdlib use case is string-flavoured: fat-pointer view of static or caller-owned bytes vs. an owned `string`. Pure-source stdlib at [vendor/stdlib/src/cow.cplus](vendor/stdlib/src/cow.cplus) — no compiler changes.
+
+**API surface — free functions, not methods.** v0.0.4 sema rejects `impl` on enum types (E0325). Callers write `cow::as_str(c)` rather than `c.as_str()`. When `impl Enum` lands, these re-export as methods trivially.
+
+```cplus
+pub enum CowStr { View(str), Owned(string) }
+
+cow::from_view(s: str) -> CowStr
+cow::from_owned(move s: string) -> CowStr
+cow::is_owned(c: CowStr) -> bool
+cow::len(c: CowStr) -> usize
+cow::into_owned(move c: CowStr) -> string  // View: allocate+copy; Owned: hand over buffer
+```
+
+**Lifetime contract for the View variant.** `View(s: str)` borrows the underlying bytes — the caller is responsible for keeping them alive. Canonical safe case is a string literal (program lifetime). Stuffing a `str` derived from a heap allocation that drops before the Cow is a use-after-free. No compile-time enforcement until lifetime annotations land more thoroughly.
+
+**Tests:** `stdlib_cow_str_view_and_owned_round_trip` — exercises both variants through `is_owned` / `len` / `into_owned`. ASan-clean.
+
+**Test count: 1200, all green.**
+
+**v0.0.4 limitations:**
+- Generic `Cow[T_view, T_owned]` not provided — see reframing above.
+- `CowSlice[T]` (the `T[]` / `Vec[T]` parallel) can land as a separate slice if a real workload asks.
+- No method API (impl-on-enum support is a future polish slice).
 
 #### Slice 2H — True fire-and-forget thread detach · S
 
@@ -400,6 +423,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2G shipped. `CowStr` — clone-on-write wrapper for string-shaped data. Reframed: ships as a string-specific type (not generic `Cow[T]`) because C+'s no-`&T` design erases the borrow/owned distinction generic Cow depends on. Free-fn API (sema E0325 rejects `impl` on enums in v0.0.4). 1200 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2F shipped. `Channel[T]` — MPMC FIFO between threads. Pure-source stdlib at [vendor/stdlib/src/channel.cplus](vendor/stdlib/src/channel.cplus). Same internally-refcounted design as Mutex (collapses Arc to sidestep no-`&T` aliasing). pthread mutex + condvar + shift-on-grow buffer. 2-producer / 2-consumer stress test passes ASan + TSan clean. 1199 tests, all green.
 - **2026-05-17** — Stdlib optimizations (out-of-band, by adel): `io::print` / `io::println` switched from raw `write` syscalls (2 per println) to a single `printf` call — fewer syscalls + stdio buffering. `stdlib/fs::read_to_end` switched its per-byte push loop to bulk `Vec::extend_from_raw` (closes one of the v0.0.4 stdlib-polish priorities from the carryover list — see below). `stdlib/hash_map`'s grow-to path replaced the per-byte zero-fill while-loops with `memset`. New `Vec[T]::extend_from_raw(mut self, src: *T, count: usize)` lands in `vendor/stdlib/src/vec.cplus` — one realloc + one `memcpy`, replacing N pushes. No new tests required — the stdlib's existing e2e regression suite covers the changed paths; the optimizations are pure performance wins on identical semantics.
 - **2026-05-17** — Phase 2 Slice 2E shipped. `Mutex[T]` — pthread-backed mutual exclusion. Internally refcounted (collapses Arc into itself; sidesteps the no-`&T` aliasing problem). Cross-thread increment test passes ASan + TSan clean. 1198 tests, all green.
