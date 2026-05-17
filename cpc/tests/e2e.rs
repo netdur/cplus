@@ -5813,6 +5813,59 @@ fn stdlib_cross_module_generic_method_propagation() {
     assert_eq!(run.code(), Some(2), "expected v.len() = 2");
 }
 
+/// v0.0.4 Phase 1A: regression for musttail+sret ABI mismatch.
+///
+/// A consumer module receives a `Vec[u8]` from a producer module whose
+/// constructor `make_empty_buf()` tail-returns `vec::new::[u8]()`. Both
+/// wrapper and callee use sret (Vec[u8] is non-Copy, 24-byte). Before the
+/// fix, the musttail call site forwarded the caller's sret slot as bare
+/// `ptr %0` while the callee declared `ptr sret(%Vec__u8) ...`. LLVM's
+/// musttail verifier rejected with "mismatched ABI impacting function
+/// attributes". The fix mirrors the callee's sret attribute string on the
+/// call site.
+#[test]
+fn musttail_sret_cross_module_vec_return_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mts\"\n\n[[bin]]\nname = \"mts\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    // Producer wrapper: tail-calls vec::new[u8]. Both sites are sret.
+    std::fs::write(
+        dir.join("src/maker.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         pub fn make_empty_buf() -> vec::Vec[u8] {\n\
+             return vec::new::[u8]();\n\
+         }\n",
+    ).unwrap();
+    // Consumer pushes onto the producer's returned Vec.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./maker\" as maker;\n\
+         fn main() -> i32 {\n\
+             let mut buf = maker::make_empty_buf();\n\
+             buf.push(7 as u8);\n\
+             buf.push(8 as u8);\n\
+             buf.push(9 as u8);\n\
+             return buf.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (musttail+sret regression?)");
+    let bin = dir.join("target/debug/mts");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(3), "expected buf.len() = 3");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

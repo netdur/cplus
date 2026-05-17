@@ -3,3 +3,6 @@
 a.out
 
 /proves
+
+# Per-user Claude Code local state
+/.claude/

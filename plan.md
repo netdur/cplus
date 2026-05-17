@@ -18,15 +18,17 @@ Slice sizes use assistant-paced framing (S/M/L), not human-typing weeks. A "sess
 
 Every Phase-2/3/4 slice is blocked on one or more of these. Land them first, accept no user-visible artifact until Phase 2.
 
-#### Slice 1A — Cross-module generic-method instantiation · M
+#### Slice 1A — Cross-module generic-method instantiation · ✅ shipped 2026-05-17
 
-`impl Vec[T] { fn push(...) }` attaches to `Vec[u8]` regardless of which module instantiates it.
+**The framing in v0.0.3's carryover note was off.** The impl-attachment mechanism itself already worked — the existing `stdlib_cross_module_generic_method_propagation` e2e test proved it. What was actually broken: a downstream codegen bug surfacing on the same call paths.
 
-Today: works only inside the stdlib module that defines the impl block. Consumer modules importing stdlib and calling `vec.push(x)` on a stdlib-returned `Vec[u8]` fail at monomorphization — the consumer's resolver doesn't walk imported modules' impl blocks.
+**Real bug, found and fixed:** `musttail call` + sret ABI mismatch. When a wrapper `fn make_buf() -> Vec[u8] { return vec::new::[u8](); }` tail-returned another sret function, the call-site forwarded the caller's sret slot as bare `ptr %0` while the callee declared `ptr sret(%Vec__u8) noalias nonnull noundef writable dereferenceable(24) align 8 %0`. LLVM's musttail verifier rejected: "mismatched ABI impacting function attributes."
 
-Fix: at link time, walk every imported module's impl blocks and re-run impl-attachment for the type-arg-pairs observed in the consuming module.
+**Fix:** [cplus-core/src/codegen.rs](cplus-core/src/codegen.rs#L5149) mirrors the callee's sret attribute string at the musttail call site. 9 lines.
 
-Tests: `cross_module_vec_push`, `cross_module_vec_iter_then_push`, `cross_module_generic_method_chain`. Regression suite is the stdlib bodies parked in v0.0.3 Phase 1.
+**Tests:** updated the pinned `musttail_with_sret_forwards_caller_slot` lib test (had been asserting the broken shape) + added `musttail_sret_cross_module_vec_return_round_trip` e2e test (consumer module calls `.push()` 3× on a Vec[u8] returned from a producer-module wrapper that tail-calls `vec::new::[u8]()`).
+
+**Test count: 1182 (313 e2e + 854 lib + 11 LSP + 4 other), all green.**
 
 #### Slice 1B — Generic-fn return-type T-substitution · S
 
@@ -244,4 +246,4 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
-_(nothing yet for v0.0.4)_
+- **2026-05-17** — Phase 1A shipped. Reframed: v0.0.3's "cross-module generic-method instantiation" carryover described a non-bug (impl-attachment already worked). The real failure mode was a musttail+sret call-site ABI mismatch that surfaced on stdlib wrapper chains. 9-line codegen fix at [codegen.rs:5149](cplus-core/src/codegen.rs#L5149); updated pinned lib test; added e2e regression. Test count 1182, all green.

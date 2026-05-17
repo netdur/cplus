@@ -5152,7 +5152,22 @@ impl<'a> FnState<'a> {
                     // `musttail call void @foo(ptr %caller_slot, ...)` the
                     // function's `ret void` will see the value already
                     // landed at the caller's caller's slot.
-                    let mut head = format!("ptr {caller_slot}");
+                    //
+                    // v0.0.4 Phase 1A: LLVM's musttail verifier requires the
+                    // call-site sret attribute (and inner type) to match the
+                    // callee's declaration. Forwarding bare `ptr %slot`
+                    // tripped "mismatched ABI impacting function attributes."
+                    // Mirror the attribute string used at the callee's
+                    // declaration site ([codegen.rs] sret in
+                    // emit_function_signature and emit_method_signature).
+                    let (sret_sz, sret_al) = static_layout(&ret, self.types)
+                        .expect("sret return type has layout");
+                    let sret_inner = self.lty(&ret);
+                    let sret_attrs = format!(
+                        "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} {}",
+                        sret_inner, sret_sz, sret_al, caller_slot
+                    );
+                    let mut head = sret_attrs;
                     if !arg_str.is_empty() { head.push_str(", "); head.push_str(&arg_str); }
                     self.emit(&format!("musttail call void{type_prefix} @{symbol}({head})"));
                     // Return type signaled to upstream — but musttail in
@@ -8226,12 +8241,15 @@ mod tests {
              fn main() -> i32 { let s: string = caller(); return 0; }"
         );
         // Caller's body must musttail-call helper using its own sret slot.
+        // v0.0.4 Phase 1A: the call-site sret attribute must match the
+        // callee's declaration or LLVM's musttail verifier rejects the IR.
         let c_start = ir.find("void @caller(").expect("caller emitted");
         let c_end = ir[c_start..].find("\n}\n").expect("caller close");
         let c_body = &ir[c_start..c_start + c_end];
         assert!(
-            c_body.contains("musttail call void @helper(ptr %0)"),
-            "expected musttail call forwarding caller's sret slot, got:\n{c_body}"
+            c_body.contains("musttail call void @helper(ptr sret(")
+                && c_body.contains(") noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
+            "expected musttail call forwarding caller's sret slot with sret attrs, got:\n{c_body}"
         );
     }
 
