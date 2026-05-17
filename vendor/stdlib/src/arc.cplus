@@ -1,0 +1,95 @@
+// stdlib/arc.cplus — atomically-refcounted shared ownership.
+//
+// `Arc[T]` is the canonical multi-owner type: cheap to clone, deep
+// last-drop free. The control block is `{ refcount: u64, value: T }`
+// allocated as one chunk; every `Arc` pointer carries `ctrl: *u8`
+// pointing at the header. `clone()` does an atomic increment;
+// `drop()` does an atomic decrement and frees the block on the
+// last reference.
+//
+// **Concurrency.** Refcount uses release-on-decrement + acquire fence
+// on the last release (the standard Boost / Rust pattern). For v0.0.4
+// the fence is folded into the LLVM atomic ordering (`AcqRel` on
+// the decrement); a stand-alone `atomic_fence` lands later if a
+// specific workload needs split ordering.
+//
+// **v0.0.4 limitation.** No `Arc::make_mut` (clone-on-write to take a
+// `&mut T`-equivalent) — C+ has no references, so the API would be
+// `Arc::unwrap_mut(mut self) -> T` that requires refcount == 1. Land
+// when an actual workload asks for it.
+//
+// **Drop of inner T.** Inherits the v0.0.4 stdlib limitation: when T
+// is Drop, the inner value's destructor is not invoked automatically
+// at the last Arc's Drop. Build dropwise-aware types on top once the
+// per-T glue is invokable from generic body context.
+
+import "stdlib/atomic" as atomic;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+pub struct Arc[T] {
+    ctrl: *u8,
+}
+
+// Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
+// align_of[T] <= 8; future align_of-driven offset lands when an
+// over-aligned T motivates it).
+pub fn new[T](move v: T) -> Arc[T] {
+    let header: usize = 8 as usize;
+    let value_size: usize = size_of::[T]();
+    let total: usize = header +% value_size;
+    let raw: *u8 = unsafe { malloc(total) };
+    let refct: *u64 = unsafe { raw as *u64 };
+    unsafe { *refct = 1 as u64; }
+    let value_ptr: *T = unsafe { (raw + header) as *T };
+    unsafe { *value_ptr = v; }
+    return Arc[T] { ctrl: raw };
+}
+
+impl Arc[T] {
+    // Atomic increment refcount; return a new Arc sharing the storage.
+    // Relaxed ordering on the increment is sufficient because the new
+    // Arc carries the same ctrl pointer that's already visible to this
+    // thread; no happens-before relationship is established by the
+    // increment itself.
+    pub fn clone(self) -> Arc[T] {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let _prev: u64 = unsafe {
+            atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
+        };
+        return Arc[T] { ctrl: self.ctrl };
+    }
+
+    // Read inner T (bitwise copy). For Copy T this is a true value
+    // copy; for non-Copy T the underlying buffer is shared and the
+    // caller must avoid double-free until proper inner-Drop landed.
+    pub fn get(self) -> T {
+        let header: usize = 8 as usize;
+        let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
+        return unsafe { *value_ptr };
+    }
+
+    // Current strong-reference count (snapshot — racy under load,
+    // useful for tests + debugging only).
+    pub fn strong_count(self) -> u64 {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
+    }
+
+    // Destructor: atomic decrement; free the block on the last ref.
+    // AcqRel ordering: release pairs with prior writes through this
+    // ctrl ptr; acquire on the final decrement synchronises with all
+    // prior Arc::drop's so the freeing thread sees a consistent view
+    // of the value before deallocation.
+    fn drop(mut self) {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let prev: u64 = unsafe {
+            atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+        };
+        if prev == (1 as u64) {
+            unsafe { free(self.ctrl); }
+        }
+        return;
+    }
+}

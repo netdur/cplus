@@ -170,9 +170,30 @@ Single heap-allocated owned value. Pure-source stdlib type at [vendor/stdlib/src
 
 **Learning surfaced during implementation:** `move self` doesn't auto-disarm the callee's function-exit Drop. The first version of `unwrap` did `free` explicitly + returned, then the implicit exit-Drop fired and double-freed. Two safe shapes for consuming methods: (a) let exit-Drop do the cleanup (what `unwrap` ended up doing), or (b) explicitly `mark_moved` self inside an intrinsic-call body (what `JoinHandle::join` + `__cplus_thread_join` does). Worth a forward-pointer for v0.0.5: provide a `consume self` syntax that statically disarms callee Drop.
 
-#### Slice 2C — `Arc[T]` · M
+#### Slice 2C — `Arc[T]` · ✅ shipped 2026-05-17
 
-Refcounted shared ownership. Atomic refcount uses the v0.0.3 Phase 5A atomic primitives. `Arc[T]: Send + Sync` iff `T: Sync`.
+Atomically-refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/arc.cplus](vendor/stdlib/src/arc.cplus) — no compiler changes.
+
+**Layout:** one heap block holds `{ u64 refcount, T value }`. Every `Arc[T]` carries `ctrl: *u8` pointing at the header. `clone()` does a Relaxed atomic increment; `drop()` does an AcqRel atomic decrement; the last reference frees.
+
+**API:**
+- `arc::new(move v: T) -> Arc[T]`
+- `Arc[T]::clone(self) -> Arc[T]` — atomic increment, returns new Arc sharing the storage.
+- `Arc[T]::get(self) -> T` — read inner (bitwise copy).
+- `Arc[T]::strong_count(self) -> u64` — snapshot via SeqCst load.
+- `Arc[T]::drop(mut self)` — atomic decrement; frees on last ref.
+
+**Ordering rationale:** Relaxed on increment (no happens-before required — the new Arc carries a ctrl already visible to this thread). AcqRel on decrement (release pairs with prior ctrl writes; acquire on the final decrement synchronises with all prior drops so the freeing thread sees a consistent view). Matches the Boost / Rust pattern.
+
+**Tests:** `stdlib_arc_cross_thread_share` — two worker threads each receive a cloned Arc, return the inner value, parent verifies + drops last. Runs under no-sanitizer, ASan, and TSan — all clean.
+
+**Test count: 1196, all green.**
+
+**v0.0.4 limitations:**
+- No `Arc::make_mut` (clone-on-write to mutable inner) — would need `Arc::unwrap_mut(mut self) -> T` gated on `strong_count() == 1`. Lands when an actual workload asks.
+- Inner T's Drop on last reference is not invoked automatically (same v0.0.4 stdlib limitation as `Box[T]` / `Vec[T]`).
+- Assumes `align_of[T] <= 8` — over-aligned T would need an alignment-driven offset. Land when motivated.
+- `clone()` syntax requires the caller to bind to a local first (`let c = root.clone(); worker(c);`) because of E0337 "cannot move out of a method-call result." Worth a separate ergonomic slice.
 
 #### Slice 2D — `Rc[T]` · S
 
@@ -320,6 +341,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2C shipped. `Arc[T]` — atomically refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/arc.cplus](vendor/stdlib/src/arc.cplus). Relaxed increment + AcqRel decrement; last reference frees. Cross-thread share verified ASan + TSan clean. 1196 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2B shipped. `Box[T]` — single heap-allocated owned value. Pure-source stdlib at [vendor/stdlib/src/box.cplus](vendor/stdlib/src/box.cplus). API: `box::new(move v)`, `get/set/unwrap`. `move self` semantics learned: don't manually free inside a `move self`-consuming method; let the function-exit Drop do it. 1195 tests, all green.
 - **2026-05-17** — Phase 1G shipped. Generic `async fn` verified e2e — sema's `subst_ty_deep` + monomorphize's `synthesize_fn` already threaded `is_async`; Phase 1E + 1F's fixes made the full chain run clean. `id::[i32]`, `id::[i64]`, `id::[bool]` all round-trip through `block_on`. 1194 tests. **Phase 1 closed.**
 - **2026-05-17** — Phase 1F shipped. `mangle_o_for_tramp` made recursive over `Ty`: raw / fn / struct / enum / array O all work in `thread::spawn`. Eligibility rewritten as explicit `match` (Slice + Str rejected — fat-pointer hazards). 2 new e2e, 1193 tests.

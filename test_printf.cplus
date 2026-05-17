@@ -1,0 +1,6 @@
+extern fn printf(fmt: *u8, ...) -> i32;
+
+fn main() -> i32 {
+    unsafe { printf(str_ptr("%.*s\n\0"), str_len("hello") as i32, str_ptr("hello")); }
+    return 0;
+}
