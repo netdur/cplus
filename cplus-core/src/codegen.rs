@@ -266,34 +266,48 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
     let suffix = mangle_o_for_tramp_with_types(o_ty, Some(types));
     let llvm_t = llvm_ty(o_ty, types);
     let align = align_of_ty(o_ty, types);
+    // v0.0.4 Phase 2 Slice 2H: ctx layout has a u64 refcount at offset 0.
+    // Fn pointer moved to offset 8; result slot to offset 16. After the
+    // worker writes its result, it atomically decrements the refcount;
+    // if it was the last reference (prev == 1), it frees `ctx`. The
+    // refcount lets `JoinHandle::drop` switch from blocking-join to true
+    // fire-and-forget detach without racing the worker.
     out.push_str(&format!(
         "define internal ptr @__cplus_thread_tramp_{suffix}(ptr %arg) {{\n"
     ));
+    out.push_str("entry:\n");
     if matches!(o_ty, Ty::Unit) {
-        out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+        out.push_str("  %f = load ptr, ptr getelementptr inbounds (i8, ptr %arg, i64 8), align 8\n");
         out.push_str("  call void %f()\n");
     } else if return_passes_by_sret_widened(o_ty, types) {
-        // v0.0.4 Phase 1E: non-Copy O ships via sret-aware call.
-        // Worker's signature is `void(ptr sret(<T>))`. Hand it the
-        // result slot inside the heap ctx (offset 8) so the value
-        // lands at the place `join` reads from. Call-site attributes
-        // must mirror the callee declaration (see musttail-sret fix
-        // from Phase 1A: same LLVM verifier requirement).
         let (sz, al) = static_layout(o_ty, types)
             .expect("sret thread-spawn O has layout");
-        out.push_str("  %f = load ptr, ptr %arg, align 8\n");
-        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 8\n");
+        out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
+        out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
+        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
         out.push_str(&format!(
             "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %slot)\n"
         ));
     } else {
-        out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+        out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
+        out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
         out.push_str(&format!("  %r = call {llvm_t} %f()\n"));
-        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 8\n");
+        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
         out.push_str(&format!(
             "  store {llvm_t} %r, ptr %slot, align {align}\n"
         ));
     }
+    // Atomic refcount decrement. AcqRel: release pairs with prior result
+    // store; acquire on the decrement-from-1 path ensures the freeing
+    // thread sees the parent's last writes (if any) before deallocation.
+    // Prev == 1 means worker was the last reference; free the ctx.
+    out.push_str("  %prev = atomicrmw sub ptr %arg, i64 1 acq_rel\n");
+    out.push_str("  %was_last = icmp eq i64 %prev, 1\n");
+    out.push_str("  br i1 %was_last, label %free_bb, label %ret_bb\n");
+    out.push_str("free_bb:\n");
+    out.push_str("  call void @free(ptr %arg)\n");
+    out.push_str("  br label %ret_bb\n");
+    out.push_str("ret_bb:\n");
     out.push_str("  ret ptr null\n");
     out.push_str("}\n");
 }
@@ -304,15 +318,19 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
     let o_align = align_of_ty(o_ty, types);
     let i_align = align_of_ty(i_ty, types);
     let o_size = static_layout(o_ty, types).map(|(s, _)| s).unwrap_or(8);
-    // Input slot lives AFTER the result slot — see the layout note on
-    // `ThreadTrampolines`. The offset is rounded up to I's natural
-    // alignment to keep typed loads valid.
-    let input_off_unaligned = 8 + o_size;
+    // v0.0.4 Phase 2 Slice 2H ctx layout:
+    //   refcount: u64       @ 0
+    //   fn_ptr:             @ 8
+    //   result_slot:        @ 16
+    //   input_slot:         @ 16 + size_of(O) (aligned to align_of(I))
+    let input_off_unaligned = 16 + o_size;
     let input_off = (input_off_unaligned + i_align - 1) & !(i_align - 1);
     out.push_str(&format!(
         "define internal ptr @__cplus_thread_tramp_with_{idx}(ptr %arg) {{\n"
     ));
-    out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+    out.push_str("entry:\n");
+    out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
+    out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
     out.push_str(&format!(
         "  %input_slot = getelementptr i8, ptr %arg, i64 {input_off}\n"
     ));
@@ -325,11 +343,19 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
         out.push_str(&format!(
             "  %r = call {o_llvm} %f({i_llvm} %i)\n"
         ));
-        out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 8\n");
+        out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
         out.push_str(&format!(
             "  store {o_llvm} %r, ptr %result_slot, align {o_align}\n"
         ));
     }
+    // Refcount dec + maybe-free, same shape as emit_spawn_tramp.
+    out.push_str("  %prev = atomicrmw sub ptr %arg, i64 1 acq_rel\n");
+    out.push_str("  %was_last = icmp eq i64 %prev, 1\n");
+    out.push_str("  br i1 %was_last, label %free_bb, label %ret_bb\n");
+    out.push_str("free_bb:\n");
+    out.push_str("  call void @free(ptr %arg)\n");
+    out.push_str("  br label %ret_bb\n");
+    out.push_str("ret_bb:\n");
     out.push_str("  ret ptr null\n");
     out.push_str("}\n");
 }
@@ -5420,10 +5446,19 @@ impl<'a> FnState<'a> {
         }
         let tramp_sym = self.tramps.register_spawn(&o_ty, self.types);
         let (size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
-        let total_size = 8 + size;
+        // v0.0.4 Phase 2 Slice 2H ctx layout:
+        //   refcount: u64       @ 0   (initialized to 2: parent + worker)
+        //   fn_ptr:             @ 8
+        //   result_slot:        @ 16
+        let total_size = 16 + size;
         let ctx = self.next_tmp();
         self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
-        self.emit(&format!("store ptr {f_val}, ptr {ctx}, align 8"));
+        // refcount = 2 (plain store — not yet shared with the worker).
+        self.emit(&format!("store i64 2, ptr {ctx}, align 8"));
+        // fn_ptr at offset 8.
+        let fn_slot = self.next_tmp();
+        self.emit(&format!("{fn_slot} = getelementptr inbounds i8, ptr {ctx}, i64 8"));
+        self.emit(&format!("store ptr {f_val}, ptr {fn_slot}, align 8"));
         let tid_slot = self.next_tmp();
         self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
         let err = self.next_tmp();
@@ -5490,14 +5525,22 @@ impl<'a> FnState<'a> {
         let tramp_sym = self.tramps.register_spawn_with(&i_ty, &o_ty);
         let (o_size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
         let (i_size, i_align) = static_layout(&i_ty, self.types).unwrap_or((8, 8));
-        // Input offset = 8 (fn ptr) + size_of(O), rounded up to I's
-        // natural alignment so the typed store stays in bounds.
-        let input_off_unaligned = 8 + o_size;
+        // v0.0.4 Phase 2 Slice 2H ctx layout:
+        //   refcount: u64       @ 0   (initialized to 2: parent + worker)
+        //   fn_ptr:             @ 8
+        //   result_slot:        @ 16
+        //   input_slot:         @ 16 + size_of(O), aligned to align_of(I)
+        let input_off_unaligned = 16 + o_size;
         let input_off = (input_off_unaligned + i_align - 1) & !(i_align - 1);
         let total_size = input_off + i_size;
         let ctx = self.next_tmp();
         self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
-        self.emit(&format!("store ptr {f_val}, ptr {ctx}, align 8"));
+        // refcount = 2 (plain store — not yet shared with the worker).
+        self.emit(&format!("store i64 2, ptr {ctx}, align 8"));
+        // fn_ptr at offset 8.
+        let fn_slot = self.next_tmp();
+        self.emit(&format!("{fn_slot} = getelementptr inbounds i8, ptr {ctx}, i64 8"));
+        self.emit(&format!("store ptr {f_val}, ptr {fn_slot}, align 8"));
         let input_slot = self.next_tmp();
         self.emit(&format!(
             "{input_slot} = getelementptr i8, ptr {ctx}, i64 {input_off}"
@@ -5689,11 +5732,17 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{ctx} = extractvalue {handle_llvm} {h_val}, 1"));
         let _err = self.next_tmp();
         self.emit(&format!("{_err} = call i32 @pthread_join(i64 {tid}, ptr null)"));
+        // v0.0.4 Phase 2 Slice 2H: refcounted ctx. After pthread_join
+        // returns, the worker has finished and atomically decremented
+        // the refcount (down to 1, since parent's ref is still live).
+        // Parent reads the result from offset 16, then atomically
+        // decrements its own ref; the parent will always observe prev==1
+        // here (worker finished its dec before pthread_join returned),
+        // so parent does the free.
         if !is_thread_spawn_eligible(&o_ty) || matches!(o_ty, Ty::Unit) {
-            // Unit: no result to load. Eligibility-failed: codegen
-            // already errored at spawn site; do the free + return undef
-            // so the rest of the function compiles.
-            self.emit(&format!("call void @free(ptr {ctx})"));
+            // Eligibility-failed: codegen errored at spawn site. Best
+            // effort: dec refcount + maybe-free so the IR still validates.
+            self.emit_refcount_dec_and_maybe_free(&ctx);
             if matches!(o_ty, Ty::Unit) {
                 return None;
             }
@@ -5708,10 +5757,31 @@ impl<'a> FnState<'a> {
         };
         let slot = self.next_tmp();
         let result = self.next_tmp();
-        self.emit(&format!("{slot} = getelementptr i8, ptr {ctx}, i64 8"));
+        // Result slot at offset 16 (after refcount@0 + fn_ptr@8).
+        self.emit(&format!("{slot} = getelementptr i8, ptr {ctx}, i64 16"));
         self.emit(&format!("{result} = load {llvm_t}, ptr {slot}, align {align}"));
-        self.emit(&format!("call void @free(ptr {ctx})"));
+        self.emit_refcount_dec_and_maybe_free(&ctx);
         Some((result, o_ty))
+    }
+
+    /// v0.0.4 Phase 2 Slice 2H helper: atomically decrement the u64
+    /// refcount at offset 0 of `ctx`. If the previous value was 1, this
+    /// thread held the last reference — free `ctx`.
+    fn emit_refcount_dec_and_maybe_free(&mut self, ctx: &str) {
+        let prev = self.next_tmp();
+        self.emit(&format!(
+            "{prev} = atomicrmw sub ptr {ctx}, i64 1 acq_rel"
+        ));
+        let was_last = self.next_tmp();
+        self.emit(&format!("{was_last} = icmp eq i64 {prev}, 1"));
+        let free_bb = self.next_block_label();
+        let cont_bb = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {was_last}, label %{free_bb}, label %{cont_bb}"));
+        self.body.push_str(&format!("{free_bb}:\n"));
+        self.body.push_str(&format!("  call void @free(ptr {ctx})\n"));
+        self.body.push_str(&format!("  br label %{cont_bb}\n"));
+        self.body.push_str(&format!("{cont_bb}:\n"));
+        self.terminated = false;
     }
 
     /// Find the `JoinHandle[O]` struct Ty in the type table. Looks
@@ -8720,8 +8790,11 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_input_stored_after_result_slot() {
-        // i32 result is 4 bytes; result slot at offset 8 → input would
-        // be at 12, but aligned up to i32's 4-byte boundary = 12.
+        // v0.0.4 Phase 2 Slice 2H ctx layout:
+        //   refcount:    @ 0  (u64, 8 bytes)
+        //   fn_ptr:      @ 8
+        //   result_slot: @ 16 (i32, 4 bytes — slot ends at 20)
+        //   input_slot:  @ 20 (i32, aligned)
         let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
@@ -8729,12 +8802,10 @@ mod tests {
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
-        // After fn ptr (offset 0..8) and result slot (8..12), input
-        // lives at offset 12 — `getelementptr i8, ptr %arg, i64 12`.
         let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
         let tramp = &ir[tramp_idx..(tramp_idx + 500).min(ir.len())];
-        assert!(tramp.contains("getelementptr i8, ptr %arg, i64 12"),
-            "expected input slot at offset 12, got:\n{tramp}");
+        assert!(tramp.contains("getelementptr i8, ptr %arg, i64 20"),
+            "expected input slot at offset 20, got:\n{tramp}");
     }
 
     #[test]

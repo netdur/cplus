@@ -5995,6 +5995,10 @@ fn stdlib_thread_spawn_join_non_copy_string() {
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6085,6 +6089,10 @@ fn stdlib_thread_spawn_join_raw_pointer_o() {
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6124,6 +6132,10 @@ fn stdlib_thread_spawn_join_fn_pointer_o() {
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6547,6 +6559,88 @@ fn stdlib_cow_str_view_and_owned_round_trip() {
     assert_eq!(run.code(), Some(0), "expected all CowStr checks to pass");
 }
 
+/// v0.0.4 Phase 2 Slice 2H: JoinHandle::drop is non-blocking. Spawn a
+/// worker that runs for ~200ms; drop the handle immediately; verify the
+/// parent returns from the dropping scope in well under that. Sleep at
+/// the end so the worker has time to finish cleanly under ASan.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_drop_is_non_blocking() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"detach_fast\"\n\n[[bin]]\nname = \"detach_fast\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+    // Worker spins for a measurable amount of time (~200ms on this machine);
+    // parent drops the handle immediately and reports elapsed ms. With
+    // fire-and-forget detach the drop returns in microseconds — well below
+    // any sane threshold. With the old blocking-join Drop, this would
+    // return ~200ms.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         extern fn usleep(us: u32) -> i32;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         #[repr(C)]\n\
+         struct Ts { sec: i64, ns: i64 }\n\
+         extern fn clock_gettime(clk: i32, ts: *Ts) -> i32;\n\
+         fn now_ns() -> i64 {\n\
+             let raw: *u8 = unsafe { malloc(16 as usize) };\n\
+             let p: *Ts = unsafe { raw as *Ts };\n\
+             let _r: i32 = unsafe { clock_gettime(6 as i32, p) };\n\
+             let s: i64 = unsafe { p[0].sec };\n\
+             let n: i64 = unsafe { p[0].ns };\n\
+             unsafe { free(raw); }\n\
+             return s *% (1000000000 as i64) +% n;\n\
+         }\n\
+         fn slow_worker() -> i32 {\n\
+             let _r: i32 = unsafe { usleep(200000 as u32) };\n\
+             return 0 as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let t0: i64 = now_ns();\n\
+             {\n\
+                 let h: thread::JoinHandle[i32] = thread::spawn::[i32](slow_worker);\n\
+                 // h goes out of scope here — Drop should NOT block on the worker.\n\
+             }\n\
+             let t1: i64 = now_ns();\n\
+             let elapsed_us: i64 = (t1 -% t0) / (1000 as i64);\n\
+             // Give the worker time to finish cleanly so ASan doesn't see\n\
+             // the process exit with a still-running thread.\n\
+             let _r: i32 = unsafe { usleep(250000 as u32) };\n\
+             // Return 0 if drop was non-blocking (< 50ms), else the\n\
+             // elapsed ms clamped to i32.\n\
+             if elapsed_us > (50000 as i64) {\n\
+                 return (elapsed_us / (1000 as i64)) as i32;\n\
+             }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build --asan failed");
+    let bin = dir.join("target/debug/detach_fast");
+    let run = Command::new(&bin).output().expect("run");
+    let code = run.status.code();
+    assert_eq!(code, Some(0),
+        "drop blocked for {:?} ms (expected non-blocking < 50ms); stderr={}",
+        code, String::from_utf8_lossy(&run.stderr));
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!stderr.contains("AddressSanitizer"),
+        "expected ASan-clean run, got:\n{stderr}");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.
@@ -6775,6 +6869,10 @@ fn stdlib_thread_spawn_join_round_trip() {
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6823,6 +6921,10 @@ fn stdlib_thread_spawn_with_round_trip() {
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
     std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6875,6 +6977,10 @@ fn stdlib_thread_spawn_with_string_input_asan_clean() {
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
     std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6914,6 +7020,10 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
     std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6935,12 +7045,14 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
         "expected E0335 (use of moved value), got:\n{stderr}");
 }
 
-/// v0.0.3 Phase 5 Slice 5B unjoined-drop path: drop a `JoinHandle`
-/// without calling `join`. The Drop impl in `stdlib/thread` blocks via
-/// pthread_join then frees the context buffer. (Detaching would race
-/// with the worker still reading the fn pointer out of the same ctx
-/// — reference-counting the ctx lands in 5C; until then, Drop is the
-/// synchronisation point.) Run under ASan to verify no leaks.
+/// v0.0.4 Phase 2 Slice 2H — true fire-and-forget thread detach. Drop
+/// a `JoinHandle` without calling `join`. The Drop impl in
+/// `stdlib/thread` now calls `pthread_detach` + atomically decrements
+/// the ctx refcount (no blocking). The worker's trampoline also
+/// decrements after writing the result; whichever thread observes
+/// prev==1 frees the ctx. Run under ASan to verify the refcount
+/// handshake doesn't leak the ctx. The spin loop ensures the worker
+/// has time to finish before main exits (so its dec actually runs).
 #[test]
 #[cfg(target_os = "macos")]
 fn stdlib_thread_drop_detaches_unjoined_handle() {
@@ -6957,6 +7069,10 @@ fn stdlib_thread_drop_detaches_unjoined_handle() {
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8288,6 +8404,10 @@ fn racy_counter_provokes_tsan_warning() {
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
     std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8366,6 +8486,10 @@ fn recipe_parallel_sum_runs() {
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
+    // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
+    let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
     assert!(st.success(), "parallel_sum build failed");

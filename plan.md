@@ -293,9 +293,22 @@ cow::into_owned(move c: CowStr) -> string  // View: allocate+copy; Owned: hand o
 - `CowSlice[T]` (the `T[]` / `Vec[T]` parallel) can land as a separate slice if a real workload asks.
 - No method API (impl-on-enum support is a future polish slice).
 
-#### Slice 2H — True fire-and-forget thread detach · S
+#### Slice 2H — True fire-and-forget thread detach · ✅ shipped 2026-05-17
 
-`JoinHandle::drop` switches from blocking `pthread_join` to refcounted-ctx detach using `Arc[ThreadCtx]`. Closes the v0.0.3 carryover.
+`JoinHandle::drop` now calls `pthread_detach` + atomic refcount decrement. **No blocking on drop.** The v0.0.3 carryover is closed.
+
+**Ctx layout change** (codegen — [cplus-core/src/codegen.rs](cplus-core/src/codegen.rs)): added a `u64 refcount @0`, pushed `fn_ptr` to `@8` and `result_slot` to `@16`. For `spawn_with`, `input_slot` is at `@16 + size_of(O)` (aligned to `align_of(I)`). Refcount initialised to 2 (parent + worker each hold one ref).
+
+**Cooperative free** (no `Arc` wrapper type — refcount is inline in the ctx header):
+- Worker trampoline: after writing result, `atomicrmw sub` the refcount with AcqRel ordering. If prev == 1 (parent already dropped), worker frees `ctx`.
+- `gen_thread_join` (codegen): after `pthread_join` returns, parent reads result then does the same dec. Worker dec happened before pthread_join returned, so parent observes prev == 1 and frees.
+- `JoinHandle::drop` (stdlib): calls `pthread_detach(self.tid)` (non-blocking — tells OS to reap thread on exit), then atomic dec. If parent observes prev == 1, parent frees. Otherwise worker will free when it later finishes.
+
+Ordering rationale (AcqRel): release pairs with prior writes through `ctx` (the result store, the input store); acquire on the prev==1 transition ensures the freeing thread sees a consistent view of the ctx contents before deallocation.
+
+**Tests:** the existing `stdlib_thread_drop_detaches_unjoined_handle` (ASan-clean leak check) still passes — the new design is ABI-compatible from the user's perspective. New: `stdlib_thread_drop_is_non_blocking` — spawns a worker that sleeps 200ms, drops the handle immediately, measures elapsed time, asserts < 50ms (typically returns in microseconds). Verifies the drop is actually fire-and-forget.
+
+**Test count: 1204, all green.**
 
 #### Phase 2 exit criteria
 
@@ -498,6 +511,7 @@ Sources: `raytracer/cplus/main.cplus`, `raytracer/c/main.c`, `raytracer/rust/src
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2H shipped. `JoinHandle::drop` is now true fire-and-forget (`pthread_detach` + atomic refcount dec). Ctx layout reshaped: u64 refcount@0, fn_ptr@8, result_slot@16, input_slot@(16+sizeof(O)). Worker trampoline decrements after writing result; whichever side observes prev==1 frees. No Arc wrapper type needed — refcount is inline in the ctx header. Closes v0.0.3 carryover. New e2e `stdlib_thread_drop_is_non_blocking` measures elapsed time and asserts < 50ms for a 200ms worker. 1204 tests, all green.
 - **2026-05-17** — JSON tokenizer benchmark (port surfaced 1 already-fixed bug, no new ones). C+ at 944 MB/s beats C's 908 MB/s by 4% on the byte-iteration workload — same hot-loop assembly, cpc's cold build is 32% faster than clang's. The let-if codegen panic the port hit (`let path: *u8 = if argc > 1 { a } else { b };`) is the SAME bug fixed in [2a4b61b](https://github.com/netdur/cplus/commit/2a4b61b); the fix's `expr_value_ty_with_bindings` covers any type stored in a binding, not just structs. User ran benchmark on a pre-fix cpc; re-running on current main will resolve the workaround.
 - **2026-05-17** — Hashmap benchmark investigation (port surfaced 2.4× lookup gap). Diagnosed as USER bug in the port code, not a compiler issue: `make_key` malloc'd a 10-byte temp inside the 2M-iteration lookup loop. Fix: stack array (`let mut tmp: [u8; 10] = [0u8, ..., 0u8];`). Lookup time 384 ms → 140 ms (beats C's 159 ms). No cpc change needed. Surfaced one ergonomic gap: array-literal repeat-count syntax (`[0u8; 10]`) doesn't parse — workaround is to list elements. Lesson recorded in SKILL.md §8.5.
 - **2026-05-17** — Two raytracer-port compiler bugs fixed: (1) `let x: STRUCT = if cond { a } else { b };` codegen panic — `expr_value_ty` didn't resolve Ident binding types; added `expr_value_ty_with_bindings` on `FnState`. (2) Inexact f32 literals emitted malformed IR (`float 0.1` is rejected by LLVM) — switched to hex form (`0x` + f64 bit pattern of f32-narrowed value); f64 literals also moved to hex for round-trip determinism. 3 new sema tests, 1203 total.

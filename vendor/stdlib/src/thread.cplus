@@ -26,7 +26,19 @@
 // Agents arriving with Rust priors should not expect a Result here;
 // the signature is honest and the docstring explains why.
 
+// v0.0.4 Phase 2 Slice 2H: JoinHandle::drop switches from blocking
+// pthread_join to true fire-and-forget pthread_detach. Safety is
+// preserved by a refcounted ctx (codegen-side layout: u64 refcount @0,
+// fn_ptr @8, result @16, [optional input @16+sizeof(O)]). Parent's
+// drop atomically decrements; worker's trampoline also decrements
+// after writing the result; whichever thread observes the prev==1
+// transition frees the ctx. pthread_detach tells the OS to reclaim
+// the thread's kernel resources whenever it exits.
+
+import "stdlib/atomic" as atomic;
+
 extern fn pthread_join(tid: u64, retval: *u8) -> i32;
+extern fn pthread_detach(tid: u64) -> i32;
 extern fn free(p: *u8);
 
 pub struct JoinHandle[O] {
@@ -72,23 +84,27 @@ impl JoinHandle[O] {
         return unsafe { __cplus_thread_join::[O](self) };
     }
 
-    // Drop an un-joined handle: BLOCK on the worker via pthread_join,
-    // then free the context buffer. The blocking-on-drop semantics
-    // are deliberate — using pthread_detach + free instead would race
-    // with the worker (the worker holds a pointer into the ctx; the
-    // parent would free underneath it). Reference-counting the ctx
-    // (the standard fix for the race) lands in Slice 5C alongside
-    // the cross-thread `move` work; until then, Drop blocks.
+    // Drop an un-joined handle: detach the worker from the OS (so its
+    // kernel resources get reaped when it eventually exits), then
+    // atomically decrement the ctx refcount. If we were the last
+    // reference (the worker already finished and decremented its
+    // ref), free the ctx ourselves; otherwise the worker will free
+    // when it exits. **No blocking** — true fire-and-forget.
     //
-    // **Practical implication:** if you spawn a thread and let the
-    // handle drop without calling `join()`, the drop point becomes
-    // a synchronisation barrier. Long-running workers will stall the
-    // dropping scope. Always join the handle when you care about
-    // when the parent proceeds; let drop happen only for short
-    // workers or end-of-program cleanup.
+    // v0.0.4 Phase 2 Slice 2H: refcounted-ctx design closes the
+    // v0.0.3 carryover. The pre-refcount drop blocked on
+    // pthread_join because freeing the ctx underneath a still-running
+    // worker would race the worker's result-store. With the refcount
+    // both sides safely cooperate on lifetime.
     fn drop(mut self) {
-        unsafe { pthread_join(self.tid, 0 as *u8); }
-        unsafe { free(self.ctx); }
+        unsafe { pthread_detach(self.tid); }
+        let refct: *u64 = unsafe { self.ctx as *u64 };
+        let prev: u64 = unsafe {
+            atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+        };
+        if prev == (1 as u64) {
+            unsafe { free(self.ctx); }
+        }
         return;
     }
 }
