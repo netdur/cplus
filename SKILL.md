@@ -16,6 +16,18 @@ C+ is a systems language. LLVM backend. Manual memory management, no GC. Rust-le
 
 File extension: `.cplus`. Compiler: `cpc`. Multi-file project layout: `Cplus.toml` manifest at the project root, source in `src/`. Imports are explicit path strings with a mandatory alias, **no `.cplus` extension**. Local files start with `./`: `import "./math" as math;` then `math::function()`. Vendored packages start with the dep name declared in `[dependencies]`: `import "stdlib/io" as io;` resolves under `vendor/stdlib/src/io.cplus`. Bare paths (no `./`, no matching dep) are rejected — every import must declare whether it's local or vendored.
 
+### 1.1 Where the binaries + stdlib live (for external projects)
+
+```text
+Compiler:  /Users/adel/Workspace/C+/target/debug/cpc
+           /Users/adel/Workspace/C+/target/release/cpc     # if built --release
+LSP:       /Users/adel/Workspace/C+/target/debug/cpc-lsp
+Formatter: invoked via `cpc fmt`
+Stdlib:    /Users/adel/Workspace/C+/vendor/stdlib          # symlink this into your project
+```
+
+To start a new C+ project anywhere on disk, see §9.1 for the scaffold.
+
 ---
 
 ## 2. Locked principles — DO NOT propose violating these
@@ -629,10 +641,13 @@ let v: str = unsafe { str_from_raw_parts(p, n) };  // unsafe: caller asserts val
 
 ## 7. The standard library
 
-**v0.0.3 Phase 1 (in progress):** `vendor/stdlib/` ships modules consumable via Phase 2's package resolution. The preferred way to print in a project-mode program is:
+`vendor/stdlib/` is a real package consumable via Phase 2's package resolution. A project declares `stdlib = "*"` in `[dependencies]` + symlinks (or copies) `/Users/adel/Workspace/C+/vendor/stdlib` into its own `vendor/stdlib`. No fetch tool yet.
+
+### 7.1 I/O + result types
 
 ```cplus
 import "stdlib/io" as io;
+import "stdlib/result" as result;
 
 fn main() -> i32 {
     io::println("hello, world");
@@ -641,19 +656,136 @@ fn main() -> i32 {
 }
 ```
 
-A project declares `stdlib = "*"` in `[dependencies]`; the consumer's `vendor/stdlib/` is a symlink or copy of the in-tree `vendor/stdlib/` package (Phase 2 MVP — no fetch tool yet).
+- **`stdlib/io`** — `print(s)`, `println(s)`, `eprintln(s)`. Backed by `printf` (one syscall + stdio buffering).
+- **`stdlib/result`** — `Result[T, E]`, `IoError`. Constructors `io_ok` / `io_err`. Match on the variant; no `?` propagation.
 
-**Available stdlib modules** (Phase 1 is filling these in incrementally):
-- `stdlib/io` — `print(s)`, `println(s)`, `eprintln(s)`. ✓ shipped 2026-05-16.
-- `stdlib/result` — `Result[T, E]` and `IoError` enums. (API only; consumers can construct/match.)
-- `stdlib/fs` — `File` with open/read/write/close + Drop. (Bodies pending Slice 1B.)
-- `stdlib/net` — `TcpStream`, `TcpListener`. (Bodies pending Slice 1C.)
-- `stdlib/vec` — `Vec[T]`. (Surface polish pending Slice 1D.)
-- `stdlib/hash_map` — `HashMap[K, V]`. (Bodies pending Slice 1D.)
-- `stdlib/env` — `var`, `args`. (Bodies pending Slice 1E.)
+### 7.2 Owned + growable containers
 
-**Compiler intrinsics that still exist** (single-file-mode fallbacks, plus low-level building blocks the stdlib itself uses):
-- `println(n: i32)` / `println(s: str)` — magic intrinsic for **single-file mode** only. In project mode, prefer `stdlib/io::println` for one-canonical-way alignment.
+```cplus
+import "stdlib/vec" as vec;
+import "stdlib/hash_map" as hash_map;
+
+let mut v: vec::Vec[i32] = vec::Vec[i32]::with_capacity(16);  // Type[args]::assoc_fn works
+v.push(1); v.push(2); v.push(3);
+let n: usize = v.len();
+
+// Vec::extend_from_raw is the bulk-copy fast path; replaces N pushes with 1 memcpy.
+unsafe { v.extend_from_raw(some_ptr, count); }
+
+// Concrete (not generic) StrIntMap is the v0.0.4 HashMap shape.
+let mut m: hash_map::StrIntMap = hash_map::new_str_int_map();
+m.insert("hello", 42);
+let r: result::Result[i32, result::IoError] = m.get("hello");
+```
+
+- **`stdlib/vec`** — `Vec[T]` with `push`, `pop`, `len`, `capacity`, `get`, `as_slice`, `extend_from_raw`, Drop.
+- **`stdlib/hash_map`** — `StrIntMap` (str → i32) with open addressing + linear probing + 0.75 load-factor grow. Generic `HashMap[K, V]` is a later slice.
+
+### 7.3 File + network + env
+
+```cplus
+import "stdlib/fs" as fs;
+import "stdlib/net" as net;
+import "stdlib/env" as env;
+
+// File I/O
+let r1 = fs::open_read("data.txt");        // Result[File, IoError]
+let r2 = fs::create("out.txt");
+
+// TCP (IPv4 + numeric IPs only in v0.0.4; gethostbyname for hostname resolution).
+let r3 = net::connect_tcp("127.0.0.1", 8080 as u16);
+let r4 = net::listen_tcp(8080 as u16);
+
+// Env
+let port_var = env::var("PORT");           // Result[string, IoError]
+```
+
+### 7.4 Threading + atomics
+
+```cplus
+import "stdlib/thread" as thread;
+import "stdlib/atomic" as atomic;
+
+fn worker() -> i32 { return 42; }
+fn main() -> i32 {
+    let h: thread::JoinHandle[i32] = thread::spawn::[i32](worker);
+    return h.join();
+}
+
+// spawn_with: move an owned input into the worker. Required for non-Copy I.
+fn proc(move s: string) -> i32 { return s.len() as i32; }
+let s = "hello".to_string();
+let h2 = thread::spawn_with::[string, i32](s, proc);
+
+// Atomic ops on raw pointers. Ordering enum: Relaxed | Acquire | Release | AcqRel | SeqCst.
+let counter: u64 = 0 as u64;
+let p: *u64 = unsafe { &counter as *u64 };  // illustrative — borrow-of-local syntax not real
+unsafe { atomic::atomic_fetch_add_u64(p, 1 as u64, atomic::Ordering::Relaxed); }
+```
+
+- **`stdlib/thread`** — `spawn[O]`, `spawn_with[I, O]`, `JoinHandle[O]::join(move self) -> O`. Non-Copy `O` works (sret-aware trampoline). Drop blocks on un-joined handles (refcounted detach is a v0.0.5 polish).
+- **`stdlib/atomic`** — every operation as a free fn on `*T` taking an `Ordering`. i32 / i64 / u32 / u64 widths.
+
+### 7.5 Async/await (compute-only — no I/O reactor yet)
+
+```cplus
+import "stdlib/future" as future;
+import "stdlib/executor" as executor;
+
+async fn inner() -> i32 { return 7; }
+async fn outer() -> i32 {
+    let x: i32 = await inner();
+    return x + 1;
+}
+
+fn main() -> i32 {
+    let f: future::Future[i32] = outer();
+    return executor::block_on::[i32](f);
+}
+```
+
+- **`stdlib/future`** — `Future[T]`, `Poll[T]`. Compiler-known.
+- **`stdlib/executor`** — `block_on`.
+
+**v0.0.4 scope limit**: there's no reactor. Every `await` runs its inner future to completion immediately on the same thread. Programs that compose `async fn` + `await` + `block_on` for chained computation work; programs that need *concurrent I/O* wait for Phase 3's reactor. **E0900** rejects borrow-shaped parameters (`str`, `T[]`, `mut x: NonCopyT`) in `async fn` signatures — pass `string` / `Vec[T]` instead.
+
+### 7.6 Heap-allocated owned types (Phase 2)
+
+```cplus
+import "stdlib/box" as box;
+import "stdlib/arc" as arc;
+import "stdlib/rc" as rc;
+import "stdlib/mutex" as mutex;
+
+// Box[T]: single heap-allocated owned value.
+let b = box::new::[i32](42);
+let v: i32 = b.unwrap();           // consume; exit-Drop frees the slot
+
+// Arc[T]: atomically refcounted shared ownership.
+let root = arc::new::[i32](7);
+let c1 = root.clone();             // atomic refcount increment
+let c2 = root.clone();
+// All three drop normally; the last reference frees.
+
+// Rc[T]: single-threaded sibling of Arc. Non-atomic refcount.
+// Don't ship Rc across threads (v0.0.4 doesn't yet enforce !Send).
+
+// Mutex[T]: pthread-backed mutual exclusion. Internally refcounted (collapses
+// Arc into itself — C+ has no &T references, so a literal Arc[Mutex[T]] would
+// break Drop).
+let m = mutex::new::[i32](10);
+let m2 = m.clone();                 // share across threads
+{
+    let mut g = m.lock();
+    g.set(g.get() + 1);
+}                                    // guard's Drop releases
+```
+
+### 7.7 Compiler intrinsics
+
+Single-file-mode fallbacks + low-level building blocks the stdlib itself uses:
+
+- `println(n: i32)` / `println(s: str)` — single-file mode intrinsic. In project mode, prefer `stdlib/io::println`.
 - `str_ptr(s: str) -> *u8`
 - `str_len(s: str) -> usize`
 - `str_from_raw_parts(p: *u8, n: usize) -> str` — unsafe
@@ -661,9 +793,9 @@ A project declares `stdlib = "*"` in `[dependencies]`; the consumer's `vendor/st
 - `align_of::[T]() -> usize`
 - `assert EXPR;` (in `#[test]` builds — sets failure flag; in regular builds — traps)
 
-**Decision rule:** if you're writing a single-file demo (`cpc file.cplus -o bin`), use the intrinsic `println`. If you're writing a project (`cpc build`), import `stdlib/io` — the project shape gives you cleaner error chains, drop integration, and forward-compatible idioms. Don't mix both in one project.
+**Decision rule:** if you're writing a single-file demo (`cpc file.cplus -o bin`), use the intrinsic `println`. If you're writing a project (`cpc build`), import `stdlib/io`. Don't mix both in one project.
 
-For types not yet in stdlib (`Option`, advanced collections, etc.), the user-level pattern still works: `extern fn malloc/free/memcpy` + `size_of[T]()` + raw pointers + generics + Drop. The reference example for owned strings: [docs/examples/owned_string.cplus](docs/examples/owned_string.cplus).
+For types not yet in stdlib, the user-level pattern still works: `extern fn malloc/free/memcpy` + `size_of[T]()` + raw pointers + generics + Drop. Reference: [docs/examples/owned_string.cplus](docs/examples/owned_string.cplus).
 
 ---
 
@@ -700,22 +832,181 @@ Every diagnostic carries a span (line/col) and often a machine-applicable sugges
 
 ---
 
+## 8.5 Common compile-time gotchas
+
+Patterns that compile or trip you up — surfaced during real implementation
+work. Each is documented because reading the spec doesn't tell you they exist.
+
+### Use `move v: T` for non-Copy value parameters
+
+```cplus
+// ❌ Footgun — caller's `s` and callee's `x` both run their Drop, double-free.
+fn echo(x: string) -> string { return x; }
+let s = "hi".to_string();
+let r = echo(s);  // double-free at runtime under ASan
+
+// ✅ Marks `s` as moved at the call site; only `r` drops the buffer.
+fn echo(move x: string) -> string { return x; }
+```
+
+For Copy `T`, `move` is a no-op marker (free to add). For non-Copy `T` it's
+essential — without it, drop-tracking doesn't fire and the value is freed
+both by the caller and the callee.
+
+### `move self` does NOT auto-disarm the callee's exit-Drop
+
+```cplus
+impl Box[T] {
+    // ❌ Frees twice: explicit free inside body, then exit-Drop fires too.
+    pub fn unwrap(move self) -> T {
+        let v: T = unsafe { *self.p };
+        unsafe { free(self.p as *u8); }   // BUG
+        return v;
+    }
+
+    // ✅ Let the exit-Drop do the cleanup.
+    pub fn unwrap(move self) -> T {
+        return unsafe { *self.p };
+    }
+}
+```
+
+The caller's binding is correctly marked moved (so the caller's Drop is
+disarmed), but the callee owns `self` for the duration of the body — its
+exit-Drop fires unconditionally. Either rely on exit-Drop or mark `self`
+consumed via an intrinsic that takes ownership (the `JoinHandle::join`
+pattern).
+
+### Bind clone results to a local before passing as a `move` arg
+
+```cplus
+// ❌ E0337: cannot move out of method-call result.
+worker(root.clone());
+
+// ✅ Bind to a local first; sema can mark the local as moved.
+let c = root.clone();
+worker(c);
+```
+
+Pre-`move`-aware-method-result-moves; lifted in a future ergonomics slice.
+
+### Mutex guards in the same scope deadlock
+
+```cplus
+// ❌ Deadlock: `g` still holds the lock when `g2` tries to acquire.
+let g = m.lock();
+let g2 = m.lock();
+
+// ✅ Use scope blocks to bound each guard's lifetime.
+{
+    let g = m.lock();
+    // ... use g ...
+}
+{
+    let mut g2 = m.lock();
+    // ... use g2 ...
+}
+```
+
+There's no borrow-checker integration that prevents this at compile time
+yet. Block-scope discipline is the v0.0.4 workaround.
+
+### String literals are `str`, not `string`
+
+```cplus
+let a: str = "hello";              // borrow-shaped string view (16-byte fat pointer)
+let b: string = "hello".to_string(); // owned, heap-allocated (24-byte fat pointer)
+```
+
+`str` parameters are not allowed in `async fn` (E0900). Owned-string params
+must use `move x: string` for the no-double-free invariant.
+
+### Pointer casts go through `usize`, not `i32`
+
+```cplus
+// ❌ E0315: cannot cast raw-pointer to i32.
+let n: i32 = unsafe { p as i32 };
+
+// ✅
+let n: usize = unsafe { p as usize };
+let i: i32 = n as i32;
+```
+
+---
+
 ## 9. Tooling
 
-The `cpc` binary lives at `/Users/adel/Workspace/C+/target/debug/cpc`
-(the debug build of this repo). If `cpc` is not already on your `PATH`,
-invoke it by absolute path or prepend that directory to `PATH`:
+### 9.1 Starting a new C+ project (external to this repo)
+
+```bash
+# 1. Create the project skeleton.
+mkdir -p my_proj/src my_proj/vendor
+cd my_proj
+
+# 2. Symlink the stdlib package. Use the absolute path; the symlink target
+#    becomes a real `vendor/stdlib` for cpc's resolver.
+ln -s /Users/adel/Workspace/C+/vendor/stdlib vendor/stdlib
+
+# 3. Write the manifest.
+cat > Cplus.toml <<'EOF'
+[package]
+name    = "my_proj"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "my_proj"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
+EOF
+
+# 4. Write your first program.
+cat > src/main.cplus <<'EOF'
+import "stdlib/io" as io;
+
+fn main() -> i32 {
+    io::println("hello from a fresh project");
+    return 0;
+}
+EOF
+
+# 5. Build + run.
+/Users/adel/Workspace/C+/target/debug/cpc build
+./target/debug/my_proj
+```
+
+If you'll run `cpc` often, put it on PATH:
 
 ```bash
 export PATH="/Users/adel/Workspace/C+/target/debug:$PATH"
-# or just:
-/Users/adel/Workspace/C+/target/debug/cpc build
 ```
 
-To build it from source (only if the binary above is missing):
+Or in `~/.zshrc`:
+
+```bash
+echo 'export PATH="/Users/adel/Workspace/C+/target/debug:$PATH"' >> ~/.zshrc
+```
+
+To rebuild `cpc` from source (only needed if the binary is stale or missing):
 
 ```bash
 cargo build --manifest-path /Users/adel/Workspace/C+/cpc/Cargo.toml
+# or for a release-optimized compiler:
+cargo build --manifest-path /Users/adel/Workspace/C+/cpc/Cargo.toml --release
+```
+
+### 9.2 Binary locations + paths
+
+```text
+Debug compiler:  /Users/adel/Workspace/C+/target/debug/cpc
+Release compiler: /Users/adel/Workspace/C+/target/release/cpc
+LSP server:       /Users/adel/Workspace/C+/target/debug/cpc-lsp
+Stdlib (symlink target): /Users/adel/Workspace/C+/vendor/stdlib
+Stdlib source:    /Users/adel/Workspace/C+/vendor/stdlib/src/*.cplus
+Repo recipes:     /Users/adel/Workspace/C+/docs/examples/recipes/
+Compiler source:  /Users/adel/Workspace/C+/cplus-core/src/   (Rust)
 ```
 
 `cpc build` reads `./Cplus.toml` in the current directory and writes the
