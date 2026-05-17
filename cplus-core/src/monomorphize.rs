@@ -547,6 +547,7 @@ fn synthesize_fn(
         is_variadic: template.is_variadic,
         attributes: template.attributes.clone(),
         generic_params: Vec::new(),   // monomorphized — no longer generic
+        is_async: template.is_async,
     }
 }
 
@@ -561,10 +562,18 @@ fn subst_type_ast(
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
             if let Some(concrete) = subst.get(name) {
-                TypeKind::Path(type_name_of(concrete))
-            } else {
-                TypeKind::Path(name.clone())
+                // v0.0.3 Phase 5 Slice 5D: round-trip through
+                // `ty_to_type_ast` so non-Path Tys (RawPtr, FnPtr,
+                // Slice, Array) keep their AST structure. Substituting
+                // `T` → `*u64` must produce `TypeKind::RawPtr(...)`,
+                // not `TypeKind::Path("raw-pointer")` — the latter
+                // codegens to `Ty::Error` since `raw-pointer` isn't a
+                // valid type name. The original Path → Path mapping
+                // works for primitives + structs/enums; the new path
+                // covers the pointer/aggregate cases too.
+                return ty_to_type_ast(concrete, type_name_of);
             }
+            TypeKind::Path(name.clone())
         }
         TypeKind::Array { elem, len } => TypeKind::Array {
             elem: Box::new(subst_type_ast(elem, subst, type_name_of, struct_lookup)),

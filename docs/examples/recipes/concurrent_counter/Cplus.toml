@@ -1,0 +1,11 @@
+[package]
+name    = "concurrent_counter"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "concurrent_counter"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"

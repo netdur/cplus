@@ -5896,6 +5896,360 @@ fn stdlib_vec_push_and_get() {
     assert_eq!(run.code(), Some(36), "expected sum of 1..=8 = 36");
 }
 
+/// v0.0.3 Phase 5 Slice 5A: stdlib/atomic end-to-end.
+///
+/// Exercises load / store / fetch_add / fetch_sub / fetch_and / fetch_or
+/// / fetch_xor / compare_exchange (both success and failure paths) on
+/// `u64` and `i32`. Each op is a `match`-dispatch in the stdlib wrapper
+/// that maps `Ordering::*` to the per-ordering compiler intrinsic
+/// (`__cplus_atomic_<op>_<ty>_<ord>`). The binary exits non-zero on the
+/// first round-trip mismatch, so a clean exit is the assertion.
+#[test]
+fn stdlib_atomic_round_trips() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"atomic_smoke\"\n\n[[bin]]\nname = \"atomic_smoke\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/atomic\" as atomic;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn main() -> i32 {\n\
+             let p64: *u64 = unsafe { malloc(8 as usize) as *u64 };\n\
+             atomic::atomic_store_u64(p64, 0 as u64, atomic::Ordering::SeqCst);\n\
+             let prev: u64 = atomic::atomic_fetch_add_u64(p64, 10 as u64, atomic::Ordering::SeqCst);\n\
+             if prev != (0 as u64) { unsafe { free(p64 as *u8); } return 1; }\n\
+             let cur: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
+             if cur != (10 as u64) { unsafe { free(p64 as *u8); } return 2; }\n\
+             let _s: u64 = atomic::atomic_fetch_sub_u64(p64, 3 as u64, atomic::Ordering::SeqCst);\n\
+             let after_sub: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
+             if after_sub != (7 as u64) { unsafe { free(p64 as *u8); } return 3; }\n\
+             let cx: u64 = atomic::atomic_compare_exchange_u64(p64, 7 as u64, 42 as u64, atomic::Ordering::SeqCst);\n\
+             if cx != (7 as u64) { unsafe { free(p64 as *u8); } return 4; }\n\
+             let after_cx: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
+             if after_cx != (42 as u64) { unsafe { free(p64 as *u8); } return 5; }\n\
+             let cx_fail: u64 = atomic::atomic_compare_exchange_u64(p64, 0 as u64, 99 as u64, atomic::Ordering::SeqCst);\n\
+             if cx_fail != (42 as u64) { unsafe { free(p64 as *u8); } return 6; }\n\
+             let after_fail: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
+             if after_fail != (42 as u64) { unsafe { free(p64 as *u8); } return 7; }\n\
+             unsafe { free(p64 as *u8); }\n\
+             let p32: *i32 = unsafe { malloc(4 as usize) as *i32 };\n\
+             atomic::atomic_store_i32(p32, 0xF0 as i32, atomic::Ordering::SeqCst);\n\
+             let _o: i32 = atomic::atomic_fetch_or_i32(p32, 0x0F as i32, atomic::Ordering::SeqCst);\n\
+             let or_val: i32 = atomic::atomic_load_i32(p32, atomic::Ordering::SeqCst);\n\
+             if or_val != (0xFF as i32) { unsafe { free(p32 as *u8); } return 8; }\n\
+             let _a: i32 = atomic::atomic_fetch_and_i32(p32, 0x0F as i32, atomic::Ordering::SeqCst);\n\
+             let and_val: i32 = atomic::atomic_load_i32(p32, atomic::Ordering::SeqCst);\n\
+             if and_val != (0x0F as i32) { unsafe { free(p32 as *u8); } return 9; }\n\
+             let _x: i32 = atomic::atomic_fetch_xor_i32(p32, 0x0F as i32, atomic::Ordering::SeqCst);\n\
+             let xor_val: i32 = atomic::atomic_load_i32(p32, atomic::Ordering::SeqCst);\n\
+             if xor_val != (0 as i32) { unsafe { free(p32 as *u8); } return 10; }\n\
+             unsafe { free(p32 as *u8); }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/atomic_smoke");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "atomic_smoke exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+}
+
+/// v0.0.3 Phase 5 Slice 5A: every atomic ordering keyword reaches LLVM.
+/// Compiles a program that uses all five `Ordering::*` variants and
+/// inspects the emitted IR via `--emit-llvm-ir`. This complements the
+/// in-tree codegen unit tests by checking the full stdlib-wrapper +
+/// match-dispatch path actually produces every ordering keyword.
+#[test]
+fn stdlib_atomic_ir_contains_every_ordering() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"atomic_ir\"\n\n[[bin]]\nname = \"atomic_ir\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+    // Three calls — one with relaxed, one with acquire, one with seqcst
+    // — together cover monotonic+acquire+seq_cst keywords. The wrapper
+    // body's match arms cover release and acq_rel under the hood for
+    // every op, so we don't need to call them all here to assert
+    // their presence in the emitted IR.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/atomic\" as atomic;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         fn main() -> i32 {\n\
+             let p: *u64 = unsafe { malloc(8 as usize) as *u64 };\n\
+             atomic::atomic_store_u64(p, 0 as u64, atomic::Ordering::Relaxed);\n\
+             let _a: u64 = atomic::atomic_fetch_add_u64(p, 1 as u64, atomic::Ordering::Acquire);\n\
+             let _b: u64 = atomic::atomic_fetch_add_u64(p, 1 as u64, atomic::Ordering::SeqCst);\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output().expect("invoke cpc");
+    assert!(out.status.success(), "cpc --emit-ll-project failed: {}", String::from_utf8_lossy(&out.stderr));
+    // The wrapper module's match arms instantiate every per-ordering
+    // intrinsic, so the linked IR must mention every LLVM ordering
+    // keyword even with only three call sites in main.
+    let ll = String::from_utf8_lossy(&out.stdout).into_owned();
+    for kw in ["monotonic", "acquire", "release", "acq_rel", "seq_cst"] {
+        assert!(ll.contains(kw), "expected ordering keyword `{kw}` in IR");
+    }
+    assert!(ll.contains("atomicrmw add"), "expected atomicrmw add in IR");
+    assert!(ll.contains("store atomic"), "expected store atomic in IR");
+}
+
+/// v0.0.3 Phase 5 Slice 5B: spawn an OS thread and round-trip a value back
+/// through `JoinHandle::join`. Verifies the full surface: thread::spawn[O]
+/// → pthread_create → trampoline runs user fn → result lands in heap ctx →
+/// join blocks until worker exits → join reads + frees → owned value
+/// returned to the parent.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_spawn_join_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"thread_smoke\"\n\n[[bin]]\nname = \"thread_smoke\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         fn lo() -> i64 { return 100 as i64; }\n\
+         fn hi() -> i64 { return 200 as i64; }\n\
+         fn answer_i32() -> i32 { return 42 as i32; }\n\
+         fn answer_u64() -> u64 { return 99 as u64; }\n\
+         fn answer_bool() -> bool { return true; }\n\
+         fn main() -> i32 {\n\
+             let h1: thread::JoinHandle[i64] = thread::spawn::[i64](lo);\n\
+             let h2: thread::JoinHandle[i64] = thread::spawn::[i64](hi);\n\
+             let total: i64 = h1.join() +% h2.join();\n\
+             if total != (300 as i64) { return 1; }\n\
+             let h32: thread::JoinHandle[i32] = thread::spawn::[i32](answer_i32);\n\
+             if h32.join() != (42 as i32) { return 2; }\n\
+             let hu: thread::JoinHandle[u64] = thread::spawn::[u64](answer_u64);\n\
+             if hu.join() != (99 as u64) { return 3; }\n\
+             let hb: thread::JoinHandle[bool] = thread::spawn::[bool](answer_bool);\n\
+             if hb.join() != true { return 4; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/thread_smoke");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "thread_smoke exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+}
+
+/// v0.0.3 Phase 5 Slice 5C: spawn_with end-to-end. Two threads each
+/// receive a `Range` struct argument (Copy struct, 16 bytes); each
+/// computes the partial sum and the parent adds the joined results.
+/// Also covers non-Copy input via `string` — the worker takes
+/// ownership and returns the byte length.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_spawn_with_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sw\"\n\n[[bin]]\nname = \"sw\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         struct Range { start: i64, end: i64 }\n\
+         fn sum_range(r: Range) -> i64 {\n\
+             let mut total: i64 = 0 as i64;\n\
+             let mut i: i64 = r.start;\n\
+             while i < r.end {\n\
+                 total = total +% i;\n\
+                 i = i +% (1 as i64);\n\
+             }\n\
+             return total;\n\
+         }\n\
+         fn measure(move s: string) -> i64 { return s.len() as i64; }\n\
+         fn main() -> i32 {\n\
+             let left:  Range = Range { start: 1 as i64,   end: 501 as i64  };\n\
+             let right: Range = Range { start: 501 as i64, end: 1001 as i64 };\n\
+             let h1: thread::JoinHandle[i64] = thread::spawn_with::[Range, i64](left, sum_range);\n\
+             let h2: thread::JoinHandle[i64] = thread::spawn_with::[Range, i64](right, sum_range);\n\
+             let total: i64 = h1.join() +% h2.join();\n\
+             if total != (500500 as i64) { return 1; }\n\
+             let s: string = \"hello, threaded world\".to_string();\n\
+             let hs: thread::JoinHandle[i64] = thread::spawn_with::[string, i64](s, measure);\n\
+             if hs.join() != (21 as i64) { return 2; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/sw");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(),
+        "spawn_with test exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+}
+
+/// v0.0.3 Phase 5 Slice 5C: ASan-clean run of the spawn_with path with
+/// a moved `string` input. The worker takes ownership and drops it
+/// when the start function exits; the heap buffer must not leak.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_spawn_with_string_input_asan_clean() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sw_asan\"\n\n[[bin]]\nname = \"sw_asan\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         fn measure(move s: string) -> i64 { return s.len() as i64; }\n\
+         fn main() -> i32 {\n\
+             let s: string = \"hello, threaded world\".to_string();\n\
+             let h: thread::JoinHandle[i64] = thread::spawn_with::[string, i64](s, measure);\n\
+             let n: i64 = h.join();\n\
+             if n != (21 as i64) { return 1; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "cpc build --asan failed");
+    let run = Command::new(dir.join("target/debug/sw_asan")).output().expect("run");
+    assert!(run.status.success(), "exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!stderr.contains("LeakSanitizer"), "leak detected:\n{stderr}");
+    assert!(!stderr.contains("AddressSanitizer"), "ASan error:\n{stderr}");
+}
+
+/// v0.0.3 Phase 5 Slice 5C borrow-check negative: post-move use of a
+/// non-Copy `string` input rejected by sema with `E0335 use of moved
+/// value`. The `move` annotation on `spawn_with[I, O]`'s input
+/// argument transfers ownership at the call site; the parent loses
+/// access to the string immediately.
+#[test]
+fn stdlib_thread_spawn_with_post_move_use_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sw_neg\"\n\n[[bin]]\nname = \"sw_neg\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         fn measure(move s: string) -> i64 { return s.len() as i64; }\n\
+         fn main() -> i32 {\n\
+             let s: string = \"hi\".to_string();\n\
+             let h: thread::JoinHandle[i64] = thread::spawn_with::[string, i64](s, measure);\n\
+             // Post-move use: borrow checker rejects.\n\
+             let n: i64 = s.len() as i64;\n\
+             let _r: i64 = h.join();\n\
+             return n as i32;\n\
+         }\n",
+    ).unwrap();
+    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    assert!(!out.status.success(), "expected build to fail on post-move use");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0335") || stderr.contains("use of moved value"),
+        "expected E0335 (use of moved value), got:\n{stderr}");
+}
+
+/// v0.0.3 Phase 5 Slice 5B unjoined-drop path: drop a `JoinHandle`
+/// without calling `join`. The Drop impl in `stdlib/thread` blocks via
+/// pthread_join then frees the context buffer. (Detaching would race
+/// with the worker still reading the fn pointer out of the same ctx
+/// — reference-counting the ctx lands in 5C; until then, Drop is the
+/// synchronisation point.) Run under ASan to verify no leaks.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_drop_detaches_unjoined_handle() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"thread_detach\"\n\n[[bin]]\nname = \"thread_detach\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         fn worker() -> i32 { return 7 as i32; }\n\
+         fn main() -> i32 {\n\
+             {\n\
+                 let h: thread::JoinHandle[i32] = thread::spawn::[i32](worker);\n\
+                 // h falls out of scope here: Drop runs pthread_detach + free.\n\
+             }\n\
+             // Spin briefly so the worker can finish before main exits.\n\
+             let mut i: i64 = 0 as i64;\n\
+             while i < (5000000 as i64) { i = i +% (1 as i64); }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build --asan failed");
+    let bin = dir.join("target/debug/thread_detach");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "detach test exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    // ASan would have written its leak report to stderr if anything leaked.
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!stderr.contains("LeakSanitizer"), "expected no leaks under ASan, got:\n{stderr}");
+    assert!(!stderr.contains("AddressSanitizer"), "expected no ASan errors, got:\n{stderr}");
+}
+
 #[test]
 fn orphan_static_lib_emits_e0861() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -7110,6 +7464,180 @@ fn recipe_http_get_compiles() {
     let dir = copy_recipe_to_tempdir("http_get");
     let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
     assert!(st.success(), "http_get build failed");
+}
+
+/// v0.0.3 Phase 5 Slice 5D reference recipe: concurrent counter. Two
+/// threads share a `*u64`; each performs 100_000 atomic increments.
+/// The final value must be exactly 200_000 — atomic fetch_add ensures
+/// no torn updates regardless of how the kernel schedules them.
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_concurrent_counter_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("concurrent_counter");
+    // Vendor-link both stdlib modules the recipe imports.
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "concurrent_counter build failed");
+    let out = Command::new(dir.join("target/debug/concurrent_counter")).output().expect("run");
+    assert!(out.status.success(),
+        "concurrent_counter exited non-zero: {:?} stderr={}",
+        out.status.code(), String::from_utf8_lossy(&out.stderr));
+}
+
+/// v0.0.3 Phase 5 Slice 5D ASan + TSan: real instrumentation. Builds
+/// the concurrent_counter recipe with `--tsan` (then `--asan`) and
+/// confirms ThreadSanitizer / AddressSanitizer reports clean. The
+/// recipe is the canonical "shared mutable state via atomics" pattern
+/// — exactly the case TSan was built to police. A regression that
+/// broke atomic lowering (or introduced a non-atomic access on the
+/// shared pointer) would surface here as a TSan data-race warning.
+///
+/// Implicit pre-condition: `cpc build` actually forwards
+/// `--asan`/`--tsan` through to clang. v0.0.3 Slice 5D follow-up wired
+/// this; before the fix, the flag was silently dropped and the binary
+/// linked without sanitizer runtimes.
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_concurrent_counter_tsan_and_asan_clean() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    for san in ["--tsan", "--asan"] {
+        let dir = copy_recipe_to_tempdir("concurrent_counter");
+        std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+        std::fs::write(
+            dir.join("vendor/stdlib/Cplus.toml"),
+            "[package]\nname = \"stdlib\"\n",
+        ).unwrap();
+        let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+        let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+        std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+        std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+        let st = Command::new(cpc).arg("build").arg(san).current_dir(&dir).status().expect("build");
+        assert!(st.success(), "concurrent_counter build {san} failed");
+        let out = Command::new(dir.join("target/debug/concurrent_counter")).output().expect("run");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(),
+            "concurrent_counter under {san} exited non-zero: {:?} stderr={}",
+            out.status.code(), stderr);
+        assert!(!stderr.contains("WARNING: ThreadSanitizer"),
+            "TSan flagged a race under {san}:\n{stderr}");
+        assert!(!stderr.contains("AddressSanitizer"),
+            "ASan flagged an error under {san}:\n{stderr}");
+        assert!(!stderr.contains("LeakSanitizer"),
+            "LSan flagged a leak under {san}:\n{stderr}");
+    }
+}
+
+/// v0.0.3 Phase 5 Slice 5D follow-up: confirm that swapping atomic
+/// fetch_add for a non-atomic `*p +%= 1` makes TSan actually
+/// fail. This is the "sanitizer is on" canary — without it, a future
+/// regression that silently disabled `--tsan` propagation would leave
+/// the previous test vacuously passing.
+#[test]
+#[cfg(target_os = "macos")]
+fn racy_counter_provokes_tsan_warning() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"racy\"\n\n[[bin]]\nname = \"racy\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn bump_racy(counter: *u64) -> i32 {\n\
+             let mut i: i32 = 0 as i32;\n\
+             while i < (100000 as i32) {\n\
+                 unsafe { *counter = *counter +% (1 as u64); }\n\
+                 i = i +% (1 as i32);\n\
+             }\n\
+             return 0 as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let counter: *u64 = unsafe { malloc(8 as usize) as *u64 };\n\
+             unsafe { *counter = 0 as u64; }\n\
+             let h1: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](counter, bump_racy);\n\
+             let h2: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](counter, bump_racy);\n\
+             let _r1: i32 = h1.join();\n\
+             let _r2: i32 = h2.join();\n\
+             unsafe { free(counter as *u8); }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--tsan").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "racy build under --tsan failed");
+    let out = Command::new(dir.join("target/debug/racy")).output().expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("WARNING: ThreadSanitizer"),
+        "expected TSan to flag the deliberate race; got:\n{stderr}");
+}
+
+/// v0.0.3 Phase 5 Slice 5E reference recipe: async_compute. Chained
+/// `async fn` + `await` + `executor::block_on` driving three nested
+/// coroutines to completion. Validates the full async-syntax surface
+/// + LLVM coroutine codegen + the stdlib executor's poll loop in one
+/// shot.
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_async_compute_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("async_compute");
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "async_compute build failed");
+    let out = Command::new(dir.join("target/debug/async_compute")).output().expect("run");
+    assert!(out.status.success(),
+        "async_compute exited non-zero: {:?} stderr={}",
+        out.status.code(), String::from_utf8_lossy(&out.stderr));
+}
+
+/// v0.0.3 Phase 5 Slice 5B reference recipe: parallel sum. Two threads
+/// each compute half of `sum(1..=1000)`; parent joins both and adds the
+/// partial results. Validates the cornerstone `thread::spawn[O]` +
+/// `JoinHandle[O]::join(move self) -> O` flow under a real build.
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_parallel_sum_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("parallel_sum");
+    // Recipe uses stdlib/thread — link the stdlib vendor tree into the
+    // tempdir before building. (`copy_recipe_to_tempdir` only ships
+    // the recipe's own src + manifest.)
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "parallel_sum build failed");
+    let out = Command::new(dir.join("target/debug/parallel_sum")).output().expect("run");
+    assert!(out.status.success(), "parallel_sum exited non-zero: {:?} stderr={}",
+        out.status.code(), String::from_utf8_lossy(&out.stderr));
 }
 
 /// v0.0.3 Phase 2 (CWE-377 hardening): use `tempfile::TempDir` so each

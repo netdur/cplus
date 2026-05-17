@@ -1,0 +1,74 @@
+// concurrent_counter — when partitioning the work isn't possible, the
+// canonical "shared mutable state + atomics" pattern.
+//
+// v0.0.3 Phase 5 Slice 5D reference recipe. Companion to
+// docs/examples/recipes/parallel_sum/ which shows the *safe* pattern
+// (no shared state). This one shows what `unsafe` + atomics is for:
+// two worker threads each increment the same `*u64` 100_000 times,
+// for a total of 200_000. The atomic fetch_add op serialises every
+// increment so there's no torn read/write — a plain `*counter +%= 1`
+// would race and produce an undercount in the high-100k range.
+//
+// **When to reach for atomics.** Almost never first. If you can pass
+// disjoint slices to spawn_with workers and combine results at join
+// time (the parallel_sum pattern), do that. Atomics belong in the
+// rare cases where the work genuinely can't be partitioned — counters
+// that all threads write to, lock-free queue producers, refcount
+// decrements. Every atomic op is `unsafe` because the compiler can't
+// verify the pointer is valid for the lifetime of the spawn.
+
+import "stdlib/thread" as thread;
+import "stdlib/atomic" as atomic;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Worker function. Each thread bumps the shared counter
+// `INCREMENTS_PER_WORKER` times via SeqCst fetch_add — the
+// stable-ordering ordering that's the right default for "I want my
+// increments not to be lost".
+fn bump(counter: *u64) -> i32 {
+    let mut i: i32 = 0 as i32;
+    while i < (100000 as i32) {
+        let _prev: u64 = unsafe {
+            atomic::atomic_fetch_add_u64(counter, 1 as u64, atomic::Ordering::SeqCst)
+        };
+        i = i +% (1 as i32);
+    }
+    return 0 as i32;
+}
+
+pub fn main() -> i32 {
+    // Allocate the shared counter on the heap so its lifetime exceeds
+    // the worker threads. (Stack-allocated locals can't be safely
+    // shared with workers — the parent's stack frame might unwind
+    // before the workers finish.)
+    let counter: *u64 = unsafe { malloc(8 as usize) as *u64 };
+    unsafe { atomic::atomic_store_u64(counter, 0 as u64, atomic::Ordering::SeqCst); }
+
+    // Two threads, both reading the same `*u64`. Raw pointers are
+    // Copy, so passing `counter` to both spawn_with calls doesn't
+    // move it — each worker just gets the same address.
+    let h1: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](counter, bump);
+    let h2: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](counter, bump);
+
+    // Wait for both workers. The order of join() calls doesn't matter
+    // — both threads will be running concurrently and we'll block on
+    // whichever finishes last.
+    let _r1: i32 = h1.join();
+    let _r2: i32 = h2.join();
+
+    // Read the final value. 100_000 + 100_000 = 200_000 every time,
+    // because fetch_add is atomic — no torn updates, no lost
+    // increments. Replace `atomic_fetch_add_u64` with a plain
+    // `*counter +%= 1` and the final value will be less than 200_000
+    // (often dramatically so on contended hardware) — the canonical
+    // demonstration of why "shared mutable state needs synchronization".
+    let final_val: u64 = unsafe {
+        atomic::atomic_load_u64(counter, atomic::Ordering::SeqCst)
+    };
+    unsafe { free(counter as *u8); }
+
+    if final_val != (200000 as u64) { return 1; }
+    return 0;
+}

@@ -1,0 +1,25 @@
+// stdlib/executor.cplus — single-threaded driver for `Future[T]`.
+//
+// v0.0.3 Phase 5 Slice 5E.5. `block_on` is the canonical entry point
+// for synchronous code that wants to consume an `async fn`'s result.
+// It loops `Future::poll` (via the compiler's `coro.resume` /
+// `coro.done` intrinsics) until the future produces `Ready(T)`,
+// then returns T.
+//
+// **v0.0.3 scope:** synchronous drive only — the loop spins on the
+// coroutine until completion. No reactor, no I/O suspension. The
+// async-fetch recipe (with kqueue/epoll wake-on-readable) lands
+// post-v0.0.3 when the reactor ships.
+//
+// **No multi-threaded executor.** Single-threaded driver only —
+// matches tokio's `current_thread` runtime semantics and sidesteps
+// the `Send`/`Sync` design that v0.0.4 will tackle.
+
+import "./future" as future;
+
+// Drive a `Future[T]` to completion and return its produced value.
+// Blocks the calling thread (no other tasks run on it) until the
+// future resolves. Drops the coroutine frame after extracting T.
+pub fn block_on[T](f: future::Future[T]) -> T {
+    return unsafe { __cplus_block_on::[T](f) };
+}

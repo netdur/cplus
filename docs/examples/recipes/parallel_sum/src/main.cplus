@@ -1,0 +1,37 @@
+// parallel_sum — the canonical "split work, join results" pattern.
+//
+// v0.0.3 Phase 5 Slice 5C reference recipe. Two worker threads each
+// receive a `Range` argument and compute the sum of integers in their
+// half; the parent joins both and adds the partial totals. No shared
+// memory, no `unsafe` at the user surface, no raw pointers — the
+// borrow checker proves race-freedom mechanically, and the `move`
+// receiver on `spawn_with`'s `input` argument transfers ownership of
+// each `Range` to its worker at the spawn call site.
+
+import "stdlib/thread" as thread;
+
+struct Range { start: i64, end: i64 }
+
+fn sum_range(r: Range) -> i64 {
+    let mut total: i64 = 0 as i64;
+    let mut i: i64 = r.start;
+    while i < r.end {
+        total = total +% i;
+        i = i +% (1 as i64);
+    }
+    return total;
+}
+
+pub fn main() -> i32 {
+    let left: Range = Range { start: 1 as i64, end: 501 as i64 };
+    let right: Range = Range { start: 501 as i64, end: 1001 as i64 };
+
+    let h1: thread::JoinHandle[i64] = thread::spawn_with::[Range, i64](left, sum_range);
+    let h2: thread::JoinHandle[i64] = thread::spawn_with::[Range, i64](right, sum_range);
+
+    let total: i64 = h1.join() +% h2.join();
+    // 1 + 2 + ... + 1000 = 500_500
+    let expected: i64 = 500500 as i64;
+    if total != expected { return 1; }
+    return 0;
+}

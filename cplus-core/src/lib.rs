@@ -5,6 +5,7 @@
 //! the language lives.
 
 pub mod ast;
+pub mod atomic;
 pub mod attrs;
 pub mod borrowck;
 pub mod codegen;

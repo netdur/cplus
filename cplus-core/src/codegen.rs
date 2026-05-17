@@ -103,6 +103,263 @@ impl ModuleMetadata {
     }
 }
 
+/// v0.0.3 Phase 5 Slice 5B: per-module registry of unique trampolines
+/// needed for `thread::spawn` / `thread::spawn_with` call sites. Each
+/// intrinsic call site registers its `O` (for spawn) or `(I, O)` (for
+/// spawn_with) tuple; after all function bodies are emitted,
+/// `emit_thread_trampolines` walks the registry and emits one
+/// `define internal ptr @<sym>(ptr %arg)` per unique entry. Modeled
+/// on `ModuleMetadata`.
+///
+/// **Layout convention (shared by spawn / spawn_with):**
+///
+/// ```text
+/// offset 0:                fn pointer (8 bytes)
+/// offset 8:                result slot, size_of(O) bytes
+/// offset 8 + size_of(O):   input slot, size_of(I) bytes (spawn_with only)
+/// ```
+/// Keeping the result at a fixed offset of 8 lets `__cplus_thread_join`
+/// be the same for both forms — it doesn't need to know whether the
+/// thread was spawned with an input.
+#[derive(Debug, Clone)]
+enum TrampolineSpec {
+    Spawn { o: Ty },
+    SpawnWith { i: Ty, o: Ty },
+}
+
+struct ThreadTrampolines {
+    /// Insertion-order list (for stable emit order + numeric indices
+    /// for spawn_with symbols).
+    specs: std::cell::RefCell<Vec<TrampolineSpec>>,
+    /// Dedup keys: mangled-suffix string per entry.
+    seen: std::cell::RefCell<std::collections::HashMap<String, usize>>,
+}
+
+impl ThreadTrampolines {
+    fn new() -> Self {
+        Self {
+            specs: std::cell::RefCell::new(Vec::new()),
+            seen: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Register a `spawn[O]` trampoline. Returns the symbol name (no
+    /// `@` prefix).
+    fn register_spawn(&self, o_ty: &Ty) -> String {
+        let suffix = mangle_o_for_tramp(o_ty);
+        let key = format!("spawn:{suffix}");
+        let mut seen = self.seen.borrow_mut();
+        if !seen.contains_key(&key) {
+            let idx = self.specs.borrow().len();
+            seen.insert(key, idx);
+            self.specs.borrow_mut().push(TrampolineSpec::Spawn { o: o_ty.clone() });
+        }
+        format!("__cplus_thread_tramp_{suffix}")
+    }
+
+    /// Register a `spawn_with[I, O]` trampoline. The (I, O) pair gets
+    /// a monotonically-increasing index — struct/aggregate Tys would
+    /// be awkward to mangle into the symbol directly. Returns the
+    /// symbol name (no `@` prefix).
+    fn register_spawn_with(&self, i_ty: &Ty, o_ty: &Ty) -> String {
+        let key = format!("with:{:?}:{:?}", i_ty, o_ty);
+        let mut seen = self.seen.borrow_mut();
+        if let Some(&idx) = seen.get(&key) {
+            return format!("__cplus_thread_tramp_with_{idx}");
+        }
+        let idx = self.specs.borrow().len();
+        seen.insert(key, idx);
+        self.specs.borrow_mut().push(TrampolineSpec::SpawnWith {
+            i: i_ty.clone(),
+            o: o_ty.clone(),
+        });
+        format!("__cplus_thread_tramp_with_{idx}")
+    }
+}
+
+/// Compute a stable suffix for a Ty to use in the trampoline symbol.
+/// Limited to the Copy-≤8-bytes subset that Slice 5B supports; codegen
+/// errors out elsewhere if O is something else, so we don't try to
+/// mangle aggregates here.
+fn mangle_o_for_tramp(ty: &Ty) -> String {
+    // Mirror sema's `mangle_ty_for_name` for primitive scalars so the
+    // `struct_by_name.get("JoinHandle__<suffix>")` lookup hits the
+    // monomorphizer-synthesised concrete struct.
+    match ty {
+        Ty::I8 => "i8".into(),     Ty::I16 => "i16".into(),
+        Ty::I32 => "i32".into(),   Ty::I64 => "i64".into(),
+        Ty::U8 => "u8".into(),     Ty::U16 => "u16".into(),
+        Ty::U32 => "u32".into(),   Ty::U64 => "u64".into(),
+        Ty::Isize => "isize".into(), Ty::Usize => "usize".into(),
+        Ty::F32 => "f32".into(),   Ty::F64 => "f64".into(),
+        Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
+        // Fallback (shouldn't be reached given codegen's eligibility check).
+        _ => "unsupported".into(),
+    }
+}
+
+/// v0.0.3 Phase 5 Slice 5B: emit one trampoline definition per unique
+/// `O` registered during function-body codegen. The trampoline is the
+/// `start_routine` handed to `pthread_create`; it reads the user's
+/// `fn() -> O` pointer from offset 0 of the malloc'd context, calls
+/// it, and writes the result at offset 8. Returns `null` (pthread's
+/// `void*` return is ignored — the result-passing channel is the
+/// context buffer that `join` reads from).
+fn emit_thread_trampolines(out: &mut String, tramps: &ThreadTrampolines, types: &TypeTable) {
+    let specs = tramps.specs.borrow().clone();
+    if specs.is_empty() { return; }
+    out.push_str("\n; --- v0.0.3 Phase 5 Slice 5B/5C: thread spawn trampolines ---\n");
+    for (idx, spec) in specs.iter().enumerate() {
+        match spec {
+            TrampolineSpec::Spawn { o } => emit_spawn_tramp(out, o, types),
+            TrampolineSpec::SpawnWith { i, o } => emit_spawn_with_tramp(out, idx, i, o, types),
+        }
+    }
+    out.push('\n');
+}
+
+fn align_of_ty(ty: &Ty, types: &TypeTable) -> u64 {
+    static_layout(ty, types).map(|(_s, a)| a).unwrap_or(8)
+}
+
+fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
+    let suffix = mangle_o_for_tramp(o_ty);
+    let llvm_t = llvm_ty(o_ty, types);
+    let align = align_of_ty(o_ty, types);
+    out.push_str(&format!(
+        "define internal ptr @__cplus_thread_tramp_{suffix}(ptr %arg) {{\n"
+    ));
+    if matches!(o_ty, Ty::Unit) {
+        out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+        out.push_str("  call void %f()\n");
+    } else {
+        out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+        out.push_str(&format!("  %r = call {llvm_t} %f()\n"));
+        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 8\n");
+        out.push_str(&format!(
+            "  store {llvm_t} %r, ptr %slot, align {align}\n"
+        ));
+    }
+    out.push_str("  ret ptr null\n");
+    out.push_str("}\n");
+}
+
+fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, types: &TypeTable) {
+    let i_llvm = llvm_ty(i_ty, types);
+    let o_llvm = llvm_ty(o_ty, types);
+    let o_align = align_of_ty(o_ty, types);
+    let i_align = align_of_ty(i_ty, types);
+    let o_size = static_layout(o_ty, types).map(|(s, _)| s).unwrap_or(8);
+    // Input slot lives AFTER the result slot — see the layout note on
+    // `ThreadTrampolines`. The offset is rounded up to I's natural
+    // alignment to keep typed loads valid.
+    let input_off_unaligned = 8 + o_size;
+    let input_off = (input_off_unaligned + i_align - 1) & !(i_align - 1);
+    out.push_str(&format!(
+        "define internal ptr @__cplus_thread_tramp_with_{idx}(ptr %arg) {{\n"
+    ));
+    out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+    out.push_str(&format!(
+        "  %input_slot = getelementptr i8, ptr %arg, i64 {input_off}\n"
+    ));
+    out.push_str(&format!(
+        "  %i = load {i_llvm}, ptr %input_slot, align {i_align}\n"
+    ));
+    if matches!(o_ty, Ty::Unit) {
+        out.push_str(&format!("  call void %f({i_llvm} %i)\n"));
+    } else {
+        out.push_str(&format!(
+            "  %r = call {o_llvm} %f({i_llvm} %i)\n"
+        ));
+        out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 8\n");
+        out.push_str(&format!(
+            "  store {o_llvm} %r, ptr %result_slot, align {o_align}\n"
+        ));
+    }
+    out.push_str("  ret ptr null\n");
+    out.push_str("}\n");
+}
+
+/// Slice 5B eligibility: O must be a primitive scalar whose mangled
+/// suffix matches sema's `mangle_ty_for_name` output (so the runtime
+/// `struct_by_name.get("JoinHandle__<suffix>")` lookup hits). Raw
+/// pointers + fn pointers land in 5C alongside the cross-thread
+/// move work — their mangled forms include the inner pointee type
+/// and need a recursive name-builder that codegen doesn't expose
+/// yet. Aggregates (structs/enums/arrays/slices) and `string` need
+/// sret-aware trampolines and join paths — those land in 5C as well.
+fn is_thread_spawn_eligible(ty: &Ty) -> bool {
+    matches!(ty,
+        Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
+        | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
+        | Ty::Isize | Ty::Usize
+        | Ty::F32 | Ty::F64
+        | Ty::Bool | Ty::Unit
+    )
+}
+
+/// v0.0.3 Phase 5 Slice 5E.3: find the `Future[T]` struct in the
+/// type table given the inner `T`. Suffix-matches `Future__<mangle(T)>`
+/// the same way `lookup_join_handle_ty` matches the JoinHandle name.
+fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
+    let target = format!("Future__{}", mangle_o_for_tramp(inner));
+    let dotted = format!(".{target}");
+    for (idx, d) in types.struct_defs.iter().enumerate() {
+        if d.name == target || d.name.ends_with(&dotted) {
+            return Ty::Struct(StructId(idx as u32));
+        }
+    }
+    Ty::Struct(StructId(0))
+}
+
+/// v0.0.3 Phase 5 Slice 5E.3: given the monomorphized struct name of
+/// a `Future[U]` instantiation (e.g. `Future__i32`), recover U as a
+/// `Ty`. Mirrors `mangle_o_for_tramp`'s naming — supports the same
+/// scalar set the async return-type restriction allows.
+fn ty_from_future_name(name: &str, _types: &TypeTable) -> Ty {
+    let suffix = name.rsplit_once("Future__").map(|(_, s)| s).unwrap_or(name);
+    match suffix {
+        "i8" => Ty::I8,    "i16" => Ty::I16,   "i32" => Ty::I32,   "i64" => Ty::I64,
+        "u8" => Ty::U8,    "u16" => Ty::U16,   "u32" => Ty::U32,   "u64" => Ty::U64,
+        "isize" => Ty::Isize, "usize" => Ty::Usize,
+        "f32" => Ty::F32,  "f64" => Ty::F64,
+        "bool" => Ty::Bool, "unit" => Ty::Unit,
+        _ => Ty::Error,
+    }
+}
+
+/// v0.0.3 Phase 5 Slice 5C input eligibility. Like
+/// `is_thread_spawn_eligible` for scalars, but also accepts Copy
+/// structs (the canonical `Range`-style input for the parallel-sum
+/// recipe is a struct, not a scalar). Strings and Vec[T] are non-Copy
+/// — sema's `check_arg_with_move` enforces the `move` at the call
+/// site so the trampoline can read+pass them, but the typed store
+/// into ctx works the same as for Copy.
+fn is_thread_input_eligible(ty: &Ty, types: &TypeTable) -> bool {
+    if is_thread_spawn_eligible(ty) { return true; }
+    // v0.0.3 Slice 5D: raw pointers + fn pointers accepted as input —
+    // they're Copy, 8-byte, LLVM `ptr`-typed. The concurrent-counter
+    // recipe shares a `*u64` between worker threads via this path.
+    if matches!(ty, Ty::RawPtr(_) | Ty::FnPtr { .. }) { return true; }
+    // Copy structs (no Drop, all-Copy fields) lay out cleanly.
+    if let Ty::Struct(id) = ty {
+        let info = &types.struct_defs[id.0 as usize];
+        if info.is_copy { return true; }
+        // Non-Copy structs (e.g. Vec[T], string-shaped wrappers): the
+        // worker takes ownership via the typed store, so this is
+        // technically safe — but ownership transfer of non-Copy I
+        // depends on the parent flipping its drop flag at the
+        // spawn_with call site (sema's `move` machinery handles that),
+        // and the worker actually freeing if the worker's f does not.
+        // For 5C v1 we accept structs; richer support for Vec[T] /
+        // string returns lands when we add sret-aware trampolines.
+        return true;
+    }
+    // Accept strings + slices as moveable input by value (they're
+    // fat-pointer aggregates; typed store/load works).
+    matches!(ty, Ty::Str | Ty::String | Ty::Slice(_))
+}
+
 /// Build mode controls overflow checking on plain `+ - *`. Division-by-zero
 /// trapping is emitted regardless of mode (per plan §2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +459,7 @@ fn generate_inner(
     // codegen each function; flushed to `out` after every function body is
     // written and before DWARF (which has its own ID range).
     let md = ModuleMetadata::new();
+    let tramps = ThreadTrampolines::new();
     write_preamble(&mut out);
     if test_mode {
         // Shared per-test failure flag — written by `assert` in any function
@@ -218,6 +476,15 @@ fn generate_inner(
     // symbols so we never emit two `declare`s with the same name (LLVM
     // rejects that as a redefinition).
     let mut emitted_extern_symbols: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // v0.0.3 Phase 5 Slice 5B: pre-seed with the symbols the preamble
+    // declares so user-level `extern fn pthread_join(...)` style
+    // declarations don't emit a duplicate `declare`. Same shape rule
+    // applies to `malloc` / `free` / `memcpy` / `snprintf` / `printf`
+    // which user code may legitimately re-declare to get a typed
+    // handle.
+    for sym in ["pthread_create", "pthread_join", "malloc", "free", "memcpy", "snprintf", "printf"] {
+        emitted_extern_symbols.insert(sym.to_string());
+    }
     for item in &program.items {
         match &item.kind {
             ItemKind::Function(f) => {
@@ -228,7 +495,7 @@ fn generate_inner(
                 // Slice 7GEN.4: generic functions don't emit pre-monomorphization.
                 // Slice 7GEN.5 will walk a work-queue of instantiations.
                 if !f.generic_params.is_empty() { continue; }
-                gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode, &mut emitted_extern_symbols, &md, is_lib);
+                gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode, &mut emitted_extern_symbols, &md, &tramps, is_lib);
             }
             ItemKind::Impl(b) => {
                 let Some(&id) = types.struct_by_name.get(&b.target.name) else { continue; };
@@ -238,7 +505,7 @@ fn generate_inner(
                     // signatures and bodies are emitted as concrete
                     // copies by the monomorphize pass.
                     if !m.generic_params.is_empty() { continue; }
-                    gen_method(&mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md, is_lib);
+                    gen_method(&mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps, is_lib);
                 }
             }
             // Slice 7GEN.3: interface declarations have no runtime
@@ -256,6 +523,11 @@ fn generate_inner(
     if let Some(cfg) = test_cfg {
         emit_test_driver_main(&mut out, cfg.tests, cfg.json);
     }
+    // v0.0.3 Phase 5 Slice 5B: emit one `define internal ptr` trampoline
+    // per unique O type registered during function-body codegen. Done
+    // before metadata flushing so the trampoline bodies don't get
+    // tangled with the metadata block.
+    emit_thread_trampolines(&mut out, &tramps, &types);
     // Slice 1B: flush the accumulated `!N = !{...}` range metadata table
     // before DWARF (which writes its own metadata block). DWARF allocates
     // IDs starting at 0; our range table starts at 100_000 — disjoint.
@@ -297,9 +569,27 @@ fn attach_sanitizer_attrs(out: &mut String, sanitizers: &[&str]) {
     let original = std::mem::take(out);
     for line in original.lines() {
         if line.starts_with("define ") {
-            // Insert ` <attrs>` after the `)` and before the `{` (or
-            // before any trailing `!dbg !N` attached for DWARF).
-            if let Some(close_paren) = line.find(')') {
+            // Insert ` <attrs>` after the params' closing `)` and
+            // before the `{`. v0.0.3 Slice 5D fix: track paren depth
+            // so we don't land inside a nested `sret(%T)`-style
+            // attribute. The function's param list opens at depth 1
+            // and closes at depth 0; we attach right after that.
+            let mut depth: i32 = 0;
+            let mut close_idx: Option<usize> = None;
+            for (i, c) in line.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_idx = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(close_paren) = close_idx {
                 let after = &line[close_paren + 1..];
                 let head = &line[..=close_paren];
                 out.push_str(head);
@@ -532,9 +822,19 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
         let params: Vec<(Ty, bool, bool)> = f.params.iter()
             .map(|p| (ty_from(&p.ty, types), p.move_, p.mutable))
             .collect();
-        let ret = match &f.return_type {
+        let declared_ret = match &f.return_type {
             Some(t) => ty_from(t, types),
             None => Ty::Unit,
+        };
+        // v0.0.3 Phase 5 Slice 5E.3: `async fn foo() -> T` exposes
+        // `Future[T]` at the call site. The body codegen path
+        // (`gen_async_function`) uses the inner T directly; the sig
+        // here drives call-site lowering, where the returned value
+        // is the Future aggregate.
+        let ret = if f.is_async {
+            lookup_future_ty(&declared_ret, types)
+        } else {
+            declared_ret
         };
         let link_name = f.attributes.iter().find_map(|a| {
             if a.path.name != "link_name" { return None; }
@@ -1273,6 +1573,30 @@ fn scan_moves_in_expr(
                         }
                     }
                 }
+                // v0.0.3 Phase 5 Slice 5B: `__cplus_thread_join`
+                // consumes its handle argument (frees the heap ctx
+                // it points into). Treat it as a move so the
+                // surrounding scope-exit drop is gated by a real
+                // flag the intrinsic can flip.
+                if fn_name == "__cplus_thread_join" {
+                    if let Some(arg) = args.first() {
+                        if let ExprKind::Ident(n) = &arg.kind {
+                            set.insert(n.clone());
+                        }
+                    }
+                }
+                // v0.0.3 Phase 5 Slice 5C: `__cplus_thread_spawn_with`
+                // moves its first value-arg (the input) into the
+                // worker's context buffer. The trampoline reads it
+                // before f runs, so the parent must relinquish
+                // ownership at the spawn site.
+                if fn_name == "__cplus_thread_spawn_with" {
+                    if let Some(arg) = args.first() {
+                        if let ExprKind::Ident(n) = &arg.kind {
+                            set.insert(n.clone());
+                        }
+                    }
+                }
             }
             // v0.0.3 drop-tracking: Call with a Path callee = associated-fn
             // call (enum variant construction `Result::Ok(v)`, or
@@ -1333,6 +1657,7 @@ fn scan_moves_in_expr(
         }
         ExprKind::Block(b) => scan_moves_in_block(b, sigs, types, set),
         ExprKind::Unsafe(b) => scan_moves_in_block(b, sigs, types, set),
+        ExprKind::Await(inner) => scan_moves_in_expr(inner, sigs, types, set),
         ExprKind::If { cond, then, else_branch } => {
             scan_moves_in_expr(cond, sigs, types, set);
             scan_moves_in_block(then, sigs, types, set);
@@ -1553,6 +1878,38 @@ fn write_preamble(out: &mut String) {
     // struct's footprint) read as 0 instead of poison when packed into
     // the coerced integer-class return register.
     out.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+    // v0.0.3 Phase 5 Slice 5B: pthread externs for the thread::spawn /
+    // JoinHandle::join intrinsics. pthread_t is opaque-pointer-sized
+    // (8 bytes on every supported target); we model it as `i64` to
+    // keep the calls platform-agnostic — both arm64-darwin and
+    // x86_64-sysv pass an 8-byte integer in the same register class
+    // as an 8-byte pointer for the ccc convention. On macOS pthread
+    // is part of libSystem (linked by default); Linux callers need
+    // `[link] libs = ["pthread"]` in their manifest (Phase 5C).
+    out.push_str("declare i32 @pthread_create(ptr, ptr, ptr, ptr)\n");
+    out.push_str("declare i32 @pthread_join(i64, ptr)\n");
+    // v0.0.3 Phase 5 Slice 5E.3: LLVM coroutine intrinsics for the
+    // `async fn` lowering. The `presplitcoroutine` function attribute
+    // on each async fn triggers LLVM's CoroSplit pass during the
+    // standard middle-end pipeline (also runs at -O0 because the
+    // intrinsics are illegal in finalized IR — the pass *must* run).
+    // We use the "promise" pattern for the per-coroutine result slot
+    // so async fns returning T ≤ 8 bytes stash their result at a
+    // known offset in the frame, retrievable by the poll loop.
+    out.push_str("declare token @llvm.coro.id(i32, ptr, ptr, ptr)\n");
+    out.push_str("declare ptr @llvm.coro.begin(token, ptr)\n");
+    out.push_str("declare i64 @llvm.coro.size.i64()\n");
+    out.push_str("declare i8 @llvm.coro.suspend(token, i1)\n");
+    out.push_str("declare i1 @llvm.coro.end(ptr, i1, token)\n");
+    out.push_str("declare ptr @llvm.coro.free(token, ptr)\n");
+    out.push_str("declare i1 @llvm.coro.done(ptr)\n");
+    out.push_str("declare void @llvm.coro.resume(ptr)\n");
+    out.push_str("declare void @llvm.coro.destroy(ptr)\n");
+    out.push_str("declare ptr @llvm.coro.promise(ptr, i32, i1)\n");
+    // pthread_detach is called from user code (stdlib/thread's Drop
+    // impl) via `extern fn`, so its declare is emitted by the normal
+    // extern-fn path. No preamble entry needed; emitting one would
+    // collide.
     // Checked-arithmetic intrinsics used in debug mode for signed integers
     // of every supported width. Always declared; LLVM drops unused ones.
     for op in ["sadd", "ssub", "smul"] {
@@ -1612,6 +1969,7 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
             }
             ExprKind::Block(b) => walk_block(b, table, next_id, out),
             ExprKind::Unsafe(b) => walk_block(b, table, next_id, out),
+            ExprKind::Await(inner) => walk_expr(inner, table, next_id, out),
             ExprKind::If { cond, then, else_branch } => {
                 walk_expr(cond, table, next_id, out);
                 walk_block(then, table, next_id, out);
@@ -1838,10 +2196,20 @@ fn gen_function(
     test_mode: bool,
     emitted_extern_symbols: &mut std::collections::HashSet<String>,
     md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
     is_lib: bool,
 ) {
     // Builtin name: codegen never emits a definition for it; clang links printf.
     if f.name.name == "println" {
+        return;
+    }
+
+    // v0.0.3 Phase 5 Slice 5E.3: `async fn` bodies route to the
+    // coroutine codegen path. The lowered fn returns a `Future[T]`
+    // wrapping an LLVM coroutine handle; the user's declared return
+    // type T lands in the coroutine promise for the executor to read.
+    if f.is_async {
+        gen_async_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
         return;
     }
 
@@ -2016,7 +2384,7 @@ fn gen_function(
     out.push_str("entry:\n");
 
     // Build the function body
-    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md);
+    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md, tramps);
     state.collect_moved_bindings(&f.body);
     // Slice 1E: record this fn's parameter types so the Return-statement
     // predicate can check musttail signature equality against the callee.
@@ -2151,6 +2519,143 @@ fn gen_function(
     out.push_str("}\n\n");
 }
 
+/// v0.0.3 Phase 5 Slice 5E.3: emit an `async fn foo() -> T` as an
+/// LLVM coroutine. The lowered function:
+///   1. Allocates the coroutine frame via `malloc(@llvm.coro.size())`
+///      and obtains a handle from `@llvm.coro.begin`.
+///   2. Runs the user's body. `return X` is rewritten to "store X
+///      into the coroutine promise, then `br final_suspend`".
+///   3. Final-suspends (the standard switched-resume pattern with the
+///      switch's `default` label returning the handle to the caller).
+///   4. The cleanup path (taken when the executor calls
+///      `coro.destroy`) frees the frame via `llvm.coro.free` + `free`.
+///   5. Wraps the handle into a `Future[T]` aggregate and returns it.
+///
+/// Scope: v0.0.3 only handles primitive Copy `T` ≤ 8 bytes. Non-Copy
+/// returns (string/Vec) need sret-aware promise sizing — same gap as
+/// thread::spawn's Copy-only restriction and tracked alongside it.
+/// Generic async fns work because monomorphization fires before
+/// codegen (the async fn is a regular `Function` post-mono).
+fn gen_async_function(
+    out: &mut String,
+    f: &Function,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+) {
+    let sig = sigs.get(&f.name.name).expect("sig was collected");
+    // codegen's `collect_sigs` wraps async fn sigs to Future[T] for
+    // call-site lowering. The body itself needs the inner T — re-derive
+    // from the parsed return-type AST.
+    let inner_ty = match &f.return_type {
+        Some(t) => ty_from(t, types),
+        None => Ty::Unit,
+    };
+    let inner_llvm = llvm_ty(&inner_ty, types);
+    let (inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
+    let future_ret_ty = sig.return_type.clone();
+
+    let linkage = if f.name.name == "main" || f.is_pub { "" } else { "internal " };
+    let future_llvm = llvm_ty(&future_ret_ty, types);
+
+    // Function signature. Async fns can't be C-exports (no extern
+    // pub), so we don't need the C-ABI coercion paths. They also
+    // can't use the sret return path because the return value
+    // (Future[T] = { *u8 }) is just one ptr — fits in a register.
+    write!(out, "define {}{} @{}(", linkage, future_llvm, f.name.name).unwrap();
+    for (i, (param, (pty, _move_flag, _mut_flag))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        if i > 0 { out.push_str(", "); }
+        write!(out, "{} %{}", llvm_ty(pty, types), i as u32).unwrap();
+        let _ = param;
+    }
+    out.push_str(") presplitcoroutine {\nentry:\n");
+
+    // Coroutine prologue. Pass the result-type's size + align as the
+    // promise hint so LLVM lays out a properly-aligned slot at a
+    // known offset; we recover that offset later via `llvm.coro.promise`.
+    out.push_str("  %.coro.id = call token @llvm.coro.id(i32 0, ptr null, ptr null, ptr null)\n");
+    out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
+    out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
+    out.push_str("  %.coro.hdl = call ptr @llvm.coro.begin(token %.coro.id, ptr %.coro.mem)\n");
+
+    // Build a FnState configured for async-body emission. The body's
+    // `return X` will store X to the coroutine promise and branch to
+    // `%.coro.final_suspend`.
+    let mut state = FnState::new(inner_ty.clone(), sigs, types, str_lits, mode, test_mode, md, tramps);
+    state.return_ty = inner_ty.clone();
+    state.coro_promise = Some((".coro.hdl".to_string(), inner_llvm.clone(), inner_align as u32));
+    state.body.push_str(""); // body collects after entry
+    state.collect_moved_bindings(&f.body);
+
+    // Bind params to allocas (mirrors the non-async path's simple
+    // value-passed handling).
+    let body_start_offset = state.body.len();
+    for (i, (param, (pty, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let slot = state.alloca_named(&param.name.name, pty.clone());
+        state.body.push_str(&format!(
+            "  store {} %{}, ptr {}\n",
+            llvm_ty(pty, types), i as u32, slot
+        ));
+        state.bind(&param.name.name, slot.clone(), pty.clone());
+    }
+
+    let _body_value = state.gen_block_expr(&f.body);
+    let _ = body_start_offset;
+
+    // If the body fell off the end without an explicit `return`, that's
+    // a unit-typed async fn — handle the same way: store an undef of
+    // inner type then suspend. (Sema rejects async fns missing return
+    // for non-unit Ty.)
+    if !state.terminated {
+        let prom_ptr = state.next_tmp();
+        state.emit(&format!(
+            "{prom_ptr} = call ptr @llvm.coro.promise(ptr %.coro.hdl, i32 {inner_align}, i1 false)"
+        ));
+        state.emit(&format!(
+            "store {inner_llvm} undef, ptr {prom_ptr}, align {inner_align}"
+        ));
+        state.emit_terminator("br label %.coro.final_suspend");
+    }
+
+    // Emit the suspend / cleanup / end blocks. These live after the
+    // user body — every `return X` branched here from inside.
+    state.body.push_str(".coro.final_suspend:\n");
+    state.body.push_str("  %.coro.fs = call i8 @llvm.coro.suspend(token none, i1 true)\n");
+    state.body.push_str("  switch i8 %.coro.fs, label %.coro.ramp_return [i8 0, label %.coro.trap i8 1, label %.coro.cleanup]\n");
+    state.body.push_str(".coro.ramp_return:\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.trap:\n");
+    state.body.push_str("  call void @llvm.trap()\n");
+    state.body.push_str("  unreachable\n");
+    state.body.push_str(".coro.cleanup:\n");
+    state.body.push_str("  %.coro.mem_free = call ptr @llvm.coro.free(token %.coro.id, ptr %.coro.hdl)\n");
+    state.body.push_str("  call void @free(ptr %.coro.mem_free)\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.end:\n");
+    state.body.push_str("  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n");
+    // Wrap the handle in Future[T].
+    state.body.push_str(&format!(
+        "  %.coro.future0 = insertvalue {future_llvm} undef, ptr %.coro.hdl, 0\n"
+    ));
+    state.body.push_str(&format!(
+        "  ret {future_llvm} %.coro.future0\n"
+    ));
+
+    // Allocas live in the function preamble before user body.
+    for a in &state.allocas {
+        out.push_str("  ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+    let _ = inner_size; // silence unused
+}
+
 /// Emit a method as a regular LLVM function with a mangled name `@Type.method`.
 /// Receivers compile to LLVM parameters:
 /// - `self` (value): a struct-typed parameter, stored in an alloca
@@ -2165,6 +2670,7 @@ fn gen_method(
     mode: BuildMode,
     test_mode: bool,
     md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
     is_lib: bool,
 ) {
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
@@ -2257,7 +2763,7 @@ fn gen_method(
     out.push_str(" {\n");
     out.push_str("entry:\n");
 
-    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md);
+    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md, tramps);
     state.collect_moved_bindings(&m.body);
     // Destructors don't auto-drop their receiver — we *are* the destructor.
     if m.name.name == "drop" {
@@ -2505,10 +3011,22 @@ struct FnState<'a> {
     /// alloca and emits `ret <coerced>` instead of `ret <original>`.
     /// `None` means no coercion is needed (Direct return).
     coerce_ret: Option<String>,
+    /// v0.0.3 Phase 5 Slice 5B: shared registry of per-O trampolines
+    /// requested by `__cplus_thread_spawn` call sites within this
+    /// function's body. After all function bodies are emitted, the
+    /// registry walks its set and writes one trampoline definition
+    /// per unique O.
+    tramps: &'a ThreadTrampolines,
+    /// v0.0.3 Phase 5 Slice 5E.3: set when emitting an `async fn`
+    /// body. Carries the coroutine handle SSA name, the inner T's
+    /// LLVM type, and T's alignment. `StmtKind::Return` consults this:
+    /// when present, `return X` lowers to "store X to coro.promise
+    /// then `br .coro.final_suspend`" instead of the usual `ret X`.
+    coro_promise: Option<(String, String, u32)>,
 }
 
 impl<'a> FnState<'a> {
-    fn new(return_ty: Ty, sigs: &'a HashMap<String, FnSig>, types: &'a TypeTable, str_lits: &'a StrLitTable, mode: BuildMode, test_mode: bool, md: &'a ModuleMetadata) -> Self {
+    fn new(return_ty: Ty, sigs: &'a HashMap<String, FnSig>, types: &'a TypeTable, str_lits: &'a StrLitTable, mode: BuildMode, test_mode: bool, md: &'a ModuleMetadata, tramps: &'a ThreadTrampolines) -> Self {
         Self {
             body: String::new(),
             allocas: Vec::new(),
@@ -2533,6 +3051,8 @@ impl<'a> FnState<'a> {
             tail_call_eligible: false,
             sret_slot: None,
             coerce_ret: None,
+            tramps,
+            coro_promise: None,
         }
     }
 
@@ -3025,6 +3545,23 @@ impl<'a> FnState<'a> {
                 if self.terminated { return; }
                 match (ret_val, &ret_ty) {
                     (Some(v), _) => {
+                        // v0.0.3 Phase 5 Slice 5E.3: inside an `async fn`
+                        // body, `return X` stashes X in the coroutine
+                        // promise and branches to the final-suspend
+                        // block — the ramp will return the handle, and
+                        // the executor will read X out via
+                        // `llvm.coro.promise` after `coro.done` flips.
+                        if let Some((hdl, inner_lty, align)) = self.coro_promise.clone() {
+                            let prom_ptr = self.next_tmp();
+                            self.emit(&format!(
+                                "{prom_ptr} = call ptr @llvm.coro.promise(ptr %{hdl}, i32 {align}, i1 false)"
+                            ));
+                            self.emit(&format!(
+                                "store {inner_lty} {v}, ptr {prom_ptr}, align {align}"
+                            ));
+                            self.emit_terminator("br label %.coro.final_suspend");
+                            return;
+                        }
                         // Slice 1D: when this fn uses sret, the result
                         // lands in the caller-provided slot — store the
                         // value there and return void.
@@ -3387,6 +3924,23 @@ impl<'a> FnState<'a> {
             // Slice 10.FFI.3: `unsafe { ... }` is a marker for sema;
             // codegen treats it as a regular block.
             ExprKind::Unsafe(b) => self.gen_block_expr(b),
+
+            // v0.0.3 Phase 5 Slice 5E.3: `await EXPR`. EXPR evaluates
+            // to a `Future[U]`; we drive it to completion in a
+            // resume-loop. The loop:
+            //
+            //   1. Check inner.done. If true, fall through to extract.
+            //   2. Otherwise self-suspend (normal suspend, i1 false).
+            //      Default switch label = ramp return (first time we
+            //      reach this point during the outer's body); i8 0 =
+            //      resumed by executor → call inner.resume + re-check.
+            //   3. Once inner.done, extract via `llvm.coro.promise`,
+            //      destroy the inner coroutine, branch out with the
+            //      loaded value.
+            //
+            // Only valid inside an `async fn` body — sema rejects
+            // otherwise (E0901).
+            ExprKind::Await(inner_expr) => self.gen_await_expr(inner_expr),
 
             ExprKind::If { cond, then, else_branch } => {
                 self.gen_if(cond, then, else_branch.as_deref())
@@ -4428,6 +4982,31 @@ impl<'a> FnState<'a> {
             ));
             return Some((r, ret_ty));
         }
+        // v0.0.3 Phase 5 Slice 5A: atomic intrinsics
+        // (`__cplus_atomic_<op>_<ty>_<ord>`). Lowered directly to LLVM's
+        // `load atomic` / `store atomic` / `atomicrmw` / `cmpxchg`. Sema
+        // validated arg count + types + the surrounding `unsafe`; codegen
+        // is mechanical.
+        if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
+            return self.gen_atomic_intrinsic(&spec, args);
+        }
+        // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Sema
+        // validated args + JoinHandle[O] shape + the surrounding
+        // `unsafe`; codegen mallocs the context, registers a per-O
+        // trampoline, and lowers to pthread_create / pthread_join +
+        // load/store of the result slot.
+        if name == "__cplus_thread_spawn" {
+            return self.gen_thread_spawn(args, type_args);
+        }
+        if name == "__cplus_thread_spawn_with" {
+            return self.gen_thread_spawn_with(args, type_args);
+        }
+        if name == "__cplus_thread_join" {
+            return self.gen_thread_join(args, type_args);
+        }
+        if name == "__cplus_block_on" {
+            return self.gen_block_on(args, type_args);
+        }
         if name == "slice_len" {
             let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
             let r = self.next_tmp();
@@ -4611,6 +5190,409 @@ impl<'a> FnState<'a> {
                 Some((v, ret))
             }
         }
+    }
+
+    /// v0.0.3 Phase 5 Slice 5A: lower `__cplus_atomic_*` intrinsics.
+    ///
+    /// - Load:    `%r = load atomic <ty> ptr <p> <ord>, align <a>`
+    /// - Store:   `store atomic <ty> <v>, ptr <p> <ord>, align <a>`
+    /// - Xchg/fetch_*: `%r = atomicrmw <op> ptr <p>, <ty> <v> <ord>`
+    /// - Cmpxchg: `%pair = cmpxchg ptr <p>, <ty> <e>, <ty> <d> <ord> <ord>`
+    ///   then `extractvalue` for the previous-value field.
+    ///
+    /// Alignment is set to the natural alignment of the operand type
+    /// (= operand byte width on every supported width 1/2/4/8). LLVM
+    /// requires `align` on atomic load/store; `atomicrmw`/`cmpxchg`
+    /// derive alignment from the pointer's pointee type.
+    fn gen_atomic_intrinsic(&mut self, spec: &crate::atomic::AtomicSpec, args: &[Expr]) -> Option<(String, Ty)> {
+        use crate::atomic::AtomicOp;
+        let (p_val, _) = self.gen_expr(&args[0]).expect("atomic ptr arg");
+        let llvm_ty = self.lty(&spec.ty);
+        let align = spec.bits / 8;
+        let ord = spec.llvm_ordering;
+        match spec.op {
+            AtomicOp::Load => {
+                let r = self.next_tmp();
+                self.emit(&format!("{r} = load atomic {llvm_ty}, ptr {p_val} {ord}, align {align}"));
+                Some((r, spec.ty.clone()))
+            }
+            AtomicOp::Store => {
+                let (v_val, _) = self.gen_expr(&args[1]).expect("atomic store val arg");
+                self.emit(&format!("store atomic {llvm_ty} {v_val}, ptr {p_val} {ord}, align {align}"));
+                None
+            }
+            AtomicOp::Xchg
+            | AtomicOp::FetchAdd
+            | AtomicOp::FetchSub
+            | AtomicOp::FetchAnd
+            | AtomicOp::FetchOr
+            | AtomicOp::FetchXor => {
+                let opcode = spec.op.rmw_opcode();
+                let (v_val, _) = self.gen_expr(&args[1]).expect("atomicrmw val arg");
+                let r = self.next_tmp();
+                self.emit(&format!(
+                    "{r} = atomicrmw {opcode} ptr {p_val}, {llvm_ty} {v_val} {ord}"
+                ));
+                Some((r, spec.ty.clone()))
+            }
+            AtomicOp::Cmpxchg => {
+                let (e_val, _) = self.gen_expr(&args[1]).expect("cmpxchg expected arg");
+                let (d_val, _) = self.gen_expr(&args[2]).expect("cmpxchg desired arg");
+                // Failure ordering: LLVM forbids the failure ordering
+                // from being stronger than the success ordering AND
+                // forbids `release`/`acq_rel` as failure orderings.
+                // Map each success ordering to the strongest legal
+                // matching failure ordering.
+                let fail_ord = match ord {
+                    "release" => "monotonic",
+                    "acq_rel" => "acquire",
+                    other => other,
+                };
+                let pair = self.next_tmp();
+                self.emit(&format!(
+                    "{pair} = cmpxchg ptr {p_val}, {llvm_ty} {e_val}, {llvm_ty} {d_val} {ord} {fail_ord}"
+                ));
+                let prev = self.next_tmp();
+                self.emit(&format!(
+                    "{prev} = extractvalue {{ {llvm_ty}, i1 }} {pair}, 0"
+                ));
+                Some((prev, spec.ty.clone()))
+            }
+        }
+    }
+
+    /// v0.0.3 Phase 5 Slice 5B: lower `__cplus_thread_spawn(f)` to:
+    ///   1. malloc(8 + size_of(O)) → ctx
+    ///   2. store f at ctx[0]
+    ///   3. malloc(8) → tid_slot (pthread_create needs writable storage)
+    ///   4. pthread_create(tid_slot, NULL, @__cplus_thread_tramp_<O>, ctx)
+    ///   5. load tid_slot → tid; free(tid_slot)
+    ///   6. insertvalue { i64, ptr } { tid, ctx }
+    ///
+    /// Returns the `JoinHandle[O]` aggregate value. O is restricted to
+    /// Copy types ≤ 8 bytes; non-Copy lands in Slice 5C.
+    fn gen_thread_spawn(&mut self, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {
+        let o_ty = ty_from(&type_args[0], self.types);
+        let (f_val, _f_ty) = self.gen_expr(&args[0]).expect("thread_spawn fn arg");
+        if !is_thread_spawn_eligible(&o_ty) {
+            // Diagnostic surfaces in sema; here we still must produce
+            // some IR to keep the build flow alive for `--emit-ll`
+            // smoke paths. Use poison and a JoinHandle-shaped value.
+            return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
+        }
+        let tramp_sym = self.tramps.register_spawn(&o_ty);
+        let (size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
+        let total_size = 8 + size;
+        let ctx = self.next_tmp();
+        self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
+        self.emit(&format!("store ptr {f_val}, ptr {ctx}, align 8"));
+        let tid_slot = self.next_tmp();
+        self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
+        let err = self.next_tmp();
+        self.emit(&format!(
+            "{err} = call i32 @pthread_create(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})"
+        ));
+        // pthread_create returns 0 on success. Trap on failure so the
+        // user doesn't get a zero'd tid silently. v0.0.3 has no
+        // unwind/Result story for thread errors per the locked plan
+        // decision; aborting is the honest behaviour.
+        let ok = self.next_tmp();
+        let trap_bb = self.next_block_label();
+        let cont_bb = self.next_block_label();
+        self.emit(&format!("{ok} = icmp eq i32 {err}, 0"));
+        self.emit_terminator(&format!("br i1 {ok}, label %{cont_bb}, label %{trap_bb}"));
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n");
+        self.body.push_str("  unreachable\n");
+        self.body.push_str(&format!("{cont_bb}:\n"));
+        self.terminated = false;
+        let tid = self.next_tmp();
+        self.emit(&format!("{tid} = load i64, ptr {tid_slot}, align 8"));
+        self.emit(&format!("call void @free(ptr {tid_slot})"));
+        // Build the JoinHandle[O] aggregate. The stdlib defines its
+        // shape as { tid: u64, ctx: *u8 } — sema-resolved Ty is what
+        // we ask the type table for the LLVM struct name.
+        let handle_ty = self.lookup_join_handle_ty(&o_ty);
+        let handle_llvm = self.lty(&handle_ty);
+        let agg0 = self.next_tmp();
+        let agg1 = self.next_tmp();
+        self.emit(&format!("{agg0} = insertvalue {handle_llvm} undef, i64 {tid}, 0"));
+        self.emit(&format!("{agg1} = insertvalue {handle_llvm} {agg0}, ptr {ctx}, 1"));
+        Some((agg1, handle_ty))
+    }
+
+    /// v0.0.3 Phase 5 Slice 5B: lower `__cplus_thread_join(h)` to:
+    ///   1. extract tid (field 0) and ctx (field 1) from h
+    ///   2. pthread_join(tid, NULL)
+    ///   3. load result from ctx + 8
+    ///   4. free(ctx)
+    ///   5. return the loaded result
+    ///
+    /// Restricted to Copy O ≤ 8 bytes (matches spawn's eligibility).
+    /// v0.0.3 Phase 5 Slice 5C: lower `__cplus_thread_spawn_with::[I, O](input, f)`
+    /// to malloc(`8 + size_of(O) + size_of(I)`) → store f at offset 0 →
+    /// store input at offset `8 + size_of(O)` → pthread_create with the
+    /// per-(I, O) trampoline → return `JoinHandle[O]`. Sharing the
+    /// fixed-offset-8 result slot with spawn keeps the join intrinsic
+    /// single-shape.
+    fn gen_thread_spawn_with(&mut self, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {
+        let i_ty = ty_from(&type_args[0], self.types);
+        let o_ty = ty_from(&type_args[1], self.types);
+        let (input_val, _input_actual_ty) = self.gen_expr(&args[0]).expect("spawn_with input arg");
+        // If the input was a named binding being moved into the worker,
+        // flip its drop flag so the parent's scope-exit drop doesn't
+        // run on memory the worker now owns.
+        if let ExprKind::Ident(name) = &args[0].kind {
+            self.mark_moved(name);
+        }
+        let (f_val, _f_ty) = self.gen_expr(&args[1]).expect("spawn_with fn arg");
+        if !is_thread_spawn_eligible(&o_ty) || !is_thread_input_eligible(&i_ty, self.types) {
+            return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
+        }
+        let tramp_sym = self.tramps.register_spawn_with(&i_ty, &o_ty);
+        let (o_size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
+        let (i_size, i_align) = static_layout(&i_ty, self.types).unwrap_or((8, 8));
+        // Input offset = 8 (fn ptr) + size_of(O), rounded up to I's
+        // natural alignment so the typed store stays in bounds.
+        let input_off_unaligned = 8 + o_size;
+        let input_off = (input_off_unaligned + i_align - 1) & !(i_align - 1);
+        let total_size = input_off + i_size;
+        let ctx = self.next_tmp();
+        self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
+        self.emit(&format!("store ptr {f_val}, ptr {ctx}, align 8"));
+        let input_slot = self.next_tmp();
+        self.emit(&format!(
+            "{input_slot} = getelementptr i8, ptr {ctx}, i64 {input_off}"
+        ));
+        let i_llvm = self.lty(&i_ty);
+        self.emit(&format!(
+            "store {i_llvm} {input_val}, ptr {input_slot}, align {i_align}"
+        ));
+        let tid_slot = self.next_tmp();
+        self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
+        let err = self.next_tmp();
+        self.emit(&format!(
+            "{err} = call i32 @pthread_create(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})"
+        ));
+        let ok = self.next_tmp();
+        let trap_bb = self.next_block_label();
+        let cont_bb = self.next_block_label();
+        self.emit(&format!("{ok} = icmp eq i32 {err}, 0"));
+        self.emit_terminator(&format!("br i1 {ok}, label %{cont_bb}, label %{trap_bb}"));
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n");
+        self.body.push_str("  unreachable\n");
+        self.body.push_str(&format!("{cont_bb}:\n"));
+        self.terminated = false;
+        let tid = self.next_tmp();
+        self.emit(&format!("{tid} = load i64, ptr {tid_slot}, align 8"));
+        self.emit(&format!("call void @free(ptr {tid_slot})"));
+        let handle_ty = self.lookup_join_handle_ty(&o_ty);
+        let handle_llvm = self.lty(&handle_ty);
+        let agg0 = self.next_tmp();
+        let agg1 = self.next_tmp();
+        self.emit(&format!("{agg0} = insertvalue {handle_llvm} undef, i64 {tid}, 0"));
+        self.emit(&format!("{agg1} = insertvalue {handle_llvm} {agg0}, ptr {ctx}, 1"));
+        Some((agg1, handle_ty))
+    }
+
+    /// v0.0.3 Phase 5 Slice 5E.3: lower `await EXPR` inside an `async fn`.
+    /// EXPR evaluates to a `Future[U]`; drive it to completion via a
+    /// resume-loop, then extract the result from the coroutine promise.
+    /// Requires `self.coro_promise.is_some()` (sema's E0901 enforces).
+    fn gen_await_expr(&mut self, inner_expr: &Expr) -> Option<(String, Ty)> {
+        let (inner_v, inner_ty) = self.gen_expr(inner_expr).expect("await on void expr");
+        // Inner must be Future[U]. Pull U out via the struct's generic origin.
+        let u_ty = match &inner_ty {
+            Ty::Struct(id) => {
+                let def = &self.types.struct_defs[id.0 as usize];
+                // Codegen StructInfo doesn't carry generic_origin; rely
+                // on the convention that Future[U] is `{ ptr }` and U
+                // comes from the surrounding expectation. Easiest path:
+                // ask sema-side via the resolver's TypeKind, but we
+                // don't have that here. Fall back to the field type +
+                // expected-type from context. For v0.0.3, await
+                // expressions always appear in contexts where the
+                // outer's body's coro_promise tells us the type we
+                // ultimately stash — but that's the OUTER's T, not
+                // the inner's U. Instead, look up by struct name
+                // ending with `Future__<u>` and parse the suffix.
+                let inner_struct_name = &def.name;
+                ty_from_future_name(inner_struct_name, self.types)
+            }
+            _ => panic!("await of non-Future at codegen — sema should have rejected"),
+        };
+        let u_llvm = llvm_ty(&u_ty, self.types);
+        let u_align = match static_layout(&u_ty, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+
+        // The Future[U] aggregate is `{ ptr }`. extractvalue needs the
+        // full named-struct type (LLVM doesn't unify structurally).
+        let inner_hdl = self.next_tmp();
+        let future_llvm = self.lty(&inner_ty);
+        self.emit(&format!(
+            "{inner_hdl} = extractvalue {future_llvm} {inner_v}, 0"
+        ));
+
+        let loop_bb = self.next_block_label();
+        let resume_bb = self.next_block_label();
+        let extract_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        let trap_bb = self.next_block_label();
+        let done_bb = self.next_block_label();
+
+        // Loop entry — check inner.done.
+        self.emit_terminator(&format!("br label %{loop_bb}"));
+        self.body.push_str(&format!("{loop_bb}:\n"));
+        self.terminated = false;
+        let done = self.next_tmp();
+        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {inner_hdl})"));
+        self.emit_terminator(&format!("br i1 {done}, label %{extract_bb}, label %{resume_bb}"));
+
+        // Resume branch — for v0.0.3 (no reactor), inner is already
+        // done after the first ramp call (no real suspension). If
+        // we ever land here, suspend self normally so the executor
+        // can advance us; on resume, drive inner forward then loop
+        // back.
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        let suspend_v = self.next_tmp();
+        self.body.push_str(&format!("  {suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)\n"));
+        self.body.push_str(&format!(
+            "  switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{loop_bb} i8 1, label %{trap_bb}]\n"
+        ));
+
+        // Ramp-return path — exited via the surrounding fn's coro.end.
+        // We branch to .coro.final_suspend? No — we need to return
+        // the outer's handle as Pending. The standard pattern is to
+        // branch to a "self ramp return" path that exits to the
+        // outer's `.coro.end`. Since the outer's coroutine ramp is
+        // already wired to return via final_suspend, we just need
+        // to fall through to that. Simplest correct: br to a label
+        // that branches to `.coro.end`. But `.coro.end` lives in
+        // the outer ramp emit. Use the existing `.coro.end` label.
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+
+        // Trap branch — shouldn't be reachable; coro.destroy on the
+        // outer would mean the executor gave up.
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
+
+        // Extract branch — read the inner promise, destroy inner.
+        self.body.push_str(&format!("{extract_bb}:\n"));
+        let inner_prom = self.next_tmp();
+        self.body.push_str(&format!(
+            "  {inner_prom} = call ptr @llvm.coro.promise(ptr {inner_hdl}, i32 {u_align}, i1 false)\n"
+        ));
+        let result = self.next_tmp();
+        self.body.push_str(&format!(
+            "  {result} = load {u_llvm}, ptr {inner_prom}, align {u_align}\n"
+        ));
+        self.body.push_str(&format!(
+            "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
+        ));
+        self.body.push_str(&format!("  br label %{done_bb}\n"));
+
+        self.body.push_str(&format!("{done_bb}:\n"));
+        self.terminated = false;
+        Some((result, u_ty))
+    }
+
+    /// v0.0.3 Phase 5 Slice 5E.5: lower `__cplus_block_on::[T](future)`.
+    /// Synchronously drives the coroutine to completion via
+    /// `coro.resume` until `coro.done`, then reads T from the
+    /// coroutine promise, destroys the frame, and returns T.
+    fn gen_block_on(&mut self, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {
+        let t_ty = ty_from(&type_args[0], self.types);
+        let t_llvm = llvm_ty(&t_ty, self.types);
+        let t_align = static_layout(&t_ty, self.types).map(|(_, a)| a).unwrap_or(8);
+        let (future_v, future_ty) = self.gen_expr(&args[0]).expect("block_on future arg");
+        let future_llvm = self.lty(&future_ty);
+        // Future[T] is { ptr }. Extract handle.
+        let hdl = self.next_tmp();
+        self.emit(&format!("{hdl} = extractvalue {future_llvm} {future_v}, 0"));
+        let loop_bb = self.next_block_label();
+        let resume_bb = self.next_block_label();
+        let extract_bb = self.next_block_label();
+        self.emit_terminator(&format!("br label %{loop_bb}"));
+        self.body.push_str(&format!("{loop_bb}:\n"));
+        self.terminated = false;
+        let done = self.next_tmp();
+        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        self.emit_terminator(&format!("br i1 {done}, label %{extract_bb}, label %{resume_bb}"));
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.body.push_str(&format!("  call void @llvm.coro.resume(ptr {hdl})\n"));
+        self.body.push_str(&format!("  br label %{loop_bb}\n"));
+        self.body.push_str(&format!("{extract_bb}:\n"));
+        self.terminated = false;
+        let prom = self.next_tmp();
+        self.emit(&format!("{prom} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {t_align}, i1 false)"));
+        let result = self.next_tmp();
+        self.emit(&format!("{result} = load {t_llvm}, ptr {prom}, align {t_align}"));
+        self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
+        Some((result, t_ty))
+    }
+
+    fn gen_thread_join(&mut self, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {
+        let o_ty = ty_from(&type_args[0], self.types);
+        let (h_val, h_ty) = self.gen_expr(&args[0]).expect("thread_join handle arg");
+        // The intrinsic consumes the handle (frees ctx). If the source
+        // expression is a plain Ident bound as a Drop value, flip its
+        // drop flag so the scope-exit destructor doesn't double-free.
+        if let ExprKind::Ident(name) = &args[0].kind {
+            self.mark_moved(name);
+        }
+        let handle_llvm = self.lty(&h_ty);
+        let tid = self.next_tmp();
+        let ctx = self.next_tmp();
+        self.emit(&format!("{tid} = extractvalue {handle_llvm} {h_val}, 0"));
+        self.emit(&format!("{ctx} = extractvalue {handle_llvm} {h_val}, 1"));
+        let _err = self.next_tmp();
+        self.emit(&format!("{_err} = call i32 @pthread_join(i64 {tid}, ptr null)"));
+        if !is_thread_spawn_eligible(&o_ty) || matches!(o_ty, Ty::Unit) {
+            // Unit: no result to load. Eligibility-failed: codegen
+            // already errored at spawn site; do the free + return undef
+            // so the rest of the function compiles.
+            self.emit(&format!("call void @free(ptr {ctx})"));
+            if matches!(o_ty, Ty::Unit) {
+                return None;
+            }
+            return Some(("undef".to_string(), o_ty));
+        }
+        let llvm_t = self.lty(&o_ty);
+        let align = match &o_ty {
+            Ty::I8 | Ty::U8 | Ty::Bool => 1,
+            Ty::I16 | Ty::U16 => 2,
+            Ty::I32 | Ty::U32 | Ty::F32 => 4,
+            _ => 8,
+        };
+        let slot = self.next_tmp();
+        let result = self.next_tmp();
+        self.emit(&format!("{slot} = getelementptr i8, ptr {ctx}, i64 8"));
+        self.emit(&format!("{result} = load {llvm_t}, ptr {slot}, align {align}"));
+        self.emit(&format!("call void @free(ptr {ctx})"));
+        Some((result, o_ty))
+    }
+
+    /// Find the `JoinHandle[O]` struct Ty in the type table. Looks
+    /// up by the monomorphizer's mangled suffix (`JoinHandle__<suffix>`);
+    /// the resolver prefixes that with a per-file path, so we
+    /// suffix-match against `.JoinHandle__<suffix>` (or the bare name
+    /// for unqualified contexts).
+    fn lookup_join_handle_ty(&self, o_ty: &Ty) -> Ty {
+        let target = format!("JoinHandle__{}", mangle_o_for_tramp(o_ty));
+        let dotted = format!(".{target}");
+        for (idx, d) in self.types.struct_defs.iter().enumerate() {
+            if d.name == target || d.name.ends_with(&dotted) {
+                return Ty::Struct(StructId(idx as u32));
+            }
+        }
+        // Unreachable when sema is happy — but during sema-error
+        // recovery codegen may still be called. Fall back to id 0
+        // so the rest of the function compiles.
+        Ty::Struct(StructId(0))
     }
 
     fn gen_method_call(&mut self, receiver: &Expr, name: &Ident, args: &[Expr]) -> Option<(String, Ty)> {
@@ -5387,6 +6369,50 @@ mod tests {
         let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
         assert!(diags.is_empty(), "sema errors: {diags:#?}");
         generate(&prog, mode)
+    }
+
+    /// v0.0.3 Phase 5 Slice 5B: gen_src + monomorphize. Required for
+    /// codegen IR tests of intrinsics whose return type is a generic
+    /// struct (e.g. `__cplus_thread_spawn` returning `JoinHandle[O]`).
+    /// Mirrors `cpc/src/main.rs::run_monomorphize`.
+    fn gen_src_mono(src: &str) -> String {
+        use crate::ast::ItemKind;
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let file_path = PathBuf::from("test.cplus");
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> = std::collections::BTreeMap::new();
+        files.insert("test.cplus".to_string(), (file_path.clone(), src.to_string()));
+        let (diags, mono) = sema::check_multi_with_mono(&prog, file_path.clone(), src, files);
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        // Build name lookup over (mono-extended) struct/enum tables.
+        let mut struct_names: Vec<String> = Vec::new();
+        let mut enum_names: Vec<String> = Vec::new();
+        for item in &prog.items {
+            match &item.kind {
+                ItemKind::Struct(s) if s.generic_params.is_empty() => struct_names.push(s.name.name.clone()),
+                ItemKind::Enum(e) if e.generic_params.is_empty() => enum_names.push(e.name.name.clone()),
+                _ => {}
+            }
+        }
+        for info in mono.struct_instantiations.values() {
+            let slot = info.id as usize;
+            if struct_names.len() <= slot { struct_names.resize(slot + 1, String::from("?")); }
+            struct_names[slot] = info.mangled_name.clone();
+        }
+        for info in mono.enum_instantiations.values() {
+            let slot = info.id as usize;
+            if enum_names.len() <= slot { enum_names.resize(slot + 1, String::from("?")); }
+            enum_names[slot] = info.mangled_name.clone();
+        }
+        let name_of = move |ty: &sema::Ty| -> String {
+            match ty {
+                sema::Ty::Struct(id) => struct_names.get(id.0 as usize).cloned().unwrap_or_else(|| "?".into()),
+                sema::Ty::Enum(id) => enum_names.get(id.0 as usize).cloned().unwrap_or_else(|| "?".into()),
+                other => other.name().to_string(),
+            }
+        };
+        let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
+        generate(&post, BuildMode::Debug)
     }
 
     #[test]
@@ -7327,7 +8353,314 @@ mod tests {
         assert!(ir.contains("declare i64 @llvm.bswap.i64(i64)"));
     }
 
+    // ---- v0.0.3 Phase 5 Slice 5A: atomic intrinsics ----
+
+    const ATOMIC_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n";
+
+    fn atomic_test_src(body: &str) -> String {
+        format!("{ATOMIC_PRELUDE}fn main() -> i32 {{ unsafe {{ {body} }} return 0; }}")
+    }
+
     #[test]
+    fn atomic_load_emits_load_atomic_seqcst() {
+        let ir = gen_src(&atomic_test_src(
+            "let p: *i32 = malloc(4 as usize) as *i32; let _v: i32 = __cplus_atomic_load_i32_seqcst(p);",
+        ));
+        assert!(ir.contains("load atomic i32, ptr"), "expected load atomic, got:\n{ir}");
+        assert!(ir.contains("seq_cst, align 4"), "expected seq_cst align 4, got:\n{ir}");
+    }
+
+    #[test]
+    fn atomic_store_emits_store_atomic_release() {
+        let ir = gen_src(&atomic_test_src(
+            "let p: *i64 = malloc(8 as usize) as *i64; __cplus_atomic_store_i64_release(p, 42 as i64);",
+        ));
+        assert!(ir.contains("store atomic i64"), "expected store atomic, got:\n{ir}");
+        assert!(ir.contains("release, align 8"), "expected release align 8, got:\n{ir}");
+    }
+
+    #[test]
+    fn atomic_fetch_add_emits_atomicrmw_add() {
+        let ir = gen_src(&atomic_test_src(
+            "let p: *u64 = malloc(8 as usize) as *u64; let _r: u64 = __cplus_atomic_fetch_add_u64_seqcst(p, 1 as u64);",
+        ));
+        assert!(ir.contains("atomicrmw add ptr"), "expected atomicrmw add, got:\n{ir}");
+        assert!(ir.contains("seq_cst"), "expected seq_cst ordering, got:\n{ir}");
+    }
+
+    #[test]
+    fn atomic_fetch_or_relaxed_uses_monotonic_keyword() {
+        let ir = gen_src(&atomic_test_src(
+            "let p: *u32 = malloc(4 as usize) as *u32; let _r: u32 = __cplus_atomic_fetch_or_u32_relaxed(p, 1 as u32);",
+        ));
+        assert!(ir.contains("atomicrmw or ptr"), "expected atomicrmw or, got:\n{ir}");
+        assert!(ir.contains("monotonic"), "relaxed should lower to monotonic, got:\n{ir}");
+    }
+
+    #[test]
+    fn atomic_xchg_emits_atomicrmw_xchg() {
+        let ir = gen_src(&atomic_test_src(
+            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = __cplus_atomic_xchg_i32_acquire(p, 5 as i32);",
+        ));
+        assert!(ir.contains("atomicrmw xchg ptr"), "expected atomicrmw xchg, got:\n{ir}");
+        assert!(ir.contains("acquire"));
+    }
+
+    #[test]
+    fn atomic_cmpxchg_emits_cmpxchg_and_extracts_prev() {
+        let ir = gen_src(&atomic_test_src(
+            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = __cplus_atomic_cmpxchg_i32_seqcst(p, 0 as i32, 1 as i32);",
+        ));
+        assert!(ir.contains("cmpxchg ptr"), "expected cmpxchg, got:\n{ir}");
+        assert!(ir.contains("seq_cst seq_cst"), "expected success+failure seq_cst, got:\n{ir}");
+        assert!(ir.contains("extractvalue { i32, i1 }"), "expected previous-value extract, got:\n{ir}");
+    }
+
+    #[test]
+    fn atomic_cmpxchg_release_uses_monotonic_failure_ord() {
+        // Failure ordering must not be stronger than success and cannot be
+        // release/acq_rel; release success → monotonic failure.
+        let ir = gen_src(&atomic_test_src(
+            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = __cplus_atomic_cmpxchg_i32_release(p, 0 as i32, 1 as i32);",
+        ));
+        assert!(ir.contains("release monotonic"), "expected release+monotonic, got:\n{ir}");
+    }
+
+    #[test]
+    fn atomic_load_outside_unsafe_is_rejected() {
+        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { let p: *i32 = unsafe { malloc(4 as usize) as *i32 }; let _v: i32 = __cplus_atomic_load_i32_seqcst(p); return 0; }";
+        let toks = crate::lexer::tokenize(src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0801"),
+            "expected E0801 (unsafe required), got:\n{:?}", diags);
+    }
+
+    #[test]
+    fn atomic_load_wrong_ptr_type_is_rejected() {
+        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { unsafe { let p: *i32 = malloc(4 as usize) as *i32; let _v: i64 = __cplus_atomic_load_i64_seqcst(p); } return 0; }";
+        let toks = crate::lexer::tokenize(src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0302"),
+            "expected E0302 (type mismatch on *T), got:\n{:?}", diags);
+    }
+
+    // ---- v0.0.3 Phase 5 Slice 5B: thread::spawn + JoinHandle::join ----
+
+    const THREAD_PRELUDE: &str = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
+
+    #[test]
+    fn thread_spawn_emits_pthread_create_and_trampoline() {
+        let src = format!(
+            "{THREAD_PRELUDE}fn main() -> i32 {{ \
+             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn::[i64](worker) }}; \
+             return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        assert!(ir.contains("call i32 @pthread_create(ptr "), "expected pthread_create call, got:\n{ir}");
+        assert!(ir.contains("@__cplus_thread_tramp_i64"), "expected trampoline reference, got:\n{ir}");
+        assert!(ir.contains("define internal ptr @__cplus_thread_tramp_i64(ptr %arg)"),
+            "expected i64 trampoline definition, got:\n{ir}");
+        assert!(ir.contains("call i64 %f()"), "trampoline must call the user's fn with the i64 return type, got:\n{ir}");
+    }
+
+    #[test]
+    fn thread_join_emits_pthread_join_load_free() {
+        let src = format!(
+            "{THREAD_PRELUDE}fn main() -> i32 {{ \
+             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn::[i64](worker) }}; \
+             let r: i64 = unsafe {{ __cplus_thread_join::[i64](h) }}; \
+             return 0; \
+             }}"
+        );
+        let ir = gen_src_mono(&src);
+        assert!(ir.contains("call i32 @pthread_join(i64 "), "expected pthread_join call, got:\n{ir}");
+        assert!(ir.contains("getelementptr i8, ptr"), "expected GEP into ctx for result slot, got:\n{ir}");
+        assert!(ir.contains("load i64, ptr"), "expected result load, got:\n{ir}");
+        assert!(ir.contains("call void @free(ptr "), "expected free of ctx, got:\n{ir}");
+    }
+
+    // Note: `()` as a turbofish type argument doesn't parse today
+    // (the parser expects a type-name starting token). The Unit-returning
+    // trampoline code path is exercised by the `gen_atomic_intrinsic`-like
+    // code in `emit_thread_trampolines`; a regression test for the IR
+    // shape would need parser support for `[()]`. Skipping for v0.0.3.
+
+    #[test]
+    fn thread_spawn_for_bool_uses_align_1() {
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn flag() -> bool { return true; } \
+                   fn main() -> i32 { \
+                       let h: JoinHandle[bool] = unsafe { __cplus_thread_spawn::[bool](flag) }; \
+                       return 0; \
+                   }";
+        let ir = gen_src_mono(src);
+        let tramp_idx = ir.find("@__cplus_thread_tramp_bool(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 400).min(ir.len())];
+        assert!(tramp.contains("store i1 %r, ptr %slot, align 1"),
+            "bool trampoline must store the i1 result with align 1, got:\n{tramp}");
+    }
+
+    #[test]
+    fn thread_spawn_outside_unsafe_is_rejected() {
+        let src = format!(
+            "{THREAD_PRELUDE}fn main() -> i32 {{ \
+             let h: JoinHandle[i64] = __cplus_thread_spawn::[i64](worker); \
+             return 0; \
+             }}"
+        );
+        let toks = crate::lexer::tokenize(&src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), &src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0801"),
+            "expected E0801 (unsafe required), got:\n{:?}", diags);
+    }
+
+    #[test]
+    fn thread_join_outside_unsafe_is_rejected() {
+        let src = format!(
+            "{THREAD_PRELUDE}fn main() -> i32 {{ \
+             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn::[i64](worker) }}; \
+             let r: i64 = __cplus_thread_join::[i64](h); \
+             return 0; \
+             }}"
+        );
+        let toks = crate::lexer::tokenize(&src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), &src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0801"),
+            "expected E0801 (unsafe required), got:\n{:?}", diags);
+    }
+
+    #[test]
+    fn thread_spawn_without_turbofish_is_rejected() {
+        let src = format!(
+            "{THREAD_PRELUDE}fn main() -> i32 {{ \
+             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn(worker) }}; \
+             return 0; \
+             }}"
+        );
+        let toks = crate::lexer::tokenize(&src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), &src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0501"),
+            "expected E0501 (missing turbofish type arg), got:\n{:?}", diags);
+    }
+
+    #[test]
+    fn thread_pthread_create_declared_in_preamble() {
+        let ir = gen_src("fn main() -> i32 { return 0; }");
+        assert!(ir.contains("declare i32 @pthread_create(ptr, ptr, ptr, ptr)"));
+        assert!(ir.contains("declare i32 @pthread_join(i64, ptr)"));
+    }
+
+    // ---- v0.0.3 Phase 5 Slice 5C: thread::spawn_with[I, O] ----
+
+    #[test]
+    fn thread_spawn_with_emits_pthread_create_and_indexed_trampoline() {
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn double(x: i32) -> i32 { return x +% x; } \
+                   fn main() -> i32 { \
+                       let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](21 as i32, double) }; \
+                       return 0; \
+                   }";
+        let ir = gen_src_mono(src);
+        assert!(ir.contains("call i32 @pthread_create(ptr "), "expected pthread_create call, got:\n{ir}");
+        assert!(ir.contains("@__cplus_thread_tramp_with_0"),
+            "expected spawn_with trampoline reference, got:\n{ir}");
+        assert!(ir.contains("define internal ptr @__cplus_thread_tramp_with_0(ptr %arg)"),
+            "expected spawn_with trampoline definition, got:\n{ir}");
+        assert!(ir.contains("call i32 %f(i32 %i)"),
+            "trampoline must call f(<i32 input>), got:\n{ir}");
+    }
+
+    #[test]
+    fn thread_spawn_with_input_stored_after_result_slot() {
+        // i32 result is 4 bytes; result slot at offset 8 → input would
+        // be at 12, but aligned up to i32's 4-byte boundary = 12.
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn double(x: i32) -> i32 { return x +% x; } \
+                   fn main() -> i32 { \
+                       let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](7 as i32, double) }; \
+                       return 0; \
+                   }";
+        let ir = gen_src_mono(src);
+        // After fn ptr (offset 0..8) and result slot (8..12), input
+        // lives at offset 12 — `getelementptr i8, ptr %arg, i64 12`.
+        let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 500).min(ir.len())];
+        assert!(tramp.contains("getelementptr i8, ptr %arg, i64 12"),
+            "expected input slot at offset 12, got:\n{tramp}");
+    }
+
+    #[test]
+    fn thread_spawn_with_for_i64_input_lives_at_offset_16() {
+        // i64 result is 8 bytes; result slot at offset 8..16. i64
+        // input aligned to 8 = offset 16.
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
+                   fn main() -> i32 { \
+                       let h: JoinHandle[i64] = unsafe { __cplus_thread_spawn_with::[i64, i64](5 as i64, negate) }; \
+                       return 0; \
+                   }";
+        let ir = gen_src_mono(src);
+        let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
+        let tramp = &ir[tramp_idx..(tramp_idx + 500).min(ir.len())];
+        assert!(tramp.contains("getelementptr i8, ptr %arg, i64 16"),
+            "expected input slot at offset 16, got:\n{tramp}");
+        assert!(tramp.contains("call i64 %f(i64 %i)"),
+            "trampoline must call f(i64 i), got:\n{tramp}");
+    }
+
+    #[test]
+    fn thread_spawn_with_distinct_io_pairs_get_distinct_trampolines() {
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn d32(x: i32) -> i32 { return x; } \
+                   fn d64(x: i64) -> i64 { return x; } \
+                   fn main() -> i32 { \
+                       let h1: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](1 as i32, d32) }; \
+                       let h2: JoinHandle[i64] = unsafe { __cplus_thread_spawn_with::[i64, i64](2 as i64, d64) }; \
+                       return 0; \
+                   }";
+        let ir = gen_src_mono(src);
+        assert!(ir.contains("@__cplus_thread_tramp_with_0"),
+            "expected first trampoline, got:\n{ir}");
+        assert!(ir.contains("@__cplus_thread_tramp_with_1"),
+            "expected second trampoline (distinct (I, O) pair), got:\n{ir}");
+    }
+
+    #[test]
+    fn thread_spawn_with_outside_unsafe_is_rejected() {
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn double(x: i32) -> i32 { return x +% x; } \
+                   fn main() -> i32 { \
+                       let h: JoinHandle[i32] = __cplus_thread_spawn_with::[i32, i32](21 as i32, double); \
+                       return 0; \
+                   }";
+        let toks = crate::lexer::tokenize(src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0801"),
+            "expected E0801 (unsafe required), got:\n{:?}", diags);
+    }
+
+    #[test]
+    fn thread_spawn_with_wrong_type_arg_count_is_rejected() {
+        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+                   fn double(x: i32) -> i32 { return x +% x; } \
+                   fn main() -> i32 { \
+                       let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32](21 as i32, double) }; \
+                       return 0; \
+                   }";
+        let toks = crate::lexer::tokenize(src).expect("lex");
+        let prog = crate::parser::parse(toks).expect("parse");
+        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.iter().any(|d| d.code.0 == "E0501"),
+            "expected E0501 (2 type args required), got:\n{:?}", diags);
+    }
+
     // ---- Phase 5 Slice 5.D: C-ABI aggregate coercion ----
 
     #[test]

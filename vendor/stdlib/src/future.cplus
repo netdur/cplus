@@ -1,0 +1,30 @@
+// stdlib/future.cplus — `Future[T]` + `Poll[T]`, the compiler-known
+// shapes that `async fn foo() -> T` declarations and the executor's
+// poll loop revolve around.
+//
+// v0.0.3 Phase 5 Slice 5E.2/5E.3. Users never construct a `Future[T]`
+// directly — the only way to produce one is to call an `async fn`.
+// The compiler synthesises the value at codegen time; the struct
+// definition here just gives the type a stable shape so signatures
+// referencing `Future[T]` resolve correctly.
+//
+// **Field shape (compiler-internal):** a single opaque `*u8` pointing
+// at the LLVM coroutine frame (`llvm.coro.begin`'s return value).
+// Codegen (Slice 5E.3) treats `handle == 0` as "completed and dropped"
+// to avoid double-resume. The field is `pub` so the compiler's
+// codegen paths can touch it from outside the impl block; users
+// shouldn't depend on the layout — it may shift when sret-aware
+// return rewriting lands.
+
+pub struct Future[T] {
+    pub handle: *u8,
+}
+
+// The result of polling a `Future[T]`. The executor's poll loop
+// checks each `poll(self)` return value: `Ready(t)` extracts the
+// final value; `Pending` means resume later (after the reactor has
+// signalled the wait was satisfied).
+pub enum Poll[T] {
+    Ready(T),
+    Pending,
+}

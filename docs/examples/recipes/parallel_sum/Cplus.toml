@@ -1,0 +1,11 @@
+[package]
+name    = "parallel_sum"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "parallel_sum"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"

@@ -73,6 +73,11 @@ pub enum TokenKind {
     // keywords (reserved for future phases)
     Struct, Enum, Union, Match, Trait, Impl, Pub, Use, Mod, Import,
     SelfLower, SelfUpper, Defer, Try, Break, Continue, Loop, Move, Guard, Assert,
+    /// v0.0.3 Phase 5 Slice 5E.1: `async` fn modifier + `await` prefix
+    /// expression. Lexed unconditionally; sema/parser gate the
+    /// allowed contexts (`async fn` declarations only, `await` only
+    /// inside an `async fn` body).
+    Async, Await,
     /// Slice 6BC.5: `borrow` keyword. Opens a region-annotated borrow
     /// type: `borrow A T` (shared) or `mut x: borrow A T` (exclusive).
     Borrow,
@@ -465,6 +470,8 @@ impl<'a> Lexer<'a> {
             "borrow" => TokenKind::Borrow,
             "interface" => TokenKind::Interface,
             "type" => TokenKind::TypeKw,
+            "async" => TokenKind::Async,
+            "await" => TokenKind::Await,
             _ => TokenKind::Ident(text.to_string()),
         };
         Token { kind, span: self.span_from(start) }

@@ -479,6 +479,7 @@ fn check_with_files_inner<'a>(
         resolving_aliases: std::collections::HashSet::new(),
         scopes: Vec::new(),
         current_return: Ty::Error,
+        current_fn_is_async: false,
         current_file: None,
         files,
         loop_depth: 0,
@@ -644,6 +645,14 @@ struct SemaCx<'a> {
     resolving_aliases: std::collections::HashSet<String>,
     scopes: Vec<HashMap<String, LocalInfo>>,
     current_return: Ty,
+    /// v0.0.3 Phase 5 Slice 5E.2: tracks whether the function being
+    /// checked is `async fn`. Set by `check_function`/`check_method`
+    /// to the function's `is_async` flag for the duration of body
+    /// checking; restored on exit. Used by `await EXPR` to enforce
+    /// "await only inside async fn" and by `return EXPR` to know that
+    /// `current_return` is the post-wrap `Future[T]` whose inner T
+    /// is what the user's value must match.
+    current_fn_is_async: bool,
     /// Slice 4C: file the currently-checked item originated from (post
     /// resolver merge). `None` in single-file mode or for items the
     /// resolver didn't touch. Used both to gate field-pub access (see
@@ -1778,9 +1787,21 @@ impl SemaCx<'_> {
                 mutable: p.mutable,
                 move_: p.move_,
             }).collect();
-            let ret = match &f.return_type {
+            let declared_ret = match &f.return_type {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
+            };
+            // v0.0.3 Phase 5 Slice 5E.2: `async fn foo() -> T` exposes
+            // `Future[T]` at the signature level. Callers see the
+            // wrapped type; the body still type-checks `return X`
+            // against the inner T (handled in `check_function_body`).
+            // The `Future` template must be in scope — it lives at
+            // `stdlib/future.cplus` and is imported automatically by
+            // anything that uses `async fn`.
+            let ret = if f.is_async {
+                self.wrap_in_future(&declared_ret, f.name.span)
+            } else {
+                declared_ret.clone()
             };
             self.pop_type_params();
             // Slice 7GEN.5a: generic fns go into a separate table.
@@ -1829,6 +1850,54 @@ impl SemaCx<'_> {
             self.fns.insert(f.name.name.clone(), FnSig { params, return_type: ret, is_variadic: f.is_variadic, link_name: link_name.clone() });
         }
         self.current_file = None;
+    }
+
+    /// v0.0.3 Phase 5 Slice 5E.2: look up the `Future` template from
+    /// the user's imported `stdlib/future` module and instantiate it
+    /// with one type argument. Returns `Ty::Error` if the template
+    /// isn't visible — usually because the project didn't import
+    /// stdlib's future module or didn't depend on stdlib at all.
+    fn wrap_in_future(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
+        // v0.0.3 Phase 5 Slice 5E.3: the resolver qualifies struct
+        // names per-file (`<file_id>.Future`), so a bare-name lookup
+        // misses imports. Suffix-match `.Future` (or the bare name in
+        // single-file builds) like Slice 5B's JoinHandle path.
+        let key = self.struct_generic_templates.keys()
+            .find(|k| k.as_str() == "Future" || k.ends_with(".Future"))
+            .cloned();
+        let template_name = match key {
+            Some(k) => k,
+            None => {
+                self.err(
+                    "E0300",
+                    "`async fn` requires `Future[T]` from `stdlib/future`".to_string(),
+                    span,
+                );
+                return Ty::Error;
+            }
+        };
+        let template = self.struct_generic_templates.get(&template_name).cloned().unwrap();
+        self.instantiate_struct_from_arg_tys(&template_name, &template, vec![inner.clone()])
+    }
+
+    /// v0.0.3 Phase 5 Slice 5E.2: given a `Ty::Struct(id)` for a
+    /// `Future[T]` instantiation, return T. Returns `None` if the
+    /// type isn't a Future. Used by `await EXPR` type-checking and
+    /// by async-body return-type checks.
+    fn unwrap_future(&self, ty: &Ty) -> Option<Ty> {
+        // Match on file-qualified template names (see `wrap_in_future`).
+        match ty {
+            Ty::Struct(id) => {
+                let def = &self.structs[id.0 as usize];
+                match &def.generic_origin {
+                    Some((name, args))
+                        if (name == "Future" || name.ends_with(".Future"))
+                            && args.len() == 1 => Some(args[0].clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn check_main_signature(&mut self, p: &Program) {
@@ -1921,7 +1990,18 @@ impl SemaCx<'_> {
         self.check_test_attribute_rules(f, &sig);
         // Slice 7GEN.4: generic params remain in scope across body checking.
         self.push_type_params(&f.generic_params);
-        self.current_return = sig.return_type.clone();
+        // v0.0.3 Phase 5 Slice 5E.2: async fn body sees the UNWRAPPED
+        // return type (the user's declared T), not the `Future[T]`
+        // that the signature exposes to callers. The wrap happens at
+        // codegen time (Slice 5E.3).
+        let body_return = if f.is_async {
+            self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+        } else {
+            sig.return_type.clone()
+        };
+        self.current_return = body_return.clone();
+        let prev_async = self.current_fn_is_async;
+        self.current_fn_is_async = f.is_async;
         self.scopes.push(HashMap::new());
         for (param, psig) in f.params.iter().zip(sig.params.iter()) {
             // E0334: `mut` and `move` are mutually exclusive ownership markers.
@@ -1937,8 +2017,9 @@ impl SemaCx<'_> {
                 LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
             );
         }
-        self.check_function_body(&f.body, sig.return_type, f.body.span);
+        self.check_function_body(&f.body, body_return, f.body.span);
         self.scopes.pop();
+        self.current_fn_is_async = prev_async;
         self.pop_type_params();
     }
 
@@ -2325,6 +2406,39 @@ impl SemaCx<'_> {
                 let ty = self.check_block_as_expr(b);
                 self.unsafe_depth -= 1;
                 ty
+            }
+            // v0.0.3 Phase 5 Slice 5E.2: `await EXPR` evaluates to the
+            // inner T of the surrounding `Future[T]` expression. Two
+            // gates:
+            //   - **E0901**: `await` outside an `async fn` body is
+            //     rejected. The keyword is meaningless without a
+            //     coroutine frame to suspend.
+            //   - **E0902**: the inner expression must evaluate to a
+            //     `Future[T]`. (Sema-only check for v0.0.3; users can
+            //     only construct futures via `async fn`, but giving a
+            //     dedicated error code keeps future expansion clean.)
+            ExprKind::Await(inner) => {
+                let inner_ty = self.check_expr(inner, None);
+                if !self.current_fn_is_async {
+                    self.err(
+                        "E0901",
+                        "`await` is only valid inside an `async fn` body".to_string(),
+                        e.span,
+                    );
+                    return Ty::Error;
+                }
+                if matches!(inner_ty, Ty::Error) { return Ty::Error; }
+                match self.unwrap_future(&inner_ty) {
+                    Some(t) => t,
+                    None => {
+                        self.err(
+                            "E0902",
+                            format!("`await` requires a `Future[T]` expression, got `{}`", ty_display(&inner_ty)),
+                            inner.span,
+                        );
+                        Ty::Error
+                    }
+                }
             }
             ExprKind::If { cond, then, else_branch } => {
                 self.check_if(cond, then, else_branch.as_deref())
@@ -3180,6 +3294,25 @@ impl SemaCx<'_> {
             let _ = self.resolve_type(&type_args[0]);
             return Ty::Usize;
         }
+        // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Placed
+        // before the "non-generic fn with turbofish" reject because both
+        // intrinsics take one type-argument by design (mirroring size_of's
+        // shape) — they're compiler-known and don't appear in `fns_generic`.
+        if name == "__cplus_thread_spawn" || name == "__cplus_thread_join" {
+            return self.check_thread_intrinsic(name, callee, args, type_args, call_span);
+        }
+        // v0.0.3 Phase 5 Slice 5C: spawn-with-input intrinsic. Takes
+        // two type args (I, O) and two value args (input, f).
+        if name == "__cplus_thread_spawn_with" {
+            return self.check_thread_spawn_with(callee, args, type_args, call_span);
+        }
+        // v0.0.3 Phase 5 Slice 5E.5: `__cplus_block_on::[T](future) -> T`.
+        // Drives a `Future[T]` to completion via a resume-loop and
+        // returns the produced value. Stdlib's `executor::block_on`
+        // wraps this so the user-visible API stays in stdlib.
+        if name == "__cplus_block_on" {
+            return self.check_block_on(callee, args, type_args, call_span);
+        }
         // Non-generic fn with turbofish → reject. The user explicitly
         // asked to instantiate something that has no generic params.
         if !type_args.is_empty() {
@@ -3341,6 +3474,51 @@ impl SemaCx<'_> {
             };
             return Ty::Slice(Box::new(elem));
         }
+        // v0.0.3 Phase 5 Slice 5A: atomic intrinsics. Names match the
+        // pattern `__cplus_atomic_<op>_<ty>_<ord>`. See the
+        // `cplus_core::atomic` module for the full surface. All
+        // atomic ops require `unsafe` — they read/write through a raw
+        // pointer whose validity the compiler can't prove.
+        if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    format!("`{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
+                    call_span,
+                );
+            }
+            let expected_args = 1 + spec.value_arg_count();
+            if args.len() != expected_args {
+                self.err(
+                    "E0308",
+                    format!("`{}` takes {} argument(s), got {}", name, expected_args, args.len()),
+                    call_span,
+                );
+                for a in args { let _ = self.check_expr(a, None); }
+                return if spec.returns_value() { spec.ty.clone() } else { Ty::Unit };
+            }
+            let ptr_ty = Ty::RawPtr(Box::new(spec.ty.clone()));
+            let p_actual = self.check_expr(&args[0], Some(ptr_ty.clone()));
+            if !matches!(p_actual, Ty::RawPtr(_) | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`{}` first argument must be `*{}`, got `{}`", name, spec.ty.name(), ty_display(&p_actual)),
+                    args[0].span,
+                );
+            } else if let Ty::RawPtr(inner) = &p_actual {
+                if **inner != spec.ty {
+                    self.err(
+                        "E0302",
+                        format!("`{}` first argument must be `*{}`, got `{}`", name, spec.ty.name(), ty_display(&p_actual)),
+                        args[0].span,
+                    );
+                }
+            }
+            for a in args.iter().skip(1) {
+                let _ = self.check_expr(a, Some(spec.ty.clone()));
+            }
+            return if spec.returns_value() { spec.ty.clone() } else { Ty::Unit };
+        }
         let Some(sig) = self.fns.get(name).cloned() else {
             self.err("E0300", format!("undefined function `{name}`"), callee.span);
             for a in args { let _ = self.check_expr(a, None); }
@@ -3409,6 +3587,163 @@ impl SemaCx<'_> {
     ///   return-only params are deferred.
     /// - **E0302** — type mismatch when the same Param infers two
     ///   different concrete types across arguments.
+    /// v0.0.3 Phase 5 Slice 5B: type-check `__cplus_thread_spawn::[O](f)`
+    /// and `__cplus_thread_join::[O](h)`. Both intrinsics take one
+    /// turbofish type argument and one value argument; both require
+    /// `unsafe`. Spawn returns `JoinHandle[O]` (from stdlib/thread),
+    /// join returns `O`.
+    fn check_thread_intrinsic(
+        &mut self,
+        name: &str,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                format!("`{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
+                call_span,
+            );
+        }
+        if type_args.len() != 1 {
+            self.err(
+                "E0501",
+                format!("`{}` takes 1 type argument, got {}", name, type_args.len()),
+                callee.span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        if args.len() != 1 {
+            self.err(
+                "E0308",
+                format!("`{}` takes 1 value argument, got {}", name, args.len()),
+                call_span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let o_ty = self.resolve_type(&type_args[0]);
+        let Some(template) = self.struct_generic_templates.get("JoinHandle").cloned() else {
+            self.err(
+                "E0300",
+                format!("`{}` requires `JoinHandle[O]` from `stdlib/thread`", name),
+                call_span,
+            );
+            return Ty::Error;
+        };
+        if name == "__cplus_thread_spawn" {
+            let expected_f = Ty::FnPtr { params: vec![], return_type: Box::new(o_ty.clone()) };
+            let _f_ty = self.check_expr(&args[0], Some(expected_f));
+            return self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty]);
+        }
+        // __cplus_thread_join
+        let expected_h = self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty.clone()]);
+        let _h_ty = self.check_expr(&args[0], Some(expected_h));
+        o_ty
+    }
+
+    /// v0.0.3 Phase 5 Slice 5E.5: type-check
+    /// `__cplus_block_on::[T](future)`. Takes one type arg T and one
+    /// value arg (a `Future[T]`); returns T. Requires `unsafe`.
+    fn check_block_on(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                "`__cplus_block_on` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span,
+            );
+        }
+        if type_args.len() != 1 {
+            self.err(
+                "E0501",
+                format!("`__cplus_block_on` takes 1 type argument, got {}", type_args.len()),
+                callee.span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        if args.len() != 1 {
+            self.err(
+                "E0308",
+                format!("`__cplus_block_on` takes 1 value argument, got {}", args.len()),
+                call_span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let t_ty = self.resolve_type(&type_args[0]);
+        let expected_future = self.wrap_in_future(&t_ty, call_span);
+        if matches!(expected_future, Ty::Error) { return Ty::Error; }
+        let _ = self.check_expr(&args[0], Some(expected_future));
+        t_ty
+    }
+
+    /// v0.0.3 Phase 5 Slice 5C: type-check
+    /// `__cplus_thread_spawn_with::[I, O](input, f)`. Like
+    /// `__cplus_thread_spawn` but with an added `input: I` arg and an
+    /// fn signature of `fn(I) -> O`.
+    fn check_thread_spawn_with(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                "`__cplus_thread_spawn_with` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span,
+            );
+        }
+        if type_args.len() != 2 {
+            self.err(
+                "E0501",
+                format!("`__cplus_thread_spawn_with` takes 2 type arguments, got {}", type_args.len()),
+                callee.span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        if args.len() != 2 {
+            self.err(
+                "E0308",
+                format!("`__cplus_thread_spawn_with` takes 2 value arguments, got {}", args.len()),
+                call_span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let i_ty = self.resolve_type(&type_args[0]);
+        let o_ty = self.resolve_type(&type_args[1]);
+        let _input = self.check_arg_with_move(&args[0], &ParamSig {
+            ty: i_ty.clone(), mutable: false, move_: true,
+        });
+        let expected_f = Ty::FnPtr {
+            params: vec![i_ty.clone()],
+            return_type: Box::new(o_ty.clone()),
+        };
+        let _f = self.check_expr(&args[1], Some(expected_f));
+        let Some(template) = self.struct_generic_templates.get("JoinHandle").cloned() else {
+            self.err(
+                "E0300",
+                "`__cplus_thread_spawn_with` requires `JoinHandle[O]` from `stdlib/thread`".to_string(),
+                call_span,
+            );
+            return Ty::Error;
+        };
+        self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty])
+    }
+
     fn check_generic_named_call(
         &mut self,
         name: &str,
@@ -3451,20 +3786,44 @@ impl SemaCx<'_> {
                 concrete_args.push(concrete);
             }
             // Now check each arg against the substituted parameter type.
+            // v0.0.3 Phase 5 Slice 5C: thread through the param's move/
+            // mutable flags via `check_arg_with_move` so `move`-marked
+            // params in a turbofish call correctly mark the source
+            // binding as moved. Without this, calls like
+            // `thread::spawn_with::[string, i64](s, f)` leave `s`
+            // un-marked and post-move use is silently accepted.
             let mut had_err = false;
             for (param, arg) in gsig.params.iter().zip(args.iter()) {
                 let expected = self.subst_ty_deep(&param.ty, &subst);
-                let actual = self.check_expr(arg, Some(expected.clone()));
-                if !matches!(actual, Ty::Error) && actual != expected {
+                let actual_before = self.check_expr(arg, Some(expected.clone()));
+                if !matches!(actual_before, Ty::Error) && actual_before != expected {
                     self.err(
                         "E0302",
                         format!(
                             "type mismatch in call to `{}`: expected `{}`, got `{}`",
-                            name, ty_display(&expected), actual.name()
+                            name, ty_display(&expected), actual_before.name()
                         ),
                         arg.span,
                     );
                     had_err = true;
+                }
+                if param.move_ && !self.is_copy(&expected) && !matches!(actual_before, Ty::Error) {
+                    // Only flag named-binding moves. A non-Ident arg
+                    // (StructLit, enum-variant Path, literal, fresh
+                    // Call result) constructs the value in place —
+                    // there's no source binding to mark moved. The
+                    // strict E0337 in `consume_arg_place` would fire
+                    // here for legitimate code like
+                    // `io_ok::[File](File { fd: fd })`, so we
+                    // sidestep it.
+                    if let ExprKind::Ident(n) = &arg.kind {
+                        for scope in self.scopes.iter_mut().rev() {
+                            if let Some(info) = scope.get_mut(n) {
+                                info.moved = true;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             if had_err { return Ty::Error; }
@@ -7937,5 +8296,63 @@ mod tests {
              pub extern fn use_it(o: Outer) -> i32 { return 0; }"
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
+    }
+
+    // ---- v0.0.3 Phase 5 Slice 5E.2: async fn + await sema ----
+
+    const FUTURE_PRELUDE: &str = "pub struct Future[T] { pub handle: *u8 } ";
+
+    #[test]
+    fn async_fn_body_returns_inner_type() {
+        // `async fn foo() -> i32` body uses `return X` for X: i32,
+        // NOT for X: Future[i32]. The `Future[i32]` wrap is sema's
+        // view at call sites only.
+        assert_clean(&format!("{FUTURE_PRELUDE}async fn fetch() -> i32 {{ return 42 as i32; }}"));
+    }
+
+    #[test]
+    fn async_fn_signature_resolves_to_future_at_call_site() {
+        // Calling an async fn from a sync context yields `Future[i32]`,
+        // which the sync fn can hold but can't await — so we just bind
+        // it to a local typed `Future[i32]`.
+        assert_clean(&format!(
+            "{FUTURE_PRELUDE}async fn fetch() -> i32 {{ return 1 as i32; }} \
+             fn main() -> i32 {{ let f: Future[i32] = fetch(); return 0; }}"
+        ));
+    }
+
+    #[test]
+    fn await_outside_async_fn_e0901() {
+        let codes = errors(&format!(
+            "{FUTURE_PRELUDE}async fn fetch() -> i32 {{ return 1 as i32; }} \
+             fn main() -> i32 {{ let x: i32 = await fetch(); return x; }}"
+        ));
+        assert!(codes.contains(&"E0901"), "expected E0901, got: {codes:?}");
+    }
+
+    #[test]
+    fn await_of_non_future_e0902() {
+        let codes = errors(&format!(
+            "{FUTURE_PRELUDE}async fn bad() -> i32 {{ let x: i32 = await (7 as i32); return x; }}"
+        ));
+        assert!(codes.contains(&"E0902"), "expected E0902 (await of non-Future), got: {codes:?}");
+    }
+
+    #[test]
+    fn await_inside_async_fn_yields_inner_type() {
+        // Chained async: `outer` awaits `inner`'s Future[i32] and binds
+        // the i32 result. Sema-only check; codegen still traps on
+        // await but the typecheck must pass.
+        assert_clean(&format!(
+            "{FUTURE_PRELUDE}async fn inner() -> i32 {{ return 7 as i32; }} \
+             async fn outer() -> i32 {{ let x: i32 = await inner(); return x; }}"
+        ));
+    }
+
+    #[test]
+    fn async_fn_without_future_in_scope_e0300() {
+        // No Future template imported → wrap_in_future fails.
+        let codes = errors("async fn fetch() -> i32 { return 0 as i32; }");
+        assert!(codes.contains(&"E0300"), "expected E0300 (Future not in scope), got: {codes:?}");
     }
 }

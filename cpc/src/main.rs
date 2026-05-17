@@ -443,7 +443,7 @@ fn main() -> ExitCode {
     }
 
     match (subcommand, input) {
-        (Some(Subcommand::Build), _) => build_project(out, diag_mode, build_mode),
+        (Some(Subcommand::Build), _) => build_project(out, diag_mode, build_mode, &sanitizers),
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => run_test(test_input, test_opts, diag_mode, build_mode),
@@ -727,7 +727,7 @@ fn collect_dep_link_args(
 /// in the current working directory, walks the import graph from the
 /// declared binary entry, and produces a single linked binary at
 /// `target/{debug,release}/<bin-name>` (or `-o OUT` if provided).
-fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMode, sanitizers: &[&str]) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
         Ok(m) => m,
@@ -777,7 +777,17 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         Ok(p) => p,
         Err(code) => return code,
     };
-    let ir = codegen::generate(&program, build_mode);
+    // v0.0.3 Phase 5 Slice 5D follow-up: forward --asan/--tsan/--ubsan/
+    // --msan through codegen options + clang. Previously `cpc build`
+    // silently dropped these flags (always emitted unsanitised IR and
+    // linked without `-fsanitize=...`), which meant every e2e ASan
+    // test was vacuously clean. The single-file path (`compile_file`)
+    // already plumbed sanitizers; this matches.
+    let ir = if sanitizers.is_empty() {
+        codegen::generate(&program, build_mode)
+    } else {
+        codegen::generate_with_options(&program, build_mode, None, sanitizers)
+    };
 
     let out_path = out.unwrap_or_else(|| {
         let sub = match build_mode { BuildMode::Debug => "debug", BuildMode::Release => "release" };
@@ -816,7 +826,7 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         Ok(mut extra) => link_args.append(&mut extra),
         Err(code) => return code,
     }
-    let status = run_clang(&tmp, &out_path, build_mode, false, &[], &link_args);
+    let status = run_clang(&tmp, &out_path, build_mode, false, sanitizers, &link_args);
     drop(tmp_handle); // explicit cleanup on the secure temp path
     status
 }

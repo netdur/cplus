@@ -278,6 +278,12 @@ pub struct Function {
     /// (slice 7GEN.5) generates one concrete LLVM function per unique
     /// `(name, [concrete_types])` pair.
     pub generic_params: Vec<GenericParam>,
+    /// v0.0.3 Phase 5 Slice 5E.1: `async fn foo() -> T` declarations.
+    /// Sema rewrites the user's declared return type from `T` to
+    /// `Future[T]` and admits `await EXPR` inside the body. Codegen
+    /// (5E.3) lowers the body to an LLVM coroutine via `llvm.coro.*`
+    /// intrinsics. False for synchronous functions (the common case).
+    pub is_async: bool,
 }
 
 /// Slice 7GEN.1: a single type parameter declaration in a generic
@@ -509,6 +515,11 @@ pub enum ExprKind {
     /// verify (pointer deref, extern fn calls, `str_from_raw_parts`).
     /// Outside an unsafe block, those operations fire E0801.
     Unsafe(Block),
+    /// v0.0.3 Phase 5 Slice 5E.1: prefix `await EXPR`. The inner
+    /// expression must evaluate to a `Future[T]`; the surrounding fn
+    /// must be `async`. Sema enforces both. Codegen (5E.3) lowers to
+    /// `llvm.coro.suspend` plus the resume/return branches.
+    Await(Box<Expr>),
     If {
         cond: Box<Expr>,
         then: Block,

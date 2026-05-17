@@ -2064,6 +2064,14 @@ impl Analyzer<'_> {
                 let outer = state.clone();
                 self.walk_block_in_scope(b, state, &outer);
             }
+            // v0.0.3 Phase 5 Slice 5E.1: `await EXPR` evaluates EXPR
+            // (the Future) and then suspends. From a borrow-checker
+            // standpoint the inner expr's side effects flow through;
+            // the suspend itself doesn't change Place state. (5E.4
+            // adds the cross-await borrow-lifetime check on top.)
+            ExprKind::Await(inner) => {
+                self.apply_expr(inner, state);
+            }
             ExprKind::If { cond, then, else_branch } => {
                 self.apply_expr(cond, state);
                 let pre = state.clone();
@@ -2779,6 +2787,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
             b.stmts.iter().any(|s| stmt_reads_ident(s, name))
                 || b.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
         }
+        ExprKind::Await(inner) => expr_reads_ident(inner, name),
         ExprKind::If { cond, then, else_branch } => {
             expr_reads_ident(cond, name)
                 || then.stmts.iter().any(|s| stmt_reads_ident(s, name))

@@ -1,0 +1,333 @@
+// stdlib/atomic.cplus — atomic memory operations on raw pointers.
+//
+// v0.0.3 Phase 5 Slice 5A. The compiler exposes per-(op, type, ordering)
+// intrinsics named `__cplus_atomic_<op>_<ty>_<ord>`; this module wraps
+// them behind ergonomic free functions that take a runtime `Ordering`.
+//
+// **Why free fns on raw pointers, not an `Atomic[T]` struct.** A struct
+// wrapper would require generics-with-width-dispatch (each width calls a
+// different intrinsic), which compounds the v0.0.3 generic-method
+// limitations. Shipping free fns now keeps the surface ~250 lines and
+// covers every Phase 5B/5C threading use case (the parallel-sum recipe
+// doesn't need shared state at all; the concurrent-counter recipe in 5D
+// shares a `*u64` directly). A struct wrapper can layer on later.
+//
+// **Why `unsafe` is required.** Every atomic op reads/writes through a
+// raw pointer whose validity the compiler can't prove (alignment,
+// pointee lifetime, no concurrent non-atomic access). The wrappers
+// here forward the `unsafe` requirement: callers must wrap atomic
+// calls in `unsafe { ... }` themselves.
+
+pub enum Ordering {
+    Relaxed,
+    Acquire,
+    Release,
+    AcqRel,
+    SeqCst,
+}
+
+// ============================================================
+// i32
+// ============================================================
+
+pub fn atomic_load_i32(p: *i32, ord: Ordering) -> i32 {
+    // Release / AcqRel are invalid for loads in LLVM; upgrade to SeqCst.
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_load_i32_relaxed(p) },
+        Ordering::Acquire => unsafe { __cplus_atomic_load_i32_acquire(p) },
+        Ordering::Release => unsafe { __cplus_atomic_load_i32_seqcst(p) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_load_i32_seqcst(p) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_load_i32_seqcst(p) },
+    };
+}
+
+pub fn atomic_store_i32(p: *i32, val: i32, ord: Ordering) {
+    // Acquire / AcqRel are invalid for stores in LLVM; upgrade to SeqCst.
+    match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_store_i32_relaxed(p, val); },
+        Ordering::Acquire => unsafe { __cplus_atomic_store_i32_seqcst(p, val); },
+        Ordering::Release => unsafe { __cplus_atomic_store_i32_release(p, val); },
+        Ordering::AcqRel => unsafe { __cplus_atomic_store_i32_seqcst(p, val); },
+        Ordering::SeqCst => unsafe { __cplus_atomic_store_i32_seqcst(p, val); },
+    }
+    return;
+}
+
+pub fn atomic_swap_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_xchg_i32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_xchg_i32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_xchg_i32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_xchg_i32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_xchg_i32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_add_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_add_i32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_add_i32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_add_i32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_add_i32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_add_i32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_sub_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_sub_i32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_sub_i32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_sub_i32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_sub_i32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_sub_i32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_and_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_and_i32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_and_i32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_and_i32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_and_i32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_and_i32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_or_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_or_i32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_or_i32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_or_i32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_or_i32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_or_i32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_xor_i32(p: *i32, val: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_xor_i32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_xor_i32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_xor_i32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_xor_i32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_xor_i32_seqcst(p, val) },
+    };
+}
+
+// Returns the previous value at `*p`. Compare against `expected` to
+// detect success. Uses a single ordering for both success and failure
+// (the compiler lowers `release` → success=release, failure=monotonic,
+// etc., to satisfy LLVM's "failure-ord ≤ success-ord" constraint).
+pub fn atomic_compare_exchange_i32(p: *i32, expected: i32, desired: i32, ord: Ordering) -> i32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_cmpxchg_i32_relaxed(p, expected, desired) },
+        Ordering::Acquire => unsafe { __cplus_atomic_cmpxchg_i32_acquire(p, expected, desired) },
+        Ordering::Release => unsafe { __cplus_atomic_cmpxchg_i32_release(p, expected, desired) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_cmpxchg_i32_acqrel(p, expected, desired) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_cmpxchg_i32_seqcst(p, expected, desired) },
+    };
+}
+
+// ============================================================
+// i64
+// ============================================================
+
+pub fn atomic_load_i64(p: *i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_load_i64_relaxed(p) },
+        Ordering::Acquire => unsafe { __cplus_atomic_load_i64_acquire(p) },
+        Ordering::Release => unsafe { __cplus_atomic_load_i64_seqcst(p) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_load_i64_seqcst(p) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_load_i64_seqcst(p) },
+    };
+}
+
+pub fn atomic_store_i64(p: *i64, val: i64, ord: Ordering) {
+    match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_store_i64_relaxed(p, val); },
+        Ordering::Acquire => unsafe { __cplus_atomic_store_i64_seqcst(p, val); },
+        Ordering::Release => unsafe { __cplus_atomic_store_i64_release(p, val); },
+        Ordering::AcqRel => unsafe { __cplus_atomic_store_i64_seqcst(p, val); },
+        Ordering::SeqCst => unsafe { __cplus_atomic_store_i64_seqcst(p, val); },
+    }
+    return;
+}
+
+pub fn atomic_swap_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_xchg_i64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_xchg_i64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_xchg_i64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_xchg_i64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_xchg_i64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_add_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_add_i64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_add_i64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_add_i64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_add_i64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_add_i64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_sub_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_sub_i64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_sub_i64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_sub_i64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_sub_i64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_sub_i64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_and_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_and_i64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_and_i64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_and_i64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_and_i64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_and_i64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_or_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_or_i64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_or_i64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_or_i64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_or_i64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_or_i64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_xor_i64(p: *i64, val: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_xor_i64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_xor_i64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_xor_i64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_xor_i64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_xor_i64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_compare_exchange_i64(p: *i64, expected: i64, desired: i64, ord: Ordering) -> i64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_cmpxchg_i64_relaxed(p, expected, desired) },
+        Ordering::Acquire => unsafe { __cplus_atomic_cmpxchg_i64_acquire(p, expected, desired) },
+        Ordering::Release => unsafe { __cplus_atomic_cmpxchg_i64_release(p, expected, desired) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_cmpxchg_i64_acqrel(p, expected, desired) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_cmpxchg_i64_seqcst(p, expected, desired) },
+    };
+}
+
+// ============================================================
+// u32
+// ============================================================
+
+pub fn atomic_load_u32(p: *u32, ord: Ordering) -> u32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_load_u32_relaxed(p) },
+        Ordering::Acquire => unsafe { __cplus_atomic_load_u32_acquire(p) },
+        Ordering::Release => unsafe { __cplus_atomic_load_u32_seqcst(p) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_load_u32_seqcst(p) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_load_u32_seqcst(p) },
+    };
+}
+
+pub fn atomic_store_u32(p: *u32, val: u32, ord: Ordering) {
+    match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_store_u32_relaxed(p, val); },
+        Ordering::Acquire => unsafe { __cplus_atomic_store_u32_seqcst(p, val); },
+        Ordering::Release => unsafe { __cplus_atomic_store_u32_release(p, val); },
+        Ordering::AcqRel => unsafe { __cplus_atomic_store_u32_seqcst(p, val); },
+        Ordering::SeqCst => unsafe { __cplus_atomic_store_u32_seqcst(p, val); },
+    }
+    return;
+}
+
+pub fn atomic_fetch_add_u32(p: *u32, val: u32, ord: Ordering) -> u32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_add_u32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_add_u32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_add_u32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_add_u32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_add_u32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_sub_u32(p: *u32, val: u32, ord: Ordering) -> u32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_sub_u32_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_sub_u32_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_sub_u32_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_sub_u32_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_sub_u32_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_compare_exchange_u32(p: *u32, expected: u32, desired: u32, ord: Ordering) -> u32 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_cmpxchg_u32_relaxed(p, expected, desired) },
+        Ordering::Acquire => unsafe { __cplus_atomic_cmpxchg_u32_acquire(p, expected, desired) },
+        Ordering::Release => unsafe { __cplus_atomic_cmpxchg_u32_release(p, expected, desired) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_cmpxchg_u32_acqrel(p, expected, desired) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_cmpxchg_u32_seqcst(p, expected, desired) },
+    };
+}
+
+// ============================================================
+// u64
+// ============================================================
+
+pub fn atomic_load_u64(p: *u64, ord: Ordering) -> u64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_load_u64_relaxed(p) },
+        Ordering::Acquire => unsafe { __cplus_atomic_load_u64_acquire(p) },
+        Ordering::Release => unsafe { __cplus_atomic_load_u64_seqcst(p) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_load_u64_seqcst(p) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_load_u64_seqcst(p) },
+    };
+}
+
+pub fn atomic_store_u64(p: *u64, val: u64, ord: Ordering) {
+    match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_store_u64_relaxed(p, val); },
+        Ordering::Acquire => unsafe { __cplus_atomic_store_u64_seqcst(p, val); },
+        Ordering::Release => unsafe { __cplus_atomic_store_u64_release(p, val); },
+        Ordering::AcqRel => unsafe { __cplus_atomic_store_u64_seqcst(p, val); },
+        Ordering::SeqCst => unsafe { __cplus_atomic_store_u64_seqcst(p, val); },
+    }
+    return;
+}
+
+pub fn atomic_fetch_add_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_add_u64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_add_u64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_add_u64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_add_u64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_add_u64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_fetch_sub_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_fetch_sub_u64_relaxed(p, val) },
+        Ordering::Acquire => unsafe { __cplus_atomic_fetch_sub_u64_acquire(p, val) },
+        Ordering::Release => unsafe { __cplus_atomic_fetch_sub_u64_release(p, val) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_fetch_sub_u64_acqrel(p, val) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_fetch_sub_u64_seqcst(p, val) },
+    };
+}
+
+pub fn atomic_compare_exchange_u64(p: *u64, expected: u64, desired: u64, ord: Ordering) -> u64 {
+    return match ord {
+        Ordering::Relaxed => unsafe { __cplus_atomic_cmpxchg_u64_relaxed(p, expected, desired) },
+        Ordering::Acquire => unsafe { __cplus_atomic_cmpxchg_u64_acquire(p, expected, desired) },
+        Ordering::Release => unsafe { __cplus_atomic_cmpxchg_u64_release(p, expected, desired) },
+        Ordering::AcqRel => unsafe { __cplus_atomic_cmpxchg_u64_acqrel(p, expected, desired) },
+        Ordering::SeqCst => unsafe { __cplus_atomic_cmpxchg_u64_seqcst(p, expected, desired) },
+    };
+}

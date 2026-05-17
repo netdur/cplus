@@ -190,6 +190,10 @@ impl Parser {
         let is_pub = self.eat(&TokenKind::Pub);
         match self.peek_kind() {
             TokenKind::Fn => self.parse_function(is_pub, attributes),
+            // v0.0.3 Phase 5 Slice 5E.1: `async fn` item — `parse_function`
+            // handles the `async`-prefix peek itself, but the top-level
+            // item dispatch needs to recognise `async` as opening a fn item.
+            TokenKind::Async => self.parse_function(is_pub, attributes),
             // Slice 10.FFI.1: `extern fn name(params) -> ret;` declarations.
             // Item-level only — no body, terminated by `;`. The lexer's
             // `Extern` keyword token has existed since Phase 1; this is
@@ -761,6 +765,7 @@ impl Parser {
                 is_variadic,
                 attributes,
                 generic_params: Vec::new(),
+                is_async: false,
             }),
             span: start.merge(end_span),
             origin_file: None,
@@ -769,6 +774,10 @@ impl Parser {
 
     fn parse_function(&mut self, is_pub: bool, attributes: Vec<Attribute>) -> Result<Item, ParseError> {
         let start = self.peek().span;
+        // v0.0.3 Phase 5 Slice 5E.1: optional `async` modifier before `fn`.
+        // `async fn` declares a coroutine whose declared return type T is
+        // implicitly wrapped to `Future[T]` at sema (Slice 5E.2).
+        let is_async = self.eat(&TokenKind::Async);
         self.expect(&TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident()?;
 
@@ -794,6 +803,7 @@ impl Parser {
         Ok(Item {
             kind: ItemKind::Function(Function {
                 name, params, return_type, body, is_pub, is_extern: false, is_variadic: false, attributes, generic_params,
+                is_async,
             }),
             span,
             origin_file: None,
@@ -1473,6 +1483,20 @@ impl Parser {
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
         let start = self.peek().span;
+        // v0.0.3 Phase 5 Slice 5E.1: prefix `await EXPR`. Parse as a
+        // unary-precedence operator so `await foo().bar` parses as
+        // `await (foo().bar)`, not `(await foo()).bar`. Sema (5E.2)
+        // enforces that the inner expr resolves to a `Future[T]` and
+        // that the surrounding fn is `async`.
+        if matches!(self.peek_kind(), TokenKind::Await) {
+            self.bump();
+            let operand = self.parse_unary()?;
+            let span = start.merge(operand.span);
+            return Ok(Expr {
+                kind: ExprKind::Await(Box::new(operand)),
+                span,
+            });
+        }
         let op = match self.peek_kind() {
             TokenKind::Minus => Some(UnaryOp::Neg),
             TokenKind::Bang => Some(UnaryOp::Not),
@@ -2961,6 +2985,66 @@ mod tests {
     }
 
     // ---- Phase 10 slice 10.FFI.1: extern fn + raw pointers ----
+
+    // ---- v0.0.3 Phase 5 Slice 5E.1: async fn + await ----
+
+    #[test]
+    fn async_fn_sets_is_async_flag() {
+        let p = parse_src("async fn fetch() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_async, "async fn must set is_async=true");
+        assert_eq!(f.name.name, "fetch");
+    }
+
+    #[test]
+    fn pub_async_fn_parses() {
+        let p = parse_src("pub async fn fetch() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_async);
+        assert!(f.is_pub);
+    }
+
+    #[test]
+    fn plain_fn_has_is_async_false() {
+        let p = parse_src("fn sync() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(!f.is_async);
+    }
+
+    #[test]
+    fn await_as_prefix_expression() {
+        let p = parse_src("async fn fetch() -> i32 { return 0; } fn main() -> i32 { return await fetch(); }").unwrap();
+        let ItemKind::Function(main_fn) = &p.items[1].kind else { panic!() };
+        // body tail expr — the `return await fetch();` statement
+        let stmts = &main_fn.body.stmts;
+        assert_eq!(stmts.len(), 1);
+        // Look at the inner expression of the return statement.
+        let crate::ast::StmtKind::Return(Some(e)) = &stmts[0].kind else { panic!("not a return-with-value: {:?}", stmts[0].kind) };
+        assert!(matches!(e.kind, ExprKind::Await(_)),
+            "expected ExprKind::Await for `await fetch()`, got: {:?}", e.kind);
+    }
+
+    #[test]
+    fn await_binds_tighter_than_method_call() {
+        // `await foo.bar()` should parse as `await (foo.bar())`,
+        // not `(await foo).bar()`. The parser routes await at unary
+        // precedence, so the method-call postfix runs *inside* the
+        // inner expression.
+        let p = parse_src(
+            "struct S { x: i32 } \
+             async fn one() -> S { return S { x: 1 }; } \
+             fn main() -> i32 { return (await one()).x; }",
+        ).unwrap();
+        let ItemKind::Function(main_fn) = &p.items[2].kind else { panic!() };
+        // The return value is `(await one()).x` — a Field expression
+        // whose receiver is the `await` expression.
+        let crate::ast::StmtKind::Return(Some(ret_e)) = &main_fn.body.stmts[0].kind else { panic!() };
+        let ExprKind::Field { receiver, .. } = &ret_e.kind else {
+            panic!("expected Field expr, got {:?}", ret_e.kind);
+        };
+        assert!(matches!(receiver.kind, ExprKind::Await(_)),
+            "expected await as field receiver, got {:?}", receiver.kind);
+    }
 
     #[test]
     fn extern_fn_parses() {
