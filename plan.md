@@ -229,9 +229,42 @@ Single-threaded sibling of `Arc`. Pure-source stdlib at [vendor/stdlib/src/rc.cp
 - Drop of inner T not invoked automatically (same v0.0.4 stdlib limitation).
 - No `try_lock` / `lock_with_timeout`. Land when motivated.
 
-#### Slice 2F — `Channel[T]` · M
+#### Slice 2F — `Channel[T]` · ✅ shipped 2026-05-17
 
-MPSC by default. Send half is `Sync` (cloneable across threads); receive half is `!Sync` (single consumer). Unbounded for v1 (bounded waits for a real use case). Lock-free or mutex-based — pick at implementation time based on what compiles cleanest.
+Unbounded FIFO message-passing queue between threads. Pure-source stdlib at [vendor/stdlib/src/channel.cplus](vendor/stdlib/src/channel.cplus) — no compiler changes.
+
+**Design deviation from the plan: MPMC, not MPSC.** Same C+-no-references constraint as Mutex (Slice 2E) — a literal "Sender + Receiver" split would need to share state through `Arc[Inner]`, and `Arc::get(self)` bitwise-copies the wrapped struct (fires the Sender/Receiver Drop on every copy). Collapsed into one `Channel[T]` type that anyone can `send` or `recv` on; clones share the inner heap block via an internal atomic refcount. Multi-producer / multi-consumer falls out for free.
+
+**Layout** (one 176-byte header + a separately-malloc'd element buffer):
+- 0..8 refcount (u64 atomic)
+- 8..72 pthread_mutex_t (64 B padded for cross-platform safety)
+- 72..136 pthread_cond_t (64 B padded)
+- 136..144 head (read index)
+- 144..152 tail (write index)
+- 152..160 capacity (element count)
+- 160..168 buffer (*T)
+- 168..176 closed flag (u64 — non-zero means closed)
+
+Buffer is **shift-on-grow** (not ring): when `tail == capacity`, if `head > 0` we slide live elements down to index 0; otherwise we realloc 2x. Simpler than a ring buffer, correct, the shift cost amortises away on growth. Ring-buffer variant is a future polish.
+
+**API:**
+- `channel::new[T]() -> Channel[T]`
+- `Channel[T]::clone(self) -> Channel[T]` — atomic refcount inc
+- `Channel[T]::send(self, move v: T)` — never blocks (unbounded); signals one waiter
+- `Channel[T]::recv(self) -> RecvResult[T]` — blocks until a value is available, returns `Value(v)`. On close + empty: returns `Closed`.
+- `Channel[T]::close(self)` — marks closed and wakes every blocked receiver
+- `Channel[T]::strong_count(self) -> u64`
+- `Channel[T]::drop(mut self)` — atomic dec; last reference destroys both pthread primitives + frees the header and the element buffer
+
+**Tests:** `stdlib_channel_mpmc_stress` — 2 producers each push 100 values; 2 consumers drain until Closed. Asserts total count = 200. Runs no-sanitizer, ASan, TSan — all clean.
+
+**Test count: 1199, all green.**
+
+**v0.0.4 limitations:**
+- No bounded variant (`channel::bounded(n)`). Add when a workload asks — needs a "send blocks when full" condvar.
+- No `try_recv` / `recv_timeout`. Add when motivated.
+- Caller bug: `send` after `close()` succeeds silently. No enforcement yet.
+- Inner T's Drop on channel-drop-with-buffered-values not invoked automatically (same v0.0.4 stdlib limitation).
 
 #### Slice 2G — `Cow[T]` · S
 
@@ -367,6 +400,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2F shipped. `Channel[T]` — MPMC FIFO between threads. Pure-source stdlib at [vendor/stdlib/src/channel.cplus](vendor/stdlib/src/channel.cplus). Same internally-refcounted design as Mutex (collapses Arc to sidestep no-`&T` aliasing). pthread mutex + condvar + shift-on-grow buffer. 2-producer / 2-consumer stress test passes ASan + TSan clean. 1199 tests, all green.
 - **2026-05-17** — Stdlib optimizations (out-of-band, by adel): `io::print` / `io::println` switched from raw `write` syscalls (2 per println) to a single `printf` call — fewer syscalls + stdio buffering. `stdlib/fs::read_to_end` switched its per-byte push loop to bulk `Vec::extend_from_raw` (closes one of the v0.0.4 stdlib-polish priorities from the carryover list — see below). `stdlib/hash_map`'s grow-to path replaced the per-byte zero-fill while-loops with `memset`. New `Vec[T]::extend_from_raw(mut self, src: *T, count: usize)` lands in `vendor/stdlib/src/vec.cplus` — one realloc + one `memcpy`, replacing N pushes. No new tests required — the stdlib's existing e2e regression suite covers the changed paths; the optimizations are pure performance wins on identical semantics.
 - **2026-05-17** — Phase 2 Slice 2E shipped. `Mutex[T]` — pthread-backed mutual exclusion. Internally refcounted (collapses Arc into itself; sidesteps the no-`&T` aliasing problem). Cross-thread increment test passes ASan + TSan clean. 1198 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2D shipped. `Rc[T]` — single-threaded refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/rc.cplus](vendor/stdlib/src/rc.cplus). Same shape as `Arc`, non-atomic refcount. Send/Sync gating is documentation-only in v0.0.4; Slice 2A will lock down `!Send` at sema-time. 1197 tests, all green.

@@ -6413,6 +6413,91 @@ fn stdlib_mutex_cross_thread_increment() {
     }
 }
 
+/// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
+///
+/// Two producers each push 100 values; two consumers drain until Closed.
+/// Verifies the channel under genuine multi-producer / multi-consumer
+/// contention. Runs ASan + TSan clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_channel_mpmc_stress() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ch\"\n\n[[bin]]\nname = \"ch\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let channel_src = include_str!("../../vendor/stdlib/src/channel.cplus");
+    let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/channel.cplus"), channel_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/channel\" as channel;\n\
+         import \"stdlib/thread\" as thread;\n\
+         fn producer(move ch: channel::Channel[i32]) -> i32 {\n\
+             let mut i: i32 = 0;\n\
+             while i < 100 {\n\
+                 ch.send(i);\n\
+                 i = i +% 1;\n\
+             }\n\
+             return 0;\n\
+         }\n\
+         fn consumer(move ch: channel::Channel[i32]) -> i32 {\n\
+             let mut count: i32 = 0;\n\
+             let mut done: bool = false;\n\
+             while !done {\n\
+                 match ch.recv() {\n\
+                     channel::RecvResult[i32]::Value(_v) => { count = count +% 1; },\n\
+                     channel::RecvResult[i32]::Closed => { done = true; },\n\
+                 }\n\
+             }\n\
+             return count;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let root = channel::new::[i32]();\n\
+             let p1 = root.clone();\n\
+             let p2 = root.clone();\n\
+             let c1 = root.clone();\n\
+             let c2 = root.clone();\n\
+             let hp1: thread::JoinHandle[i32] = thread::spawn_with::[channel::Channel[i32], i32](p1, producer);\n\
+             let hp2: thread::JoinHandle[i32] = thread::spawn_with::[channel::Channel[i32], i32](p2, producer);\n\
+             let hc1: thread::JoinHandle[i32] = thread::spawn_with::[channel::Channel[i32], i32](c1, consumer);\n\
+             let hc2: thread::JoinHandle[i32] = thread::spawn_with::[channel::Channel[i32], i32](c2, consumer);\n\
+             let _r1: i32 = hp1.join();\n\
+             let _r2: i32 = hp2.join();\n\
+             root.close();\n\
+             let cnt1: i32 = hc1.join();\n\
+             let cnt2: i32 = hc2.join();\n\
+             let total: i32 = cnt1 +% cnt2;\n\
+             if total != 200 { return 1; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    for sanitizer in &["", "--asan", "--tsan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() { cmd.arg(sanitizer); }
+        let st = cmd.status().expect("invoke cpc");
+        assert!(st.success(), "cpc build failed with {}", sanitizer);
+        let bin = dir.join("target/debug/ch");
+        let run = Command::new(&bin).output().expect("run");
+        assert!(
+            run.status.success(),
+            "channel test exit non-zero with {}: code={:?} stderr={}",
+            sanitizer, run.status.code(), String::from_utf8_lossy(&run.stderr),
+        );
+    }
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.
