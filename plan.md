@@ -66,13 +66,24 @@ Sema body-checking was attempted first but reverted: it surfaced unrelated quali
 
 **Precedence**: impl-block methods win over free fns when both exist with the same name (sema checks methods first). Mirrors Rust's UFCS semantics.
 
-#### Slice 1D — E0900: borrow check across `await` · M
+#### Slice 1D — E0900: borrow check across `await` · ✅ shipped 2026-05-17
 
-Sema enforces "borrows held across `await` must live in the coroutine frame, not the caller's stack." Hard precondition for Phase 3's reactor.
+**Reframed during implementation:** rather than full dataflow ("borrows held across await"), shipped a parameter-shape gate. Async fns can't take borrow-shaped parameters at all — owned-data-only.
 
-Body checker walks every `let` binding in scope and checks whether any binding's borrows (in C+'s sense — `mut self`/`self`-receiver result, slice-of-local, raw-pointer-into-local) cross an `await`. If so, the binding's owner must be a parameter or coroutine-local, not a caller-stack value.
+**Why narrower works:** C+ has no `&T` references. The only borrow surface inside an async fn body is parameters of these shapes:
+- `Ty::Str` — fat pointer into someone else's string
+- `Ty::Slice(_)` — fat pointer into someone else's array/Vec
+- `mut x: NonCopyT` — pointer-passed by Phase-6 ABI
 
-Tests: positive (borrow-from-coroutine-local across await — accepts), negative (borrow-from-caller-stack across await — rejects with E0900), edge (await inside `if let` — borrow scope ends at branch).
+Banning these at the parameter list means borrows can't enter the async fn — no possibility of being live across an await. Owned alternatives (`string`, `Vec[T]`, drop the `mut` and `let mut x = x`) cover every legitimate use case.
+
+**Fix** ([cplus-core/src/sema.rs:2031](cplus-core/src/sema.rs#L2031)): in `check_function`, when `f.is_async`, walk parameter list and emit E0900 for each borrow-shaped or `mut`-pointer-passed param. Two diagnostic messages with concrete migration hints.
+
+**Tests:** 5 new sema unit tests — `async_fn_with_str_param_emits_e0900`, `async_fn_with_slice_param_emits_e0900`, `async_fn_with_mut_noncopy_param_emits_e0900` (negatives), `async_fn_with_owned_string_param_clean`, `async_fn_with_copy_param_clean` (positives).
+
+**Test count: 1189 (315 e2e + 859 lib + 11 LSP + 4 other), all green.**
+
+**Forward-pointer:** if Phase 3's reactor surfaces realistic patterns blocked by this rule, refine with dataflow ("borrow live across await") instead of the parameter-shape gate. Error code and diagnostic stay; only the check loosens.
 
 #### Slice 1E — Non-Copy O in `thread::spawn` + `JoinHandle::join` + `async fn` return · M
 
@@ -270,6 +281,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 1D shipped. E0900 borrow-across-await guard. Reframed as a parameter-shape gate (no dataflow): async fns can't take `str`, `T[]`, or `mut x: NonCopyT` parameters. The narrower rule catches every realistic v0.0.4 footgun without requiring dataflow infrastructure. 5 new sema tests, 1189 total.
 - **2026-05-17** — Phase 1C shipped. `Type[args]::name(...)` falls back to free generic fn in the same module when no impl method exists. Sema records the dispatch in `MonoInfo::assoc_free_fn_dispatches`; monomorphize rewrites the GenericEnumCall AST to a plain Call with the inline-mangled callee. Tests up to 1184.
 - **2026-05-17** — Phase 1B shipped. Generic-fn return-type T-substitution + transitive instantiation propagation. Reframed: sema doesn't check generic-fn bodies, so the inner call `vec::new::[T]()` inside `make_buf[T]` never registered. Monomorphize-side fixed-point propagation reads AST turbofish type-args directly, substitutes through outer subst, and discovers transitive instantiations without sema changes. Tests up to 1183 (314 e2e + 854 lib + 11 LSP + 4 other).
 - **2026-05-17** — Phase 1A shipped. Reframed: v0.0.3's "cross-module generic-method instantiation" carryover described a non-bug (impl-attachment already worked). The real failure mode was a musttail+sret call-site ABI mismatch that surfaced on stdlib wrapper chains. 9-line codegen fix at [codegen.rs:5149](cplus-core/src/codegen.rs#L5149); updated pinned lib test; added e2e regression. Test count 1182, all green.

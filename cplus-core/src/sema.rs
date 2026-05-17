@@ -2028,6 +2028,57 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
+            // v0.0.4 Phase 1D — E0900 borrow-across-await guard.
+            //
+            // Async fns suspend at every `await`. Anything live across a
+            // suspension must survive in the coroutine frame (which LLVM
+            // promotes to the heap). Parameters that are *borrows of
+            // caller data* — fat-pointer-shaped (`str`, `T[]`) or
+            // mutably-borrowed (`mut x: NonCopyT`, which is pointer-passed
+            // per Phase-6 ABI) — risk pointing into a caller's stack
+            // frame that doesn't survive the suspension. v0.0.3's
+            // executor is compute-only so the hazard is latent; v0.0.4's
+            // reactor (Phase 3) lets coroutines actually resume on a
+            // different stack frame, making this a live UAF.
+            //
+            // The check is a parameter-shape gate rather than dataflow
+            // because: (a) v0.0.3 has no `&T` references, so the only
+            // borrow surface is parameters of these shapes; (b) banning
+            // the shape outright forces async fns to be owned-data-only,
+            // which is the right default; (c) escape hatches exist
+            // (`string`, `Vec[T]`, owned types) for every banned case.
+            //
+            // Forbidden in async-fn param position:
+            //   - `Ty::Str` (fat ptr borrowing into a string)
+            //   - `Ty::Slice(_)` (fat ptr borrowing into an array/vec)
+            //   - `mut x: NonCopyT` (pointer-passed by Phase-6 ABI)
+            if f.is_async {
+                let pty = &psig.ty;
+                let is_borrow_shape = matches!(pty, Ty::Str | Ty::Slice(_));
+                let is_mut_pointer_passed = param.mutable
+                    && !param.move_
+                    && !self.is_copy(pty);
+                if is_borrow_shape {
+                    self.err(
+                        "E0900",
+                        format!(
+                            "parameter `{}` has borrow-shaped type `{}` which is not allowed in `async fn` — borrows live across `await` may dangle once the reactor lands (Phase 3). Use an owned type instead (`string` for `str`, `Vec[T]` for `T[]`).",
+                            param.name.name, ty_display(pty),
+                        ),
+                        param.span,
+                    );
+                }
+                if is_mut_pointer_passed {
+                    self.err(
+                        "E0900",
+                        format!(
+                            "parameter `{}: {}` is `mut`-bound (pointer-passed) in an `async fn`; that storage may not outlive an `await`. Drop the `mut` and bind locally (`let mut x = x;`) or move ownership in with `move`.",
+                            param.name.name, ty_display(pty),
+                        ),
+                        param.span,
+                    );
+                }
+            }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
@@ -8404,5 +8455,49 @@ mod tests {
         // No Future template imported → wrap_in_future fails.
         let codes = errors("async fn fetch() -> i32 { return 0 as i32; }");
         assert!(codes.contains(&"E0300"), "expected E0300 (Future not in scope), got: {codes:?}");
+    }
+
+    // ---- v0.0.4 Phase 1D: E0900 borrow-across-await parameter guard ----
+
+    #[test]
+    fn async_fn_with_str_param_emits_e0900() {
+        let codes = errors(&format!(
+            "{FUTURE_PRELUDE}async fn fetch(url: str) -> i32 {{ return 0 as i32; }}"
+        ));
+        assert!(codes.contains(&"E0900"), "expected E0900 (str borrow in async param), got: {codes:?}");
+    }
+
+    #[test]
+    fn async_fn_with_slice_param_emits_e0900() {
+        let codes = errors(&format!(
+            "{FUTURE_PRELUDE}async fn proc(buf: i32[]) -> i32 {{ return 0 as i32; }}"
+        ));
+        assert!(codes.contains(&"E0900"), "expected E0900 (slice borrow in async param), got: {codes:?}");
+    }
+
+    #[test]
+    fn async_fn_with_owned_string_param_clean() {
+        // `string` is owned → safe to hold across await.
+        assert_clean(&format!(
+            "{FUTURE_PRELUDE}async fn fetch(url: string) -> i32 {{ return 0 as i32; }}"
+        ));
+    }
+
+    #[test]
+    fn async_fn_with_copy_param_clean() {
+        // i32 is Copy → safe.
+        assert_clean(&format!(
+            "{FUTURE_PRELUDE}async fn id(x: i32) -> i32 {{ return x; }}"
+        ));
+    }
+
+    #[test]
+    fn async_fn_with_mut_noncopy_param_emits_e0900() {
+        // `mut buf: string` is pointer-passed in Phase-6 ABI; storage
+        // doesn't necessarily live in the coroutine frame.
+        let codes = errors(&format!(
+            "{FUTURE_PRELUDE}async fn proc(mut buf: string) -> i32 {{ return 0 as i32; }}"
+        ));
+        assert!(codes.contains(&"E0900"), "expected E0900 (mut non-Copy param), got: {codes:?}");
     }
 }
