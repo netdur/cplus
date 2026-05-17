@@ -53,6 +53,24 @@ impl Vec[T] {
         return;
     }
 
+    // Ensure capacity for at least `additional` more elements beyond
+    // `len`. If the current capacity already suffices, this is a no-op.
+    // Otherwise grows the buffer to fit `len + additional` exactly —
+    // no extra slack. Use `reserve(n)` upfront when you know you'll
+    // push `n` elements to skip the log2(n) realloc cascade `push`
+    // would otherwise pay (v0.0.4 Phase 3 Slice 3B.2).
+    pub fn reserve(mut self, additional: usize) {
+        let required: usize = self.len +% additional;
+        if required <= self.cap {
+            return;
+        }
+        let new_bytes: usize = required *% size_of::[T]();
+        let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
+        self.ptr = unsafe { raw as *T };
+        self.cap = required;
+        return;
+    }
+
     // Drop the last element (no return). Use `get(len - 1)` first if needed.
     // Returns true iff something was popped.
     pub fn pop(mut self) -> bool {

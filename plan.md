@@ -350,9 +350,9 @@ Task queue on top of the reactor. `spawn_local` enqueues; `yield_now` is the coo
 
 `TcpStream::read_async` / `write_async`, `TcpListener::accept_async`, `File::read_async`, `sleep`. Each: set fd nonblocking, attempt sync op, on EWOULDBLOCK register-with-reactor + suspend.
 
-##### Slice 3A.4 — Hand-rolled `Future` implementations · S
+##### Slice 3A.4 — Hand-rolled `Future` implementations · blocked on `impl Trait for Type` dispatch surface
 
-Users `impl Future for MyType { fn poll(...) -> Poll[T] }`. Lift the "Future is compiler-known, constructed only via async fn" restriction in sema; the `Poll[T]` enum in stdlib becomes reachable.
+Investigated: lifting the "Future is compiler-known" restriction requires a runtime dispatch mechanism that can call either the compiler-coroutine `coro.resume(handle)` or a user's `MyType::poll()` polymorphically. The standard answer is trait objects (`dyn Future`) which C+ rejects on principle. The alternative is monomorphizing the executor over every Future implementor — feasible but bigger than expected. Forward-pointer: revisit when a real workload actually needs hand-rolled futures (the reactor itself doesn't — it can wake compiler-coroutines directly by storing their handles).
 
 ##### Slice 3A.5 — `async_fetch` recipe + 1000-task exit test · S
 
@@ -364,15 +364,17 @@ The v0.0.3 plan's worked example, now actually buildable. Plus the "1000 concurr
 
 The v0.0.3 skeleton APIs become real. With Phase 1A in, the parked bodies mostly compile as-is. DNS via `getaddrinfo` (replacing the blocking `gethostbyname`), IPv6 support.
 
-##### Slice 3B.2 — `Vec::reserve` + `Vec::with_capacity` · S
+##### Slice 3B.2 — `Vec::reserve` + `Vec::with_capacity` · ✅ shipped 2026-05-17
 
-Single biggest stdlib win. Trivial once Phase 1C is in.
+`Vec::with_capacity` shipped in v0.0.3; `Vec::reserve(additional: usize)` shipped here. Single biggest stdlib win for any non-trivial Vec workload — pre-allocate to skip the log₂(n) realloc cascade `push` would pay otherwise. Pure-source stdlib at [vendor/stdlib/src/vec.cplus](vendor/stdlib/src/vec.cplus). ASan-clean.
 
 ##### Slice 3B.3 — `Vec::extend_from_slice` + `Vec<u8>` element-type specialization · partially shipped
 
 The core win — replacing N pushes with one realloc + one `memcpy` — landed out-of-band as `Vec[T]::extend_from_raw(mut self, src: *T, count: usize)` (see resolved log entry "Stdlib optimizations"). `stdlib/fs::read_to_end` already uses it, getting the cascading win on response-buffer reads. **Still open for Phase 3B.3**: a safer `extend_from_slice(s: T[])` wrapper that takes a slice instead of a raw pointer; today users construct slices via `slice_from_raw_parts` themselves. Element-type specialization for `Vec[u8]` to bypass per-element loop emission is a separate codegen item — `extend_from_raw` already lowers to one `memcpy` regardless of T because it skips the per-element loop entirely.
 
-##### Slice 3B.4 — `Result::unwrap_unchecked` + match-inlining hints · S
+##### Slice 3B.4 — `Result::unwrap_unchecked` + match-inlining hints · blocked on `impl` for enum types
+
+Investigated: the branchless `unwrap_unchecked` needs to read the Ok payload past the discriminant without going through `match`. The cleanest API is `r.unwrap_unchecked()` as a method on Result, but v0.0.4 sema rejects `impl` on enums (E0325). A free-fn workaround that reads via raw-pointer cast on the enum value also needs `&local` (also unsupported). Forward-pointer: revisit once impl-on-enum lands or an `unsafe { *(&r as *T) }` shape is permitted.
 
 ##### Slice 3B.5 — Generic `HashMap[K, V]` + `Hash[K]` interface · M
 
