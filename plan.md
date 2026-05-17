@@ -436,6 +436,24 @@ _(none open — see resolved log)_
 
 Real-world ports tracking C+'s competitive position against C / Rust / Swift. Numbers are point-in-time snapshots; they shift as both C+ and competitors evolve.
 
+### Hashmap (1M inserts + 2M lookups, open-addressing + FNV-1a)
+
+| Lang  | Binary    | Build   | Insert  | Lookup       | Max RSS |
+|-------|-----------|---------|---------|--------------|---------|
+| Rust  | 319,136 B | 2,649 ms| 22.6 ms | **134.6 ms** | 55.1 MB |
+| C     | 33,816 B  | 142 ms  | 23.0 ms | 158.8 ms     | 55.0 MB |
+| Swift | 54,856 B  | 871 ms  | 27.3 ms | 503.6 ms     | 59.5 MB |
+| **C+ (initial port)** | 33,656 B | 113 ms | 29.9 ms | 384.0 ms | 55.1 MB |
+| **C+ (after fix)**    | 33,656 B | 113 ms | ~22 ms  | **~140 ms**  | 55.1 MB |
+
+**The initial 2.4× lookup gap was misdiagnosed in the port notes** as "cpc doesn't support field-level reads through a typed pointer." That diagnosis is wrong — `unsafe { table[idx].hash }` does emit just a 4-byte field load, and at `-O2` LLVM's SROA pass also strips the full struct load from the `let e: Entry = ...; e.hash` workaround pattern. Both forms produce identical optimized IR for the hot loop.
+
+**The actual gap** was in `make_key` — the C+ port called `malloc(10)` + `free(tmp_ptr)` inside the lookup loop (2M times). The C version uses a 10-byte stack array. Replacing the malloc with `let mut tmp: [u8; 10] = [0u8, 0u8, ..., 0u8];` collapses 2M malloc/free pairs into nothing. Lookup time drops 384 ms → 140 ms — **better than C**.
+
+**Lesson** (worth surfacing in SKILL.md for future ports): if you're tempted to `malloc` a small fixed-size buffer in a hot loop, use a stack array (`let mut buf: [u8; N] = [...];`) instead. The malloc/free overhead is brutal at high call rates, and stack arrays are essentially free.
+
+**Ergonomic gap surfaced:** array-literal repeat-count syntax (`[0u8; 10]` for "ten zeros") doesn't parse. Workaround: write the elements explicitly. Worth a small parser slice to add this — Rust + Swift + Zig all support it.
+
 ### Raytracer (800×450, 32 spp, max depth 15, single-threaded)
 
 | Lang  | Binary    | Build   | Run (best of 3) | Max RSS | Output MD5      |
@@ -459,6 +477,7 @@ Sources: `raytracer/cplus/main.cplus`, `raytracer/c/main.c`, `raytracer/rust/src
 
 ## Resolved log
 
+- **2026-05-17** — Hashmap benchmark investigation (port surfaced 2.4× lookup gap). Diagnosed as USER bug in the port code, not a compiler issue: `make_key` malloc'd a 10-byte temp inside the 2M-iteration lookup loop. Fix: stack array (`let mut tmp: [u8; 10] = [0u8, ..., 0u8];`). Lookup time 384 ms → 140 ms (beats C's 159 ms). No cpc change needed. Surfaced one ergonomic gap: array-literal repeat-count syntax (`[0u8; 10]`) doesn't parse — workaround is to list elements. Lesson recorded in SKILL.md §8.5.
 - **2026-05-17** — Two raytracer-port compiler bugs fixed: (1) `let x: STRUCT = if cond { a } else { b };` codegen panic — `expr_value_ty` didn't resolve Ident binding types; added `expr_value_ty_with_bindings` on `FnState`. (2) Inexact f32 literals emitted malformed IR (`float 0.1` is rejected by LLVM) — switched to hex form (`0x` + f64 bit pattern of f32-narrowed value); f64 literals also moved to hex for round-trip determinism. 3 new sema tests, 1203 total.
 - **2026-05-17** — Phase 2 Slice 2G shipped. `CowStr` — clone-on-write wrapper for string-shaped data. Reframed: ships as a string-specific type (not generic `Cow[T]`) because C+'s no-`&T` design erases the borrow/owned distinction generic Cow depends on. Free-fn API (sema E0325 rejects `impl` on enums in v0.0.4). 1200 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2F shipped. `Channel[T]` — MPMC FIFO between threads. Pure-source stdlib at [vendor/stdlib/src/channel.cplus](vendor/stdlib/src/channel.cplus). Same internally-refcounted design as Mutex (collapses Arc to sidestep no-`&T` aliasing). pthread mutex + condvar + shift-on-grow buffer. 2-producer / 2-consumer stress test passes ASan + TSan clean. 1199 tests, all green.

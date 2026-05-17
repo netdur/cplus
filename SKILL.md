@@ -921,6 +921,30 @@ let b: string = "hello".to_string(); // owned, heap-allocated (24-byte fat point
 `str` parameters are not allowed in `async fn` (E0900). Owned-string params
 must use `move x: string` for the no-double-free invariant.
 
+### Don't `malloc` small fixed-size buffers in hot loops
+
+```cplus
+// ❌ Footgun — 2M malloc/free pairs in a tight loop killed the
+//   hashmap benchmark by 2.4× before this was spotted.
+fn make_key(buf: *u8, n: u32) -> u32 {
+    let tmp_ptr: *u8 = unsafe { malloc(10 as usize) };
+    // ... fill tmp_ptr ...
+    unsafe { free(tmp_ptr); }
+    return p;
+}
+
+// ✅ Stack array — zero allocation, optimizer keeps it in registers.
+fn make_key(buf: *u8, n: u32) -> u32 {
+    let mut tmp: [u8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    // ... fill tmp ...
+    return p;
+}
+```
+
+`[u8; N]` arrays live on the stack (or in registers after SROA). Use them for small per-call scratch buffers. C+'s `extern fn malloc` is real heap allocation — the same cost C pays — and it dominates tight loops fast.
+
+**Known parser gap:** array-literal repeat-count syntax (`[0u8; 10]`) doesn't parse yet. Workaround: list elements explicitly.
+
 ### Pointer casts go through `usize`, not `i32`
 
 ```cplus
