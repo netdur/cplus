@@ -286,9 +286,9 @@ The v0.0.3 skeleton APIs become real. With Phase 1A in, the parked bodies mostly
 
 Single biggest stdlib win. Trivial once Phase 1C is in.
 
-##### Slice 3B.3 — `Vec::extend_from_slice` + `Vec<u8>` element-type specialization · M
+##### Slice 3B.3 — `Vec::extend_from_slice` + `Vec<u8>` element-type specialization · partially shipped
 
-`Vec<u8>::extend_from_slice` lowers to a single `memcpy`; generic path stays as N pushes.
+The core win — replacing N pushes with one realloc + one `memcpy` — landed out-of-band as `Vec[T]::extend_from_raw(mut self, src: *T, count: usize)` (see resolved log entry "Stdlib optimizations"). `stdlib/fs::read_to_end` already uses it, getting the cascading win on response-buffer reads. **Still open for Phase 3B.3**: a safer `extend_from_slice(s: T[])` wrapper that takes a slice instead of a raw pointer; today users construct slices via `slice_from_raw_parts` themselves. Element-type specialization for `Vec[u8]` to bypass per-element loop emission is a separate codegen item — `extend_from_raw` already lowers to one `memcpy` regardless of T because it skips the per-element loop entirely.
 
 ##### Slice 3B.4 — `Result::unwrap_unchecked` + match-inlining hints · S
 
@@ -367,6 +367,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Stdlib optimizations (out-of-band, by adel): `io::print` / `io::println` switched from raw `write` syscalls (2 per println) to a single `printf` call — fewer syscalls + stdio buffering. `stdlib/fs::read_to_end` switched its per-byte push loop to bulk `Vec::extend_from_raw` (closes one of the v0.0.4 stdlib-polish priorities from the carryover list — see below). `stdlib/hash_map`'s grow-to path replaced the per-byte zero-fill while-loops with `memset`. New `Vec[T]::extend_from_raw(mut self, src: *T, count: usize)` lands in `vendor/stdlib/src/vec.cplus` — one realloc + one `memcpy`, replacing N pushes. No new tests required — the stdlib's existing e2e regression suite covers the changed paths; the optimizations are pure performance wins on identical semantics.
 - **2026-05-17** — Phase 2 Slice 2E shipped. `Mutex[T]` — pthread-backed mutual exclusion. Internally refcounted (collapses Arc into itself; sidesteps the no-`&T` aliasing problem). Cross-thread increment test passes ASan + TSan clean. 1198 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2D shipped. `Rc[T]` — single-threaded refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/rc.cplus](vendor/stdlib/src/rc.cplus). Same shape as `Arc`, non-atomic refcount. Send/Sync gating is documentation-only in v0.0.4; Slice 2A will lock down `!Send` at sema-time. 1197 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2C shipped. `Arc[T]` — atomically refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/arc.cplus](vendor/stdlib/src/arc.cplus). Relaxed increment + AcqRel decrement; last reference frees. Cross-thread share verified ASan + TSan clean. 1196 tests, all green.
