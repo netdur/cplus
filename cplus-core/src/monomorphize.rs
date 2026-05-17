@@ -98,10 +98,27 @@ pub fn monomorphize(
         })
         .collect();
     let struct_lookup = StructLookup { by_names };
+    // v0.0.4 Phase 1B: propagate fn-instantiation set to a fixed point.
+    //
+    // Sema records each generic-fn call site's type-args once, using the
+    // surrounding fn's type-parameter names where they appear. So
+    // `make_buf[T]() -> Vec[T] { return vec::new::[T](); }` produces
+    // `(make_buf, [i32])` from `main`'s `make_buf::[i32]()` call site and
+    // `(vec::new, [Ty::Param("T")])` from inside `make_buf`'s body.
+    //
+    // Without propagation the latter never resolves to a concrete
+    // instantiation — `vec_new__i32` is never synthesized — and codegen
+    // panics looking up `sigs["vec::new"]` (the un-mangled name).
+    //
+    // Fix: walk each instantiation's body, substitute the outer subst
+    // through recorded inner call args, and add the resolved
+    // `(callee, concrete_args)` to the instantiation set. Iterate until
+    // no new pair is produced.
+    let propagated_instantiations = propagate_fn_instantiations(&program, &mono.instantiations, &mono.call_monos);
     // Build the substitution context for each instantiation up front
     // so call-site rewriting and template-expansion share one source.
     let mut instances: Vec<MonoInstance> = Vec::new();
-    for (name, args) in &mono.instantiations {
+    for (name, args) in &propagated_instantiations {
         instances.push(MonoInstance {
             generic_name: name.clone(),
             concrete_args: args.clone(),
@@ -113,8 +130,7 @@ pub fn monomorphize(
     // clone. Also rewrite all `Call` sites whose callee is `Ident(name)`
     // matching a generic fn name to use the mangled name; we look up
     // the right instantiation by call_span.
-    let generic_names: std::collections::HashSet<String> = mono
-        .instantiations
+    let generic_names: std::collections::HashSet<String> = propagated_instantiations
         .iter()
         .map(|(n, _)| n.clone())
         .collect();
@@ -511,6 +527,264 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
 
 /// Build the param-name → concrete-type substitution for a single
 /// instantiation. `generic_params` order matches `concrete_args` order.
+/// v0.0.4 Phase 1B: Resolve a turbofish `Type` (AST) to a `Ty` (sema-level)
+/// using the surrounding instantiation's substitution map. Returns
+/// `None` for type-arg shapes monomorphize can't fully resolve without
+/// sema's type-id table (Struct / Enum references — those would need
+/// the StructLookup-by-name lookup, which is not threaded here).
+///
+/// This handles primitives + Param substitution + pointer/slice/array
+/// recursion. The propagation pass uses it to discover transitive
+/// generic-fn instantiations without forcing sema to type-check generic
+/// fn bodies (which has its own set of complications around qualified
+/// names and intrinsic checks).
+fn type_ast_to_ty_with_subst(t: &Type, subst: &std::collections::HashMap<String, Ty>) -> Option<Ty> {
+    match &t.kind {
+        TypeKind::Path(name) => {
+            if let Some(concrete) = subst.get(name) { return Some(concrete.clone()); }
+            match name.as_str() {
+                "i8" => Some(Ty::I8),
+                "i16" => Some(Ty::I16),
+                "i32" => Some(Ty::I32),
+                "i64" => Some(Ty::I64),
+                "u8" => Some(Ty::U8),
+                "u16" => Some(Ty::U16),
+                "u32" => Some(Ty::U32),
+                "u64" => Some(Ty::U64),
+                "isize" => Some(Ty::Isize),
+                "usize" => Some(Ty::Usize),
+                "f32" => Some(Ty::F32),
+                "f64" => Some(Ty::F64),
+                "bool" => Some(Ty::Bool),
+                "()" => Some(Ty::Unit),
+                "str" => Some(Ty::Str),
+                "string" => Some(Ty::String),
+                // Struct / enum names: monomorphize doesn't carry sema's
+                // id table. Skip — these instantiations get discovered
+                // via the struct_instantiations path instead.
+                _ => None,
+            }
+        }
+        TypeKind::RawPtr(inner) => type_ast_to_ty_with_subst(inner, subst).map(|t| Ty::RawPtr(Box::new(t))),
+        TypeKind::Slice(inner) => type_ast_to_ty_with_subst(inner, subst).map(|t| Ty::Slice(Box::new(t))),
+        TypeKind::Array { elem, len } => type_ast_to_ty_with_subst(elem, subst).map(|t| Ty::Array(Box::new(t), *len)),
+        TypeKind::FnPtr { params, return_type } => {
+            let params: Option<Vec<Ty>> = params.iter().map(|p| type_ast_to_ty_with_subst(p, subst)).collect();
+            let ret = match return_type {
+                Some(rt) => type_ast_to_ty_with_subst(rt, subst)?,
+                None => Ty::Unit,
+            };
+            Some(Ty::FnPtr { params: params?, return_type: Box::new(ret) })
+        }
+        _ => None,
+    }
+}
+
+/// v0.0.4 Phase 1B: Does `ty` contain any `Ty::Param(...)` reference?
+/// Used to filter out generic-context fn_instantiation entries that
+/// sema records when type-checking a generic fn body — those are not
+/// real concrete monomorphs and only become real after substitution
+/// through an outer caller's subst.
+fn ty_contains_param(ty: &Ty) -> bool {
+    match ty {
+        Ty::Param(_) => true,
+        Ty::Array(elem, _) | Ty::Slice(elem) | Ty::RawPtr(elem) => ty_contains_param(elem),
+        Ty::FnPtr { params, return_type } => {
+            params.iter().any(ty_contains_param) || ty_contains_param(return_type)
+        }
+        _ => false,
+    }
+}
+
+/// v0.0.4 Phase 1B: Substitute `Ty::Param` references through `subst`
+/// without triggering re-instantiation. Mirrors sema's `subst_ty_deep`
+/// for the Param/Array/Slice/RawPtr/FnPtr branches but stops at
+/// `Ty::Struct(id)` / `Ty::Enum(id)` — those carry sema-assigned ids
+/// that monomorphize doesn't re-resolve here.
+fn subst_ty_plain(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty {
+    match ty {
+        Ty::Param(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+        Ty::Array(elem, len) => Ty::Array(Box::new(subst_ty_plain(elem, subst)), *len),
+        Ty::Slice(elem) => Ty::Slice(Box::new(subst_ty_plain(elem, subst))),
+        Ty::RawPtr(inner) => Ty::RawPtr(Box::new(subst_ty_plain(inner, subst))),
+        Ty::FnPtr { params, return_type } => Ty::FnPtr {
+            params: params.iter().map(|p| subst_ty_plain(p, subst)).collect(),
+            return_type: Box::new(subst_ty_plain(return_type, subst)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// v0.0.4 Phase 1B: walk a body and call `f` with
+/// `(callee_name, type_args, span)` for every `Call` whose callee is a
+/// plain `Ident`. Used by the fn-instantiation propagation pass.
+fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer::Span)) {
+    match &expr.kind {
+        ExprKind::Call { callee, args, type_args } => {
+            if let ExprKind::Ident(name) = &callee.kind {
+                f(name, type_args, expr.span);
+            }
+            visit_ident_calls(callee, f);
+            for a in args { visit_ident_calls(a, f); }
+        }
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => visit_ident_calls_in_block(b, f),
+        ExprKind::If { cond, then, else_branch } => {
+            visit_ident_calls(cond, f);
+            visit_ident_calls_in_block(then, f);
+            if let Some(e) = else_branch { visit_ident_calls(e, f); }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            visit_ident_calls(lhs, f);
+            visit_ident_calls(rhs, f);
+        }
+        ExprKind::Unary { operand, .. } => visit_ident_calls(operand, f),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { visit_ident_calls(s, f); }
+            if let Some(e) = end { visit_ident_calls(e, f); }
+        }
+        ExprKind::Assign { target, value, .. } => {
+            visit_ident_calls(target, f);
+            visit_ident_calls(value, f);
+        }
+        ExprKind::Field { receiver, .. } => visit_ident_calls(receiver, f),
+        ExprKind::Index { receiver, index } => {
+            visit_ident_calls(receiver, f);
+            visit_ident_calls(index, f);
+        }
+        ExprKind::Cast { expr, .. } => visit_ident_calls(expr, f),
+        ExprKind::StructLit { fields, .. } => {
+            for sf in fields { visit_ident_calls(&sf.value, f); }
+        }
+        ExprKind::GenericStructLit { fields, .. } => {
+            for sf in fields { visit_ident_calls(&sf.value, f); }
+        }
+        ExprKind::ArrayLit { elements } => {
+            for e in elements { visit_ident_calls(e, f); }
+        }
+        ExprKind::GenericEnumCall { args, .. } => {
+            for a in args { visit_ident_calls(a, f); }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            visit_ident_calls(scrutinee, f);
+            for arm in arms { visit_ident_calls(&arm.body, f); }
+        }
+        ExprKind::Await(inner) => visit_ident_calls(inner, f),
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { visit_ident_calls(e, f); }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn visit_ident_calls_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type], crate::lexer::Span)) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Let { init: Some(e), .. } => visit_ident_calls(e, f),
+            StmtKind::Let { init: None, .. } => {}
+            StmtKind::Expr(e) => visit_ident_calls(e, f),
+            StmtKind::Return(e) => { if let Some(e) = e { visit_ident_calls(e, f); } }
+            StmtKind::While { cond, body } => {
+                visit_ident_calls(cond, f);
+                visit_ident_calls_in_block(body, f);
+            }
+            StmtKind::For(forloop) => match forloop {
+                ForLoop::Range { iter, body, .. } => {
+                    visit_ident_calls(iter, f);
+                    visit_ident_calls_in_block(body, f);
+                }
+                ForLoop::CStyle { init, cond, update, body } => {
+                    if let Some(s) = init.as_deref() {
+                        let wrap = Block { stmts: vec![s.clone()], tail: None, span: stmt.span };
+                        visit_ident_calls_in_block(&wrap, f);
+                    }
+                    if let Some(c) = cond { visit_ident_calls(c, f); }
+                    for u in update { visit_ident_calls(u, f); }
+                    visit_ident_calls_in_block(body, f);
+                }
+            },
+            StmtKind::Defer(e) | StmtKind::Assert(e) => visit_ident_calls(e, f),
+            StmtKind::Loop(body) => visit_ident_calls_in_block(body, f),
+            // Lowering pass converts IfLet / WhileLet / GuardLet to
+            // match/loop+match before monomorphize, but cover them
+            // defensively in case a sample reaches us pre-lowering.
+            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+                visit_ident_calls(scrutinee, f);
+                visit_ident_calls_in_block(body, f);
+                if let Some(b) = else_body { visit_ident_calls_in_block(b, f); }
+            }
+            StmtKind::WhileLet { scrutinee, body, .. } => {
+                visit_ident_calls(scrutinee, f);
+                visit_ident_calls_in_block(body, f);
+            }
+            StmtKind::GuardLet { scrutinee, .. } => visit_ident_calls(scrutinee, f),
+            StmtKind::Break | StmtKind::Continue => {}
+        }
+    }
+    if let Some(t) = &block.tail { visit_ident_calls(t, f); }
+}
+
+/// v0.0.4 Phase 1B: fixed-point propagation of fn instantiations through
+/// transitive generic calls. See the explanatory comment at the call site
+/// in `monomorphize()`.
+fn propagate_fn_instantiations(
+    program: &Program,
+    initial: &std::collections::BTreeSet<(String, Vec<Ty>)>,
+    call_monos: &std::collections::HashMap<crate::lexer::Span, Vec<Ty>>,
+) -> std::collections::BTreeSet<(String, Vec<Ty>)> {
+    // Build template lookup: name -> &Function. Only generic templates.
+    let templates: std::collections::HashMap<String, &Function> = program.items.iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Function(f) if !f.generic_params.is_empty() => {
+                Some((f.name.name.clone(), f))
+            }
+            _ => None,
+        })
+        .collect();
+    // Drop Param-bearing entries from the seed set. Sema records every
+    // turbofish call (including those inside a generic body, where the
+    // type-args are `Ty::Param`) into `fn_instantiations`. Those entries
+    // don't name a real concrete monomorph — they're context-dependent
+    // and only become real after substitution through an outer caller's
+    // subst, which is the propagation step below.
+    let is_concrete = |args: &Vec<Ty>| !args.iter().any(ty_contains_param);
+    let mut out: std::collections::BTreeSet<(String, Vec<Ty>)> = initial
+        .iter()
+        .filter(|(_, args)| is_concrete(args))
+        .cloned()
+        .collect();
+    let mut worklist: std::collections::VecDeque<(String, Vec<Ty>)> = out.iter().cloned().collect();
+    while let Some((caller, caller_args)) = worklist.pop_front() {
+        let Some(template) = templates.get(&caller) else { continue; };
+        if template.generic_params.len() != caller_args.len() { continue; }
+        let subst = build_subst(&template.generic_params, &caller_args);
+        let mut discoveries: Vec<(String, Vec<Ty>)> = Vec::new();
+        visit_ident_calls_in_block(&template.body, &mut |callee_name, type_args, _span| {
+            // Only generic-fn templates need propagation. Plain
+            // non-generic calls don't need monomorphization.
+            if !templates.contains_key(callee_name) { return; }
+            // Read the turbofish type-args directly from the AST. Sema
+            // doesn't type-check generic-fn bodies in v0.0.4, so
+            // `call_monos` is empty for these spans. The AST is the
+            // ground truth here.
+            if type_args.is_empty() { return; }
+            let Some(resolved) = type_args.iter()
+                .map(|t| type_ast_to_ty_with_subst(t, &subst))
+                .collect::<Option<Vec<Ty>>>()
+            else { return; };
+            if !is_concrete(&resolved) { return; }
+            discoveries.push((callee_name.to_string(), resolved));
+        });
+        for d in discoveries {
+            if out.insert(d.clone()) {
+                worklist.push_back(d);
+            }
+        }
+    }
+    out
+}
+
 fn build_subst(generic_params: &[GenericParam], concrete_args: &[Ty]) -> std::collections::HashMap<String, Ty> {
     generic_params
         .iter()
@@ -815,7 +1089,30 @@ fn rewrite_expr(
             // to also include generic methods (Field callee) and
             // generic associated functions (Path callee).
             let args_for_call_opt = mono.call_monos.get(&expr.span);
-            let new_callee: Expr = match (&callee.kind, args_for_call_opt) {
+            // v0.0.4 Phase 1B: resolve the call site's effective concrete
+            // type-args. Two sources:
+            //   - `call_monos`: sema's record (may contain `Ty::Param(T)`
+            //     when this call is inside a non-generic enclosing fn
+            //     that references a type-param of its impl block; or in
+            //     mixed cases).
+            //   - AST `type_args` (turbofish): direct user-supplied
+            //     types. The propagation pass uses these to discover
+            //     transitive generic instantiations inside generic-fn
+            //     bodies (sema doesn't type-check those, so `call_monos`
+            //     is empty for spans inside them).
+            // In both cases the active `subst` resolves remaining Params
+            // to the outer instantiation's concrete types.
+            let resolved_args_for_call: Option<Vec<Ty>> =
+                if let Some(args) = args_for_call_opt {
+                    Some(args.iter().map(|t| subst_ty_plain(t, subst)).collect())
+                } else if !type_args.is_empty() {
+                    type_args.iter()
+                        .map(|t| type_ast_to_ty_with_subst(t, subst))
+                        .collect()
+                } else {
+                    None
+                };
+            let new_callee: Expr = match (&callee.kind, resolved_args_for_call.as_ref()) {
                 (ExprKind::Ident(cname), Some(args_for_call)) if generic_names.contains(cname) => {
                     if let Some(mangled) = inst_lookup.get(&(cname.clone(), args_for_call.clone())) {
                         Expr { kind: ExprKind::Ident(mangled.clone()), span: callee.span }

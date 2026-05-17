@@ -5866,6 +5866,67 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
     assert_eq!(run.code(), Some(3), "expected buf.len() = 3");
 }
 
+/// v0.0.4 Phase 1B: generic-fn return-type T-substitution + transitive
+/// generic-fn instantiation propagation.
+///
+/// `fn make_buf[T]() -> vec::Vec[T] { return vec::new::[T](); }` exercises:
+///   1. A user-written generic fn that returns a stdlib generic struct.
+///   2. The body's inner generic call (`vec::new::[T]`) uses the outer
+///      fn's type-param T.
+///   3. A consumer calls `make_buf::[i32]()` and gets back `vec::Vec[i32]`.
+///
+/// Before the fix, monomorphize only saw sema's `fn_instantiations`,
+/// which (for the inner call inside the generic body) recorded
+/// `(vec::new, [Ty::Param("T")])` — not a real concrete instantiation.
+/// `vec_new__i32` was never synthesized; codegen panicked looking up the
+/// un-mangled name.
+///
+/// Fix: monomorphize propagates instantiations to a fixed point by
+/// walking each instantiation's template body, reading the AST
+/// turbofish type-args, and substituting through the outer subst.
+#[test]
+fn generic_fn_returning_generic_struct_transitive_instantiation() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"gpb\"\n\n[[bin]]\nname = \"gpb\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/io.cplus"), io_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/io\" as io;\n\
+         \n\
+         fn make_buf[T]() -> vec::Vec[T] {\n\
+             return vec::new::[T]();\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let mut b = make_buf::[i32]();\n\
+             b.push(7);\n\
+             b.push(8);\n\
+             b.push(9);\n\
+             io::println(\"ok\");\n\
+             return b.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1B regression?)");
+    let bin = dir.join("target/debug/gpb");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(3), "expected b.len() = 3");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

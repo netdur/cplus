@@ -30,11 +30,25 @@ Every Phase-2/3/4 slice is blocked on one or more of these. Land them first, acc
 
 **Test count: 1182 (313 e2e + 854 lib + 11 LSP + 4 other), all green.**
 
-#### Slice 1B — Generic-fn return-type T-substitution · S
+#### Slice 1B — Generic-fn return-type T-substitution · ✅ shipped 2026-05-17
 
-`fn make_vec[T]() -> Vec[T] { ... }` substitutes T at the call site so `make_vec::[i32]()` returns `Vec[i32]`.
+**Reframed during implementation.** The plan's "extend `subst_type_ast` to recurse through `TypeKind::Path { args, .. }`" was misdiagnosed — that recursion already worked. The real gap was deeper: sema doesn't type-check generic-fn bodies (early-returns at [sema.rs:1988](cplus-core/src/sema.rs#L1988) because generics live in `fns_generic`, not `fns`), so the inner call inside `make_buf[T]`'s body (`vec::new::[T]()`) never registered in `call_monos` / `fn_instantiations`. Monomorphize had no transitive entries to walk; the synthesized `make_buf__i32` body contained `vec::new::[T]()` calls that codegen panicked on (`vec_new__i32` never existed).
 
-Fix: extend `subst_type_ast` in [cplus-core/src/monomorphize.rs](cplus-core/src/monomorphize.rs) to recurse through `TypeKind::Path { args, .. }`. Same shape as the v0.0.3 fix for non-Path Tys.
+**Fix:** monomorphize-side propagation that doesn't require sema body-checks. Two parts in [cplus-core/src/monomorphize.rs](cplus-core/src/monomorphize.rs):
+
+1. **Fixed-point propagation pass.** Walk each instantiation's template body, read each `Call`'s AST `type_args` (turbofish), substitute through the outer instantiation's subst, and add the resolved `(callee_name, concrete_args)` to the instantiation set. Iterate until no new pair surfaces. Filters out Param-bearing entries (sema-recorded generic-context instantiations that aren't real concrete monomorphs).
+
+2. **Rewrite-site fix.** In `rewrite_expr`, when looking up a generic-fn call's mangled name, fall back to AST `type_args` (resolved via outer subst) when `call_monos` is empty for the span — covers the generic-fn-body case where sema didn't record anything.
+
+Sema body-checking was attempted first but reverted: it surfaced unrelated qualified-name bugs in `check_thread_intrinsic`'s `JoinHandle` lookup. AST-driven propagation in monomorphize is less invasive and doesn't require sema changes.
+
+**Tests:** added `generic_fn_returning_generic_struct_transitive_instantiation` e2e — a consumer module calls `make_buf::[i32]()` where `make_buf[T]` is user-written and tail-returns `vec::new::[T]()`. Test asserts `b.len() = 3` after 3 pushes.
+
+**Test count: 1183 (314 e2e + 854 lib + 11 LSP + 4 other), all green.**
+
+**Limitations (carry forward to v0.0.5 or revisit if motivated):**
+- Generic struct / enum type-args (`make_buf::[Vec[T]]()`) aren't fully resolved — `type_ast_to_ty_with_subst` returns None for non-primitive type names. The struct_instantiations path handles direct uses; nested generic-of-generic in a generic-fn body is still rough.
+- Generic-fn bodies still aren't sema-checked, so type errors inside them are caught at monomorphize/codegen rather than at sema. Acceptable for now — the language permits unchecked generic body forms and monomorph errors give precise diagnostics.
 
 #### Slice 1C — `Type[args]::assoc_fn(...)` call shape · S
 
@@ -246,4 +260,5 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 1B shipped. Generic-fn return-type T-substitution + transitive instantiation propagation. Reframed: sema doesn't check generic-fn bodies, so the inner call `vec::new::[T]()` inside `make_buf[T]` never registered. Monomorphize-side fixed-point propagation reads AST turbofish type-args directly, substitutes through outer subst, and discovers transitive instantiations without sema changes. Tests up to 1183 (314 e2e + 854 lib + 11 LSP + 4 other).
 - **2026-05-17** — Phase 1A shipped. Reframed: v0.0.3's "cross-module generic-method instantiation" carryover described a non-bug (impl-attachment already worked). The real failure mode was a musttail+sret call-site ABI mismatch that surfaced on stdlib wrapper chains. 9-line codegen fix at [codegen.rs:5149](cplus-core/src/codegen.rs#L5149); updated pinned lib test; added e2e regression. Test count 1182, all green.
