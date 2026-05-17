@@ -6041,6 +6041,9 @@ fn async_fn_returning_string_through_block_on() {
     ).unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    // v0.0.4 Phase 3 Slice 3A.1: executor.cplus now imports reactor.
+    let __reactor_for_executor = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), __reactor_for_executor).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(
@@ -6179,6 +6182,9 @@ fn generic_async_fn_multi_instantiation_round_trip() {
     ).unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    // v0.0.4 Phase 3 Slice 3A.1: executor.cplus now imports reactor.
+    let __reactor_for_executor = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), __reactor_for_executor).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(
@@ -8458,6 +8464,9 @@ fn recipe_async_compute_runs() {
     ).unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    // v0.0.4 Phase 3 Slice 3A.1: executor.cplus now imports reactor.
+    let __reactor_for_executor = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), __reactor_for_executor).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");

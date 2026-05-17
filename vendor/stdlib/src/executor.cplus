@@ -16,10 +16,23 @@
 // the `Send`/`Sync` design that v0.0.4 will tackle.
 
 import "./future" as future;
+// v0.0.4 Phase 3 Slice 3A.1: pull in the reactor so block_on's
+// reactor-integrated drive loop has its stable-symbol callees
+// (`stdlib_reactor_*_v1`) available at link time. block_on itself
+// is compiler-intrinsic, but it now calls into the reactor's drain /
+// poll routines emitted by reactor.cplus.
+import "./reactor" as reactor;
 
 // Drive a `Future[T]` to completion and return its produced value.
 // Blocks the calling thread (no other tasks run on it) until the
 // future resolves. Drops the coroutine frame after extracting T.
 pub fn block_on[T](f: future::Future[T]) -> T {
     return unsafe { __cplus_block_on::[T](f) };
+}
+
+// Touch reactor module so the `import` isn't treated as unused. The
+// reactor's stable-symbol exports are link-time-resolved; this read
+// keeps the import elided-pass happy.
+fn _touch_reactor() -> i32 {
+    return reactor::waiter_count();
 }

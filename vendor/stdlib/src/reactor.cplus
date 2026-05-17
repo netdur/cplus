@@ -1,0 +1,309 @@
+// stdlib/reactor.cplus — async I/O event loop (v0.0.4 Phase 3 Slice 3A.1).
+//
+// Backed by kqueue on macOS; epoll-on-Linux lands separately. The reactor
+// is a process-global resource lazily initialized on first use. Single-
+// threaded for v0.0.4 — matches tokio's `current_thread` runtime, and
+// sidesteps the Send/Sync design that the multi-threaded executor would
+// need.
+//
+// **Architecture.**
+//
+//   - The reactor holds a kqueue fd + parallel arrays for `(waiter_fd,
+//     waiter_handle)` pairs (one per pending fd registration) and a
+//     queue of pending coroutine handles (spawned via `spawn_local`).
+//
+//   - Async I/O wrappers call `wait_fd_readable(fd)` (a compiler
+//     intrinsic — see codegen.rs) to suspend the current coroutine
+//     until the fd becomes read-ready. The intrinsic registers
+//     `(fd, current_coro_handle)` with the reactor, then issues
+//     `llvm.coro.suspend`.
+//
+//   - `executor::block_on(future)` drives the outer coroutine. When
+//     `coro.resume(outer)` returns and `coro.done(outer)` is false,
+//     block_on first drains any tasks `spawn_local` queued, then
+//     calls `reactor::poll_one_event` which blocks on `kevent` until
+//     one fd is ready, looks up the waiter, and `coro.resume`s it.
+//     Loop until outer is done.
+//
+//   - `spawn_local(future)` pushes the future's handle onto the
+//     reactor's task queue; block_on's loop resumes each queued task
+//     to its next suspend point.
+//
+//   - `yield_now()` is `spawn_local(self)` essentially — re-enqueue
+//     self and suspend, giving the scheduler a chance to run other
+//     queued tasks.
+//
+// **Layout of the reactor state heap block:**
+//   0..4    kqfd            i32
+//   4..8    n_waiters       i32   (current waiter count)
+//   8..12   cap_waiters     i32
+//   12..16  n_pending       i32   (queued spawn_local handles)
+//   16..20  cap_pending     i32
+//   24..32  waiter_fds      *i32  (separately malloc'd)
+//   32..40  waiter_hdls     **u8
+//   40..48  pending_hdls    **u8
+//   48..56  kevent_buf      *u8  (32-byte kevent struct slot, reused)
+//   total: 56 bytes header + 3 growable buffers.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// kqueue / kevent (macOS).
+extern fn kqueue() -> i32;
+extern fn kevent(
+    kq: i32,
+    changelist: *u8,
+    nchanges: i32,
+    eventlist: *u8,
+    nevents: i32,
+    timeout: *u8,
+) -> i32;
+
+// LLVM coroutine intrinsics — surfaced via stable wrapper symbols
+// emitted by codegen, so stdlib can call them as plain extern fns.
+// `__cplus_coro_resume(hdl)` lowers to `call void @llvm.coro.resume(ptr %hdl)`.
+extern fn __cplus_coro_resume(hdl: *u8);
+extern fn __cplus_coro_done(hdl: *u8) -> i32;
+
+// Reactor-state-slot accessors emitted in the codegen preamble.
+extern fn __cplus_reactor_get_state() -> *u8;
+extern fn __cplus_reactor_set_state(p: *u8);
+
+// kevent struct field constants (macOS):
+//   ident   uintptr_t  @ 0    (fd for EVFILT_READ)
+//   filter  int16_t    @ 8    (EVFILT_READ = -1)
+//   flags   uint16_t   @ 10   (EV_ADD | EV_ONESHOT = 0x11)
+//   fflags  uint32_t   @ 12
+//   data    intptr_t   @ 16
+//   udata   void*      @ 24
+// total size: 32 bytes.
+
+fn header_bytes() -> usize { return 56 as usize; }
+fn kevent_bytes() -> usize { return 32 as usize; }
+
+fn off_kqfd() -> usize { return 0 as usize; }
+fn off_n_waiters() -> usize { return 4 as usize; }
+fn off_cap_waiters() -> usize { return 8 as usize; }
+fn off_n_pending() -> usize { return 12 as usize; }
+fn off_cap_pending() -> usize { return 16 as usize; }
+fn off_waiter_fds() -> usize { return 24 as usize; }
+fn off_waiter_hdls() -> usize { return 32 as usize; }
+fn off_pending_hdls() -> usize { return 40 as usize; }
+fn off_kevent_buf() -> usize { return 48 as usize; }
+
+// Lazily allocate + init the reactor on first use. Idempotent: returns
+// the same state pointer on every call within a process.
+pub fn ensure() -> *u8 {
+    let cur: *u8 = unsafe { __cplus_reactor_get_state() };
+    let null_p: *u8 = unsafe { 0 as *u8 };
+    if !ptr_is_null(cur) { return cur; }
+    let state: *u8 = unsafe { malloc(header_bytes()) };
+    let kqfd: i32 = unsafe { kqueue() };
+    let kqfd_slot: *i32 = unsafe { (state + off_kqfd()) as *i32 };
+    unsafe { *kqfd_slot = kqfd; }
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    unsafe { *nw_slot = 0 as i32; }
+    let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
+    unsafe { *cw_slot = 8 as i32; }
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    unsafe { *np_slot = 0 as i32; }
+    let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
+    unsafe { *cp_slot = 8 as i32; }
+    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
+    unsafe { *wf_slot = malloc((8 *% 4) as usize); }
+    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    unsafe { *wh_slot = malloc((8 *% 8) as usize); }
+    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
+    unsafe { *ph_slot = malloc((8 *% 8) as usize); }
+    let kb_slot: **u8 = unsafe { (state + off_kevent_buf()) as **u8 };
+    unsafe { *kb_slot = malloc(kevent_bytes()); }
+    unsafe { __cplus_reactor_set_state(state); }
+    let _x: *u8 = null_p;
+    return state;
+}
+
+// Internal helper: null check on a raw pointer via direct comparison
+// against the canonical null spelling.
+fn ptr_is_null(p: *u8) -> bool {
+    let null_p: *u8 = unsafe { 0 as *u8 };
+    return p == null_p;
+}
+
+// Stable-symbol wrappers exposed under canonical C-ABI names so the
+// codegen intrinsics for `__cplus_reactor_wait_read` and
+// `block_on`'s reactor-integrated drive loop can call them directly.
+// Named at the source level rather than via `#[link_name]` because the
+// link_name attribute is currently honored only on `extern fn`
+// declarations, not on `pub extern fn` export definitions (v0.0.5
+// polish — at which point these can rename via link_name).
+pub extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
+    register_read(fd, hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
+    enqueue_pending(hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_drain_pending_v1() -> i32 {
+    return drain_pending();
+}
+
+pub extern fn stdlib_reactor_waiter_count_v1() -> i32 {
+    return waiter_count();
+}
+
+pub extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
+    if poll_one_event() {
+        return 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// Register fd for read-readiness; record the coroutine handle to wake.
+pub fn register_read(fd: i32, hdl: *u8) {
+    let state: *u8 = ensure();
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
+    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
+    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *nw_slot };
+    let mut cap: i32 = unsafe { *cw_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_fds: *u8 = unsafe { realloc(*wf_slot, (cap *% 4) as usize) };
+        let new_hdls: *u8 = unsafe { realloc(*wh_slot, (cap *% 8) as usize) };
+        unsafe { *wf_slot = new_fds; }
+        unsafe { *wh_slot = new_hdls; }
+        unsafe { *cw_slot = cap; }
+    }
+    let fds: *i32 = unsafe { *wf_slot as *i32 };
+    let hdls: **u8 = unsafe { *wh_slot as **u8 };
+    let fd_slot: *i32 = unsafe { fds + (n as usize) };
+    unsafe { *fd_slot = fd; }
+    let hdl_slot: **u8 = unsafe { hdls + (n as usize) };
+    unsafe { *hdl_slot = hdl; }
+    unsafe { *nw_slot = n +% (1 as i32); }
+    // Submit a one-shot read filter to kqueue.
+    let kqfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
+    let kb: *u8 = unsafe { *((state + off_kevent_buf()) as **u8) };
+    // ident @0 (uintptr_t = u64): fd
+    let ident_slot: *u64 = unsafe { kb as *u64 };
+    unsafe { *ident_slot = fd as u64; }
+    // filter @8 (i16): EVFILT_READ = -1
+    let filter_slot: *i16 = unsafe { (kb + (8 as usize)) as *i16 };
+    unsafe { *filter_slot = (0 as i16) -% (1 as i16); }
+    // flags @10 (u16): EV_ADD (0x0001) | EV_ONESHOT (0x0010) = 0x0011
+    let flags_slot: *u16 = unsafe { (kb + (10 as usize)) as *u16 };
+    unsafe { *flags_slot = 0x0011 as u16; }
+    // fflags @12 (u32): 0
+    let fflags_slot: *u32 = unsafe { (kb + (12 as usize)) as *u32 };
+    unsafe { *fflags_slot = 0 as u32; }
+    // data @16 (i64): 0
+    let data_slot: *i64 = unsafe { (kb + (16 as usize)) as *i64 };
+    unsafe { *data_slot = 0 as i64; }
+    // udata @24 (ptr): null
+    let udata_slot: **u8 = unsafe { (kb + (24 as usize)) as **u8 };
+    unsafe { *udata_slot = 0 as *u8; }
+    let _r: i32 = unsafe { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
+    return;
+}
+
+// Wait for one fd to become ready, then resume its waiter. Blocks the
+// calling thread on kevent. Returns true if a coroutine was resumed.
+pub fn poll_one_event() -> bool {
+    let state: *u8 = ensure();
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    let n: i32 = unsafe { *nw_slot };
+    if n == (0 as i32) { return false; }
+    let kqfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
+    let kb: *u8 = unsafe { *((state + off_kevent_buf()) as **u8) };
+    let nev: i32 = unsafe { kevent(kqfd, 0 as *u8, 0 as i32, kb, 1 as i32, 0 as *u8) };
+    if nev <= (0 as i32) { return false; }
+    let ident: u64 = unsafe { *(kb as *u64) };
+    let fd_ready: i32 = ident as i32;
+    // Find the matching waiter; swap-remove from the parallel arrays.
+    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
+    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    let fds: *i32 = unsafe { *wf_slot as *i32 };
+    let hdls: **u8 = unsafe { *wh_slot as **u8 };
+    let mut i: i32 = 0;
+    while i < n {
+        let cur_fd: i32 = unsafe { *(fds + (i as usize)) };
+        if cur_fd == fd_ready {
+            let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
+            // Swap-remove: move last to slot i, dec count.
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_fd: i32 = unsafe { *(fds + (last_i as usize)) };
+                let last_hdl: *u8 = unsafe { *(hdls + (last_i as usize)) };
+                unsafe { *(fds + (i as usize)) = last_fd; }
+                unsafe { *(hdls + (i as usize)) = last_hdl; }
+            }
+            unsafe { *nw_slot = last_i; }
+            unsafe { __cplus_coro_resume(hdl); }
+            return true;
+        }
+        i = i +% (1 as i32);
+    }
+    return false;
+}
+
+// Drain the spawn_local task queue: resume each handle once. Returns
+// the number of tasks resumed.
+pub fn drain_pending() -> i32 {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    let n: i32 = unsafe { *np_slot };
+    if n == (0 as i32) { return 0; }
+    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
+    let hdls: **u8 = unsafe { *ph_slot as **u8 };
+    unsafe { *np_slot = 0 as i32; }
+    let mut i: i32 = 0;
+    while i < n {
+        let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
+        let done: i32 = unsafe { __cplus_coro_done(hdl) };
+        if done == (0 as i32) {
+            unsafe { __cplus_coro_resume(hdl); }
+        }
+        i = i +% (1 as i32);
+    }
+    return n;
+}
+
+// Push a coroutine handle to the spawn_local queue.
+pub fn enqueue_pending(hdl: *u8) {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
+    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *np_slot };
+    let mut cap: i32 = unsafe { *cp_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_p: *u8 = unsafe { realloc(*ph_slot, (cap *% 8) as usize) };
+        unsafe { *ph_slot = new_p; }
+        unsafe { *cp_slot = cap; }
+    }
+    let hdls: **u8 = unsafe { *ph_slot as **u8 };
+    let slot: **u8 = unsafe { hdls + (n as usize) };
+    unsafe { *slot = hdl; }
+    unsafe { *np_slot = n +% (1 as i32); }
+    return;
+}
+
+// Snapshot the waiter count. Used by block_on to decide whether to
+// kevent_wait or terminate the loop.
+pub fn waiter_count() -> i32 {
+    let state: *u8 = ensure();
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    return unsafe { *nw_slot };
+}
+
+pub fn pending_count() -> i32 {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    return unsafe { *np_slot };
+}

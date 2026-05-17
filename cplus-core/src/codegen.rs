@@ -589,7 +589,14 @@ fn generate_inner(
     // applies to `malloc` / `free` / `memcpy` / `snprintf` / `printf`
     // which user code may legitimately re-declare to get a typed
     // handle.
-    for sym in ["pthread_create", "pthread_join", "malloc", "free", "memcpy", "snprintf", "printf"] {
+    for sym in [
+        "pthread_create", "pthread_join", "malloc", "free", "memcpy", "snprintf", "printf",
+        // v0.0.4 Phase 3 Slice 3A.1: reactor preamble emits these as
+        // internal definitions; pre-seed so stdlib/reactor.cplus's
+        // `extern fn` re-declarations don't double-emit.
+        "__cplus_reactor_get_state", "__cplus_reactor_set_state",
+        "__cplus_coro_resume", "__cplus_coro_done",
+    ] {
         emitted_extern_symbols.insert(sym.to_string());
     }
     for item in &program.items {
@@ -2017,6 +2024,46 @@ fn write_preamble(out: &mut String) {
     // impl) via `extern fn`, so its declare is emitted by the normal
     // extern-fn path. No preamble entry needed; emitting one would
     // collide.
+    //
+    // v0.0.4 Phase 3 Slice 3A.1: async reactor state. A single
+    // process-global mutable pointer slot, plus tiny getter/setter
+    // helpers. The actual reactor state struct (kqueue fd, waiter
+    // arrays, pending-task queue) lives at the address this slot
+    // points to and is allocated/managed by stdlib/reactor.cplus.
+    // We emit the global + accessors here so that C+ source can
+    // remain global-free; stdlib calls these as plain extern fns.
+    out.push_str("\n; v0.0.4 Phase 3 Slice 3A.1: reactor state slot.\n");
+    out.push_str("@__cplus_reactor_state = internal global ptr null, align 8\n");
+    out.push_str(
+        "define internal ptr @__cplus_reactor_get_state() {\n  \
+         %p = load ptr, ptr @__cplus_reactor_state, align 8\n  \
+         ret ptr %p\n\
+         }\n",
+    );
+    out.push_str(
+        "define internal void @__cplus_reactor_set_state(ptr %p) {\n  \
+         store ptr %p, ptr @__cplus_reactor_state, align 8\n  \
+         ret void\n\
+         }\n",
+    );
+    // FFI-callable wrappers around the `llvm.coro.*` intrinsics so
+    // stdlib/reactor.cplus can call them as plain extern fns. The
+    // intrinsics themselves aren't FFI-callable directly (the LLVM
+    // verifier rejects calls to them from non-coroutine functions
+    // unless wrapped).
+    out.push_str(
+        "define internal void @__cplus_coro_resume(ptr %h) {\n  \
+         call void @llvm.coro.resume(ptr %h)\n  \
+         ret void\n\
+         }\n",
+    );
+    out.push_str(
+        "define internal i32 @__cplus_coro_done(ptr %h) {\n  \
+         %d = call i1 @llvm.coro.done(ptr %h)\n  \
+         %r = zext i1 %d to i32\n  \
+         ret i32 %r\n\
+         }\n",
+    );
     // Checked-arithmetic intrinsics used in debug mode for signed integers
     // of every supported width. Always declared; LLVM drops unused ones.
     for op in ["sadd", "ssub", "smul"] {
@@ -5156,6 +5203,25 @@ impl<'a> FnState<'a> {
         if name == "__cplus_block_on" {
             return self.gen_block_on(args, type_args);
         }
+        // v0.0.4 Phase 3 Slice 3A.1: async I/O suspension intrinsic.
+        // `__cplus_reactor_wait_read(fd)` — inside an async fn, register
+        // the current coroutine handle with the reactor for read-readiness
+        // on `fd`, then suspend self. Reactor wakes us when the fd is
+        // ready; control returns from the intrinsic call.
+        if name == "__cplus_reactor_wait_read" {
+            return self.gen_reactor_wait_read(args);
+        }
+        // v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)`
+        // pushes a Future's handle onto the reactor's task queue.
+        if name == "__cplus_reactor_spawn_local" {
+            return self.gen_reactor_spawn_local(args);
+        }
+        // v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_yield_now()`
+        // enqueues self + suspends, giving the executor a round-trip
+        // to drive other queued tasks.
+        if name == "__cplus_reactor_yield_now" {
+            return self.gen_reactor_yield_now();
+        }
         if name == "slice_len" {
             let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
             let r = self.next_tmp();
@@ -5691,21 +5757,56 @@ impl<'a> FnState<'a> {
         let t_align = static_layout(&t_ty, self.types).map(|(_, a)| a).unwrap_or(8);
         let (future_v, future_ty) = self.gen_expr(&args[0]).expect("block_on future arg");
         let future_llvm = self.lty(&future_ty);
-        // Future[T] is { ptr }. Extract handle.
         let hdl = self.next_tmp();
         self.emit(&format!("{hdl} = extractvalue {future_llvm} {future_v}, 0"));
+        // v0.0.4 Phase 3 Slice 3A.1: reactor-integrated drive loop.
+        //
+        //   loop:
+        //     if done(future_hdl): goto extract
+        //     resume(future_hdl)
+        //     if done(future_hdl): goto extract
+        //     drain pending tasks (spawn_local'd, yield_now'd)
+        //     if waiter_count() > 0: poll_one_event (blocks on kevent)
+        //     goto loop
+        //
+        // Check done BEFORE resume — async fns run their body eagerly
+        // from the call site (no initial_suspend), so the handle may
+        // already be done before block_on ever sees it. Resuming a
+        // done handle is undefined behavior in LLVM coroutines.
         let loop_bb = self.next_block_label();
-        let resume_bb = self.next_block_label();
         let extract_bb = self.next_block_label();
+        let resume_bb = self.next_block_label();
+        let drive_bb = self.next_block_label();
         self.emit_terminator(&format!("br label %{loop_bb}"));
         self.body.push_str(&format!("{loop_bb}:\n"));
         self.terminated = false;
-        let done = self.next_tmp();
-        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
-        self.emit_terminator(&format!("br i1 {done}, label %{extract_bb}, label %{resume_bb}"));
+        let pre_done = self.next_tmp();
+        self.emit(&format!("{pre_done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        self.emit_terminator(&format!("br i1 {pre_done}, label %{extract_bb}, label %{resume_bb}"));
         self.body.push_str(&format!("{resume_bb}:\n"));
+        self.terminated = false;
         self.body.push_str(&format!("  call void @llvm.coro.resume(ptr {hdl})\n"));
+        let post_done = self.next_tmp();
+        self.emit(&format!("{post_done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        self.emit_terminator(&format!("br i1 {post_done}, label %{extract_bb}, label %{drive_bb}"));
+        // Drive: drain pending queue, then kevent_wait if there are
+        // waiters. Loop back to check done + maybe resume outer.
+        self.body.push_str(&format!("{drive_bb}:\n"));
+        self.terminated = false;
+        self.body.push_str("  call i32 @stdlib_reactor_drain_pending_v1()\n");
+        self.body.push_str("  %.bo.nw = call i32 @stdlib_reactor_waiter_count_v1()\n");
+        self.body.push_str("  %.bo.has_waiters = icmp sgt i32 %.bo.nw, 0\n");
+        let poll_bb = self.next_block_label();
+        let loop_skip = self.next_block_label();
+        self.body.push_str(&format!(
+            "  br i1 %.bo.has_waiters, label %{poll_bb}, label %{loop_skip}\n"
+        ));
+        self.body.push_str(&format!("{poll_bb}:\n"));
+        self.body.push_str("  %.bo.poll = call i32 @stdlib_reactor_poll_one_event_v1()\n");
+        self.body.push_str(&format!("  br label %{loop_skip}\n"));
+        self.body.push_str(&format!("{loop_skip}:\n"));
         self.body.push_str(&format!("  br label %{loop_bb}\n"));
+        // Extract path: read the outer's promise, destroy the frame.
         self.body.push_str(&format!("{extract_bb}:\n"));
         self.terminated = false;
         let prom = self.next_tmp();
@@ -5714,6 +5815,89 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{result} = load {t_llvm}, ptr {prom}, align {t_align}"));
         self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
         Some((result, t_ty))
+    }
+
+    /// v0.0.4 Phase 3 Slice 3A.1: `__cplus_reactor_wait_read(fd)` —
+    /// register fd + current coroutine handle with the reactor, then
+    /// suspend self via `llvm.coro.suspend`. When the reactor wakes us,
+    /// fall through. Returns Unit.
+    ///
+    /// Only valid inside an async fn body (sema enforces). The
+    /// coroutine handle comes from the enclosing fn's `%.coro.hdl`
+    /// which the async-fn lowering bound during prologue setup.
+    fn gen_reactor_wait_read(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
+        let (fd_val, _) = self.gen_expr(&args[0]).expect("wait_read fd arg");
+        // Use the enclosing coroutine's handle. gen_async_function
+        // binds this as `%.coro.hdl` at prologue time.
+        self.emit(&format!(
+            "call void @stdlib_reactor_register_read_v1(i32 {fd_val}, ptr %.coro.hdl)"
+        ));
+        // Suspend self. Switched-resume pattern (same shape as await
+        // and async-fn final-suspend).
+        let suspend_v = self.next_tmp();
+        let resume_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        let trap_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+        ));
+        // Ramp-return path: yield Pending up to the outer awaiter (or
+        // block_on). Falls into the standard `.coro.end` block emitted
+        // by gen_async_function's epilogue.
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        // Trap: should be unreachable in a healthy program.
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
+        // Normal resume: continue with the body.
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.terminated = false;
+        None
+    }
+
+    /// v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)` —
+    /// push a Future's coroutine handle onto the reactor's task queue.
+    /// The Future is consumed (its handle propagates to the reactor).
+    /// Returns Unit.
+    fn gen_reactor_spawn_local(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
+        let (fut_val, fut_ty) = self.gen_expr(&args[0]).expect("spawn_local future arg");
+        // Future[T] is `{ ptr }`. Extract the handle and enqueue.
+        let fut_llvm = self.lty(&fut_ty);
+        let hdl = self.next_tmp();
+        self.emit(&format!("{hdl} = extractvalue {fut_llvm} {fut_val}, 0"));
+        self.emit(&format!(
+            "call void @stdlib_reactor_enqueue_pending_v1(ptr {hdl})"
+        ));
+        None
+    }
+
+    /// v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_yield_now()` —
+    /// enqueue self + suspend. Lets the executor round-trip through
+    /// the pending queue before resuming us.
+    fn gen_reactor_yield_now(&mut self) -> Option<(String, Ty)> {
+        self.emit(
+            "call void @stdlib_reactor_enqueue_pending_v1(ptr %.coro.hdl)"
+        );
+        let suspend_v = self.next_tmp();
+        let resume_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        let trap_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+        ));
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.terminated = false;
+        None
     }
 
     fn gen_thread_join(&mut self, args: &[Expr], type_args: &[Type]) -> Option<(String, Ty)> {

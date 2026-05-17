@@ -3468,6 +3468,18 @@ impl SemaCx<'_> {
         if name == "__cplus_block_on" {
             return self.check_block_on(callee, args, type_args, call_span);
         }
+        // v0.0.4 Phase 3 Slice 3A.1: reactor-suspend intrinsics. Each
+        // requires `unsafe { ... }` and must appear inside an async fn
+        // body — the suspend needs an enclosing coroutine to suspend.
+        if name == "__cplus_reactor_wait_read" {
+            return self.check_reactor_wait_read(callee, args, type_args, call_span);
+        }
+        if name == "__cplus_reactor_spawn_local" {
+            return self.check_reactor_spawn_local(callee, args, type_args, call_span);
+        }
+        if name == "__cplus_reactor_yield_now" {
+            return self.check_reactor_yield_now(callee, args, type_args, call_span);
+        }
         // Non-generic fn with turbofish → reject. The user explicitly
         // asked to instantiate something that has no generic params.
         if !type_args.is_empty() {
@@ -3840,6 +3852,110 @@ impl SemaCx<'_> {
         if matches!(expected_future, Ty::Error) { return Ty::Error; }
         let _ = self.check_expr(&args[0], Some(expected_future));
         t_ty
+    }
+
+    /// v0.0.4 Phase 3 Slice 3A.1: type-check
+    /// `__cplus_reactor_wait_read(fd: i32)`. Single i32 arg, returns
+    /// Unit. Must appear inside an `async fn` body (we need a coroutine
+    /// to suspend) and inside `unsafe { ... }` (it's an FFI-shaped
+    /// intrinsic that the compiler can't safety-check beyond shape).
+    fn check_reactor_wait_read(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`__cplus_reactor_wait_read` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span);
+        }
+        if !self.current_fn_is_async {
+            self.err("E0901",
+                "`__cplus_reactor_wait_read` is only valid inside an `async fn` body".to_string(),
+                call_span);
+        }
+        if !type_args.is_empty() {
+            self.err("E0501",
+                "`__cplus_reactor_wait_read` takes 0 type arguments".to_string(),
+                callee.span);
+        }
+        if args.len() != 1 {
+            self.err("E0308",
+                format!("`__cplus_reactor_wait_read` takes 1 value argument, got {}", args.len()),
+                call_span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let _ = self.check_expr(&args[0], Some(Ty::I32));
+        Ty::Unit
+    }
+
+    /// v0.0.4 Phase 3 Slice 3A.2: type-check
+    /// `__cplus_reactor_spawn_local(future: Future[T])`. Pushes the
+    /// future onto the reactor's task queue. Returns Unit.
+    fn check_reactor_spawn_local(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`__cplus_reactor_spawn_local` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span);
+        }
+        if !type_args.is_empty() {
+            self.err("E0501",
+                "`__cplus_reactor_spawn_local` takes 0 type arguments".to_string(),
+                callee.span);
+        }
+        if args.len() != 1 {
+            self.err("E0308",
+                format!("`__cplus_reactor_spawn_local` takes 1 value argument, got {}", args.len()),
+                call_span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        // Accept any Future[T] type. Sema doesn't enforce the specific
+        // T; the runtime treats handles uniformly.
+        let _ = self.check_expr(&args[0], None);
+        Ty::Unit
+    }
+
+    /// v0.0.4 Phase 3 Slice 3A.2: type-check `__cplus_reactor_yield_now()`.
+    /// Zero args, zero type args, returns Unit. Must be inside async fn.
+    fn check_reactor_yield_now(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`__cplus_reactor_yield_now` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span);
+        }
+        if !self.current_fn_is_async {
+            self.err("E0901",
+                "`__cplus_reactor_yield_now` is only valid inside an `async fn` body".to_string(),
+                call_span);
+        }
+        if !type_args.is_empty() {
+            self.err("E0501",
+                "`__cplus_reactor_yield_now` takes 0 type arguments".to_string(),
+                callee.span);
+        }
+        if !args.is_empty() {
+            self.err("E0308",
+                format!("`__cplus_reactor_yield_now` takes 0 value arguments, got {}", args.len()),
+                call_span);
+            for a in args { let _ = self.check_expr(a, None); }
+        }
+        Ty::Unit
     }
 
     /// v0.0.3 Phase 5 Slice 5C: type-check
