@@ -3271,6 +3271,25 @@ impl<'a> FnState<'a> {
         None
     }
 
+    /// v0.0.4 bug fix (raytracer port surfaced 2026-05-17): the free
+    /// `expr_value_ty` doesn't know about bindings, so `let r: Struct =
+    /// if cond { a } else { b };` where `a`/`b` are `Ident`s returned
+    /// None and the if produced no value (panicking the let's
+    /// `expect`). This binding-aware variant looks up locals and
+    /// transparently recurses through block / if tails.
+    fn expr_value_ty_with_bindings(&self, e: &Expr) -> Option<Ty> {
+        match &e.kind {
+            ExprKind::Ident(name) => self.lookup(name).map(|(_, ty)| ty.clone()),
+            ExprKind::Block(b) => b.tail.as_deref().and_then(|t| self.expr_value_ty_with_bindings(t)),
+            ExprKind::If { then, .. } => then.tail.as_deref().and_then(|t| self.expr_value_ty_with_bindings(t)),
+            _ => expr_value_ty(e),
+        }
+    }
+
+    fn block_value_ty_with_bindings(&self, b: &Block) -> Option<Ty> {
+        b.tail.as_deref().and_then(|t| self.expr_value_ty_with_bindings(t))
+    }
+
     // ---- Drop registration + emission ----
 
     /// Register a Drop binding in the current scope. Slice 6BC.opt
@@ -3990,11 +4009,20 @@ impl<'a> FnState<'a> {
                     NumSuffix::F32 => Ty::F32,
                     _ => Ty::F64,
                 };
-                // LLVM IR float literals: scientific notation works for both
-                // `float` and `double`. Use a hex-float for round-trippable
-                // determinism — but for Phase-2 simplicity emit decimal. The
-                // optimizer canonicalizes anyway.
-                Some((format!("{v:?}"), ty))
+                // v0.0.4 bug fix (raytracer port, 2026-05-17): LLVM rejects
+                // `float 0.1` because decimal-form float constants require
+                // exact representability; `0.1` is not f32-exact. The decimal
+                // form is also strict for `double` (e.g. `1e-8` lacks the
+                // mandatory decimal point in the mantissa, breaking parses).
+                // Emit hex form: `0x` + the bit pattern of the *f64*
+                // representation. For f32 we narrow first (so the f64 hex
+                // we emit, when re-narrowed to float by LLVM, round-trips
+                // to the exact f32 the user wrote).
+                let bits: u64 = match suf {
+                    NumSuffix::F32 => (*v as f32 as f64).to_bits(),
+                    _ => v.to_bits(),
+                };
+                Some((format!("0x{bits:016X}"), ty))
             }
 
             ExprKind::Ident(name) => {
@@ -5869,7 +5897,8 @@ impl<'a> FnState<'a> {
 
     fn gen_if(&mut self, cond: &Expr, then: &Block, else_branch: Option<&Expr>) -> Option<(String, Ty)> {
         let (cond_v, _) = self.gen_expr(cond).expect("if cond is bool");
-        let result_ty = block_value_ty(then).or_else(|| else_branch.and_then(expr_value_ty));
+        let result_ty = self.block_value_ty_with_bindings(then)
+            .or_else(|| else_branch.and_then(|e| self.expr_value_ty_with_bindings(e)));
         let result_slot = match result_ty {
             Some(ty) if ty != Ty::Unit => Some((self.alloca_anon(ty.clone()), ty)),
             _ => None,
@@ -9132,6 +9161,46 @@ mod tests {
             .count();
         assert!(touched >= 2,
             "expected at least 2 scope-annotated loads/stores through GEP chains, got {touched}:\n{ir}");
+    }
+
+    // ---- v0.0.4 raytracer-port bug fixes (2026-05-17) ----
+
+    #[test]
+    fn let_struct_eq_if_expression_does_not_panic() {
+        // Regression: `let r: V = if cond { a } else { b };` panicked
+        // codegen with "let init produces a value" because `expr_value_ty`
+        // didn't resolve Ident expressions to their binding type. Fixed
+        // by `expr_value_ty_with_bindings` which consults the binding
+        // table.
+        let ir = gen_src(
+            "struct V { x: i32, y: i32 }\n\
+             fn main() -> i32 {\n\
+                 let cond: bool = true;\n\
+                 let a: V = V { x: 1, y: 2 };\n\
+                 let b: V = V { x: 10, y: 20 };\n\
+                 let r: V = if cond { a } else { b };\n\
+                 return r.x;\n\
+             }"
+        );
+        // The if-merge slot must exist and the result must be loaded back.
+        assert!(ir.contains("alloca %V"), "expected V alloca for if-result slot:\n{ir}");
+    }
+
+    #[test]
+    fn f32_literal_emits_hex_form() {
+        // Regression: `0.1f32` emitted `float 0.1` which LLVM rejects
+        // (not f32-exact). All f32 literals now emit hex form. The hex
+        // is the f64 bit pattern of the f32-narrowed value.
+        let ir = gen_src("fn main() -> i32 { let a: f32 = 0.1f32; return 0; }");
+        assert!(ir.contains("float 0x"), "expected hex-form f32 literal:\n{ir}");
+        assert!(!ir.contains("float 0.1,"), "decimal-form f32 literal should be gone:\n{ir}");
+    }
+
+    #[test]
+    fn f64_literal_emits_hex_form() {
+        // f64 literals also use hex form for round-trippable determinism.
+        let ir = gen_src("fn main() -> i32 { let a: f64 = 1e-8; return 0; }");
+        assert!(ir.contains("double 0x"), "expected hex-form f64 literal:\n{ir}");
     }
 
     #[test]
