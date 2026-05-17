@@ -6305,6 +6305,47 @@ fn stdlib_arc_cross_thread_share() {
     }
 }
 
+/// v0.0.4 Phase 2 Slice 2D: `Rc[T]` — single-threaded refcounted
+/// shared ownership. Same shape as `Arc[T]`, non-atomic refcount.
+/// 3-deep clone chain rounds-trips ASan-clean.
+#[test]
+fn stdlib_rc_clone_chain_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"rcr\"\n\n[[bin]]\nname = \"rcr\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let rc_src = include_str!("../../vendor/stdlib/src/rc.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/rc.cplus"), rc_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/rc\" as rc;\n\
+         fn main() -> i32 {\n\
+             let a = rc::new::[i32](42);\n\
+             if a.get() != 42 { return 1; }\n\
+             if a.strong_count() != (1 as u64) { return 2; }\n\
+             let b = a.clone();\n\
+             if a.strong_count() != (2 as u64) { return 3; }\n\
+             let c = b.clone();\n\
+             if c.strong_count() != (3 as u64) { return 4; }\n\
+             if c.get() != 42 { return 5; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 2D Rc regression?)");
+    let bin = dir.join("target/debug/rcr");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected Rc round-trip to pass");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

@@ -195,9 +195,15 @@ Atomically-refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src
 - Assumes `align_of[T] <= 8` — over-aligned T would need an alignment-driven offset. Land when motivated.
 - `clone()` syntax requires the caller to bind to a local first (`let c = root.clone(); worker(c);`) because of E0337 "cannot move out of a method-call result." Worth a separate ergonomic slice.
 
-#### Slice 2D — `Rc[T]` · S
+#### Slice 2D — `Rc[T]` · ✅ shipped 2026-05-17
 
-Single-threaded sibling of `Arc`. Same shape, non-atomic refcount. `Rc[T]: !Send`.
+Single-threaded sibling of `Arc`. Pure-source stdlib at [vendor/stdlib/src/rc.cplus](vendor/stdlib/src/rc.cplus). Same layout (`{ u64 refcount, T value }`), same API (`new` / `clone` / `get` / `strong_count` / `drop`); refcount ops are plain loads/stores instead of atomic ones.
+
+**Send/Sync contract is documentation-only in v0.0.4.** Passing `Rc` across threads compiles but is unsound (concurrent refcount writes race). Slice 2A locks down `Rc[T]: !Send` at sema-time later in Phase 2.
+
+**Tests:** `stdlib_rc_clone_chain_round_trip` — 3-deep clone chain; verifies refcount increments + ASan-clean teardown.
+
+**Test count: 1197, all green.**
 
 #### Slice 2E — `Mutex[T]` · M
 
@@ -341,6 +347,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2D shipped. `Rc[T]` — single-threaded refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/rc.cplus](vendor/stdlib/src/rc.cplus). Same shape as `Arc`, non-atomic refcount. Send/Sync gating is documentation-only in v0.0.4; Slice 2A will lock down `!Send` at sema-time. 1197 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2C shipped. `Arc[T]` — atomically refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/arc.cplus](vendor/stdlib/src/arc.cplus). Relaxed increment + AcqRel decrement; last reference frees. Cross-thread share verified ASan + TSan clean. 1196 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2B shipped. `Box[T]` — single heap-allocated owned value. Pure-source stdlib at [vendor/stdlib/src/box.cplus](vendor/stdlib/src/box.cplus). API: `box::new(move v)`, `get/set/unwrap`. `move self` semantics learned: don't manually free inside a `move self`-consuming method; let the function-exit Drop do it. 1195 tests, all green.
 - **2026-05-17** — Phase 1G shipped. Generic `async fn` verified e2e — sema's `subst_ty_deep` + monomorphize's `synthesize_fn` already threaded `is_async`; Phase 1E + 1F's fixes made the full chain run clean. `id::[i32]`, `id::[i64]`, `id::[bool]` all round-trip through `block_on`. 1194 tests. **Phase 1 closed.**

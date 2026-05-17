@@ -1,0 +1,69 @@
+// stdlib/rc.cplus — single-threaded reference-counted shared ownership.
+//
+// `Rc[T]` is the single-threaded sibling of `Arc[T]`: same shape, same
+// API, **non-atomic** refcount. Use `Rc` when sharing within one OS
+// thread (saves the atomic-op overhead); use `Arc` when sharing across
+// threads.
+//
+// Future (post-`Send`/`Sync`): `Rc[T]` will be marked `!Send`, so
+// `thread::spawn_with::[Rc[T], ...]` rejects at sema time. For v0.0.4
+// the contract is documentation-only — passing an `Rc` across threads
+// will compile but is unsound (concurrent refcount writes will race).
+//
+// Inherits the v0.0.4 stdlib limitations: no `make_mut`, inner T's
+// Drop on last reference is not invoked automatically.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+pub struct Rc[T] {
+    ctrl: *u8,
+}
+
+// Header is `u64 refcount`. Value lives at `ctrl + 8`.
+pub fn new[T](move v: T) -> Rc[T] {
+    let header: usize = 8 as usize;
+    let value_size: usize = size_of::[T]();
+    let total: usize = header +% value_size;
+    let raw: *u8 = unsafe { malloc(total) };
+    let refct: *u64 = unsafe { raw as *u64 };
+    unsafe { *refct = 1 as u64; }
+    let value_ptr: *T = unsafe { (raw + header) as *T };
+    unsafe { *value_ptr = v; }
+    return Rc[T] { ctrl: raw };
+}
+
+impl Rc[T] {
+    // Non-atomic increment; returns a new Rc sharing the storage.
+    pub fn clone(self) -> Rc[T] {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let cur: u64 = unsafe { *refct };
+        unsafe { *refct = cur +% (1 as u64); }
+        return Rc[T] { ctrl: self.ctrl };
+    }
+
+    // Read inner T (bitwise copy).
+    pub fn get(self) -> T {
+        let header: usize = 8 as usize;
+        let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
+        return unsafe { *value_ptr };
+    }
+
+    // Current strong-reference count (single-threaded, exact).
+    pub fn strong_count(self) -> u64 {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        return unsafe { *refct };
+    }
+
+    // Destructor: non-atomic decrement; free the block on the last ref.
+    fn drop(mut self) {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let cur: u64 = unsafe { *refct };
+        let new_count: u64 = cur -% (1 as u64);
+        unsafe { *refct = new_count; }
+        if new_count == (0 as u64) {
+            unsafe { free(self.ctrl); }
+        }
+        return;
+    }
+}
