@@ -6647,6 +6647,124 @@ fn stdlib_thread_drop_is_non_blocking() {
         "expected ASan-clean run, got:\n{stderr}");
 }
 
+/// v0.0.4 Phase 3 Slice 3A.2: executor::yield_now round-trips through
+/// the reactor's pending queue. Each `yield_now()` enqueues self and
+/// suspends; block_on's drain step resumes us. Counts to N to prove
+/// the loop actually advances.
+#[test]
+fn stdlib_executor_yield_now_round_trips() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"yt\"\n\n[[bin]]\nname = \"yt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         async fn count_with_yields() -> i32 {\n\
+             let mut i: i32 = 0;\n\
+             while i < 5 {\n\
+                 executor::yield_now();\n\
+                 i = i +% 1;\n\
+             }\n\
+             return i;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let f: future::Future[i32] = count_with_yields();\n\
+             return executor::block_on::[i32](f);\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (yield_now regression?)");
+    let bin = dir.join("target/debug/yt");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(5), "expected 5 yield round-trips");
+}
+
+/// v0.0.4 Phase 3 Slice 3A.1: reactor wait-fd-readable. Open a pipe,
+/// write a byte to the write end, then await `wait_read` on the read
+/// end. The reactor's kevent_wait should return immediately (fd is
+/// already readable), resume the coroutine, and we read the byte.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"rwf\"\n\n[[bin]]\nname = \"rwf\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         extern fn pipe(fds: *u8) -> i32;\n\
+         extern fn read(fd: i32, buf: *u8, count: usize) -> isize;\n\
+         extern fn write(fd: i32, buf: *u8, count: usize) -> isize;\n\
+         extern fn close(fd: i32) -> i32;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         async fn await_and_read(rfd: i32) -> i32 {\n\
+             unsafe { __cplus_reactor_wait_read(rfd); }\n\
+             let buf: *u8 = unsafe { malloc(1 as usize) };\n\
+             let n: isize = unsafe { read(rfd, buf, 1 as usize) };\n\
+             let v: u8 = unsafe { *buf };\n\
+             unsafe { free(buf); }\n\
+             if n != (1 as isize) { return -1 as i32; }\n\
+             return v as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let fds_buf: *u8 = unsafe { malloc(8 as usize) };\n\
+             let _r: i32 = unsafe { pipe(fds_buf) };\n\
+             let fds_i32: *i32 = unsafe { fds_buf as *i32 };\n\
+             let rfd: i32 = unsafe { *fds_i32 };\n\
+             let wfd_p: *i32 = unsafe { fds_i32 + (1 as usize) };\n\
+             let wfd: i32 = unsafe { *wfd_p };\n\
+             let payload: *u8 = unsafe { malloc(1 as usize) };\n\
+             unsafe { *payload = 42 as u8; }\n\
+             let _w: isize = unsafe { write(wfd, payload, 1 as usize) };\n\
+             unsafe { free(payload); }\n\
+             let f: future::Future[i32] = await_and_read(rfd);\n\
+             let got: i32 = executor::block_on::[i32](f);\n\
+             unsafe { close(rfd); }\n\
+             unsafe { close(wfd); }\n\
+             unsafe { free(fds_buf); }\n\
+             return got;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (reactor wait_read regression?)");
+    let bin = dir.join("target/debug/rwf");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected reactor to wake + read byte 42");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

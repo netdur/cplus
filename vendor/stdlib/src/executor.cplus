@@ -30,6 +30,28 @@ pub fn block_on[T](f: future::Future[T]) -> T {
     return unsafe { __cplus_block_on::[T](f) };
 }
 
+// v0.0.4 Phase 3 Slice 3A.2: yield control back to the executor.
+// Only meaningful inside an `async fn` body — pushes self onto the
+// reactor's pending queue and suspends. On the next block_on
+// iteration, the drain step resumes us; cooperative-multitasking
+// primitive for "give other tasks a turn."
+pub async fn yield_now() {
+    unsafe { __cplus_reactor_yield_now(); }
+    return;
+}
+
+// v0.0.4 Phase 3 Slice 3A.2: enqueue a future for the executor to
+// drive in addition to the one passed to `block_on`. The spawned
+// future runs to completion in the same thread, interleaved with
+// the awaiter. Single-threaded only.
+//
+// `T` must be Send for forward compatibility, even though v0.0.4's
+// Send is permissive (every type satisfies it).
+pub fn spawn_local[T: Send](move f: future::Future[T]) {
+    unsafe { __cplus_reactor_spawn_local(f); }
+    return;
+}
+
 // Touch reactor module so the `import` isn't treated as unused. The
 // reactor's stable-symbol exports are link-time-resolved; this read
 // keeps the import elided-pass happy.

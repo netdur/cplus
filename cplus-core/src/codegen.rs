@@ -2740,11 +2740,17 @@ fn gen_async_function(
     // promise arg + its alignment as the first i32. CoroSplit hoists
     // the alloca into the heap frame at a known offset; `coro.promise`
     // returns that in-frame pointer.
+    // Unit-returning async fns have no value to stash; LLVM rejects
+    // `alloca void`. Use a 1-byte placeholder so the promise pointer
+    // is non-null + addressable but no bytes are read/written through
+    // it (Unit-return bodies never `store {inner_llvm} value, ptr ...`).
+    let promise_ty: &str = if matches!(inner_ty, Ty::Unit) { "i8" } else { &inner_llvm };
+    let promise_align: u64 = if matches!(inner_ty, Ty::Unit) { 1 } else { inner_align };
     out.push_str(&format!(
-        "  %.coro.promise = alloca {inner_llvm}, align {inner_align}\n"
+        "  %.coro.promise = alloca {promise_ty}, align {promise_align}\n"
     ));
     out.push_str(&format!(
-        "  %.coro.id = call token @llvm.coro.id(i32 {inner_align}, ptr %.coro.promise, ptr null, ptr null)\n"
+        "  %.coro.id = call token @llvm.coro.id(i32 {promise_align}, ptr %.coro.promise, ptr null, ptr null)\n"
     ));
     out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
     out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
@@ -2779,13 +2785,18 @@ fn gen_async_function(
     // inner type then suspend. (Sema rejects async fns missing return
     // for non-unit Ty.)
     if !state.terminated {
-        let prom_ptr = state.next_tmp();
-        state.emit(&format!(
-            "{prom_ptr} = call ptr @llvm.coro.promise(ptr %.coro.hdl, i32 {inner_align}, i1 false)"
-        ));
-        state.emit(&format!(
-            "store {inner_llvm} undef, ptr {prom_ptr}, align {inner_align}"
-        ));
+        // Unit-returning async fns: no value to store; just fall into
+        // final_suspend. (Sema rejects async fns missing `return` for
+        // non-Unit T, so this is the unit fall-off case.)
+        if !matches!(inner_ty, Ty::Unit) {
+            let prom_ptr = state.next_tmp();
+            state.emit(&format!(
+                "{prom_ptr} = call ptr @llvm.coro.promise(ptr %.coro.hdl, i32 {promise_align}, i1 false)"
+            ));
+            state.emit(&format!(
+                "store {inner_llvm} undef, ptr {prom_ptr}, align {promise_align}"
+            ));
+        }
         state.emit_terminator("br label %.coro.final_suspend");
     }
 
@@ -3792,7 +3803,17 @@ impl<'a> FnState<'a> {
                             self.emit_terminator(&format!("ret {} {}", self.lty(&ret_ty), v));
                         }
                     }
-                    (None, &Ty::Unit) => self.emit_terminator("ret void"),
+                    (None, &Ty::Unit) => {
+                        // v0.0.4 Phase 3 Slice 3A.2: Unit-returning
+                        // async fns (`async fn yield_now() { ... }`)
+                        // exit via final_suspend rather than `ret void`.
+                        // No promise store — Unit has no value.
+                        if self.coro_promise.is_some() {
+                            self.emit_terminator("br label %.coro.final_suspend");
+                        } else {
+                            self.emit_terminator("ret void");
+                        }
+                    }
                     (None, _) => unreachable!("sema should reject return-without-value for non-Unit"),
                 }
             }
