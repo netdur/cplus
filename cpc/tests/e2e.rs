@@ -6143,6 +6143,57 @@ fn stdlib_thread_spawn_join_fn_pointer_o() {
     assert_eq!(run.code(), Some(42), "expected pick_42() = 42");
 }
 
+/// v0.0.4 Phase 1G: generic `async fn` end-to-end across multiple
+/// instantiations.
+///
+/// Sema threads `is_async` through `subst_type_ast` already (v0.0.3
+/// Slice 5E groundwork); monomorphize's `synthesize_fn` preserves
+/// `is_async` when cloning the template. This pins the property by
+/// driving 3 concrete instantiations (`id::[i32]`, `id::[i64]`,
+/// `id::[bool]`) through `block_on` and verifying each round-trip.
+#[test]
+fn generic_async_fn_multi_instantiation_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"gar\"\n\n[[bin]]\nname = \"gar\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         import \"stdlib/executor\" as executor;\n\
+         async fn id[T](x: T) -> T { return x; }\n\
+         fn main() -> i32 {\n\
+             let f1: future::Future[i32] = id::[i32](42);\n\
+             let n: i32 = executor::block_on::[i32](f1);\n\
+             if n != 42 { return 1; }\n\
+             let f2: future::Future[i64] = id::[i64](99 as i64);\n\
+             let m: i64 = executor::block_on::[i64](f2);\n\
+             if m != (99 as i64) { return 2; }\n\
+             let f3: future::Future[bool] = id::[bool](true);\n\
+             let b: bool = executor::block_on::[bool](f3);\n\
+             if !b { return 3; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1G generic async fn regression?)");
+    let bin = dir.join("target/debug/gar");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected all generic async instantiations to round-trip clean");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

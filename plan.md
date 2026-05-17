@@ -115,11 +115,19 @@ Three changes, all in codegen:
 
 **Test count: 1193 (319 e2e + 859 lib + 11 LSP + 4 other), all green.**
 
-#### Slice 1G — Generic `async fn` e2e + `is_async` threading verification · S
+#### Slice 1G — Generic `async fn` e2e + `is_async` threading verification · ✅ shipped 2026-05-17
 
-`async fn id[T](x: T) -> T { return x; }` works for multiple instantiations.
+**Outcome: already-works, now pinned.** Both halves of the property held before this slice:
+- Sema's `subst_ty_deep` threads `is_async` (v0.0.3 Slice 5E groundwork).
+- Monomorphize's `synthesize_fn` preserves `template.is_async` when cloning ([monomorphize.rs:550](cplus-core/src/monomorphize.rs#L550)).
 
-Likely already-works after 1E; budgeted as a slice so it gets actually tested.
+Phase 1F's recursive mangler + Phase 1E's promise-alloca fix are what made Copy-T generic async actually work end-to-end (previously the chain had latent issues at codegen-time).
+
+**Test:** new e2e `generic_async_fn_multi_instantiation_round_trip` — drives `id::[i32]`, `id::[i64]`, and `id::[bool]` through `block_on`, asserts each returns its input.
+
+**Test count: 1194 (320 e2e + 859 lib + 11 LSP + 4 other), all green.**
+
+**Known limitation carried forward (NOT new to 1G):** non-Copy `T` parameter to an async fn (`async fn id[T](x: T)` instantiated with `T = string`) double-frees at runtime. This reproduces with **non-generic** non-Copy parameter passing too (`fn echo(x: string) -> string { return x; }`); the bug is the value-passed-without-`move` drop-tracking gap, not async-specific or generic-specific. Workaround: write the param as `move x: T`. Real fix is a separate slice — probably "auto-promote non-Copy value params to `move`" — when motivated. Documented here so the limitation doesn't get rediscovered.
 
 #### Phase 1 exit criteria
 
@@ -299,6 +307,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 1G shipped. Generic `async fn` verified e2e — sema's `subst_ty_deep` + monomorphize's `synthesize_fn` already threaded `is_async`; Phase 1E + 1F's fixes made the full chain run clean. `id::[i32]`, `id::[i64]`, `id::[bool]` all round-trip through `block_on`. 1194 tests. **Phase 1 closed.**
 - **2026-05-17** — Phase 1F shipped. `mangle_o_for_tramp` made recursive over `Ty`: raw / fn / struct / enum / array O all work in `thread::spawn`. Eligibility rewritten as explicit `match` (Slice + Str rejected — fat-pointer hazards). 2 new e2e, 1193 tests.
 - **2026-05-17** — Phase 1E shipped. Non-Copy `O` for `thread::spawn` + `JoinHandle::join` + `async fn` return. Trampoline emits sret-aware call when O is non-Copy; coroutine prologue allocates a real promise alloca (CoroSplit hoists into the frame). 2 new e2e, 1191 tests. ASan-async interaction noted as pre-existing follow-up.
 - **2026-05-17** — Phase 1D shipped. E0900 borrow-across-await guard. Reframed as a parameter-shape gate (no dataflow): async fns can't take `str`, `T[]`, or `mut x: NonCopyT` parameters. The narrower rule catches every realistic v0.0.4 footgun without requiring dataflow infrastructure. 5 new sema tests, 1189 total.
