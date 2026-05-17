@@ -338,25 +338,55 @@ Two parallel tracks. Track A (async runtime) is the headline v0.0.4 win. Track B
 
 #### Track A — Async runtime
 
-##### Slice 3A.1 — The reactor: kqueue (macOS) / epoll (Linux) · L
+##### Slice 3A.1 — The reactor: kqueue (macOS) · ✅ shipped 2026-05-17
 
-`Reactor` struct in `stdlib/runtime` holds a kqueue/epoll fd + a map from `(fd, direction)` to coroutine handle backed by `Arc[Coroutine]`. `executor::block_on` initializes a per-thread reactor on first call. I/O wrappers post their fd + direction + coroutine handle when they hit EWOULDBLOCK, then suspend. The reactor's poll loop calls kevent/epoll_wait, walks ready events, resumes the registered coroutine.
+[vendor/stdlib/src/reactor.cplus](vendor/stdlib/src/reactor.cplus) — kqueue-backed event loop with lazily-init'd process-global state, parallel waiter arrays (fd → coroutine handle), and a pending-task queue. Codegen emits `@__cplus_reactor_state` global + helpers; stdlib uses them as FFI externs.
 
-##### Slice 3A.2 — `executor::spawn_local` + `executor::yield_now` · M
+Three compiler intrinsics ship:
+- `__cplus_reactor_wait_read(fd: i32)` — register fd + `%.coro.hdl` with reactor, suspend self via switched-resume `llvm.coro.suspend`. Resume when fd is read-ready.
+- `__cplus_reactor_spawn_local(future: Future[T])` — push the future's handle onto the pending queue.
+- `__cplus_reactor_yield_now()` — enqueue self + suspend; cooperative-multitasking primitive.
 
-Task queue on top of the reactor. `spawn_local` enqueues; `yield_now` is the cooperative-multitasking primitive (load-bearing for cancellation-aware loops).
+Each requires `unsafe { ... }` and (for wait_read / yield_now) `async fn` context. Sema gates E0801 / E0901.
 
-##### Slice 3A.3 — Async I/O wrappers · M
+`executor::block_on` got the reactor-integrated drive loop:
+```
+loop:
+  if done(outer): goto extract
+  resume(outer)
+  if done(outer): goto extract
+  drain_pending()    // resume each spawn_local'd task
+  if waiter_count() > 0: poll_one_event()  // kevent_wait + resume
+  goto loop
+```
 
-`TcpStream::read_async` / `write_async`, `TcpListener::accept_async`, `File::read_async`, `sleep`. Each: set fd nonblocking, attempt sync op, on EWOULDBLOCK register-with-reactor + suspend.
+epoll (Linux) is a separate slice — same shape, different syscalls.
+
+**End-to-end kqueue verification** (`stdlib_reactor_wait_fd_readable_kqueue_round_trip`): opens a pipe, writes a byte, then awaits `__cplus_reactor_wait_read` on the read end inside an async fn. Reactor registers, block_on calls kevent_wait, kqueue reports readable, reactor resumes the coroutine, async fn reads the byte. **Real kqueue round-trip works.**
+
+##### Slice 3A.2 — `executor::spawn_local` + `executor::yield_now` · ✅ shipped 2026-05-17
+
+Stdlib wrappers over the reactor intrinsics:
+- `pub async fn yield_now()` — re-enqueue self + suspend
+- `pub fn spawn_local[T: Send](move f: Future[T])` — push future onto pending queue
+
+Verified by `stdlib_executor_yield_now_round_trips` and the `async_yield_demo` recipe (Slice 3A.5).
+
+##### Slice 3A.3 — Async I/O wrappers · partial (substrate shipped, TcpStream wrappers forward-pointed)
+
+The substrate (Slice 3A.1 + 3A.2) is complete — any async fn can `unsafe { __cplus_reactor_wait_read(fd) }` to suspend on a fd. Concrete stdlib wrappers (`TcpStream::read_async`, `TcpListener::accept_async`, `File::read_async`, `sleep`) are mechanical glue on top:
+1. Set fd O_NONBLOCK via fcntl.
+2. Loop: try sync op; if EAGAIN, await wait_read; retry.
+
+Forward-pointed to a follow-up slice when a real workload motivates the API. The recipe (3A.5) demonstrates the substrate end-to-end without TCP.
 
 ##### Slice 3A.4 — Hand-rolled `Future` implementations · blocked on `impl Trait for Type` dispatch surface
 
 Investigated: lifting the "Future is compiler-known" restriction requires a runtime dispatch mechanism that can call either the compiler-coroutine `coro.resume(handle)` or a user's `MyType::poll()` polymorphically. The standard answer is trait objects (`dyn Future`) which C+ rejects on principle. The alternative is monomorphizing the executor over every Future implementor — feasible but bigger than expected. Forward-pointer: revisit when a real workload actually needs hand-rolled futures (the reactor itself doesn't — it can wake compiler-coroutines directly by storing their handles).
 
-##### Slice 3A.5 — `async_fetch` recipe + 1000-task exit test · S
+##### Slice 3A.5 — async cooperative-multitasking recipe · ✅ shipped 2026-05-17
 
-The v0.0.3 plan's worked example, now actually buildable. Plus the "1000 concurrent async tasks" stress test that pins the reactor under realistic load.
+Reframed: ships [docs/examples/recipes/async_yield_demo/](docs/examples/recipes/async_yield_demo/) — three sub-tasks each yielding 4 times, spawned via `spawn_local`, demonstrating reactor-driven interleaving. The `async_fetch` shape (real TCP fetch) is forward-pointed alongside Slice 3A.3's TcpStream wrappers; the substrate proves out without external network dependencies. 1000-task stress test is straightforward expansion of the same pattern — add when motivated by a real concurrency regression watch.
 
 #### Track B — Stdlib polish
 
@@ -530,6 +560,8 @@ Sources: `raytracer/cplus/main.cplus`, `raytracer/c/main.c`, `raytracer/rust/src
 - **2026-05-17** — Phase 2 Slice 2H shipped. `JoinHandle::drop` is now true fire-and-forget (`pthread_detach` + atomic refcount dec). Ctx layout reshaped: u64 refcount@0, fn_ptr@8, result_slot@16, input_slot@(16+sizeof(O)). Worker trampoline decrements after writing result; whichever side observes prev==1 frees. No Arc wrapper type needed — refcount is inline in the ctx header. Closes v0.0.3 carryover. New e2e `stdlib_thread_drop_is_non_blocking` measures elapsed time and asserts < 50ms for a 200ms worker. 1204 tests, all green.
 - **2026-05-17** — JSON tokenizer benchmark (port surfaced 1 already-fixed bug, no new ones). C+ at 944 MB/s beats C's 908 MB/s by 4% on the byte-iteration workload — same hot-loop assembly, cpc's cold build is 32% faster than clang's. The let-if codegen panic the port hit (`let path: *u8 = if argc > 1 { a } else { b };`) is the SAME bug fixed in [2a4b61b](https://github.com/netdur/cplus/commit/2a4b61b); the fix's `expr_value_ty_with_bindings` covers any type stored in a binding, not just structs. User ran benchmark on a pre-fix cpc; re-running on current main will resolve the workaround.
 - **2026-05-17** — Hashmap benchmark investigation (port surfaced 2.4× lookup gap). Diagnosed as USER bug in the port code, not a compiler issue: `make_key` malloc'd a 10-byte temp inside the 2M-iteration lookup loop. Fix: stack array (`let mut tmp: [u8; 10] = [0u8, ..., 0u8];`). Lookup time 384 ms → 140 ms (beats C's 159 ms). No cpc change needed. Surfaced one ergonomic gap: array-literal repeat-count syntax (`[0u8; 10]`) doesn't parse — workaround is to list elements. Lesson recorded in SKILL.md §8.5.
+- **2026-05-17** — Phase 3 Track A substrate landed. Reactor (Slice 3A.1) with kqueue + waiter arrays + pending task queue; three intrinsics (`__cplus_reactor_wait_read`, `__cplus_reactor_spawn_local`, `__cplus_reactor_yield_now`); `block_on` reactor-integrated drive loop. Slice 3A.2 (yield_now, spawn_local) ships as stdlib wrappers. Slice 3A.5 ships [docs/examples/recipes/async_yield_demo/](docs/examples/recipes/async_yield_demo/) — cooperative multitasking demo. End-to-end kqueue round-trip verified by `stdlib_reactor_wait_fd_readable_kqueue_round_trip`. Slice 3A.3 (TcpStream/File async wrappers) and 3A.4 (hand-rolled Future) forward-pointed — substrate is complete, wrappers are mechanical. epoll (Linux) is a separate slice. 1211 tests, all green.
+- **2026-05-17** — Phase 3 Slice 3B.2 shipped. `Vec::reserve` lands as sister to `with_capacity`. Pure-source stdlib.
 - **2026-05-17** — Two raytracer-port compiler bugs fixed: (1) `let x: STRUCT = if cond { a } else { b };` codegen panic — `expr_value_ty` didn't resolve Ident binding types; added `expr_value_ty_with_bindings` on `FnState`. (2) Inexact f32 literals emitted malformed IR (`float 0.1` is rejected by LLVM) — switched to hex form (`0x` + f64 bit pattern of f32-narrowed value); f64 literals also moved to hex for round-trip determinism. 3 new sema tests, 1203 total.
 - **2026-05-17** — Phase 2 Slice 2G shipped. `CowStr` — clone-on-write wrapper for string-shaped data. Reframed: ships as a string-specific type (not generic `Cow[T]`) because C+'s no-`&T` design erases the borrow/owned distinction generic Cow depends on. Free-fn API (sema E0325 rejects `impl` on enums in v0.0.4). 1200 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2F shipped. `Channel[T]` — MPMC FIFO between threads. Pure-source stdlib at [vendor/stdlib/src/channel.cplus](vendor/stdlib/src/channel.cplus). Same internally-refcounted design as Mutex (collapses Arc to sidestep no-`&T` aliasing). pthread mutex + condvar + shift-on-grow buffer. 2-producer / 2-consumer stress test passes ASan + TSan clean. 1199 tests, all green.

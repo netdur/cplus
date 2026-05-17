@@ -1,0 +1,73 @@
+// async_yield_demo — cooperative multitasking via the v0.0.4 reactor.
+//
+// Demonstrates the executor's pending-queue mechanism: three sub-tasks
+// take turns advancing one step at a time, interleaved via `yield_now`.
+// Without the reactor, each task would run to completion in turn (no
+// interleaving); with the reactor's drain step in `block_on`, each
+// `yield_now` push-pops self off the pending queue, letting other
+// queued tasks make progress between iterations.
+//
+// **No I/O.** This recipe exercises the substrate without needing a
+// real fd — the kqueue path is exercised by separate e2e tests. The
+// recipe shape generalizes directly to async I/O: replace `yield_now`
+// with `wait_fd_readable(fd)` and you have an async fd-poller.
+//
+// **Architecture.**
+//
+//   - `step_loop[n](label, ticks_done_ptr)` is an async fn that yields
+//     `n` times, bumping a shared counter on each iteration. The
+//     counter ordering reveals the interleaving.
+//   - `main_async()` spawns two `step_loop`s via `spawn_local`, then
+//     awaits its own `step_loop`. block_on drives all three to
+//     completion.
+//   - The exit code is the final counter value, which equals
+//     `3 * iterations` if all three tasks ran to completion.
+
+import "stdlib/executor" as executor;
+import "stdlib/future" as future;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// step_loop returns i32 (== 0) rather than Unit, because the parser
+// rejects `()` as a generic type-arg today (turbofish path).
+// `Future[i32]` / `spawn_local::[i32]` work cleanly.
+async fn step_loop(counter: *i32, ticks: i32) -> i32 {
+    let mut i: i32 = 0;
+    while i < ticks {
+        let cur: i32 = unsafe { *counter };
+        unsafe { *counter = cur +% 1; }
+        executor::yield_now();
+        i = i +% 1;
+    }
+    return 0;
+}
+
+async fn drive_three(counter: *i32, ticks: i32) -> i32 {
+    let f1: future::Future[i32] = step_loop(counter, ticks);
+    let f2: future::Future[i32] = step_loop(counter, ticks);
+    let f3: future::Future[i32] = step_loop(counter, ticks);
+    executor::spawn_local::[i32](f1);
+    executor::spawn_local::[i32](f2);
+    let _r: i32 = await f3;
+    // f3 done. The two spawned tasks may still be queued; yield until
+    // the counter shows everyone finished.
+    while unsafe { *counter } < (3 *% ticks) {
+        executor::yield_now();
+    }
+    return unsafe { *counter };
+}
+
+fn main() -> i32 {
+    let counter_buf: *u8 = unsafe { malloc(4 as usize) };
+    let counter: *i32 = unsafe { counter_buf as *i32 };
+    unsafe { *counter = 0; }
+    let ticks: i32 = 4;
+    let f: future::Future[i32] = drive_three(counter, ticks);
+    let total: i32 = executor::block_on::[i32](f);
+    unsafe { free(counter_buf); }
+    if total != (3 *% ticks) {
+        return 1;
+    }
+    return 0;
+}

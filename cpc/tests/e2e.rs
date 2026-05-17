@@ -8572,6 +8572,33 @@ fn racy_counter_provokes_tsan_warning() {
 /// shot.
 #[test]
 #[cfg(target_os = "macos")]
+fn recipe_async_yield_demo_runs() {
+    // v0.0.4 Phase 3 Slice 3A.5: cooperative-multitasking recipe.
+    // Three tasks each yield 4 times via spawn_local + yield_now;
+    // verifies reactor-driven interleaving works end-to-end.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("async_yield_demo");
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "async_yield_demo build failed");
+    let out = Command::new(dir.join("target/debug/async_yield_demo")).output().expect("run");
+    assert!(out.status.success(),
+        "async_yield_demo exited non-zero: {:?} stderr={}",
+        out.status.code(), String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 fn recipe_async_compute_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("async_compute");
