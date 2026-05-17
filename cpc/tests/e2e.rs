@@ -5973,6 +5973,96 @@ fn assoc_free_fn_dispatch_via_type_brackets() {
     assert_eq!(run.code(), Some(2), "expected b.len() = 2");
 }
 
+/// v0.0.4 Phase 1E: non-Copy `O` for `thread::spawn` + `JoinHandle::join`.
+///
+/// Worker fn returns `string` via sret; the trampoline forwards its sret
+/// slot into the heap ctx so the value lands at the offset `join` reads
+/// from. join's aggregate load lifts the 24-byte struct back to the
+/// parent. ASan-clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_spawn_join_non_copy_string() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tsj\"\n\n[[bin]]\nname = \"tsj\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         fn produce() -> string { return \"hello from worker\".to_string(); }\n\
+         fn main() -> i32 {\n\
+             let h: thread::JoinHandle[string] = thread::spawn::[string](produce);\n\
+             let s: string = h.join();\n\
+             return s.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1E thread sret regression?)");
+    let bin = dir.join("target/debug/tsj");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(17), "expected len(\"hello from worker\") = 17, got {:?}", run.code());
+}
+
+/// v0.0.4 Phase 1E: `async fn` returning non-Copy `T`.
+///
+/// Pre-fix, the coroutine prologue passed `ptr null` as the promise to
+/// `llvm.coro.id` but later wrote a value via `coro.promise`. For Copy
+/// scalars the OOB writes landed in frame slack and "worked" by luck; for
+/// `string` (24 B) they overflowed (ASan caught it). Fix: allocate
+/// `%.coro.promise = alloca <T>` and pass it through `coro.id` so the
+/// promise slot is part of the frame at a known offset.
+#[test]
+fn async_fn_returning_string_through_block_on() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"asr\"\n\n[[bin]]\nname = \"asr\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         import \"stdlib/executor\" as executor;\n\
+         async fn inner() -> string {\n\
+             return \"hello from coro\".to_string();\n\
+         }\n\
+         async fn outer() -> string {\n\
+             let s = await inner();\n\
+             return s;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let f: future::Future[string] = outer();\n\
+             let s: string = executor::block_on::[string](f);\n\
+             return s.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1E async sret regression?)");
+    let bin = dir.join("target/debug/asr");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(15), "expected len(\"hello from coro\") = 15, got {:?}", run.code());
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

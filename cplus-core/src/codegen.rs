@@ -193,6 +193,12 @@ fn mangle_o_for_tramp(ty: &Ty) -> String {
         Ty::Isize => "isize".into(), Ty::Usize => "usize".into(),
         Ty::F32 => "f32".into(),   Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
+        // v0.0.4 Phase 1E: non-Copy O ships via sret-aware trampoline +
+        // sret-aware join load. The mangled suffix must agree with
+        // sema's `mangle_ty_for_name` so `JoinHandle__<suffix>` lookups
+        // hit the monomorphized struct.
+        Ty::String => "string".into(),
+        // Raw/fn pointer O lands in Phase 1F (recursive mangler).
         // Fallback (shouldn't be reached given codegen's eligibility check).
         _ => "unsupported".into(),
     }
@@ -232,6 +238,20 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
     if matches!(o_ty, Ty::Unit) {
         out.push_str("  %f = load ptr, ptr %arg, align 8\n");
         out.push_str("  call void %f()\n");
+    } else if return_passes_by_sret_widened(o_ty, types) {
+        // v0.0.4 Phase 1E: non-Copy O ships via sret-aware call.
+        // Worker's signature is `void(ptr sret(<T>))`. Hand it the
+        // result slot inside the heap ctx (offset 8) so the value
+        // lands at the place `join` reads from. Call-site attributes
+        // must mirror the callee declaration (see musttail-sret fix
+        // from Phase 1A: same LLVM verifier requirement).
+        let (sz, al) = static_layout(o_ty, types)
+            .expect("sret thread-spawn O has layout");
+        out.push_str("  %f = load ptr, ptr %arg, align 8\n");
+        out.push_str("  %slot = getelementptr i8, ptr %arg, i64 8\n");
+        out.push_str(&format!(
+            "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %slot)\n"
+        ));
     } else {
         out.push_str("  %f = load ptr, ptr %arg, align 8\n");
         out.push_str(&format!("  %r = call {llvm_t} %f()\n"));
@@ -295,6 +315,13 @@ fn is_thread_spawn_eligible(ty: &Ty) -> bool {
         | Ty::Isize | Ty::Usize
         | Ty::F32 | Ty::F64
         | Ty::Bool | Ty::Unit
+        // v0.0.4 Phase 1E: non-Copy `string` ships via sret-aware
+        // trampoline. The worker's sret slot points into the heap ctx;
+        // join loads the 24-byte aggregate back. Non-Copy struct/Vec
+        // returns ride the same path, but their mangled names need the
+        // type-id table to construct (handled via `mangle_o_for_tramp`'s
+        // `Ty::Struct(id)` fallback at the call site).
+        | Ty::String
     )
 }
 
@@ -316,7 +343,7 @@ fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
 /// a `Future[U]` instantiation (e.g. `Future__i32`), recover U as a
 /// `Ty`. Mirrors `mangle_o_for_tramp`'s naming — supports the same
 /// scalar set the async return-type restriction allows.
-fn ty_from_future_name(name: &str, _types: &TypeTable) -> Ty {
+fn ty_from_future_name(name: &str, types: &TypeTable) -> Ty {
     let suffix = name.rsplit_once("Future__").map(|(_, s)| s).unwrap_or(name);
     match suffix {
         "i8" => Ty::I8,    "i16" => Ty::I16,   "i32" => Ty::I32,   "i64" => Ty::I64,
@@ -324,7 +351,21 @@ fn ty_from_future_name(name: &str, _types: &TypeTable) -> Ty {
         "isize" => Ty::Isize, "usize" => Ty::Usize,
         "f32" => Ty::F32,  "f64" => Ty::F64,
         "bool" => Ty::Bool, "unit" => Ty::Unit,
-        _ => Ty::Error,
+        // v0.0.4 Phase 1E: non-Copy futures.
+        "string" => Ty::String,
+        _ => {
+            // Struct-typed inner (e.g. `Future__Vec__u8` for `Future[Vec[u8]]`).
+            // Look up the suffix in the struct table. Both the bare name
+            // and the file-qualified `.<suffix>` form are checked because
+            // the resolver may prefix file paths.
+            let dotted = format!(".{suffix}");
+            for (idx, d) in types.struct_defs.iter().enumerate() {
+                if d.name == suffix || d.name.ends_with(&dotted) {
+                    return Ty::Struct(StructId(idx as u32));
+                }
+            }
+            Ty::Error
+        }
     }
 }
 
@@ -2574,10 +2615,24 @@ fn gen_async_function(
     }
     out.push_str(") presplitcoroutine {\nentry:\n");
 
-    // Coroutine prologue. Pass the result-type's size + align as the
-    // promise hint so LLVM lays out a properly-aligned slot at a
-    // known offset; we recover that offset later via `llvm.coro.promise`.
-    out.push_str("  %.coro.id = call token @llvm.coro.id(i32 0, ptr null, ptr null, ptr null)\n");
+    // v0.0.4 Phase 1E: properly allocate the coroutine promise.
+    // Previously we passed `ptr null` as the promise arg to `coro.id`
+    // and then called `coro.promise(...)` to write to it, which
+    // returned undefined behavior for non-trivial inner types. For
+    // primitive Copy returns the resulting OOB writes happened to land
+    // inside the frame's slack; for `string` (24 B) and `Vec[T]` they
+    // overflowed (ASan caught it on the chained-string async test).
+    //
+    // The LLVM coro intrinsic contract: pass an `alloca <T>` as the
+    // promise arg + its alignment as the first i32. CoroSplit hoists
+    // the alloca into the heap frame at a known offset; `coro.promise`
+    // returns that in-frame pointer.
+    out.push_str(&format!(
+        "  %.coro.promise = alloca {inner_llvm}, align {inner_align}\n"
+    ));
+    out.push_str(&format!(
+        "  %.coro.id = call token @llvm.coro.id(i32 {inner_align}, ptr %.coro.promise, ptr null, ptr null)\n"
+    ));
     out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
     out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
     out.push_str("  %.coro.hdl = call ptr @llvm.coro.begin(token %.coro.id, ptr %.coro.mem)\n");

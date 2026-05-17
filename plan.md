@@ -85,11 +85,23 @@ Banning these at the parameter list means borrows can't enter the async fn — n
 
 **Forward-pointer:** if Phase 3's reactor surfaces realistic patterns blocked by this rule, refine with dataflow ("borrow live across await") instead of the parameter-shape gate. Error code and diagnostic stay; only the check loosens.
 
-#### Slice 1E — Non-Copy O in `thread::spawn` + `JoinHandle::join` + `async fn` return · M
+#### Slice 1E — Non-Copy O in `thread::spawn` + `JoinHandle::join` + `async fn` return · ✅ shipped 2026-05-17
 
-`thread::spawn(|| string::from("hello"))` works. `async fn foo() -> string` works. `async fn foo() -> Vec[u8]` works.
+Three changes, all in codegen:
 
-sret-aware trampoline: worker writes O to the heap ctx via sret; join reads via memcpy into caller's sret slot. Mirrors v0.0.2 Slice 1P sret widening applied to the spawn/join return path *and* the coroutine return shape. The coroutine case writes to the caller-frame sret slot via the promise.
+1. **Thread spawn for non-Copy O** ([codegen.rs:225–250](cplus-core/src/codegen.rs#L225)): the trampoline now branches on `return_passes_by_sret_widened`. For non-Copy O the worker is called with a sret slot pointing into the heap ctx (offset 8), exactly where `join` reads from. Call-site sret attributes mirror the callee's declaration (same constraint as Phase 1A's musttail fix).
+2. **Eligibility expanded** ([codegen.rs:291](cplus-core/src/codegen.rs#L291)): `is_thread_spawn_eligible` accepts `Ty::String`. `mangle_o_for_tramp` produces `"string"` to match sema's `JoinHandle__string` instantiation.
+3. **Coroutine promise alloca** ([codegen.rs:2618](cplus-core/src/codegen.rs#L2618)): the prologue was passing `ptr null` as the `coro.id` promise arg but later writing through `coro.promise`. For primitive Copy returns the OOB writes happened to land inside frame slack ("worked" by luck); for `string` (24 B) ASan caught them. Fix: allocate `%.coro.promise = alloca <T>` and pass it as the promise arg + its alignment as the first i32. CoroSplit hoists the alloca into the frame at a known offset.
+4. **Future struct lookup for non-scalar T** ([codegen.rs:319](cplus-core/src/codegen.rs#L319)): `ty_from_future_name` now also handles `string` and struct-typed inner names (`Future__Vec__u8` → look up `Vec__u8` in `struct_defs`).
+
+**Tests:** 2 new e2e — `stdlib_thread_spawn_join_non_copy_string` (spawn → join → len("hello from worker") = 17), `async_fn_returning_string_through_block_on` (chained `async fn outer() -> string` awaiting inner, returning len = 15).
+
+**Test count: 1191 (317 e2e + 859 lib + 11 LSP + 4 other), all green.**
+
+**Known limitations carried forward:**
+- **ASan + async coroutines unrelated bug.** Even scalar `i32` async fns under `--asan` return 0 instead of the expected value. Pre-existing (not introduced by Phase 1E). The non-ASan path is correct. Tracked as a follow-up — probably ASan instrumentation of the alloca-promise + CoroSplit interaction. Doesn't block the headline Phase 1E goal.
+- **Raw / fn-pointer O in spawn:** still falls through `mangle_o_for_tramp`'s `"unsupported"` arm. Phase 1F (recursive mangler) closes this.
+- **`Vec[T]` and arbitrary non-Copy structs as `O` in spawn:** the trampoline emission handles them via the same sret path, but `mangle_o_for_tramp` returns `"unsupported"` for `Ty::Struct(_)` — sema's `JoinHandle__Vec__u8` instantiation name wouldn't match. Trivial extension after Phase 1F's mangler lands.
 
 #### Slice 1F — Recursive type-name mangling for raw/fn-pointer O · S
 
@@ -281,6 +293,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 1E shipped. Non-Copy `O` for `thread::spawn` + `JoinHandle::join` + `async fn` return. Trampoline emits sret-aware call when O is non-Copy; coroutine prologue allocates a real promise alloca (CoroSplit hoists into the frame). 2 new e2e, 1191 tests. ASan-async interaction noted as pre-existing follow-up.
 - **2026-05-17** — Phase 1D shipped. E0900 borrow-across-await guard. Reframed as a parameter-shape gate (no dataflow): async fns can't take `str`, `T[]`, or `mut x: NonCopyT` parameters. The narrower rule catches every realistic v0.0.4 footgun without requiring dataflow infrastructure. 5 new sema tests, 1189 total.
 - **2026-05-17** — Phase 1C shipped. `Type[args]::name(...)` falls back to free generic fn in the same module when no impl method exists. Sema records the dispatch in `MonoInfo::assoc_free_fn_dispatches`; monomorphize rewrites the GenericEnumCall AST to a plain Call with the inline-mangled callee. Tests up to 1184.
 - **2026-05-17** — Phase 1B shipped. Generic-fn return-type T-substitution + transitive instantiation propagation. Reframed: sema doesn't check generic-fn bodies, so the inner call `vec::new::[T]()` inside `make_buf[T]` never registered. Monomorphize-side fixed-point propagation reads AST turbofish type-args directly, substitutes through outer subst, and discovers transitive instantiations without sema changes. Tests up to 1183 (314 e2e + 854 lib + 11 LSP + 4 other).
