@@ -5927,6 +5927,52 @@ fn generic_fn_returning_generic_struct_transitive_instantiation() {
     assert_eq!(run.code(), Some(3), "expected b.len() = 3");
 }
 
+/// v0.0.4 Phase 1C: `Type[args]::name(...)` resolves to a same-module
+/// free generic fn when no impl-block method matches.
+///
+/// `vec::Vec[i32]::with_capacity(16)` desugars to a call of the free fn
+/// `vec::with_capacity::[i32](16)`. Mirrors the Rust UFCS shape
+/// `Vec::<i32>::with_capacity(16)` despite C+ stdlib having
+/// `with_capacity` as a module-level free fn rather than an impl-block
+/// associated fn.
+#[test]
+fn assoc_free_fn_dispatch_via_type_brackets() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ats\"\n\n[[bin]]\nname = \"ats\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/io.cplus"), io_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/io\" as io;\n\
+         \n\
+         fn main() -> i32 {\n\
+             let mut b = vec::Vec[i32]::with_capacity(16);\n\
+             b.push(7);\n\
+             b.push(8);\n\
+             io::println(\"ok\");\n\
+             return b.len() as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1C regression?)");
+    let bin = dir.join("target/debug/ats");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(2), "expected b.len() = 2");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

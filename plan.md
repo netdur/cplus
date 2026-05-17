@@ -50,11 +50,21 @@ Sema body-checking was attempted first but reverted: it surfaced unrelated quali
 - Generic struct / enum type-args (`make_buf::[Vec[T]]()`) aren't fully resolved — `type_ast_to_ty_with_subst` returns None for non-primitive type names. The struct_instantiations path handles direct uses; nested generic-of-generic in a generic-fn body is still rough.
 - Generic-fn bodies still aren't sema-checked, so type errors inside them are caught at monomorphize/codegen rather than at sema. Acceptable for now — the language permits unchecked generic body forms and monomorph errors give precise diagnostics.
 
-#### Slice 1C — `Type[args]::assoc_fn(...)` call shape · S
+#### Slice 1C — `Type[args]::assoc_fn(...)` call shape · ✅ shipped 2026-05-17
 
-`Vec[i32]::with_capacity(16)` parses and resolves. Required for any constructor on a parameterized type.
+`vec::Vec[i32]::with_capacity(16)` works. The parser already produced `GenericEnumCall { enum_name, type_args, variant, args }` for this shape (shared with `Result[T]::Ok(v)`). Sema's struct-template branch only tried impl-block methods and failed for stdlib's free-fn constructors. The fix dispatches to a same-module free generic fn as a fallback.
 
-Parser hand-off for `Ident '[' type_args ']' '::' Ident`. Sema: resolve to the impl block instantiated with `type_args`. Codegen: existing `Type::method` path post-monomorphization.
+**Fix** (sema + monomorphize):
+
+1. **Sema** ([cplus-core/src/sema.rs:2804](cplus-core/src/sema.rs#L2804)): in `check_generic_enum_call`'s struct-template branch, when the instantiated struct has no impl method named `variant`, derive the module prefix by stripping the struct's last name segment and look up `<module>.<variant>` in `fns_generic`. If found, dispatch via `check_generic_named_call` with the Type[args] bracket's type_args, and record the decision in a new `MonoInfo::assoc_free_fn_dispatches: HashMap<ByteSpan, String>` so monomorphize can re-derive the lowered shape.
+
+2. **Monomorphize** ([cplus-core/src/monomorphize.rs](cplus-core/src/monomorphize.rs) GenericEnumCall branch): when sema recorded a free-fn dispatch for this span, rewrite to `Call { callee: Ident(mangled_fn_name), args, type_args: [] }`. Inline mangling lookup uses `inst_lookup` since the outer `rewrite_expr` doesn't re-process the produced Call.
+
+**Tests:** `assoc_free_fn_dispatch_via_type_brackets` — `vec::Vec[i32]::with_capacity(16) + push + push + len` returns 2.
+
+**Test count: 1184 (315 e2e + 854 lib + 11 LSP + 4 other), all green.**
+
+**Precedence**: impl-block methods win over free fns when both exist with the same name (sema checks methods first). Mirrors Rust's UFCS semantics.
 
 #### Slice 1D — E0900: borrow check across `await` · M
 
@@ -260,5 +270,6 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 1C shipped. `Type[args]::name(...)` falls back to free generic fn in the same module when no impl method exists. Sema records the dispatch in `MonoInfo::assoc_free_fn_dispatches`; monomorphize rewrites the GenericEnumCall AST to a plain Call with the inline-mangled callee. Tests up to 1184.
 - **2026-05-17** — Phase 1B shipped. Generic-fn return-type T-substitution + transitive instantiation propagation. Reframed: sema doesn't check generic-fn bodies, so the inner call `vec::new::[T]()` inside `make_buf[T]` never registered. Monomorphize-side fixed-point propagation reads AST turbofish type-args directly, substitutes through outer subst, and discovers transitive instantiations without sema changes. Tests up to 1183 (314 e2e + 854 lib + 11 LSP + 4 other).
 - **2026-05-17** — Phase 1A shipped. Reframed: v0.0.3's "cross-module generic-method instantiation" carryover described a non-bug (impl-attachment already worked). The real failure mode was a musttail+sret call-site ABI mismatch that surfaced on stdlib wrapper chains. 9-line codegen fix at [codegen.rs:5149](cplus-core/src/codegen.rs#L5149); updated pinned lib test; added e2e regression. Test count 1182, all green.

@@ -387,6 +387,14 @@ pub struct MonoInfo {
     /// the alias target before doing anything else — codegen never
     /// sees alias names. Cycle detection happened at sema.
     pub type_aliases: std::collections::BTreeMap<String, crate::ast::Type>,
+    /// v0.0.4 Phase 1C: per-call-site marker for the `Type[args]::name(...)`
+    /// shape where `name` is a same-module free generic fn (not an impl
+    /// method). Sema dispatched the call to the free fn; monomorphize
+    /// uses this map to rewrite the `GenericEnumCall` AST node to a
+    /// plain `Call { callee: Ident(qualified_fn_name), ... }` instead
+    /// of the default enum/struct-variant lowering. Keyed by the
+    /// outer call's span (matching the AST node's span).
+    pub assoc_free_fn_dispatches: HashMap<ByteSpan, String>,
 }
 
 /// Slice 7GEN.5c: per-instantiation info handed to monomorphize.
@@ -492,6 +500,7 @@ fn check_with_files_inner<'a>(
         fns_generic: HashMap::new(),
         fn_instantiations: std::collections::BTreeSet::new(),
         call_monos: HashMap::new(),
+        assoc_free_fn_dispatches: HashMap::new(),
         struct_generic_templates: HashMap::new(),
         struct_instantiations: std::collections::BTreeMap::new(),
         enum_generic_templates: HashMap::new(),
@@ -607,6 +616,7 @@ fn check_with_files_inner<'a>(
     let mono = MonoInfo {
         instantiations: std::mem::take(&mut cx.fn_instantiations),
         call_monos: std::mem::take(&mut cx.call_monos),
+        assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
         struct_instantiations,
         enum_instantiations,
         method_instantiations,
@@ -719,6 +729,12 @@ struct SemaCx<'a> {
     /// looks up each `Call` node by span to pick the right mangled
     /// callee name.
     call_monos: HashMap<ByteSpan, Vec<Ty>>,
+    /// v0.0.4 Phase 1C: `Type[args]::name(...)` call sites that resolved
+    /// to a free generic fn (not an impl method). Maps the
+    /// `GenericEnumCall`'s span to the qualified free fn name sema
+    /// dispatched to. Monomorphize uses this to lower the AST node
+    /// to the right Call shape.
+    assoc_free_fn_dispatches: HashMap<ByteSpan, String>,
     /// Slice 7GEN.5c: generic-struct templates. Keyed by source name.
     /// Holds the cloned AST `StructDecl` so on-demand instantiation
     /// (`resolve_generic_instantiation`) can substitute Param types in
@@ -2808,11 +2824,45 @@ impl SemaCx<'_> {
                 return Ty::Error;
             };
             let mangled = self.structs[sid.0 as usize].name.clone();
-            let segments = vec![
-                Ident { name: mangled, span: enum_name.span },
-                variant.clone(),
-            ];
-            return self.check_assoc_call(&segments, &[], args, enum_name.span, span);
+            // First try the impl-block method on the instantiated struct.
+            // If present, dispatch like any other `Type::method(...)` call.
+            if self.structs[sid.0 as usize].methods.contains_key(&variant.name) {
+                let segments = vec![
+                    Ident { name: mangled, span: enum_name.span },
+                    variant.clone(),
+                ];
+                return self.check_assoc_call(&segments, &[], args, enum_name.span, span);
+            }
+            // v0.0.4 Phase 1C: free-fn fallback for `Type[args]::name(...)`.
+            // Many constructor-shaped fns (`Vec::with_capacity`, `string::new`)
+            // are written as module-level free generic fns rather than impl
+            // associated fns. Resolve by stripping the struct's last name
+            // segment to get the enclosing module prefix and looking up
+            // `<module>.<variant>` in the generic-fn table. The Type[args]
+            // bracket's type-args become the free fn's type-args.
+            let module_prefix = enum_name.name
+                .rsplit_once('.')
+                .map(|(prefix, _)| prefix.to_string());
+            let qualified_fn_name = match &module_prefix {
+                Some(prefix) if !prefix.is_empty() => format!("{}.{}", prefix, variant.name),
+                _ => variant.name.clone(),
+            };
+            if let Some(gsig) = self.fns_generic.get(&qualified_fn_name).cloned() {
+                self.assoc_free_fn_dispatches.insert(span, qualified_fn_name.clone());
+                return self.check_generic_named_call(
+                    &qualified_fn_name, &gsig, args, type_args, span,
+                );
+            }
+            self.err(
+                "E0324",
+                format!(
+                    "struct `{}` has no method `{}` and no free fn `{}` in its module",
+                    mangled, variant.name, variant.name
+                ),
+                variant.span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
         }
         let ty = self.resolve_generic_enum_instantiation(&enum_name.name, type_args, enum_name.span);
         let Ty::Enum(id) = ty else {

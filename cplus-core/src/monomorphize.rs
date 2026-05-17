@@ -1228,36 +1228,71 @@ fn rewrite_expr(
         // Slice 7GEN.5d: rewrite `Option[i32]::Some(7)` to a regular
         // `Call { callee: Path([mangled_enum, variant]), args }`.
         // Codegen never sees GenericEnumCall.
+        //
+        // v0.0.4 Phase 1C: also handles the `Type[args]::name(...)` shape
+        // when `name` is a free generic fn in the same module as the
+        // struct (not an impl-block method). Sema's
+        // `check_generic_enum_call` recorded the dispatch decision in
+        // `mono.assoc_free_fn_dispatches`; mirror it here by rewriting
+        // to `Call { callee: Ident(qualified_fn_name), type_args, args }`.
         ExprKind::GenericEnumCall { enum_name, type_args, variant, args } => {
             let resolved_args: Vec<Type> = type_args
                 .iter()
                 .map(|a| subst_type_ast(a, subst, type_name_of, struct_lookup))
                 .collect();
-            let arg_names: Vec<String> = resolved_args.iter().map(mangle_type_ast_arg).collect();
-            let mangled_enum = struct_lookup
-                .by_names
-                .get(&(enum_name.name.clone(), arg_names))
-                .cloned()
-                .unwrap_or_else(|| enum_name.name.clone());
-            let segments = vec![
-                Ident { name: mangled_enum, span: enum_name.span },
-                variant.clone(),
-            ];
-            // For payload-less variants written without parens (args is
-            // empty), rewrite to a bare Path expression (e.g.
-            // `Maybe::None`). Otherwise rewrite to a Call.
-            if args.is_empty() {
-                ExprKind::Path { segments }
-            } else {
-                let path_expr = Expr {
-                    kind: ExprKind::Path { segments },
-                    span: enum_name.span,
-                };
+            // v0.0.4 Phase 1C: free-fn fallback.
+            if let Some(qualified_fn_name) = mono.assoc_free_fn_dispatches.get(&expr.span) {
                 let new_args: Vec<Expr> = args.iter().map(|a| rewrite_expr(a, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup)).collect();
+                // Try to mangle to the monomorphized fn name. The
+                // outer rewrite_expr doesn't re-process the Call we
+                // construct here, so this mangling needs to land
+                // inline.
+                let arg_tys: Option<Vec<Ty>> = resolved_args.iter()
+                    .map(|t| type_ast_to_ty_with_subst(t, subst))
+                    .collect();
+                let final_name = if let Some(tys) = arg_tys {
+                    inst_lookup.get(&(qualified_fn_name.clone(), tys))
+                        .cloned()
+                        .unwrap_or_else(|| qualified_fn_name.clone())
+                } else {
+                    qualified_fn_name.clone()
+                };
+                let callee_expr = Expr {
+                    kind: ExprKind::Ident(final_name),
+                    span: variant.span,
+                };
                 ExprKind::Call {
-                    callee: Box::new(path_expr),
+                    callee: Box::new(callee_expr),
                     args: new_args,
                     type_args: Vec::new(),
+                }
+            } else {
+                let arg_names: Vec<String> = resolved_args.iter().map(mangle_type_ast_arg).collect();
+                let mangled_enum = struct_lookup
+                    .by_names
+                    .get(&(enum_name.name.clone(), arg_names))
+                    .cloned()
+                    .unwrap_or_else(|| enum_name.name.clone());
+                let segments = vec![
+                    Ident { name: mangled_enum, span: enum_name.span },
+                    variant.clone(),
+                ];
+                // For payload-less variants written without parens (args is
+                // empty), rewrite to a bare Path expression (e.g.
+                // `Maybe::None`). Otherwise rewrite to a Call.
+                if args.is_empty() {
+                    ExprKind::Path { segments }
+                } else {
+                    let path_expr = Expr {
+                        kind: ExprKind::Path { segments },
+                        span: enum_name.span,
+                    };
+                    let new_args: Vec<Expr> = args.iter().map(|a| rewrite_expr(a, subst, generic_names, inst_lookup, mono, type_name_of, struct_lookup)).collect();
+                    ExprKind::Call {
+                        callee: Box::new(path_expr),
+                        args: new_args,
+                        type_args: Vec::new(),
+                    }
                 }
             }
         }
