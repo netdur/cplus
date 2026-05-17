@@ -6063,6 +6063,86 @@ fn async_fn_returning_string_through_block_on() {
     assert_eq!(run.code(), Some(15), "expected len(\"hello from coro\") = 15, got {:?}", run.code());
 }
 
+/// v0.0.4 Phase 1F: recursive `mangle_o_for_tramp` — raw pointer O.
+///
+/// `thread::spawn::[*u8](worker)` previously fell into the
+/// "unsupported" arm of the mangler and crashed at runtime. The
+/// recursive mangler matches sema's `mangle_ty_for_name` so
+/// `JoinHandle__ptr_u8` lookups land.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_spawn_join_raw_pointer_o() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tsp\"\n\n[[bin]]\nname = \"tsp\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn produce() -> *u8 { return unsafe { malloc(64 as usize) }; }\n\
+         fn main() -> i32 {\n\
+             let h: thread::JoinHandle[*u8] = thread::spawn::[*u8](produce);\n\
+             let p: *u8 = h.join();\n\
+             unsafe { free(p); }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1F raw-pointer mangler regression?)");
+    let bin = dir.join("target/debug/tsp");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected clean round-trip");
+}
+
+/// v0.0.4 Phase 1F: fn-pointer O round-trip. Mangler emits `fn_ret_i32`
+/// (matches sema's `mangle_ty_for_name` shape).
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_thread_spawn_join_fn_pointer_o() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tsf\"\n\n[[bin]]\nname = \"tsf\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/thread\" as thread;\n\
+         fn pick_42() -> i32 { return 42; }\n\
+         fn produce_fn() -> fn() -> i32 { return pick_42; }\n\
+         fn main() -> i32 {\n\
+             let h: thread::JoinHandle[fn() -> i32] = thread::spawn::[fn() -> i32](produce_fn);\n\
+             let f: fn() -> i32 = h.join();\n\
+             return f();\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1F fn-pointer mangler regression?)");
+    let bin = dir.join("target/debug/tsf");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected pick_42() = 42");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

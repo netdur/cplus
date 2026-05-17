@@ -103,11 +103,17 @@ Three changes, all in codegen:
 - **Raw / fn-pointer O in spawn:** still falls through `mangle_o_for_tramp`'s `"unsupported"` arm. Phase 1F (recursive mangler) closes this.
 - **`Vec[T]` and arbitrary non-Copy structs as `O` in spawn:** the trampoline emission handles them via the same sret path, but `mangle_o_for_tramp` returns `"unsupported"` for `Ty::Struct(_)` — sema's `JoinHandle__Vec__u8` instantiation name wouldn't match. Trivial extension after Phase 1F's mangler lands.
 
-#### Slice 1F — Recursive type-name mangling for raw/fn-pointer O · S
+#### Slice 1F — Recursive type-name mangling for raw/fn-pointer O · ✅ shipped 2026-05-17
 
-`thread::spawn(|| ptr)` where `ptr: *u8` works. `async fn foo() -> fn(i32) -> i32` works.
+`thread::spawn::[*u8](worker)` and `thread::spawn::[fn() -> i32](worker)` round-trip now. Eligibility widened; mangler made recursive.
 
-Recursive `mangle_o_for_tramp` over `Ty`: `*u8` → `ptr_u8`, `fn(i32) -> i32` → `fnptr_i32_to_i32`, `Vec[i32]` → `Vec__i32` (existing monomorph mangler shape).
+**Fix** ([codegen.rs:184](cplus-core/src/codegen.rs#L184)): `mangle_o_for_tramp_with_types` recurses through `RawPtr`, `FnPtr`, `Array`, `Slice` — and resolves struct / enum names via the type table (needed because codegen's `EnumInfo` doesn't carry the source name; uses reverse lookup through `enum_by_name`). Output matches sema's `mangle_ty_for_name` so `JoinHandle__<suffix>` lookups land.
+
+`is_thread_spawn_eligible` rewritten as a `match` so each shape is explicit. Raw/fn/struct/enum/array O are accepted; `Slice(_)` and `Str` rejected (they're fat pointers borrowing external storage — a worker returning one would hand the parent dangling references once the worker's stack unwinds).
+
+**Tests:** 2 new e2e — `stdlib_thread_spawn_join_raw_pointer_o` (worker returns `malloc`'d `*u8`, parent joins + `free`s), `stdlib_thread_spawn_join_fn_pointer_o` (worker returns `fn() -> i32`, parent joins + invokes).
+
+**Test count: 1193 (319 e2e + 859 lib + 11 LSP + 4 other), all green.**
 
 #### Slice 1G — Generic `async fn` e2e + `is_async` threading verification · S
 
@@ -293,6 +299,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 1F shipped. `mangle_o_for_tramp` made recursive over `Ty`: raw / fn / struct / enum / array O all work in `thread::spawn`. Eligibility rewritten as explicit `match` (Slice + Str rejected — fat-pointer hazards). 2 new e2e, 1193 tests.
 - **2026-05-17** — Phase 1E shipped. Non-Copy `O` for `thread::spawn` + `JoinHandle::join` + `async fn` return. Trampoline emits sret-aware call when O is non-Copy; coroutine prologue allocates a real promise alloca (CoroSplit hoists into the frame). 2 new e2e, 1191 tests. ASan-async interaction noted as pre-existing follow-up.
 - **2026-05-17** — Phase 1D shipped. E0900 borrow-across-await guard. Reframed as a parameter-shape gate (no dataflow): async fns can't take `str`, `T[]`, or `mut x: NonCopyT` parameters. The narrower rule catches every realistic v0.0.4 footgun without requiring dataflow infrastructure. 5 new sema tests, 1189 total.
 - **2026-05-17** — Phase 1C shipped. `Type[args]::name(...)` falls back to free generic fn in the same module when no impl method exists. Sema records the dispatch in `MonoInfo::assoc_free_fn_dispatches`; monomorphize rewrites the GenericEnumCall AST to a plain Call with the inline-mangled callee. Tests up to 1184.

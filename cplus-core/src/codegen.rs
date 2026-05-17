@@ -144,9 +144,11 @@ impl ThreadTrampolines {
     }
 
     /// Register a `spawn[O]` trampoline. Returns the symbol name (no
-    /// `@` prefix).
-    fn register_spawn(&self, o_ty: &Ty) -> String {
-        let suffix = mangle_o_for_tramp(o_ty);
+    /// `@` prefix). `types` is needed when `O` mentions struct or enum
+    /// types — sema's `mangle_ty_for_name` uses their names to build
+    /// the JoinHandle suffix, so codegen must match.
+    fn register_spawn(&self, o_ty: &Ty, types: &TypeTable) -> String {
+        let suffix = mangle_o_for_tramp_with_types(o_ty, Some(types));
         let key = format!("spawn:{suffix}");
         let mut seen = self.seen.borrow_mut();
         if !seen.contains_key(&key) {
@@ -182,9 +184,17 @@ impl ThreadTrampolines {
 /// errors out elsewhere if O is something else, so we don't try to
 /// mangle aggregates here.
 fn mangle_o_for_tramp(ty: &Ty) -> String {
-    // Mirror sema's `mangle_ty_for_name` for primitive scalars so the
-    // `struct_by_name.get("JoinHandle__<suffix>")` lookup hits the
-    // monomorphizer-synthesised concrete struct.
+    mangle_o_for_tramp_with_types(ty, None)
+}
+
+/// v0.0.4 Phase 1F: recursive type-name mangler matching sema's
+/// `mangle_ty_for_name`. Recurses through `*T`, `T[]`, `[N]T`, `fn(...) -> T`
+/// so `JoinHandle__<suffix>` lookups hit the monomorphized struct for
+/// non-scalar `O`. Struct / Enum names come from the type table; passing
+/// `None` for `types` falls back to a `"struct?"` placeholder (only
+/// reachable in error-recovery paths where the sema-side mangle would
+/// also have produced a placeholder).
+fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
     match ty {
         Ty::I8 => "i8".into(),     Ty::I16 => "i16".into(),
         Ty::I32 => "i32".into(),   Ty::I64 => "i64".into(),
@@ -193,14 +203,38 @@ fn mangle_o_for_tramp(ty: &Ty) -> String {
         Ty::Isize => "isize".into(), Ty::Usize => "usize".into(),
         Ty::F32 => "f32".into(),   Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
-        // v0.0.4 Phase 1E: non-Copy O ships via sret-aware trampoline +
-        // sret-aware join load. The mangled suffix must agree with
-        // sema's `mangle_ty_for_name` so `JoinHandle__<suffix>` lookups
-        // hit the monomorphized struct.
+        Ty::Str => "str".into(),
         Ty::String => "string".into(),
-        // Raw/fn pointer O lands in Phase 1F (recursive mangler).
-        // Fallback (shouldn't be reached given codegen's eligibility check).
-        _ => "unsupported".into(),
+        Ty::RawPtr(inner) => format!("ptr_{}", mangle_o_for_tramp_with_types(inner, types)),
+        Ty::Slice(inner) => format!("slice_{}", mangle_o_for_tramp_with_types(inner, types)),
+        Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_o_for_tramp_with_types(elem, types)),
+        Ty::FnPtr { params, return_type } => {
+            let mut s = String::from("fn");
+            for p in params {
+                s.push('_');
+                s.push_str(&mangle_o_for_tramp_with_types(p, types));
+            }
+            if !matches!(**return_type, Ty::Unit) {
+                s.push_str("_ret_");
+                s.push_str(&mangle_o_for_tramp_with_types(return_type, types));
+            }
+            s
+        }
+        Ty::Struct(id) => match types {
+            Some(t) => t.struct_defs[id.0 as usize].name.clone(),
+            None => "struct?".into(),
+        },
+        Ty::Enum(id) => match types {
+            // codegen's `EnumInfo` doesn't carry the source name; reverse
+            // through `enum_by_name`. Slow but only fires when a thread/
+            // async return is enum-typed, which is rare.
+            Some(t) => t.enum_by_name.iter()
+                .find_map(|(name, eid)| (eid == id).then(|| name.clone()))
+                .unwrap_or_else(|| "enum?".into()),
+            None => "enum?".into(),
+        },
+        Ty::Param(n) => format!("Param_{n}"),
+        Ty::Error => "ERR".into(),
     }
 }
 
@@ -229,7 +263,7 @@ fn align_of_ty(ty: &Ty, types: &TypeTable) -> u64 {
 }
 
 fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
-    let suffix = mangle_o_for_tramp(o_ty);
+    let suffix = mangle_o_for_tramp_with_types(o_ty, Some(types));
     let llvm_t = llvm_ty(o_ty, types);
     let align = align_of_ty(o_ty, types);
     out.push_str(&format!(
@@ -309,27 +343,33 @@ fn emit_spawn_with_tramp(out: &mut String, idx: usize, i_ty: &Ty, o_ty: &Ty, typ
 /// yet. Aggregates (structs/enums/arrays/slices) and `string` need
 /// sret-aware trampolines and join paths — those land in 5C as well.
 fn is_thread_spawn_eligible(ty: &Ty) -> bool {
-    matches!(ty,
+    match ty {
         Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
         | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
         | Ty::Isize | Ty::Usize
         | Ty::F32 | Ty::F64
         | Ty::Bool | Ty::Unit
-        // v0.0.4 Phase 1E: non-Copy `string` ships via sret-aware
-        // trampoline. The worker's sret slot points into the heap ctx;
-        // join loads the 24-byte aggregate back. Non-Copy struct/Vec
-        // returns ride the same path, but their mangled names need the
-        // type-id table to construct (handled via `mangle_o_for_tramp`'s
-        // `Ty::Struct(id)` fallback at the call site).
-        | Ty::String
-    )
+        | Ty::String => true,
+        // v0.0.4 Phase 1F: raw / fn / struct / enum / array O. The
+        // trampoline path handles them via either the value-return or
+        // sret-return branch (depending on `return_passes_by_sret_widened`),
+        // and `mangle_o_for_tramp_with_types` builds matching symbols.
+        Ty::RawPtr(_) | Ty::FnPtr { .. } | Ty::Struct(_) | Ty::Enum(_) | Ty::Array(_, _) => true,
+        // Slice (`T[]`) is a fat pointer borrowing external storage; a
+        // worker that returns one would hand the parent a dangling
+        // pointer once the worker's stack unwinds. Reject explicitly.
+        Ty::Slice(_) => false,
+        // str: same hazard as Slice.
+        Ty::Str => false,
+        Ty::Param(_) | Ty::Error => false,
+    }
 }
 
 /// v0.0.3 Phase 5 Slice 5E.3: find the `Future[T]` struct in the
 /// type table given the inner `T`. Suffix-matches `Future__<mangle(T)>`
 /// the same way `lookup_join_handle_ty` matches the JoinHandle name.
 fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
-    let target = format!("Future__{}", mangle_o_for_tramp(inner));
+    let target = format!("Future__{}", mangle_o_for_tramp_with_types(inner, Some(types)));
     let dotted = format!(".{target}");
     for (idx, d) in types.struct_defs.iter().enumerate() {
         if d.name == target || d.name.ends_with(&dotted) {
@@ -5350,7 +5390,7 @@ impl<'a> FnState<'a> {
             // smoke paths. Use poison and a JoinHandle-shaped value.
             return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
         }
-        let tramp_sym = self.tramps.register_spawn(&o_ty);
+        let tramp_sym = self.tramps.register_spawn(&o_ty, self.types);
         let (size, _) = static_layout(&o_ty, self.types).unwrap_or((8, 8));
         let total_size = 8 + size;
         let ctx = self.next_tmp();
@@ -5652,7 +5692,7 @@ impl<'a> FnState<'a> {
     /// suffix-match against `.JoinHandle__<suffix>` (or the bare name
     /// for unqualified contexts).
     fn lookup_join_handle_ty(&self, o_ty: &Ty) -> Ty {
-        let target = format!("JoinHandle__{}", mangle_o_for_tramp(o_ty));
+        let target = format!("JoinHandle__{}", mangle_o_for_tramp_with_types(o_ty, Some(self.types)));
         let dotted = format!(".{target}");
         for (idx, d) in self.types.struct_defs.iter().enumerate() {
             if d.name == target || d.name.ends_with(&dotted) {
