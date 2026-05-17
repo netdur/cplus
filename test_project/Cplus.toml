@@ -1,0 +1,9 @@
+[package]
+name = "test_project"
+
+[[bin]]
+name = "test_project"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
