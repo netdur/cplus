@@ -1,0 +1,142 @@
+// stdlib/mutex.cplus — mutual-exclusion primitive over a heap-stored T.
+//
+// `Mutex[T]` wraps `T` with a pthread mutex; `lock()` returns a
+// `MutexGuard[T]` whose Drop releases the lock. Acquire-only access:
+// no method on a `Mutex` reads / writes `T` without going through a
+// `MutexGuard`.
+//
+// **Why Mutex is internally refcounted in v0.0.4.** Rust's idiomatic
+// shape is `Arc<Mutex<T>>`, with `&Mutex<T>` as the shared handle.
+// C+ has no `&T` references, so a literal `Arc[Mutex[T]]` would break:
+// `Arc::get(self)` returns a bitwise copy of `Mutex`, and `Mutex`'s
+// own Drop (which destroys the pthread mutex + frees the heap block)
+// would fire on every copy. To avoid that hazard while keeping the
+// API ergonomic, `Mutex[T]` collapses Arc into itself: the heap block
+// holds `{ u64 refcount, pthread_mutex_t, T value }`; `clone()` does
+// an atomic increment; `drop()` does an atomic decrement and destroys
+// the mutex + frees only on the last reference. Users `clone()` into
+// a worker thread; the worker drops normally on exit; the last live
+// reference does the teardown.
+//
+// **Pthread mutex size.** macOS pthread_mutex_t is 64 bytes; Linux
+// (glibc) is 40. We allocate 64 in the v0.0.4 layout so the same
+// code works on both platforms.
+
+import "stdlib/atomic" as atomic;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+extern fn pthread_mutex_init(mutex: *u8, attr: *u8) -> i32;
+extern fn pthread_mutex_destroy(mutex: *u8) -> i32;
+extern fn pthread_mutex_lock(mutex: *u8) -> i32;
+extern fn pthread_mutex_unlock(mutex: *u8) -> i32;
+
+pub struct Mutex[T] {
+    // Pointer to heap block: { u64 refcount, [64 bytes pthread mutex], T value }.
+    ctrl: *u8,
+}
+
+pub struct MutexGuard[T] {
+    // Same pointer the originating Mutex carries; the guard's Drop
+    // releases via the offset into the pthread mutex slot.
+    ctrl: *u8,
+}
+
+// Heap layout offsets — keep in sync between `new` / `clone` / `lock` /
+// `drop` / `get` / `set`.
+//   refcount: ctrl + 0    (u64, 8 bytes)
+//   mutex:    ctrl + 8    (64 bytes — pthread_mutex_t)
+//   value:    ctrl + 72   (T)
+
+pub fn new[T](move v: T) -> Mutex[T] {
+    let refct_bytes: usize = 8 as usize;
+    let mutex_bytes: usize = 64 as usize;
+    let value_size: usize = size_of::[T]();
+    let total: usize = refct_bytes +% mutex_bytes +% value_size;
+    let raw: *u8 = unsafe { malloc(total) };
+    let refct: *u64 = unsafe { raw as *u64 };
+    unsafe { *refct = 1 as u64; }
+    let mutex_ptr: *u8 = unsafe { raw + refct_bytes };
+    let _err: i32 = unsafe { pthread_mutex_init(mutex_ptr, 0 as *u8) };
+    let value_off: usize = refct_bytes +% mutex_bytes;
+    let value_ptr: *T = unsafe { (raw + value_off) as *T };
+    unsafe { *value_ptr = v; }
+    return Mutex[T] { ctrl: raw };
+}
+
+impl Mutex[T] {
+    // Atomic increment refcount; share the inner heap block. Same
+    // ordering rationale as `Arc::clone` — relaxed is sufficient
+    // because the new Mutex carries a ctrl already visible to this
+    // thread.
+    pub fn clone(self) -> Mutex[T] {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let _prev: u64 = unsafe {
+            atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
+        };
+        return Mutex[T] { ctrl: self.ctrl };
+    }
+
+    // Acquire the lock, return a `MutexGuard` whose Drop releases it.
+    // Borrows the mutex via `self` (read-only-receiver — the lock op
+    // doesn't change the Mutex's own state, only the underlying
+    // mutex's state).
+    pub fn lock(self) -> MutexGuard[T] {
+        let refct_bytes: usize = 8 as usize;
+        let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
+        let _err: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
+        return MutexGuard[T] { ctrl: self.ctrl };
+    }
+
+    // Strong-count snapshot (racy except in single-threaded contexts).
+    pub fn strong_count(self) -> u64 {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
+    }
+
+    // Destructor: atomic decrement; on the last reference, destroy
+    // the pthread mutex and free the heap block. AcqRel ordering
+    // mirrors `Arc::drop`.
+    fn drop(mut self) {
+        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let prev: u64 = unsafe {
+            atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
+        };
+        if prev == (1 as u64) {
+            let refct_bytes: usize = 8 as usize;
+            let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
+            let _err: i32 = unsafe { pthread_mutex_destroy(mutex_ptr) };
+            unsafe { free(self.ctrl); }
+        }
+        return;
+    }
+}
+
+impl MutexGuard[T] {
+    // Read inner T (bitwise copy). The lock guarantees no other
+    // thread is reading or writing concurrently.
+    pub fn get(self) -> T {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+        return unsafe { *value_ptr };
+    }
+
+    // Write inner T. Caller must be sole writer (guard guarantees).
+    pub fn set(mut self, v: T) {
+        let value_off: usize = (8 as usize) +% (64 as usize);
+        let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+        unsafe { *value_ptr = v; }
+        return;
+    }
+
+    // Destructor: release the lock. The Mutex's own refcount is
+    // unaffected — the guard does NOT own a reference; it borrows
+    // through the Mutex that produced it.
+    fn drop(mut self) {
+        let refct_bytes: usize = 8 as usize;
+        let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
+        let _err: i32 = unsafe { pthread_mutex_unlock(mutex_ptr) };
+        return;
+    }
+}

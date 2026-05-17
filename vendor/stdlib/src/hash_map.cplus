@@ -18,6 +18,7 @@ extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
 pub struct StrIntMap {
     // Three parallel arrays sized at `cap` entries each.
@@ -155,10 +156,8 @@ impl StrIntMap {
         let nl_raw: *u8 = unsafe { malloc(lens_bytes) };
         let nv_raw: *u8 = unsafe { malloc(vals_bytes) };
         // Zero key + length regions so empty-slot detection works.
-        let mut i: usize = 0 as usize;
-        while i < keys_bytes { unsafe { nk_raw[i] = 0 as u8; } i = i +% (1 as usize); }
-        i = 0 as usize;
-        while i < lens_bytes { unsafe { nl_raw[i] = 0 as u8; } i = i +% (1 as usize); }
+        unsafe { memset(nk_raw, 0 as i32, keys_bytes); }
+        unsafe { memset(nl_raw, 0 as i32, lens_bytes); }
         self.keys = unsafe { nk_raw as **u8 };
         self.klens = unsafe { nl_raw as *usize };
         self.vals = unsafe { nv_raw as *i32 };

@@ -205,9 +205,29 @@ Single-threaded sibling of `Arc`. Pure-source stdlib at [vendor/stdlib/src/rc.cp
 
 **Test count: 1197, all green.**
 
-#### Slice 2E — `Mutex[T]` · M
+#### Slice 2E — `Mutex[T]` · ✅ shipped 2026-05-17
 
-`Mutex[T]` wraps `T` + a pthread mutex. `lock(mut self) -> MutexGuard[T]`. `MutexGuard::drop` releases. Canonical shape: `Arc[Mutex[T]]`.
+`Mutex[T]` wraps T + a pthread mutex. `lock(self) -> MutexGuard[T]`; guard's Drop releases.
+
+**Design deviation from the plan: Mutex is internally refcounted.** Rust's idiomatic shape is `Arc<Mutex<T>>` with `&Mutex<T>` as the shared handle. C+ has no `&T` references — a literal `Arc[Mutex[T]]` would break because `Arc::get(self)` returns a bitwise copy of `Mutex`, and `Mutex::drop` would fire on every copy. To work around it without inventing references, `Mutex[T]` collapses Arc into itself: heap block holds `{ u64 refcount, pthread_mutex_t, T value }`; `clone()` does an atomic increment; `drop()` does an atomic decrement and destroys the pthread mutex + frees the heap only on the last reference. Users clone into worker threads; the worker drops normally; the last live reference does teardown.
+
+**API:**
+- `mutex::new(move v: T) -> Mutex[T]`
+- `Mutex[T]::clone(self) -> Mutex[T]` — atomic refcount inc
+- `Mutex[T]::lock(self) -> MutexGuard[T]` — pthread_mutex_lock; guard's Drop unlocks
+- `Mutex[T]::strong_count(self) -> u64`
+- `MutexGuard[T]::get(self) -> T` / `set(mut self, v: T)`
+
+**pthread mutex layout:** 64-byte allocation per mutex (macOS pthread_mutex_t is 64 B; Linux glibc is 40 B — same code works on both).
+
+**Tests:** `stdlib_mutex_cross_thread_increment` — two workers each acquire/get/inc/set/drop; parent reads final value. Verifies under no-sanitizer, ASan, and TSan — all clean.
+
+**Test count: 1198, all green.**
+
+**v0.0.4 limitations:**
+- Guard lifetime is unenforced at sema-time — `let g = m.lock(); let g2 = m.lock();` in the same scope deadlocks (g still holds the lock). Block-scope discipline is the workaround until borrow-checker integration lands.
+- Drop of inner T not invoked automatically (same v0.0.4 stdlib limitation).
+- No `try_lock` / `lock_with_timeout`. Land when motivated.
 
 #### Slice 2F — `Channel[T]` · M
 
@@ -347,6 +367,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2E shipped. `Mutex[T]` — pthread-backed mutual exclusion. Internally refcounted (collapses Arc into itself; sidesteps the no-`&T` aliasing problem). Cross-thread increment test passes ASan + TSan clean. 1198 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2D shipped. `Rc[T]` — single-threaded refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/rc.cplus](vendor/stdlib/src/rc.cplus). Same shape as `Arc`, non-atomic refcount. Send/Sync gating is documentation-only in v0.0.4; Slice 2A will lock down `!Send` at sema-time. 1197 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2C shipped. `Arc[T]` — atomically refcounted shared ownership. Pure-source stdlib at [vendor/stdlib/src/arc.cplus](vendor/stdlib/src/arc.cplus). Relaxed increment + AcqRel decrement; last reference frees. Cross-thread share verified ASan + TSan clean. 1196 tests, all green.
 - **2026-05-17** — Phase 2 Slice 2B shipped. `Box[T]` — single heap-allocated owned value. Pure-source stdlib at [vendor/stdlib/src/box.cplus](vendor/stdlib/src/box.cplus). API: `box::new(move v)`, `get/set/unwrap`. `move self` semantics learned: don't manually free inside a `move self`-consuming method; let the function-exit Drop do it. 1195 tests, all green.

@@ -68,12 +68,7 @@ impl File {
                 return result::io_ok::[vec::Vec[u8]](buf);
             }
             let count: usize = n as usize;
-            let mut k: usize = 0 as usize;
-            while k < count {
-                let byte_p: *u8 = unsafe { chunk + k };
-                buf.push(unsafe { *byte_p });
-                k = k +% (1 as usize);
-            }
+            buf.extend_from_raw(chunk, count);
         }
         return result::io_err::[vec::Vec[u8]](result::IoError::Other);
     }

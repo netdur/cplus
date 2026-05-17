@@ -4,6 +4,7 @@
 // they just call `print` / `println` / etc.
 
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn printf(fmt: *u8, ...) -> i32;
 
 // Loop until all `n` bytes from `p` are written to `fd` (or write errors).
 fn write_all(fd: i32, p: *u8, n: usize) {
@@ -20,14 +21,13 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 
 // Write `s` to stdout, no trailing newline.
 pub fn print(s: str) {
-    write_all(1 as i32, str_ptr(s), str_len(s));
+    unsafe { printf(str_ptr("%.*s\0"), str_len(s) as i32, str_ptr(s)); }
     return;
 }
 
 // Write `s` to stdout, followed by '\n'.
 pub fn println(s: str) {
-    write_all(1 as i32, str_ptr(s), str_len(s));
-    write_all(1 as i32, str_ptr("\n"), 1 as usize);
+    unsafe { printf(str_ptr("%.*s\n\0"), str_len(s) as i32, str_ptr(s)); }
     return;
 }
 

@@ -14,6 +14,7 @@
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 
 pub struct Vec[T] {
     ptr: *T,
@@ -60,6 +61,32 @@ impl Vec[T] {
         }
         self.len = self.len -% (1 as usize);
         return true;
+    }
+
+    // Bulk-copy elements from a raw pointer.
+    pub fn extend_from_raw(mut self, src: *T, count: usize) {
+        if count == (0 as usize) {
+            return;
+        }
+        let required: usize = self.len +% count;
+        if required > self.cap {
+            let mut new_cap: usize = self.cap *% (2 as usize);
+            if new_cap < required {
+                new_cap = required;
+            }
+            if new_cap == (0 as usize) {
+                new_cap = required;
+            }
+            let new_bytes: usize = new_cap *% size_of::[T]();
+            let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
+            self.ptr = unsafe { raw as *T };
+            self.cap = new_cap;
+        }
+        let dest: *T = unsafe { self.ptr + self.len };
+        let bytes_to_copy: usize = count *% size_of::[T]();
+        unsafe { memcpy(dest as *u8, src as *u8, bytes_to_copy); }
+        self.len = required;
+        return;
     }
 
     pub fn len(self) -> usize {

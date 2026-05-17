@@ -6346,6 +6346,73 @@ fn stdlib_rc_clone_chain_round_trip() {
     assert_eq!(run.code(), Some(0), "expected Rc round-trip to pass");
 }
 
+/// v0.0.4 Phase 2 Slice 2E: `Mutex[T]` — pthread-backed mutual
+/// exclusion with an internal refcount. Two worker threads each
+/// acquire the lock, increment, drop; parent verifies final value =
+/// initial + 2. TSan + ASan clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_mutex_cross_thread_increment() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mux\"\n\n[[bin]]\nname = \"mux\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let mutex_src = include_str!("../../vendor/stdlib/src/mutex.cplus");
+    let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
+    let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/mutex.cplus"), mutex_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/mutex\" as mutex;\n\
+         import \"stdlib/thread\" as thread;\n\
+         fn worker(move m: mutex::Mutex[i32]) -> i32 {\n\
+             let mut g = m.lock();\n\
+             let cur: i32 = g.get();\n\
+             g.set(cur + 1);\n\
+             return 0;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let root = mutex::new::[i32](10);\n\
+             let c1 = root.clone();\n\
+             let c2 = root.clone();\n\
+             let h1: thread::JoinHandle[i32] = thread::spawn_with::[mutex::Mutex[i32], i32](c1, worker);\n\
+             let h2: thread::JoinHandle[i32] = thread::spawn_with::[mutex::Mutex[i32], i32](c2, worker);\n\
+             let _r1: i32 = h1.join();\n\
+             let _r2: i32 = h2.join();\n\
+             let final_val: i32 = {\n\
+                 let g = root.lock();\n\
+                 g.get()\n\
+             };\n\
+             if final_val != 12 { return 1; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    for sanitizer in &["", "--asan", "--tsan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() { cmd.arg(sanitizer); }
+        let st = cmd.status().expect("invoke cpc");
+        assert!(st.success(), "cpc build failed with {}", sanitizer);
+        let bin = dir.join("target/debug/mux");
+        let run = Command::new(&bin).output().expect("run");
+        assert!(
+            run.status.success(),
+            "mux exit non-zero with {}: code={:?} stderr={}",
+            sanitizer, run.status.code(), String::from_utf8_lossy(&run.stderr),
+        );
+    }
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.
