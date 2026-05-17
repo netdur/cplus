@@ -153,9 +153,22 @@ The check is structural at type-definition time, not lifetime-typed. Cross-threa
 
 Tests: rejects `Arc[RefCell[T]]`-shape misuse with a precise diagnostic; accepts `Arc[Mutex[T]]`; rejects raw-pointer-containing structs from cross-thread move unless explicitly marked.
 
-#### Slice 2B — `Box[T]` · S
+#### Slice 2B — `Box[T]` · ✅ shipped 2026-05-17
 
-The simplest owned-heap type. No refcount, no sharing. Baseline for the rest of the zoo. Drop calls `free` on the inner ptr after the inner T's Drop.
+Single heap-allocated owned value. Pure-source stdlib type at [vendor/stdlib/src/box.cplus](vendor/stdlib/src/box.cplus) — no compiler changes.
+
+**API:**
+- `box::new(move v: T) -> Box[T]` — heap-allocate slot, init with `v`, return box.
+- `Box[T]::get(self) -> T` — read inner (bitwise copy; caller responsible for not double-using when T is non-Copy).
+- `Box[T]::set(mut self, v: T)` — overwrite inner.
+- `Box[T]::unwrap(move self) -> T` — consume box, return inner. The function-exit Drop (fires because `move self` transfers ownership into the callee) frees the heap slot; no manual `free` here or it would double-free.
+- `Box[T]::drop(mut self)` — frees heap slot. Inner T's Drop (if any) is the caller's job — `unwrap()` first.
+
+**Tests:** new e2e `stdlib_box_round_trip_copy_and_non_copy` covers Copy (i32) and non-Copy (string) round-trips through `new` → `set` → `get` → `unwrap`.
+
+**Test count: 1195, all green.**
+
+**Learning surfaced during implementation:** `move self` doesn't auto-disarm the callee's function-exit Drop. The first version of `unwrap` did `free` explicitly + returned, then the implicit exit-Drop fired and double-freed. Two safe shapes for consuming methods: (a) let exit-Drop do the cleanup (what `unwrap` ended up doing), or (b) explicitly `mark_moved` self inside an intrinsic-call body (what `JoinHandle::join` + `__cplus_thread_join` does). Worth a forward-pointer for v0.0.5: provide a `consume self` syntax that statically disarms callee Drop.
 
 #### Slice 2C — `Arc[T]` · M
 
@@ -307,6 +320,7 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ## Resolved log
 
+- **2026-05-17** — Phase 2 Slice 2B shipped. `Box[T]` — single heap-allocated owned value. Pure-source stdlib at [vendor/stdlib/src/box.cplus](vendor/stdlib/src/box.cplus). API: `box::new(move v)`, `get/set/unwrap`. `move self` semantics learned: don't manually free inside a `move self`-consuming method; let the function-exit Drop do it. 1195 tests, all green.
 - **2026-05-17** — Phase 1G shipped. Generic `async fn` verified e2e — sema's `subst_ty_deep` + monomorphize's `synthesize_fn` already threaded `is_async`; Phase 1E + 1F's fixes made the full chain run clean. `id::[i32]`, `id::[i64]`, `id::[bool]` all round-trip through `block_on`. 1194 tests. **Phase 1 closed.**
 - **2026-05-17** — Phase 1F shipped. `mangle_o_for_tramp` made recursive over `Ty`: raw / fn / struct / enum / array O all work in `thread::spawn`. Eligibility rewritten as explicit `match` (Slice + Str rejected — fat-pointer hazards). 2 new e2e, 1193 tests.
 - **2026-05-17** — Phase 1E shipped. Non-Copy `O` for `thread::spawn` + `JoinHandle::join` + `async fn` return. Trampoline emits sret-aware call when O is non-Copy; coroutine prologue allocates a real promise alloca (CoroSplit hoists into the frame). 2 new e2e, 1191 tests. ASan-async interaction noted as pre-existing follow-up.

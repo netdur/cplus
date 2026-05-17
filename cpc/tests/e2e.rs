@@ -6194,6 +6194,54 @@ fn generic_async_fn_multi_instantiation_round_trip() {
     assert_eq!(run.code(), Some(0), "expected all generic async instantiations to round-trip clean");
 }
 
+/// v0.0.4 Phase 2 Slice 2B: `Box[T]` — single heap-allocated owned value.
+///
+/// Exercises:
+///   - i32 round-trip (`new(42).get() == 42`).
+///   - `set` mutation followed by `get` reads the new value.
+///   - `unwrap(move self)` consumes the box and the function-exit Drop
+///     frees the heap slot — no manual free, or we'd double-free.
+///   - non-Copy `string` round-trip via `move v` param.
+///   - ASan-clean.
+#[test]
+fn stdlib_box_round_trip_copy_and_non_copy() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"boxr\"\n\n[[bin]]\nname = \"boxr\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let box_src = include_str!("../../vendor/stdlib/src/box.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/box.cplus"), box_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/box\" as box;\n\
+         fn main() -> i32 {\n\
+             let mut b = box::new::[i32](7);\n\
+             if b.get() != 7 { return 1; }\n\
+             b.set(100);\n\
+             if b.get() != 100 { return 2; }\n\
+             if b.unwrap() != 100 { return 3; }\n\
+             let s = \"boxed-string\".to_string();\n\
+             let b2 = box::new::[string](s);\n\
+             let recovered: string = b2.unwrap();\n\
+             if recovered.len() != (12 as usize) { return 4; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 2B Box regression?)");
+    let bin = dir.join("target/debug/boxr");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected all Box checks to pass");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.

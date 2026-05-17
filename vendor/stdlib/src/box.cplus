@@ -1,0 +1,69 @@
+// stdlib/box.cplus — single heap-allocated owned value.
+//
+// `Box[T]` is a unique-ownership wrapper around a heap slot. Useful when
+// you need a stable pointer to a value (recursive types via raw pointer
+// chains, FFI handles whose lifetime matches a C+ scope, returning a
+// value through a function boundary without sret-widening every callee).
+//
+// API: free-fn constructor `box::new(v)` (matches the rest of the
+// stdlib's free-fn-constructor convention until module-qualified
+// generic associated-fn calls are routinely resolved). Methods on
+// `Box[T]`: `get`, `set`, `unwrap`, and Drop. No `as_ref` — C+ has no
+// `&T` reference type; pass `mut self` / `self` receivers instead.
+//
+// **v0.0.4 limitation** (inherited from `Vec[T]`): when `T` itself is
+// Drop, the inner value's destructor is **not** invoked automatically
+// at Box's Drop. Free-fn `unwrap(move self)` is the safe way to recover
+// the inner T before scope-exit Drop runs.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+pub struct Box[T] {
+    p: *T,
+}
+
+// Heap-allocate a new T-sized slot, initialize it with `v`, return Box.
+// `move v` is the explicit ownership-transfer marker — required for
+// non-Copy T (string, Vec[U], owned structs) so the caller's binding
+// is properly marked moved. Copy T's behave as if move were absent.
+pub fn new[T](move v: T) -> Box[T] {
+    let bytes: usize = size_of::[T]();
+    let raw: *u8 = unsafe { malloc(bytes) };
+    let p: *T = unsafe { raw as *T };
+    unsafe { *p = v; }
+    return Box[T] { p: p };
+}
+
+impl Box[T] {
+    // Read the boxed value (does not consume the box; pointer stays
+    // valid). Returns a fresh `T` — for Copy T this is a value-copy;
+    // for non-Copy T the inner storage now has a *bitwise-duplicated*
+    // copy whose ownership is ambiguous, so callers should immediately
+    // `unwrap()` or replace via `set()` to avoid double-free.
+    pub fn get(self) -> T {
+        return unsafe { *self.p };
+    }
+
+    // Overwrite the boxed value. Existing T is replaced; if T was Drop
+    // the previous value is *not* destructed (v0.0.4 limitation).
+    pub fn set(mut self, v: T) {
+        unsafe { *self.p = v; }
+        return;
+    }
+
+    // Consume the box, return the inner T. The function-exit drop
+    // (fires because `move self` transfers ownership *into* the
+    // callee) frees the heap slot — no manual free here, or we'd
+    // double-free.
+    pub fn unwrap(move self) -> T {
+        return unsafe { *self.p };
+    }
+
+    // Destructor: free the heap slot. Inner T's Drop (if any) is the
+    // caller's job — `unwrap()` first to take ownership.
+    fn drop(mut self) {
+        unsafe { free(self.p as *u8); }
+        return;
+    }
+}
