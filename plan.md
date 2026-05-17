@@ -421,6 +421,38 @@ Locked decisions; don't reopen without a clear motivating case:
 
 ---
 
+## Known compiler bugs (surfaced during external use)
+
+Tracked separately from feature carryovers — these are wrong-behaviour bugs in shipped code paths, not deliberate deferrals. Each should land as a discrete slice when prioritised.
+
+- **Codegen panic on `let x: STRUCT = if cond { a } else { b };`.** Surfaced 2026-05-17 during the [raytracer benchmark port](#external-benchmarks). Codegen panics with `"let init produces a value"` when the let initializer is an if-expression returning a struct. Primitive `let r: i32 = if … { 1 } else { 0 }` works; struct-returning if-init does not. **Workaround:** rewrite as `let mut x = a; if !cond { x = b; }`. Likely root cause: the let-init lowering path expects a single value from the initializer; the if-expression value path emits the value through both branches but the let-init doesn't pick it up when the result is a struct (sret-shaped return through the if).
+- **Inexact f32 literals emit malformed LLVM IR.** Surfaced 2026-05-17. Literals like `0.1f32`, `0.001f32`, `1e-8f32`, `1e30f32` lower to invalid IR — either decimal-form (`float 0.4`, where LLVM requires hex) or scientific without a decimal point (`1e-8` where the float printer needs `0.1e-7` or hex). **Workaround:** write `(0.1 as f32)` — f64 literal then narrowing `as` cast, which routes through `fptrunc` and emits correct IR. Likely root cause: codegen's float-literal printer for f32 doesn't normalise to LLVM's accepted forms (decimal-with-fractional-part, scientific-with-decimal-mantissa, or hex). Fix lands in `cplus-core/src/codegen.rs` near the float-literal lowering.
+
+## External benchmarks
+
+Real-world ports tracking C+'s competitive position against C / Rust / Swift. Numbers are point-in-time snapshots; they shift as both C+ and competitors evolve.
+
+### Raytracer (800×450, 32 spp, max depth 15, single-threaded)
+
+| Lang  | Binary    | Build   | Run (best of 3) | Max RSS | Output MD5      |
+|-------|-----------|---------|-----------------|---------|-----------------|
+| C     | 50,312 B  | 141 ms  | **1,170 ms**    | 2.49 MB | 7730fff3…aef85  |
+| **C+**| **33,656 B** | **116 ms** | 1,520 ms    | 2.47 MB | 12e92897…b98ee  |
+| Rust  | 302,496 B | 2,324 ms| **1,170 ms**    | 2.64 MB | 7730fff3…aef85  |
+| Swift | 58,472 B  | 774 ms  | 1,470 ms        | 8.32 MB | d1424244…b8746  |
+
+C and Rust are **bit-identical output** (same xorshift32 RNG + seed + FP behaviour). C+ and Swift differ at the bit level due to `-ffp-contract` defaults (FMA fusion) — visually identical.
+
+**C+ wins:** smallest binary (33 KB; Rust's static-linked stdlib + panic handler costs ~10× there), fastest cold build (`cpc` is a thin LLVM frontend; Rust pays for LTO + codegen-units=1).
+
+**C+ loses:** runtime is ~30% behind C / Rust. Same algorithm, same RNG, same seed — the gap is codegen quality (FMA defaults, autovec, inlining heuristics). Plausible recovery items: tune `-ffp-contract`, audit LLVM passes for missing `noundef` / `noalias` / `nofree` on hot-path params, profile-guided inlining hints in v0.0.5.
+
+**Memory:** C / C+ / Rust all fit 2.5–2.6 MB (the 1 MB pixel buffer dominates). Swift's 8.32 MB is runtime overhead.
+
+Sources: `raytracer/cplus/main.cplus`, `raytracer/c/main.c`, `raytracer/rust/src/main.rs`, `raytracer/swift/main.swift`, `raytracer/bench.sh` (external project; not in this repo).
+
+---
+
 ## Resolved log
 
 - **2026-05-17** — Phase 2 Slice 2G shipped. `CowStr` — clone-on-write wrapper for string-shaped data. Reframed: ships as a string-specific type (not generic `Cow[T]`) because C+'s no-`&T` design erases the borrow/owned distinction generic Cow depends on. Free-fn API (sema E0325 rejects `impl` on enums in v0.0.4). 1200 tests, all green.
