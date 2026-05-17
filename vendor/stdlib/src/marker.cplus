@@ -1,0 +1,40 @@
+// stdlib/marker.cplus — documentation anchor for the blessed marker
+// interfaces `Send` and `Sync`.
+//
+// These are *blessed* interfaces — registered by the compiler at sema
+// startup, available everywhere without import. The names are reserved;
+// `interface Send` / `interface Sync` declarations in user code are
+// rejected with E0301 (duplicate name) the same way `Copy` is.
+//
+// **Send** — a type is `Send` iff it is safe to **transfer** between
+// threads. Concretely: `thread::spawn[O: Send]` accepts only `O: Send`
+// at sema-time. Values whose ownership crosses a thread boundary
+// (function-parameter move, return value) must impl Send.
+//
+// **Sync** — a type is `Sync` iff it is safe to **share** between
+// threads via `&T`-style cross-thread reads. Less load-bearing in C+
+// than Rust because C+ has no `&T` reference type; the closest analog
+// is `Arc[T]` where multiple threads hold clones of an Arc pointing at
+// the same `T`. The `Arc[T]: Sync` rule (Arc-of-T is Sync iff T is Sync)
+// will land alongside future `Mutex[T]: Sync` and `Cell[T]: !Sync`
+// markers.
+//
+// **v0.0.4 baseline: permissive — every type is `Send + Sync`.** The
+// vocabulary exists; enforcement is incremental. Future slices tighten:
+//
+//   - `Rc[T]: !Send` — non-atomic refcount races on cross-thread move
+//   - `MutexGuard[T]: !Send` — pthread_mutex_unlock must be on the
+//     same thread that called pthread_mutex_lock
+//   - Structs with raw-pointer fields default to `!Send` unless the
+//     user opts in via `unsafe impl Send for MyType {}`
+//   - `Cell[T] / RefCell[T]: !Sync` (when those types land)
+//
+// Today this file is documentation; the marker interfaces are
+// registered globally by the compiler with no methods. Future
+// negative-impl syntax (`impl !Send for Rc[T] {}`) is a separate
+// trait-system slice.
+//
+// **Why an empty .cplus file then?** Discoverability — `import
+// "stdlib/marker"` is the canonical place to read the rules. Stdlib
+// consumers `import "stdlib/marker";` to make the dependency on the
+// markers explicit, even though the names resolve globally.

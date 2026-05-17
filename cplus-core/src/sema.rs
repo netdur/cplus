@@ -1042,6 +1042,31 @@ impl SemaCx<'_> {
         }
     }
 
+    /// v0.0.4 Phase 2 Slice 2A: structural Send membership.
+    ///
+    /// v0.0.4 baseline: every type is Send. The check exists as a
+    /// vocabulary anchor — generic signatures can declare `T: Send`
+    /// bounds (e.g. `thread::spawn[O: Send]`) and the check accepts
+    /// every type today, but the surface is forward-compatible with
+    /// the tightening planned for future slices:
+    /// - `Rc[T]`, `MutexGuard[T]`: explicit `!Send`.
+    /// - Structs with raw-pointer fields: `!Send` unless the user
+    ///   opts in via `unsafe impl Send for T {}`.
+    ///
+    /// Today the check returns true regardless. The bound itself is
+    /// the documentation; enforcement tightens incrementally.
+    pub fn is_send(&self, _ty: &Ty) -> bool {
+        true
+    }
+
+    /// v0.0.4 Phase 2 Slice 2A: structural Sync membership. Same
+    /// baseline + roadmap as `is_send` — vacuous true for now;
+    /// tightening tracks per-type `!Sync` markers + structural
+    /// inference for cells/refcells when those land.
+    pub fn is_sync(&self, _ty: &Ty) -> bool {
+        true
+    }
+
     /// Slice 7GEN.5e step 4: verify each `(param, arg)` pair against
     /// the param's declared bounds at an instantiation site. Emits
     /// **E0502** for each violation, naming the offending bound, type,
@@ -1094,6 +1119,19 @@ impl SemaCx<'_> {
     pub fn satisfies_bound(&self, ty: &Ty, bound: &str) -> bool {
         if bound == "Copy" {
             return self.is_copy(ty);
+        }
+        // v0.0.4 Phase 2 Slice 2A: Send / Sync are structural marker
+        // interfaces. v0.0.4 baseline is permissive — every type
+        // satisfies both. Future slices tighten: Rc[T] / MutexGuard[T]
+        // explicitly !Send, raw-pointer-bearing structs !Send unless
+        // user opts in via `unsafe impl Send for T`. The bound API
+        // is locked in now so generic signatures (`thread::spawn[O: Send]`)
+        // compose forward-compatibly with future tightening.
+        if bound == "Send" {
+            return self.is_send(ty);
+        }
+        if bound == "Sync" {
+            return self.is_sync(ty);
         }
         match ty {
             Ty::Struct(id) => {
@@ -1449,6 +1487,22 @@ impl SemaCx<'_> {
         self.interfaces.insert(
             "Copy".to_string(),
             InterfaceDef { name: "Copy".to_string(), methods: HashMap::new(), origin_file: None },
+        );
+        // v0.0.4 Phase 2 Slice 2A: Send and Sync — marker interfaces
+        // gating cross-thread transfer (Send) and cross-thread sharing
+        // (Sync). Same shape as Copy: no methods, structurally inferred
+        // via `is_send` / `is_sync`. v0.0.4 starts permissive (every
+        // type satisfies both); future slices tighten by marking
+        // specific types (`Rc[T]`, `MutexGuard[T]`) as `!Send` and
+        // raw-pointer-containing types as `!Send` unless explicitly
+        // opted-in.
+        self.interfaces.insert(
+            "Send".to_string(),
+            InterfaceDef { name: "Send".to_string(), methods: HashMap::new(), origin_file: None },
+        );
+        self.interfaces.insert(
+            "Sync".to_string(),
+            InterfaceDef { name: "Sync".to_string(), methods: HashMap::new(), origin_file: None },
         );
         // Single-method interfaces with shared shape.
         // (name, method_name, return_type, takes_other_param)
@@ -8499,5 +8553,51 @@ mod tests {
             "{FUTURE_PRELUDE}async fn proc(mut buf: string) -> i32 {{ return 0 as i32; }}"
         ));
         assert!(codes.contains(&"E0900"), "expected E0900 (mut non-Copy param), got: {codes:?}");
+    }
+
+    // ---- v0.0.4 Phase 2 Slice 2A: Send / Sync marker interfaces ----
+
+    #[test]
+    fn send_bound_accepts_primitive() {
+        // `fn worker[T: Send](x: T) -> T { return x; }` instantiated with
+        // i32 must pass. v0.0.4 baseline is permissive — every type is
+        // Send — so this is the canonical "vocabulary works" check.
+        assert_clean(
+            "fn worker[T: Send](x: T) -> T { return x; }\n\
+             fn main() -> i32 { return worker::[i32](42); }"
+        );
+    }
+
+    #[test]
+    fn send_bound_accepts_user_struct() {
+        // User-defined struct: also Send under the v0.0.4 baseline.
+        assert_clean(
+            "struct Pt { x: i32, y: i32 }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let p: Pt = Pt { x: 1, y: 2 };\n\
+                 let q: Pt = ship::[Pt](p);\n\
+                 return q.x;\n\
+             }"
+        );
+    }
+
+    #[test]
+    fn sync_bound_accepts_primitive() {
+        // Same shape, Sync bound.
+        assert_clean(
+            "fn share[T: Sync](x: T) -> T { return x; }\n\
+             fn main() -> i32 { return share::[i32](42); }"
+        );
+    }
+
+    #[test]
+    fn send_and_sync_compose_with_other_bounds() {
+        // Multiple bounds on one type param — verifies the bound-list
+        // parsing/resolution sees Send / Sync as first-class.
+        assert_clean(
+            "fn need_both[T: Send + Sync](x: T) -> T { return x; }\n\
+             fn main() -> i32 { return need_both::[i32](7); }"
+        );
     }
 }
