@@ -1531,6 +1531,7 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
         ExprKind::Block(b) => rewrite_block(b, ctx, scope)?,
         ExprKind::Unsafe(b) => rewrite_block(b, ctx, scope)?,
         ExprKind::Await(inner) => rewrite_expr(inner, ctx, scope)?,
+        ExprKind::Yield(inner) => rewrite_expr(inner, ctx, scope)?,
         ExprKind::If { cond, then, else_branch } => {
             rewrite_expr(cond, ctx, scope)?;
             rewrite_block(then, ctx, scope)?;

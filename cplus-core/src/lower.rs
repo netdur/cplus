@@ -171,6 +171,7 @@ impl Lower {
             ExprKind::Block(b) => self.lower_block(b),
             ExprKind::Unsafe(b) => self.lower_block(b),
             ExprKind::Await(inner) => self.lower_expr(inner),
+            ExprKind::Yield(inner) => self.lower_expr(inner),
             ExprKind::If { cond, then, else_branch } => {
                 self.lower_expr(cond);
                 self.lower_block(then);
@@ -520,6 +521,7 @@ pub(crate) fn expr_diverges(e: &Expr) -> bool {
         ExprKind::Block(b) => block_diverges(b),
         ExprKind::Unsafe(b) => block_diverges(b),
         ExprKind::Await(inner) => expr_diverges(inner),
+        ExprKind::Yield(inner) => expr_diverges(inner),
         ExprKind::If { then, else_branch, .. } => {
             let then_d = block_diverges(then);
             let else_d = match else_branch {

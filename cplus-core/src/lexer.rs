@@ -78,6 +78,12 @@ pub enum TokenKind {
     /// allowed contexts (`async fn` declarations only, `await` only
     /// inside an `async fn` body).
     Async, Await,
+    /// v0.0.4 Phase 4 Slice 4A: `gen` fn modifier + `yield` expression.
+    /// `gen fn name() -> T` declares a generator coroutine whose body
+    /// uses `yield V;` to produce successive `T` values. Sema rewrites
+    /// the declared return type from `T` to `Iterator[T]`; codegen
+    /// lowers the body to an LLVM coroutine.
+    Gen, Yield,
     /// Slice 6BC.5: `borrow` keyword. Opens a region-annotated borrow
     /// type: `borrow A T` (shared) or `mut x: borrow A T` (exclusive).
     Borrow,
@@ -471,6 +477,8 @@ impl<'a> Lexer<'a> {
             "interface" => TokenKind::Interface,
             "type" => TokenKind::TypeKw,
             "async" => TokenKind::Async,
+            "gen"   => TokenKind::Gen,
+            "yield" => TokenKind::Yield,
             "await" => TokenKind::Await,
             _ => TokenKind::Ident(text.to_string()),
         };

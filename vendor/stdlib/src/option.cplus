@@ -1,0 +1,22 @@
+// stdlib/option.cplus — `Option[T]` (v0.0.4 Phase 4).
+//
+// The canonical "value or nothing" type. Returned by `Iterator[T]::next()`
+// to signal end-of-stream. Also useful anywhere a function might or
+// might not produce a value.
+//
+// **Why not just use `Result[T, E]` with `E = ()`?** Option's `None`
+// case is more idiomatic for "no value here, this isn't an error";
+// Result's `Err` implies a fault path. Both shapes coexist — pick the
+// one that matches caller intent.
+
+pub enum Option[T] {
+    Some(T),
+    None,
+}
+
+// Generic constructor for `Some` — symmetric with `Result::ok`. The
+// `None` variant is constructed directly as `Option[T]::None` with the
+// turbofish (sema can't infer T from a payload-less variant).
+pub fn some[T](move v: T) -> Option[T] {
+    return Option[T]::Some(v);
+}

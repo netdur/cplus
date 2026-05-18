@@ -945,6 +945,22 @@ fn make_key(buf: *u8, n: u32) -> u32 {
 
 **Known parser gap:** array-literal repeat-count syntax (`[0u8; 10]`) doesn't parse yet. Workaround: list elements explicitly.
 
+### Variadic libc functions: declare with `...`, not fixed-arity
+
+If the C declaration says `int fcntl(int fd, int cmd, ...);` then the C+ extern must mirror the variadic shape:
+
+```cplus
+// ✅
+extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+
+// ❌ Silently broken on AArch64-darwin.
+extern fn fcntl(fd: i32, cmd: i32, arg: i32) -> i32;
+```
+
+On AArch64-darwin the variadic ABI puts vararg arguments on the **stack**, not in registers (named args go in regs). A fixed 3-arg declaration passes the third arg in `w2`, but libc's `fcntl(F_SETFL, flags)` reads it from the stack — picking up whatever was there (likely 0). The call returns 0 ("success") but the flag was never set. Symptoms: a "non-blocking" fd that still blocks, an `ioctl` that silently no-ops.
+
+This bit Slice 3A.3 hard: `set_nonblocking` looked correct, returned 0, but `read()` still blocked because O_NONBLOCK was never actually set. Lesson: **for any libc function declared variadic in its header, use `...` in the C+ extern**. Don't try to "make it concrete" by listing the args you care about.
+
 ### Pointer casts go through `usize`, not `i32`
 
 ```cplus

@@ -1,16 +1,53 @@
-// stdlib/hash_map.cplus — concrete `StrIntMap` (str → i32) for v0.0.3.
+// stdlib/hash_map.cplus — Generic `HashMap[K, V]` (v0.0.4 Slice 3B.5).
 //
-// Generic `HashMap[K, V]` is deferred to v0.0.4: it needs a `Hash[K]`
-// interface that monomorphizes correctly across module boundaries,
-// which compounds the same cross-module-impl machinery shipped for
-// generic-struct methods in v0.0.3 Slice 1P. For now, this concrete
-// map covers the 80% case (text counter, header dictionary, simple
-// caches). The shape mirrors the eventual generic API so consumer
-// code reads the same after the migration.
+// Open addressing with linear probing, doubling at 0.75 load factor.
 //
-// Open addressing with linear probing. Doubles capacity at 0.75 load
-// factor. Keys are byte-copied into the table on insert; the caller's
-// `str` borrow can drop without affecting the map.
+// **Type parameters and bounds.**
+//
+//   - `K: Copy` — keys are bitwise-copied into the table on insert.
+//     Primitive types (`i32`, `i64`, `u64`, `usize`, `str`, ...) are
+//     Copy structurally. User struct types are Copy iff every field is
+//     Copy. For `K = str`, the table stores the str's fat pointer
+//     verbatim — **the caller is responsible for keeping the underlying
+//     bytes alive for the map's lifetime**. Use static string literals
+//     or pre-allocated buffers; never store a str backed by a heap
+//     string that drops before the map.
+//
+//   - `V: Copy` — same bitwise-copy semantics on insert and `get`.
+//     Non-Copy `V` (like `string` or `Vec[T]`) would need Drop hooks
+//     on overwrite and on map-Drop; forward-pointed to a future slice.
+//
+// **Hashing and equality.**
+//
+//   - `K.hash() -> u64` and `K.eq(other) -> bool` are required. The
+//     compiler ships blessed implementations for every integer
+//     primitive plus `str` — those just work. User types provide their
+//     own via `impl Hash for MyType { fn hash(self) -> u64 { ... } }`
+//     and `impl Eq for MyType { fn eq(self, other: Self) -> bool { ... } }`.
+//
+//     The generic body in this module calls `k.hash()` and `k.eq(stored)`
+//     directly; monomorphization picks the right lowering per
+//     instantiation.
+//
+// **Layout** (parallel arrays — separate K, V, and occupancy buffers,
+// avoids per-entry padding that a `{K, V, bool}` slot struct would pay):
+//
+//   keys:     *K       — cap slots
+//   vals:     *V       — cap slots
+//   occupied: *u8      — cap slots; 0 = empty, 1 = occupied
+//   cap, len: usize
+//
+// **API.**
+//
+//   hash_map::new::[K, V]() -> HashMap[K, V]
+//   HashMap[K, V]::len(self) -> usize
+//   HashMap[K, V]::capacity(self) -> usize
+//   HashMap[K, V]::insert(mut self, k: K, v: V)
+//   HashMap[K, V]::get(self, k: K) -> result::Result[V, result::IoError]
+//   HashMap[K, V]::contains_key(self, k: K) -> bool
+//
+// `StrIntMap` from v0.0.3 is retained as a thin alias: `pub fn
+// new_str_int_map() -> HashMap[str, i32]` constructs the same shape.
 
 import "./result" as result;
 
@@ -20,50 +57,28 @@ extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
-pub struct StrIntMap {
-    // Three parallel arrays sized at `cap` entries each.
-    keys: **u8,        // *u8 per slot — heap-owned copy of the key bytes (null = empty)
-    klens: *usize,     // byte length of slot i's key (0 = empty)
-    vals: *i32,        // value associated with slot i
+pub struct HashMap[K, V] {
+    keys: *K,
+    vals: *V,
+    occupied: *u8,
     cap: usize,
     len: usize,
 }
 
-// FNV-1a 64-bit. Stable, fast, no need for randomization in v0.0.3.
-fn fnv1a(bytes: *u8, len: usize) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325 as u64;
-    let mut i: usize = 0 as usize;
-    while i < len {
-        let b: u8 = unsafe { bytes[i] };
-        h = h ^ (b as u64);
-        h = h *% (0x100000001b3 as u64);
-        i = i +% (1 as usize);
-    }
-    return h;
-}
-
-fn keys_equal(a: *u8, alen: usize, b: *u8, blen: usize) -> bool {
-    if alen != blen { return false; }
-    let mut i: usize = 0 as usize;
-    while i < alen {
-        if unsafe { a[i] } != unsafe { b[i] } { return false; }
-        i = i +% (1 as usize);
-    }
-    return true;
-}
-
-// Empty map; allocates on first insert. Drop releases all heap memory.
-pub fn new_str_int_map() -> StrIntMap {
-    return StrIntMap {
-        keys: unsafe { 0 as **u8 },
-        klens: unsafe { 0 as *usize },
-        vals: unsafe { 0 as *i32 },
+// Empty map; first insert allocates. `K` and `V` must both satisfy the
+// blessed bounds documented at the top of this file — sema enforces
+// them at use-site monomorphization.
+pub fn new[K, V]() -> HashMap[K, V] {
+    return HashMap[K, V] {
+        keys: unsafe { 0 as *K },
+        vals: unsafe { 0 as *V },
+        occupied: unsafe { 0 as *u8 },
         cap: 0 as usize,
         len: 0 as usize,
     };
 }
 
-impl StrIntMap {
+impl HashMap[K, V] {
     pub fn len(self) -> usize {
         return self.len;
     }
@@ -72,9 +87,9 @@ impl StrIntMap {
         return self.cap;
     }
 
-    // Insert or overwrite `key → val`. The key bytes are copied into the
-    // table's own allocation; the caller's `str` can drop afterward.
-    pub fn insert(mut self, key: str, val: i32) {
+    // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
+    // the table (their `Copy` bound makes this safe).
+    pub fn insert(mut self, k: K, v: V) {
         if self.cap == (0 as usize) {
             self.grow_to(16 as usize);
         }
@@ -82,61 +97,58 @@ impl StrIntMap {
         if (self.len *% (4 as usize)) >= (self.cap *% (3 as usize)) {
             self.grow_to(self.cap *% (2 as usize));
         }
-        let kp: *u8 = str_ptr(key);
-        let kl: usize = str_len(key);
-        let h: u64 = fnv1a(kp, kl);
+        let h: u64 = k.hash();
         let start: usize = (h as usize) % self.cap;
         let mut slot: usize = start;
         loop {
-            let existing_len: usize = unsafe { self.klens[slot] };
-            if existing_len == (0 as usize) {
-                let owned: *u8 = unsafe { malloc(kl) };
-                unsafe { memcpy(owned, kp, kl); }
-                unsafe { self.keys[slot] = owned; }
-                unsafe { self.klens[slot] = kl; }
-                unsafe { self.vals[slot] = val; }
+            let occ: u8 = unsafe { self.occupied[slot] };
+            if occ == (0 as u8) {
+                unsafe { self.keys[slot] = k; }
+                unsafe { self.vals[slot] = v; }
+                unsafe { self.occupied[slot] = 1 as u8; }
                 self.len = self.len +% (1 as usize);
                 return;
             }
-            let existing_key: *u8 = unsafe { self.keys[slot] };
-            if keys_equal(existing_key, existing_len, kp, kl) {
-                unsafe { self.vals[slot] = val; }
+            let existing: K = unsafe { self.keys[slot] };
+            if existing.eq(k) {
+                unsafe { self.vals[slot] = v; }
                 return;
             }
             slot = (slot +% (1 as usize)) % self.cap;
-            if slot == start { return; } // table full; should never happen post-grow
+            if slot == start { return; } // table full; cannot happen post-grow
         }
     }
 
-    // Look up `key`. Returns Ok(value) on hit, Err(NotFound) on miss.
-    pub fn get(self, key: str) -> result::Result[i32, result::IoError] {
+    // Look up `k`. Returns Ok(v) on hit, Err(NotFound) on miss.
+    pub fn get(self, k: K) -> result::Result[V, result::IoError] {
         if self.cap == (0 as usize) {
-            return result::io_err::[i32](result::IoError::NotFound);
+            return result::Result[V, result::IoError]::Err(result::IoError::NotFound);
         }
-        let kp: *u8 = str_ptr(key);
-        let kl: usize = str_len(key);
-        let h: u64 = fnv1a(kp, kl);
+        let h: u64 = k.hash();
         let start: usize = (h as usize) % self.cap;
         let mut slot: usize = start;
         loop {
-            let existing_len: usize = unsafe { self.klens[slot] };
-            if existing_len == (0 as usize) {
-                return result::io_err::[i32](result::IoError::NotFound);
+            let occ: u8 = unsafe { self.occupied[slot] };
+            if occ == (0 as u8) {
+                return result::Result[V, result::IoError]::Err(result::IoError::NotFound);
             }
-            let existing_key: *u8 = unsafe { self.keys[slot] };
-            if keys_equal(existing_key, existing_len, kp, kl) {
-                return result::io_ok::[i32](unsafe { self.vals[slot] });
+            let existing: K = unsafe { self.keys[slot] };
+            if existing.eq(k) {
+                let v: V = unsafe { self.vals[slot] };
+                return result::Result[V, result::IoError]::Ok(v);
             }
             slot = (slot +% (1 as usize)) % self.cap;
-            if slot == start { return result::io_err::[i32](result::IoError::NotFound); }
+            if slot == start {
+                return result::Result[V, result::IoError]::Err(result::IoError::NotFound);
+            }
         }
-        return result::io_err::[i32](result::IoError::NotFound);  // unreachable
+        return result::Result[V, result::IoError]::Err(result::IoError::NotFound);  // unreachable
     }
 
-    pub fn contains_key(self, key: str) -> bool {
-        return match self.get(key) {
-            result::Result[i32, result::IoError]::Ok(_) => true,
-            result::Result[i32, result::IoError]::Err(_) => false,
+    pub fn contains_key(self, k: K) -> bool {
+        return match self.get(k) {
+            result::Result[V, result::IoError]::Ok(_) => true,
+            result::Result[V, result::IoError]::Err(_) => false,
         };
     }
 
@@ -144,42 +156,41 @@ impl StrIntMap {
     // (open-addressing positions depend on cap, so a memcpy-resize won't
     // work). Internal helper; not in the public surface.
     fn grow_to(mut self, new_cap: usize) {
-        let old_keys: **u8 = self.keys;
-        let old_klens: *usize = self.klens;
-        let old_vals: *i32 = self.vals;
+        let old_keys: *K = self.keys;
+        let old_vals: *V = self.vals;
+        let old_occ: *u8 = self.occupied;
         let old_cap: usize = self.cap;
-        // 8 bytes per pointer, 8 per usize, 4 per i32 on aarch64-darwin.
-        let keys_bytes: usize = new_cap *% (8 as usize);
-        let lens_bytes: usize = new_cap *% (8 as usize);
-        let vals_bytes: usize = new_cap *% (4 as usize);
+
+        let keys_bytes: usize = new_cap *% size_of::[K]();
+        let vals_bytes: usize = new_cap *% size_of::[V]();
+        let occ_bytes: usize = new_cap;
         let nk_raw: *u8 = unsafe { malloc(keys_bytes) };
-        let nl_raw: *u8 = unsafe { malloc(lens_bytes) };
         let nv_raw: *u8 = unsafe { malloc(vals_bytes) };
-        // Zero key + length regions so empty-slot detection works.
-        unsafe { memset(nk_raw, 0 as i32, keys_bytes); }
-        unsafe { memset(nl_raw, 0 as i32, lens_bytes); }
-        self.keys = unsafe { nk_raw as **u8 };
-        self.klens = unsafe { nl_raw as *usize };
-        self.vals = unsafe { nv_raw as *i32 };
+        let no_raw: *u8 = unsafe { malloc(occ_bytes) };
+        // Zero the occupied buffer so empty-slot detection is correct.
+        unsafe { memset(no_raw, 0 as i32, occ_bytes); }
+        self.keys = unsafe { nk_raw as *K };
+        self.vals = unsafe { nv_raw as *V };
+        self.occupied = unsafe { no_raw as *u8 };
         self.cap = new_cap;
         self.len = 0 as usize;
-        // Re-insert every live old entry. Each was heap-allocated; we
-        // transfer the existing allocation rather than re-malloc + free.
+
+        // Re-insert every old live entry.
         let mut j: usize = 0 as usize;
         while j < old_cap {
-            let l: usize = unsafe { old_klens[j] };
-            if l != (0 as usize) {
-                let kp: *u8 = unsafe { old_keys[j] };
-                let v: i32 = unsafe { old_vals[j] };
-                let h: u64 = fnv1a(kp, l);
+            let occ_j: u8 = unsafe { old_occ[j] };
+            if occ_j != (0 as u8) {
+                let k: K = unsafe { old_keys[j] };
+                let v: V = unsafe { old_vals[j] };
+                let h: u64 = k.hash();
                 let start: usize = (h as usize) % self.cap;
                 let mut slot: usize = start;
                 loop {
-                    let exist_len: usize = unsafe { self.klens[slot] };
-                    if exist_len == (0 as usize) {
-                        unsafe { self.keys[slot] = kp; }
-                        unsafe { self.klens[slot] = l; }
+                    let cur: u8 = unsafe { self.occupied[slot] };
+                    if cur == (0 as u8) {
+                        unsafe { self.keys[slot] = k; }
                         unsafe { self.vals[slot] = v; }
+                        unsafe { self.occupied[slot] = 1 as u8; }
                         self.len = self.len +% (1 as usize);
                         break;
                     }
@@ -191,26 +202,24 @@ impl StrIntMap {
         }
         if old_cap > (0 as usize) {
             unsafe { free(old_keys as *u8); }
-            unsafe { free(old_klens as *u8); }
             unsafe { free(old_vals as *u8); }
+            unsafe { free(old_occ); }
         }
         return;
     }
 
     fn drop(mut self) {
         if self.cap == (0 as usize) { return; }
-        let mut i: usize = 0 as usize;
-        while i < self.cap {
-            let l: usize = unsafe { self.klens[i] };
-            if l != (0 as usize) {
-                let kp: *u8 = unsafe { self.keys[i] };
-                unsafe { free(kp); }
-            }
-            i = i +% (1 as usize);
-        }
         unsafe { free(self.keys as *u8); }
-        unsafe { free(self.klens as *u8); }
         unsafe { free(self.vals as *u8); }
+        unsafe { free(self.occupied); }
         return;
     }
+}
+
+// v0.0.3 alias retained so existing callers don't have to migrate
+// immediately. The shape is identical to the generic form; users can
+// switch to `hash_map::new::[str, i32]()` directly when convenient.
+pub fn new_str_int_map() -> HashMap[str, i32] {
+    return new::[str, i32]();
 }

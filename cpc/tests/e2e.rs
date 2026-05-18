@@ -5470,7 +5470,7 @@ fn stdlib_hash_map_str_int() {
         "import \"stdlib/hash_map\" as map;\n\
          import \"stdlib/result\" as result;\n\
          fn main() -> i32 {\n\
-             let mut m: map::StrIntMap = map::new_str_int_map();\n\
+             let mut m: map::HashMap[str, i32] = map::new_str_int_map();\n\
              m.insert(\"apple\",  1 as i32);\n\
              m.insert(\"banana\", 2 as i32);\n\
              m.insert(\"cherry\", 3 as i32);\n\
@@ -5494,6 +5494,87 @@ fn stdlib_hash_map_str_int() {
     assert_eq!(run.code(), Some(0), "hash_map round-trip failed");
 }
 
+/// v0.0.4 Phase 3 Slice 3B.5: generic HashMap[K, V] exercised over
+/// integer keys (K=i32) and over str keys with overwrite + miss +
+/// 100-entry grow path. Validates: (a) blessed `k.hash()` + `k.eq()`
+/// dispatch through monomorphization; (b) two-type-parameter generic
+/// struct shape; (c) doubling-on-load-factor still re-inserts every
+/// live entry correctly.
+#[test]
+fn stdlib_hash_map_generic_k_v() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hmg\"\n\n[[bin]]\nname = \"hmg\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let hm_src = include_str!("../../vendor/stdlib/src/hash_map.cplus");
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/hash_map.cplus"), hm_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/hash_map\" as hm;\n\
+         import \"stdlib/result\" as result;\n\
+         fn main() -> i32 {\n\
+             // K = i32, V = i32 with overwrite + miss.\n\
+             let mut m1: hm::HashMap[i32, i32] = hm::new::[i32, i32]();\n\
+             m1.insert(1 as i32, 10 as i32);\n\
+             m1.insert(2 as i32, 20 as i32);\n\
+             m1.insert(1 as i32, 100 as i32);  // overwrite\n\
+             if m1.len() != (2 as usize) { return 1 as i32; }\n\
+             guard let result::Result[i32, result::IoError]::Ok(v1) = m1.get(1 as i32)\n\
+                 else { return 2 as i32; };\n\
+             if v1 != (100 as i32) { return 3 as i32; }\n\
+             match m1.get(99 as i32) {\n\
+                 result::Result[i32, result::IoError]::Ok(_) => { return 4 as i32; }\n\
+                 result::Result[i32, result::IoError]::Err(_) => { }\n\
+             }\n\
+             // K = str, V = i32.\n\
+             let mut m2: hm::HashMap[str, i32] = hm::new::[str, i32]();\n\
+             m2.insert(\"apple\", 1 as i32);\n\
+             m2.insert(\"banana\", 2 as i32);\n\
+             m2.insert(\"cherry\", 3 as i32);\n\
+             if m2.len() != (3 as usize) { return 5 as i32; }\n\
+             guard let result::Result[i32, result::IoError]::Ok(v2) = m2.get(\"banana\")\n\
+                 else { return 6 as i32; };\n\
+             if v2 != (2 as i32) { return 7 as i32; }\n\
+             if !m2.contains_key(\"apple\") { return 8 as i32; }\n\
+             if m2.contains_key(\"grape\") { return 9 as i32; }\n\
+             // Stress: 100 entries exercises grow_to (16 → 32 → 64 → 128).\n\
+             let mut m3: hm::HashMap[i32, i32] = hm::new::[i32, i32]();\n\
+             let mut i: i32 = 0;\n\
+             while i < (100 as i32) {\n\
+                 m3.insert(i, i *% (10 as i32));\n\
+                 i = i +% (1 as i32);\n\
+             }\n\
+             if m3.len() != (100 as usize) { return 10 as i32; }\n\
+             let mut sum: i32 = 0;\n\
+             let mut j: i32 = 0;\n\
+             while j < (100 as i32) {\n\
+                 guard let result::Result[i32, result::IoError]::Ok(v) = m3.get(j)\n\
+                     else { return 11 as i32; };\n\
+                 sum = sum +% v;\n\
+                 j = j +% (1 as i32);\n\
+             }\n\
+             // sum over j of j*10 for j in 0..100 = 10 * 99 * 100 / 2 = 49500.\n\
+             if sum != (49500 as i32) { return 12 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (generic HashMap)");
+    let bin = dir.join("target/debug/hmg");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "generic HashMap round-trip failed");
+}
+
 /// v0.0.3 Slice 1C: stdlib/net round-trip — fork() a server, parent acts
 /// as client, send "HELLO" (5 bytes), receive echo, assert len.
 #[test]
@@ -5511,7 +5592,10 @@ fn stdlib_net_tcp_round_trip() {
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
-    for name in &["result", "vec", "net", "io"] {
+    // v0.0.4 Phase 3 Slice 3A.3: net.cplus now imports stdlib/reactor for
+    // the async I/O wrappers; its async fns also implicitly need
+    // stdlib/future for the `Future[T]` shape. Stage both alongside net.
+    for name in &["result", "vec", "net", "io", "reactor", "future"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent().unwrap()
@@ -6648,6 +6732,72 @@ fn stdlib_thread_drop_is_non_blocking() {
 }
 
 /// v0.0.4 Phase 3 Slice 3A.2: executor::yield_now round-trips through
+/// v0.0.4 Phase 4 Slice 4A/4B/4C: `gen fn` + `Iterator[T]::next()` +
+/// `for x in iter { ... }` round-trip. The generator coroutine yields
+/// values 1..=5; the for-in lowering walks the iterator inline (no
+/// per-iteration Option allocation), summing into `total`. Validates
+/// every Phase 4 surface in one shot.
+#[test]
+fn phase4_gen_fn_for_in_round_trips() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"genf\"\n\n[[bin]]\nname = \"genf\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as iter;\n\
+         import \"stdlib/option\" as option;\n\
+         gen fn count_up(n: i32) -> i32 {\n\
+             let mut i: i32 = 1;\n\
+             while i <= n {\n\
+                 yield i;\n\
+                 i = i +% (1 as i32);\n\
+             }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             // Path 1: `for x in iter` desugar.\n\
+             let mut sum: i32 = 0;\n\
+             for x in count_up(5 as i32) {\n\
+                 sum = sum +% x;\n\
+             }\n\
+             if sum != (15 as i32) { return 1 as i32; }\n\
+             // Path 2: explicit `it.next()` pull-style consumption.\n\
+             let mut it: iter::Iterator[i32] = count_up(3 as i32);\n\
+             let mut pulled: i32 = 0;\n\
+             let mut loops: i32 = 0;\n\
+             while loops < (10 as i32) {\n\
+                 match it.next() {\n\
+                     option::Option[i32]::Some(v) => { pulled = pulled +% v; }\n\
+                     option::Option[i32]::None => {\n\
+                         if pulled != (6 as i32) { return 2 as i32; }\n\
+                         return 0 as i32;\n\
+                     }\n\
+                 }\n\
+                 loops = loops +% (1 as i32);\n\
+             }\n\
+             return 3 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (gen fn / for-in)");
+    let bin = dir.join("target/debug/genf");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "gen fn + for-in round-trip mismatched");
+}
+
 /// the reactor's pending queue. Each `yield_now()` enqueues self and
 /// suspends; block_on's drain step resumes us. Counts to N to prove
 /// the loop actually advances.
@@ -6765,6 +6915,93 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
     assert_eq!(run.code(), Some(42), "expected reactor to wake + read byte 42");
 }
 
+/// v0.0.4 Phase 3 Slice 3A.3: stdlib `net::read_fd_async` round-trip.
+/// Exercises the full async-wrapper EAGAIN path:
+///   - `set_nonblocking(rfd)` flips O_NONBLOCK via fcntl.
+///   - `read_fd_async(rfd, buf, 1)` syscalls, gets EAGAIN, registers
+///     with the reactor's wait_read filter, suspends the coroutine.
+///   - block_on's drive loop runs drain_pending (writer task pushes
+///     the byte synchronously into the pipe), then poll_one_event
+///     fires kevent_wait, which returns immediately because the pipe
+///     became readable. Reader is resumed, retries the read, returns 1.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_net_read_fd_async_eagain_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"rfa\"\n\n[[bin]]\nname = \"rfa\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         import \"stdlib/net\" as net;\n\
+         extern fn pipe(fds: *u8) -> i32;\n\
+         extern fn write(fd: i32, buf: *u8, count: usize) -> isize;\n\
+         extern fn close(fd: i32) -> i32;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         async fn reader(rfd: i32) -> i32 {\n\
+             let buf: *u8 = unsafe { malloc(1 as usize) };\n\
+             let n: isize = await net::read_fd_async(rfd, buf, 1 as usize);\n\
+             let v: u8 = unsafe { *buf };\n\
+             unsafe { free(buf); }\n\
+             if n != (1 as isize) { return -1 as i32; }\n\
+             return v as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let fds_buf: *u8 = unsafe { malloc(8 as usize) };\n\
+             let _r: i32 = unsafe { pipe(fds_buf) };\n\
+             let fds_i32: *i32 = unsafe { fds_buf as *i32 };\n\
+             let rfd: i32 = unsafe { *fds_i32 };\n\
+             let wfd_p: *i32 = unsafe { fds_i32 + (1 as usize) };\n\
+             let wfd: i32 = unsafe { *wfd_p };\n\
+             let nb: i32 = net::set_nonblocking(rfd);\n\
+             if nb != (0 as i32) { return 90 as i32; }\n\
+             // Start the reader coroutine; reactor body runs eagerly,\n\
+             // hits EAGAIN on the empty pipe, registers a waiter, suspends.\n\
+             let f: future::Future[i32] = reader(rfd);\n\
+             // Now write the byte synchronously. kqueue's EVFILT_READ on\n\
+             // rfd will fire when block_on calls kevent_wait below.\n\
+             let payload: *u8 = unsafe { malloc(1 as usize) };\n\
+             unsafe { *payload = 42 as u8; }\n\
+             let _w: isize = unsafe { write(wfd, payload, 1 as usize) };\n\
+             unsafe { free(payload); }\n\
+             let got: i32 = executor::block_on::[i32](f);\n\
+             let _c1: i32 = unsafe { close(rfd) };\n\
+             let _c2: i32 = unsafe { close(wfd) };\n\
+             unsafe { free(fds_buf); }\n\
+             return got;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (net::read_fd_async)");
+    let bin = dir.join("target/debug/rfa");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42),
+        "expected reactor EAGAIN→wait_read→resume to yield byte 42");
+}
+
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
 /// `result::Result[i32, i32]::Ok(42)` and the matching pattern
 /// `result::Result[i32, i32]::Ok(v)` work end-to-end.
@@ -6846,6 +7083,65 @@ fn stdlib_vec_push_and_get() {
     let run = Command::new(&bin).status().expect("run");
     // 1+2+3+4+5+6+7+8 = 36.
     assert_eq!(run.code(), Some(36), "expected sum of 1..=8 = 36");
+}
+
+/// v0.0.4 Phase 3 Slice 3B.3: `Vec[T]::extend_from_slice(s: T[])` —
+/// slice-typed wrapper over `extend_from_raw`. Single realloc + single
+/// memcpy regardless of T. This test exercises both element type kinds
+/// where T is a scalar primitive (i32) — the `T[]` slice shape carries
+/// the count, so the caller doesn't have to compute it separately.
+#[test]
+fn stdlib_vec_extend_from_slice_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vex\"\n\n[[bin]]\nname = \"vex\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn main() -> i32 {\n\
+             // Build a source Vec with [10, 20, 30, 40, 50] then expose a slice.\n\
+             let mut src_vec: vec::Vec[i32] = vec::new::[i32]();\n\
+             src_vec.push(10 as i32);\n\
+             src_vec.push(20 as i32);\n\
+             src_vec.push(30 as i32);\n\
+             src_vec.push(40 as i32);\n\
+             src_vec.push(50 as i32);\n\
+             let slice: i32[] = src_vec.as_slice();\n\
+             // Extend a fresh Vec; assert total + count.\n\
+             let mut dst: vec::Vec[i32] = vec::new::[i32]();\n\
+             dst.push(1 as i32);\n\
+             dst.extend_from_slice(slice);\n\
+             dst.push(2 as i32);\n\
+             // dst = [1, 10, 20, 30, 40, 50, 2]; len = 7, sum = 153.\n\
+             let mut sum: i32 = 0;\n\
+             let mut i: usize = 0 as usize;\n\
+             while i < dst.len() {\n\
+                 sum = sum +% dst.get(i);\n\
+                 i = i +% (1 as usize);\n\
+             }\n\
+             if dst.len() != (7 as usize) { return 90 as i32; }\n\
+             if sum != (153 as i32) { return 91 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/vex");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "extend_from_slice round-trip mismatched");
 }
 
 /// v0.0.3 Phase 5 Slice 5A: stdlib/atomic end-to-end.

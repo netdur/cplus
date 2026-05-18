@@ -107,6 +107,18 @@ impl Vec[T] {
         return;
     }
 
+    // v0.0.4 Phase 3 Slice 3B.3: slice-typed wrapper over `extend_from_raw`.
+    // Same single-realloc + single-memcpy lowering, but the caller passes a
+    // slice (fat pointer with bounds-known length) instead of a raw pointer
+    // + count. Safer in practice — slice length comes from the producer, not
+    // from a user-side `count` that can drift.
+    pub fn extend_from_slice(mut self, s: T[]) {
+        let p: *T = unsafe { slice_ptr(s) };
+        let n: usize = slice_len(s);
+        self.extend_from_raw(p, n);
+        return;
+    }
+
     pub fn len(self) -> usize {
         return self.len;
     }

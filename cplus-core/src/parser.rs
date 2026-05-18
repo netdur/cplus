@@ -194,6 +194,8 @@ impl Parser {
             // handles the `async`-prefix peek itself, but the top-level
             // item dispatch needs to recognise `async` as opening a fn item.
             TokenKind::Async => self.parse_function(is_pub, attributes),
+            // v0.0.4 Phase 4 Slice 4A: `gen fn` item — generator coroutine.
+            TokenKind::Gen => self.parse_function(is_pub, attributes),
             // Slice 10.FFI.1: `extern fn name(params) -> ret;` declarations.
             // Item-level only — no body, terminated by `;`. The lexer's
             // `Extern` keyword token has existed since Phase 1; this is
@@ -425,6 +427,11 @@ impl Parser {
         // Per-method attributes (slice 5ATTR.1) then per-method `pub` (slice 4B).
         let attributes = self.parse_attributes()?;
         let is_pub = self.eat(&TokenKind::Pub);
+        // v0.0.4 Phase 4 Slice 4E: `gen` (and `async`, when we land
+        // async methods) modifier before `fn`. Methods can be generators
+        // so `Vec[T]::iter(self) -> T` reads naturally.
+        let is_async = self.eat(&TokenKind::Async);
+        let is_gen = self.eat(&TokenKind::Gen);
         let start = self.expect(&TokenKind::Fn, "`fn`")?.span;
         let name = self.expect_ident()?;
         // Slice 7GEN.5e: optional `[T, U: Bound]` after the method name,
@@ -463,7 +470,7 @@ impl Parser {
         };
         let body = self.parse_block()?;
         let span = start.merge(body.span);
-        Ok(Method { name, generic_params, receiver, params, return_type, body, span, is_pub, attributes })
+        Ok(Method { name, generic_params, receiver, params, return_type, body, span, is_pub, attributes, is_async, is_gen })
     }
 
     /// Try to parse a receiver (`self`, `mut self`, or `move self`) at the
@@ -766,6 +773,7 @@ impl Parser {
                 attributes,
                 generic_params: Vec::new(),
                 is_async: false,
+                is_gen: false,
             }),
             span: start.merge(end_span),
             origin_file: None,
@@ -778,6 +786,10 @@ impl Parser {
         // `async fn` declares a coroutine whose declared return type T is
         // implicitly wrapped to `Future[T]` at sema (Slice 5E.2).
         let is_async = self.eat(&TokenKind::Async);
+        // v0.0.4 Phase 4 Slice 4A: `gen fn` modifier. Mutually exclusive
+        // with `async` — a fn is either coroutine-with-future-return or
+        // coroutine-with-iterator-return, not both.
+        let is_gen = self.eat(&TokenKind::Gen);
         self.expect(&TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident()?;
 
@@ -804,6 +816,7 @@ impl Parser {
             kind: ItemKind::Function(Function {
                 name, params, return_type, body, is_pub, is_extern: false, is_variadic: false, attributes, generic_params,
                 is_async,
+                is_gen,
             }),
             span,
             origin_file: None,
@@ -1494,6 +1507,19 @@ impl Parser {
             let span = start.merge(operand.span);
             return Ok(Expr {
                 kind: ExprKind::Await(Box::new(operand)),
+                span,
+            });
+        }
+        // v0.0.4 Phase 4 Slice 4A: `yield EXPR` — same precedence shape
+        // as `await`. Sema enforces that the surrounding fn is `gen` and
+        // that the value type matches the iterator's T. Lexer-keyword;
+        // not usable as an identifier.
+        if matches!(self.peek_kind(), TokenKind::Yield) {
+            self.bump();
+            let operand = self.parse_unary()?;
+            let span = start.merge(operand.span);
+            return Ok(Expr {
+                kind: ExprKind::Yield(Box::new(operand)),
                 span,
             });
         }

@@ -1,0 +1,26 @@
+// stdlib/iterator.cplus — `Iterator[T]`, the compiler-known shape
+// returned by every `gen fn`.
+//
+// v0.0.4 Phase 4 Slice 4A/4B. Users never construct an `Iterator[T]`
+// directly — the only way to produce one is to call a `gen fn`. The
+// compiler synthesises the value at codegen time; the struct definition
+// here just gives the type a stable shape so `gen fn` signatures
+// resolve and `for x in iter { ... }` lowering type-checks.
+//
+// **Field shape (compiler-internal):** a single opaque `*u8` pointing
+// at the LLVM coroutine frame (`llvm.coro.begin`'s return value).
+// Codegen treats `handle == 0` as "exhausted and destroyed" to avoid
+// double-resume.
+//
+// **`it.next()` is a blessed compiler method.** Sema recognizes the
+// call shape `<Iterator[T]>.next()` and returns `Option[T]`; codegen
+// lowers it inline to: check coro.done → if done return Option::None;
+// else read promise → resume coroutine → return Option::Some(v). The
+// method has no source-level body because the operation can't be
+// expressed in surface C+ (it needs raw access to LLVM coro intrinsics).
+
+import "./option" as option;
+
+pub struct Iterator[T] {
+    pub handle: *u8,
+}

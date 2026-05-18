@@ -822,6 +822,7 @@ fn synthesize_fn(
         attributes: template.attributes.clone(),
         generic_params: Vec::new(),   // monomorphized — no longer generic
         is_async: template.is_async,
+        is_gen: template.is_gen,
     }
 }
 

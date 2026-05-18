@@ -405,6 +405,18 @@ fn lookup_future_ty(inner: &Ty, types: &TypeTable) -> Ty {
     Ty::Struct(StructId(0))
 }
 
+/// v0.0.4 Phase 4 Slice 4A: mirror of `lookup_future_ty` for `Iterator[T]`.
+fn lookup_iterator_ty(inner: &Ty, types: &TypeTable) -> Ty {
+    let target = format!("Iterator__{}", mangle_o_for_tramp_with_types(inner, Some(types)));
+    let dotted = format!(".{target}");
+    for (idx, d) in types.struct_defs.iter().enumerate() {
+        if d.name == target || d.name.ends_with(&dotted) {
+            return Ty::Struct(StructId(idx as u32));
+        }
+    }
+    Ty::Struct(StructId(0))
+}
+
 /// v0.0.3 Phase 5 Slice 5E.3: given the monomorphized struct name of
 /// a `Future[U]` instantiation (e.g. `Future__i32`), recover U as a
 /// `Ty`. Mirrors `mangle_o_for_tramp`'s naming — supports the same
@@ -947,6 +959,10 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
         // is the Future aggregate.
         let ret = if f.is_async {
             lookup_future_ty(&declared_ret, types)
+        } else if f.is_gen {
+            // v0.0.4 Phase 4 Slice 4A: gen fn exposes `Iterator[T]` at
+            // the call site.
+            lookup_iterator_ty(&declared_ret, types)
         } else {
             declared_ret
         };
@@ -1772,6 +1788,7 @@ fn scan_moves_in_expr(
         ExprKind::Block(b) => scan_moves_in_block(b, sigs, types, set),
         ExprKind::Unsafe(b) => scan_moves_in_block(b, sigs, types, set),
         ExprKind::Await(inner) => scan_moves_in_expr(inner, sigs, types, set),
+        ExprKind::Yield(inner) => scan_moves_in_expr(inner, sigs, types, set),
         ExprKind::If { cond, then, else_branch } => {
             scan_moves_in_expr(cond, sigs, types, set);
             scan_moves_in_block(then, sigs, types, set);
@@ -2124,6 +2141,7 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
             ExprKind::Block(b) => walk_block(b, table, next_id, out),
             ExprKind::Unsafe(b) => walk_block(b, table, next_id, out),
             ExprKind::Await(inner) => walk_expr(inner, table, next_id, out),
+            ExprKind::Yield(inner) => walk_expr(inner, table, next_id, out),
             ExprKind::If { cond, then, else_branch } => {
                 walk_expr(cond, table, next_id, out);
                 walk_block(then, table, next_id, out);
@@ -2364,6 +2382,15 @@ fn gen_function(
     // type T lands in the coroutine promise for the executor to read.
     if f.is_async {
         gen_async_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
+        return;
+    }
+    // v0.0.4 Phase 4 Slice 4A: `gen fn` bodies are also coroutines, but
+    // they produce `Iterator[T]` (multi-value sequence) instead of
+    // `Future[T]` (single eventual value). `yield V` stashes V into the
+    // coroutine promise and suspends; the iterator's `next()` reads the
+    // promise + resumes.
+    if f.is_gen {
+        gen_gen_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
         return;
     }
 
@@ -2690,6 +2717,111 @@ fn gen_function(
 /// thread::spawn's Copy-only restriction and tracked alongside it.
 /// Generic async fns work because monomorphization fires before
 /// codegen (the async fn is a regular `Function` post-mono).
+/// v0.0.4 Phase 4 Slice 4A: lower a `gen fn` body to an LLVM coroutine
+/// that produces `Iterator[T]`. Structurally identical to
+/// `gen_async_function` — same coro.id/begin/suspend/end pattern — but
+/// wraps the handle in Iterator instead of Future and doesn't write a
+/// dummy promise value on body fall-off (gen body is Unit; the inner T
+/// only appears at `yield` sites, which write the promise themselves).
+fn gen_gen_function(
+    out: &mut String,
+    f: &Function,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+) {
+    let sig = sigs.get(&f.name.name).expect("sig was collected");
+    let inner_ty = match &f.return_type {
+        Some(t) => ty_from(t, types),
+        None => Ty::Unit,
+    };
+    let inner_llvm = llvm_ty(&inner_ty, types);
+    let (_inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
+    let iter_ret_ty = sig.return_type.clone();
+
+    let linkage = if f.name.name == "main" || f.is_pub { "" } else { "internal " };
+    let iter_llvm = llvm_ty(&iter_ret_ty, types);
+
+    write!(out, "define {}{} @{}(", linkage, iter_llvm, f.name.name).unwrap();
+    for (i, (param, (pty, _move_flag, _mut_flag))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        if i > 0 { out.push_str(", "); }
+        write!(out, "{} %{}", llvm_ty(pty, types), i as u32).unwrap();
+        let _ = param;
+    }
+    out.push_str(") presplitcoroutine {\nentry:\n");
+
+    // Promise alloca holds the yielded value. Unit-typed gen fns are
+    // unusual (a yield-less generator), but still need a valid promise
+    // slot — use a 1-byte placeholder. Yield sites store the actual T.
+    let promise_ty: &str = if matches!(inner_ty, Ty::Unit) { "i8" } else { &inner_llvm };
+    let promise_align: u64 = if matches!(inner_ty, Ty::Unit) { 1 } else { inner_align };
+    out.push_str(&format!(
+        "  %.coro.promise = alloca {promise_ty}, align {promise_align}\n"
+    ));
+    out.push_str(&format!(
+        "  %.coro.id = call token @llvm.coro.id(i32 {promise_align}, ptr %.coro.promise, ptr null, ptr null)\n"
+    ));
+    out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
+    out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
+    out.push_str("  %.coro.hdl = call ptr @llvm.coro.begin(token %.coro.id, ptr %.coro.mem)\n");
+
+    let mut state = FnState::new(Ty::Unit, sigs, types, str_lits, mode, test_mode, md, tramps);
+    state.return_ty = Ty::Unit;
+    state.coro_promise = Some((".coro.hdl".to_string(), inner_llvm.clone(), inner_align as u32));
+    state.collect_moved_bindings(&f.body);
+
+    for (i, (param, (pty, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+        let slot = state.alloca_named(&param.name.name, pty.clone());
+        state.body.push_str(&format!(
+            "  store {} %{}, ptr {}\n",
+            llvm_ty(pty, types), i as u32, slot
+        ));
+        state.bind(&param.name.name, slot.clone(), pty.clone());
+    }
+
+    let _body_value = state.gen_block_expr(&f.body);
+
+    // Gen fn body is Unit-typed. Fall-off and explicit `return;` both
+    // branch into the final-suspend block (the consumer's next() will
+    // observe coro.done = true and return Option::None).
+    if !state.terminated {
+        state.emit_terminator("br label %.coro.final_suspend");
+    }
+
+    state.body.push_str(".coro.final_suspend:\n");
+    state.body.push_str("  %.coro.fs = call i8 @llvm.coro.suspend(token none, i1 true)\n");
+    state.body.push_str("  switch i8 %.coro.fs, label %.coro.ramp_return [i8 0, label %.coro.trap i8 1, label %.coro.cleanup]\n");
+    state.body.push_str(".coro.ramp_return:\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.trap:\n");
+    state.body.push_str("  call void @llvm.trap()\n");
+    state.body.push_str("  unreachable\n");
+    state.body.push_str(".coro.cleanup:\n");
+    state.body.push_str("  %.coro.mem_free = call ptr @llvm.coro.free(token %.coro.id, ptr %.coro.hdl)\n");
+    state.body.push_str("  call void @free(ptr %.coro.mem_free)\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.end:\n");
+    state.body.push_str("  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n");
+    state.body.push_str(&format!(
+        "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
+    ));
+    state.body.push_str(&format!(
+        "  ret {iter_llvm} %.coro.iter0\n"
+    ));
+
+    for a in &state.allocas {
+        out.push_str("  ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
 fn gen_async_function(
     out: &mut String,
     f: &Function,
@@ -3938,12 +4070,94 @@ impl<'a> FnState<'a> {
         self.open_block(&exit);
     }
 
+    /// v0.0.4 Phase 4 Slice 4C: lower `for var in iter_expr { body }`
+    /// when `iter_expr` produces an `Iterator[T]`. Inline shape:
+    ///   __hdl  = extractvalue Iterator, 0
+    ///   loop:
+    ///     done = coro.done(__hdl)
+    ///     if done -> exit
+    ///     prom = coro.promise(__hdl)
+    ///     var  = load T, prom
+    ///     coro.resume(__hdl)
+    ///     <body>
+    ///     br loop
+    ///   exit:
+    ///     coro.destroy(__hdl)
+    /// Cleaner than constructing `Option[T]` per iteration; the next()
+    /// path remains for explicit pull-style consumers.
+    fn gen_for_iterator(&mut self, var: &crate::ast::Ident, iter: &Expr, body: &crate::ast::Block) {
+        let (iter_v, iter_ty) = self.gen_expr(iter).expect("for-iter has value");
+        let elem_ty = self.unwrap_iterator_ty(&iter_ty)
+            .expect("sema validated iter is Iterator[T]");
+        let iter_llvm = self.lty(&iter_ty);
+        let elem_llvm = self.lty(&elem_ty);
+        let elem_align = match static_layout(&elem_ty, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+        let hdl = self.next_tmp();
+        self.emit(&format!("{hdl} = extractvalue {iter_llvm} {iter_v}, 0"));
+
+        self.push_scope();
+        let var_slot = self.alloca_named(&var.name, elem_ty.clone());
+        self.bind(&var.name, var_slot.clone(), elem_ty.clone());
+
+        let head = self.next_block_label();
+        let body_lbl = self.next_block_label();
+        let exit = self.next_block_label();
+
+        self.emit_terminator(&format!("br label %{head}"));
+        self.open_block(&head);
+        let done = self.next_tmp();
+        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        self.emit_terminator(&format!("br i1 {done}, label %{exit}, label %{body_lbl}"));
+
+        self.open_block(&body_lbl);
+        let prom_ptr = self.next_tmp();
+        self.emit(&format!(
+            "{prom_ptr} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {elem_align}, i1 false)"
+        ));
+        let val = self.next_tmp();
+        self.emit(&format!(
+            "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
+        ));
+        self.emit(&format!("store {elem_llvm} {val}, ptr {var_slot}"));
+        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
+
+        // `continue` should jump back to head; `break` to exit.
+        self.loop_labels.push((head.clone(), exit.clone()));
+        self.push_scope();
+        for s in &body.stmts {
+            if self.terminated { break; }
+            self.gen_stmt(s);
+        }
+        if !self.terminated {
+            if let Some(tail) = &body.tail { let _ = self.gen_expr(tail); }
+            self.emit_terminator(&format!("br label %{head}"));
+        }
+        self.pop_scope();
+        self.loop_labels.pop();
+
+        self.open_block(&exit);
+        // Destroy the iterator's frame so the malloc'd coroutine state
+        // is freed once iteration completes.
+        self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
+        self.pop_scope();
+    }
+
     fn gen_for(&mut self, fl: &ForLoop) {
         match fl {
             ForLoop::Range { var, iter, body } => {
+                // v0.0.4 Phase 4 Slice 4C: two for-in shapes — closed-range
+                // (`for x in 0..n`) and iterator (`for x in some_gen_fn()`).
+                // Iterator form lowers inline to coro.done/resume/promise
+                // (avoids materializing an Option per iteration).
                 let (start_e, end_e, inclusive) = match &iter.kind {
                     ExprKind::Range { start: Some(s), end: Some(e), inclusive } => (s.as_ref(), e.as_ref(), *inclusive),
-                    _ => unreachable!("sema only allows closed Range as for-iter"),
+                    _ => {
+                        self.gen_for_iterator(var, iter, body);
+                        return;
+                    }
                 };
                 self.push_scope();
                 let i_slot = self.alloca_named(&var.name, Ty::I32);
@@ -4158,6 +4372,14 @@ impl<'a> FnState<'a> {
             // Only valid inside an `async fn` body — sema rejects
             // otherwise (E0901).
             ExprKind::Await(inner_expr) => self.gen_await_expr(inner_expr),
+
+            // v0.0.4 Phase 4 Slice 4A: `yield EXPR` inside a `gen fn`
+            // body. Lowering: store EXPR to the coroutine promise,
+            // suspend (non-final), resume falls through. The actual
+            // function lowering (`gen_gen_function`) emits the
+            // surrounding coroutine setup; this handler just stamps in
+            // the per-yield store + suspend.
+            ExprKind::Yield(inner_expr) => self.gen_yield_expr(inner_expr),
 
             ExprKind::If { cond, then, else_branch } => {
                 self.gen_if(cond, then, else_branch.as_deref())
@@ -5232,6 +5454,11 @@ impl<'a> FnState<'a> {
         if name == "__cplus_reactor_wait_read" {
             return self.gen_reactor_wait_read(args);
         }
+        // v0.0.4 Phase 3 Slice 3A.3: write-side counterpart to wait_read.
+        // Suspends until `fd` is write-ready (EVFILT_WRITE).
+        if name == "__cplus_reactor_wait_write" {
+            return self.gen_reactor_wait_write(args);
+        }
         // v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)`
         // pushes a Future's handle onto the reactor's task queue.
         if name == "__cplus_reactor_spawn_local" {
@@ -5302,7 +5529,7 @@ impl<'a> FnState<'a> {
             self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
             return Some((int_tmp, Ty::Usize));
         }
-        let sig = self.sigs.get(name).expect("sema validated function exists").clone();
+        let sig = self.sigs.get(name).unwrap_or_else(|| panic!("sema validated function exists: missing `{name}`")).clone();
         // Per-arg lowering. `arg_vals[i]` is (ssa-value, llvm-type-string).
         // For pointer-passed `mut x: T` params we take the address of the
         // source place; for value-passed params we evaluate the value and
@@ -5668,6 +5895,52 @@ impl<'a> FnState<'a> {
     /// EXPR evaluates to a `Future[U]`; drive it to completion via a
     /// resume-loop, then extract the result from the coroutine promise.
     /// Requires `self.coro_promise.is_some()` (sema's E0901 enforces).
+    /// v0.0.4 Phase 4 Slice 4A: lower `yield EXPR` inside a `gen fn`
+    /// body. Stash the value in the coroutine promise, then suspend
+    /// (non-final). Resume falls through; ramp exits the gen fn.
+    fn gen_yield_expr(&mut self, inner_expr: &Expr) -> Option<(String, Ty)> {
+        // Evaluate the yielded value.
+        let (val, vty) = self.gen_expr(inner_expr).expect("yield value has SSA");
+        let vty_llvm = self.lty(&vty);
+        let (_size, align) = match static_layout(&vty, self.types) {
+            Some((s, a)) => (s, a),
+            None => (8u64, 8u64),
+        };
+        // Store the value into the coroutine promise. The promise slot
+        // is owned by the surrounding gen fn (allocated in gen_gen_function).
+        let prom_ptr = self.next_tmp();
+        self.emit(&format!(
+            "{prom_ptr} = call ptr @llvm.coro.promise(ptr %.coro.hdl, i32 {align}, i1 false)"
+        ));
+        self.emit(&format!(
+            "store {vty_llvm} {val}, ptr {prom_ptr}, align {align}"
+        ));
+        // Suspend self (non-final). Switched-resume pattern matches
+        // wait_read / yield_now: default → ramp-return out of the gen
+        // fn; 0 → continue with next statement; 1 → cleanup path.
+        let suspend_v = self.next_tmp();
+        let resume_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        let trap_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+        ));
+        // Ramp-return path: branch to the gen fn's .coro.end (emitted by
+        // gen_gen_function's epilogue).
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        // Trap branch: should be unreachable.
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
+        // Normal-resume branch: continue with the body.
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.terminated = false;
+        None
+    }
+
     fn gen_await_expr(&mut self, inner_expr: &Expr) -> Option<(String, Ty)> {
         let (inner_v, inner_ty) = self.gen_expr(inner_expr).expect("await on void expr");
         // Inner must be Future[U]. Pull U out via the struct's generic origin.
@@ -5879,6 +6152,34 @@ impl<'a> FnState<'a> {
         None
     }
 
+    /// v0.0.4 Phase 3 Slice 3A.3: `__cplus_reactor_wait_write(fd)` —
+    /// mirror of wait_read for write-readiness. Same control-flow shape;
+    /// the only difference is registering with EVFILT_WRITE via the
+    /// `register_write_v1` stable export.
+    fn gen_reactor_wait_write(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
+        let (fd_val, _) = self.gen_expr(&args[0]).expect("wait_write fd arg");
+        self.emit(&format!(
+            "call void @stdlib_reactor_register_write_v1(i32 {fd_val}, ptr %.coro.hdl)"
+        ));
+        let suspend_v = self.next_tmp();
+        let resume_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        let trap_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+        ));
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.terminated = false;
+        None
+    }
+
     /// v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)` —
     /// push a Future's coroutine handle onto the reactor's task queue.
     /// The Future is consumed (its handle propagates to the reactor).
@@ -6016,6 +6317,33 @@ impl<'a> FnState<'a> {
             let (rv, rt) = self.gen_expr(receiver).expect("to_string receiver has value");
             if Self::is_blessed_to_string_receiver_codegen(&rt) {
                 return Some(self.gen_to_string_intrinsic(&rv, &rt));
+            }
+        }
+        // v0.0.4 Phase 4 Slice 4B: blessed `next()` on `Iterator[T]`.
+        // Inline lowering: check coro.done → if done return None; else
+        // read promise into v, resume coroutine, return Some(v).
+        if name.name == "next" && args.is_empty() {
+            let (rv, rt) = self.gen_expr(receiver).expect("iter.next receiver value");
+            if let Some(elem) = self.unwrap_iterator_ty(&rt) {
+                return Some(self.gen_iter_next_intrinsic(&rv, &rt, &elem));
+            }
+        }
+        // v0.0.4 Phase 3 Slice 3B.5: blessed `hash()` for primitive + str
+        // receivers. Routes to `gen_hash_intrinsic` which emits FNV-1a on
+        // the underlying bytes (str) or a multiplicative mixer (integers).
+        if name.name == "hash" && args.is_empty() {
+            let (rv, rt) = self.gen_expr(receiver).expect("hash receiver has value");
+            if Self::is_blessed_hash_receiver_codegen(&rt) {
+                return Some(self.gen_hash_intrinsic(&rv, &rt));
+            }
+        }
+        // v0.0.4 Phase 3 Slice 3B.5: blessed `eq(other)` for primitive +
+        // str receivers. Lowers to the same icmp / memcmp shape as `==`.
+        if name.name == "eq" && args.len() == 1 {
+            let (lv, lt) = self.gen_expr(receiver).expect("eq receiver");
+            if Self::is_blessed_eq_receiver_codegen(&lt) {
+                let (rv, _) = self.gen_expr(&args[0]).expect("eq arg");
+                return Some(self.gen_eq_intrinsic(&lv, &rv, &lt));
             }
         }
         // Materialize the receiver as a place (pointer) — works for Ident,
@@ -6437,6 +6765,299 @@ impl<'a> FnState<'a> {
             | Ty::F32 | Ty::F64
             | Ty::Bool
             | Ty::Str)
+    }
+
+    /// v0.0.4 Phase 4 Slice 4B: given a `Ty::Struct(id)` whose name
+    /// matches `Iterator__<U>`, recover U. Returns None for non-Iterator
+    /// types.
+    fn unwrap_iterator_ty(&self, ty: &Ty) -> Option<Ty> {
+        let Ty::Struct(id) = ty else { return None; };
+        let name = self.types.struct_defs[id.0 as usize].name.clone();
+        let bare = name.rsplit_once('.').map(|(_, t)| t).unwrap_or(name.as_str());
+        let suffix = bare.strip_prefix("Iterator__")?;
+        // Reuse the future-name-decoder; the suffix grammar is identical.
+        let synthetic = format!("Future__{suffix}");
+        Some(ty_from_future_name(&synthetic, self.types))
+    }
+
+    /// v0.0.4 Phase 4 Slice 4B: emit IR for `it.next()`. Returns
+    /// `Option[T]`. Algorithm:
+    ///   1. Extract handle from the Iterator aggregate.
+    ///   2. If coro.done(hdl) → return Option::None.
+    ///   3. Else read T from the coroutine promise.
+    ///   4. coro.resume(hdl) to advance for the next call.
+    ///   5. Wrap T in Option::Some and return.
+    fn gen_iter_next_intrinsic(&mut self, rv: &str, rt: &Ty, elem: &Ty) -> (String, Ty) {
+        // The Iterator aggregate is `{ ptr }`. Extract the handle.
+        let iter_llvm = self.lty(rt);
+        let hdl = self.next_tmp();
+        self.emit(&format!("{hdl} = extractvalue {iter_llvm} {rv}, 0"));
+
+        // Resolve the concrete `Option[T]` enum type that sema instantiated.
+        let option_ty = self.lookup_option_ty(elem);
+        let option_llvm = self.lty(&option_ty);
+        let option_align = match static_layout(&option_ty, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+        let elem_align = match static_layout(elem, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+        let elem_llvm = self.lty(elem);
+
+        // Result slot for the Option[T] aggregate we'll return.
+        let result_slot = self.alloca_anon(option_ty.clone());
+
+        let done = self.next_tmp();
+        self.emit(&format!("{done} = call i1 @llvm.coro.done(ptr {hdl})"));
+        let none_bb = self.next_block_label();
+        let some_bb = self.next_block_label();
+        let join_bb = self.next_block_label();
+        self.emit_terminator(&format!(
+            "br i1 {done}, label %{none_bb}, label %{some_bb}"
+        ));
+
+        // None arm: discriminant 1 (Option's variants are Some=0, None=1
+        // by declaration order in stdlib/option.cplus).
+        self.open_block(&none_bb);
+        let none_agg = self.build_option_none_aggregate(&option_llvm);
+        self.emit(&format!(
+            "store {option_llvm} {none_agg}, ptr {result_slot}, align {option_align}"
+        ));
+        self.emit_terminator(&format!("br label %{join_bb}"));
+
+        // Some arm: read promise, resume, build Some(v).
+        self.open_block(&some_bb);
+        let prom_ptr = self.next_tmp();
+        self.emit(&format!(
+            "{prom_ptr} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {elem_align}, i1 false)"
+        ));
+        let val = self.next_tmp();
+        self.emit(&format!(
+            "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
+        ));
+        self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
+        let some_agg = self.build_option_some_aggregate(&option_ty, elem, &val);
+        self.emit(&format!(
+            "store {option_llvm} {some_agg}, ptr {result_slot}, align {option_align}"
+        ));
+        self.emit_terminator(&format!("br label %{join_bb}"));
+
+        self.open_block(&join_bb);
+        let result = self.next_tmp();
+        self.emit(&format!(
+            "{result} = load {option_llvm}, ptr {result_slot}, align {option_align}"
+        ));
+        (result, option_ty)
+    }
+
+    /// Build an `Option::None` aggregate value (just the tag set to 1).
+    fn build_option_none_aggregate(&mut self, option_llvm: &str) -> String {
+        // Option[T] lowers as `%enum.<id> = type { i32, [N x i64] }` per
+        // the v0.0.2 tagged-enum scheme. None = tag 1, payload undef.
+        let t1 = self.next_tmp();
+        self.emit(&format!("{t1} = insertvalue {option_llvm} undef, i32 1, 0"));
+        t1
+    }
+
+    /// Build an `Option::Some(v)` aggregate by writing the tag (0) then
+    /// the payload value into the payload slot. Uses an alloca + store
+    /// to handle arbitrary T layout; reloads as the option aggregate.
+    fn build_option_some_aggregate(&mut self, option_ty: &Ty, elem: &Ty, val: &str) -> String {
+        let option_llvm = self.lty(option_ty);
+        let option_align = match static_layout(option_ty, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+        let elem_llvm = self.lty(elem);
+        let elem_align = match static_layout(elem, self.types) {
+            Some((_, a)) => a,
+            None => 8,
+        };
+        // Alloca for the option aggregate; write tag=0, payload=val.
+        let slot = self.alloca_anon(option_ty.clone());
+        // Zero-init the slot so the payload bytes past T are clean (the
+        // payload array is sized for the worst-case variant).
+        self.emit(&format!(
+            "call void @llvm.memset.p0.i64(ptr {slot}, i8 0, i64 ptrtoint (ptr getelementptr ({option_llvm}, ptr null, i64 1) to i64), i1 false)"
+        ));
+        // Tag at offset 0 (i32).
+        self.emit(&format!("store i32 0, ptr {slot}, align {option_align}"));
+        // Payload starts at offset 8 (i32 tag + 4 bytes padding to align
+        // for the 8-byte payload field). Get a payload pointer via GEP
+        // into the aggregate's payload member (field 1, index 0).
+        let pay_ptr = self.next_tmp();
+        self.emit(&format!(
+            "{pay_ptr} = getelementptr inbounds {option_llvm}, ptr {slot}, i32 0, i32 1, i32 0"
+        ));
+        // Cast pay_ptr to ptr-to-elem and store val.
+        // (LLVM opaque pointers — no bitcast needed.)
+        let pay_elem_ptr = pay_ptr.clone();
+        self.emit(&format!(
+            "store {elem_llvm} {val}, ptr {pay_elem_ptr}, align {elem_align}"
+        ));
+        // Reload as the option aggregate.
+        let loaded = self.next_tmp();
+        self.emit(&format!(
+            "{loaded} = load {option_llvm}, ptr {slot}, align {option_align}"
+        ));
+        loaded
+    }
+
+    /// Look up the concrete `Option[T]` enum type table entry for an
+    /// element type T. Mirrors `lookup_future_ty`'s suffix-match scheme.
+    fn lookup_option_ty(&self, inner: &Ty) -> Ty {
+        let target = format!("Option__{}", mangle_o_for_tramp_with_types(inner, Some(self.types)));
+        let dotted = format!(".{target}");
+        for (name, id) in &self.types.enum_by_name {
+            if name == &target || name.ends_with(&dotted) {
+                return Ty::Enum(*id);
+            }
+        }
+        Ty::Enum(EnumId(0))
+    }
+
+    fn is_blessed_hash_receiver_codegen(ty: &Ty) -> bool {
+        matches!(ty,
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
+            | Ty::Str)
+    }
+
+    fn is_blessed_eq_receiver_codegen(ty: &Ty) -> bool {
+        matches!(ty,
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
+            | Ty::Bool
+            | Ty::Str)
+    }
+
+    /// v0.0.4 Phase 3 Slice 3B.5: emit a u64 hash for an arbitrary
+    /// primitive or str receiver. Strategy:
+    ///   - integer: widen to i64 / zext / sext, multiply by a constant
+    ///     (FNV-1a prime 0x100000001b3) XOR'd with the FNV offset basis.
+    ///     One mix step is sufficient for hashtable bucket dispersion;
+    ///     it's not a cryptographic hash.
+    ///   - str: extract ptr + len, FNV-1a over the bytes via a 4-block
+    ///     loop. Length-prefixed so "ab" and "ba" hash differently.
+    fn gen_hash_intrinsic(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        if matches!(rt, Ty::Str) {
+            return self.gen_hash_str(rv);
+        }
+        // Integer: widen to u64, then mix with FNV-1a prime.
+        let widened = match rt {
+            Ty::I64 | Ty::Isize | Ty::U64 | Ty::Usize => rv.to_string(),
+            _ if rt.is_signed_int() => {
+                let w = self.next_tmp();
+                self.emit(&format!("{w} = sext {} {rv} to i64", self.lty(rt)));
+                w
+            }
+            _ => {
+                let w = self.next_tmp();
+                self.emit(&format!("{w} = zext {} {rv} to i64", self.lty(rt)));
+                w
+            }
+        };
+        // FNV-1a mix: h = (offset XOR v) * prime.
+        let xored = self.next_tmp();
+        self.emit(&format!("{xored} = xor i64 {widened}, -3750763034362895579"));
+        let mixed = self.next_tmp();
+        self.emit(&format!("{mixed} = mul i64 {xored}, 1099511628211"));
+        (mixed, Ty::U64)
+    }
+
+    fn gen_hash_str(&mut self, rv: &str) -> (String, Ty) {
+        // Extract ptr + len from the fat-pointer aggregate.
+        let p = self.next_tmp();
+        let n = self.next_tmp();
+        self.emit(&format!("{p} = extractvalue {{ ptr, i64 }} {rv}, 0"));
+        self.emit(&format!("{n} = extractvalue {{ ptr, i64 }} {rv}, 1"));
+        // Inline FNV-1a byte loop. Allocate stack slots for the running
+        // hash + counter so we can re-load through the loop.
+        let h_slot = self.alloca_anon(Ty::U64);
+        let i_slot = self.alloca_anon(Ty::I64);
+        self.emit(&format!("store i64 -3750763034362895579, ptr {h_slot}"));
+        self.emit(&format!("store i64 0, ptr {i_slot}"));
+        let loop_bb = self.next_block_label();
+        let body_bb = self.next_block_label();
+        let done_bb = self.next_block_label();
+        self.emit_terminator(&format!("br label %{loop_bb}"));
+        self.body.push_str(&format!("{loop_bb}:\n"));
+        self.terminated = false;
+        let i_cur = self.next_tmp();
+        self.emit(&format!("{i_cur} = load i64, ptr {i_slot}"));
+        let cmp = self.next_tmp();
+        self.emit(&format!("{cmp} = icmp slt i64 {i_cur}, {n}"));
+        self.emit_terminator(&format!("br i1 {cmp}, label %{body_bb}, label %{done_bb}"));
+        self.body.push_str(&format!("{body_bb}:\n"));
+        self.terminated = false;
+        let byte_p = self.next_tmp();
+        self.emit(&format!("{byte_p} = getelementptr inbounds i8, ptr {p}, i64 {i_cur}"));
+        let byte = self.next_tmp();
+        self.emit(&format!("{byte} = load i8, ptr {byte_p}"));
+        let byte_w = self.next_tmp();
+        self.emit(&format!("{byte_w} = zext i8 {byte} to i64"));
+        let h_cur = self.next_tmp();
+        self.emit(&format!("{h_cur} = load i64, ptr {h_slot}"));
+        let xored = self.next_tmp();
+        self.emit(&format!("{xored} = xor i64 {h_cur}, {byte_w}"));
+        let mixed = self.next_tmp();
+        self.emit(&format!("{mixed} = mul i64 {xored}, 1099511628211"));
+        self.emit(&format!("store i64 {mixed}, ptr {h_slot}"));
+        let i_next = self.next_tmp();
+        self.emit(&format!("{i_next} = add i64 {i_cur}, 1"));
+        self.emit(&format!("store i64 {i_next}, ptr {i_slot}"));
+        self.emit_terminator(&format!("br label %{loop_bb}"));
+        self.body.push_str(&format!("{done_bb}:\n"));
+        self.terminated = false;
+        let h_final = self.next_tmp();
+        self.emit(&format!("{h_final} = load i64, ptr {h_slot}"));
+        (h_final, Ty::U64)
+    }
+
+    /// v0.0.4 Phase 3 Slice 3B.5: emit a bool from an `.eq(other)` call
+    /// on a primitive / str receiver. Same lowering as `==`.
+    fn gen_eq_intrinsic(&mut self, lv: &str, rv: &str, lt: &Ty) -> (String, Ty) {
+        if matches!(lt, Ty::Str) {
+            return self.gen_eq_str(lv, rv);
+        }
+        // Bool + integer: icmp eq.
+        let r = self.next_tmp();
+        self.emit(&format!("{r} = icmp eq {} {lv}, {rv}", self.lty(lt)));
+        (r, Ty::Bool)
+    }
+
+    fn gen_eq_str(&mut self, lv: &str, rv: &str) -> (String, Ty) {
+        let result_slot = self.alloca_anon(Ty::Bool);
+        let lp = self.next_tmp();
+        let ll = self.next_tmp();
+        let rp = self.next_tmp();
+        let rl = self.next_tmp();
+        self.emit(&format!("{lp} = extractvalue {{ ptr, i64 }} {lv}, 0"));
+        self.emit(&format!("{ll} = extractvalue {{ ptr, i64 }} {lv}, 1"));
+        self.emit(&format!("{rp} = extractvalue {{ ptr, i64 }} {rv}, 0"));
+        self.emit(&format!("{rl} = extractvalue {{ ptr, i64 }} {rv}, 1"));
+        let len_eq = self.next_tmp();
+        self.emit(&format!("{len_eq} = icmp eq i64 {ll}, {rl}"));
+        let cmp_lbl = self.next_block_label();
+        let unequal_lbl = self.next_block_label();
+        let merge_lbl = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {len_eq}, label %{cmp_lbl}, label %{unequal_lbl}"));
+        self.open_block(&cmp_lbl);
+        let mc = self.next_tmp();
+        self.emit(&format!("{mc} = call i32 @memcmp(ptr {lp}, ptr {rp}, i64 {ll})"));
+        let mc_eq = self.next_tmp();
+        self.emit(&format!("{mc_eq} = icmp eq i32 {mc}, 0"));
+        self.emit(&format!("store i1 {mc_eq}, ptr {result_slot}"));
+        self.emit_terminator(&format!("br label %{merge_lbl}"));
+        self.open_block(&unequal_lbl);
+        self.emit(&format!("store i1 false, ptr {result_slot}"));
+        self.emit_terminator(&format!("br label %{merge_lbl}"));
+        self.open_block(&merge_lbl);
+        let result = self.next_tmp();
+        self.emit(&format!("{result} = load i1, ptr {result_slot}"));
+        (result, Ty::Bool)
     }
 
     /// Emit IR that produces a `string` aggregate for an arbitrary

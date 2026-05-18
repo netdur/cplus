@@ -9,8 +9,10 @@
 // **Architecture.**
 //
 //   - The reactor holds a kqueue fd + parallel arrays for `(waiter_fd,
-//     waiter_handle)` pairs (one per pending fd registration) and a
-//     queue of pending coroutine handles (spawned via `spawn_local`).
+//     waiter_filter, waiter_handle)` triples (one per pending fd
+//     registration; storing the filter makes wait_read + wait_write on
+//     the same fd resume the right coroutine) and a queue of pending
+//     coroutine handles (spawned via `spawn_local`).
 //
 //   - Async I/O wrappers call `wait_fd_readable(fd)` (a compiler
 //     intrinsic — see codegen.rs) to suspend the current coroutine
@@ -34,16 +36,18 @@
 //     queued tasks.
 //
 // **Layout of the reactor state heap block:**
-//   0..4    kqfd            i32
-//   4..8    n_waiters       i32   (current waiter count)
-//   8..12   cap_waiters     i32
-//   12..16  n_pending       i32   (queued spawn_local handles)
-//   16..20  cap_pending     i32
-//   24..32  waiter_fds      *i32  (separately malloc'd)
-//   32..40  waiter_hdls     **u8
-//   40..48  pending_hdls    **u8
-//   48..56  kevent_buf      *u8  (32-byte kevent struct slot, reused)
-//   total: 56 bytes header + 3 growable buffers.
+//   0..4    kqfd             i32
+//   4..8    n_waiters        i32   (current waiter count)
+//   8..12   cap_waiters      i32
+//   12..16  n_pending        i32   (queued spawn_local handles)
+//   16..20  cap_pending      i32
+//   20..24  (pad)
+//   24..32  waiter_fds       *i32  (separately malloc'd)
+//   32..40  waiter_hdls      **u8
+//   40..48  pending_hdls     **u8
+//   48..56  kevent_buf       *u8  (32-byte kevent struct slot, reused)
+//   56..64  waiter_filters   *i16  (parallel to waiter_fds: EVFILT_READ=-1, EVFILT_WRITE=-2)
+//   total: 64 bytes header + 4 growable buffers.
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -79,7 +83,7 @@ extern fn __cplus_reactor_set_state(p: *u8);
 //   udata   void*      @ 24
 // total size: 32 bytes.
 
-fn header_bytes() -> usize { return 56 as usize; }
+fn header_bytes() -> usize { return 64 as usize; }
 fn kevent_bytes() -> usize { return 32 as usize; }
 
 fn off_kqfd() -> usize { return 0 as usize; }
@@ -91,6 +95,11 @@ fn off_waiter_fds() -> usize { return 24 as usize; }
 fn off_waiter_hdls() -> usize { return 32 as usize; }
 fn off_pending_hdls() -> usize { return 40 as usize; }
 fn off_kevent_buf() -> usize { return 48 as usize; }
+fn off_waiter_filters() -> usize { return 56 as usize; }
+
+// EVFILT_READ = -1, EVFILT_WRITE = -2 (macOS sys/event.h).
+fn evfilt_read() -> i16 { return (0 as i16) -% (1 as i16); }
+fn evfilt_write() -> i16 { return (0 as i16) -% (2 as i16); }
 
 // Lazily allocate + init the reactor on first use. Idempotent: returns
 // the same state pointer on every call within a process.
@@ -118,6 +127,8 @@ pub fn ensure() -> *u8 {
     unsafe { *ph_slot = malloc((8 *% 8) as usize); }
     let kb_slot: **u8 = unsafe { (state + off_kevent_buf()) as **u8 };
     unsafe { *kb_slot = malloc(kevent_bytes()); }
+    let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
+    unsafe { *wflt_slot = malloc((8 *% 2) as usize); }
     unsafe { __cplus_reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
@@ -139,6 +150,11 @@ fn ptr_is_null(p: *u8) -> bool {
 // polish — at which point these can rename via link_name).
 pub extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
+    register_write(fd, hdl);
     return;
 }
 
@@ -164,37 +180,57 @@ pub extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 
 // Register fd for read-readiness; record the coroutine handle to wake.
 pub fn register_read(fd: i32, hdl: *u8) {
+    register_filter(fd, hdl, evfilt_read());
+    return;
+}
+
+// Register fd for write-readiness (kqueue EVFILT_WRITE).
+pub fn register_write(fd: i32, hdl: *u8) {
+    register_filter(fd, hdl, evfilt_write());
+    return;
+}
+
+// Append a (fd, filter, hdl) triple to the waiter arrays and submit a
+// one-shot kqueue filter. `poll_one_event` matches by (fd, filter) so
+// read- and write-waiters on the same fd don't collide.
+fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
     let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
     let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
     let mut n: i32 = unsafe { *nw_slot };
     let mut cap: i32 = unsafe { *cw_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_fds: *u8 = unsafe { realloc(*wf_slot, (cap *% 4) as usize) };
         let new_hdls: *u8 = unsafe { realloc(*wh_slot, (cap *% 8) as usize) };
+        let new_flts: *u8 = unsafe { realloc(*wflt_slot, (cap *% 2) as usize) };
         unsafe { *wf_slot = new_fds; }
         unsafe { *wh_slot = new_hdls; }
+        unsafe { *wflt_slot = new_flts; }
         unsafe { *cw_slot = cap; }
     }
     let fds: *i32 = unsafe { *wf_slot as *i32 };
     let hdls: **u8 = unsafe { *wh_slot as **u8 };
+    let flts: *i16 = unsafe { *wflt_slot as *i16 };
     let fd_slot: *i32 = unsafe { fds + (n as usize) };
     unsafe { *fd_slot = fd; }
     let hdl_slot: **u8 = unsafe { hdls + (n as usize) };
     unsafe { *hdl_slot = hdl; }
+    let flt_slot: *i16 = unsafe { flts + (n as usize) };
+    unsafe { *flt_slot = filter; }
     unsafe { *nw_slot = n +% (1 as i32); }
-    // Submit a one-shot read filter to kqueue.
+    // Submit a one-shot filter to kqueue.
     let kqfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
     let kb: *u8 = unsafe { *((state + off_kevent_buf()) as **u8) };
     // ident @0 (uintptr_t = u64): fd
     let ident_slot: *u64 = unsafe { kb as *u64 };
     unsafe { *ident_slot = fd as u64; }
-    // filter @8 (i16): EVFILT_READ = -1
+    // filter @8 (i16)
     let filter_slot: *i16 = unsafe { (kb + (8 as usize)) as *i16 };
-    unsafe { *filter_slot = (0 as i16) -% (1 as i16); }
+    unsafe { *filter_slot = filter; }
     // flags @10 (u16): EV_ADD (0x0001) | EV_ONESHOT (0x0010) = 0x0011
     let flags_slot: *u16 = unsafe { (kb + (10 as usize)) as *u16 };
     unsafe { *flags_slot = 0x0011 as u16; }
@@ -224,27 +260,35 @@ pub fn poll_one_event() -> bool {
     if nev <= (0 as i32) { return false; }
     let ident: u64 = unsafe { *(kb as *u64) };
     let fd_ready: i32 = ident as i32;
-    // Find the matching waiter; swap-remove from the parallel arrays.
+    let filter_ready: i16 = unsafe { *((kb + (8 as usize)) as *i16) };
+    // Find the matching (fd, filter) waiter; swap-remove from the parallel arrays.
     let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
     let fds: *i32 = unsafe { *wf_slot as *i32 };
     let hdls: **u8 = unsafe { *wh_slot as **u8 };
+    let flts: *i16 = unsafe { *wflt_slot as *i16 };
     let mut i: i32 = 0;
     while i < n {
         let cur_fd: i32 = unsafe { *(fds + (i as usize)) };
+        let cur_flt: i16 = unsafe { *(flts + (i as usize)) };
         if cur_fd == fd_ready {
-            let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
-            // Swap-remove: move last to slot i, dec count.
-            let last_i: i32 = n -% (1 as i32);
-            if i != last_i {
-                let last_fd: i32 = unsafe { *(fds + (last_i as usize)) };
-                let last_hdl: *u8 = unsafe { *(hdls + (last_i as usize)) };
-                unsafe { *(fds + (i as usize)) = last_fd; }
-                unsafe { *(hdls + (i as usize)) = last_hdl; }
+            if cur_flt == filter_ready {
+                let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
+                // Swap-remove: move last to slot i, dec count.
+                let last_i: i32 = n -% (1 as i32);
+                if i != last_i {
+                    let last_fd: i32 = unsafe { *(fds + (last_i as usize)) };
+                    let last_hdl: *u8 = unsafe { *(hdls + (last_i as usize)) };
+                    let last_flt: i16 = unsafe { *(flts + (last_i as usize)) };
+                    unsafe { *(fds + (i as usize)) = last_fd; }
+                    unsafe { *(hdls + (i as usize)) = last_hdl; }
+                    unsafe { *(flts + (i as usize)) = last_flt; }
+                }
+                unsafe { *nw_slot = last_i; }
+                unsafe { __cplus_coro_resume(hdl); }
+                return true;
             }
-            unsafe { *nw_slot = last_i; }
-            unsafe { __cplus_coro_resume(hdl); }
-            return true;
         }
         i = i +% (1 as i32);
     }

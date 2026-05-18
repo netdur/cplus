@@ -230,6 +230,11 @@ pub struct Method {
     /// note `#[test]` is rejected inside `impl` (E0360); validation lives
     /// in the post-parse attribute_check pass, not here.
     pub attributes: Vec<Attribute>,
+    /// v0.0.4 Phase 4 Slice 4E: `async fn` / `gen fn` method modifiers.
+    /// Currently only `is_gen = true` exercises a real lowering path
+    /// (async methods land alongside non-Copy `self` async).
+    pub is_async: bool,
+    pub is_gen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +289,14 @@ pub struct Function {
     /// (5E.3) lowers the body to an LLVM coroutine via `llvm.coro.*`
     /// intrinsics. False for synchronous functions (the common case).
     pub is_async: bool,
+    /// v0.0.4 Phase 4 Slice 4A: `gen fn foo() -> T` declarations.
+    /// Sema rewrites the declared return type from `T` to `Iterator[T]`
+    /// and admits `yield EXPR;` inside the body. Codegen lowers the
+    /// body to an LLVM coroutine that suspends at each yield with the
+    /// yielded value stashed in the coroutine promise; `Iterator::next`
+    /// resumes + reads + returns `Option::Some(v)` (or `Option::None`
+    /// when the coroutine completes).
+    pub is_gen: bool,
 }
 
 /// Slice 7GEN.1: a single type parameter declaration in a generic
@@ -520,6 +533,12 @@ pub enum ExprKind {
     /// must be `async`. Sema enforces both. Codegen (5E.3) lowers to
     /// `llvm.coro.suspend` plus the resume/return branches.
     Await(Box<Expr>),
+    /// v0.0.4 Phase 4 Slice 4A: `yield EXPR` — produce one value from
+    /// a generator. The surrounding fn must be `gen`. Sema enforces
+    /// the value type matches the iterator's T. Codegen lowers to
+    /// `store EXPR -> promise; llvm.coro.suspend(non-final)` with the
+    /// resume arm returning to the next-statement.
+    Yield(Box<Expr>),
     If {
         cond: Box<Expr>,
         then: Block,

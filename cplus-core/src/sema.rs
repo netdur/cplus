@@ -488,6 +488,8 @@ fn check_with_files_inner<'a>(
         scopes: Vec::new(),
         current_return: Ty::Error,
         current_fn_is_async: false,
+        current_fn_is_gen: false,
+        current_gen_yield_ty: None,
         current_file: None,
         files,
         loop_depth: 0,
@@ -663,6 +665,13 @@ struct SemaCx<'a> {
     /// `current_return` is the post-wrap `Future[T]` whose inner T
     /// is what the user's value must match.
     current_fn_is_async: bool,
+    /// v0.0.4 Phase 4 Slice 4A: tracks whether the surrounding fn is a
+    /// `gen fn`. `yield` is only valid when true.
+    current_fn_is_gen: bool,
+    /// v0.0.4 Phase 4 Slice 4A: the inner yield element type for the
+    /// surrounding `gen fn`. `None` outside a gen fn or when the
+    /// return type is malformed.
+    current_gen_yield_ty: Option<Ty>,
     /// Slice 4C: file the currently-checked item originated from (post
     /// resolver merge). `None` in single-file mode or for items the
     /// resolver didn't touch. Used both to gate field-pub access (see
@@ -1870,6 +1879,11 @@ impl SemaCx<'_> {
             // anything that uses `async fn`.
             let ret = if f.is_async {
                 self.wrap_in_future(&declared_ret, f.name.span)
+            } else if f.is_gen {
+                // v0.0.4 Phase 4 Slice 4A: `gen fn name() -> T` exposes
+                // `Iterator[T]` at the signature level; the body still
+                // type-checks `yield X` against the inner T.
+                self.wrap_in_iterator(&declared_ret, f.name.span)
             } else {
                 declared_ret.clone()
             };
@@ -1927,6 +1941,66 @@ impl SemaCx<'_> {
     /// with one type argument. Returns `Ty::Error` if the template
     /// isn't visible — usually because the project didn't import
     /// stdlib's future module or didn't depend on stdlib at all.
+    /// v0.0.4 Phase 4 Slice 4A: mirror of `wrap_in_future` for `gen fn`.
+    /// The `Iterator` template must be in scope — it lives at
+    /// `stdlib/iterator.cplus`.
+    fn wrap_in_iterator(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
+        let key = self.struct_generic_templates.keys()
+            .find(|k| k.as_str() == "Iterator" || k.ends_with(".Iterator"))
+            .cloned();
+        let template_name = match key {
+            Some(k) => k,
+            None => {
+                self.err(
+                    "E1000",
+                    "`gen fn` requires `Iterator[T]` from `stdlib/iterator`".to_string(),
+                    span,
+                );
+                return Ty::Error;
+            }
+        };
+        let template = self.struct_generic_templates.get(&template_name).cloned().unwrap();
+        self.instantiate_struct_from_arg_tys(&template_name, &template, vec![inner.clone()])
+    }
+
+    /// v0.0.4 Phase 4 Slice 4B: instantiate the `Option[T]` enum from
+    /// `stdlib/option`. Used by `Iterator::next()`'s blessed-method
+    /// return type and by `for x in ...` desugaring.
+    fn instantiate_option(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
+        let key = self.enum_generic_templates.keys()
+            .find(|k| k.as_str() == "Option" || k.ends_with(".Option"))
+            .cloned();
+        let template_name = match key {
+            Some(k) => k,
+            None => {
+                self.err(
+                    "E1000",
+                    "`Iterator::next` requires `Option[T]` from `stdlib/option`".to_string(),
+                    span,
+                );
+                return Ty::Error;
+            }
+        };
+        let template = self.enum_generic_templates.get(&template_name).cloned().unwrap();
+        self.instantiate_enum_from_arg_tys(&template_name, &template, vec![inner.clone()])
+    }
+
+    /// v0.0.4 Phase 4 Slice 4A: given `Iterator[T]`, return T.
+    fn unwrap_iterator(&self, ty: &Ty) -> Option<Ty> {
+        match ty {
+            Ty::Struct(id) => {
+                let def = &self.structs[id.0 as usize];
+                match &def.generic_origin {
+                    Some((name, args))
+                        if (name == "Iterator" || name.ends_with(".Iterator"))
+                            && args.len() == 1 => Some(args[0].clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn wrap_in_future(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
         // v0.0.3 Phase 5 Slice 5E.3: the resolver qualifies struct
         // names per-file (`<file_id>.Future`), so a bare-name lookup
@@ -2066,12 +2140,25 @@ impl SemaCx<'_> {
         // codegen time (Slice 5E.3).
         let body_return = if f.is_async {
             self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+        } else if f.is_gen {
+            // v0.0.4 Phase 4 Slice 4A: gen fn body sees Unit return.
+            // The body's job is to `yield` values; falling off the end
+            // (or `return;`) completes the iteration with None.
+            Ty::Unit
         } else {
             sig.return_type.clone()
         };
         self.current_return = body_return.clone();
         let prev_async = self.current_fn_is_async;
         self.current_fn_is_async = f.is_async;
+        let prev_gen = self.current_fn_is_gen;
+        let prev_gen_ty = self.current_gen_yield_ty.clone();
+        self.current_fn_is_gen = f.is_gen;
+        self.current_gen_yield_ty = if f.is_gen {
+            self.unwrap_iterator(&sig.return_type)
+        } else {
+            None
+        };
         self.scopes.push(HashMap::new());
         for (param, psig) in f.params.iter().zip(sig.params.iter()) {
             // E0334: `mut` and `move` are mutually exclusive ownership markers.
@@ -2141,6 +2228,8 @@ impl SemaCx<'_> {
         self.check_function_body(&f.body, body_return, f.body.span);
         self.scopes.pop();
         self.current_fn_is_async = prev_async;
+        self.current_fn_is_gen = prev_gen;
+        self.current_gen_yield_ty = prev_gen_ty;
         self.pop_type_params();
     }
 
@@ -2442,23 +2531,42 @@ impl SemaCx<'_> {
     fn check_for(&mut self, fl: &ForLoop) {
         match fl {
             ForLoop::Range { var, iter, body } => {
-                let (start, end) = match &iter.kind {
-                    ExprKind::Range { start: Some(s), end: Some(e), .. } => (s.as_ref(), e.as_ref()),
-                    _ => {
+                // First try the literal-range form `for x in 0..n`.
+                if let ExprKind::Range { start: Some(s), end: Some(e), .. } = &iter.kind {
+                    self.check_expr(s, Some(Ty::I32));
+                    self.check_expr(e, Some(Ty::I32));
+                    self.scopes.push(HashMap::new());
+                    self.scopes.last_mut().unwrap().insert(
+                        var.name.clone(),
+                        LocalInfo { ty: Ty::I32, mutable: false, moved: false, assigned: true },
+                    );
+                    self.check_block_as_stmt(body);
+                    self.scopes.pop();
+                    return;
+                }
+                // v0.0.4 Phase 4 Slice 4C: iterator-form `for x in expr`
+                // where expr is an `Iterator[T]`. Bind `var: T` inside
+                // the body. Lowering happens in codegen.
+                let it_ty = self.check_expr(iter, None);
+                if matches!(it_ty, Ty::Error) { return; }
+                let elem_ty = match self.unwrap_iterator(&it_ty) {
+                    Some(t) => t,
+                    None => {
                         self.err(
                             "E0312",
-                            "Phase 1 `for ... in` requires a closed range like `0..n` or `0..=n`".to_string(),
+                            format!(
+                                "`for ... in` requires either a closed range (`0..n`) or an `Iterator[T]`, got `{}`",
+                                ty_display(&it_ty),
+                            ),
                             iter.span,
                         );
                         return;
                     }
                 };
-                self.check_expr(start, Some(Ty::I32));
-                self.check_expr(end, Some(Ty::I32));
                 self.scopes.push(HashMap::new());
                 self.scopes.last_mut().unwrap().insert(
                     var.name.clone(),
-                    LocalInfo { ty: Ty::I32, mutable: false, moved: false, assigned: true },
+                    LocalInfo { ty: elem_ty, mutable: false, moved: false, assigned: true },
                 );
                 self.check_block_as_stmt(body);
                 self.scopes.pop();
@@ -2560,6 +2668,29 @@ impl SemaCx<'_> {
                         Ty::Error
                     }
                 }
+            }
+            // v0.0.4 Phase 4 Slice 4A: `yield EXPR` produces one value
+            // from a generator. Allowed only inside a `gen fn` body;
+            // the value type must match the iterator's T. yield is a
+            // statement-shaped expression with value type Unit (no
+            // result back from the consumer).
+            //
+            //   - **E1001**: `yield` outside a `gen fn` body.
+            //   - **E1002**: yielded value type doesn't match the
+            //     iterator's element type.
+            ExprKind::Yield(inner) => {
+                if !self.current_fn_is_gen {
+                    let _ = self.check_expr(inner, None);
+                    self.err(
+                        "E1001",
+                        "`yield` is only valid inside a `gen fn` body".to_string(),
+                        e.span,
+                    );
+                    return Ty::Error;
+                }
+                let expected = self.current_gen_yield_ty.clone();
+                let _inner_ty = self.check_expr(inner, expected.clone());
+                Ty::Unit
             }
             ExprKind::If { cond, then, else_branch } => {
                 self.check_if(cond, then, else_branch.as_deref())
@@ -3474,6 +3605,9 @@ impl SemaCx<'_> {
         if name == "__cplus_reactor_wait_read" {
             return self.check_reactor_wait_read(callee, args, type_args, call_span);
         }
+        if name == "__cplus_reactor_wait_write" {
+            return self.check_reactor_wait_write(callee, args, type_args, call_span);
+        }
         if name == "__cplus_reactor_spawn_local" {
             return self.check_reactor_spawn_local(callee, args, type_args, call_span);
         }
@@ -3892,6 +4026,41 @@ impl SemaCx<'_> {
         Ty::Unit
     }
 
+    /// v0.0.4 Phase 3 Slice 3A.3: type-check
+    /// `__cplus_reactor_wait_write(fd: i32)`. Same shape as wait_read.
+    fn check_reactor_wait_write(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`__cplus_reactor_wait_write` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span);
+        }
+        if !self.current_fn_is_async {
+            self.err("E0901",
+                "`__cplus_reactor_wait_write` is only valid inside an `async fn` body".to_string(),
+                call_span);
+        }
+        if !type_args.is_empty() {
+            self.err("E0501",
+                "`__cplus_reactor_wait_write` takes 0 type arguments".to_string(),
+                callee.span);
+        }
+        if args.len() != 1 {
+            self.err("E0308",
+                format!("`__cplus_reactor_wait_write` takes 1 value argument, got {}", args.len()),
+                call_span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let _ = self.check_expr(&args[0], Some(Ty::I32));
+        Ty::Unit
+    }
+
     /// v0.0.4 Phase 3 Slice 3A.2: type-check
     /// `__cplus_reactor_spawn_local(future: Future[T])`. Pushes the
     /// future onto the reactor's task queue. Returns Unit.
@@ -4192,6 +4361,48 @@ impl SemaCx<'_> {
             }
             return Ty::String;
         }
+        // v0.0.4 Phase 4 Slice 4B: blessed `next()` on `Iterator[T]`
+        // receiver — returns `Option[T]`. The method has no source-level
+        // body (codegen lowers inline via coro.done + coro.resume +
+        // coro.promise). Sema enforces the shape: 0 args, 0 type args,
+        // receiver is some Iterator[T].
+        if name.name == "next" && args.is_empty() {
+            if let Some(elem) = self.unwrap_iterator(&recv_ty) {
+                if !type_args.is_empty() {
+                    self.err("E0501",
+                        "`Iterator::next` takes no type arguments".to_string(),
+                        call_span);
+                }
+                return self.instantiate_option(&elem, call_span);
+            }
+        }
+        // v0.0.4 Phase 3 Slice 3B.5: blessed `hash()` on every primitive
+        // hashable receiver. Returns u64. Generic HashMap[K, V] calls
+        // `k.hash()` in its body; after K is monomorphized to a primitive
+        // type the blessed path produces a real hash. User structs hit
+        // the normal method-lookup below (they must provide `impl Hash`).
+        if name.name == "hash" && args.is_empty() && Self::is_blessed_hash_receiver(&recv_ty) {
+            if !type_args.is_empty() {
+                self.err("E0501",
+                    "`hash` takes no type arguments".to_string(),
+                    call_span);
+            }
+            return Ty::U64;
+        }
+        // v0.0.4 Phase 3 Slice 3B.5: blessed `eq(other)` on primitive
+        // receivers — lowers to the same memcmp/icmp shape as `==`.
+        // Generic HashMap[K, V]'s probe loop uses `k.eq(stored)` so
+        // monomorphized code over user K can use their impl Eq while
+        // monomorphized code over primitive K uses the blessed lowering.
+        if name.name == "eq" && args.len() == 1 && Self::is_blessed_eq_receiver(&recv_ty) {
+            if !type_args.is_empty() {
+                self.err("E0501",
+                    "`eq` takes no type arguments".to_string(),
+                    call_span);
+            }
+            let _ = self.check_expr(&args[0], Some(recv_ty.clone()));
+            return Ty::Bool;
+        }
         let Ty::Struct(id) = recv_ty else {
             self.err(
                 "E0324",
@@ -4418,6 +4629,27 @@ impl SemaCx<'_> {
             Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
             | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
             | Ty::F32 | Ty::F64
+            | Ty::Bool
+            | Ty::Str)
+    }
+
+    /// v0.0.4 Phase 3 Slice 3B.5: blessed `hash()` for primitive
+    /// receivers. Integer types + str. (Bool and floats aren't typical
+    /// hashmap keys; add if motivated.)
+    fn is_blessed_hash_receiver(ty: &Ty) -> bool {
+        matches!(ty,
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
+            | Ty::Str)
+    }
+
+    /// v0.0.4 Phase 3 Slice 3B.5: blessed `eq(other)` for primitive
+    /// receivers. Same set as Hash plus Bool — anywhere `==` works
+    /// today.
+    fn is_blessed_eq_receiver(ty: &Ty) -> bool {
+        matches!(ty,
+            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
+            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
             | Ty::Bool
             | Ty::Str)
     }

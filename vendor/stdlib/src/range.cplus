@@ -1,0 +1,29 @@
+// stdlib/range.cplus — small iterator-producing utilities.
+//
+// v0.0.4 Phase 4 Slice 4E. `range(start, end)` returns an exclusive-end
+// `Iterator[i32]`; `range_inclusive(start, end)` includes the end.
+// Both are pure-source `gen fn` declarations — no compiler changes
+// required beyond Phase 4's gen-fn lowering. Importing `iterator`
+// pulls the `Iterator[T]` template + its `Option[T]` dependency.
+
+import "./iterator" as iterator;
+
+// Exclusive-end: `range(0, 3)` yields 0, 1, 2.
+pub gen fn range(start: i32, end: i32) -> i32 {
+    let mut i: i32 = start;
+    while i < end {
+        yield i;
+        i = i +% (1 as i32);
+    }
+    return;
+}
+
+// Inclusive-end: `range_inclusive(0, 3)` yields 0, 1, 2, 3.
+pub gen fn range_inclusive(start: i32, end: i32) -> i32 {
+    let mut i: i32 = start;
+    while i <= end {
+        yield i;
+        i = i +% (1 as i32);
+    }
+    return;
+}
