@@ -47,7 +47,31 @@
 //   40..48  pending_hdls     **u8
 //   48..56  kevent_buf       *u8  (32-byte kevent struct slot, reused)
 //   56..64  waiter_filters   *i16  (parallel to waiter_fds: EVFILT_READ=-1, EVFILT_WRITE=-2)
-//   total: 64 bytes header + 4 growable buffers.
+//   64..68  n_timers         i32   (pending one-shot timer count; v0.0.5 Slice 4A)
+//   68..72  (pad)
+//   72..76  n_awaiters       i32   (live awaitee→awaiter mappings; v0.0.5 Slice 4F)
+//   76..80  cap_awaiters     i32
+//   80..88  awaitee_hdls     **u8  (parallel to awaiter_hdls; v0.0.5 Slice 4F)
+//   88..96  awaiter_hdls     **u8
+//   total: 96 bytes header + 6 growable buffers.
+//
+// **Timers (v0.0.5 Slice 4A).** A `sleep(ms)` await registers a kqueue
+// EVFILT_TIMER (filter = -7) using the coroutine handle as the kevent
+// `ident` (uintptr_t). On fire, `poll_one_event` reads ident back and
+// resumes that handle directly — no separate waiter table needed, since
+// the resume target is encoded in the ident. `n_timers` participates in
+// `waiter_count()` so `block_on` knows to keep polling.
+//
+// **Awaiter notification (v0.0.5 Slice 4F).** Each `await EXPR` site
+// registers `(awaitee_hdl, %.coro.hdl)` in the awaiter table before
+// suspending the awaiter coroutine. When the awaitee reaches its
+// `final_suspend` epilogue, codegen emits a `notify_completed(self_hdl)`
+// call — the reactor looks up the matching entry, swap-removes it, and
+// enqueues the awaiter on the pending queue. Next `drain_pending` round
+// resumes the awaiter, which re-checks `coro.done(awaitee)` (now true)
+// and extracts the value. Without this notification, awaiters of inner
+// coroutines that suspend on fd/timer events stall forever — `block_on`
+// only re-resumes the *outermost* future on each loop pass.
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -83,7 +107,7 @@ extern fn __cplus_reactor_set_state(p: *u8);
 //   udata   void*      @ 24
 // total size: 32 bytes.
 
-fn header_bytes() -> usize { return 64 as usize; }
+fn header_bytes() -> usize { return 96 as usize; }
 fn kevent_bytes() -> usize { return 32 as usize; }
 
 fn off_kqfd() -> usize { return 0 as usize; }
@@ -96,10 +120,16 @@ fn off_waiter_hdls() -> usize { return 32 as usize; }
 fn off_pending_hdls() -> usize { return 40 as usize; }
 fn off_kevent_buf() -> usize { return 48 as usize; }
 fn off_waiter_filters() -> usize { return 56 as usize; }
+fn off_n_timers() -> usize { return 64 as usize; }
+fn off_n_awaiters() -> usize { return 72 as usize; }
+fn off_cap_awaiters() -> usize { return 76 as usize; }
+fn off_awaitee_hdls() -> usize { return 80 as usize; }
+fn off_awaiter_hdls() -> usize { return 88 as usize; }
 
-// EVFILT_READ = -1, EVFILT_WRITE = -2 (macOS sys/event.h).
+// EVFILT_READ = -1, EVFILT_WRITE = -2, EVFILT_TIMER = -7 (macOS sys/event.h).
 fn evfilt_read() -> i16 { return (0 as i16) -% (1 as i16); }
 fn evfilt_write() -> i16 { return (0 as i16) -% (2 as i16); }
+fn evfilt_timer() -> i16 { return (0 as i16) -% (7 as i16); }
 
 // Lazily allocate + init the reactor on first use. Idempotent: returns
 // the same state pointer on every call within a process.
@@ -129,6 +159,19 @@ pub fn ensure() -> *u8 {
     unsafe { *kb_slot = malloc(kevent_bytes()); }
     let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
     unsafe { *wflt_slot = malloc((8 *% 2) as usize); }
+    // v0.0.5 Slice 4A: timer count starts at zero. Timers don't need a
+    // parallel waiter table — the kevent ident *is* the resume target.
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    unsafe { *nt_slot = 0 as i32; }
+    // v0.0.5 Slice 4F: awaiter table. Two parallel arrays of `*u8`.
+    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
+    unsafe { *na_slot = 0 as i32; }
+    let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
+    unsafe { *ca_slot = 8 as i32; }
+    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
+    unsafe { *ae_slot = malloc((8 *% 8) as usize); }
+    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
+    unsafe { *ar_slot = malloc((8 *% 8) as usize); }
     unsafe { __cplus_reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
@@ -155,6 +198,31 @@ pub extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
 
 pub extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
+    return;
+}
+
+// v0.0.5 Slice 4A: register a one-shot timer that fires after `ms`
+// milliseconds and resumes `hdl`. Uses kqueue EVFILT_TIMER with
+// ident = handle pointer (uintptr_t). On fire, `poll_one_event` reads
+// ident back from the kevent and resumes directly — no waiter table
+// lookup, no separate timer-id allocation.
+pub extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
+    register_timer(ms, hdl);
+    return;
+}
+
+// v0.0.5 Slice 4F: awaiter-of-completed-coroutine notification.
+// Codegen emits `register_awaiter_v1(awaitee, self)` at await sites
+// before suspending; `notify_completed_v1(self)` runs in every async
+// fn's final_suspend epilogue. See the architecture comment at the
+// top of this file for the full flow.
+pub extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
+    register_awaiter(awaitee, awaiter);
+    return;
+}
+
+pub extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
+    notify_completed(awaitee);
     return;
 }
 
@@ -187,6 +255,43 @@ pub fn register_read(fd: i32, hdl: *u8) {
 // Register fd for write-readiness (kqueue EVFILT_WRITE).
 pub fn register_write(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_write());
+    return;
+}
+
+// v0.0.5 Slice 4A: register a one-shot timer. Submits EVFILT_TIMER with
+// ident = (u64)hdl, data = ms (default unit on macOS is milliseconds).
+// `poll_one_event` recognizes the timer filter and resumes via ident
+// directly, so we just bump the `n_timers` counter so `block_on`'s
+// "anything pending?" check sees us.
+pub fn register_timer(ms: u64, hdl: *u8) {
+    let state: *u8 = ensure();
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    let n: i32 = unsafe { *nt_slot };
+    unsafe { *nt_slot = n +% (1 as i32); }
+    let kqfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
+    let kb: *u8 = unsafe { *((state + off_kevent_buf()) as **u8) };
+    // ident @0 (uintptr_t = 8 bytes on 64-bit): the coroutine handle
+    // pointer doubles as a unique timer ident. Write through a `**u8`
+    // view so we don't need a pointer→integer cast (not yet legal in
+    // surface C+ — pointers live in their own type space here).
+    let ident_slot: **u8 = unsafe { kb as **u8 };
+    unsafe { *ident_slot = hdl; }
+    // filter @8 (i16): EVFILT_TIMER = -7
+    let filter_slot: *i16 = unsafe { (kb + (8 as usize)) as *i16 };
+    unsafe { *filter_slot = evfilt_timer(); }
+    // flags @10 (u16): EV_ADD | EV_ONESHOT
+    let flags_slot: *u16 = unsafe { (kb + (10 as usize)) as *u16 };
+    unsafe { *flags_slot = 0x0011 as u16; }
+    // fflags @12 (u32): 0 → data is interpreted as milliseconds.
+    let fflags_slot: *u32 = unsafe { (kb + (12 as usize)) as *u32 };
+    unsafe { *fflags_slot = 0 as u32; }
+    // data @16 (i64): the timeout in milliseconds.
+    let data_slot: *i64 = unsafe { (kb + (16 as usize)) as *i64 };
+    unsafe { *data_slot = ms as i64; }
+    // udata @24 (ptr): null
+    let udata_slot: **u8 = unsafe { (kb + (24 as usize)) as **u8 };
+    unsafe { *udata_slot = 0 as *u8; }
+    let _r: i32 = unsafe { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
     return;
 }
 
@@ -252,15 +357,34 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
 pub fn poll_one_event() -> bool {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
     let n: i32 = unsafe { *nw_slot };
-    if n == (0 as i32) { return false; }
+    let nt: i32 = unsafe { *nt_slot };
+    if n == (0 as i32) {
+        if nt == (0 as i32) { return false; }
+    }
     let kqfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
     let kb: *u8 = unsafe { *((state + off_kevent_buf()) as **u8) };
     let nev: i32 = unsafe { kevent(kqfd, 0 as *u8, 0 as i32, kb, 1 as i32, 0 as *u8) };
     if nev <= (0 as i32) { return false; }
     let ident: u64 = unsafe { *(kb as *u64) };
-    let fd_ready: i32 = ident as i32;
     let filter_ready: i16 = unsafe { *((kb + (8 as usize)) as *i16) };
+    // v0.0.5 Slice 4A: timer fires use ident as the coroutine handle
+    // directly (we set it that way in register_timer). No waiter-table
+    // lookup needed — just resume and decrement the timer count.
+    if filter_ready == evfilt_timer() {
+        // The kevent ident slot stored a coroutine-handle pointer (see
+        // register_timer). Read it back as `*u8` via the existing
+        // `*ident_slot` value we already loaded — `ident` is a u64
+        // but we need it as a pointer, so re-load through a `**u8`
+        // view at the same offset.
+        let phdl: **u8 = unsafe { kb as **u8 };
+        let hdl: *u8 = unsafe { *phdl };
+        unsafe { *nt_slot = nt -% (1 as i32); }
+        unsafe { __cplus_coro_resume(hdl); }
+        return true;
+    }
+    let fd_ready: i32 = ident as i32;
     // Find the matching (fd, filter) waiter; swap-remove from the parallel arrays.
     let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
@@ -338,16 +462,98 @@ pub fn enqueue_pending(hdl: *u8) {
     return;
 }
 
-// Snapshot the waiter count. Used by block_on to decide whether to
-// kevent_wait or terminate the loop.
+// Snapshot of "pending kevent-side work" — fd waiters plus active
+// timers. `block_on` uses it to decide whether to kevent_wait or
+// terminate the loop.
+//
+// v0.0.5 Slice 4F: the awaiter table doesn't drive kevent (its
+// resumes are triggered by `notify_completed`, which routes through
+// `enqueue_pending`), so it doesn't participate here. The drain step
+// in `block_on` picks up notified awaiters via the pending queue.
 pub fn waiter_count() -> i32 {
     let state: *u8 = ensure();
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
-    return unsafe { *nw_slot };
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    return unsafe { *nw_slot } +% unsafe { *nt_slot };
 }
 
 pub fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     return unsafe { *np_slot };
+}
+
+// v0.0.5 Slice 4F: register `awaiter` as waiting on `awaitee`. Codegen
+// emits a call here from inside each `await` site's resume_bb, just
+// before the awaiter suspends itself. The table grows by doubling.
+// Append-only; entries are removed by `notify_completed` (swap-remove).
+pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
+    let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
+    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *na_slot };
+    let mut cap: i32 = unsafe { *ca_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_ae: *u8 = unsafe { realloc(*ae_slot, (cap *% 8) as usize) };
+        let new_ar: *u8 = unsafe { realloc(*ar_slot, (cap *% 8) as usize) };
+        unsafe { *ae_slot = new_ae; }
+        unsafe { *ar_slot = new_ar; }
+        unsafe { *ca_slot = cap; }
+    }
+    let aes: **u8 = unsafe { *ae_slot as **u8 };
+    let ars: **u8 = unsafe { *ar_slot as **u8 };
+    let aes_dst: **u8 = unsafe { aes + (n as usize) };
+    unsafe { *aes_dst = awaitee; }
+    let ars_dst: **u8 = unsafe { ars + (n as usize) };
+    unsafe { *ars_dst = awaiter; }
+    unsafe { *na_slot = n +% (1 as i32); }
+    return;
+}
+
+// v0.0.5 Slice 4F: linear scan for an awaiter registered on `awaitee`.
+// If found, swap-remove and enqueue the awaiter for resumption. No-op
+// when nobody is awaiting (block_on'd outer futures don't register,
+// orphan spawned tasks don't register).
+//
+// An awaitee can in principle be awaited by multiple awaiters. The
+// codegen path only generates a single `await X` per source-level
+// `await`, so the scenario is: same future-value passed to two
+// different awaiters via Copy semantics. Treating the table as a
+// multimap is overkill for v0.0.5; instead this fn pops *one* matching
+// entry per call. If two awaiters were registered, the second is left
+// behind in the table — leak, not crash. (Realistic? Same Future
+// shouldn't be awaited twice anyway; the gen_await_expr destroy path
+// already breaks that pattern.)
+pub fn notify_completed(awaitee: *u8) {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
+    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
+    let n: i32 = unsafe { *na_slot };
+    if n == (0 as i32) { return; }
+    let aes: **u8 = unsafe { *ae_slot as **u8 };
+    let ars: **u8 = unsafe { *ar_slot as **u8 };
+    let mut i: i32 = 0;
+    while i < n {
+        let cur_ae: *u8 = unsafe { *(aes + (i as usize)) };
+        if cur_ae == awaitee {
+            let awaiter: *u8 = unsafe { *(ars + (i as usize)) };
+            // Swap-remove.
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_ae: *u8 = unsafe { *(aes + (last_i as usize)) };
+                let last_ar: *u8 = unsafe { *(ars + (last_i as usize)) };
+                unsafe { *(aes + (i as usize)) = last_ae; }
+                unsafe { *(ars + (i as usize)) = last_ar; }
+            }
+            unsafe { *na_slot = last_i; }
+            enqueue_pending(awaiter);
+            return;
+        }
+        i = i +% (1 as i32);
+    }
+    return;
 }

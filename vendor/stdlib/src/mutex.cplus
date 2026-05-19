@@ -107,6 +107,12 @@ impl Mutex[T] {
             let refct_bytes: usize = 8 as usize;
             let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
             let _err: i32 = unsafe { pthread_mutex_destroy(mutex_ptr) };
+            // v0.0.5 Phase 1C: invoke inner-T Drop on the last
+            // reference before freeing the heap block. Value lives
+            // at refcount(8B) + pthread_mutex_t(64B) = offset 72.
+            let value_off: usize = (8 as usize) +% (64 as usize);
+            let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+            unsafe { __cplus_drop_in_place::[T](value_ptr); }
             unsafe { free(self.ctrl); }
         }
         return;

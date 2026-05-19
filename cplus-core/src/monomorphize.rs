@@ -114,7 +114,7 @@ pub fn monomorphize(
     // through recorded inner call args, and add the resolved
     // `(callee, concrete_args)` to the instantiation set. Iterate until
     // no new pair is produced.
-    let propagated_instantiations = propagate_fn_instantiations(&program, &mono.instantiations, &mono.call_monos);
+    let propagated_instantiations = propagate_fn_instantiations(&program, &mono.instantiations, &mono.call_monos, &mono.struct_instantiations);
     // Build the substitution context for each instantiation up front
     // so call-site rewriting and template-expansion share one source.
     let mut instances: Vec<MonoInstance> = Vec::new();
@@ -311,11 +311,30 @@ fn synthesize_generic_typed_impls(
     let target_name = b.target.name.clone();
     let impl_param_names: Vec<String> = b.target_generic_params.iter()
         .map(|g| g.name.name.clone()).collect();
-    // For each instantiation of this generic struct, build a fresh
-    // concrete impl block.
-    for ((sname, args), info) in &mono.struct_instantiations {
-        if sname != &target_name { continue; }
+    // For each instantiation of this generic struct OR enum, build a
+    // fresh concrete impl block. Enum instantiations carry the same
+    // shape (mangled_name + concrete args) so both paths route through
+    // the same per-instantiation rewriting below.
+    let struct_pairs: Vec<(String, Vec<Ty>, String)> = mono.struct_instantiations.iter()
+        .map(|((n, a), info)| (n.clone(), a.clone(), info.mangled_name.clone()))
+        .collect();
+    let enum_pairs: Vec<(String, Vec<Ty>, String)> = mono.enum_instantiations.iter()
+        .map(|((n, a), info)| (n.clone(), a.clone(), info.mangled_name.clone()))
+        .collect();
+    let all_pairs = struct_pairs.into_iter().chain(enum_pairs.into_iter());
+    for (sname, args, mangled_from_info) in all_pairs {
+        if sname != target_name { continue; }
         if args.len() != impl_param_names.len() { continue; }
+        let _ = &mangled_from_info; // kept for parity with prior shape
+        // Re-resolve mangled name from the appropriate instantiation
+        // map (we know `sname == target_name` and arities match).
+        let info_mangled: String = mono.struct_instantiations
+            .get(&(sname.clone(), args.clone()))
+            .map(|i| i.mangled_name.clone())
+            .or_else(|| mono.enum_instantiations
+                .get(&(sname.clone(), args.clone()))
+                .map(|i| i.mangled_name.clone()))
+            .expect("instantiation present (just iterated)");
         // Subst: impl-level T → concrete Ty; "Self" → Path(mangled)
         // handled separately by inserting Self into subst with the
         // concrete struct's Ty rendered by type_name_of.
@@ -329,7 +348,7 @@ fn synthesize_generic_typed_impls(
         // type_name_of-of would not handle, then handle "Self" as a
         // special Path name in subst_type_ast via a name-level rewrite.
         // Simpler: pre-rewrite Self → Path(mangled) by walking AST.
-        let mangled_name = info.mangled_name.clone();
+        let mangled_name = info_mangled.clone();
         let mut new_methods: Vec<Method> = Vec::with_capacity(b.methods.len());
         for m in &b.methods {
             let mut m2 = m.clone();
@@ -383,6 +402,9 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
             return_type: return_type.as_ref().map(|rt| Box::new(rewrite_self_in_type(rt, mangled_name))),
         },
         TypeKind::Slice(inner) => TypeKind::Slice(Box::new(rewrite_self_in_type(inner, mangled_name))),
+        TypeKind::Tuple(elems) => TypeKind::Tuple(
+            elems.iter().map(|t| rewrite_self_in_type(t, mangled_name)).collect()
+        ),
     };
     Type { kind, span: ty.span }
 }
@@ -732,6 +754,7 @@ fn propagate_fn_instantiations(
     program: &Program,
     initial: &std::collections::BTreeSet<(String, Vec<Ty>)>,
     call_monos: &std::collections::HashMap<crate::lexer::Span, Vec<Ty>>,
+    struct_instantiations: &std::collections::BTreeMap<(String, Vec<Ty>), crate::sema::StructInstantiationInfo>,
 ) -> std::collections::BTreeSet<(String, Vec<Ty>)> {
     // Build template lookup: name -> &Function. Only generic templates.
     let templates: std::collections::HashMap<String, &Function> = program.items.iter()
@@ -779,6 +802,70 @@ fn propagate_fn_instantiations(
         for d in discoveries {
             if out.insert(d.clone()) {
                 worklist.push_back(d);
+            }
+        }
+    }
+    // v0.0.5 Phase 2A: extend propagation through generic-impl-method
+    // bodies. Phase 1B only walks generic-FREE-fn bodies, so a generic
+    // method body like `HashMap[K, V]::get` calling `result::io_err::[V]`
+    // never gets the propagated `(io_err, [i32])` entry when the user
+    // instantiates `HashMap[i32, i32]`. Worked around in v0.0.4 by
+    // inlining the constructor; this slice closes the gap.
+    //
+    // For each `struct_instantiation` (struct_name, concrete_args), find
+    // the matching generic impl block, build the subst from
+    // `target_generic_params → concrete_args`, walk each method body's
+    // turbofish call sites, substitute, and feed concrete pairs to the
+    // worklist for transitive discovery.
+    let mut method_worklist: std::collections::VecDeque<(String, Vec<Ty>)> = std::collections::VecDeque::new();
+    for ((sname, sargs), _info) in struct_instantiations {
+        for item in &program.items {
+            let ItemKind::Impl(b) = &item.kind else { continue; };
+            if b.target_generic_params.is_empty() { continue; }
+            if &b.target.name != sname { continue; }
+            if b.target_generic_params.len() != sargs.len() { continue; }
+            let subst: std::collections::HashMap<String, Ty> = b.target_generic_params.iter()
+                .zip(sargs.iter())
+                .map(|(gp, t)| (gp.name.name.clone(), t.clone()))
+                .collect();
+            for m in &b.methods {
+                visit_ident_calls_in_block(&m.body, &mut |callee_name, type_args, _span| {
+                    if !templates.contains_key(callee_name) { return; }
+                    if type_args.is_empty() { return; }
+                    let Some(resolved) = type_args.iter()
+                        .map(|t| type_ast_to_ty_with_subst(t, &subst))
+                        .collect::<Option<Vec<Ty>>>()
+                    else { return; };
+                    if !is_concrete(&resolved) { return; }
+                    let pair = (callee_name.to_string(), resolved);
+                    if out.insert(pair.clone()) {
+                        method_worklist.push_back(pair);
+                    }
+                });
+            }
+        }
+    }
+    // Drain the method-discovered set transitively — a freshly-discovered
+    // generic-fn instantiation might call yet another generic fn in its
+    // body. Same fixed-point shape as the main worklist above.
+    while let Some((caller, caller_args)) = method_worklist.pop_front() {
+        let Some(template) = templates.get(&caller) else { continue; };
+        if template.generic_params.len() != caller_args.len() { continue; }
+        let subst = build_subst(&template.generic_params, &caller_args);
+        let mut discoveries: Vec<(String, Vec<Ty>)> = Vec::new();
+        visit_ident_calls_in_block(&template.body, &mut |callee_name, type_args, _span| {
+            if !templates.contains_key(callee_name) { return; }
+            if type_args.is_empty() { return; }
+            let Some(resolved) = type_args.iter()
+                .map(|t| type_ast_to_ty_with_subst(t, &subst))
+                .collect::<Option<Vec<Ty>>>()
+            else { return; };
+            if !is_concrete(&resolved) { return; }
+            discoveries.push((callee_name.to_string(), resolved));
+        });
+        for d in discoveries {
+            if out.insert(d.clone()) {
+                method_worklist.push_back(d);
             }
         }
     }
@@ -897,6 +984,23 @@ fn subst_type_ast(
                 .map(|rt| Box::new(subst_type_ast(rt, subst, type_name_of, struct_lookup))),
         },
         TypeKind::Slice(inner) => TypeKind::Slice(Box::new(subst_type_ast(inner, subst, type_name_of, struct_lookup))),
+        // v0.0.5 Phase 3 Slice 3B: tuple type. Recurse first, then
+        // look up the synthesized tuple struct under the synthetic
+        // template name `"__Tuple"` (same key sema stored under).
+        // Falls through unchanged if the lookup misses — sema would
+        // have synthesized it on first encounter, so a miss here
+        // means an out-of-band tuple type that won't codegen.
+        TypeKind::Tuple(elems) => {
+            let resolved: Vec<Type> = elems.iter()
+                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup))
+                .collect();
+            let arg_names: Vec<String> = resolved.iter().map(mangle_type_ast_arg).collect();
+            if let Some(mangled) = struct_lookup.by_names.get(&("__Tuple".to_string(), arg_names)) {
+                TypeKind::Path(mangled.clone())
+            } else {
+                TypeKind::Tuple(resolved)
+            }
+        }
     };
     Type { kind, span: ty.span }
 }
@@ -1393,6 +1497,9 @@ fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String,
             for a in args { rewrite_alias_type(a, aliases); }
         }
         TypeKind::Slice(inner) => rewrite_alias_type(inner, aliases),
+        TypeKind::Tuple(elems) => {
+            for t in elems { rewrite_alias_type(t, aliases); }
+        }
     }
 }
 
@@ -1520,6 +1627,11 @@ fn mangle_type_ast_arg(t: &Type) -> String {
             s
         }
         TypeKind::Slice(inner) => format!("slice_{}", mangle_type_ast_arg(inner)),
+        TypeKind::Tuple(elems) => {
+            let mut s = format!("tuple{}", elems.len());
+            for e in elems { s.push('_'); s.push_str(&mangle_type_ast_arg(e)); }
+            s
+        }
     }
 }
 

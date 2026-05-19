@@ -377,6 +377,14 @@ pub enum TypeKind {
     /// Indexing `s[i]` is bounds-checked at runtime; element access
     /// via `slice_ptr(s)` / `slice_len(s)` intrinsics is safe.
     Slice(Box<Type>),
+    /// v0.0.5 Phase 3 Slice 3B: tuple type `(T1, T2, ...)`. Arity must
+    /// be ≥ 2; a parenthesised single type is grouping, and `()` is the
+    /// unit type which has its own `Path("()")` representation. Sema
+    /// synthesizes a concrete struct per unique `(T1, T2, ...)` combo
+    /// (named `__tuple_N_<t1>_<t2>_...`) with fields `_0`, `_1`, ...
+    /// Codegen then sees it as any other struct — field access via
+    /// `.0` / `.1` desugars to `._0` / `._1` field projection.
+    Tuple(Vec<Type>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -629,6 +637,14 @@ pub enum ExprKind {
     Index {
         receiver: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// v0.0.5 Phase 3 Slice 3B: tuple literal `(a, b, ...)`. Arity ≥ 2;
+    /// `(a)` is grouping (handled in parse_primary as a pass-through),
+    /// `()` is the unit literal. Sema looks up the synthesized tuple
+    /// struct for `(T_a, T_b, ...)` and rewrites this node to a struct
+    /// literal with fields `_0`, `_1`, ... bound to the element exprs.
+    TupleLit {
+        elements: Vec<Expr>,
     },
     /// `match SCRUTINEE { Pat => arm, ... }`. Phase 3I.
     /// Scrutinee is an enum value; arms are checked for exhaustiveness by

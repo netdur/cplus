@@ -380,6 +380,11 @@ impl CopyOracle {
             TypeKind::FnPtr { .. } => false,
             // Phase 11 polish: slice type — fat-pointer view, Copy.
             TypeKind::Slice(_) => false,
+            // v0.0.5 Phase 3 Slice 3B: tuple type. Same conservative
+            // shape as `Generic` — the synthesized tuple struct's
+            // Copy-ness depends on its element types; defer to sema's
+            // computed flag after monomorphize lowers this to a Path.
+            TypeKind::Tuple(_) => false,
         }
     }
 
@@ -400,6 +405,9 @@ impl CopyOracle {
             TypeKind::Generic { .. } => false,
             // Phase 11 polish: slice type — fat pointer, Copy.
             TypeKind::Slice(_) => true,
+            // v0.0.5 Phase 3 Slice 3B: tuple type — same conservative
+            // assumption as Generic until lowered to a Path.
+            TypeKind::Tuple(_) => false,
         }
     }
 }
@@ -2126,7 +2134,7 @@ impl Analyzer<'_> {
                 }
             }
             ExprKind::Field { receiver, .. } => self.apply_expr(receiver, state),
-            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } | ExprKind::TupleLit { elements } => {
                 for el in elements {
                     self.apply_expr(el, state);
                 }
@@ -2819,7 +2827,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
             fields.iter().any(|f| expr_reads_ident(&f.value, name))
         }
         ExprKind::Field { receiver, .. } => expr_reads_ident(receiver, name),
-        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => elements.iter().any(|e| expr_reads_ident(e, name)),
+        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } | ExprKind::TupleLit { elements } => elements.iter().any(|e| expr_reads_ident(e, name)),
         ExprKind::Index { receiver, index } => {
             expr_reads_ident(receiver, name) || expr_reads_ident(index, name)
         }

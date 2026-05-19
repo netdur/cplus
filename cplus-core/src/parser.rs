@@ -935,6 +935,31 @@ impl Parser {
             // unambiguously starts a fn-pointer type because parse_type is
             // never called at an item-declaration site (item parsing handles
             // `fn name(...)` via its own path).
+            // v0.0.5 Phase 3 Slice 3B: tuple type `(T1, T2, ...)`. The
+            // unit type `()` is spelled `Path("()")` elsewhere in the
+            // codebase; we only enter the LParen branch for arity ≥ 2.
+            TokenKind::LParen => {
+                let start = self.bump().span;
+                let mut elems: Vec<Type> = Vec::new();
+                while !self.at(&TokenKind::RParen) {
+                    elems.push(self.parse_type()?);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                let end = self.expect(&TokenKind::RParen, "`)` (tuple type element list)")?.span;
+                if elems.len() < 2 {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: ")".to_string(),
+                            expected: "tuple type element (arity ≥ 2)",
+                        },
+                        span: start.merge(end),
+                    });
+                }
+                return Ok(Type {
+                    kind: TypeKind::Tuple(elems),
+                    span: start.merge(end),
+                });
+            }
             TokenKind::Fn => {
                 let start = self.bump().span;
                 self.expect(&TokenKind::LParen, "`(` after `fn` in fn-pointer type")?;
@@ -1606,7 +1631,20 @@ impl Parser {
                 }
                 TokenKind::Dot => {
                     self.bump();
-                    let name = self.expect_ident()?;
+                    // v0.0.5 Phase 3 Slice 3B: accept numeric field
+                    // access (`pair.0`, `pair.1`) by rewriting the
+                    // literal to a synthetic `_N` ident matching the
+                    // tuple struct's field names. Decimal-only — no
+                    // `0x` / `0b` prefixes, no suffixes (sema rejects
+                    // suffix-bearing tokens here implicitly via the
+                    // expect_ident fall-through).
+                    let tok = self.peek().clone();
+                    let name = if let TokenKind::Int(n, _) = &tok.kind {
+                        self.bump();
+                        Ident { name: format!("_{}", n), span: tok.span }
+                    } else {
+                        self.expect_ident()?
+                    };
                     let span = e.span.merge(name.span);
                     e = Expr { kind: ExprKind::Field { receiver: Box::new(e), name }, span };
                 }
@@ -1897,10 +1935,28 @@ impl Parser {
                 Ok(Expr { kind: ExprKind::Ident(n), span: tok.span })
             }
             TokenKind::LParen => {
-                self.bump();
-                let e = self.parse_expr()?;
+                let lparen = self.bump().span;
+                // v0.0.5 Phase 3 Slice 3B: distinguish tuple literal
+                // `(a, b, ...)` from grouping `(a)`. Look ahead one
+                // expression and check for `,`: if present, it's a
+                // tuple. `()` (empty parens) would be the unit value
+                // but the parser doesn't accept that today — `()` is
+                // strictly a type-position spelling.
+                let first = self.parse_expr()?;
+                if self.eat(&TokenKind::Comma) {
+                    let mut elements: Vec<Expr> = vec![first];
+                    while !self.at(&TokenKind::RParen) {
+                        elements.push(self.parse_expr()?);
+                        if !self.eat(&TokenKind::Comma) { break; }
+                    }
+                    let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+                    return Ok(Expr {
+                        kind: ExprKind::TupleLit { elements },
+                        span: lparen.merge(end),
+                    });
+                }
                 self.expect(&TokenKind::RParen, "`)`")?;
-                Ok(e)
+                Ok(first)
             }
             TokenKind::LBracket => {
                 let start = self.bump().span;

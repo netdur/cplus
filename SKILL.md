@@ -139,6 +139,24 @@ impl Vec3 {
 let c = a.add(b);
 ```
 
+**Ordered comparison (`<` / `<=` / `>` / `>=`) on a generic parameter** is rejected at sema time (E0302) — there is no `T: Ord` desugar to `T::cmp` because that would *be* operator overloading. Write `.cmp(other)` (returns `i32`) and compare its result:
+
+```cplus
+// ❌ E0302: ordered comparison on generic-parameter binding `a` is not supported
+fn max[T: Ord](a: T, b: T) -> T {
+    if a < b { return b; }
+    return a;
+}
+
+// ✅ Canonical form — `.cmp()` resolves through the `T: Ord` bound's
+// interface signature; monomorphization dispatches to the concrete
+// `impl Ord for T` per instantiation.
+fn max[T: Ord](a: T, b: T) -> T {
+    if a.cmp(b) < 0 { return b; }
+    return a;
+}
+```
+
 ### 2.7 No macros, no decorators, no comptime, no AST transformation
 
 Attributes (`#[...]`) are **pure metadata** — they flip flags the compiler reads. They never generate code, transform the AST, or run user logic at compile time.

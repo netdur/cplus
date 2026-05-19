@@ -6,6 +6,11 @@
 
 import "./result" as result;
 import "./vec" as vec;
+// v0.0.5 Phase 4 Slice 4C: File::read_async needs the reactor's
+// fd-readiness path. Phase 3 Slice 3D's File::lines is sync but
+// the gen-method machinery needs Iterator[T] in scope.
+import "./net" as net;
+import "./iterator" as iterator;
 
 // `open` is variadic in libc — mode is only consumed when O_CREAT is in
 // flags. The variadic decl matches the platform ABI exactly (on
@@ -100,6 +105,80 @@ impl File {
         if self.fd >= (0 as i32) {
             unsafe { close(self.fd); }
             self.fd = 0 -% 1 as i32;
+        }
+        return;
+    }
+
+    // v0.0.5 Phase 4 Slice 4C: flip O_NONBLOCK on the underlying fd so
+    // `read_async` can return EAGAIN-loops instead of blocking the
+    // executor thread. Idempotent; safe to call repeatedly. Returns 0
+    // on success, -1 on fcntl error.
+    pub fn make_nonblocking(mut self) -> i32 {
+        return net::set_nonblocking(self.fd);
+    }
+
+    // v0.0.5 Phase 4 Slice 4C: async read. Same semantics as
+    // `net::read_fd_async(self.fd, buf, count)` — reactor handles
+    // EAGAIN suspension via kqueue EVFILT_READ. Prerequisite: call
+    // `make_nonblocking()` once before first use.
+    pub async fn read_async(mut self, buf: *u8, count: usize) -> isize {
+        return await net::read_fd_async(self.fd, buf, count);
+    }
+
+    // v0.0.5 Phase 3 Slice 3D: iterator over '\n'-separated lines.
+    // Reads the file in 4 KiB chunks; each yielded `string` is the
+    // line *without* its trailing newline. The carry buffer holds the
+    // partial line that spans a chunk boundary, copied into the next
+    // chunk's scan. A final fragment without a trailing newline at EOF
+    // is yielded as the last line.
+    pub gen fn lines(self) -> string {
+        let mut carry: vec::Vec[u8] = vec::new::[u8]();
+        let chunk_size: usize = 4096 as usize;
+        let chunk: *u8 = unsafe { malloc(chunk_size) };
+        loop {
+            let n: isize = unsafe { read(self.fd, chunk, chunk_size) };
+            if n <= (0 as isize) {
+                // EOF (n == 0) or error (n < 0). Yield any pending
+                // partial line, then stop. Read errors are silently
+                // surfaced as "no more lines" — callers needing error
+                // detail should use `read_to_end` + manual splitting.
+                if carry.len() > (0 as usize) {
+                    let cs: u8[] = carry.as_slice();
+                    let cp: *u8 = unsafe { slice_ptr(cs) };
+                    let view: str = unsafe { str_from_raw_parts(cp, carry.len()) };
+                    yield view.to_string();
+                }
+                unsafe { free(chunk); }
+                return;
+            }
+            let count: usize = n as usize;
+            let mut start: usize = 0 as usize;
+            let mut i: usize = 0 as usize;
+            while i < count {
+                let bp: *u8 = unsafe { chunk + i };
+                let b: u8 = unsafe { *bp };
+                if b == (10 as u8) {
+                    let chunk_p: *u8 = unsafe { chunk + start };
+                    let chunk_len: usize = i -% start;
+                    if carry.len() == (0 as usize) {
+                        let view: str = unsafe { str_from_raw_parts(chunk_p, chunk_len) };
+                        yield view.to_string();
+                    } else {
+                        carry.extend_from_raw(chunk_p, chunk_len);
+                        let cs: u8[] = carry.as_slice();
+                        let cp: *u8 = unsafe { slice_ptr(cs) };
+                        let view: str = unsafe { str_from_raw_parts(cp, carry.len()) };
+                        yield view.to_string();
+                        carry.clear();
+                    }
+                    start = i +% (1 as usize);
+                }
+                i = i +% (1 as usize);
+            }
+            if start < count {
+                let rest_p: *u8 = unsafe { chunk + start };
+                carry.extend_from_raw(rest_p, count -% start);
+            }
         }
         return;
     }

@@ -580,10 +580,24 @@ impl<'a> Lexer<'a> {
 
         let _ = body_start;
         let kind = if is_float || matches!(suf, NumSuffix::F32 | NumSuffix::F64) {
-            let v: f64 = digits.parse().map_err(|_| LexError {
-                kind: LexErrorKind::InvalidNumber(digits.clone()),
-                span: self.span_from(start),
-            })?;
+            // F32-suffixed literals parse directly to f32, then widen to f64
+            // for AST storage. The widen is lossless (f32 → f64 is exact),
+            // and codegen's `(*v as f32).to_bits()` recovers the exact f32.
+            // Going through f64 first would double-round (decimal → f64 →
+            // fptrunc-to-f32), one ULP off from the IEEE-correct value for
+            // any non-exact literal.
+            let v: f64 = if matches!(suf, NumSuffix::F32) {
+                let f: f32 = digits.parse().map_err(|_| LexError {
+                    kind: LexErrorKind::InvalidNumber(digits.clone()),
+                    span: self.span_from(start),
+                })?;
+                f as f64
+            } else {
+                digits.parse().map_err(|_| LexError {
+                    kind: LexErrorKind::InvalidNumber(digits.clone()),
+                    span: self.span_from(start),
+                })?
+            };
             TokenKind::Float(v, suf)
         } else {
             let v = u64::from_str_radix(&digits, radix).map_err(|_| LexError {

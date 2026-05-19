@@ -62,6 +62,10 @@ impl Rc[T] {
         let new_count: u64 = cur -% (1 as u64);
         unsafe { *refct = new_count; }
         if new_count == (0 as u64) {
+            // v0.0.5 Phase 1C: invoke inner-T Drop on the last reference
+            // before freeing the control block.
+            let value_ptr: *T = unsafe { (self.ctrl + (8 as usize)) as *T };
+            unsafe { __cplus_drop_in_place::[T](value_ptr); }
             unsafe { free(self.ctrl); }
         }
         return;

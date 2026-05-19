@@ -197,6 +197,10 @@ pub struct EnumDef {
     /// a return type like `Result[T, Err]`, we walk the args, substitute,
     /// and re-instantiate. `None` for non-generic enums.
     pub generic_origin: Option<(String, Vec<Ty>)>,
+    /// v0.0.5 Phase 2C: inherent methods declared via `impl EnumName { fn
+    /// ... }`. Keyed by method name; same shape as `StructDef::methods`.
+    /// Empty for enums without an explicit impl block.
+    pub methods: HashMap<String, MethodSig>,
 }
 
 #[derive(Debug, Clone)]
@@ -496,6 +500,7 @@ fn check_with_files_inner<'a>(
         unsafe_depth: 0,
         extern_fns: std::collections::HashSet::new(),
         type_params_stack: Vec::new(),
+        param_bounds_stack: Vec::new(),
         self_type_stack: Vec::new(),
         interfaces: HashMap::new(),
         interface_impls: std::collections::HashSet::new(),
@@ -533,8 +538,28 @@ fn check_with_files_inner<'a>(
     cx.collect_functions(program);
     cx.check_main_signature(program);
     cx.validate_interface_impls(program);
+    cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
+    // v0.0.5 Phase 3 Slice 3C: enum-pattern-discovery propagation.
+    //
+    // Sema's check_method type-checks each impl method body *once* using
+    // `Ty::Param` placeholders for the impl's generic params, so any
+    // `Option[T]::Some(v)` pattern inside (e.g.) `Iterator[T]::filter`
+    // registers as a placeholder `Option[Param("T")]` — filtered out
+    // when MonoInfo is built. Mono later synthesizes `filter` with
+    // `T = i32`, but by then sema is gone and there's no machinery to
+    // register `Option[i32]` as a real instantiation. Codegen then
+    // panics on `Ty::Enum(EnumId(0))` (lookup_option_ty's fallback).
+    //
+    // Fix: iterate concrete struct_instantiations × generic-impl-method
+    // bodies, walk each body's `match`/`if let`/`while let`/`guard let`
+    // patterns, and for every `PatternKind::Variant { enum_name,
+    // type_args, .. }` with non-empty `type_args`, substitute through
+    // the struct's subst and call `instantiate_enum_from_arg_tys`. Run
+    // to a fixed point so an instantiation that itself drags in another
+    // enum (e.g. a `Vec[Option[i32]]` field type) gets registered too.
+    cx.propagate_pattern_instantiations(program);
     // Slice 7GEN.5c: hand monomorphize a snapshot of the synthesized
     // struct instantiations (mangled name + concrete fields) so it can
     // emit AST struct items + rewrite Generic types in the program.
@@ -708,6 +733,13 @@ struct SemaCx<'a> {
     /// pushed). Outside both contexts, the name `Self` is rejected
     /// with E0508.
     type_params_stack: Vec<std::collections::HashSet<String>>,
+    /// v0.0.5: parallel to `type_params_stack` — maps each in-scope
+    /// generic param to its declared interface bounds. Lets method-call
+    /// dispatch on `Ty::Param(name)` find the bound interface's method
+    /// signature instead of erroring out with E0324. Pushed/popped
+    /// together with `type_params_stack` via `push_type_params` /
+    /// `pop_type_params`.
+    param_bounds_stack: Vec<HashMap<String, Vec<String>>>,
     /// Slice 7GEN.4: stack of "what does `Self` refer to here?" entries.
     /// `Some(ty)` inside an `impl Type { ... }` body (or its method
     /// signatures); `None` everywhere else. When present, `resolve_type`
@@ -893,6 +925,7 @@ impl SemaCx<'_> {
                         is_tagged,
                         generic_base: None,
                         generic_origin: None,
+                        methods: HashMap::new(),
                     });
                     self.enum_by_name.insert(e.name.name.clone(), id);
                 }
@@ -1312,19 +1345,18 @@ impl SemaCx<'_> {
             // are handled by `validate_interface_impls`. Inherent impls
             // (`impl Type { ... }`) still flow through this pass.
             let Some(&id) = self.struct_by_name.get(&b.target.name) else {
-                if self.enum_by_name.contains_key(&b.target.name) {
-                    self.err(
-                        "E0325",
-                        format!("`impl` on enum type `{}` is not yet supported (Phase 2 supports inherent methods on structs only)", b.target.name),
-                        b.target.span,
-                    );
-                } else {
-                    self.err(
-                        "E0325",
-                        format!("`impl` target `{}` is not a known type", b.target.name),
-                        b.target.span,
-                    );
+                // v0.0.5 Phase 2C: enum impls now collect into
+                // `EnumDef::methods`. Generic enum impls still pending
+                // (block-level generic_params already routed above).
+                if let Some(&enum_id) = self.enum_by_name.get(&b.target.name) {
+                    self.collect_enum_impl_methods(enum_id, b);
+                    continue;
                 }
+                self.err(
+                    "E0325",
+                    format!("`impl` target `{}` is not a known type", b.target.name),
+                    b.target.span,
+                );
                 continue;
             };
             // Slice 7GEN.4: `Self` inside an impl body resolves to the
@@ -1343,9 +1375,20 @@ impl SemaCx<'_> {
                     mutable: p.mutable,
                     move_: p.move_,
                 }).collect();
-                let return_type = match &m.return_type {
+                let declared_ret = match &m.return_type {
                     Some(t) => self.resolve_type(t),
                     None => Ty::Unit,
+                };
+                // v0.0.5 Phase 2B: `gen fn` methods expose `Iterator[T]`
+                // at the call site (mirror of `gen fn` free fns).
+                // v0.0.5 Phase 4 Slice 4B: same wrap for `async fn`
+                // methods — callers see `Future[T]`, body sees T.
+                let return_type = if m.is_gen {
+                    self.wrap_in_iterator(&declared_ret, m.name.span)
+                } else if m.is_async {
+                    self.wrap_in_future(&declared_ret, m.name.span)
+                } else {
+                    declared_ret
                 };
                 self.type_params_stack.pop();
                 if self.structs[id.0 as usize].methods.contains_key(&m.name.name) {
@@ -1392,29 +1435,88 @@ impl SemaCx<'_> {
         self.current_file = None;
     }
 
+    /// v0.0.5 Phase 2C: collect methods from `impl EnumName { fn ... }`.
+    /// Mirror of the struct path in `collect_methods` — sigs go into
+    /// `EnumDef::methods`, `Self` resolves to `Ty::Enum(enum_id)`, no
+    /// destructor detection (enums don't carry Drop yet; relaxes when
+    /// the no-Drop-payload rule does).
+    fn collect_enum_impl_methods(&mut self, enum_id: EnumId, b: &ImplBlock) {
+        self.self_type_stack.push(Ty::Enum(enum_id));
+        for m in &b.methods {
+            let mut mscope = std::collections::HashSet::new();
+            for gp in &m.generic_params { mscope.insert(gp.name.name.clone()); }
+            self.type_params_stack.push(mscope);
+            let params: Vec<ParamSig> = m.params.iter().map(|p| ParamSig {
+                ty: self.resolve_type(&p.ty),
+                mutable: p.mutable,
+                move_: p.move_,
+            }).collect();
+            let declared_ret = match &m.return_type {
+                Some(t) => self.resolve_type(t),
+                None => Ty::Unit,
+            };
+            let return_type = if m.is_gen {
+                self.wrap_in_iterator(&declared_ret, m.name.span)
+            } else if m.is_async {
+                self.wrap_in_future(&declared_ret, m.name.span)
+            } else {
+                declared_ret
+            };
+            self.type_params_stack.pop();
+            if self.enums[enum_id.0 as usize].methods.contains_key(&m.name.name) {
+                self.err(
+                    "E0326",
+                    format!("duplicate method `{}` in impl `{}`", m.name.name, b.target.name),
+                    m.name.span,
+                );
+                continue;
+            }
+            // Reject `drop` on enums for v0.0.5 — the §3.3 design rule
+            // (E0344, no Drop payloads in tagged enums) is still in
+            // force, so an enum has no resources to release on its own.
+            if m.name.name == "drop" {
+                self.err(
+                    "E0338",
+                    format!("destructor methods on enums are not yet supported (`impl {}::drop`)", b.target.name),
+                    m.name.span,
+                );
+                continue;
+            }
+            let generic_params: Vec<String> = m.generic_params.iter()
+                .map(|gp| gp.name.name.clone())
+                .collect();
+            let generic_bounds: Vec<Vec<String>> = m.generic_params.iter()
+                .map(|gp| gp.bounds.iter().map(|b| b.name.clone()).collect())
+                .collect();
+            self.enums[enum_id.0 as usize].methods.insert(
+                m.name.name.clone(),
+                MethodSig { receiver: m.receiver, params, return_type, generic_params, generic_bounds },
+            );
+        }
+        self.self_type_stack.pop();
+    }
+
     /// Slice 7GEN.5e step 3: route methods declared inside a generic-typed
     /// impl block (`impl Vec[T] { ... }`) into `generic_impl_methods`.
     /// They are materialized as concrete `MethodSig`s by
     /// `populate_generic_impl_methods` whenever the template is
     /// instantiated (`Vec[i32]`, `Vec[bool]`, ...).
     fn collect_generic_impl_methods(&mut self, b: &ImplBlock) {
-        // Verify the target is a known generic struct or enum template.
-        // Today we only allow struct targets; enum-side generic impls
-        // are a follow-up.
-        if !self.struct_generic_templates.contains_key(&b.target.name) {
-            if self.enum_generic_templates.contains_key(&b.target.name) {
-                self.err(
-                    "E0325",
-                    format!("`impl` on generic enum `{}` is not yet supported", b.target.name),
-                    b.target.span,
-                );
-            } else {
-                self.err(
-                    "E0325",
-                    format!("`impl` target `{}` is not a known generic type", b.target.name),
-                    b.target.span,
-                );
-            }
+        // v0.0.5: accept impl targets that are either generic structs
+        // OR generic enums (the latter previously rejected with E0325).
+        // Both kinds funnel into the same `generic_impl_methods` table
+        // (keyed by template name — names are unique across the type
+        // namespace, so no collision risk). The per-instantiation
+        // method population is routed differently inside
+        // `instantiate_struct_from_arg_tys` vs `instantiate_enum_from_arg_tys`.
+        let is_struct = self.struct_generic_templates.contains_key(&b.target.name);
+        let is_enum = self.enum_generic_templates.contains_key(&b.target.name);
+        if !is_struct && !is_enum {
+            self.err(
+                "E0325",
+                format!("`impl` target `{}` is not a known generic type", b.target.name),
+                b.target.span,
+            );
             return;
         }
         // Push impl-level generic params onto the type-param stack so
@@ -1451,9 +1553,21 @@ impl SemaCx<'_> {
                 mutable: p.mutable,
                 move_: p.move_,
             }).collect();
-            let return_type = match &m.return_type {
+            let declared_ret = match &m.return_type {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
+            };
+            // v0.0.5 Phase 2B: gen-method template — wrap T → Iterator[T]
+            // at the signature level. Methods on generic structs preserve
+            // the wrap through monomorphization (synthesize_generic_typed_impls
+            // re-renders the return type via subst_type_ast).
+            // v0.0.5 Phase 4 Slice 4B: same wrap for async methods.
+            let return_type = if m.is_gen {
+                self.wrap_in_iterator(&declared_ret, m.name.span)
+            } else if m.is_async {
+                self.wrap_in_future(&declared_ret, m.name.span)
+            } else {
+                declared_ret
             };
             self.type_params_stack.pop();
             templates.push(GenericImplMethodTemplate {
@@ -1774,16 +1888,81 @@ impl SemaCx<'_> {
     fn check_methods(&mut self, p: &Program) {
         for item in &p.items {
             let ItemKind::Impl(b) = &item.kind else { continue; };
-            let Some(&id) = self.struct_by_name.get(&b.target.name) else { continue; };
+            self.current_file = item.origin_file.clone();
             // Slice 4C: per-item context. Methods inherit their impl
             // block's origin_file — every impl block lives in the same
             // file as its type (enforced by the resolver).
-            self.current_file = item.origin_file.clone();
-            for m in &b.methods {
-                self.check_method(id, m);
+            if let Some(&id) = self.struct_by_name.get(&b.target.name) {
+                for m in &b.methods {
+                    self.check_method(id, m);
+                }
+                continue;
+            }
+            // v0.0.5 Phase 2C: enum impl bodies.
+            if let Some(&enum_id) = self.enum_by_name.get(&b.target.name) {
+                for m in &b.methods {
+                    self.check_enum_method(enum_id, m);
+                }
+                continue;
             }
         }
         self.current_file = None;
+    }
+
+    /// v0.0.5 Phase 2C: type-check the body of a method declared inside
+    /// `impl EnumName { fn ... }`. Mirror of `check_method` for structs;
+    /// `Self` resolves to `Ty::Enum(enum_id)` and receiver bindings
+    /// take the enum's type.
+    fn check_enum_method(&mut self, enum_id: EnumId, m: &Method) {
+        let Some(sig) = self.enums[enum_id.0 as usize].methods.get(&m.name.name).cloned() else {
+            return;
+        };
+        self.self_type_stack.push(Ty::Enum(enum_id));
+        self.push_type_params(&m.generic_params);
+        let body_return = if m.is_gen {
+            Ty::Unit
+        } else if m.is_async {
+            self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+        } else {
+            sig.return_type.clone()
+        };
+        self.current_return = body_return;
+        let prev_gen = self.current_fn_is_gen;
+        let prev_gen_ty = self.current_gen_yield_ty.clone();
+        self.current_fn_is_gen = m.is_gen;
+        self.current_gen_yield_ty = if m.is_gen {
+            self.unwrap_iterator(&sig.return_type)
+        } else {
+            None
+        };
+        let prev_async = self.current_fn_is_async;
+        self.current_fn_is_async = m.is_async;
+        self.scopes.push(HashMap::new());
+        if let Some(rcv) = sig.receiver {
+            let mutable = matches!(rcv, Receiver::Mut);
+            self.scopes.last_mut().unwrap().insert(
+                "self".to_string(),
+                LocalInfo { ty: Ty::Enum(enum_id), mutable, moved: false, assigned: true },
+            );
+        }
+        for (param, psig) in m.params.iter().zip(sig.params.iter()) {
+            if param.mutable && param.move_ {
+                self.err("E0334",
+                    "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
+                    param.span);
+            }
+            self.scopes.last_mut().unwrap().insert(
+                param.name.name.clone(),
+                LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
+            );
+        }
+        self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
+        self.scopes.pop();
+        self.current_fn_is_gen = prev_gen;
+        self.current_gen_yield_ty = prev_gen_ty;
+        self.current_fn_is_async = prev_async;
+        self.pop_type_params();
+        self.self_type_stack.pop();
     }
 
     fn check_method(&mut self, struct_id: StructId, m: &Method) {
@@ -1796,7 +1975,33 @@ impl SemaCx<'_> {
         // Slice 7GEN.5e: re-push method-level generic params for
         // body checking so `T` references in the body resolve.
         self.push_type_params(&m.generic_params);
-        self.current_return = sig.return_type.clone();
+        // v0.0.5 Phase 2B: gen methods (e.g. `pub gen fn iter(self) -> T`)
+        // expose `Iterator[T]` at the signature level; the body sees the
+        // unwrapped element type T and uses `yield V;` to produce values.
+        // Mirror `check_function`'s state-threading for `current_fn_is_gen`
+        // and `current_gen_yield_ty` so `yield` checks fire correctly
+        // inside method bodies.
+        // v0.0.5 Phase 4 Slice 4B: same shape for async methods —
+        // body sees the inner T, callers see Future[T]; `current_fn_is_async`
+        // gates the body's `await` checks.
+        let body_return = if m.is_gen {
+            Ty::Unit
+        } else if m.is_async {
+            self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+        } else {
+            sig.return_type.clone()
+        };
+        self.current_return = body_return;
+        let prev_gen = self.current_fn_is_gen;
+        let prev_gen_ty = self.current_gen_yield_ty.clone();
+        self.current_fn_is_gen = m.is_gen;
+        self.current_gen_yield_ty = if m.is_gen {
+            self.unwrap_iterator(&sig.return_type)
+        } else {
+            None
+        };
+        let prev_async = self.current_fn_is_async;
+        self.current_fn_is_async = m.is_async;
         self.scopes.push(HashMap::new());
 
         // Register `self` if there's a receiver. `mut self` makes self
@@ -1825,8 +2030,11 @@ impl SemaCx<'_> {
                 LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
             );
         }
-        self.check_function_body(&m.body, sig.return_type, m.body.span);
+        self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
         self.scopes.pop();
+        self.current_fn_is_gen = prev_gen;
+        self.current_gen_yield_ty = prev_gen_ty;
+        self.current_fn_is_async = prev_async;
         self.pop_type_params();
         self.self_type_stack.pop();
     }
@@ -1861,6 +2069,16 @@ impl SemaCx<'_> {
             // are visible while resolving the function's parameter and
             // return types.
             self.push_type_params(&f.generic_params);
+            // v0.0.5 Phase 1A: auto-promote non-Copy value params to `move`
+            // semantics. A param `x: T` where T is non-Copy and there's no
+            // explicit `mut` / `move` annotation behaves as if `move x: T`
+            // was written — caller's binding marked moved at the call site,
+            // callee owns. Closes the value-pass-without-`move` double-free
+            // (`fn echo(x: string) -> string { return x; }` no longer
+            // double-frees). Read-only callees on non-Copy types now also
+            // consume the source — callers needing to retain ownership
+            // clone explicitly. Explicit `mut` keeps its pointer-pass
+            // semantics; explicit `move` is preserved verbatim.
             let params: Vec<ParamSig> = f.params.iter().map(|p| ParamSig {
                 ty: self.resolve_type(&p.ty),
                 mutable: p.mutable,
@@ -2061,6 +2279,161 @@ impl SemaCx<'_> {
             );
         }
         self.current_file = None;
+    }
+
+    /// v0.0.5: targeted lint over generic-fn bodies catching ordered
+    /// comparisons (`<` / `<=` / `>` / `>=`) on bare-param-typed idents.
+    /// Generic bodies are NOT fully sema-checked at definition time (the
+    /// codebase is built around lazy "check after monomorphization" — a
+    /// real change there cascades through intrinsic dispatch + struct
+    /// instantiation lookups, see the v0.0.5 false-start). This narrow
+    /// AST walk closes the specific footgun documented at SKILL.md §2.6:
+    /// `fn max[T: Ord](a: T, b: T) -> T { if a < b { ... } }` would
+    /// otherwise silently fall through sema and produce an invalid
+    /// `icmp slt %StructTy` at codegen, surfacing as a downstream LLVM
+    /// rejection ("icmp requires integer operands") only when the user
+    /// happened to instantiate with a non-numeric concrete type.
+    ///
+    /// Limitation: only catches bare-Ident-of-param operand shapes. A
+    /// `let x = a; if x < b { ... }` body still skips this check. The
+    /// canonical idiom — `a.cmp(b)` returning i32 — is what users should
+    /// write; the diagnostic points there.
+    fn lint_generic_fn_bodies(&mut self, p: &Program) {
+        for item in &p.items {
+            let ItemKind::Function(f) = &item.kind else { continue; };
+            if f.generic_params.is_empty() { continue; }
+            // Build the set of bare-param-typed parameter NAMES — these
+            // are the idents that, when compared with `<`/etc., produce
+            // the codegen failure.
+            let mut param_typed: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for p in &f.params {
+                if let TypeKind::Path(name) = &p.ty.kind {
+                    if f.generic_params.iter().any(|g| g.name.name == *name) {
+                        param_typed.insert(p.name.name.clone());
+                    }
+                }
+            }
+            if param_typed.is_empty() { continue; }
+            self.walk_block_for_param_compare(&f.body, &param_typed);
+        }
+    }
+
+    /// AST walker for `lint_generic_fn_bodies`. Visits every `Binary`
+    /// expression in the block and emits E0302 when an ordered-comparison
+    /// operand is a bare Ident that names a generic-param-typed
+    /// parameter.
+    fn walk_block_for_param_compare(
+        &mut self,
+        block: &Block,
+        param_idents: &std::collections::HashSet<String>,
+    ) {
+        for stmt in &block.stmts {
+            self.walk_stmt_for_param_compare(stmt, param_idents);
+        }
+        if let Some(tail) = &block.tail {
+            self.walk_expr_for_param_compare(tail, param_idents);
+        }
+    }
+
+    fn walk_stmt_for_param_compare(
+        &mut self,
+        stmt: &Stmt,
+        param_idents: &std::collections::HashSet<String>,
+    ) {
+        match &stmt.kind {
+            StmtKind::Let { init: Some(e), .. } => self.walk_expr_for_param_compare(e, param_idents),
+            StmtKind::Let { init: None, .. } => {}
+            StmtKind::Expr(e)
+            | StmtKind::Return(Some(e))
+            | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => self.walk_expr_for_param_compare(e, param_idents),
+            StmtKind::While { cond, body } => {
+                self.walk_expr_for_param_compare(cond, param_idents);
+                self.walk_block_for_param_compare(body, param_idents);
+            }
+            StmtKind::Loop(b) => self.walk_block_for_param_compare(b, param_idents),
+            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+                self.walk_expr_for_param_compare(scrutinee, param_idents);
+                self.walk_block_for_param_compare(body, param_idents);
+                if let Some(eb) = else_body { self.walk_block_for_param_compare(eb, param_idents); }
+            }
+            StmtKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr_for_param_compare(scrutinee, param_idents);
+                self.walk_block_for_param_compare(body, param_idents);
+            }
+            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+                self.walk_expr_for_param_compare(scrutinee, param_idents);
+                self.walk_block_for_param_compare(else_body, param_idents);
+            }
+            StmtKind::For(_)
+            | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+        }
+    }
+
+    fn walk_expr_for_param_compare(
+        &mut self,
+        e: &Expr,
+        param_idents: &std::collections::HashSet<String>,
+    ) {
+        match &e.kind {
+            ExprKind::Binary { op, lhs, rhs } => {
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                    let bad = |operand: &Expr| -> Option<String> {
+                        if let ExprKind::Ident(n) = &operand.kind {
+                            if param_idents.contains(n) {
+                                return Some(n.clone());
+                            }
+                        }
+                        None
+                    };
+                    if let Some(n) = bad(lhs).or_else(|| bad(rhs)) {
+                        self.err(
+                            "E0302",
+                            format!(
+                                "ordered comparison on generic-parameter binding `{}` is not supported; \
+                                 use `{}.cmp(other)` (returns i32) and compare its result \
+                                 — C+ has no operator overloading (§2.6)",
+                                n, n
+                            ),
+                            e.span,
+                        );
+                    }
+                }
+                self.walk_expr_for_param_compare(lhs, param_idents);
+                self.walk_expr_for_param_compare(rhs, param_idents);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr_for_param_compare(operand, param_idents),
+            ExprKind::Call { callee, args, .. } => {
+                self.walk_expr_for_param_compare(callee, param_idents);
+                for a in args { self.walk_expr_for_param_compare(a, param_idents); }
+            }
+            ExprKind::Field { receiver, .. } => self.walk_expr_for_param_compare(receiver, param_idents),
+            ExprKind::Index { receiver, index } => {
+                self.walk_expr_for_param_compare(receiver, param_idents);
+                self.walk_expr_for_param_compare(index, param_idents);
+            }
+            ExprKind::If { cond, then, else_branch } => {
+                self.walk_expr_for_param_compare(cond, param_idents);
+                self.walk_block_for_param_compare(then, param_idents);
+                if let Some(eb) = else_branch {
+                    self.walk_expr_for_param_compare(eb, param_idents);
+                }
+            }
+            ExprKind::Block(b) => self.walk_block_for_param_compare(b, param_idents),
+            ExprKind::Unsafe(b) => self.walk_block_for_param_compare(b, param_idents),
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr_for_param_compare(scrutinee, param_idents);
+                for arm in arms { self.walk_expr_for_param_compare(&arm.body, param_idents); }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                self.walk_expr_for_param_compare(target, param_idents);
+                self.walk_expr_for_param_compare(value, param_idents);
+            }
+            ExprKind::Cast { expr, .. } => self.walk_expr_for_param_compare(expr, param_idents),
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => self.walk_expr_for_param_compare(inner, param_idents),
+            _ => {}
+        }
     }
 
     fn check_functions(&mut self, p: &Program) {
@@ -2718,6 +3091,7 @@ impl SemaCx<'_> {
             }
             ExprKind::Field { receiver, name } => self.check_field(receiver, name),
             ExprKind::ArrayLit { elements } => self.check_array_lit(elements, expected, e.span),
+            ExprKind::TupleLit { elements } => self.check_tuple_lit(elements, expected, e.span),
             ExprKind::Index { receiver, index } => self.check_index(receiver, index, e.span),
             ExprKind::Match { scrutinee, arms } => self.check_match(scrutinee, arms, expected, e.span),
         }
@@ -2761,6 +3135,83 @@ impl SemaCx<'_> {
             }
         }
         Ty::Array(Box::new(first_ty), len)
+    }
+
+    /// v0.0.5 Phase 3 Slice 3B: type-check a tuple literal `(a, b, ...)`.
+    /// Resolves each element type (using the expected tuple element
+    /// when known), synthesizes/looks up the matching tuple struct,
+    /// and returns `Ty::Struct(id)`. Codegen sees TupleLit directly
+    /// and lowers via `gen_tuple_lit` — no AST rewrite needed.
+    fn check_tuple_lit(&mut self, elements: &[Expr], expected: Option<Ty>, span: ByteSpan) -> Ty {
+        if elements.len() < 2 {
+            self.err(
+                "E0700",
+                "tuple literal must have at least 2 elements (`()` is the unit value, `(x)` is grouping)".to_string(),
+                span,
+            );
+            return Ty::Error;
+        }
+        // If `expected` is a tuple struct (its generic_origin marks it
+        // as a synthesized tuple), feed per-element expectations.
+        let expected_elem_tys: Vec<Option<Ty>> = match &expected {
+            Some(Ty::Struct(id)) => {
+                let def = &self.structs[id.0 as usize];
+                match &def.generic_origin {
+                    Some((name, args))
+                        if name == "__Tuple" && args.len() == elements.len() =>
+                    {
+                        args.iter().map(|t| Some(t.clone())).collect()
+                    }
+                    _ => vec![None; elements.len()],
+                }
+            }
+            _ => vec![None; elements.len()],
+        };
+        let elem_tys: Vec<Ty> = elements.iter().zip(expected_elem_tys.iter())
+            .map(|(e, exp)| self.check_expr(e, exp.clone()))
+            .collect();
+        if elem_tys.iter().any(|t| matches!(t, Ty::Error)) {
+            return Ty::Error;
+        }
+        self.synthesize_tuple_struct(&elem_tys, span)
+    }
+
+    /// v0.0.5 Phase 3 Slice 3B: synthesize (or look up) a concrete
+    /// tuple struct for the given element types. Fields are named
+    /// `_0`, `_1`, ... in element order. Deduplicates against prior
+    /// instantiations — `(i32, i32)` always resolves to the same
+    /// struct id. Registered under `struct_instantiations` with the
+    /// pseudo-template name `"__Tuple"` so monomorphize emits an AST
+    /// struct item per unique tuple at codegen-handoff time.
+    fn synthesize_tuple_struct(&mut self, elem_tys: &[Ty], _span: ByteSpan) -> Ty {
+        let key = ("__Tuple".to_string(), elem_tys.to_vec());
+        if let Some(&existing) = self.struct_instantiations.get(&key) {
+            return Ty::Struct(existing);
+        }
+        let mangled = format!(
+            "__tuple_{}",
+            elem_tys.iter()
+                .map(|t| mangle_ty_for_name(t, &self.structs, &self.enums))
+                .collect::<Vec<_>>()
+                .join("_")
+        );
+        let fields: Vec<(String, Ty, bool)> = elem_tys.iter().enumerate()
+            .map(|(i, t)| (format!("_{}", i), t.clone(), true))
+            .collect();
+        let id = StructId(self.structs.len() as u32);
+        self.structs.push(StructDef {
+            name: mangled.clone(),
+            fields,
+            methods: HashMap::new(),
+            is_copy: false,
+            is_drop: false,
+            is_repr_c: false,
+            origin_file: None,
+            generic_origin: Some(("__Tuple".to_string(), elem_tys.to_vec())),
+        });
+        self.struct_by_name.insert(mangled.clone(), id);
+        self.struct_instantiations.insert(key, id);
+        Ty::Struct(id)
     }
 
     fn check_index(&mut self, receiver: &Expr, index: &Expr, span: ByteSpan) -> Ty {
@@ -3587,6 +4038,35 @@ impl SemaCx<'_> {
         if name == "__cplus_thread_spawn" || name == "__cplus_thread_join" {
             return self.check_thread_intrinsic(name, callee, args, type_args, call_span);
         }
+        // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` — drop the
+        // value at *p in place. Compiler lowers to a call to `T::drop(p)`
+        // for the monomorphized T, or to a no-op when T has no Drop. Used
+        // by stdlib containers to invoke inner-T Drop before freeing
+        // their storage. Unsafe (raw-pointer write semantics).
+        if name == "__cplus_drop_in_place" {
+            if type_args.len() != 1 {
+                self.err("E0501",
+                    format!("`__cplus_drop_in_place` takes exactly 1 type argument, got {}", type_args.len()),
+                    callee.span);
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Unit;
+            }
+            if args.len() != 1 {
+                self.err("E0308",
+                    format!("`__cplus_drop_in_place` takes 1 value argument, got {}", args.len()),
+                    call_span);
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Unit;
+            }
+            if self.unsafe_depth == 0 {
+                self.err("E0801",
+                    "`__cplus_drop_in_place` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                    call_span);
+            }
+            let target_ty = self.resolve_type(&type_args[0]);
+            let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty))));
+            return Ty::Unit;
+        }
         // v0.0.3 Phase 5 Slice 5C: spawn-with-input intrinsic. Takes
         // two type args (I, O) and two value args (input, f).
         if name == "__cplus_thread_spawn_with" {
@@ -3607,6 +4087,9 @@ impl SemaCx<'_> {
         }
         if name == "__cplus_reactor_wait_write" {
             return self.check_reactor_wait_write(callee, args, type_args, call_span);
+        }
+        if name == "__cplus_reactor_wait_timer" {
+            return self.check_reactor_wait_timer(callee, args, type_args, call_span);
         }
         if name == "__cplus_reactor_spawn_local" {
             return self.check_reactor_spawn_local(callee, args, type_args, call_span);
@@ -4061,6 +4544,43 @@ impl SemaCx<'_> {
         Ty::Unit
     }
 
+    /// v0.0.5 Phase 4 Slice 4A: `__cplus_reactor_wait_timer(ms: u64)`.
+    /// Registers a kqueue EVFILT_TIMER for `ms` milliseconds, then
+    /// suspends self. Reactor wakes us when the timer fires. Same
+    /// unsafe + async-only gates as wait_read / wait_write.
+    fn check_reactor_wait_timer(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`__cplus_reactor_wait_timer` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                call_span);
+        }
+        if !self.current_fn_is_async {
+            self.err("E0901",
+                "`__cplus_reactor_wait_timer` is only valid inside an `async fn` body".to_string(),
+                call_span);
+        }
+        if !type_args.is_empty() {
+            self.err("E0501",
+                "`__cplus_reactor_wait_timer` takes 0 type arguments".to_string(),
+                callee.span);
+        }
+        if args.len() != 1 {
+            self.err("E0308",
+                format!("`__cplus_reactor_wait_timer` takes 1 value argument, got {}", args.len()),
+                call_span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let _ = self.check_expr(&args[0], Some(Ty::U64));
+        Ty::Unit
+    }
+
     /// v0.0.4 Phase 3 Slice 3A.2: type-check
     /// `__cplus_reactor_spawn_local(future: Future[T])`. Pushes the
     /// future onto the reactor's task queue. Returns Unit.
@@ -4403,6 +4923,49 @@ impl SemaCx<'_> {
             let _ = self.check_expr(&args[0], Some(recv_ty.clone()));
             return Ty::Bool;
         }
+        // v0.0.5 Phase 2C: dispatch on enum receivers via the new
+        // `EnumDef::methods` table. Same shape as the struct path —
+        // method lookup + receiver-mutability + arg checks.
+        if let Ty::Enum(eid) = recv_ty {
+            let enum_name = self.enums[eid.0 as usize].name.clone();
+            let Some(sig) = self.enums[eid.0 as usize].methods.get(&name.name).cloned() else {
+                self.err(
+                    "E0324",
+                    format!("no method `{}` on enum `{}`", name.name, enum_name),
+                    name.span,
+                );
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Error;
+            };
+            return self.check_enum_method_call(eid, &enum_name, name, &sig, args, call_span, receiver);
+        }
+        // v0.0.5: method call on a generic-parameter receiver — `t.cmp(o)`
+        // where `t: T` and the enclosing fn declared `T: Ord`. Resolve via
+        // the bound interface's method table. Each arg is type-checked
+        // against the interface signature (with `Self` substituted to the
+        // receiver's `Ty::Param(name)`). Codegen then handles the dispatch
+        // through monomorphization — each instantiation calls the concrete
+        // impl's method directly.
+        if let Ty::Param(ref pname) = recv_ty {
+            if let Some(msig) = self.lookup_bound_method(pname, &name.name) {
+                // Substitute `Self` → `Ty::Param(pname)` in the interface
+                // method signature so arg-type checks match what the user
+                // wrote (`other: T` not `other: Self`).
+                let mut subst = HashMap::new();
+                subst.insert("Self".to_string(), recv_ty.clone());
+                let mut arg_idx = 0;
+                for psig in &msig.params {
+                    if arg_idx >= args.len() { break; }
+                    let want = self.subst_ty_deep(&psig.ty, &subst);
+                    let _ = self.check_expr(&args[arg_idx], Some(want));
+                    arg_idx += 1;
+                }
+                // Drain any extra args (sema-error fallback) so type
+                // checking still walks them.
+                for a in &args[arg_idx..] { let _ = self.check_expr(a, None); }
+                return self.subst_ty_deep(&msig.return_type, &subst);
+            }
+        }
         let Ty::Struct(id) = recv_ty else {
             self.err(
                 "E0324",
@@ -4478,6 +5041,56 @@ impl SemaCx<'_> {
             let _ = self.check_expr(a, None);
         }
         sig.return_type
+    }
+
+    /// v0.0.5 Phase 2C: type-check a method call on an enum receiver.
+    /// Mirrors the struct path (`check_method_call`'s tail) but uses
+    /// `EnumDef::methods` for sig lookup. Generic-method dispatch on
+    /// enums isn't supported yet (no `impl Option[T] { fn map[U](...) }`);
+    /// that requires the generic-enum impl synthesis still pending.
+    fn check_enum_method_call(
+        &mut self,
+        enum_id: EnumId,
+        enum_name: &str,
+        name: &Ident,
+        sig: &MethodSig,
+        args: &[Expr],
+        call_span: ByteSpan,
+        receiver: &Expr,
+    ) -> Ty {
+        let Some(rcv) = sig.receiver else {
+            self.err(
+                "E0327",
+                format!("`{}::{}` is an associated function; call it as `{}::{}(...)`", enum_name, name.name, enum_name, name.name),
+                call_span,
+            );
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        };
+        if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
+            self.err(
+                "E0328",
+                format!("method `{}::{}` requires a mutable receiver", enum_name, name.name),
+                receiver.span,
+            );
+        }
+        if matches!(rcv, Receiver::Move) && !self.enums[enum_id.0 as usize].is_copy {
+            self.consume_place(receiver, enum_name, &name.name);
+        }
+        if args.len() != sig.params.len() {
+            self.err(
+                "E0308",
+                format!("method `{}::{}` takes {} argument(s), got {}", enum_name, name.name, sig.params.len(), args.len()),
+                call_span,
+            );
+        }
+        for (a, expected) in args.iter().zip(sig.params.iter()) {
+            self.check_arg_with_move(a, expected);
+        }
+        for a in args.iter().skip(sig.params.len()) {
+            let _ = self.check_expr(a, None);
+        }
+        sig.return_type.clone()
     }
 
     /// Slice 7GEN.5e: type-check a generic-method call.
@@ -4982,6 +5595,29 @@ impl SemaCx<'_> {
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let lhs_ty = self.check_expr(lhs, None);
+                // v0.0.5: generic-parameter operands hit a separate path —
+                // C+ doesn't have operator overloading (SKILL.md §2.6), so
+                // `<` on a `T: Ord` cannot desugar to `T::cmp` the way it
+                // would in Rust/C++. Without this catch, sema let the
+                // comparison through, monomorphization substituted `T` with
+                // a concrete struct like `Point`, and codegen emitted
+                // `icmp slt %Point %a, %b` — LLVM rejected the IR ("icmp
+                // requires integer operands"). Diagnose at the source level
+                // and point users to the `cmp()` method call shape.
+                if let Ty::Param(pname) = &lhs_ty {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "ordered comparison on generic type parameter `{}` is not supported; \
+                             use `a.cmp(b)` (returns i32) and compare its result \
+                             — C+ has no operator overloading (§2.6)",
+                            pname
+                        ),
+                        span,
+                    );
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Bool;
+                }
                 if !lhs_ty.is_numeric() && lhs_ty != Ty::Error {
                     self.err(
                         "E0302",
@@ -5324,6 +5960,13 @@ impl SemaCx<'_> {
                 let inner_ty = self.resolve_type(inner);
                 return Ty::Slice(Box::new(inner_ty));
             }
+            // v0.0.5 Phase 3 Slice 3B: tuple type `(T1, T2, ...)`.
+            // Resolve each element type then synthesize (or look up) a
+            // concrete tuple struct with fields `_0`, `_1`, ...
+            TypeKind::Tuple(elems) => {
+                let elem_tys: Vec<Ty> = elems.iter().map(|e| self.resolve_type(e)).collect();
+                return self.synthesize_tuple_struct(&elem_tys, t.span);
+            }
         };
         match name.as_str() {
             "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
@@ -5645,6 +6288,123 @@ impl SemaCx<'_> {
         self.instantiate_enum_from_arg_tys(name, &template, arg_tys)
     }
 
+    /// v0.0.5 Phase 3 Slice 3C: walk generic-impl-method bodies for
+    /// `match`/`if let`/`while let`/`guard let` patterns whose
+    /// `PatternKind::Variant` carries explicit type-args. For each
+    /// concrete struct instantiation, substitute the impl's generic
+    /// params and instantiate the discovered enums. See the explanatory
+    /// comment at the call site in `check_with_files_inner`.
+    fn propagate_pattern_instantiations(&mut self, program: &Program) {
+        // Worklist seed: every concrete struct_instantiation. Each entry
+        // walks its matching `impl <name>[<params>]` body once; new
+        // enum-instantiations discovered along the way don't themselves
+        // produce more struct-instantiations (struct fields are AST
+        // `Type` nodes which can't carry `PatternKind::Variant`), so
+        // a single pass over the seed set suffices — no fixed-point
+        // loop needed.
+        //
+        // Snapshot the seed so the mutable `instantiate_enum_from_arg_tys`
+        // calls inside the loop don't fight the borrow checker.
+        let seed: Vec<(String, Vec<Ty>)> = self
+            .struct_instantiations
+            .iter()
+            .filter(|(key, _)| !key.1.iter().any(|t| ty_contains_param(t, &self.structs, &self.enums)))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for (sname, sargs) in seed {
+            // Find the generic impl block matching this struct's template.
+            for item in &program.items {
+                let ItemKind::Impl(b) = &item.kind else { continue; };
+                if b.target_generic_params.is_empty() { continue; }
+                if b.target.name != sname { continue; }
+                if b.target_generic_params.len() != sargs.len() { continue; }
+                // Build a name → concrete-Ty subst from the impl's
+                // target generic params.
+                let subst: HashMap<String, Ty> = b
+                    .target_generic_params
+                    .iter()
+                    .zip(sargs.iter())
+                    .map(|(gp, t)| (gp.name.name.clone(), t.clone()))
+                    .collect();
+                // Collect all variant patterns in the impl's method
+                // bodies into a flat list first; instantiation needs
+                // `&mut self`, but the walker only needs an immutable
+                // borrow of `program`.
+                let mut discoveries: Vec<(String, Vec<Type>)> = Vec::new();
+                for m in &b.methods {
+                    walk_variant_patterns_in_block(&m.body, &mut |enum_name, type_args| {
+                        if type_args.is_empty() { return; }
+                        discoveries.push((enum_name.to_string(), type_args.to_vec()));
+                    });
+                }
+                for (enum_name, type_args) in discoveries {
+                    self.try_instantiate_enum_from_pattern_args(&enum_name, &type_args, &subst);
+                }
+            }
+        }
+        // Same pass for generic free fns: every concrete `fn_instantiation`
+        // walks its template body. Sema doesn't type-check generic fn
+        // bodies (see `check_function`'s early-return on `fns.get`
+        // miss), so variant patterns inside `fn map[T, U](...)` would
+        // otherwise be invisible.
+        let fn_seed: Vec<(String, Vec<Ty>)> = self
+            .fn_instantiations
+            .iter()
+            .filter(|(_, args)| !args.iter().any(|t| ty_contains_param(t, &self.structs, &self.enums)))
+            .cloned()
+            .collect();
+        for (fname, fargs) in fn_seed {
+            for item in &program.items {
+                let ItemKind::Function(f) = &item.kind else { continue; };
+                if f.name.name != fname { continue; }
+                if f.generic_params.len() != fargs.len() { continue; }
+                let subst: HashMap<String, Ty> = f
+                    .generic_params
+                    .iter()
+                    .zip(fargs.iter())
+                    .map(|(gp, t)| (gp.name.name.clone(), t.clone()))
+                    .collect();
+                let mut discoveries: Vec<(String, Vec<Type>)> = Vec::new();
+                walk_variant_patterns_in_block(&f.body, &mut |enum_name, type_args| {
+                    if type_args.is_empty() { return; }
+                    discoveries.push((enum_name.to_string(), type_args.to_vec()));
+                });
+                for (enum_name, type_args) in discoveries {
+                    self.try_instantiate_enum_from_pattern_args(&enum_name, &type_args, &subst);
+                }
+            }
+        }
+    }
+
+    /// v0.0.5 Phase 3 Slice 3C helper: substitute the given subst through
+    /// each pattern type-arg, resolve to `Ty`, and feed to
+    /// `instantiate_enum_from_arg_tys`. No-op when the enum isn't
+    /// generic, the arity mismatches, or any arg still references a
+    /// type-param after substitution (the latter happens when a generic
+    /// impl-method body references an enum with a generic param the
+    /// outer subst doesn't bind — pattern discovery from that inner
+    /// substitution is the caller's responsibility).
+    fn try_instantiate_enum_from_pattern_args(
+        &mut self,
+        enum_name: &str,
+        type_args: &[Type],
+        subst: &HashMap<String, Ty>,
+    ) {
+        let Some(template) = self.enum_generic_templates.get(enum_name).cloned() else { return; };
+        if template.generic_params.len() != type_args.len() { return; }
+        let resolved_args: Vec<Ty> = type_args
+            .iter()
+            .map(|t| {
+                let substituted = substitute_param_in_type_ast(t, subst);
+                self.resolve_field_type_with_subst(&substituted, subst)
+            })
+            .collect();
+        if resolved_args.iter().any(|t| ty_contains_param(t, &self.structs, &self.enums) || matches!(t, Ty::Error)) {
+            return;
+        }
+        self.instantiate_enum_from_arg_tys(enum_name, &template, resolved_args);
+    }
+
     /// Slice 7GEN.5d (factored 2026-05-13): post-arg-resolution body of
     /// `resolve_generic_enum_instantiation`. See `instantiate_struct_from_arg_tys`
     /// for the rationale (substitution paths re-enter without AST args).
@@ -5687,9 +6447,47 @@ impl SemaCx<'_> {
             is_tagged,
             generic_base: Some(name.to_string()),
             generic_origin: Some((name.to_string(), arg_tys.clone())),
+            methods: HashMap::new(),
         });
         self.enum_by_name.insert(mangled, id);
         self.enum_instantiations.insert(key, id);
+        // v0.0.5 generic-enum impl carry-over: populate methods on the
+        // synthesized concrete enum from any `impl Option[T] { ... }`
+        // generic impl block registered for this template. Mirror of
+        // the struct-side population path; substitutes impl-level `T`
+        // refs (Ty::Param) with the concrete arg types, `Self` refs
+        // resolve to the new Ty::Enum(id).
+        if let Some(templates) = self.generic_impl_methods.get(name).cloned() {
+            let self_ty = Ty::Enum(id);
+            for t in &templates {
+                let mut method_subst: HashMap<String, Ty> = HashMap::new();
+                for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
+                    method_subst.insert(gp.clone(), arg.clone());
+                }
+                let resolved_params: Vec<ParamSig> = {
+                    let raw: Vec<(Ty, bool, bool)> = t.params.iter()
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_)).collect();
+                    raw.into_iter().map(|(ty, mutable, move_)| {
+                        let s = self.subst_ty_deep(&ty, &method_subst);
+                        ParamSig { ty: subst_self(&s, &self_ty), mutable, move_ }
+                    }).collect()
+                };
+                let resolved_return = {
+                    let s = self.subst_ty_deep(&t.return_type, &method_subst);
+                    subst_self(&s, &self_ty)
+                };
+                self.enums[id.0 as usize].methods.insert(
+                    t.name.clone(),
+                    MethodSig {
+                        receiver: t.receiver,
+                        params: resolved_params,
+                        return_type: resolved_return,
+                        generic_params: t.method_generic_params.clone(),
+                        generic_bounds: Vec::new(),
+                    },
+                );
+            }
+        }
         Ty::Enum(id)
     }
 
@@ -5742,6 +6540,12 @@ impl SemaCx<'_> {
                 let inner_ty = self.resolve_field_type_with_subst(inner, subst);
                 Ty::Slice(Box::new(inner_ty))
             }
+            TypeKind::Tuple(elems) => {
+                let elem_tys: Vec<Ty> = elems.iter()
+                    .map(|e| self.resolve_field_type_with_subst(e, subst))
+                    .collect();
+                self.synthesize_tuple_struct(&elem_tys, ty.span)
+            }
         }
     }
 
@@ -5757,10 +6561,47 @@ impl SemaCx<'_> {
         let frame: std::collections::HashSet<String> =
             params.iter().map(|p| p.name.name.clone()).collect();
         self.type_params_stack.push(frame);
+        // v0.0.5: parallel frame tracking the interface bounds per param.
+        // Used by method-call dispatch on `Ty::Param(name)`: when the body
+        // calls `t.cmp(other)` with `t: T` and the active generic context
+        // declares `T: Ord`, we resolve `cmp` against `Ord`'s method table
+        // rather than emitting E0324.
+        let bound_frame: HashMap<String, Vec<String>> = params.iter()
+            .map(|p| (
+                p.name.name.clone(),
+                p.bounds.iter().map(|b| b.name.clone()).collect(),
+            ))
+            .collect();
+        self.param_bounds_stack.push(bound_frame);
     }
 
     fn pop_type_params(&mut self) {
         self.type_params_stack.pop();
+        self.param_bounds_stack.pop();
+    }
+
+    /// v0.0.5: when `Ty::Param(name)` appears as a method-call receiver,
+    /// walk the active bound stack to find the first frame that declares
+    /// a bound for `name`, then return the union of method signatures
+    /// across every named interface bound. Used by `check_method_call`
+    /// to make `T: Ord` → `t.cmp(other)` resolve.
+    fn lookup_bound_method(&self, param_name: &str, method: &str) -> Option<MethodSig> {
+        for frame in self.param_bounds_stack.iter().rev() {
+            if let Some(bounds) = frame.get(param_name) {
+                for iface_name in bounds {
+                    if let Some(iface) = self.interfaces.get(iface_name) {
+                        if let Some(sig) = iface.methods.get(method) {
+                            return Some(sig.clone());
+                        }
+                    }
+                }
+                // Param name found in this frame but no bound provides
+                // the method — shadowing rules say inner frames mask
+                // outer ones, so stop here.
+                return None;
+            }
+        }
+        None
     }
 
     fn check_path(&mut self, segments: &[Ident], span: ByteSpan) -> Ty {
@@ -5935,6 +6776,128 @@ fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool 
     }
 }
 
+/// v0.0.5 Phase 3 Slice 3C: walk a `Block` and invoke `f` with
+/// `(pat_enum_name, pat_type_args)` for every `PatternKind::Variant`
+/// reachable through `match`/`if let`/`while let`/`guard let` arm and
+/// payload sub-patterns. Used by `propagate_pattern_instantiations` to
+/// discover enums mentioned only at pattern positions inside generic
+/// method bodies — `ExprKind::Call` propagation alone misses them.
+fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type])) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Let { init: Some(e), .. } => walk_variant_patterns_in_expr(e, f),
+            StmtKind::Let { init: None, .. } => {}
+            StmtKind::Expr(e) => walk_variant_patterns_in_expr(e, f),
+            StmtKind::Return(Some(e)) => walk_variant_patterns_in_expr(e, f),
+            StmtKind::Return(None) => {}
+            StmtKind::While { cond, body } => {
+                walk_variant_patterns_in_expr(cond, f);
+                walk_variant_patterns_in_block(body, f);
+            }
+            StmtKind::For(forloop) => match forloop {
+                ForLoop::Range { iter, body, .. } => {
+                    walk_variant_patterns_in_expr(iter, f);
+                    walk_variant_patterns_in_block(body, f);
+                }
+                ForLoop::CStyle { init, cond, update, body } => {
+                    if let Some(s) = init.as_deref() {
+                        let wrap = Block { stmts: vec![s.clone()], tail: None, span: stmt.span };
+                        walk_variant_patterns_in_block(&wrap, f);
+                    }
+                    if let Some(c) = cond { walk_variant_patterns_in_expr(c, f); }
+                    for u in update { walk_variant_patterns_in_expr(u, f); }
+                    walk_variant_patterns_in_block(body, f);
+                }
+            },
+            StmtKind::Defer(e) | StmtKind::Assert(e) => walk_variant_patterns_in_expr(e, f),
+            StmtKind::Loop(body) => walk_variant_patterns_in_block(body, f),
+            StmtKind::IfLet { pattern, scrutinee, body, else_body } => {
+                walk_variant_patterns_in_pat(pattern, f);
+                walk_variant_patterns_in_expr(scrutinee, f);
+                walk_variant_patterns_in_block(body, f);
+                if let Some(b) = else_body { walk_variant_patterns_in_block(b, f); }
+            }
+            StmtKind::WhileLet { pattern, scrutinee, body } => {
+                walk_variant_patterns_in_pat(pattern, f);
+                walk_variant_patterns_in_expr(scrutinee, f);
+                walk_variant_patterns_in_block(body, f);
+            }
+            StmtKind::GuardLet { pattern, scrutinee, complement, else_body } => {
+                walk_variant_patterns_in_pat(pattern, f);
+                walk_variant_patterns_in_expr(scrutinee, f);
+                if let Some(c) = complement { walk_variant_patterns_in_pat(c, f); }
+                walk_variant_patterns_in_block(else_body, f);
+            }
+            StmtKind::Break | StmtKind::Continue => {}
+        }
+    }
+    if let Some(t) = &block.tail { walk_variant_patterns_in_expr(t, f); }
+}
+
+fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type])) {
+    match &expr.kind {
+        ExprKind::Match { scrutinee, arms } => {
+            walk_variant_patterns_in_expr(scrutinee, f);
+            for arm in arms {
+                walk_variant_patterns_in_pat(&arm.pattern, f);
+                walk_variant_patterns_in_expr(&arm.body, f);
+            }
+        }
+        ExprKind::Call { callee, args, .. } => {
+            walk_variant_patterns_in_expr(callee, f);
+            for a in args { walk_variant_patterns_in_expr(a, f); }
+        }
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => walk_variant_patterns_in_block(b, f),
+        ExprKind::If { cond, then, else_branch } => {
+            walk_variant_patterns_in_expr(cond, f);
+            walk_variant_patterns_in_block(then, f);
+            if let Some(e) = else_branch { walk_variant_patterns_in_expr(e, f); }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            walk_variant_patterns_in_expr(lhs, f);
+            walk_variant_patterns_in_expr(rhs, f);
+        }
+        ExprKind::Unary { operand, .. } => walk_variant_patterns_in_expr(operand, f),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { walk_variant_patterns_in_expr(s, f); }
+            if let Some(e) = end { walk_variant_patterns_in_expr(e, f); }
+        }
+        ExprKind::Assign { target, value, .. } => {
+            walk_variant_patterns_in_expr(target, f);
+            walk_variant_patterns_in_expr(value, f);
+        }
+        ExprKind::Field { receiver, .. } => walk_variant_patterns_in_expr(receiver, f),
+        ExprKind::Index { receiver, index } => {
+            walk_variant_patterns_in_expr(receiver, f);
+            walk_variant_patterns_in_expr(index, f);
+        }
+        ExprKind::Cast { expr, .. } => walk_variant_patterns_in_expr(expr, f),
+        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            for sf in fields { walk_variant_patterns_in_expr(&sf.value, f); }
+        }
+        ExprKind::ArrayLit { elements } => {
+            for e in elements { walk_variant_patterns_in_expr(e, f); }
+        }
+        ExprKind::GenericEnumCall { args, .. } => {
+            for a in args { walk_variant_patterns_in_expr(a, f); }
+        }
+        ExprKind::Await(inner) | ExprKind::Yield(inner) => walk_variant_patterns_in_expr(inner, f),
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p { walk_variant_patterns_in_expr(e, f); }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn walk_variant_patterns_in_pat(pat: &Pattern, f: &mut impl FnMut(&str, &[Type])) {
+    if let PatternKind::Variant { enum_name, type_args, payload, .. } = &pat.kind {
+        f(&enum_name.name, type_args);
+        for p in payload { walk_variant_patterns_in_pat(p, f); }
+    }
+}
+
 fn ty_display(ty: &Ty) -> String {
     match ty {
         Ty::Param(name) => name.clone(),
@@ -5990,6 +6953,9 @@ fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type 
             return_type: return_type.as_ref().map(|rt| Box::new(substitute_param_in_type_ast(rt, subst))),
         },
         TypeKind::Slice(inner) => TypeKind::Slice(Box::new(substitute_param_in_type_ast(inner, subst))),
+        TypeKind::Tuple(elems) => TypeKind::Tuple(
+            elems.iter().map(|e| substitute_param_in_type_ast(e, subst)).collect()
+        ),
     };
     Type { kind, span: ty.span }
 }
@@ -6850,11 +7816,16 @@ mod tests {
     }
 
     #[test]
-    fn impl_on_enum_e0325() {
+    fn impl_on_concrete_enum_accepted_phase2c() {
+        // v0.0.5 Phase 2C: `impl EnumName { ... }` on a non-generic
+        // enum is now accepted; the old E0325 rejection lifted. Generic
+        // enum impls (e.g. `impl Option[T]`) still error pending the
+        // monomorphize-side synthesis.
         let codes = errors(
             "enum E { A }\nimpl E { fn f(self) {} }\nfn main() -> i32 { return 0; }"
         );
-        assert!(codes.contains(&"E0325"));
+        assert!(!codes.contains(&"E0325"),
+            "expected non-generic enum impl to be accepted; got: {codes:?}");
     }
 
     #[test]

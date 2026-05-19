@@ -57,12 +57,34 @@ impl Box[T] {
     // callee) frees the heap slot — no manual free here, or we'd
     // double-free.
     pub fn unwrap(move self) -> T {
-        return unsafe { *self.p };
+        // Read the inner value out, then null `self.p` so the
+        // function-exit Drop (v0.0.5 Phase 1C invokes inner-T Drop
+        // via `__cplus_drop_in_place`) treats the box as "already
+        // emptied" and skips both inner Drop and the outer free.
+        // The caller now owns the T; their scope-exit Drop handles
+        // cleanup. Without this nulling, the v0.0.5 inner-T Drop
+        // would double-free the inner value while it's also live in
+        // the caller's binding.
+        let v: T = unsafe { *self.p };
+        let free_p: *u8 = unsafe { self.p as *u8 };
+        unsafe { self.p = 0 as *T; }
+        unsafe { free(free_p); }
+        return v;
     }
 
-    // Destructor: free the heap slot. Inner T's Drop (if any) is the
-    // caller's job — `unwrap()` first to take ownership.
+    // Destructor: invoke inner-T Drop, then free the heap slot.
+    // Short-circuits on null `self.p` so the `unwrap` consumer path
+    // (which nulls `p` after taking ownership of the inner T) doesn't
+    // double-free.
     fn drop(mut self) {
+        let null_p: *T = unsafe { 0 as *T };
+        if self.p == null_p { return; }
+        // v0.0.5 Phase 1C: invoke inner-T Drop before freeing the box's
+        // heap slot. For Copy T this is a no-op the optimizer elides;
+        // for `T = string` / `T = Vec[U]` / user struct with Drop, this
+        // tears down the contained value's resources first so the
+        // following `free` only releases the box's outer slot.
+        unsafe { __cplus_drop_in_place::[T](self.p); }
         unsafe { free(self.p as *u8); }
         return;
     }

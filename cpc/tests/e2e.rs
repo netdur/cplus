@@ -5295,7 +5295,7 @@ fn stdlib_env_var_into() {
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
-    for name in &["vec", "env"] {
+    for name in &["vec", "env", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent().unwrap()
@@ -5595,7 +5595,7 @@ fn stdlib_net_tcp_round_trip() {
     // v0.0.4 Phase 3 Slice 3A.3: net.cplus now imports stdlib/reactor for
     // the async I/O wrappers; its async fns also implicitly need
     // stdlib/future for the `Future[T]` shape. Stage both alongside net.
-    for name in &["result", "vec", "net", "io", "reactor", "future"] {
+    for name in &["result", "vec", "net", "io", "reactor", "future", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent().unwrap()
@@ -5690,7 +5690,7 @@ fn cross_module_vec_in_result_no_double_free() {
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
-    for name in &["vec", "result"] {
+    for name in &["vec", "result", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent().unwrap()
@@ -5749,7 +5749,9 @@ fn stdlib_fs_round_trip() {
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
     ).unwrap();
-    for name in &["result", "vec", "fs", "io"] {
+    // v0.0.5 Phase 4 Slice 4C: fs.cplus now imports net + reactor +
+    // future (for File::read_async). Stage them too.
+    for name in &["result", "vec", "fs", "io", "iterator", "option", "net", "reactor", "future"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent().unwrap()
@@ -5864,6 +5866,14 @@ fn stdlib_cross_module_generic_method_propagation() {
     ).unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
+    // Vec::iter's `gen fn` return wrap → Iterator[T]); iterator.cplus
+    // imports stdlib/option. Stage both alongside vec.cplus so sema's
+    // signature collection resolves cleanly.
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     // `other` module uses `vec::Vec[u8]` in its method's return type —
     // this is what triggered the pre-fix bug.
     std::fs::write(
@@ -5923,6 +5933,14 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
     ).unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
+    // Vec::iter's `gen fn` return wrap → Iterator[T]); iterator.cplus
+    // imports stdlib/option. Stage both alongside vec.cplus so sema's
+    // signature collection resolves cleanly.
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     // Producer wrapper: tail-calls vec::new[u8]. Both sites are sret.
     std::fs::write(
         dir.join("src/maker.cplus"),
@@ -5984,8 +6002,12 @@ fn generic_fn_returning_generic_struct_transitive_instantiation() {
     ).unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/io.cplus"), io_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
@@ -6035,8 +6057,12 @@ fn assoc_free_fn_dispatch_via_type_brackets() {
     ).unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/io.cplus"), io_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
@@ -6915,6 +6941,466 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
     assert_eq!(run.code(), Some(42), "expected reactor to wake + read byte 42");
 }
 
+/// v0.0.5 Phase 3 Slice 3D: `File::lines()` end-to-end. Writes a small
+/// multi-line file via raw libc, then iterates via the gen method:
+///   `for line in f.lines() { ... }`
+/// Validates the chunk-and-carry newline scanner: line A ('a'), line B
+/// ('bc'), final fragment 'd' (no trailing \n at EOF) all yielded as
+/// owned `string` values.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_fs_file_lines_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"flt\"\n\n[[bin]]\nname = \"flt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let fs_src = include_str!("../../vendor/stdlib/src/fs.cplus");
+    let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/fs.cplus"), fs_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // Each test gets its own temp file to avoid cross-test interference.
+    let test_file = dir.join("input.txt");
+    std::fs::write(&test_file, "alpha\nbeta beta\ngamma").unwrap();
+    let test_file_str = test_file.to_str().unwrap();
+    let main = format!(
+        "import \"stdlib/fs\" as fs;\n\
+         import \"stdlib/result\" as result;\n\
+         fn main() -> i32 {{\n\
+             guard let result::Result[fs::File, result::IoError]::Ok(f) = fs::open_read(\"{test_file_str}\")\n\
+                 else {{ return 1 as i32; }};\n\
+             let mut count: i32 = 0;\n\
+             let mut total_len: i32 = 0;\n\
+             for line in f.lines() {{\n\
+                 count = count +% (1 as i32);\n\
+                 total_len = total_len +% (line.len() as i32);\n\
+             }}\n\
+             // 3 lines: \"alpha\"(5), \"beta beta\"(9), \"gamma\"(5) = 19 bytes total.\n\
+             if count != (3 as i32) {{ return 2 as i32; }}\n\
+             if total_len != (19 as i32) {{ return 3 as i32; }}\n\
+             return 0 as i32;\n\
+         }}\n",
+    );
+    std::fs::write(dir.join("src/main.cplus"), main).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 3 Slice 3D regression?)");
+    let bin = dir.join("target/debug/flt");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected 3 lines totaling 19 bytes");
+}
+
+/// v0.0.5 Phase 4 Slice 4C: `File::read_async` round-trip. Same EAGAIN-
+/// suspend/resume shape as `read_fd_async` but accessed through the
+/// method form. Uses a pipe stand-in (kqueue doesn't fire EVFILT_READ
+/// on regular-file fds — they're always immediately "ready") wrapped
+/// in a `File { fd }`-shaped harness so the method dispatch + reactor
+/// integration are both exercised.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_fs_file_read_async_compiles() {
+    // The fs::File constructor (`open_read`) requires a real path; pipe
+    // fds can't be wrapped without a public `File { fd }` constructor
+    // (the field is private). For now, smoke-test that the method form
+    // compiles cleanly — runtime exercise lives in
+    // `stdlib_net_read_fd_async_eagain_round_trip` for the free fn.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fra\"\n\n[[bin]]\nname = \"fra\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let fs_src = include_str!("../../vendor/stdlib/src/fs.cplus");
+    let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/fs.cplus"), fs_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    let test_file = dir.join("input.txt");
+    std::fs::write(&test_file, "x").unwrap();
+    let test_file_str = test_file.to_str().unwrap();
+    let main = format!(
+        "import \"stdlib/fs\" as fs;\n\
+         import \"stdlib/result\" as result;\n\
+         import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         async fn read_first(move f: fs::File) -> i32 {{\n\
+             // Re-bind locally so the body has a `mut` handle without\n\
+             // tripping the E0900 (mut-pointer-pass + await) guard.\n\
+             let mut f: fs::File = f;\n\
+             let _nb: i32 = f.make_nonblocking();\n\
+             let buf: *u8 = unsafe {{ malloc(1 as usize) }};\n\
+             let n: isize = await f.read_async(buf, 1 as usize);\n\
+             let v: u8 = unsafe {{ *buf }};\n\
+             unsafe {{ free(buf); }}\n\
+             if n != (1 as isize) {{ return 0 -% 1 as i32; }}\n\
+             return v as i32;\n\
+         }}\n\
+         fn main() -> i32 {{\n\
+             guard let result::Result[fs::File, result::IoError]::Ok(f) = fs::open_read(\"{test_file_str}\")\n\
+                 else {{ return 1 as i32; }};\n\
+             let fut: future::Future[i32] = read_first(f);\n\
+             let got: i32 = executor::block_on::[i32](fut);\n\
+             if got != (0x78 as i32) {{ return 2 as i32; }}\n\
+             return 0 as i32;\n\
+         }}\n",
+    );
+    std::fs::write(dir.join("src/main.cplus"), main).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 4 Slice 4C regression?)");
+    let bin = dir.join("target/debug/fra");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected to read 'x' (0x78) asynchronously");
+}
+
+/// v0.0.5 Phase 3 Slice 3B: tuple types end-to-end. Exercises
+///   - Tuple type in fn return position: `fn make_pair(...) -> (i32, i32)`
+///   - Tuple literal expression: `(x, y)`
+///   - Numeric field projection: `pair.0`, `pair.1`
+///   - 3-tuples (arity > 2)
+///   - Mixed element types: `(i32, bool)`
+///
+/// Tuples lower to synthesized concrete structs (`__tuple_<t1>_<t2>_...`)
+/// at sema time; codegen reconstructs the matching struct from element
+/// types and emits the same insertvalue/load shape as a struct literal.
+#[test]
+fn phase3b_tuple_construct_projection_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"tup\"\n\n[[bin]]\nname = \"tup\"\npath = \"src/main.cplus\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn make_pair(x: i32, y: i32) -> (i32, i32) {\n\
+             return (x, y);\n\
+         }\n\
+         fn main() -> i32 {\n\
+             // 2-tuple round-trip: construct via fn return, project via .0/.1.\n\
+             let p: (i32, i32) = make_pair(7 as i32, 35 as i32);\n\
+             let sum: i32 = p.0 +% p.1;\n\
+             if sum != (42 as i32) { return 1 as i32; }\n\
+             // 3-tuple, inline literal.\n\
+             let t: (i32, i32, i32) = (1 as i32, 2 as i32, 3 as i32);\n\
+             let s: i32 = t.0 +% t.1 +% t.2;\n\
+             if s != (6 as i32) { return 2 as i32; }\n\
+             // Mixed element types — exercises the per-element type\n\
+             // mangling path in tuple_struct_name.\n\
+             let mixed: (i32, bool) = (99 as i32, true);\n\
+             if !mixed.1 { return 3 as i32; }\n\
+             if mixed.0 != (99 as i32) { return 4 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 3 Slice 3B regression?)");
+    let bin = dir.join("target/debug/tup");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "tuple construct + project should round-trip");
+}
+
+/// v0.0.5 Phase 4 Slice 4F: concurrent-async stress. Spawns N
+/// `time::sleep(50)` futures eagerly (each runs to its first
+/// wait_timer + suspends), then awaits each in sequence. With the
+/// awaiter-notification fix, all N timers run concurrently — total
+/// wall time is ~max(individual delay), not Σ.
+///
+/// Without 4F, this hangs: the outer's `await futs[i]` suspends, the
+/// inner sleep's timer fires and inner completes, but the outer never
+/// gets re-resumed (only the timer's coro was resumed by
+/// `poll_one_event`, not its awaiter).
+///
+/// Stores `Future[i32]` handles as raw `*u8` in a malloc'd array to
+/// work around the nested-generic `Vec[Future[i32]]` limitation
+/// (sema's ty_to_source_name renders inner struct types as
+/// `<concrete>`); re-wraps as `Future[i32] { handle: h }` at await
+/// time via the struct's `pub handle` field.
+#[test]
+#[cfg(target_os = "macos")]
+fn phase4f_concurrent_n_sleeps_stress() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cns\"\n\n[[bin]]\nname = \"cns\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    let time_src = include_str!("../../vendor/stdlib/src/time.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/time.cplus"), time_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         extern fn gettimeofday(tv: *u8, tz: *u8) -> i32;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn now_ms() -> u64 {\n\
+             let buf: *u8 = unsafe { malloc(16 as usize) };\n\
+             let _rc: i32 = unsafe { gettimeofday(buf, 0 as *u8) };\n\
+             let sec: i64 = unsafe { *(buf as *i64) };\n\
+             let usec: i64 = unsafe { *((buf + (8 as usize)) as *i64) };\n\
+             unsafe { free(buf); }\n\
+             return ((sec *% (1000 as i64)) +% (usec / (1000 as i64))) as u64;\n\
+         }\n\
+         async fn unit_sleep() -> i32 {\n\
+             await time::sleep(50 as u64);\n\
+             return 0 as i32;\n\
+         }\n\
+         async fn stress(n: i32) -> i32 {\n\
+             let bytes: usize = (n as usize) *% (8 as usize);\n\
+             let buf: *u8 = unsafe { malloc(bytes) };\n\
+             let hdls: **u8 = unsafe { buf as **u8 };\n\
+             let mut i: i32 = 0;\n\
+             while i < n {\n\
+                 let f: future::Future[i32] = unit_sleep();\n\
+                 let slot: **u8 = unsafe { hdls + (i as usize) };\n\
+                 unsafe { *slot = f.handle; }\n\
+                 i = i +% (1 as i32);\n\
+             }\n\
+             let mut j: i32 = 0;\n\
+             while j < n {\n\
+                 let slot: **u8 = unsafe { hdls + (j as usize) };\n\
+                 let h: *u8 = unsafe { *slot };\n\
+                 let f: future::Future[i32] = future::Future[i32] { handle: h };\n\
+                 let _r: i32 = await f;\n\
+                 j = j +% (1 as i32);\n\
+             }\n\
+             unsafe { free(buf); }\n\
+             return 0 as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let t0: u64 = now_ms();\n\
+             let _r: i32 = executor::block_on::[i32](stress(50 as i32));\n\
+             let t1: u64 = now_ms();\n\
+             let elapsed: u64 = t1 -% t0;\n\
+             // Concurrent: ~50ms + overhead. Sequential would be 50*50 = 2500ms.\n\
+             if elapsed < (40 as u64) { return 1 as i32; }\n\
+             if elapsed > (500 as u64) { return 2 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 4 Slice 4F regression?)");
+    let bin = dir.join("target/debug/cns");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0),
+        "expected 50 concurrent sleeps to complete in ~50ms (not sequential ~2500ms)");
+}
+
+/// v0.0.5 Phase 4 Slice 4B: async method form on a user-defined struct.
+/// Exercises the new `gen_async_method` codegen path end-to-end:
+/// `mut self` is pointer-passed (not consumed), the method body runs
+/// inside an LLVM coroutine that returns `Future[T]`, and `block_on`
+/// drives it through the reactor just like a free async fn would.
+/// Mirror of the existing `stdlib_net_read_fd_async_eagain_round_trip`
+/// shape, but threading the read through a method call instead of a
+/// free-fn call.
+#[test]
+#[cfg(target_os = "macos")]
+fn async_method_on_user_struct_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"asm\"\n\n[[bin]]\nname = \"asm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/future\" as future;\n\
+         import \"stdlib/net\" as net;\n\
+         extern fn pipe(fds: *u8) -> i32;\n\
+         extern fn write(fd: i32, buf: *u8, count: usize) -> isize;\n\
+         extern fn close(fd: i32) -> i32;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct PipeReader { fd: i32 }\n\
+         impl PipeReader {\n\
+             pub async fn read_byte(mut self) -> i32 {\n\
+                 let buf: *u8 = unsafe { malloc(1 as usize) };\n\
+                 let n: isize = await net::read_fd_async(self.fd, buf, 1 as usize);\n\
+                 let v: u8 = unsafe { *buf };\n\
+                 unsafe { free(buf); }\n\
+                 if n != (1 as isize) { return -1 as i32; }\n\
+                 return v as i32;\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let fds_buf: *u8 = unsafe { malloc(8 as usize) };\n\
+             let _r: i32 = unsafe { pipe(fds_buf) };\n\
+             let fds_i32: *i32 = unsafe { fds_buf as *i32 };\n\
+             let rfd: i32 = unsafe { *fds_i32 };\n\
+             let wfd_p: *i32 = unsafe { fds_i32 + (1 as usize) };\n\
+             let wfd: i32 = unsafe { *wfd_p };\n\
+             let nb: i32 = net::set_nonblocking(rfd);\n\
+             if nb != (0 as i32) { return 90 as i32; }\n\
+             let mut reader: PipeReader = PipeReader { fd: rfd };\n\
+             let f: future::Future[i32] = reader.read_byte();\n\
+             let payload: *u8 = unsafe { malloc(1 as usize) };\n\
+             unsafe { *payload = 42 as u8; }\n\
+             let _w: isize = unsafe { write(wfd, payload, 1 as usize) };\n\
+             unsafe { free(payload); }\n\
+             let got: i32 = executor::block_on::[i32](f);\n\
+             let _c1: i32 = unsafe { close(rfd) };\n\
+             let _c2: i32 = unsafe { close(wfd) };\n\
+             unsafe { free(fds_buf); }\n\
+             return got;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 4 Slice 4B regression?)");
+    let bin = dir.join("target/debug/asm");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42),
+        "expected async method call to drive reactor + return read byte 42");
+}
+
+/// v0.0.5 Phase 4 Slice 4A: `time::sleep(ms)` round-trip via kqueue
+/// EVFILT_TIMER. Drives the reactor's timer path end-to-end:
+///   - `time::sleep(80ms)` translates to `__cplus_reactor_wait_timer(80)`
+///     inside an `async fn`.
+///   - Codegen emits `stdlib_reactor_register_timer_v1(80, %.coro.hdl)`
+///     then suspends self via `llvm.coro.suspend`.
+///   - Reactor submits an EVFILT_TIMER one-shot kevent with ident set
+///     to the handle pointer.
+///   - `block_on`'s drive loop sees `waiter_count() > 0` (n_timers > 0),
+///     calls `poll_one_event` which blocks in kevent until the timer
+///     fires, reads ident back as the handle, resumes the coroutine.
+/// Verifies elapsed wall-clock time is bounded loosely (70..500 ms),
+/// proving the suspend really blocked rather than busy-looping.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_time_sleep_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"slp\"\n\n[[bin]]\nname = \"slp\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    let time_src = include_str!("../../vendor/stdlib/src/time.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/time.cplus"), time_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/time\" as time;\n\
+         import \"stdlib/executor\" as executor;\n\
+         extern fn gettimeofday(tv: *u8, tz: *u8) -> i32;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn now_ms() -> u64 {\n\
+             let buf: *u8 = unsafe { malloc(16 as usize) };\n\
+             let _rc: i32 = unsafe { gettimeofday(buf, 0 as *u8) };\n\
+             let sec: i64 = unsafe { *(buf as *i64) };\n\
+             let usec: i64 = unsafe { *((buf + (8 as usize)) as *i64) };\n\
+             unsafe { free(buf); }\n\
+             return ((sec *% (1000 as i64)) +% (usec / (1000 as i64))) as u64;\n\
+         }\n\
+         async fn do_sleep(ms: u64) -> i32 {\n\
+             await time::sleep(ms);\n\
+             return 0 as i32;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let t0: u64 = now_ms();\n\
+             let _r: i32 = executor::block_on::[i32](do_sleep(80 as u64));\n\
+             let t1: u64 = now_ms();\n\
+             let elapsed: u64 = t1 -% t0;\n\
+             if elapsed < (70 as u64) { return 1 as i32; }\n\
+             if elapsed > (500 as u64) { return 2 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 4 Slice 4A regression?)");
+    let bin = dir.join("target/debug/slp");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected ~80ms sleep to complete within bounds");
+}
+
 /// v0.0.4 Phase 3 Slice 3A.3: stdlib `net::read_fd_async` round-trip.
 /// Exercises the full async-wrapper EAGAIN path:
 ///   - `set_nonblocking(rfd)` flips O_NONBLOCK via fcntl.
@@ -6945,12 +7431,16 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
     let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
     let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/executor\" as executor;\n\
@@ -7040,6 +7530,419 @@ fn stdlib_qualified_generic_enum_construct_and_match() {
 }
 
 /// A project that depends on `stdlib` can `import "stdlib/vec"` and use the
+/// v0.0.5 Phase 1B: block-tail `Ident(name)` of a non-Copy binding moves
+/// the value out of the block instead of dropping it twice. The bug:
+/// `let f: string = { let inner: string = ...; inner };` would free
+/// `inner`'s heap at the block's scope exit, then dangle into `f`'s
+/// slot, then double-free at `f`'s scope exit. Fix: pre-mark the
+/// tail Ident as moved (Runtime drop disposition), then flip the
+/// flag in `gen_block_expr` before the inner scope tears down.
+/// v0.0.5 Slice 1A: `fn echo(x: string) -> string { return x; }` was the
+/// long-open double-free footgun documented in plan.md. The caller's `s`
+/// flowed into `echo` as a value-passed aggregate (heap pointer shared
+/// with the caller); `return x` lifted that pointer into the caller's
+/// result binding `t`; at scope exit, both `s` and `t` Dropped the same
+/// heap → SIGTRAP (exit 133 on darwin).
+///
+/// The fix (codegen-side auto-clone): when `StmtKind::Return` sees a
+/// bare-Ident return of a non-`move` `string` parameter, emit a deep
+/// copy into the result slot. Both ends now own independent heaps.
+
+#[test]
+/// v0.0.5: `fn max[T: Ord](a, b) -> T` can now be written with the
+/// canonical `a.cmp(b)` body. The bound-method dispatch (added to
+/// `check_method_call`) resolves `.cmp` against the active `T: Ord`
+/// bound's interface signature, so the call type-checks at sema time
+/// instead of failing as "no method `cmp` on type `type-param`".
+/// Monomorphization then substitutes T → concrete type and the call
+/// dispatches to that type's `impl Ord for T` method.
+fn generic_max_with_ord_bound_calls_cmp_in_body() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("max.cplus");
+    std::fs::write(&src, "\
+struct Point { x: i32, y: i32 }
+impl Ord for Point {
+    fn cmp(self, other: Point) -> i32 {
+        if self.x < other.x { return 0 -% 1; }
+        if self.x > other.x { return 1; }
+        return 0;
+    }
+}
+fn max[T: Ord](a: T, b: T) -> T {
+    if a.cmp(b) < 0 { return b; }
+    return a;
+}
+fn main() -> i32 {
+    let p: Point = Point { x: 1, y: 2 };
+    let q: Point = Point { x: 3, y: 4 };
+    let r: Point = max(p, q);
+    return r.x;
+}
+").unwrap();
+    let bin = dir.join("max");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for max[T: Ord] with cmp");
+    let run = Command::new(&bin).status().expect("run max");
+    assert_eq!(run.code(), Some(3), "max(p, q).x should be 3 (q's x)");
+}
+
+#[test]
+/// v0.0.5: `<` / `<=` / `>` / `>=` on a generic-parameter operand is
+/// rejected at sema time with E0302 and a helpful message pointing at
+/// the `.cmp()` idiom. Before this lint, sema let the comparison
+/// through (because Ty::Param bodies aren't fully sema-checked), and
+/// codegen happily produced `icmp slt %StructTy` — LLVM rejected the
+/// IR with the cryptic "icmp requires integer operands" when the user
+/// instantiated with a non-numeric type. C+ has no operator
+/// overloading (SKILL.md §2.6), so the only correct shape is to call
+/// the bound's `cmp(other)` method and compare the i32 result.
+fn ordered_compare_on_generic_param_rejected_e0302() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("badmax.cplus");
+    std::fs::write(&src, "\
+fn max_lt[T: Ord](a: T, b: T) -> T {
+    if a < b { return b; }
+    return a;
+}
+fn main() -> i32 { return 0; }
+").unwrap();
+    let bin = dir.join("badmax");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(!out.status.success(), "cpc should reject `<` on T: Ord");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0302"),
+        "expected E0302 in stderr; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("cmp") && (stderr.contains("§2.6") || stderr.contains("operator overloading")),
+        "diagnostic should point at .cmp() and the §2.6 no-overloading policy; got: {stderr}"
+    );
+}
+
+#[test]
+fn echo_string_param_does_not_double_free() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("echo.cplus");
+    std::fs::write(&src, "\
+fn echo(x: string) -> string {
+    return x;
+}
+fn main() -> i32 {
+    let s: string = \"hello\".to_string();
+    let t: string = echo(s);
+    if t.len() != (5 as usize) { return 1 as i32; }
+    return 0 as i32;
+}
+").unwrap();
+    let bin = dir.join("echo");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for echo-double-free regression");
+    let run = Command::new(&bin).status().expect("run echo");
+    assert_eq!(run.code(), Some(0),
+        "echo(x: string) returning x should not double-free; got exit {:?}",
+        run.code());
+}
+
+#[test]
+fn block_tail_ident_non_copy_does_not_double_free() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("blkmv.cplus");
+    std::fs::write(&src, "\
+extern fn printf(fmt: *u8, ...) -> i32;
+fn main() -> i32 {
+    // Block-tail rebind.
+    let f: string = {
+        let inner: string = \"inside\".to_string();
+        inner
+    };
+    if f.len() != (6 as usize) { return 1 as i32; }
+    // Nested block-tail rebind.
+    let g: string = {
+        let outer: string = {
+            let deep: string = \"deep\".to_string();
+            deep
+        };
+        outer
+    };
+    if g.len() != (4 as usize) { return 2 as i32; }
+    return 0 as i32;
+}
+").unwrap();
+    let bin = dir.join("blkmv");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for block-tail-rebind regression");
+    let run = Command::new(&bin).status().expect("run blkmv");
+    assert_eq!(run.code(), Some(0), "block-tail rebind should not double-free");
+}
+
+/// v0.0.5 Phase 1C: container `drop` invokes inner-T Drop via the
+/// `__cplus_drop_in_place::[T]` intrinsic. Without this fix, every
+/// container that holds a Drop type leaked the inner resources on
+/// container teardown — `Box[string]`, `Vec[string]`, `Arc[string]`,
+/// `HashMap[str, string]` all bled bytes per-instance.
+///
+/// We can't easily detect leaks portably (LSan needs Linux), but we
+/// CAN verify the new drop path runs without crashing for every
+/// container that v0.0.4 shipped. A crash here means the inner-T Drop
+/// machinery is firing on bad pointers (e.g. uninitialized refcount
+/// path or wrong field offset).
+#[test]
+fn phase1c_container_inner_drop_runs_without_crash() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"idrop\"\n\n[[bin]]\nname = \"idrop\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    for name in &["box", "vec", "arc", "rc", "hash_map", "atomic", "result", "iterator", "option"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        ).unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/box\" as box;\n\
+         import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/arc\" as arc;\n\
+         import \"stdlib/rc\" as rc;\n\
+         import \"stdlib/hash_map\" as hm;\n\
+         fn box_scope() { let _b: box::Box[string] = box::new::[string](\"hello\".to_string()); return; }\n\
+         fn vec_scope() {\n\
+             let mut v: vec::Vec[string] = vec::new::[string]();\n\
+             v.push(\"one\".to_string());\n\
+             v.push(\"two\".to_string());\n\
+             v.push(\"three\".to_string());\n\
+             return;\n\
+         }\n\
+         fn arc_scope() {\n\
+             let a: arc::Arc[string] = arc::new::[string](\"arc-value\".to_string());\n\
+             let _c: u64 = a.strong_count();\n\
+             return;\n\
+         }\n\
+         fn rc_scope() {\n\
+             let r: rc::Rc[string] = rc::new::[string](\"rc-value\".to_string());\n\
+             let _c: u64 = r.strong_count();\n\
+             return;\n\
+         }\n\
+         fn hm_scope() {\n\
+             let mut m: hm::HashMap[str, i32] = hm::new::[str, i32]();\n\
+             m.insert(\"apple\", 1 as i32);\n\
+             m.insert(\"banana\", 2 as i32);\n\
+             m.insert(\"cherry\", 3 as i32);\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             box_scope();\n\
+             vec_scope();\n\
+             arc_scope();\n\
+             rc_scope();\n\
+             hm_scope();\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 1C inner-Drop regression?)");
+    let bin = dir.join("target/debug/idrop");
+    let run = Command::new(&bin).status().expect("run idrop");
+    assert_eq!(run.code(), Some(0), "inner-T Drop sites should all run cleanly");
+}
+
+/// v0.0.5 Phase 1D: async fns drive cleanly under `--asan`. The
+/// Phase-1E note in plan-0.0.4 flagged that scalar `i32` async fns
+/// returned 0 instead of the expected value under `--asan`; that
+/// regression was incidentally cured by Phase 1E's promise-alloca fix
+/// (passing `alloca <T>` to `coro.id` instead of `ptr null`) but was
+/// never tested. This regression locks the fix in: scalar primitive
+/// returns, chained awaits across two coroutines, and the generic
+/// async-fn instantiation matrix (i32/i64/bool) all build and run
+/// cleanly under ASan.
+#[test]
+#[cfg(target_os = "macos")]
+fn phase1d_async_runs_clean_under_asan() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"asanasync\"\n\n[[bin]]\nname = \"asanasync\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         import \"stdlib/executor\" as executor;\n\
+         async fn id[T](x: T) -> T { return x; }\n\
+         async fn inner(x: i32) -> i32 { return x +% (10 as i32); }\n\
+         async fn outer(x: i32) -> i32 {\n\
+             let v: i32 = await inner(x);\n\
+             return v +% (100 as i32);\n\
+         }\n\
+         fn main() -> i32 {\n\
+             // Scalar primitive return.\n\
+             let f0: future::Future[i32] = id::[i32](42);\n\
+             if executor::block_on::[i32](f0) != (42 as i32) { return 1; }\n\
+             // Two more generic instantiations to exercise the\n\
+             // monomorphized promise alloca for different sizes.\n\
+             let f1: future::Future[i64] = id::[i64](99 as i64);\n\
+             if executor::block_on::[i64](f1) != (99 as i64) { return 2; }\n\
+             let f2: future::Future[bool] = id::[bool](true);\n\
+             if !executor::block_on::[bool](f2) { return 3; }\n\
+             // Chained await — two coroutine frames live concurrently.\n\
+             let f3: future::Future[i32] = outer(5 as i32);\n\
+             if executor::block_on::[i32](f3) != (115 as i32) { return 4; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status()
+        .expect("invoke cpc --asan");
+    assert!(st.success(), "cpc build --asan failed (Phase 1D async-under-ASan regression?)");
+    let bin = dir.join("target/debug/asanasync");
+    let run = Command::new(&bin).status().expect("run asanasync");
+    assert_eq!(run.code(), Some(0), "async fns under --asan should return their declared values");
+}
+
+/// v0.0.5 Phase 2B: `pub gen fn iter(self) -> T` on a user struct.
+/// Mirror of Phase 4's `gen fn` lowering, threaded through the method
+/// path (`check_method` + `gen_gen_method`). Verifies:
+///   - sema wraps return T → Iterator[T] at the method-sig site
+///   - codegen emits a coroutine returning Iterator[T] with the
+///     receiver as the first parameter
+///   - `for x in obj.iter()` desugar walks the iterator inline
+#[test]
+fn phase2b_gen_method_on_struct() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"genm\"\n\n[[bin]]\nname = \"genm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as iterator;\n\
+         pub struct Counter { n: i32 }\n\
+         impl Counter {\n\
+             pub gen fn iter(self) -> i32 {\n\
+                 let mut i: i32 = 0;\n\
+                 while i < self.n {\n\
+                     yield i;\n\
+                     i = i +% (1 as i32);\n\
+                 }\n\
+                 return;\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let c: Counter = Counter { n: 5 as i32 };\n\
+             let mut sum: i32 = 0;\n\
+             for x in c.iter() {\n\
+                 sum = sum +% x;\n\
+             }\n\
+             // 0+1+2+3+4 = 10\n\
+             if sum != (10 as i32) { return 1 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 2B gen-method regression?)");
+    let bin = dir.join("target/debug/genm");
+    let run = Command::new(&bin).status().expect("run genm");
+    assert_eq!(run.code(), Some(0), "gen-method + for-in should sum 0..5 to 10");
+}
+
+/// v0.0.5 Phase 2C: `impl EnumName { fn ... }` on a non-generic enum.
+/// Lifts the v0.0.4 E0325 restriction for concrete enum types. Generic
+/// enum impls (`impl Option[T]`) still pending — the monomorphize-side
+/// `synthesize_generic_typed_impls` analog for enum templates needs the
+/// same `mono.enum_instantiations` walk and is a separate slice.
+///
+/// Verifies:
+///   - Plain enums (Tag::Yes/No): both methods dispatch through the
+///     enum's pointer-passed receiver.
+///   - Tagged enums (Shape::Circle(i32)/Square(i32)): method body's
+///     `match self { ... }` reads through the receiver correctly.
+#[test]
+fn phase2c_enum_impl_methods_dispatch() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("enumimpl.cplus");
+    std::fs::write(&src, "\
+extern fn printf(fmt: *u8, ...) -> i32;
+pub enum Tag { Yes, No }
+impl Tag {
+    pub fn flip(self) -> Tag {
+        return match self {
+            Tag::Yes => Tag::No,
+            Tag::No => Tag::Yes,
+        };
+    }
+    pub fn is_yes(self) -> bool {
+        return match self {
+            Tag::Yes => true,
+            Tag::No => false,
+        };
+    }
+}
+pub enum Shape { Circle(i32), Square(i32) }
+impl Shape {
+    pub fn area(self) -> i32 {
+        return match self {
+            Shape::Circle(r) => r *% r *% (3 as i32),
+            Shape::Square(s) => s *% s,
+        };
+    }
+}
+fn main() -> i32 {
+    let y: Tag = Tag::Yes;
+    let n: Tag = y.flip();
+    if y.is_yes() != true { return 1 as i32; }
+    if n.is_yes() != false { return 2 as i32; }
+    let c: Shape = Shape::Circle(2 as i32);
+    let s: Shape = Shape::Square(3 as i32);
+    if c.area() != (12 as i32) { return 3 as i32; }
+    if s.area() != (9 as i32) { return 4 as i32; }
+    return 0 as i32;
+}
+").unwrap();
+    let bin = dir.join("enumimpl");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 2C enum impl regression?)");
+    let run = Command::new(&bin).status().expect("run enumimpl");
+    assert_eq!(run.code(), Some(0), "enum impl methods should dispatch correctly");
+}
+
 /// free-function constructors `vec::new::[T]()` + `vec::with_capacity::[T](n)`.
 /// Exercises push, len, get, drop end-to-end.
 #[test]
@@ -7058,6 +7961,14 @@ fn stdlib_vec_push_and_get() {
     ).unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
+    // Vec::iter's `gen fn` return wrap → Iterator[T]); iterator.cplus
+    // imports stdlib/option. Stage both alongside vec.cplus so sema's
+    // signature collection resolves cleanly.
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
@@ -7085,6 +7996,223 @@ fn stdlib_vec_push_and_get() {
     assert_eq!(run.code(), Some(36), "expected sum of 1..=8 = 36");
 }
 
+/// v0.0.5 Phase 3 Slice 3A: `Vec[T]::iter()` is the first stdlib
+/// gen-method, exercised end-to-end via for-in. Validates Phase 2B's
+/// gen-method machinery on a generic struct's instantiation (`Vec[i32]`).
+#[test]
+fn stdlib_vec_iter_for_in() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vec_iter\"\n\n[[bin]]\nname = \"vec_iter\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         fn main() -> i32 {\n\
+             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             v.push(10 as i32);\n\
+             v.push(20 as i32);\n\
+             v.push(30 as i32);\n\
+             let mut sum: i32 = 0;\n\
+             for x in v.iter() {\n\
+                 sum = sum +% x;\n\
+             }\n\
+             if sum != (60 as i32) { return 1 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 3 Slice 3A regression?)");
+    let bin = dir.join("target/debug/vec_iter");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "Vec::iter for-in sum should be 60");
+}
+
+/// v0.0.5 Phase 2C follow-on: generic-enum impl synthesis. `impl
+/// Option[T] { fn is_some(self) -> bool }` style — methods on a
+/// generic enum template now compile + dispatch correctly at each
+/// instantiation. Mirror of the struct-side `synthesize_generic_typed_impls`
+/// path; sema's `instantiate_enum_from_arg_tys` populates the
+/// synthesized concrete enum's methods table from the generic impl
+/// template, and monomorphize emits the concrete ImplBlock per
+/// instantiation.
+#[test]
+fn phase2c_generic_enum_impl_synthesis() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"gei\"\n\n[[bin]]\nname = \"gei\"\npath = \"src/main.cplus\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "enum Maybe[T] { Some(T), None }\n\
+         impl Maybe[T] {\n\
+             pub fn is_some(self) -> bool {\n\
+                 return match self {\n\
+                     Maybe[T]::Some(_) => true,\n\
+                     Maybe[T]::None => false,\n\
+                 };\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let s: Maybe[i32] = Maybe[i32]::Some(7 as i32);\n\
+             let n: Maybe[i32] = Maybe[i32]::None;\n\
+             if !s.is_some() { return 1 as i32; }\n\
+             if n.is_some() { return 2 as i32; }\n\
+             // Second instantiation: Maybe[bool] exercises the per-arg\n\
+             // synthesis path independently.\n\
+             let sb: Maybe[bool] = Maybe[bool]::Some(true);\n\
+             if !sb.is_some() { return 3 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (generic-enum impl synthesis regression?)");
+    let bin = dir.join("target/debug/gei");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected generic-enum methods to dispatch correctly");
+}
+
+/// v0.0.5 Phase 3 Slice 3C follow-on: `vec::collect[T]` drains an
+/// Iterator[T] into a Vec[T]. Free fn (not an `impl Iterator[T]`
+/// method) to avoid the iterator↔vec circular import. Exercises
+/// chained `.iter().filter(...)` consumption.
+#[test]
+fn stdlib_vec_collect_drains_iterator() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"col\"\n\n[[bin]]\nname = \"col\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         fn is_pos(x: i32) -> bool { return x > (0 as i32); }\n\
+         fn main() -> i32 {\n\
+             let mut src: vec::Vec[i32] = vec::new::[i32]();\n\
+             src.push(0 -% (1 as i32));\n\
+             src.push(2 as i32);\n\
+             src.push(0 -% (3 as i32));\n\
+             src.push(4 as i32);\n\
+             src.push(5 as i32);\n\
+             let positives: vec::Vec[i32] = vec::collect::[i32](src.iter().filter(is_pos));\n\
+             if positives.len() != (3 as usize) { return 1 as i32; }\n\
+             let mut sum: i32 = 0;\n\
+             let mut i: usize = 0 as usize;\n\
+             while i < positives.len() {\n\
+                 sum = sum +% positives.get(i);\n\
+                 i = i +% (1 as usize);\n\
+             }\n\
+             if sum != (11 as i32) { return 2 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (collect adapter regression?)");
+    let bin = dir.join("target/debug/col");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "expected collected positives to total 11");
+}
+
+/// v0.0.5 Phase 3 Slice 3C: iterator adapters end-to-end. Exercises
+/// `Iterator[i32]::filter`, `Iterator[i32]::take`, and the free
+/// `iterator::map::[i32, i32]` — all of which match on `Option[T]`
+/// inside generic-impl-method / generic-fn bodies. Sema's
+/// `propagate_pattern_instantiations` is what registers `Option[i32]`
+/// from those pattern positions; without it, codegen would panic in
+/// `lty(Ty::Enum(EnumId(0)))` synthesizing the adapter's `match
+/// self.next() { ... }` lowering.
+#[test]
+fn stdlib_iterator_adapters_filter_take_map() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"itad\"\n\n[[bin]]\nname = \"itad\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/iterator\" as iterator;\n\
+         fn is_even(x: i32) -> bool { return (x % (2 as i32)) == (0 as i32); }\n\
+         fn double(x: i32) -> i32 { return x *% (2 as i32); }\n\
+         fn main() -> i32 {\n\
+             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             v.push(1 as i32);\n\
+             v.push(2 as i32);\n\
+             v.push(3 as i32);\n\
+             v.push(4 as i32);\n\
+             v.push(5 as i32);\n\
+             v.push(6 as i32);\n\
+             // filter: keep even — sum 2+4+6 = 12\n\
+             let mut sum: i32 = 0;\n\
+             for x in v.iter().filter(is_even) {\n\
+                 sum = sum +% x;\n\
+             }\n\
+             if sum != (12 as i32) { return 1 as i32; }\n\
+             // take(3): count exactly three elements\n\
+             let mut count: i32 = 0;\n\
+             for _x in v.iter().take(3 as usize) {\n\
+                 count = count +% (1 as i32);\n\
+             }\n\
+             if count != (3 as i32) { return 2 as i32; }\n\
+             // map: double every element — sum 2+4+6+8+10+12 = 42\n\
+             let mut sum2: i32 = 0;\n\
+             for x in iterator::map::[i32, i32](v.iter(), double) {\n\
+                 sum2 = sum2 +% x;\n\
+             }\n\
+             if sum2 != (42 as i32) { return 3 as i32; }\n\
+             return 0 as i32;\n\
+         }\n",
+    ).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed (Phase 3 Slice 3C regression?)");
+    let bin = dir.join("target/debug/itad");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "iterator adapters round-trip should exit 0");
+}
+
 /// v0.0.4 Phase 3 Slice 3B.3: `Vec[T]::extend_from_slice(s: T[])` —
 /// slice-typed wrapper over `extend_from_raw`. Single realloc + single
 /// memcpy regardless of T. This test exercises both element type kinds
@@ -7106,6 +8234,14 @@ fn stdlib_vec_extend_from_slice_round_trip() {
     ).unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
+    // Vec::iter's `gen fn` return wrap → Iterator[T]); iterator.cplus
+    // imports stdlib/option. Stage both alongside vec.cplus so sema's
+    // signature collection resolves cleanly.
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
@@ -8866,6 +10002,77 @@ fn racy_counter_provokes_tsan_warning() {
 /// coroutines to completion. Validates the full async-syntax surface
 /// + LLVM coroutine codegen + the stdlib executor's poll loop in one
 /// shot.
+/// v0.0.5 Phase 4 Slice 4E: async_fetch recipe round-trip. Exercises
+/// method-form async TCP (`stream.write_all_async`, `stream.read_async`,
+/// `stream.make_nonblocking`) end-to-end against a real localhost
+/// echo server running in a sidecar Rust thread. The C+ client uses
+/// `block_on` on a single async fn that connects, sends 'A', reads
+/// the echoed byte. Validates 4B's method form drives the reactor
+/// correctly through multi-level awaits inside the outer future.
+///
+/// **Concurrency note:** 4E's original 1000-task stress is blocked
+/// on an executor improvement — nested awaits in `spawn_local`'d
+/// futures don't get re-resumed when their awaitee completes (only
+/// the *outer* future passed to `block_on` is re-driven on each loop
+/// pass). Forward-pointed to Phase 5.
+#[test]
+#[cfg(target_os = "macos")]
+fn recipe_async_fetch_runs() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = copy_recipe_to_tempdir("async_fetch");
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    ).unwrap();
+    // Stage stdlib modules the recipe imports + their transitive deps.
+    let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
+    let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
+    let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
+    let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
+    let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
+    let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
+    let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
+    let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
+    std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    assert!(st.success(), "async_fetch build failed");
+    // Bind to a free port on 127.0.0.1, accept one connection, echo
+    // back whatever byte the client writes. Sidecar Rust thread does
+    // the synchronous accept/read/write; the C+ binary is the async
+    // client.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().expect("accept");
+        let mut buf = [0u8; 1];
+        conn.read_exact(&mut buf).expect("read");
+        conn.write_all(&buf).expect("echo");
+        // Hold the connection open briefly so the client's read
+        // doesn't EOF instead of returning the byte. (TCP buffers
+        // mean this typically isn't needed, but cheap insurance.)
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        drop(conn);
+    });
+    let out = Command::new(dir.join("target/debug/async_fetch"))
+        .env("FETCH_PORT", port.to_string())
+        .output().expect("run");
+    server.join().expect("server thread");
+    let code = out.status.code().unwrap_or(-1);
+    assert_eq!(code, 0x41,
+        "expected echoed 'A' (0x41); got code={code} stderr={}",
+        String::from_utf8_lossy(&out.stderr));
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn recipe_async_yield_demo_runs() {

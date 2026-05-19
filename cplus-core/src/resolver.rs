@@ -1379,6 +1379,11 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
             if let Some(rt) = return_type.as_mut() { rewrite_type(rt, ctx)?; }
         }
         TypeKind::Slice(inner) => rewrite_type(inner, ctx)?,
+        // v0.0.5 Phase 3 Slice 3B: tuple element types may themselves
+        // reference cross-file types — recurse into each.
+        TypeKind::Tuple(elems) => {
+            for t in elems.iter_mut() { rewrite_type(t, ctx)?; }
+        }
     }
     Ok(())
 }
@@ -1651,7 +1656,7 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
             for f in fields { rewrite_expr(&mut f.value, ctx, scope)?; }
         }
         ExprKind::Field { receiver, .. } => rewrite_expr(receiver, ctx, scope)?,
-        ExprKind::ArrayLit { elements } => {
+        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
             for el in elements { rewrite_expr(el, ctx, scope)?; }
         }
         // v0.0.3 1P.1: qualify the enum_name for cross-module generic enum

@@ -1,0 +1,82 @@
+// async_fetch — single async TCP client using method-form async I/O.
+//
+// v0.0.5 Phase 4 Slice 4E. Demonstrates the full Phase 4 surface:
+// connect, set non-blocking, write a request, read a response — all
+// through method-form `await stream.write_async(...)` /
+// `await stream.read_async(...)`. No raw fds in user code; the
+// `mut self` receiver keeps the stream live across `await` points
+// without `move`-on-value-pass consumption.
+//
+// Pairs with a server running on 127.0.0.1:PORT that echoes one byte.
+// The recipe is launchable as `cpc run` once a listener is available
+// on PORT — the e2e harness ([cpc/tests/e2e.rs](../../../../cpc/tests/e2e.rs)
+// `async_method_tcp_round_trip`) sets one up via a sidecar thread.
+//
+// **Concurrency note.** v0.0.4's single-threaded executor drives the
+// *outer* future passed to `block_on` correctly, including its
+// multi-level `await` chains (await foo() where foo's body itself
+// awaits a timer or fd-event). But nested awaits inside
+// `spawn_local`'d futures do NOT make progress — when the awaitee
+// completes, the awaiter's resume isn't scheduled because
+// `block_on` only resumes the outer future on each loop pass. So
+// 1000-task fanout (the original 4E ambition) is blocked on an
+// executor improvement (forward-pointed to Phase 5). This recipe
+// runs *one* async client; concurrent-clients-via-spawn_local lands
+// when the executor learns to re-enqueue awaiters of completed
+// futures.
+
+import "stdlib/executor" as executor;
+import "stdlib/future" as future;
+import "stdlib/net" as net;
+import "stdlib/result" as result;
+
+extern fn printf(fmt: *u8, ...) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn getenv(name: *u8) -> *u8;
+extern fn atoi(s: *u8) -> i32;
+
+// Read the target port from `FETCH_PORT` env var, defaulting to 7878.
+// Lets the e2e harness pick a free port without recompiling.
+fn target_port() -> u16 {
+    let var: *u8 = unsafe { getenv(str_ptr("FETCH_PORT\0")) };
+    let null_p: *u8 = unsafe { 0 as *u8 };
+    if var == null_p {
+        return 7878 as u16;
+    }
+    let p: i32 = unsafe { atoi(var) };
+    return p as u16;
+}
+
+async fn fetch_one_byte(port: u16) -> i32 {
+    // `guard let` binds the Ok payload into the enclosing scope and
+    // diverges via the `else` block on Err. Pure sugar over `match`,
+    // but type-checks cleanly without the "expected struct, found ()"
+    // gotcha that match-as-expression with divergent arms triggers.
+    guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp("127.0.0.1", port)
+        else { return 0 -% 1 as i32; };
+    let mut stream: net::TcpStream = s;
+    let _nb: i32 = stream.make_nonblocking();
+    // Send a one-byte request and read a one-byte reply.
+    let req: *u8 = unsafe { malloc(1 as usize) };
+    unsafe { *req = 0x41 as u8; }   // 'A'
+    let _w: isize = await stream.write_all_async(req, 1 as usize);
+    unsafe { free(req); }
+    let buf: *u8 = unsafe { malloc(1 as usize) };
+    let n: isize = await stream.read_async(buf, 1 as usize);
+    if n != (1 as isize) {
+        unsafe { free(buf); }
+        return 0 -% 2 as i32;
+    }
+    let v: u8 = unsafe { *buf };
+    unsafe { free(buf); }
+    return v as i32;
+}
+
+fn main() -> i32 {
+    let port: u16 = target_port();
+    let f: future::Future[i32] = fetch_one_byte(port);
+    let got: i32 = executor::block_on::[i32](f);
+    unsafe { printf(str_ptr("got=%d\n\0"), got); }
+    return got;
+}

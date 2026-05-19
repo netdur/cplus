@@ -624,14 +624,21 @@ fn generate_inner(
                 gen_function(&mut out, f, &sigs, &types, &str_lits, mode, test_mode, &mut emitted_extern_symbols, &md, &tramps, is_lib);
             }
             ItemKind::Impl(b) => {
-                let Some(&id) = types.struct_by_name.get(&b.target.name) else { continue; };
-                for m in &b.methods {
-                    // Slice 7GEN.5e: generic methods are codegen-skipped
-                    // pre-monomorphization. Their Ty::Param-bearing
-                    // signatures and bodies are emitted as concrete
-                    // copies by the monomorphize pass.
-                    if !m.generic_params.is_empty() { continue; }
-                    gen_method(&mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps, is_lib);
+                if let Some(&id) = types.struct_by_name.get(&b.target.name) {
+                    for m in &b.methods {
+                        // Slice 7GEN.5e: generic methods are codegen-skipped
+                        // pre-monomorphization. Their Ty::Param-bearing
+                        // signatures and bodies are emitted as concrete
+                        // copies by the monomorphize pass.
+                        if !m.generic_params.is_empty() { continue; }
+                        gen_method(&mut out, id, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps, is_lib);
+                    }
+                } else if let Some(&enum_id) = types.enum_by_name.get(&b.target.name) {
+                    // v0.0.5 Phase 2C: enum impl-method emission.
+                    for m in &b.methods {
+                        if !m.generic_params.is_empty() { continue; }
+                        gen_enum_method(&mut out, enum_id, m, &sigs, &types, &str_lits, mode, test_mode, &md, &tramps);
+                    }
                 }
             }
             // Slice 7GEN.3: interface declarations have no runtime
@@ -1008,6 +1015,9 @@ struct EnumInfo {
     /// Mirror of sema's Copy fixpoint. Plain enums are always Copy; tagged
     /// enums are Copy iff every variant's payload type list is all-Copy.
     is_copy: bool,
+    /// v0.0.5 Phase 2C: inherent methods declared via `impl EnumName`.
+    /// Keyed by method name; same shape as `StructInfo::methods`.
+    methods: HashMap<String, MethodInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -1052,6 +1062,46 @@ fn mangle(struct_name: &str, method_name: &str) -> String {
     format!("{}.{}", struct_name, method_name)
 }
 
+/// v0.0.5 Phase 3 Slice 3B: reconstruct a synthesized tuple struct's
+/// mangled name from its element types. Must match sema's naming in
+/// `synthesize_tuple_struct` (which uses `mangle_ty_for_name`).
+fn tuple_struct_name(elem_tys: &[Ty], types: &TypeTable) -> String {
+    let parts: Vec<String> = elem_tys.iter()
+        .map(|t| tuple_elem_mangle(t, types))
+        .collect();
+    format!("__tuple_{}", parts.join("_"))
+}
+
+fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
+    match ty {
+        Ty::I8 => "i8".into(), Ty::I16 => "i16".into(), Ty::I32 => "i32".into(), Ty::I64 => "i64".into(),
+        Ty::U8 => "u8".into(), Ty::U16 => "u16".into(), Ty::U32 => "u32".into(), Ty::U64 => "u64".into(),
+        Ty::Isize => "isize".into(), Ty::Usize => "usize".into(),
+        Ty::F32 => "f32".into(), Ty::F64 => "f64".into(),
+        Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
+        Ty::Str => "str".into(),
+        Ty::String => "string".into(),
+        Ty::Slice(inner) => format!("slice_{}", tuple_elem_mangle(inner, types)),
+        Ty::RawPtr(inner) => format!("ptr_{}", tuple_elem_mangle(inner, types)),
+        Ty::FnPtr { params, return_type } => {
+            let mut s = String::from("fn");
+            for p in params { s.push('_'); s.push_str(&tuple_elem_mangle(p, types)); }
+            if !matches!(**return_type, Ty::Unit) {
+                s.push_str("_ret_");
+                s.push_str(&tuple_elem_mangle(return_type, types));
+            }
+            s
+        }
+        Ty::Struct(id) => types.struct_defs[id.0 as usize].name.clone(),
+        Ty::Enum(id) => types.enum_by_name.iter()
+            .find_map(|(n, eid)| if eid == id { Some(n.clone()) } else { None })
+            .unwrap_or_else(|| "<enum>".to_string()),
+        Ty::Array(elem, n) => format!("arr{}_{}", n, tuple_elem_mangle(elem, types)),
+        Ty::Param(name) => format!("Param_{name}"),
+        Ty::Error => "ERR".into(),
+    }
+}
+
 fn collect_types(p: &Program) -> TypeTable {
     let mut t = TypeTable::default();
     // First pass: register names so struct field type resolution can refer
@@ -1082,6 +1132,7 @@ fn collect_types(p: &Program) -> TypeTable {
                     // Plain enums are Copy unconditionally; tagged enums are
                     // resolved by the fixpoint in `compute_copy_flags`.
                     is_copy: !is_tagged,
+                    methods: HashMap::new(),
                 });
                 t.enum_by_name.insert(e.name.name.clone(), id);
             }
@@ -1157,6 +1208,34 @@ fn collect_types(p: &Program) -> TypeTable {
     // Third pass: collect methods from impl blocks.
     for item in &p.items {
         let ItemKind::Impl(b) = &item.kind else { continue; };
+        // v0.0.5 Phase 2C: route enum impls to enum_defs's method table.
+        if let Some(&enum_id) = t.enum_by_name.get(&b.target.name) {
+            for m in &b.methods {
+                if t.enum_defs[enum_id.0 as usize].methods.contains_key(&m.name.name) {
+                    continue;
+                }
+                if !m.generic_params.is_empty() { continue; }
+                let params: Vec<(Ty, bool, bool)> = m.params.iter()
+                    .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable))
+                    .collect();
+                let declared_ret = match &m.return_type {
+                    Some(ty) => ty_from(ty, &t),
+                    None => Ty::Unit,
+                };
+                let return_type = if m.is_gen {
+                    lookup_iterator_ty(&declared_ret, &t)
+                } else if m.is_async {
+                    lookup_future_ty(&declared_ret, &t)
+                } else {
+                    declared_ret
+                };
+                t.enum_defs[enum_id.0 as usize].methods.insert(
+                    m.name.name.clone(),
+                    MethodInfo { receiver: m.receiver, params, return_type },
+                );
+            }
+            continue;
+        }
         let Some(&id) = t.struct_by_name.get(&b.target.name) else { continue; };
         for m in &b.methods {
             if t.struct_defs[id.0 as usize].methods.contains_key(&m.name.name) {
@@ -1169,9 +1248,19 @@ fn collect_types(p: &Program) -> TypeTable {
             let params: Vec<(Ty, bool, bool)> = m.params.iter()
                 .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable))
                 .collect();
-            let return_type = match &m.return_type {
+            let declared_ret = match &m.return_type {
                 Some(ty) => ty_from(ty, &t),
                 None => Ty::Unit,
+            };
+            // v0.0.5 Phase 2B: gen-method return wraps T → Iterator[T] at
+            // the call site (mirror of `gen fn` free fn collect_sigs).
+            // v0.0.5 Phase 4 Slice 4B: same for async methods → Future[T].
+            let return_type = if m.is_gen {
+                lookup_iterator_ty(&declared_ret, &t)
+            } else if m.is_async {
+                lookup_future_ty(&declared_ret, &t)
+            } else {
+                declared_ret
             };
             t.struct_defs[id.0 as usize].methods.insert(
                 m.name.name.clone(),
@@ -1627,7 +1716,17 @@ fn scan_moves_in_block(
     set: &mut std::collections::HashSet<String>,
 ) {
     for s in &b.stmts { scan_moves_in_stmt(s, sigs, types, set); }
-    if let Some(t) = &b.tail { scan_moves_in_expr(t, sigs, types, set); }
+    if let Some(t) = &b.tail {
+        // v0.0.5 Phase 1B: a block whose tail expression is a bare
+        // `Ident(n)` moves that binding out of the block (its value
+        // flows to whichever expression consumes the block). Pre-mark
+        // the source so its drop_flag gets Runtime disposition; the
+        // block-expr codegen flips it before pop_scope drops fire.
+        if let ExprKind::Ident(n) = &t.kind {
+            set.insert(n.clone());
+        }
+        scan_moves_in_expr(t, sigs, types, set);
+    }
 }
 
 fn scan_moves_in_stmt(
@@ -1872,6 +1971,11 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             let inner_ty = ty_from(inner, types);
             return Ty::Slice(Box::new(inner_ty));
         }
+        // v0.0.5 Phase 3 Slice 3B: tuple types are lowered to a
+        // synthesized struct (`__tuple_N_<t1>_<t2>_...`) by sema +
+        // monomorphize before codegen sees them. Reaching here means
+        // a lowering site was missed.
+        TypeKind::Tuple(_) => panic!("codegen reached TypeKind::Tuple — sema/monomorphize did not lower this site"),
     };
     match name.as_str() {
         "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
@@ -2009,6 +2113,12 @@ fn write_preamble(out: &mut String) {
     // struct's footprint) read as 0 instead of poison when packed into
     // the coerced integer-class return register.
     out.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+    // v0.0.5: FMA intrinsics for the `a*b + c` peephole in gen_binary.
+    // clang lowers source-level `a*b+c` to `llvm.fmuladd` directly at
+    // `-ffp-contract=on` (default); cpc does the same so hot raytracer
+    // loops match C's instruction count and FP-rounding behavior.
+    out.push_str("declare float  @llvm.fmuladd.f32(float, float, float)\n");
+    out.push_str("declare double @llvm.fmuladd.f64(double, double, double)\n");
     // v0.0.3 Phase 5 Slice 5B: pthread externs for the thread::spawn /
     // JoinHandle::join intrinsics. pthread_t is opaque-pointer-sized
     // (8 bytes on every supported target); we model it as `i64` to
@@ -2618,6 +2728,12 @@ fn gen_function(
         }
         if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
             state.bind(&param.name.name, format!("%{llvm_idx}"), pty.clone());
+            // v0.0.5 Slice 1A: track params that share heap with the
+            // caller (so the body cannot return the binding as-is
+            // without a deep clone — both ends would Drop the same
+            // heap). For pointer-passed non-Copy structs, the binding
+            // IS the caller's pointer.
+            state.borrowed_params.insert(param.name.name.clone());
             continue;
         }
         let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -2626,6 +2742,17 @@ fn gen_function(
             llvm_ty(pty, types), llvm_idx, slot
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
+        // v0.0.5 Slice 1A: value-passed non-`move` Drop param. The
+        // aggregate is a bit-copy of the caller's; its heap pointer
+        // (Ty::String → {ptr, len, cap}, Vec[T] → {ptr, len, cap},
+        // etc.) ALIASES the caller's. Returning this binding without
+        // a clone double-frees at scope exit. Track for the auto-
+        // clone-on-return path (today only Ty::String returns are
+        // auto-cloned — Vec[T] and similar need T::clone glue, their
+        // own slice).
+        if !*move_flag && matches!(pty, Ty::String) {
+            state.borrowed_params.insert(param.name.name.clone());
+        }
         if *move_flag {
             if let Ty::Struct(id) = pty {
                 if types.struct_defs[id.0 as usize].is_drop {
@@ -2717,6 +2844,316 @@ fn gen_function(
 /// thread::spawn's Copy-only restriction and tracked alongside it.
 /// Generic async fns work because monomorphization fires before
 /// codegen (the async fn is a regular `Function` post-mono).
+/// v0.0.5 Phase 2B: lower a generator method (e.g.
+/// `pub gen fn iter(self) -> T`) to an LLVM coroutine returning
+/// `Iterator[T]`. Mirrors `gen_gen_function`'s overall shape but
+/// adapts to the method's receiver-prefix parameter layout.
+/// v0.0.5 Phase 4 Slice 4B: lower an `async fn` method to an LLVM
+/// coroutine that produces `Future[T]`. Structurally identical to
+/// `gen_async_function` for the body (same coro.id/begin/suspend/end
+/// pattern, same promise wiring) but with method-shaped signature
+/// (receiver + params) and a mangled name. Mirror of `gen_gen_method`
+/// for the async/Future side.
+fn gen_async_method(
+    out: &mut String,
+    struct_id: StructId,
+    m: &Method,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+) {
+    let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
+    let sig = types.struct_defs[struct_id.0 as usize]
+        .methods.get(&m.name.name).expect("sig was collected").clone();
+    let mangled = mangle(&struct_name, &m.name.name);
+
+    let inner_ty = match &m.return_type {
+        Some(t) => ty_from(t, types),
+        None => Ty::Unit,
+    };
+    let inner_llvm = llvm_ty(&inner_ty, types);
+    let (_inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
+    let future_ret_ty = sig.return_type.clone();
+    let future_llvm = llvm_ty(&future_ret_ty, types);
+
+    let linkage = if m.is_pub { "" } else { "internal " };
+
+    // Function header: receiver + params, returns Future[T] (single-ptr
+    // aggregate, fits in a register — no sret).
+    write!(out, "define {}{} @{}(", linkage, future_llvm, mangled).unwrap();
+    let mut llvm_idx: u32 = 0;
+    let mut first = true;
+    let struct_ty = Ty::Struct(struct_id);
+    if let Some(rcv) = sig.receiver {
+        let (mv, mu) = match rcv {
+            Receiver::Read => (false, false),
+            Receiver::Mut  => (false, true),
+            Receiver::Move => (true,  true),
+        };
+        if !first { out.push_str(", "); }
+        let attrs = param_attrs(&struct_ty, mv, mu, true, types);
+        if attrs.is_empty() {
+            write!(out, "ptr %{llvm_idx}").unwrap();
+        } else {
+            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        if !first { out.push_str(", "); }
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let base_ty = if by_ptr { "ptr".to_string() } else { llvm_ty(pty, types) };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    out.push_str(") presplitcoroutine {\nentry:\n");
+
+    // Promise allocation. Unit-returning async methods use an i8 placeholder
+    // so the promise pointer is addressable but never written through.
+    let promise_ty: &str = if matches!(inner_ty, Ty::Unit) { "i8" } else { &inner_llvm };
+    let promise_align: u64 = if matches!(inner_ty, Ty::Unit) { 1 } else { inner_align };
+    out.push_str(&format!(
+        "  %.coro.promise = alloca {promise_ty}, align {promise_align}\n"
+    ));
+    out.push_str(&format!(
+        "  %.coro.id = call token @llvm.coro.id(i32 {promise_align}, ptr %.coro.promise, ptr null, ptr null)\n"
+    ));
+    out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
+    out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
+    out.push_str("  %.coro.hdl = call ptr @llvm.coro.begin(token %.coro.id, ptr %.coro.mem)\n");
+
+    let mut state = FnState::new(inner_ty.clone(), sigs, types, str_lits, mode, test_mode, md, tramps);
+    state.return_ty = inner_ty.clone();
+    state.coro_promise = Some((".coro.hdl".to_string(), inner_llvm.clone(), inner_align as u32));
+    state.collect_moved_bindings(&m.body);
+
+    let mut next_idx: u32 = 0;
+    if let Some(_rcv) = sig.receiver {
+        let recv_name = format!("%{}", next_idx);
+        state.bind("self", recv_name, Ty::Struct(struct_id));
+        next_idx += 1;
+    }
+    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        if by_ptr {
+            state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
+        } else {
+            let slot = state.alloca_named(&param.name.name, pty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(pty, types), next_idx, slot
+            ));
+            state.bind(&param.name.name, slot.clone(), pty.clone());
+        }
+        next_idx += 1;
+    }
+
+    let _body_value = state.gen_block_expr(&m.body);
+
+    // Body fall-off: same handling as gen_async_function — Unit methods
+    // fall through cleanly, non-Unit ones store undef (sema rejects
+    // missing-return for non-Unit T, so this is the unit fall-off case).
+    if !state.terminated {
+        if !matches!(inner_ty, Ty::Unit) {
+            let prom_ptr = state.next_tmp();
+            state.emit(&format!(
+                "{prom_ptr} = call ptr @llvm.coro.promise(ptr %.coro.hdl, i32 {promise_align}, i1 false)"
+            ));
+            state.emit(&format!(
+                "store {inner_llvm} undef, ptr {prom_ptr}, align {promise_align}"
+            ));
+        }
+        state.emit_terminator("br label %.coro.final_suspend");
+    }
+
+    // v0.0.5 Slice 4F: notify awaiter before final suspend.
+    // See parallel comment in gen_async_function.
+    state.body.push_str(".coro.final_suspend:\n");
+    state.body.push_str("  call void @stdlib_reactor_notify_completed_v1(ptr %.coro.hdl)\n");
+    state.body.push_str("  %.coro.fs = call i8 @llvm.coro.suspend(token none, i1 true)\n");
+    state.body.push_str("  switch i8 %.coro.fs, label %.coro.ramp_return [i8 0, label %.coro.trap i8 1, label %.coro.cleanup]\n");
+    state.body.push_str(".coro.ramp_return:\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.trap:\n");
+    state.body.push_str("  call void @llvm.trap()\n");
+    state.body.push_str("  unreachable\n");
+    state.body.push_str(".coro.cleanup:\n");
+    state.body.push_str("  %.coro.mem_free = call ptr @llvm.coro.free(token %.coro.id, ptr %.coro.hdl)\n");
+    state.body.push_str("  call void @free(ptr %.coro.mem_free)\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.end:\n");
+    state.body.push_str("  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n");
+    state.body.push_str(&format!(
+        "  %.coro.future0 = insertvalue {future_llvm} undef, ptr %.coro.hdl, 0\n"
+    ));
+    state.body.push_str(&format!(
+        "  ret {future_llvm} %.coro.future0\n"
+    ));
+
+    for a in &state.allocas {
+        out.push_str("  ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
+fn gen_gen_method(
+    out: &mut String,
+    struct_id: StructId,
+    m: &Method,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+) {
+    let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
+    let sig = types.struct_defs[struct_id.0 as usize]
+        .methods.get(&m.name.name).expect("sig was collected").clone();
+    let mangled = mangle(&struct_name, &m.name.name);
+
+    let inner_ty = match &m.return_type {
+        Some(t) => ty_from(t, types),
+        None => Ty::Unit,
+    };
+    let inner_llvm = llvm_ty(&inner_ty, types);
+    let (_inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
+    let iter_ret_ty = sig.return_type.clone();
+    let iter_llvm = llvm_ty(&iter_ret_ty, types);
+
+    let linkage = if m.is_pub { "" } else { "internal " };
+
+    // Function header: same receiver + param structure as a regular
+    // method, but the return is `Iterator[T]` (one-ptr aggregate that
+    // fits in a register, so no sret).
+    write!(out, "define {}{} @{}(", linkage, iter_llvm, mangled).unwrap();
+    let mut llvm_idx: u32 = 0;
+    let mut first = true;
+    let struct_ty = Ty::Struct(struct_id);
+    if let Some(rcv) = sig.receiver {
+        let (mv, mu) = match rcv {
+            Receiver::Read => (false, false),
+            Receiver::Mut  => (false, true),
+            Receiver::Move => (true,  true),
+        };
+        if !first { out.push_str(", "); }
+        let attrs = param_attrs(&struct_ty, mv, mu, true, types);
+        if attrs.is_empty() {
+            write!(out, "ptr %{llvm_idx}").unwrap();
+        } else {
+            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        if !first { out.push_str(", "); }
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let base_ty = if by_ptr { "ptr".to_string() } else { llvm_ty(pty, types) };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    out.push_str(") presplitcoroutine {\nentry:\n");
+
+    let promise_ty: &str = if matches!(inner_ty, Ty::Unit) { "i8" } else { &inner_llvm };
+    let promise_align: u64 = if matches!(inner_ty, Ty::Unit) { 1 } else { inner_align };
+    out.push_str(&format!(
+        "  %.coro.promise = alloca {promise_ty}, align {promise_align}\n"
+    ));
+    out.push_str(&format!(
+        "  %.coro.id = call token @llvm.coro.id(i32 {promise_align}, ptr %.coro.promise, ptr null, ptr null)\n"
+    ));
+    out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
+    out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
+    out.push_str("  %.coro.hdl = call ptr @llvm.coro.begin(token %.coro.id, ptr %.coro.mem)\n");
+
+    let mut state = FnState::new(Ty::Unit, sigs, types, str_lits, mode, test_mode, md, tramps);
+    state.return_ty = Ty::Unit;
+    state.coro_promise = Some((".coro.hdl".to_string(), inner_llvm.clone(), inner_align as u32));
+    state.collect_moved_bindings(&m.body);
+
+    let mut next_idx: u32 = 0;
+    // Bind the receiver: `self` is the pointer parameter directly.
+    if let Some(_rcv) = sig.receiver {
+        let recv_name = format!("%{}", next_idx);
+        state.bind("self", recv_name, Ty::Struct(struct_id));
+        next_idx += 1;
+    }
+    // Bind params to allocas (value-passed) or pointer slots (pointer-passed).
+    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        if by_ptr {
+            state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
+        } else {
+            let slot = state.alloca_named(&param.name.name, pty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(pty, types), next_idx, slot
+            ));
+            state.bind(&param.name.name, slot.clone(), pty.clone());
+        }
+        next_idx += 1;
+    }
+
+    let _body_value = state.gen_block_expr(&m.body);
+
+    // gen-method body is Unit-typed (it `yield`s values rather than
+    // returning one). Fall-off / `return;` both branch into final_suspend.
+    if !state.terminated {
+        state.emit_terminator("br label %.coro.final_suspend");
+    }
+
+    state.body.push_str(".coro.final_suspend:\n");
+    state.body.push_str("  %.coro.fs = call i8 @llvm.coro.suspend(token none, i1 true)\n");
+    state.body.push_str("  switch i8 %.coro.fs, label %.coro.ramp_return [i8 0, label %.coro.trap i8 1, label %.coro.cleanup]\n");
+    state.body.push_str(".coro.ramp_return:\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.trap:\n");
+    state.body.push_str("  call void @llvm.trap()\n");
+    state.body.push_str("  unreachable\n");
+    state.body.push_str(".coro.cleanup:\n");
+    state.body.push_str("  %.coro.mem_free = call ptr @llvm.coro.free(token %.coro.id, ptr %.coro.hdl)\n");
+    state.body.push_str("  call void @free(ptr %.coro.mem_free)\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.end:\n");
+    state.body.push_str("  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n");
+    state.body.push_str(&format!(
+        "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
+    ));
+    state.body.push_str(&format!(
+        "  ret {iter_llvm} %.coro.iter0\n"
+    ));
+
+    for a in &state.allocas {
+        out.push_str("  ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
 /// v0.0.4 Phase 4 Slice 4A: lower a `gen fn` body to an LLVM coroutine
 /// that produces `Iterator[T]`. Structurally identical to
 /// `gen_async_function` — same coro.id/begin/suspend/end pattern — but
@@ -2934,7 +3371,16 @@ fn gen_async_function(
 
     // Emit the suspend / cleanup / end blocks. These live after the
     // user body — every `return X` branched here from inside.
+    //
+    // v0.0.5 Slice 4F: notify any registered awaiter that this coro
+    // is about to complete. The call happens BEFORE the final suspend
+    // so the awaiter is enqueued before control leaves this frame;
+    // the next `drain_pending` round in `block_on` picks it up and
+    // resumes it. By that point `coro.done(self_hdl)` reads true
+    // (the final suspend has executed), so the awaiter's await loop
+    // extracts cleanly.
     state.body.push_str(".coro.final_suspend:\n");
+    state.body.push_str("  call void @stdlib_reactor_notify_completed_v1(ptr %.coro.hdl)\n");
     state.body.push_str("  %.coro.fs = call i8 @llvm.coro.suspend(token none, i1 true)\n");
     state.body.push_str("  switch i8 %.coro.fs, label %.coro.ramp_return [i8 0, label %.coro.trap i8 1, label %.coro.cleanup]\n");
     state.body.push_str(".coro.ramp_return:\n");
@@ -2971,6 +3417,277 @@ fn gen_async_function(
 /// Receivers compile to LLVM parameters:
 /// - `self` (value): a struct-typed parameter, stored in an alloca
 /// - `self` / `mut self`: a `ptr` parameter, bound directly (no alloca)
+/// v0.0.5 Phase 2C: emit an inherent method declared on an enum type
+/// (`impl EnumName { fn foo(self, ...) -> T { ... } }`). Mirror of
+/// `gen_method` adapted for enum receivers — same coroutine dispatch
+/// for `is_gen`, same calling-convention / linkage / sret rules.
+/// Enums skip the destructor-special-case (drops are struct-only today,
+/// gated by sema's E0338).
+fn gen_enum_method(
+    out: &mut String,
+    enum_id: EnumId,
+    m: &Method,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+) {
+    // Recover the enum name via the reverse-lookup table — EnumInfo
+    // doesn't carry it directly (Phase-1F-style reverse lookup, same
+    // pattern other enum-aware codegen helpers use).
+    let enum_name = types.enum_by_name.iter()
+        .find_map(|(n, eid)| if *eid == enum_id { Some(n.clone()) } else { None })
+        .expect("enum has registered name");
+    let sig = types.enum_defs[enum_id.0 as usize]
+        .methods.get(&m.name.name).expect("sig was collected").clone();
+    let mangled = mangle(&enum_name, &m.name.name);
+
+    // is_gen path: same coroutine lowering as gen_gen_method but receiver
+    // is the enum's address. Reuse the gen-method coroutine helper with
+    // a struct_id stand-in if needed; for simplicity inline a small
+    // mirror that's enum-aware.
+    if m.is_gen {
+        gen_gen_enum_method(out, enum_id, &enum_name, m, &sig, sigs, types, str_lits, mode, test_mode, md, tramps);
+        return;
+    }
+
+    let return_ty = sig.return_type.clone();
+    let enum_ty = Ty::Enum(enum_id);
+
+    let linkage = if m.is_pub { "" } else { "internal " };
+    let uses_sret = return_passes_by_sret_widened(&return_ty, types);
+    let return_ty_str = if uses_sret { "void".to_string() } else { llvm_ty(&return_ty, types) };
+    write!(out, "define {}{} @{}(", linkage, return_ty_str, mangled).unwrap();
+    let mut llvm_idx: u32 = 0;
+    let mut first = true;
+    if uses_sret {
+        let (sz, al) = static_layout(&return_ty, types)
+            .expect("sret return type has layout");
+        let ret_ty_inner = llvm_ty(&return_ty, types);
+        write!(
+            out,
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
+            ret_ty_inner, sz, al, llvm_idx
+        ).unwrap();
+        llvm_idx += 1;
+        first = false;
+    }
+    if let Some(rcv) = sig.receiver {
+        let (mv, mu) = match rcv {
+            Receiver::Read => (false, false),
+            Receiver::Mut  => (false, true),
+            Receiver::Move => (true,  true),
+        };
+        if !first { out.push_str(", "); }
+        let attrs = param_attrs(&enum_ty, mv, mu, true, types);
+        if attrs.is_empty() {
+            write!(out, "ptr %{llvm_idx}").unwrap();
+        } else {
+            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        if !first { out.push_str(", "); }
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let base_ty = if by_ptr { "ptr".to_string() } else { llvm_ty(pty, types) };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    out.push_str(") {\n");
+    out.push_str("entry:\n");
+
+    let mut state = FnState::new(return_ty.clone(), sigs, types, str_lits, mode, test_mode, md, tramps);
+    state.collect_moved_bindings(&m.body);
+    let mut next_idx: u32 = 0;
+    if uses_sret {
+        state.sret_slot = Some("%0".to_string());
+        next_idx = 1;
+    }
+    if let Some(_rcv) = sig.receiver {
+        let recv_name = format!("%{}", next_idx);
+        state.bind("self", recv_name, Ty::Enum(enum_id));
+        next_idx += 1;
+    }
+    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        if by_ptr {
+            state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
+        } else {
+            let slot = state.alloca_named(&param.name.name, pty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(pty, types), next_idx, slot
+            ));
+            state.bind(&param.name.name, slot.clone(), pty.clone());
+        }
+        next_idx += 1;
+    }
+
+    let _ = state.gen_block_expr(&m.body);
+
+    // If the body is value-producing (non-Unit return), make sure we
+    // emit a final ret. Otherwise fall through to ret void.
+    if !state.terminated {
+        if uses_sret {
+            state.emit_terminator("ret void");
+        } else if matches!(return_ty, Ty::Unit) {
+            state.emit_terminator("ret void");
+        } else {
+            // Unreachable in well-formed bodies; sema enforces explicit
+            // return for non-Unit. Trap to avoid UB on malformed input.
+            state.emit_terminator("unreachable");
+        }
+    }
+
+    for a in &state.allocas {
+        out.push_str("  ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
+/// v0.0.5 Phase 2C: lower a `gen` method on an enum to an LLVM
+/// coroutine returning `Iterator[T]`. Mirror of `gen_gen_method` for
+/// struct receivers.
+fn gen_gen_enum_method(
+    out: &mut String,
+    enum_id: EnumId,
+    enum_name: &str,
+    m: &Method,
+    sig: &MethodInfo,
+    sigs: &HashMap<String, FnSig>,
+    types: &TypeTable,
+    str_lits: &StrLitTable,
+    mode: BuildMode,
+    test_mode: bool,
+    md: &ModuleMetadata,
+    tramps: &ThreadTrampolines,
+) {
+    let mangled = mangle(enum_name, &m.name.name);
+    let inner_ty = match &m.return_type {
+        Some(t) => ty_from(t, types),
+        None => Ty::Unit,
+    };
+    let inner_llvm = llvm_ty(&inner_ty, types);
+    let (_inner_size, inner_align) = static_layout(&inner_ty, types).unwrap_or((8, 8));
+    let iter_ret_ty = sig.return_type.clone();
+    let iter_llvm = llvm_ty(&iter_ret_ty, types);
+
+    let linkage = if m.is_pub { "" } else { "internal " };
+    let enum_ty = Ty::Enum(enum_id);
+
+    write!(out, "define {}{} @{}(", linkage, iter_llvm, mangled).unwrap();
+    let mut llvm_idx: u32 = 0;
+    let mut first = true;
+    if let Some(rcv) = sig.receiver {
+        let (mv, mu) = match rcv {
+            Receiver::Read => (false, false),
+            Receiver::Mut  => (false, true),
+            Receiver::Move => (true,  true),
+        };
+        if !first { out.push_str(", "); }
+        let attrs = param_attrs(&enum_ty, mv, mu, true, types);
+        if attrs.is_empty() {
+            write!(out, "ptr %{llvm_idx}").unwrap();
+        } else {
+            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        if !first { out.push_str(", "); }
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let base_ty = if by_ptr { "ptr".to_string() } else { llvm_ty(pty, types) };
+        if attrs.is_empty() {
+            write!(out, "{} %{}", base_ty, llvm_idx).unwrap();
+        } else {
+            write!(out, "{} {} %{}", base_ty, attrs, llvm_idx).unwrap();
+        }
+        llvm_idx += 1;
+        first = false;
+    }
+    out.push_str(") presplitcoroutine {\nentry:\n");
+
+    let promise_ty: &str = if matches!(inner_ty, Ty::Unit) { "i8" } else { &inner_llvm };
+    let promise_align: u64 = if matches!(inner_ty, Ty::Unit) { 1 } else { inner_align };
+    out.push_str(&format!(
+        "  %.coro.promise = alloca {promise_ty}, align {promise_align}\n"
+    ));
+    out.push_str(&format!(
+        "  %.coro.id = call token @llvm.coro.id(i32 {promise_align}, ptr %.coro.promise, ptr null, ptr null)\n"
+    ));
+    out.push_str("  %.coro.size = call i64 @llvm.coro.size.i64()\n");
+    out.push_str("  %.coro.mem = call ptr @malloc(i64 %.coro.size)\n");
+    out.push_str("  %.coro.hdl = call ptr @llvm.coro.begin(token %.coro.id, ptr %.coro.mem)\n");
+
+    let mut state = FnState::new(Ty::Unit, sigs, types, str_lits, mode, test_mode, md, tramps);
+    state.return_ty = Ty::Unit;
+    state.coro_promise = Some((".coro.hdl".to_string(), inner_llvm.clone(), inner_align as u32));
+    state.collect_moved_bindings(&m.body);
+
+    let mut next_idx: u32 = 0;
+    if let Some(_rcv) = sig.receiver {
+        state.bind("self", format!("%{}", next_idx), Ty::Enum(enum_id));
+        next_idx += 1;
+    }
+    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+        let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
+        if by_ptr {
+            state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
+        } else {
+            let slot = state.alloca_named(&param.name.name, pty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(pty, types), next_idx, slot
+            ));
+            state.bind(&param.name.name, slot.clone(), pty.clone());
+        }
+        next_idx += 1;
+    }
+
+    let _ = state.gen_block_expr(&m.body);
+    if !state.terminated {
+        state.emit_terminator("br label %.coro.final_suspend");
+    }
+    state.body.push_str(".coro.final_suspend:\n");
+    state.body.push_str("  %.coro.fs = call i8 @llvm.coro.suspend(token none, i1 true)\n");
+    state.body.push_str("  switch i8 %.coro.fs, label %.coro.ramp_return [i8 0, label %.coro.trap i8 1, label %.coro.cleanup]\n");
+    state.body.push_str(".coro.ramp_return:\n  br label %.coro.end\n");
+    state.body.push_str(".coro.trap:\n  call void @llvm.trap()\n  unreachable\n");
+    state.body.push_str(".coro.cleanup:\n");
+    state.body.push_str("  %.coro.mem_free = call ptr @llvm.coro.free(token %.coro.id, ptr %.coro.hdl)\n");
+    state.body.push_str("  call void @free(ptr %.coro.mem_free)\n");
+    state.body.push_str("  br label %.coro.end\n");
+    state.body.push_str(".coro.end:\n");
+    state.body.push_str("  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n");
+    state.body.push_str(&format!(
+        "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
+    ));
+    state.body.push_str(&format!("  ret {iter_llvm} %.coro.iter0\n"));
+    for a in &state.allocas {
+        out.push_str("  ");
+        out.push_str(a);
+        out.push('\n');
+    }
+    out.push_str(&state.body);
+    out.push_str("}\n\n");
+}
+
 fn gen_method(
     out: &mut String,
     struct_id: StructId,
@@ -2984,6 +3701,20 @@ fn gen_method(
     tramps: &ThreadTrampolines,
     is_lib: bool,
 ) {
+    // v0.0.5 Phase 2B: gen-method dispatch. Same lowering as
+    // `gen_gen_function` for free fns but adapted to method receiver
+    // + parameter shape.
+    if m.is_gen {
+        gen_gen_method(out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps);
+        return;
+    }
+    // v0.0.5 Phase 4 Slice 4B: async-method dispatch. Same coroutine
+    // lowering as `gen_async_function` (Future[T] return, coro.id/begin/
+    // suspend/end) but with method-shaped receiver + params.
+    if m.is_async {
+        gen_async_method(out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps);
+        return;
+    }
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
     let sig = types.struct_defs[struct_id.0 as usize]
         .methods.get(&m.name.name).expect("sig was collected").clone();
@@ -3116,6 +3847,8 @@ fn gen_method(
         let idx = next_idx + i as u32;
         if param_passes_by_ptr(pty, *move_flag, *mut_flag, types) {
             state.bind(&param.name.name, format!("%{idx}"), pty.clone());
+            // v0.0.5 Slice 1A: track for auto-clone-on-return (see gen_function).
+            state.borrowed_params.insert(param.name.name.clone());
             continue;
         }
         let slot = state.alloca_named(&param.name.name, pty.clone());
@@ -3124,6 +3857,10 @@ fn gen_method(
             llvm_ty(pty, types), idx, slot
         ));
         state.bind(&param.name.name, slot.clone(), pty.clone());
+        // v0.0.5 Slice 1A: value-passed non-`move` Ty::String shares heap.
+        if !*move_flag && matches!(pty, Ty::String) {
+            state.borrowed_params.insert(param.name.name.clone());
+        }
         if *move_flag {
             if let Ty::Struct(id) = pty {
                 if types.struct_defs[id.0 as usize].is_drop {
@@ -3334,6 +4071,18 @@ struct FnState<'a> {
     /// when present, `return X` lowers to "store X to coro.promise
     /// then `br .coro.final_suspend`" instead of the usual `ret X`.
     coro_promise: Option<(String, String, u32)>,
+    /// v0.0.5 Slice 1A: names of parameters bound via shared-borrow ABI
+    /// (passed as `ptr readonly` with the caller still owning the value).
+    /// `StmtKind::Return` consults this to detect `return X` where X is
+    /// borrowed-not-owned — the body would otherwise hand the caller's
+    /// pointer back, and the caller would then double-free (caller's
+    /// original binding + caller's result binding both Drop the same
+    /// heap). Closes the long-open `fn echo(x: string) -> string { return x; }`
+    /// runtime bug documented in plan.md Slice 1A. The fix: when this set
+    /// contains the returned ident and the return type has heap-owned
+    /// Drop semantics (currently `Ty::String`), emit a deep clone so the
+    /// caller's result is an independent heap allocation.
+    borrowed_params: std::collections::HashSet<String>,
 }
 
 impl<'a> FnState<'a> {
@@ -3364,6 +4113,7 @@ impl<'a> FnState<'a> {
             coerce_ret: None,
             tramps,
             coro_promise: None,
+            borrowed_params: std::collections::HashSet::new(),
         }
     }
 
@@ -3587,11 +4337,92 @@ impl<'a> FnState<'a> {
     /// Flip a Drop binding's flag to `false`, suppressing its scope-exit
     /// drop. Called when codegen emits a `move`-marked argument or a
     /// `move self` receiver and the source is a plain Ident.
+    /// v0.0.5 Phase 1C: emit the drop call for the value at `*p_val`
+    /// when T has Drop. No-op for Copy / non-Drop types. Mirrors the
+    /// drop-dispatch logic in `emit_conditional_drop`'s body.
+    ///
+    /// Recognized Drop kinds:
+    ///   - `Ty::String` → inline free of the `{ptr, len, cap}` aggregate's
+    ///     `ptr` field (string's heap buffer).
+    ///   - `Ty::Struct(id)` where the struct has an explicit `fn drop`
+    ///     method → call `<mangled-struct-name>.drop(p_val)` with
+    ///     `preserve_nonecc` to match the callee's CC.
+    ///   - Anything else → no-op (Copy types and structs without Drop
+    ///     don't need teardown).
+    fn gen_drop_in_place(&mut self, ty: &Ty, p_val: &str) {
+        match ty {
+            Ty::String => {
+                let pp = self.next_tmp();
+                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {p_val}, i32 0, i32 0"));
+                let pv = self.next_tmp();
+                self.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                self.emit(&format!("call void @free(ptr {pv})"));
+            }
+            Ty::Struct(id) => {
+                let struct_def = &self.types.struct_defs[id.0 as usize];
+                // Only invoke .drop if the struct has one. C+ keeps the
+                // method-table indexed by name; absence means the
+                // struct is trivially droppable.
+                if struct_def.methods.contains_key("drop") {
+                    let struct_name = struct_def.name.clone();
+                    self.emit(&format!("call preserve_nonecc void @{struct_name}.drop(ptr {p_val})"));
+                }
+            }
+            // Tagged enums could carry Drop payloads in the future; for
+            // v0.0.5, the §3.3 design rule (no Drop payloads in tagged
+            // enums, E0344) keeps this branch a no-op.
+            _ => {}
+        }
+    }
+
     fn mark_moved(&mut self, name: &str) {
         if let Some(flag) = self.find_drop_flag(name) {
             self.emit(&format!("store i1 false, ptr {flag}"));
         }
         // If there's no flag, the binding isn't Drop — nothing to do.
+    }
+
+    /// v0.0.5 Slice 1A: deep-clone a `string` aggregate value (`{ ptr, i64
+    /// len, i64 cap }`). Allocates `len` bytes on the heap, memcpies the
+    /// source bytes in, returns a fresh aggregate `{ new_ptr, len, len }`.
+    /// `cap` is set to `len` (tighter than the source) — the result is
+    /// only ever read or freed, never grown, so the saved bytes are pure
+    /// win. Free-of-null is a libc no-op, so `len == 0` is safe even
+    /// though `malloc(0)` is implementation-defined.
+    ///
+    /// Used by `StmtKind::Return` when the returned ident is a shared-
+    /// borrow parameter: the caller still owns the original; the result
+    /// must be an independent allocation or Drop double-frees.
+    fn clone_string_aggregate(&mut self, src: &str) -> String {
+        let src_ptr = self.next_tmp();
+        self.emit(&format!("{src_ptr} = extractvalue {{ ptr, i64, i64 }} {src}, 0"));
+        let len = self.next_tmp();
+        self.emit(&format!("{len} = extractvalue {{ ptr, i64, i64 }} {src}, 1"));
+        let new_ptr = self.next_tmp();
+        self.emit(&format!("{new_ptr} = call ptr @malloc(i64 {len})"));
+        // `len == 0` → malloc may return null or a unique sentinel; either
+        // way memcpy(_, _, 0) is a no-op, free(null) is a no-op. Skip the
+        // zero-length branch — keeps the IR flat and matches what the
+        // existing string constructors emit. libc `memcpy` is already
+        // declared in the preamble; cheaper than introducing the LLVM
+        // memcpy intrinsic here.
+        let _dummy = self.next_tmp();
+        self.emit(&format!(
+            "{_dummy} = call ptr @memcpy(ptr {new_ptr}, ptr {src_ptr}, i64 {len})"
+        ));
+        let t1 = self.next_tmp();
+        self.emit(&format!(
+            "{t1} = insertvalue {{ ptr, i64, i64 }} undef, ptr {new_ptr}, 0"
+        ));
+        let t2 = self.next_tmp();
+        self.emit(&format!(
+            "{t2} = insertvalue {{ ptr, i64, i64 }} {t1}, i64 {len}, 1"
+        ));
+        let t3 = self.next_tmp();
+        self.emit(&format!(
+            "{t3} = insertvalue {{ ptr, i64, i64 }} {t2}, i64 {len}, 2"
+        ));
+        t3
     }
 
     /// Emit a drop call for a Drop binding at scope-exit. Slice
@@ -3622,7 +4453,7 @@ impl<'a> FnState<'a> {
                     // no-op so `string::new()`'s null ptr is safe.
                     let pp = state.next_tmp();
                     state.emit(&format!(
-                        "{pp} = getelementptr {{ ptr, i64, i64 }}, ptr {}, i32 0, i32 0",
+                        "{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {}, i32 0, i32 0",
                         entry.value_slot
                     ));
                     let pv = state.next_tmp();
@@ -3859,7 +4690,30 @@ impl<'a> FnState<'a> {
                         if let ExprKind::Ident(name) = &e.kind {
                             self.mark_moved(name);
                         }
-                        Some(v.expect("non-Unit return value").0)
+                        let raw = v.expect("non-Unit return value").0;
+                        // v0.0.5 Slice 1A: auto-clone-on-return-of-borrowed.
+                        // `fn echo(x: string) -> string { return x; }` lifts
+                        // the caller's pointer into the result slot; the
+                        // caller's source binding stays live → both Drop the
+                        // same heap → double-free at exit.
+                        //
+                        // When the returned expression is a bare Ident bound
+                        // to a shared-borrow parameter AND the return type
+                        // is `string` (the only currently-supported heap-
+                        // owning Drop type), emit a deep clone so the result
+                        // is an independent allocation. Other heap-owning
+                        // generic containers (Vec[T], HashMap[K,V]) still
+                        // need explicit `move` — their element-level clone
+                        // needs T::clone glue which is its own slice.
+                        let cloned = match (&e.kind, &ret_ty) {
+                            (ExprKind::Ident(name), Ty::String)
+                                if self.borrowed_params.contains(name) =>
+                            {
+                                Some(self.clone_string_aggregate(&raw))
+                            }
+                            _ => None,
+                        };
+                        Some(cloned.unwrap_or(raw))
                     }
                     None => None,
                 };
@@ -4405,6 +5259,13 @@ impl<'a> FnState<'a> {
             ExprKind::GenericStructLit { .. } => {
                 panic!("codegen reached GenericStructLit — monomorphize did not rewrite this site")
             }
+            // v0.0.5 Phase 3 Slice 3B: tuple literal `(a, b, ...)`.
+            // Element types come from each gen_expr; combine them to
+            // re-derive the synthesized tuple struct's mangled name
+            // (matches sema's `synthesize_tuple_struct` naming), then
+            // emit the same alloca + per-field store + final load
+            // pattern that gen_struct_lit uses.
+            ExprKind::TupleLit { elements } => Some(self.gen_tuple_lit(elements)),
             ExprKind::Field { receiver, name } => Some(self.gen_field(receiver, name)),
             ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => Some(self.gen_array_lit(elements)),
             ExprKind::Index { receiver, index } => Some(self.gen_index(receiver, index)),
@@ -4425,13 +5286,13 @@ impl<'a> FnState<'a> {
         let slot = self.alloca_anon(array_ty.clone());
         // Store first element.
         let p0 = self.next_tmp();
-        self.emit(&format!("{p0} = getelementptr {llvm_arr}, ptr {slot}, i32 0, i32 0"));
+        self.emit(&format!("{p0} = getelementptr inbounds {llvm_arr}, ptr {slot}, i32 0, i32 0"));
         self.emit(&format!("store {llvm_elem} {first_val}, ptr {p0}"));
         // Store the rest.
         for (i, e) in elements.iter().enumerate().skip(1) {
             let (v, _) = self.gen_expr(e).expect("array lit element");
             let p = self.next_tmp();
-            self.emit(&format!("{p} = getelementptr {llvm_arr}, ptr {slot}, i32 0, i32 {i}"));
+            self.emit(&format!("{p} = getelementptr inbounds {llvm_arr}, ptr {slot}, i32 0, i32 {i}"));
             self.emit(&format!("store {llvm_elem} {v}, ptr {p}"));
         }
         let v = self.next_tmp();
@@ -4479,7 +5340,7 @@ impl<'a> FnState<'a> {
         self.emit(&format!("call void @llvm.assume(i1 {in_bounds})"));
         // GEP and load.
         let ptr = self.next_tmp();
-        self.emit(&format!("{ptr} = getelementptr {llvm_arr}, ptr {recv_ptr}, i64 0, i64 {idx_val}"));
+        self.emit(&format!("{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_ptr}, i64 0, i64 {idx_val}"));
         let v = self.next_tmp();
         self.emit(&format!("{v} = load {llvm_elem}, ptr {ptr}"));
         (v, (*elem).clone())
@@ -4488,6 +5349,33 @@ impl<'a> FnState<'a> {
     /// Build a struct literal: alloca a slot for the new value, store each
     /// field via GEP, load the whole struct as the SSA value. mem2reg
     /// promotes this to PHI/aggregate construction at -O2.
+    /// v0.0.5 Phase 3 Slice 3B: lower a tuple literal to a struct
+    /// aggregate. Reconstructs the synthesized tuple struct's name
+    /// from element types (mirrors sema's `synthesize_tuple_struct`
+    /// naming via `mangle_ty_for_tuple` below) and uses the same
+    /// per-field store pattern `gen_struct_lit` uses.
+    fn gen_tuple_lit(&mut self, elements: &[Expr]) -> (String, Ty) {
+        let parts: Vec<(String, Ty)> = elements.iter()
+            .map(|e| self.gen_expr(e).expect("tuple element has value"))
+            .collect();
+        let mangled = tuple_struct_name(&parts.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(), self.types);
+        let id = *self.types.struct_by_name.get(&mangled)
+            .unwrap_or_else(|| panic!("sema should have synthesized tuple struct `{}`", mangled));
+        let struct_ty = Ty::Struct(id);
+        let llvm_struct = self.lty(&struct_ty);
+        let slot = self.alloca_anon(struct_ty.clone());
+        for (i, (val, t)) in parts.iter().enumerate() {
+            let ptr = self.next_tmp();
+            self.emit(&format!(
+                "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {i}"
+            ));
+            self.emit(&format!("store {} {val}, ptr {ptr}", self.lty(t)));
+        }
+        let v = self.next_tmp();
+        self.emit(&format!("{v} = load {llvm_struct}, ptr {slot}"));
+        (v, struct_ty)
+    }
+
     fn gen_struct_lit(&mut self, name: &Ident, fields: &[StructLitField]) -> (String, Ty) {
         let id = *self.types.struct_by_name.get(&name.name).expect("sema validated");
         let info = self.types.struct_defs[id.0 as usize].clone();
@@ -4501,7 +5389,7 @@ impl<'a> FnState<'a> {
             let field_ty = info.field_type(&f.name.name);
             let ptr = self.next_tmp();
             self.emit(&format!(
-                "{ptr} = getelementptr {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
+                "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
             ));
             self.emit(&format!("store {} {val}, ptr {ptr}", self.lty(&field_ty)));
         }
@@ -4523,7 +5411,7 @@ impl<'a> FnState<'a> {
         let field_ty = info.field_type(&name.name);
         let ptr = self.next_tmp();
         self.emit(&format!(
-            "{ptr} = getelementptr {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
+            "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
         ));
         let v = self.next_tmp();
         self.emit(&format!("{v} = load {}, ptr {ptr}", self.lty(&field_ty)));
@@ -4549,7 +5437,7 @@ impl<'a> FnState<'a> {
                 let field_ty = info.field_type(&name.name);
                 let ptr = self.next_tmp();
                 self.emit(&format!(
-                    "{ptr} = getelementptr {llvm_struct}, ptr {recv_slot}, i32 0, i32 {idx}"
+                    "{ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_slot}, i32 0, i32 {idx}"
                 ));
                 (ptr, field_ty)
             }
@@ -4589,7 +5477,7 @@ impl<'a> FnState<'a> {
                 self.emit(&format!("{in_bounds} = icmp ult i64 {idx_val}, {n}"));
                 self.emit(&format!("call void @llvm.assume(i1 {in_bounds})"));
                 let ptr = self.next_tmp();
-                self.emit(&format!("{ptr} = getelementptr {llvm_arr}, ptr {recv_slot}, i64 0, i64 {idx_val}"));
+                self.emit(&format!("{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_slot}, i64 0, i64 {idx_val}"));
                 (ptr, (*elem).clone())
             }
             // Slice 10.FFI.2: `*p` as an assignment target. `gen_place`
@@ -4614,12 +5502,121 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// FMA peephole. Returns Some when `lhs OP rhs` matches one of:
+    /// - `(a * b) + c`   → `llvm.fmuladd.fN(a, b, c)`
+    /// - `c + (a * b)`   → `llvm.fmuladd.fN(a, b, c)`
+    /// - `(a * b) - c`   → `llvm.fmuladd.fN(a, b, -c)` via fneg
+    /// - `c - (a * b)`   → `llvm.fmuladd.fN(-a, b, c)` (negate one factor)
+    /// All on a float type. Sides must agree on type.
+    fn try_emit_fmuladd(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> Option<(String, Ty)> {
+        // Helper: when an Expr is a `Binary(Mul, a, b)`, return (a, b).
+        fn as_mul<'e>(e: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
+            if let ExprKind::Binary { op: BinOp::Mul, lhs, rhs } = &e.kind {
+                Some((lhs, rhs))
+            } else {
+                None
+            }
+        }
+        // Detect which side is the Mul; evaluation order is left-to-right
+        // (same as gen_binary's default). For `c +/- a*b`, we still
+        // evaluate c before a, b — matches both source order and the
+        // existing non-FMA path.
+        let (a_e, b_e, c_e, c_first) = match op {
+            BinOp::Add => {
+                if let Some((a, b)) = as_mul(lhs) {
+                    (a, b, rhs, false)
+                } else if let Some((a, b)) = as_mul(rhs) {
+                    (a, b, lhs, true)
+                } else {
+                    return None;
+                }
+            }
+            BinOp::Sub => {
+                // (a*b) - c  → fmuladd(a, b, -c)
+                // c - (a*b)  → fmuladd(-a, b, c)
+                if let Some((a, b)) = as_mul(lhs) {
+                    (a, b, rhs, false)
+                } else if let Some((a, b)) = as_mul(rhs) {
+                    (a, b, lhs, true)
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+        // Evaluate the c operand first if it appears first in source order,
+        // else evaluate a, b first. This preserves the side-effect ordering
+        // that the non-FMA path has.
+        let (c_val, c_ty, a_val, a_ty, b_val, b_ty) = if c_first {
+            let (c, ct) = self.gen_expr(c_e)?;
+            let (a, at) = self.gen_expr(a_e)?;
+            let (b, bt) = self.gen_expr(b_e)?;
+            (c, ct, a, at, b, bt)
+        } else {
+            let (a, at) = self.gen_expr(a_e)?;
+            let (b, bt) = self.gen_expr(b_e)?;
+            let (c, ct) = self.gen_expr(c_e)?;
+            (c, ct, a, at, b, bt)
+        };
+        // All three operands must agree on float type.
+        if !(a_ty.is_float() && a_ty == b_ty && a_ty == c_ty) {
+            // Operands not all float / not same float type — fall back to
+            // the regular path. Emit the operands we already generated;
+            // re-evaluating in the caller would duplicate side effects.
+            // Easiest: reconstruct via plain fmul+fadd/fsub here.
+            // (Reached only if sema let through a mismatch, which it
+            // shouldn't.)
+            return None;
+        }
+        let lty = self.lty(&a_ty);
+        let intrin = match a_ty {
+            Ty::F32 => "@llvm.fmuladd.f32",
+            Ty::F64 => "@llvm.fmuladd.f64",
+            _ => return None,
+        };
+        // For (a*b) - c, negate c. For c - (a*b), negate a.
+        let (a_final, c_final) = match op {
+            BinOp::Add => (a_val, c_val),
+            BinOp::Sub => {
+                if c_first {
+                    // c - (a*b) → fmuladd(-a, b, c)
+                    let neg = self.next_tmp();
+                    self.emit(&format!("{neg} = fneg contract {lty} {a_val}"));
+                    (neg, c_val)
+                } else {
+                    // (a*b) - c → fmuladd(a, b, -c)
+                    let neg = self.next_tmp();
+                    self.emit(&format!("{neg} = fneg contract {lty} {c_val}"));
+                    (a_val, neg)
+                }
+            }
+            _ => unreachable!(),
+        };
+        let v = self.next_tmp();
+        self.emit(&format!(
+            "{v} = call contract {lty} {intrin}({lty} {a_final}, {lty} {b_val}, {lty} {c_final})"
+        ));
+        Some((v, a_ty))
+    }
+
     fn gen_binary(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> (String, Ty) {
         // Short-circuit evaluation for && and ||.
         match op {
             BinOp::And => return self.gen_short_circuit(lhs, rhs, true),
             BinOp::Or  => return self.gen_short_circuit(lhs, rhs, false),
             _ => {}
+        }
+        // FMA peephole: `(a * b) + c` / `c + (a * b)` / `(a * b) - c` /
+        // `c - (a * b)` on a float type lower to `llvm.fmuladd` (single
+        // instruction with one rounding). Matches clang's `-ffp-contract=on`
+        // default, which contracts source-level a*b+c to fmuladd at IR-build
+        // time. Without this, raytracer-style hot loops were ~50% slower
+        // than C even after adding `contract` to fmul/fadd, because the
+        // explicit intrinsic conveys more information than fast-math flags.
+        if matches!(op, BinOp::Add | BinOp::Sub) {
+            if let Some(out) = self.try_emit_fmuladd(op, lhs, rhs) {
+                return out;
+            }
         }
         let (l, lt) = self.gen_expr(lhs).expect("binary lhs has value");
         let (r, rt) = self.gen_expr(rhs).expect("binary rhs has value");
@@ -4649,7 +5646,12 @@ impl<'a> FnState<'a> {
                 if lt.is_float() {
                     let v = self.next_tmp();
                     let fop = match op { BinOp::Add => "fadd", BinOp::Sub => "fsub", BinOp::Mul => "fmul", _ => unreachable!() };
-                    self.emit(&format!("{v} = {fop} {} {l}, {r}", self.lty(&lt)));
+                    // `contract` enables LLVM to fuse fmul+fadd into fmadd
+                    // (one rounding instead of two). Matches clang's default
+                    // `-ffp-contract=on`; without it cpc raytracer-style code
+                    // ran ~50% slower than the C equivalent because every
+                    // dot/scale/madd pair stayed as discrete instructions.
+                    self.emit(&format!("{v} = {fop} contract {} {l}, {r}", self.lty(&lt)));
                     return (v, lt);
                 }
                 // Integer: signed gets debug overflow checks, unsigned wraps.
@@ -4664,7 +5666,7 @@ impl<'a> FnState<'a> {
             BinOp::Div => {
                 if lt.is_float() {
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = fdiv {} {l}, {r}", self.lty(&lt)));
+                    self.emit(&format!("{v} = fdiv contract {} {l}, {r}", self.lty(&lt)));
                     return (v, lt);
                 }
                 (self.divide_with_zero_check(op, &lt, &l, &r), lt)
@@ -4975,7 +5977,7 @@ impl<'a> FnState<'a> {
         // Store tag at field 0.
         let tag_ptr = self.next_tmp();
         self.emit(&format!(
-            "{tag_ptr} = getelementptr {llvm_enum}, ptr {slot}, i32 0, i32 0"
+            "{tag_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot}, i32 0, i32 0"
         ));
         self.emit(&format!("store i32 {tag}, ptr {tag_ptr}"));
         // Store each payload value in its slot.
@@ -4983,7 +5985,7 @@ impl<'a> FnState<'a> {
             // GEP to the i64 payload array, then to slot i.
             let slot_ptr = self.next_tmp();
             self.emit(&format!(
-                "{slot_ptr} = getelementptr {llvm_enum}, ptr {slot}, i32 0, i32 1, i64 {i}"
+                "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot}, i32 0, i32 1, i64 {i}"
             ));
             // Opaque pointers: storing as the payload type is a no-op cast.
             self.emit(&format!(
@@ -5041,7 +6043,7 @@ impl<'a> FnState<'a> {
             if info.is_tagged {
                 let tag_ptr = self.next_tmp();
                 self.emit(&format!(
-                    "{tag_ptr} = getelementptr {llvm_enum}, ptr {scr_ptr}, i32 0, i32 0"
+                    "{tag_ptr} = getelementptr inbounds {llvm_enum}, ptr {scr_ptr}, i32 0, i32 0"
                 ));
                 let v = self.next_tmp();
                 self.emit(&format!("{v} = load i32, ptr {tag_ptr}, !range !{range_md}"));
@@ -5117,7 +6119,7 @@ impl<'a> FnState<'a> {
                             // payload's actual type.
                             let slot_ptr = self.next_tmp();
                             self.emit(&format!(
-                                "{slot_ptr} = getelementptr {llvm_enum}, ptr {scr_ptr}, i32 0, i32 1, i64 {pi}"
+                                "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {scr_ptr}, i32 0, i32 1, i64 {pi}"
                             ));
                             let v = self.next_tmp();
                             self.emit(&format!(
@@ -5459,6 +6461,11 @@ impl<'a> FnState<'a> {
         if name == "__cplus_reactor_wait_write" {
             return self.gen_reactor_wait_write(args);
         }
+        // v0.0.5 Phase 4 Slice 4A: timer-side counterpart. Registers a
+        // one-shot EVFILT_TIMER for `ms` ms, then suspends self.
+        if name == "__cplus_reactor_wait_timer" {
+            return self.gen_reactor_wait_timer(args);
+        }
         // v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)`
         // pushes a Future's handle onto the reactor's task queue.
         if name == "__cplus_reactor_spawn_local" {
@@ -5528,6 +6535,16 @@ impl<'a> FnState<'a> {
             ));
             self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
             return Some((int_tmp, Ty::Usize));
+        }
+        // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` lowers to
+        // a call to the monomorphized `T::drop(p)` when T has Drop,
+        // or to nothing (no-op) when T has no Drop. Used by stdlib
+        // containers to invoke inner-T Drop before freeing storage.
+        if name == "__cplus_drop_in_place" {
+            let t = ty_from(&type_args[0], &self.types);
+            let (p_val, _) = self.gen_expr(&args[0]).expect("drop_in_place ptr arg");
+            self.gen_drop_in_place(&t, &p_val);
+            return None;
         }
         let sig = self.sigs.get(name).unwrap_or_else(|| panic!("sema validated function exists: missing `{name}`")).clone();
         // Per-arg lowering. `arg_vals[i]` is (ssa-value, llvm-type-string).
@@ -5997,7 +7014,19 @@ impl<'a> FnState<'a> {
         // we ever land here, suspend self normally so the executor
         // can advance us; on resume, drive inner forward then loop
         // back.
+        //
+        // v0.0.5 Slice 4F: before suspending, register self as an
+        // awaiter of inner. When inner reaches its final_suspend
+        // epilogue, it'll call `notify_completed(inner_hdl)` which
+        // looks up this mapping and enqueues self on the pending
+        // queue. Without this, awaiters of deep-nested coroutines
+        // stall when their target suspends and later completes —
+        // `block_on` only re-resumes the *outermost* future on each
+        // loop pass.
         self.body.push_str(&format!("{resume_bb}:\n"));
+        self.body.push_str(&format!(
+            "  call void @stdlib_reactor_register_awaiter_v1(ptr {inner_hdl}, ptr %.coro.hdl)\n"
+        ));
         let suspend_v = self.next_tmp();
         self.body.push_str(&format!("  {suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)\n"));
         self.body.push_str(&format!(
@@ -6022,15 +7051,29 @@ impl<'a> FnState<'a> {
         self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
 
         // Extract branch — read the inner promise, destroy inner.
+        // v0.0.5 Slice 4A fix: when U is Unit, the promise has no
+        // payload to load — emitting `load void, ...` is illegal LLVM.
+        // Skip the load and produce the canonical unit value instead.
         self.body.push_str(&format!("{extract_bb}:\n"));
-        let inner_prom = self.next_tmp();
-        self.body.push_str(&format!(
-            "  {inner_prom} = call ptr @llvm.coro.promise(ptr {inner_hdl}, i32 {u_align}, i1 false)\n"
-        ));
-        let result = self.next_tmp();
-        self.body.push_str(&format!(
-            "  {result} = load {u_llvm}, ptr {inner_prom}, align {u_align}\n"
-        ));
+        let result = if matches!(u_ty, Ty::Unit) {
+            self.body.push_str(&format!(
+                "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
+            ));
+            self.body.push_str(&format!("  br label %{done_bb}\n"));
+            self.body.push_str(&format!("{done_bb}:\n"));
+            self.terminated = false;
+            return None;
+        } else {
+            let inner_prom = self.next_tmp();
+            self.body.push_str(&format!(
+                "  {inner_prom} = call ptr @llvm.coro.promise(ptr {inner_hdl}, i32 {u_align}, i1 false)\n"
+            ));
+            let r = self.next_tmp();
+            self.body.push_str(&format!(
+                "  {r} = load {u_llvm}, ptr {inner_prom}, align {u_align}\n"
+            ));
+            r
+        };
         self.body.push_str(&format!(
             "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
         ));
@@ -6160,6 +7203,35 @@ impl<'a> FnState<'a> {
         let (fd_val, _) = self.gen_expr(&args[0]).expect("wait_write fd arg");
         self.emit(&format!(
             "call void @stdlib_reactor_register_write_v1(i32 {fd_val}, ptr %.coro.hdl)"
+        ));
+        let suspend_v = self.next_tmp();
+        let resume_bb = self.next_block_label();
+        let ramp_bb = self.next_block_label();
+        let trap_bb = self.next_block_label();
+        self.emit(&format!(
+            "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
+        ));
+        self.emit_terminator(&format!(
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+        ));
+        self.body.push_str(&format!("{ramp_bb}:\n"));
+        self.body.push_str("  br label %.coro.end\n");
+        self.body.push_str(&format!("{trap_bb}:\n"));
+        self.body.push_str("  call void @llvm.trap()\n  unreachable\n");
+        self.body.push_str(&format!("{resume_bb}:\n"));
+        self.terminated = false;
+        None
+    }
+
+    /// v0.0.5 Phase 4 Slice 4A: `__cplus_reactor_wait_timer(ms: u64)` —
+    /// register a one-shot EVFILT_TIMER with the reactor for `ms`
+    /// milliseconds, then suspend self. Reactor's `poll_one_event` reads
+    /// the kevent ident back as `%.coro.hdl` (we set it that way in
+    /// register_timer) and resumes us directly.
+    fn gen_reactor_wait_timer(&mut self, args: &[Expr]) -> Option<(String, Ty)> {
+        let (ms_val, _) = self.gen_expr(&args[0]).expect("wait_timer ms arg");
+        self.emit(&format!(
+            "call void @stdlib_reactor_register_timer_v1(i64 {ms_val}, ptr %.coro.hdl)"
         ));
         let suspend_v = self.next_tmp();
         let resume_bb = self.next_block_label();
@@ -6354,6 +7426,27 @@ impl<'a> FnState<'a> {
         if matches!(recv_ty, Ty::String) {
             return Some(self.gen_string_method_call(&recv_ptr, &name.name, args));
         }
+        // v0.0.5 Phase 2C: enum receivers route through the enum
+        // method-table (`enum_defs[id].methods`). Same call shape as
+        // structs — `ptr` for the receiver followed by the value args.
+        if let Ty::Enum(eid) = recv_ty {
+            let enum_name = self.types.enum_by_name.iter()
+                .find_map(|(n, id)| if *id == eid { Some(n.clone()) } else { None })
+                .expect("enum name registered");
+            let info = self.types.enum_defs[eid.0 as usize]
+                .methods.get(&name.name).expect("sema validated").clone();
+            // Move-receiver flip mirrors the struct path below.
+            if matches!(info.receiver, Some(Receiver::Move)) {
+                if let ExprKind::Ident(n) = &receiver.kind {
+                    self.mark_moved(n);
+                }
+            }
+            let (v, ret) = self.gen_enum_method_call_inner(&recv_ptr, &enum_name, &name.name, &info, args);
+            if matches!(ret, Ty::Unit) {
+                return None;
+            }
+            return Some((v, ret));
+        }
         let Ty::Struct(id) = recv_ty else { unreachable!("sema validated") };
         let struct_name = self.types.struct_defs[id.0 as usize].name.clone();
         let info = self.types.struct_defs[id.0 as usize]
@@ -6413,6 +7506,62 @@ impl<'a> FnState<'a> {
                 let v = self.next_tmp();
                 self.emit(&format!("{v} = call {} @{mangled}({arg_str})", self.lty(&ret)));
                 Some((v, ret))
+            }
+        }
+    }
+
+    /// v0.0.5 Phase 2C: emit an enum method call. Same shape as the
+    /// struct method-call path — pointer receiver + value/pointer args
+    /// per `param_passes_by_ptr`, sret-aware return handling for
+    /// non-Copy aggregate returns.
+    fn gen_enum_method_call_inner(
+        &mut self,
+        recv_ptr: &str,
+        enum_name: &str,
+        method_name: &str,
+        info: &MethodInfo,
+        args: &[Expr],
+    ) -> (String, Ty) {
+        let mangled = mangle(enum_name, method_name);
+        let mut arg_parts: Vec<String> = vec![format!("ptr {recv_ptr}")];
+        for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
+            if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
+                let (addr, _) = self.gen_place(a);
+                arg_parts.push(format!("ptr {addr}"));
+            } else {
+                let (v, _) = self.gen_expr(a).expect("call arg has value");
+                arg_parts.push(format!("{} {v}", self.lty(pty)));
+                if *move_flag {
+                    if let ExprKind::Ident(name) = &a.kind {
+                        self.mark_moved(name);
+                    }
+                }
+            }
+        }
+        let arg_str = arg_parts.join(", ");
+        if return_passes_by_sret_widened(&info.return_type, self.types) {
+            let ret = info.return_type.clone();
+            let lty = self.lty(&ret);
+            let slot = self.alloca_anon(ret.clone());
+            let mut head = format!("ptr {slot}");
+            if !arg_str.is_empty() { head.push_str(", "); head.push_str(&arg_str); }
+            self.emit(&format!("call void @{mangled}({head})"));
+            let v = self.next_tmp();
+            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            return (v, ret);
+        }
+        match &info.return_type {
+            Ty::Unit => {
+                self.emit(&format!("call void @{mangled}({arg_str})"));
+                // gen_method_call's signature is Option<(String, Ty)>;
+                // returning a placeholder isn't quite right but the
+                // caller treats Unit specially. Use a fresh undef tmp.
+                ("undef".to_string(), Ty::Unit)
+            }
+            ret => {
+                let v = self.next_tmp();
+                self.emit(&format!("{v} = call {} @{mangled}({arg_str})", self.lty(ret)));
+                (v, ret.clone())
             }
         }
     }
@@ -6574,7 +7723,27 @@ impl<'a> FnState<'a> {
             None
         } else {
             match &b.tail {
-                Some(t) => self.gen_expr(t),
+                Some(t) => {
+                    let r = self.gen_expr(t);
+                    // v0.0.5 Phase 1B: a block whose tail expression is a
+                    // bare `Ident(name)` of a non-Copy binding is moving
+                    // that value out of the block. The pop_scope below
+                    // would otherwise drop the local, freeing the buffer
+                    // before the loaded value reaches the caller's slot —
+                    // and the caller's drop then fires on a dangling ptr.
+                    // Flip the local's drop flag to disarm the scope-exit
+                    // drop. (Plain `let b: T = a;` already gets this
+                    // disarm via gen_let's Ident-RHS detection; the gap
+                    // was the block-tail-as-value form.)
+                    if let Some((_, ref rty)) = r {
+                        if !is_copy_ty(rty, self.types) {
+                            if let ExprKind::Ident(name) = &t.kind {
+                                self.mark_moved(name);
+                            }
+                        }
+                    }
+                    r
+                }
                 None => None,
             }
         };
@@ -6616,7 +7785,7 @@ impl<'a> FnState<'a> {
                         AssignOp::MulAssign => "fmul",
                         _ => unreachable!(),
                     };
-                    self.emit(&format!("{v} = {fop} {lty} {l}, {r}"));
+                    self.emit(&format!("{v} = {fop} contract {lty} {l}, {r}"));
                     return v;
                 }
                 let bin = match op {
@@ -6641,7 +7810,7 @@ impl<'a> FnState<'a> {
             AssignOp::DivAssign => {
                 if ty.is_float() {
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = fdiv {lty} {l}, {r}"));
+                    self.emit(&format!("{v} = fdiv contract {lty} {l}, {r}"));
                     return v;
                 }
                 self.divide_with_zero_check(BinOp::Div, ty, l, r)
@@ -7227,14 +8396,14 @@ impl<'a> FnState<'a> {
         match method {
             "len" => {
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.emit(&format!("{lv} = load i64, ptr {lp}"));
                 (lv, Ty::Usize)
             }
             "is_empty" => {
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.emit(&format!("{lv} = load i64, ptr {lp}"));
                 let cmp = self.next_tmp();
@@ -7244,11 +8413,11 @@ impl<'a> FnState<'a> {
             "as_str" => {
                 // Extract ptr + len; package as `str` fat-pointer `{ ptr, i64 }`.
                 let pp = self.next_tmp();
-                self.emit(&format!("{pp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
+                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
                 self.emit(&format!("{pv} = load ptr, ptr {pp}"));
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.emit(&format!("{lv} = load i64, ptr {lp}"));
                 let s0 = self.next_tmp();
@@ -7261,11 +8430,11 @@ impl<'a> FnState<'a> {
                 // Load len, malloc a fresh buffer of size len (cap = len in
                 // the clone), memcpy bytes, build a new aggregate.
                 let pp = self.next_tmp();
-                self.emit(&format!("{pp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
+                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
                 self.emit(&format!("{pv} = load ptr, ptr {pp}"));
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.emit(&format!("{lv} = load i64, ptr {lp}"));
                 let buf = self.next_tmp();
@@ -7740,9 +8909,13 @@ mod tests {
 
     #[test]
     fn float_arithmetic_uses_fadd_etc() {
-        let ir = gen_src("fn main() -> i32 { let a: f64 = 1.0; let _b: f64 = a + a * a; return 0; }");
-        assert!(ir.contains(" = fadd double "));
-        assert!(ir.contains(" = fmul double "));
+        // Use independent operands so the FMA peephole doesn't fire — this
+        // test pins the plain fadd/fmul lowering path.
+        let ir = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: f64 = 3.0; let _x: f64 = a + b; let _y: f64 = a * c; return 0; }");
+        // `contract` fast-math flag lets LLVM fuse fmul+fadd into fmadd
+        // (matches clang's `-ffp-contract=on` default).
+        assert!(ir.contains(" = fadd contract double "));
+        assert!(ir.contains(" = fmul contract double "));
         // No overflow-intrinsic *call* (the declaration in preamble is fine).
         assert_eq!(count(&ir, "call {"), 0, "no checked-arith calls expected for float ops");
     }
@@ -7750,7 +8923,7 @@ mod tests {
     #[test]
     fn float_division_no_zero_check() {
         let ir = gen_src("fn main() -> i32 { let a: f64 = 1.0; let b: f64 = 2.0; let _c: f64 = a / b; return 0; }");
-        assert!(ir.contains(" = fdiv double "));
+        assert!(ir.contains(" = fdiv contract double "));
         // Float div doesn't trap; no zero check.
         // (Other code paths may still have icmp eq for integer divs; assert
         // the fdiv lacks a preceding zero-check on a float.)
@@ -7908,7 +9081,7 @@ mod tests {
              fn main() -> i32 { let _p: Point = Point { x: 1, y: 2 }; return 0; }"
         );
         assert!(ir.contains("alloca %Point"), "expected struct alloca: {ir}");
-        assert!(ir.contains("getelementptr %Point"), "expected GEP into struct: {ir}");
+        assert!(ir.contains("getelementptr inbounds %Point"), "expected GEP into struct: {ir}");
         assert!(ir.contains("store i32 1, ptr"));
         assert!(ir.contains("store i32 2, ptr"));
     }
@@ -7920,7 +9093,7 @@ mod tests {
              fn first(p: Point) -> i32 { return p.x; }\n\
              fn main() -> i32 { return 0; }"
         );
-        assert!(ir.contains("getelementptr %Point"));
+        assert!(ir.contains("getelementptr inbounds %Point"));
         assert!(ir.contains("load i32, ptr"));
     }
 
@@ -7930,7 +9103,7 @@ mod tests {
             "struct Counter { count: i32 }\n\
              fn main() -> i32 { let mut c: Counter = Counter { count: 0 }; c.count = 5; return 0; }"
         );
-        assert!(ir.contains("getelementptr %Counter"));
+        assert!(ir.contains("getelementptr inbounds %Counter"));
         assert!(ir.contains("store i32 5, ptr"));
     }
 
@@ -7998,7 +9171,7 @@ mod tests {
         );
         assert!(ir.contains("void @P.set(ptr "), "expected void+ptr for mut self: {ir}");
         // Body should store through the ptr (GEP then store).
-        assert!(ir.contains("getelementptr %P"));
+        assert!(ir.contains("getelementptr inbounds %P"));
     }
 
     #[test]
@@ -8038,7 +9211,7 @@ mod tests {
         assert!(ir.contains("icmp uge i64"), "expected bounds-check icmp: {ir}");
         assert!(ir.contains("call void @llvm.trap()"), "expected trap branch: {ir}");
         // GEP into the array.
-        assert!(ir.contains("getelementptr [3 x i32]"));
+        assert!(ir.contains("getelementptr inbounds [3 x i32]"));
     }
 
     #[test]
@@ -8046,7 +9219,7 @@ mod tests {
         let ir = gen_src(
             "fn main() -> i32 { let mut xs: [i32; 3] = [0, 0, 0]; xs[1 as usize] = 7; return 0; }"
         );
-        assert!(ir.contains("getelementptr [3 x i32]"));
+        assert!(ir.contains("getelementptr inbounds [3 x i32]"));
         assert!(ir.contains("store i32 7, ptr"));
     }
 
@@ -10098,6 +11271,85 @@ mod tests {
         // f64 literals also use hex form for round-trippable determinism.
         let ir = gen_src("fn main() -> i32 { let a: f64 = 1e-8; return 0; }");
         assert!(ir.contains("double 0x"), "expected hex-form f64 literal:\n{ir}");
+    }
+
+    #[test]
+    fn f32_literal_parses_directly_without_double_rounding() {
+        // Regression: `0.4f32` previously parsed decimal → f64 → fptrunc-to-f32,
+        // double-rounding to 0x3ECCCCCD via 0x3FD999999999999A. After fix:
+        // decimal parses directly to f32 (0x3ECCCCCD is the IEEE-correct
+        // round-to-nearest f32 of 0.4) and the IR carries its lossless f64
+        // bit pattern 0x3FD99999A0000000 — what LLVM expects for `float 0x...`.
+        let ir = gen_src("fn main() -> i32 { let _a: f32 = 0.4f32; return 0; }");
+        // 0.4f32 → f32 bits 0x3ECCCCCD → lossless f64 widen → 0x3FD99999A0000000.
+        assert!(
+            ir.contains("float 0x3FD99999A0000000"),
+            "expected float 0x3FD99999A0000000 (lossless f64 of 0.4f32):\n{ir}"
+        );
+        // 0.1f32 directly: f32 bits 0x3DCCCCCD → lossless f64 widen → 0x3FB99999A0000000.
+        let ir2 = gen_src("fn main() -> i32 { let _a: f32 = 0.1f32; return 0; }");
+        assert!(
+            ir2.contains("float 0x3FB99999A0000000"),
+            "expected float 0x3FB99999A0000000 (lossless f64 of 0.1f32):\n{ir2}"
+        );
+    }
+
+    #[test]
+    fn float_arith_emits_contract_fast_math_flag() {
+        // Regression: cpc's IR didn't emit any fast-math flags, so LLVM at
+        // -O2 couldn't fuse `fmul; fadd` into `fmadd` and the raytracer
+        // benchmark ran ~50% slower than the C equivalent (which gets
+        // `-ffp-contract=on` by default). Now every float arith carries
+        // `contract`, recovering the missing fmadd codegen.
+        //
+        // Operands are deliberately split across multiple lets so the FMA
+        // peephole (which fires on `(a*b) + c` shapes) doesn't lower them
+        // to `llvm.fmuladd` — this test pins the plain-op path.
+        let ir = gen_src("fn main() -> i32 { let a: f32 = 1.0f32; let b: f32 = 2.0f32; let c: f32 = 3.0f32; let _w: f32 = a + b; let _x: f32 = a - b; let _y: f32 = a * c; let _z: f32 = a / c; return 0; }");
+        assert!(ir.contains(" = fmul contract float "), "expected fmul contract:\n{ir}");
+        assert!(ir.contains(" = fadd contract float "), "expected fadd contract:\n{ir}");
+        assert!(ir.contains(" = fsub contract float "), "expected fsub contract:\n{ir}");
+        assert!(ir.contains(" = fdiv contract float "), "expected fdiv contract:\n{ir}");
+    }
+
+    #[test]
+    fn fma_peephole_emits_fmuladd_for_mul_add_pattern() {
+        // Regression: cpc's raytracer ran ~50% slower than C even with
+        // `contract` flags because LLVM didn't always fuse fmul+fadd into
+        // fmadd. clang's frontend lowers source-level `a*b+c` directly to
+        // `llvm.fmuladd` at `-ffp-contract=on`; cpc now does the same in
+        // gen_binary's FMA peephole.
+        let ir = gen_src("fn dot(a: f32, b: f32, c: f32) -> f32 { return a * b + c; } fn main() -> i32 { return 0; }");
+        assert!(
+            ir.contains("call contract float @llvm.fmuladd.f32"),
+            "expected fmuladd lowering for `a * b + c`:\n{ir}"
+        );
+
+        // `c + a * b` (mul on the right) — same intrinsic.
+        let ir2 = gen_src("fn dot(a: f32, b: f32, c: f32) -> f32 { return c + a * b; } fn main() -> i32 { return 0; }");
+        assert!(
+            ir2.contains("call contract float @llvm.fmuladd.f32"),
+            "expected fmuladd for `c + a*b`:\n{ir2}"
+        );
+
+        // `(a*b) - c` lowers via fmuladd(a, b, -c) — there should be one
+        // fneg of c plus the fmuladd call.
+        let ir3 = gen_src("fn dot(a: f32, b: f32, c: f32) -> f32 { return a * b - c; } fn main() -> i32 { return 0; }");
+        assert!(
+            ir3.contains("call contract float @llvm.fmuladd.f32"),
+            "expected fmuladd for `a*b - c`:\n{ir3}"
+        );
+        assert!(
+            ir3.contains(" = fneg contract float "),
+            "expected fneg of c in `a*b - c`:\n{ir3}"
+        );
+
+        // f64 form selects the f64 intrinsic.
+        let ir4 = gen_src("fn dot(a: f64, b: f64, c: f64) -> f64 { return a * b + c; } fn main() -> i32 { return 0; }");
+        assert!(
+            ir4.contains("call contract double @llvm.fmuladd.f64"),
+            "expected f64 fmuladd:\n{ir4}"
+        );
     }
 
     #[test]

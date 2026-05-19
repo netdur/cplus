@@ -88,6 +88,10 @@ impl Arc[T] {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
+            // v0.0.5 Phase 1C: invoke inner-T Drop on the last
+            // reference before freeing the control block.
+            let value_ptr: *T = unsafe { (self.ctrl + (8 as usize)) as *T };
+            unsafe { __cplus_drop_in_place::[T](value_ptr); }
             unsafe { free(self.ctrl); }
         }
         return;

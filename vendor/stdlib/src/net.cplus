@@ -181,6 +181,40 @@ impl TcpStream {
         }
         return;
     }
+
+    // v0.0.5 Phase 4 Slice 4B: async I/O method form. `mut self` is
+    // pointer-passed (not consumed), so callers can chain — a
+    // `stream.read_async(...)` then `stream.write_async(...)` keeps
+    // the same handle live and Drop still runs on scope exit.
+    //
+    // Slice 4F shipped the executor's awaiter-notification machinery
+    // (register_awaiter at await sites + notify_completed in async
+    // fn epilogues), so these can now be real `async fn` methods —
+    // multi-level await chains drive correctly.
+    //
+    // Prerequisite: the stream's fd must be non-blocking. Easiest path
+    // is to call `self.make_nonblocking()` once after construction.
+
+    // Mark the stream's fd O_NONBLOCK. Idempotent; safe to call
+    // repeatedly. Returns 0 on success, -1 on fcntl error.
+    pub fn make_nonblocking(mut self) -> i32 {
+        return set_nonblocking(self.fd);
+    }
+
+    // Async read: same semantics as `read_fd_async(self.fd, buf, count)`.
+    pub async fn read_async(mut self, buf: *u8, count: usize) -> isize {
+        return await read_fd_async(self.fd, buf, count);
+    }
+
+    // Async best-effort write (may return < count).
+    pub async fn write_async(mut self, buf: *u8, count: usize) -> isize {
+        return await write_fd_async(self.fd, buf, count);
+    }
+
+    // Async full-buffer write — loops on short writes / EAGAIN.
+    pub async fn write_all_async(mut self, buf: *u8, count: usize) -> isize {
+        return await write_all_fd_async(self.fd, buf, count);
+    }
 }
 
 impl TcpListener {
@@ -213,6 +247,18 @@ impl TcpListener {
             unsafe { close(self.fd); }
         }
         return;
+    }
+
+    // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
+    // awaiter-notification fix made real `async fn` shapes safe here.
+    pub fn make_nonblocking(mut self) -> i32 {
+        return set_nonblocking(self.fd);
+    }
+
+    // Async accept: returns the accepted client fd on success (>= 0),
+    // -1 on error.
+    pub async fn accept_async(mut self) -> i32 {
+        return await accept_fd_async(self.fd);
     }
 }
 

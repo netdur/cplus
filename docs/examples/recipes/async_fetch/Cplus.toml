@@ -1,0 +1,11 @@
+[package]
+name    = "async_fetch"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "async_fetch"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"

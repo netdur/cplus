@@ -1,0 +1,27 @@
+// stdlib/time.cplus — async timer primitives.
+
+// `async fn` needs `Future[T]` from stdlib/future in scope so the
+// signature collection wraps the return type correctly. The reactor
+// import drags in `stdlib_reactor_register_timer_v1` — the C-ABI
+// export the `__cplus_reactor_wait_timer` intrinsic calls — so users
+// who pull in `time` automatically get the timer machinery linked.
+import "./future" as future;
+import "./reactor" as reactor;
+
+//
+// v0.0.5 Phase 4 Slice 4A: `sleep(ms)` suspends the current async task
+// for the given number of milliseconds via the reactor's `EVFILT_TIMER`
+// path. Multiple `sleep`s issued from different `spawn_local`'d tasks
+// run concurrently — the reactor's kqueue dispatch reaps timers in
+// fire-order, not registration-order, so total wall-clock time is
+// `max(durations)` not `sum(durations)`.
+//
+// The intrinsic `__cplus_reactor_wait_timer(ms)` is a compiler-blessed
+// suspend point — it can't be expressed in surface C+ because it needs
+// raw access to the enclosing coroutine handle (`%.coro.hdl`). The
+// stdlib's job here is just to give it a friendly `async fn` face.
+
+pub async fn sleep(ms: u64) {
+    unsafe { __cplus_reactor_wait_timer(ms); }
+    return;
+}

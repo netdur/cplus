@@ -11,6 +11,16 @@
 // match Zig/Go conventions. The associated-fn shape lands when the
 // resolver-side support is wired.
 
+// v0.0.5 Phase 3 Slice 3A: gen-method `iter` returns `Iterator[T]`;
+// importing `iterator` brings the template into scope so the wrap
+// resolves at sig-collection time.
+import "./iterator" as iterator;
+// v0.0.5 Phase 3 Slice 3C follow-on: `collect` consumes an Iterator[T]
+// into a fresh Vec[T]. Lives in vec.cplus (not iterator.cplus) to
+// avoid the iterator↔vec circular import that an `impl Iterator[T]`
+// method would force.
+import "./option" as option;
+
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -25,6 +35,22 @@ pub struct Vec[T] {
 // Empty Vec, no allocation. Drop's free is a no-op when `cap == 0`.
 pub fn new[T]() -> Vec[T] {
     return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: 0 as usize };
+}
+
+// v0.0.5 Phase 3 Slice 3C follow-on: drain an Iterator[T] into a
+// fresh Vec[T]. Consumes the iterator (`move source`). The natural
+// home would be `impl Iterator[T]::collect_to_vec(move self) -> Vec[T]`
+// but iterator.cplus can't `import "./vec"` without a circular dep,
+// so we expose it as a free fn here. Call: `vec::collect::[i32](v.iter())`.
+pub fn collect[T](move source: iterator::Iterator[T]) -> Vec[T] {
+    let mut out: Vec[T] = new::[T]();
+    loop {
+        match source.next() {
+            option::Option[T]::Some(x) => { out.push(x); }
+            option::Option[T]::None => { return out; }
+        }
+    }
+    return out;
 }
 
 // Pre-allocate room for `n` elements (len stays 0).
@@ -119,6 +145,21 @@ impl Vec[T] {
         return;
     }
 
+    // Drop all elements (running inner-T Drop on each) and reset `len`
+    // to 0. Allocation is retained — the buffer keeps its capacity so
+    // subsequent pushes don't re-malloc. Useful as a per-iteration
+    // reset in chunked readers (File::lines's carry-over, etc.).
+    pub fn clear(mut self) {
+        let mut i: usize = 0 as usize;
+        while i < self.len {
+            let elem_ptr: *T = unsafe { self.ptr + i };
+            unsafe { __cplus_drop_in_place::[T](elem_ptr); }
+            i = i +% (1 as usize);
+        }
+        self.len = 0 as usize;
+        return;
+    }
+
     pub fn len(self) -> usize {
         return self.len;
     }
@@ -138,13 +179,31 @@ impl Vec[T] {
         return unsafe { slice_from_raw_parts(self.ptr, self.len) };
     }
 
-    // Destructor: free the heap buffer. Element drop is the caller's job
-    // (Vec doesn't recursively drop T) — generic-method-invoked drop-glue
-    // lands when the per-T glue can be invoked from generic body context.
-    fn drop(mut self) {
-        if self.cap > (0 as usize) {
-            unsafe { free(self.ptr as *u8); }
+    // v0.0.5 Phase 3 Slice 3A: iterator-style traversal. Yields each
+    // live element by value; for non-Copy T the receiver's storage
+    // stays intact (`get` reads through the raw pointer, not move out).
+    pub gen fn iter(self) -> T {
+        let mut i: usize = 0 as usize;
+        while i < self.len {
+            yield self.get(i);
+            i = i +% (1 as usize);
         }
+        return;
+    }
+
+    // Destructor: walk live elements invoking inner-T Drop, then free
+    // the heap buffer. v0.0.5 Phase 1C closes the v0.0.4 leak where
+    // `Vec[string]` / `Vec[Vec[U]]` / `Vec[MyStructWithDrop]` leaked
+    // every element's resources.
+    fn drop(mut self) {
+        if self.cap == (0 as usize) { return; }
+        let mut i: usize = 0 as usize;
+        while i < self.len {
+            let elem_ptr: *T = unsafe { self.ptr + i };
+            unsafe { __cplus_drop_in_place::[T](elem_ptr); }
+            i = i +% (1 as usize);
+        }
+        unsafe { free(self.ptr as *u8); }
         return;
     }
 }

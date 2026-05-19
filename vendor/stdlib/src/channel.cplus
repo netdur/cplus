@@ -220,6 +220,20 @@ impl Channel[T] {
             let cond_ptr: *u8 = unsafe { self.ctrl + off_cond() };
             let buf_ptr_slot: **u8 = unsafe { (self.ctrl + off_buffer()) as **u8 };
             let buf: *u8 = unsafe { *buf_ptr_slot };
+            // v0.0.5 Phase 1C: drop every buffered element (live range
+            // [head, tail) in the shift-on-grow buffer) before freeing
+            // the element storage.
+            let head_ptr: *usize = unsafe { (self.ctrl + off_head()) as *usize };
+            let tail_ptr: *usize = unsafe { (self.ctrl + off_tail()) as *usize };
+            let head: usize = unsafe { *head_ptr };
+            let tail: usize = unsafe { *tail_ptr };
+            let typed_buf: *T = unsafe { buf as *T };
+            let mut i: usize = head;
+            while i < tail {
+                let elem_ptr: *T = unsafe { typed_buf + i };
+                unsafe { __cplus_drop_in_place::[T](elem_ptr); }
+                i = i +% (1 as usize);
+            }
             let _e1: i32 = unsafe { pthread_cond_destroy(cond_ptr) };
             let _e2: i32 = unsafe { pthread_mutex_destroy(mutex_ptr) };
             unsafe { free(buf); }

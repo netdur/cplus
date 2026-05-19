@@ -6,3 +6,4 @@ a.out
 
 # Per-user Claude Code local state
 /.claude/
+.DS_Store

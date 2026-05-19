@@ -24,3 +24,54 @@ import "./option" as option;
 pub struct Iterator[T] {
     pub handle: *u8,
 }
+
+// v0.0.5 Phase 3 Slice 3C: iterator adapters. Each adapter is a
+// `gen fn` that pulls from its source iterator and re-yields. The
+// `match self.next() { Option[T]::Some(v) => ..., Option[T]::None => return }`
+// shape is enabled by sema's `propagate_pattern_instantiations` pass
+// (walks variant patterns inside generic-impl-method bodies and
+// generic free fn bodies, substitutes through the outer subst, and
+// registers the discovered enum instantiations).
+//
+// `map` is a free function rather than a method because methods can't
+// declare an *additional* type parameter on top of the impl's `T`
+// without a parser change for method-level generics; the free-fn form
+// sidesteps that.
+
+impl Iterator[T] {
+    // Keep only elements where `pred` returns true.
+    pub gen fn filter(self, pred: fn(T) -> bool) -> T {
+        loop {
+            match self.next() {
+                option::Option[T]::Some(v) => {
+                    if pred(v) { yield v; }
+                }
+                option::Option[T]::None => { return; }
+            }
+        }
+    }
+
+    // Yield at most `n` elements, then stop.
+    pub gen fn take(self, n: usize) -> T {
+        let mut k: usize = 0 as usize;
+        while k < n {
+            match self.next() {
+                option::Option[T]::Some(v) => { yield v; }
+                option::Option[T]::None => { return; }
+            }
+            k = k +% (1 as usize);
+        }
+        return;
+    }
+}
+
+// Transform each element via `f`. Free function because methods can't
+// declare an extra type parameter on top of the impl's `T` today.
+pub gen fn map[T, U](source: Iterator[T], f: fn(T) -> U) -> U {
+    loop {
+        match source.next() {
+            option::Option[T]::Some(v) => { yield f(v); }
+            option::Option[T]::None => { return; }
+        }
+    }
+}

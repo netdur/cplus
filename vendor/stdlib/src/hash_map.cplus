@@ -122,7 +122,7 @@ impl HashMap[K, V] {
     // Look up `k`. Returns Ok(v) on hit, Err(NotFound) on miss.
     pub fn get(self, k: K) -> result::Result[V, result::IoError] {
         if self.cap == (0 as usize) {
-            return result::Result[V, result::IoError]::Err(result::IoError::NotFound);
+            return result::io_err::[V](result::IoError::NotFound);
         }
         let h: u64 = k.hash();
         let start: usize = (h as usize) % self.cap;
@@ -130,19 +130,19 @@ impl HashMap[K, V] {
         loop {
             let occ: u8 = unsafe { self.occupied[slot] };
             if occ == (0 as u8) {
-                return result::Result[V, result::IoError]::Err(result::IoError::NotFound);
+                return result::io_err::[V](result::IoError::NotFound);
             }
             let existing: K = unsafe { self.keys[slot] };
             if existing.eq(k) {
                 let v: V = unsafe { self.vals[slot] };
-                return result::Result[V, result::IoError]::Ok(v);
+                return result::io_ok::[V](v);
             }
             slot = (slot +% (1 as usize)) % self.cap;
             if slot == start {
-                return result::Result[V, result::IoError]::Err(result::IoError::NotFound);
+                return result::io_err::[V](result::IoError::NotFound);
             }
         }
-        return result::Result[V, result::IoError]::Err(result::IoError::NotFound);  // unreachable
+        return result::io_err::[V](result::IoError::NotFound);  // unreachable
     }
 
     pub fn contains_key(self, k: K) -> bool {
@@ -210,6 +210,21 @@ impl HashMap[K, V] {
 
     fn drop(mut self) {
         if self.cap == (0 as usize) { return; }
+        // v0.0.5 Phase 1C: invoke per-entry Drop for each live (K, V)
+        // pair before freeing the parallel storage arrays. Closes the
+        // v0.0.4 leak where `HashMap[str, string]` leaked every value
+        // and (for non-static) every key.
+        let mut i: usize = 0 as usize;
+        while i < self.cap {
+            let occ: u8 = unsafe { self.occupied[i] };
+            if occ != (0 as u8) {
+                let k_ptr: *K = unsafe { self.keys + i };
+                let v_ptr: *V = unsafe { self.vals + i };
+                unsafe { __cplus_drop_in_place::[K](k_ptr); }
+                unsafe { __cplus_drop_in_place::[V](v_ptr); }
+            }
+            i = i +% (1 as usize);
+        }
         unsafe { free(self.keys as *u8); }
         unsafe { free(self.vals as *u8); }
         unsafe { free(self.occupied); }

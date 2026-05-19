@@ -197,7 +197,7 @@ impl Lower {
                 for f in fields { self.lower_expr(&mut f.value); }
             }
             ExprKind::Field { receiver, .. } => self.lower_expr(receiver),
-            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } | ExprKind::TupleLit { elements } => {
                 for el in elements { self.lower_expr(el); }
             }
             ExprKind::Index { receiver, index } => {
