@@ -107,11 +107,11 @@ impl Lower {
                     self.lower_expr(e);
                 }
             }
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, .. } => {
                 self.lower_expr(cond);
                 self.lower_block(body);
             }
-            StmtKind::For(fl) => match fl {
+            StmtKind::For(fl, _) => match fl {
                 ForLoop::CStyle {
                     init,
                     cond,
@@ -160,7 +160,7 @@ impl Lower {
                 // Leaf control-flow markers — nothing to recurse into.
             }
             StmtKind::Assert(e) => self.lower_expr(e),
-            StmtKind::Loop(body) => {
+            StmtKind::Loop(body, _) => {
                 self.lower_block(body);
             }
             StmtKind::WhileLet {
@@ -215,6 +215,7 @@ impl Lower {
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
             | ExprKind::IncludeBytes { .. }
+            | ExprKind::IncludeStr { .. }
             | ExprKind::Ident(_) => {}
             ExprKind::InterpStr { parts } => {
                 for p in parts {
@@ -522,7 +523,7 @@ impl Lower {
             tail: None,
             span: stmt_span,
         };
-        StmtKind::Loop(loop_body)
+        StmtKind::Loop(loop_body, Vec::new())
     }
 
     fn check_complement(&mut self, success: &Pattern, complement: &Pattern) {

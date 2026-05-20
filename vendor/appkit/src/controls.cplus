@@ -23,12 +23,22 @@ impl TextField {
         rt::msg_void_id(self.obj, rt::sel(str_ptr("setStringValue:\0")), rt::ns_string(val));
     }
 
+    // v0.0.7 Slice 5.1: pre-built-NSString variant. See window.cplus
+    // for the rationale.
+    pub fn set_string_value_ns(self, val_ns: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setStringValue:\0")), val_ns);
+    }
+
     pub fn string_value(self) -> *u8 {
         return rt::msg_id(self.obj, rt::sel(str_ptr("stringValue\0")));
     }
 
     pub fn set_placeholder_string(self, val: *u8) {
         rt::msg_void_id(self.obj, rt::sel(str_ptr("setPlaceholderString:\0")), rt::ns_string(val));
+    }
+
+    pub fn set_placeholder_string_ns(self, val_ns: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setPlaceholderString:\0")), val_ns);
     }
 
     pub fn set_alignment(self, align: i64) {
@@ -78,6 +88,11 @@ impl Button {
 
     pub fn set_title(self, title: *u8) {
         rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), rt::ns_string(title));
+    }
+
+    // v0.0.7 Slice 5.1: pre-built-NSString variant.
+    pub fn set_title_ns(self, title_ns: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), title_ns);
     }
 
     pub fn set_button_type(self, btn_type: u64) {
@@ -187,6 +202,11 @@ impl PopUpButton {
         rt::msg_void_id(self.obj, rt::sel(str_ptr("addItemWithTitle:\0")), rt::ns_string(title));
     }
 
+    // v0.0.7 Slice 5.1: pre-built-NSString variant.
+    pub fn add_item_ns(self, title_ns: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("addItemWithTitle:\0")), title_ns);
+    }
+
     pub fn remove_all_items(self) {
         rt::msg_void(self.obj, rt::sel(str_ptr("removeAllItems\0")));
     }
@@ -277,6 +297,11 @@ impl SegmentedControl {
         rt::msg_void_id_i64(self.obj, rt::sel(str_ptr("setLabel:forSegment:\0")), rt::ns_string(label), segment);
     }
 
+    // v0.0.7 Slice 5.1: pre-built-NSString variant.
+    pub fn set_label_for_segment_ns(self, label_ns: *u8, segment: i64) {
+        rt::msg_void_id_i64(self.obj, rt::sel(str_ptr("setLabel:forSegment:\0")), label_ns, segment);
+    }
+
     pub fn set_selected_for_segment(self, selected: i8, segment: i64) {
         rt::msg_void_i8_i64(self.obj, rt::sel(str_ptr("setSelected:forSegment:\0")), selected, segment);
     }
@@ -301,6 +326,11 @@ impl ComboButton {
 
     pub fn set_title(self, title: *u8) {
         rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), rt::ns_string(title));
+    }
+
+    // v0.0.7 Slice 5.1: pre-built-NSString variant.
+    pub fn set_title_ns(self, title_ns: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), title_ns);
     }
 
     pub fn set_menu(self, menu: *u8) {

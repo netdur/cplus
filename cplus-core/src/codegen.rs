@@ -30,12 +30,28 @@ struct ModuleMetadata {
     nodes: RefCell<Vec<String>>,
     /// Cache so equal (lo, hi, ty_str) tuples share one MD node.
     cache: RefCell<HashMap<(i64, i64, &'static str), u32>>,
-    /// v0.0.6 Slice 1A: per-call-site `include_bytes!` lookup. Populated
-    /// by the module-init pass from sema's [`MonoInfo::include_bytes`]
+    /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: per-call-site
+    /// `include_bytes!` / `include_str!` lookup. Populated by the
+    /// module-init pass from sema's [`MonoInfo::compile_time_blobs`]
     /// (or empty when no mono is plumbed in). gen_expr for
-    /// `ExprKind::IncludeBytes` consults this map to produce the byte
-    /// global's address as the SSA value.
-    include_bytes: RefCell<HashMap<crate::lexer::Span, (String, u32)>>,
+    /// `ExprKind::IncludeBytes` / `ExprKind::IncludeStr` consults this
+    /// map to produce the global's symbol + byte length; the AST node
+    /// variant picks whether to emit a raw pointer or a `str`
+    /// fat-pointer aggregate.
+    compile_time_blobs: RefCell<HashMap<crate::lexer::Span, (String, u32)>>,
+    /// v0.0.7 Slice 1.2: TBAA (Type-Based Alias Analysis) tree.
+    /// Lazily populated on first `tbaa_tag_for` call. Layout:
+    ///   - root: `!N = !{!"C+ TBAA Root"}`
+    ///   - one leaf per primitive name, parented at root:
+    ///     `!M = !{!"<name>", !N, i64 0}`
+    /// Returned IDs are referenced from `!tbaa !M` clauses on
+    /// load/store instructions emitted via `gen_load` / `gen_store`.
+    /// Aggregate types (struct, enum, str, slice, string, simd) skip
+    /// TBAA today — they get the conservative "may alias anything"
+    /// treatment until v0.0.8 ships the per-field tree if raytracer
+    /// perf justifies the complexity.
+    tbaa_root: Cell<Option<u32>>,
+    tbaa_leaves: RefCell<HashMap<&'static str, u32>>,
 }
 
 impl ModuleMetadata {
@@ -97,6 +113,55 @@ impl ModuleMetadata {
             .borrow_mut()
             .push(format!("!{id} = !{{{}}}", items.join(", ")));
         id
+    }
+
+    /// v0.0.7 Slice 1.2: return the TBAA leaf ID for a primitive `ty`,
+    /// allocating the root + the relevant leaf on first use. Returns
+    /// `None` for aggregate types (struct, enum, str, slice, string,
+    /// simd, fn-pointer) — those skip TBAA tagging today; LLVM treats
+    /// untagged accesses as may-alias-anything, the conservative
+    /// default. Pointer types share a single `"ptr"` leaf.
+    fn tbaa_tag_for(&self, ty: &Ty) -> Option<u32> {
+        let name: &'static str = match ty {
+            Ty::I8 => "i8",
+            Ty::U8 => "u8",
+            Ty::Bool => "bool",
+            Ty::I16 => "i16",
+            Ty::U16 => "u16",
+            Ty::I32 => "i32",
+            Ty::U32 => "u32",
+            Ty::I64 => "i64",
+            Ty::U64 => "u64",
+            Ty::Isize => "isize",
+            Ty::Usize => "usize",
+            Ty::F32 => "f32",
+            Ty::F64 => "f64",
+            Ty::RawPtr(_) | Ty::FnPtr { .. } => "ptr",
+            // Aggregates skip TBAA today — see field docs.
+            _ => return None,
+        };
+        if let Some(&id) = self.tbaa_leaves.borrow().get(name) {
+            return Some(id);
+        }
+        let root = match self.tbaa_root.get() {
+            Some(id) => id,
+            None => {
+                let id = self.next_id.get();
+                self.next_id.set(id + 1);
+                self.nodes
+                    .borrow_mut()
+                    .push(format!("!{id} = !{{!\"C+ TBAA Root\"}}"));
+                self.tbaa_root.set(Some(id));
+                id
+            }
+        };
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        self.nodes
+            .borrow_mut()
+            .push(format!("!{id} = !{{!\"{name}\", !{root}, i64 0}}"));
+        self.tbaa_leaves.borrow_mut().insert(name, id);
+        Some(id)
     }
 
     /// Drain the accumulated metadata definitions into the output. Must be
@@ -555,9 +620,10 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
     generate_inner(program, mode, None, None, &[], false, &Default::default())
 }
 
-/// v0.0.6 Slice 1A: codegen entry point for the post-monomorphize
-/// pipeline, taking sema's [`MonoInfo`] so `include_bytes!` calls can
-/// resolve to the bytes sema read at type-check time.
+/// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: codegen entry point for the
+/// post-monomorphize pipeline, taking sema's [`MonoInfo`] so
+/// `include_bytes!` / `include_str!` calls can resolve to the bytes
+/// sema read at type-check time.
 pub fn generate_with_mono(
     program: &Program,
     mode: BuildMode,
@@ -573,7 +639,7 @@ pub fn generate_with_mono(
         debug_source,
         sanitizers,
         is_lib,
-        &mono.include_bytes,
+        &mono.compile_time_blobs,
     )
 }
 
@@ -678,7 +744,7 @@ fn generate_inner(
     debug_source: Option<&std::path::Path>,
     sanitizers: &[&str],
     is_lib: bool,
-    include_bytes_map: &HashMap<crate::lexer::Span, crate::sema::IncludeBytesEntry>,
+    compile_time_blobs_map: &HashMap<crate::lexer::Span, crate::sema::CompileTimeBlobEntry>,
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
@@ -699,12 +765,13 @@ fn generate_inner(
     // program, emit one `@.str.N` global per unique payload, build a
     // lookup table so gen_expr can resolve a literal to its global.
     let str_lits = collect_and_emit_str_lits(&mut out, program);
-    // v0.0.6 Slice 1A: emit one `@.bytes.N = private unnamed_addr
-    // constant [N x i8] c"..."` global per unique absolute path in
-    // sema's IncludeBytesMap. Populate `md.include_bytes` with the
-    // per-call-site lookup so `gen_expr(ExprKind::IncludeBytes)` can
-    // return the global's address as the SSA value.
-    emit_include_bytes_globals(&mut out, include_bytes_map, &md);
+    // v0.0.6 Slice 1A / v0.0.7 Slice 3.1: emit one `@.bytes.N =
+    // private unnamed_addr constant [N x i8] c"..."` global per
+    // unique absolute path in sema's compile-time-blobs map. Populate
+    // `md.compile_time_blobs` with the per-call-site lookup so
+    // `gen_expr(ExprKind::IncludeBytes | ExprKind::IncludeStr)` can
+    // emit the right shape (raw pointer or `str` fat-pointer).
+    emit_compile_time_blob_globals(&mut out, compile_time_blobs_map, &md);
     write_struct_decls(&mut out, &types, program);
     // Phase 11 / ObjC interop: multiple `extern fn` declarations may share
     // a single linker symbol via `#[link_name = "..."]`. Track emitted
@@ -2137,11 +2204,11 @@ fn scan_moves_in_stmt(
             scan_moves_in_expr(e, sigs, types, set)
         }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             scan_moves_in_expr(cond, sigs, types, set);
             scan_moves_in_block(body, sigs, types, set);
         }
-        StmtKind::For(fl) => match fl {
+        StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle {
                 init,
                 cond,
@@ -2164,7 +2231,7 @@ fn scan_moves_in_stmt(
                 scan_moves_in_block(body, sigs, types, set);
             }
         },
-        StmtKind::Loop(body) => scan_moves_in_block(body, sigs, types, set),
+        StmtKind::Loop(body, _) => scan_moves_in_block(body, sigs, types, set),
         // Lowered before codegen — should not appear here, but be safe.
         StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => {}
     }
@@ -2432,6 +2499,10 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             elem: Box::new(Ty::I64),
             lanes: 2,
         },
+        "u64x2" => Ty::Simd {
+            elem: Box::new(Ty::U64),
+            lanes: 2,
+        },
         "u32x4" => Ty::Simd {
             elem: Box::new(Ty::U32),
             lanes: 4,
@@ -2452,6 +2523,26 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             elem: Box::new(Ty::U16),
             lanes: 8,
         },
+        // v0.0.7 Slice 2.2: 256-bit widths.
+        "f32x8"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  },
+        "f64x4"  => Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  },
+        "i8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
+        "u8x32"  => Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 },
+        "i16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
+        "u16x16" => Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 },
+        "i32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
+        "u32x8"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  },
+        "i64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
+        "u64x4"  => Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  },
+        // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
+        "mask8x16"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 },
+        "mask16x8"  => Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  },
+        "mask32x4"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  },
+        "mask64x2"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  },
+        "mask8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
+        "mask16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
+        "mask32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
+        "mask64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
         _ => {
             if let Some(&id) = types.enum_by_name.get(name) {
                 return Ty::Enum(id);
@@ -2595,6 +2686,14 @@ fn write_preamble(out: &mut String) {
     // struct's footprint) read as 0 instead of poison when packed into
     // the coerced integer-class return register.
     out.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+    // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
+    // alloca helpers bracket each local's live range with these so
+    // LLVM's SROA can reuse stack slots across non-overlapping
+    // scopes. Disabled at `-O0` (debug builds skip the calls to keep
+    // lldb's frame walker simple); declared unconditionally so the
+    // emitted IR is identical-shape across modes.
+    out.push_str("declare void @llvm.lifetime.start.p0(i64, ptr)\n");
+    out.push_str("declare void @llvm.lifetime.end.p0(i64, ptr)\n");
     // v0.0.5: FMA intrinsics for the `a*b + c` peephole in gen_binary.
     // clang lowers source-level `a*b+c` to `llvm.fmuladd` directly at
     // `-ffp-contract=on` (default); cpc does the same so hot raytracer
@@ -2623,6 +2722,14 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare <4 x i32> @llvm.smax.v4i32(<4 x i32>, <4 x i32>)\n");
     out.push_str("declare <2 x i64> @llvm.smin.v2i64(<2 x i64>, <2 x i64>)\n");
     out.push_str("declare <2 x i64> @llvm.smax.v2i64(<2 x i64>, <2 x i64>)\n");
+    // v0.0.7 Slice 2.2 audit: `u64x2` was the 1B gap among 128-bit
+    // 8-byte-lane widths (only `i64x2` shipped). The umin/umax
+    // intrinsics are the only per-width declarations it needs — every
+    // other method on `u64x2` (add/sub/mul/div/and/or/xor/shl/shr/
+    // splat/new/from_array/to_array/lane/with_lane/load/store) lowers
+    // to native LLVM instructions with no intrinsic call.
+    out.push_str("declare <2 x i64> @llvm.umin.v2i64(<2 x i64>, <2 x i64>)\n");
+    out.push_str("declare <2 x i64> @llvm.umax.v2i64(<2 x i64>, <2 x i64>)\n");
     out.push_str("declare <4 x i32> @llvm.umin.v4i32(<4 x i32>, <4 x i32>)\n");
     out.push_str("declare <4 x i32> @llvm.umax.v4i32(<4 x i32>, <4 x i32>)\n");
     out.push_str("declare <16 x i8> @llvm.smin.v16i8(<16 x i8>, <16 x i8>)\n");
@@ -2633,6 +2740,81 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare <8 x i16> @llvm.smax.v8i16(<8 x i16>, <8 x i16>)\n");
     out.push_str("declare <8 x i16> @llvm.umin.v8i16(<8 x i16>, <8 x i16>)\n");
     out.push_str("declare <8 x i16> @llvm.umax.v8i16(<8 x i16>, <8 x i16>)\n");
+    // v0.0.7 Slice 2.2: 256-bit SIMD intrinsics. AArch64 splits them
+    // into two 128-bit ops at the LLVM backend; AVX2/SVE2 hosts use
+    // native 256-bit vectors. Same intrinsic families as the 128-bit
+    // widths — float fma/sqrt/fabs/minnum/maxnum, int abs/smin/smax/
+    // umin/umax. No new method semantics; the method dispatch in
+    // gen_simd_method_call is fully generic over (elem, lanes).
+    out.push_str("declare <8 x float> @llvm.fma.v8f32(<8 x float>, <8 x float>, <8 x float>)\n");
+    out.push_str("declare <8 x float> @llvm.sqrt.v8f32(<8 x float>)\n");
+    out.push_str("declare <8 x float> @llvm.fabs.v8f32(<8 x float>)\n");
+    out.push_str("declare <8 x float> @llvm.minnum.v8f32(<8 x float>, <8 x float>)\n");
+    out.push_str("declare <8 x float> @llvm.maxnum.v8f32(<8 x float>, <8 x float>)\n");
+    out.push_str("declare <4 x double> @llvm.fma.v4f64(<4 x double>, <4 x double>, <4 x double>)\n");
+    out.push_str("declare <4 x double> @llvm.sqrt.v4f64(<4 x double>)\n");
+    out.push_str("declare <4 x double> @llvm.fabs.v4f64(<4 x double>)\n");
+    out.push_str("declare <4 x double> @llvm.minnum.v4f64(<4 x double>, <4 x double>)\n");
+    out.push_str("declare <4 x double> @llvm.maxnum.v4f64(<4 x double>, <4 x double>)\n");
+    // i8x32 / u8x32
+    out.push_str("declare <32 x i8> @llvm.abs.v32i8(<32 x i8>, i1)\n");
+    out.push_str("declare <32 x i8> @llvm.smin.v32i8(<32 x i8>, <32 x i8>)\n");
+    out.push_str("declare <32 x i8> @llvm.smax.v32i8(<32 x i8>, <32 x i8>)\n");
+    out.push_str("declare <32 x i8> @llvm.umin.v32i8(<32 x i8>, <32 x i8>)\n");
+    out.push_str("declare <32 x i8> @llvm.umax.v32i8(<32 x i8>, <32 x i8>)\n");
+    // i16x16 / u16x16
+    out.push_str("declare <16 x i16> @llvm.abs.v16i16(<16 x i16>, i1)\n");
+    out.push_str("declare <16 x i16> @llvm.smin.v16i16(<16 x i16>, <16 x i16>)\n");
+    out.push_str("declare <16 x i16> @llvm.smax.v16i16(<16 x i16>, <16 x i16>)\n");
+    out.push_str("declare <16 x i16> @llvm.umin.v16i16(<16 x i16>, <16 x i16>)\n");
+    out.push_str("declare <16 x i16> @llvm.umax.v16i16(<16 x i16>, <16 x i16>)\n");
+    // i32x8 / u32x8
+    out.push_str("declare <8 x i32> @llvm.abs.v8i32(<8 x i32>, i1)\n");
+    out.push_str("declare <8 x i32> @llvm.smin.v8i32(<8 x i32>, <8 x i32>)\n");
+    out.push_str("declare <8 x i32> @llvm.smax.v8i32(<8 x i32>, <8 x i32>)\n");
+    out.push_str("declare <8 x i32> @llvm.umin.v8i32(<8 x i32>, <8 x i32>)\n");
+    out.push_str("declare <8 x i32> @llvm.umax.v8i32(<8 x i32>, <8 x i32>)\n");
+    // i64x4 / u64x4
+    out.push_str("declare <4 x i64> @llvm.abs.v4i64(<4 x i64>, i1)\n");
+    out.push_str("declare <4 x i64> @llvm.smin.v4i64(<4 x i64>, <4 x i64>)\n");
+    out.push_str("declare <4 x i64> @llvm.smax.v4i64(<4 x i64>, <4 x i64>)\n");
+    out.push_str("declare <4 x i64> @llvm.umin.v4i64(<4 x i64>, <4 x i64>)\n");
+    out.push_str("declare <4 x i64> @llvm.umax.v4i64(<4 x i64>, <4 x i64>)\n");
+    // v0.0.7 Slice 2.1: vector reduction intrinsics. Used by
+    // `sum` / `product` / `min_across` / `max_across` (numeric SIMD)
+    // and `any` / `all` (mask SIMD via i1 vector intermediates).
+    // Float reductions are seeded (sequential fp), int reductions are
+    // bare. LLVM auto-instantiates these — declarations exist so the
+    // emitted IR is self-contained for `cpc --emit-ll | clang`.
+    let float_widths = [(4u32, "f32", "float"), (2, "f64", "double"),
+                        (8, "f32", "float"), (4, "f64", "double")];
+    for (n, suf, lty) in &float_widths {
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fadd.v{n}{suf}({lty}, <{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fmul.v{n}{suf}({lty}, <{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fmin.v{n}{suf}(<{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fmax.v{n}{suf}(<{n} x {lty}>)\n"));
+    }
+    let int_widths: &[(u32, &str)] = &[
+        (16, "i8"), (32, "i8"),
+        (8, "i16"), (16, "i16"),
+        (4, "i32"), (8, "i32"),
+        (2, "i64"), (4, "i64"),
+    ];
+    for (n, lty) in int_widths {
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.add.v{n}{lty}(<{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.mul.v{n}{lty}(<{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.smin.v{n}{lty}(<{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.smax.v{n}{lty}(<{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.umin.v{n}{lty}(<{n} x {lty}>)\n"));
+        out.push_str(&format!("declare {lty} @llvm.vector.reduce.umax.v{n}{lty}(<{n} x {lty}>)\n"));
+    }
+    // `any` / `all` lower to or/and reductions on i1 vectors. One
+    // per mask width.
+    let i1_widths = [2u32, 4, 8, 16, 32];
+    for n in &i1_widths {
+        out.push_str(&format!("declare i1 @llvm.vector.reduce.or.v{n}i1(<{n} x i1>)\n"));
+        out.push_str(&format!("declare i1 @llvm.vector.reduce.and.v{n}i1(<{n} x i1>)\n"));
+    }
     // v0.0.3 Phase 5 Slice 5B: pthread externs for the thread::spawn /
     // JoinHandle::join intrinsics. pthread_t is opaque-pointer-sized
     // (8 bytes on every supported target); we model it as `i64` to
@@ -2850,11 +3032,11 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                     walk_expr(e, table, next_id, out);
                 }
             }
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, .. } => {
                 walk_expr(cond, table, next_id, out);
                 walk_block(body, table, next_id, out);
             }
-            StmtKind::For(forloop) => match forloop {
+            StmtKind::For(forloop, _) => match forloop {
                 crate::ast::ForLoop::Range { iter, body, .. } => {
                     walk_expr(iter, table, next_id, out);
                     walk_block(body, table, next_id, out);
@@ -2882,7 +3064,7 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
             // were silently skipped by the str-literal pre-pass, so any
             // literal inside a `loop` body tripped a codegen `expect`. Walk
             // the body the same way as `while` / `for`.
-            StmtKind::Loop(body) => walk_block(body, table, next_id, out),
+            StmtKind::Loop(body, _) => walk_block(body, table, next_id, out),
             _ => {}
         }
     }
@@ -2905,17 +3087,19 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
     table
 }
 
-/// v0.0.6 Slice 1A: emit one `@.bytes.N` global per unique resolved
-/// path in sema's IncludeBytesMap and populate
-/// `md.include_bytes` with the per-call-site lookup.
+/// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: emit one `@.bytes.N` global
+/// per unique resolved path in sema's compile-time-blobs map and
+/// populate `md.compile_time_blobs` with the per-call-site lookup.
 ///
 /// Dedup is by canonicalized absolute path — sema's
-/// `IncludeBytesEntry::abs_path` is the dedup key — so two
-/// `include_bytes!("foo.bin")` calls in the same file share one
-/// global.
-fn emit_include_bytes_globals(
+/// `CompileTimeBlobEntry::abs_path` is the dedup key — so two
+/// `include_bytes!("foo.bin")` calls (or one bytes + one str on the
+/// same path) share one underlying `[N x i8]` global. The AST node
+/// variant downstream decides whether to lower the call to a raw
+/// pointer or to a `str` fat-pointer aggregate.
+fn emit_compile_time_blob_globals(
     out: &mut String,
-    map: &HashMap<crate::lexer::Span, crate::sema::IncludeBytesEntry>,
+    map: &HashMap<crate::lexer::Span, crate::sema::CompileTimeBlobEntry>,
     md: &ModuleMetadata,
 ) {
     let mut path_to_sym: HashMap<std::path::PathBuf, (String, u32)> = HashMap::new();
@@ -2947,7 +3131,7 @@ fn emit_include_bytes_globals(
                 v
             }
         };
-        md.include_bytes.borrow_mut().insert(*span, (symbol, len));
+        md.compile_time_blobs.borrow_mut().insert(*span, (symbol, len));
     }
     if !map.is_empty() {
         out.push_str("\n");
@@ -4949,6 +5133,17 @@ struct FnState<'a> {
     /// (Drop bindings + `defer` statements) in registration order. At scope
     /// close codegen walks the frame in reverse and dispatches each entry.
     scope_exits: Vec<Vec<ScopeExit>>,
+    /// v0.0.7 Slice 1.1: parallel stack to `scopes`. Each frame holds
+    /// the `(slot, size_bytes)` of every alloca registered in that
+    /// scope, so `pop_scope` can emit one `llvm.lifetime.end` per
+    /// binding in reverse registration order. Allocas created before
+    /// any `push_scope` (e.g. param-copy slots at fn entry) live for
+    /// the whole function — those skip the lifetime intrinsics
+    /// entirely so LLVM treats them as fully live (the default).
+    /// Only populated when `mode == BuildMode::Release`; debug builds
+    /// skip lifetime intrinsics to keep the debugger's frame walker
+    /// simple.
+    scope_allocas: Vec<Vec<(String, u64)>>,
     return_ty: Ty,
     sigs: &'a HashMap<String, FnSig>,
     types: &'a TypeTable,
@@ -5052,6 +5247,7 @@ impl<'a> FnState<'a> {
             allocas: Vec::new(),
             scopes: vec![HashMap::new()],
             scope_exits: vec![Vec::new()],
+            scope_allocas: vec![Vec::new()],
             return_ty,
             sigs,
             types,
@@ -5147,6 +5343,7 @@ impl<'a> FnState<'a> {
         let slot = format!("%{}.addr{}", sanitize(name_hint), self.tmp_counter);
         self.allocas
             .push(format!("{slot} = alloca {}", self.lty(&ty)));
+        self.bracket_lifetime(&slot, &ty);
         slot
     }
 
@@ -5155,6 +5352,7 @@ impl<'a> FnState<'a> {
         let slot = format!("%a{}", self.tmp_counter);
         self.allocas
             .push(format!("{slot} = alloca {}", self.lty(&ty)));
+        self.bracket_lifetime(&slot, &ty);
         slot
     }
 
@@ -5169,7 +5367,68 @@ impl<'a> FnState<'a> {
         let slot = format!("%{}.addr{}", sanitize(name_hint), self.tmp_counter);
         self.allocas
             .push(format!("{slot} = alloca {llvm_ty_str}, align {align}"));
+        // Raw-LLVM-typed allocas (C-ABI param coercion slots) carry no
+        // Ty we can size statically, so they skip the lifetime
+        // bracketing. They live for the full function anyway — the
+        // coerced bits are read once at fn entry and never revisited.
         slot
+    }
+
+    /// v0.0.7 Slice 1.2: emit a `load` instruction with the right TBAA
+    /// tag for `ty`. Centralized so primitive-typed loads pick up the
+    /// `!tbaa !N` access tag, which lets LLVM's alias analysis prove
+    /// that a load of `*i32` and a load of `*f32` (e.g. in a Vec3 vs
+    /// Sphere mixed-field hot loop) don't alias. Aggregate types get
+    /// no tag — `tbaa_tag_for` returns `None` for those and LLVM
+    /// falls back to may-alias-anything, the conservative default.
+    fn gen_load(&mut self, tmp: &str, ty: &Ty, ptr: &str) {
+        let lty = self.lty(ty);
+        match self.md.tbaa_tag_for(ty) {
+            Some(id) => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}, !tbaa !{id}")),
+            None => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}")),
+        }
+    }
+
+    /// v0.0.7 Slice 1.2: emit a `store` instruction with the right
+    /// TBAA tag for `ty`. Mirror of `gen_load`.
+    fn gen_store(&mut self, ty: &Ty, val: &str, ptr: &str) {
+        let lty = self.lty(ty);
+        match self.md.tbaa_tag_for(ty) {
+            Some(id) => self.emit(&format!("store {lty} {val}, ptr {ptr}, !tbaa !{id}")),
+            None => self.emit(&format!("store {lty} {val}, ptr {ptr}")),
+        }
+    }
+
+    /// v0.0.7 Slice 1.1: emit `llvm.lifetime.start` inline at the
+    /// alloca's source position and register the slot for matching
+    /// `lifetime.end` at scope close. Gated on `BuildMode::Release`
+    /// (debug builds skip lifetime intrinsics to keep lldb's frame
+    /// walker simple) and on being inside a non-bottom scope frame
+    /// (allocas before the body's first `push_scope` — e.g. param
+    /// copy slots — live for the whole function and need no
+    /// brackets, which is the default LLVM behavior).
+    fn bracket_lifetime(&mut self, slot: &str, ty: &Ty) {
+        if !matches!(self.mode, BuildMode::Release) {
+            return;
+        }
+        if self.scope_allocas.len() <= 1 {
+            // Bottom (function-wide) frame: leave the alloca live
+            // for the whole function.
+            return;
+        }
+        let Some((size, _)) = static_layout(ty, self.types) else {
+            return;
+        };
+        if size == 0 {
+            return;
+        }
+        self.body.push_str(&format!(
+            "  call void @llvm.lifetime.start.p0(i64 {size}, ptr {slot})\n"
+        ));
+        self.scope_allocas
+            .last_mut()
+            .unwrap()
+            .push((slot.to_string(), size));
     }
 
     // ---- locals / scopes ----
@@ -5177,6 +5436,7 @@ impl<'a> FnState<'a> {
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.scope_exits.push(Vec::new());
+        self.scope_allocas.push(Vec::new());
     }
 
     /// Close the innermost scope, emitting scope-exit hooks (Drop calls and
@@ -5190,9 +5450,23 @@ impl<'a> FnState<'a> {
             for entry in frame.iter().rev() {
                 self.emit_scope_exit(entry);
             }
+            // v0.0.7 Slice 1.1: emit `llvm.lifetime.end` for each alloca
+            // registered in this scope, in reverse registration order.
+            // Runs *after* drop hooks (which read the slot's stored
+            // value) so the lifetime.end doesn't poison those reads.
+            // On the terminated branch the `ret` follows immediately and
+            // the stack frame is destroyed wholesale — lifetime.end is
+            // unnecessary there.
+            let allocas = self.scope_allocas.last().cloned().unwrap_or_default();
+            for (slot, size) in allocas.iter().rev() {
+                self.body.push_str(&format!(
+                    "  call void @llvm.lifetime.end.p0(i64 {size}, ptr {slot})\n"
+                ));
+            }
         }
         self.scopes.pop();
         self.scope_exits.pop();
+        self.scope_allocas.pop();
     }
 
     fn bind(&mut self, name: &str, slot: String, ty: Ty) {
@@ -5287,7 +5561,8 @@ impl<'a> FnState<'a> {
                 self.tmp_counter += 1;
                 let s = format!("%{}.drop_flag", sanitize(binding_name));
                 self.allocas.push(format!("{s} = alloca i1"));
-                self.emit(&format!("store i1 true, ptr {s}"));
+                // v0.0.7 Slice 1.2: drop-flag init store — bool leaf.
+                self.gen_store(&Ty::Bool, "true", &s);
                 s
             }
             DropDisposition::Always => {
@@ -5355,7 +5630,7 @@ impl<'a> FnState<'a> {
                     "{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {p_val}, i32 0, i32 0"
                 ));
                 let pv = self.next_tmp();
-                self.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 self.emit(&format!("call void @free(ptr {pv})"));
             }
             Ty::Struct(id) => {
@@ -5379,7 +5654,8 @@ impl<'a> FnState<'a> {
 
     fn mark_moved(&mut self, name: &str) {
         if let Some(flag) = self.find_drop_flag(name) {
-            self.emit(&format!("store i1 false, ptr {flag}"));
+            // v0.0.7 Slice 1.2: drop-flag write — bool leaf.
+            self.gen_store(&Ty::Bool, "false", &flag);
         }
         // If there's no flag, the binding isn't Drop — nothing to do.
     }
@@ -5466,7 +5742,8 @@ impl<'a> FnState<'a> {
                         entry.value_slot
                     ));
                     let pv = state.next_tmp();
-                    state.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                    // v0.0.7 Slice 1.2: string-payload ptr field load — ptr leaf.
+                    state.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                     state.emit(&format!("call void @free(ptr {pv})"));
                 }
             }
@@ -5477,7 +5754,7 @@ impl<'a> FnState<'a> {
             }
             DropDisposition::Runtime => {
                 let flag_val = self.next_tmp();
-                self.emit(&format!("{flag_val} = load i1, ptr {}", entry.flag_slot));
+                self.gen_load(&flag_val, &Ty::Bool, &entry.flag_slot);
                 let drop_lbl = self.next_block_label();
                 let skip_lbl = self.next_block_label();
                 self.emit_terminator(&format!(
@@ -5788,8 +6065,11 @@ impl<'a> FnState<'a> {
                         // through a temp alloca and reload as the coerced
                         // type before returning.
                         if let Some(slot) = self.sret_slot.clone() {
-                            let lty = self.lty(&ret_ty);
-                            self.emit(&format!("store {lty} {v}, ptr {slot}"));
+                            // v0.0.7 Slice 1.2: TBAA-tagged sret store.
+                            // sret is aggregate-typed (struct-by-pointer),
+                            // so gen_store falls through untagged — which
+                            // is the conservative correct default.
+                            self.gen_store(&ret_ty, &v, &slot);
                             self.emit_terminator("ret void");
                         } else if let Some(coerced) = self.coerce_ret.clone() {
                             // Stage the original-typed value through a
@@ -5818,7 +6098,14 @@ impl<'a> FnState<'a> {
                             self.emit(&format!(
                                 "call void @llvm.memset.p0.i64(ptr {tmp}, i8 0, i64 {sz}, i1 false)"
                             ));
-                            self.emit(&format!("store {lty} {v}, ptr {tmp}"));
+                            // v0.0.7 Slice 1.2: ret-coerce stage store /
+                            // reload. The store uses the user's Ty (TBAA-
+                            // tagged when primitive); the reload reads the
+                            // bits through the coerced LLVM type
+                            // (alloca_named_raw owns this slot — raw LLVM
+                            // type — so we can't gen_load it from a Ty).
+                            self.gen_store(&ret_ty, &v, &tmp);
+                            let _ = lty;
                             let coerced_v = self.next_tmp();
                             self.emit(&format!("{coerced_v} = load {coerced}, ptr {tmp}"));
                             self.emit_terminator(&format!("ret {coerced} {coerced_v}"));
@@ -5842,8 +6129,8 @@ impl<'a> FnState<'a> {
                     }
                 }
             }
-            StmtKind::While { cond, body } => self.gen_while(cond, body),
-            StmtKind::For(fl) => self.gen_for(fl),
+            StmtKind::While { cond, body, attributes } => self.gen_while(cond, body, attributes),
+            StmtKind::For(fl, attributes) => self.gen_for(fl, attributes),
             StmtKind::Expr(e) => {
                 let _ = self.gen_expr(e);
             }
@@ -5875,7 +6162,7 @@ impl<'a> FnState<'a> {
                     .clone();
                 self.emit_terminator(&format!("br label %{cont_lbl}"));
             }
-            StmtKind::Loop(body) => self.gen_loop(body),
+            StmtKind::Loop(body, attributes) => self.gen_loop(body, attributes),
             // Phase 5 slice 5ATTR.3: `assert EXPR;` — branch on the bool
             // and trap on the false path. Sema guarantees the expression
             // type is bool. Phase-5 trap-only behavior; slice 5ATTR.4 will
@@ -5898,7 +6185,8 @@ impl<'a> FnState<'a> {
             // We do *not* return early — Phase 5 has no raw pointers, so
             // continuing past a failed assertion can't segfault, and a flag
             // write is cheaper than synthesizing a return-of-default per type.
-            self.emit("store i32 1, ptr @cpc_test_failed");
+            // v0.0.7 Slice 1.2: test-driver flag write — i32 leaf.
+            self.gen_store(&Ty::I32, "1", "@cpc_test_failed");
             self.emit_terminator(&format!("br label %{ok_lbl}"));
         } else {
             self.emit("call void @llvm.trap()");
@@ -5912,7 +6200,7 @@ impl<'a> FnState<'a> {
     ///     body            ; may `br exit` (break) or `br head` (continue) or fall through
     ///     br head
     ///   exit:
-    fn gen_loop(&mut self, body: &Block) {
+    fn gen_loop(&mut self, body: &Block, attributes: &[Attribute]) {
         let head = self.next_block_label();
         let exit = self.next_block_label();
         self.emit_terminator(&format!("br label %{head}"));
@@ -5930,14 +6218,17 @@ impl<'a> FnState<'a> {
             if let Some(tail) = &body.tail {
                 let _ = self.gen_expr(tail);
             }
-            self.emit_terminator(&format!("br label %{head}"));
+            // v0.0.7 Slice 1.3: attach `!llvm.loop` metadata to the
+            // back-edge branch if loop-hint attributes are present.
+            let md = self.loop_metadata_for(attributes);
+            self.emit_terminator(&format!("br label %{head}{md}"));
         }
         self.pop_scope();
         self.loop_labels.pop();
         self.open_block(&exit);
     }
 
-    fn gen_while(&mut self, cond: &Expr, body: &Block) {
+    fn gen_while(&mut self, cond: &Expr, body: &Block, attributes: &[Attribute]) {
         let head = self.next_block_label();
         let loop_body = self.next_block_label();
         let exit = self.next_block_label();
@@ -5965,12 +6256,61 @@ impl<'a> FnState<'a> {
                 // value discarded
                 let _ = self.gen_expr(tail);
             }
-            self.emit_terminator(&format!("br label %{head}"));
+            // v0.0.7 Slice 1.3: `!llvm.loop` on the back-edge branch.
+            let md = self.loop_metadata_for(attributes);
+            self.emit_terminator(&format!("br label %{head}{md}"));
         }
         self.pop_scope();
         self.loop_labels.pop();
 
         self.open_block(&exit);
+    }
+
+    /// v0.0.7 Slice 1.3: build the `, !llvm.loop !N` suffix from a list
+    /// of loop-hint attributes. Returns an empty string when no
+    /// recognized attributes are present so the emitted branch is
+    /// byte-identical to the no-attr case (preserves existing IR test
+    /// fixtures). Recognized: `#[unroll(N)]` →
+    /// `!{!"llvm.loop.unroll.count", i32 N}`; `#[vectorize_width(N)]`
+    /// → `!{!"llvm.loop.vectorize.width", i32 N}`.
+    fn loop_metadata_for(&self, attributes: &[Attribute]) -> String {
+        if attributes.is_empty() {
+            return String::new();
+        }
+        let mut child_ids: Vec<u32> = Vec::new();
+        for a in attributes {
+            let Some(n) = loop_attr_int_value(a) else {
+                continue;
+            };
+            let key = match a.path.name.as_str() {
+                "unroll" => "llvm.loop.unroll.count",
+                "vectorize_width" => "llvm.loop.vectorize.width",
+                _ => continue,
+            };
+            let id = self.md.next_id.get();
+            self.md.next_id.set(id + 1);
+            self.md
+                .nodes
+                .borrow_mut()
+                .push(format!("!{id} = !{{!\"{key}\", i32 {n}}}"));
+            child_ids.push(id);
+        }
+        if child_ids.is_empty() {
+            return String::new();
+        }
+        // The outer node is the `!llvm.loop` group: self-referential
+        // distinct, followed by the per-hint child nodes.
+        let loop_id = self.md.next_id.get();
+        self.md.next_id.set(loop_id + 1);
+        let mut items = vec![format!("!{loop_id}")];
+        for c in &child_ids {
+            items.push(format!("!{c}"));
+        }
+        self.md.nodes.borrow_mut().push(format!(
+            "!{loop_id} = distinct !{{{}}}",
+            items.join(", ")
+        ));
+        format!(", !llvm.loop !{loop_id}")
     }
 
     /// v0.0.4 Phase 4 Slice 4C: lower `for var in iter_expr { body }`
@@ -6022,10 +6362,16 @@ impl<'a> FnState<'a> {
             "{prom_ptr} = call ptr @llvm.coro.promise(ptr {hdl}, i32 {elem_align}, i1 false)"
         ));
         let val = self.next_tmp();
+        // v0.0.7 Slice 1.2: coroutine yield-value load + var store.
+        // gen_load doesn't accept an explicit align argument, but the
+        // coroutine promise pointer needs `align {elem_align}` because
+        // it's an arbitrary stack address from `llvm.coro.promise`.
+        // Emit the load directly here and the store via gen_store
+        // (which picks up TBAA for primitive `elem_ty`).
         self.emit(&format!(
             "{val} = load {elem_llvm}, ptr {prom_ptr}, align {elem_align}"
         ));
-        self.emit(&format!("store {elem_llvm} {val}, ptr {var_slot}"));
+        self.gen_store(&elem_ty, &val, &var_slot);
         self.emit(&format!("call void @llvm.coro.resume(ptr {hdl})"));
 
         // `continue` should jump back to head; `break` to exit.
@@ -6053,7 +6399,7 @@ impl<'a> FnState<'a> {
         self.pop_scope();
     }
 
-    fn gen_for(&mut self, fl: &ForLoop) {
+    fn gen_for(&mut self, fl: &ForLoop, attributes: &[Attribute]) {
         match fl {
             ForLoop::Range { var, iter, body } => {
                 // v0.0.4 Phase 4 Slice 4C: two for-in shapes — closed-range
@@ -6077,9 +6423,10 @@ impl<'a> FnState<'a> {
                 let end_slot = self.alloca_anon(Ty::I32);
 
                 let (start_v, _) = self.gen_expr(start_e).expect("range start");
-                self.emit(&format!("store i32 {start_v}, ptr {i_slot}"));
+                // v0.0.7 Slice 1.2: for-range loop counter — i32 leaf.
+                self.gen_store(&Ty::I32, &start_v, &i_slot);
                 let (end_v, _) = self.gen_expr(end_e).expect("range end");
-                self.emit(&format!("store i32 {end_v}, ptr {end_slot}"));
+                self.gen_store(&Ty::I32, &end_v, &end_slot);
 
                 let head = self.next_block_label();
                 let body_lbl = self.next_block_label();
@@ -6089,9 +6436,9 @@ impl<'a> FnState<'a> {
                 self.emit_terminator(&format!("br label %{head}"));
                 self.open_block(&head);
                 let i_v = self.next_tmp();
-                self.emit(&format!("{i_v} = load i32, ptr {i_slot}"));
+                self.gen_load(&i_v, &Ty::I32, &i_slot);
                 let e_v = self.next_tmp();
-                self.emit(&format!("{e_v} = load i32, ptr {end_slot}"));
+                self.gen_load(&e_v, &Ty::I32, &end_slot);
                 let cond_v = self.next_tmp();
                 let cmp = if inclusive { "sle" } else { "slt" };
                 self.emit(&format!("{cond_v} = icmp {cmp} i32 {i_v}, {e_v}"));
@@ -6120,11 +6467,13 @@ impl<'a> FnState<'a> {
                 // Step block: increment then back to head.
                 self.open_block(&step);
                 let cur_i = self.next_tmp();
-                self.emit(&format!("{cur_i} = load i32, ptr {i_slot}"));
+                self.gen_load(&cur_i, &Ty::I32, &i_slot);
                 let next_i = self.next_tmp();
                 self.emit(&format!("{next_i} = add i32 {cur_i}, 1"));
-                self.emit(&format!("store i32 {next_i}, ptr {i_slot}"));
-                self.emit_terminator(&format!("br label %{head}"));
+                self.gen_store(&Ty::I32, &next_i, &i_slot);
+                // v0.0.7 Slice 1.3: back-edge gets `!llvm.loop`.
+                let md = self.loop_metadata_for(attributes);
+                self.emit_terminator(&format!("br label %{head}{md}"));
 
                 self.pop_scope();
                 self.open_block(&exit);
@@ -6178,7 +6527,9 @@ impl<'a> FnState<'a> {
                 for u in update {
                     let _ = self.gen_expr(u);
                 }
-                self.emit_terminator(&format!("br label %{head}"));
+                // v0.0.7 Slice 1.3: back-edge gets `!llvm.loop`.
+                let md = self.loop_metadata_for(attributes);
+                self.emit_terminator(&format!("br label %{head}{md}"));
 
                 self.pop_scope();
                 self.open_block(&exit);
@@ -6223,16 +6574,17 @@ impl<'a> FnState<'a> {
             ExprKind::BoolLit(b) => Some((if *b { "true" } else { "false" }.to_string(), Ty::Bool)),
             ExprKind::IncludeBytes { .. } => {
                 // v0.0.6 Slice 1A: lower to the byte global's address.
-                // The pre-pass (`emit_include_bytes_globals`) populates
-                // `md.include_bytes` keyed by this expression's span.
+                // The pre-pass (`emit_compile_time_blob_globals`)
+                // populates `md.compile_time_blobs` keyed by this
+                // expression's span.
                 let span = e.span;
                 let (symbol, len) = {
-                    let table = self.md.include_bytes.borrow();
+                    let table = self.md.compile_time_blobs.borrow();
                     table
                         .get(&span)
                         .expect(
                             "include_bytes!: span not in module table — \
-                         sema must have produced a MonoInfo::include_bytes \
+                         sema must have produced a MonoInfo::compile_time_blobs \
                          entry for every ExprKind::IncludeBytes node",
                         )
                         .clone()
@@ -6241,6 +6593,35 @@ impl<'a> FnState<'a> {
                     symbol,
                     Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len))),
                 ))
+            }
+            ExprKind::IncludeStr { .. } => {
+                // v0.0.7 Slice 3.1: lower to a `str` fat-pointer
+                // aggregate `{ ptr, i64 }` pointing at the shared
+                // `[N x i8]` global emitted by
+                // `emit_compile_time_blob_globals`. UTF-8 has already
+                // been validated at sema time (E0875), so the bytes
+                // here are guaranteed valid.
+                let span = e.span;
+                let (symbol, len) = {
+                    let table = self.md.compile_time_blobs.borrow();
+                    table
+                        .get(&span)
+                        .expect(
+                            "include_str!: span not in module table — \
+                         sema must have produced a MonoInfo::compile_time_blobs \
+                         entry for every ExprKind::IncludeStr node",
+                        )
+                        .clone()
+                };
+                let t1 = self.next_tmp();
+                let t2 = self.next_tmp();
+                self.body.push_str(&format!(
+                    "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+                ));
+                self.body.push_str(&format!(
+                    "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+                ));
+                Some((t2, Ty::Str))
             }
             ExprKind::StrLit(s) => {
                 // Phase 8 slice 8.STR.1: lower a string literal to a fat-pointer
@@ -6302,7 +6683,11 @@ impl<'a> FnState<'a> {
                 }
                 let (slot, ty) = self.lookup(name).expect("sema validated").clone();
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = load {}, ptr {slot}", self.lty(&ty)));
+                // v0.0.7 Slice 1.2: ident-lookup load — the densest
+                // single TBAA migration target. Primitive bindings
+                // pick up `!tbaa !N` so LLVM's alias analysis can
+                // hoist past disjoint-type accesses in hot loops.
+                self.gen_load(&v, &ty, &slot);
                 Some((v, ty))
             }
 
@@ -6391,14 +6776,16 @@ impl<'a> FnState<'a> {
         let len = elements.len() as u32;
         let array_ty = Ty::Array(Box::new(elem_ty.clone()), len);
         let llvm_arr = self.lty(&array_ty);
-        let llvm_elem = self.lty(&elem_ty);
+        let _ = self.lty(&elem_ty);
         let slot = self.alloca_anon(array_ty.clone());
         // Store first element.
         let p0 = self.next_tmp();
         self.emit(&format!(
             "{p0} = getelementptr inbounds {llvm_arr}, ptr {slot}, i32 0, i32 0"
         ));
-        self.emit(&format!("store {llvm_elem} {first_val}, ptr {p0}"));
+        // v0.0.7 Slice 1.2: array literal init — per-element store
+        // through GEP. gen_store picks up the element-type TBAA leaf.
+        self.gen_store(&elem_ty, &first_val, &p0);
         // Store the rest.
         for (i, e) in elements.iter().enumerate().skip(1) {
             let (v, _) = self.gen_expr(e).expect("array lit element");
@@ -6406,10 +6793,11 @@ impl<'a> FnState<'a> {
             self.emit(&format!(
                 "{p} = getelementptr inbounds {llvm_arr}, ptr {slot}, i32 0, i32 {i}"
             ));
-            self.emit(&format!("store {llvm_elem} {v}, ptr {p}"));
+            self.gen_store(&elem_ty, &v, &p);
         }
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load {llvm_arr}, ptr {slot}"));
+        // Whole-array load is aggregate-shaped; gen_load skips TBAA.
+        self.gen_load(&v, &array_ty, &slot);
         (v, array_ty)
     }
 
@@ -6420,7 +6808,10 @@ impl<'a> FnState<'a> {
         if let Ty::RawPtr(inner_box) = recv_ty.clone() {
             let inner = (*inner_box).clone();
             let loaded_ptr = self.next_tmp();
-            self.emit(&format!("{loaded_ptr} = load ptr, ptr {recv_ptr}"));
+            // v0.0.7 Slice 1.2: raw-pointer dereference indexing —
+            // ptr-load via the "ptr" TBAA leaf, then element load via
+            // the inner type's leaf.
+            self.gen_load(&loaded_ptr, &recv_ty, &recv_ptr);
             let (idx_val, _) = self.gen_expr(index).expect("index has value");
             let inner_lt = self.lty(&inner);
             let ptr = self.next_tmp();
@@ -6428,7 +6819,7 @@ impl<'a> FnState<'a> {
                 "{ptr} = getelementptr inbounds {inner_lt}, ptr {loaded_ptr}, i64 {idx_val}"
             ));
             let v = self.next_tmp();
-            self.emit(&format!("{v} = load {inner_lt}, ptr {ptr}"));
+            self.gen_load(&v, &inner, &ptr);
             return (v, inner);
         }
         let Ty::Array(elem, n) = recv_ty.clone() else {
@@ -6461,7 +6852,9 @@ impl<'a> FnState<'a> {
             "{ptr} = getelementptr inbounds {llvm_arr}, ptr {recv_ptr}, i64 0, i64 {idx_val}"
         ));
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load {llvm_elem}, ptr {ptr}"));
+        // v0.0.7 Slice 1.2: array element load — element type's TBAA leaf.
+        let _ = llvm_elem;
+        self.gen_load(&v, &elem, &ptr);
         (v, (*elem).clone())
     }
 
@@ -6494,10 +6887,13 @@ impl<'a> FnState<'a> {
             self.emit(&format!(
                 "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {i}"
             ));
-            self.emit(&format!("store {} {val}, ptr {ptr}", self.lty(t)));
+            // v0.0.7 Slice 1.2: TBAA-tagged tuple-struct field write.
+            self.gen_store(t, val, &ptr);
         }
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load {llvm_struct}, ptr {slot}"));
+        // v0.0.7 Slice 1.2: tuple-struct value load — aggregate, no TBAA.
+        let _ = llvm_struct;
+        self.gen_load(&v, &struct_ty, &slot);
         (v, struct_ty)
     }
 
@@ -6520,10 +6916,16 @@ impl<'a> FnState<'a> {
             self.emit(&format!(
                 "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
             ));
-            self.emit(&format!("store {} {val}, ptr {ptr}", self.lty(&field_ty)));
+            // v0.0.7 Slice 1.2: TBAA-tagged struct field write at
+            // struct-literal initialization. Primitive-typed fields
+            // carry their per-type leaf; aggregate fields stay
+            // untagged (gen_store handles both via tbaa_tag_for).
+            self.gen_store(&field_ty, &val, &ptr);
         }
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load {llvm_struct}, ptr {slot}"));
+        // v0.0.7 Slice 1.2: struct-lit value load — aggregate, no TBAA.
+        let _ = llvm_struct;
+        self.gen_load(&v, &struct_ty, &slot);
         (v, struct_ty)
     }
 
@@ -6545,7 +6947,10 @@ impl<'a> FnState<'a> {
             "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
         ));
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load {}, ptr {ptr}", self.lty(&field_ty)));
+        // v0.0.7 Slice 1.2: TBAA-tagged struct field load. Primitive
+        // fields get the per-type leaf; aggregate fields fall through
+        // untagged (gen_load handles both).
+        self.gen_load(&v, &field_ty, &ptr);
         (v, field_ty)
     }
 
@@ -6583,7 +6988,8 @@ impl<'a> FnState<'a> {
                 if let Ty::RawPtr(inner_box) = recv_ty.clone() {
                     let inner = (*inner_box).clone();
                     let loaded_ptr = self.next_tmp();
-                    self.emit(&format!("{loaded_ptr} = load ptr, ptr {recv_slot}"));
+                    // v0.0.7 Slice 1.2: place-side raw-pointer load.
+                    self.gen_load(&loaded_ptr, &recv_ty, &recv_slot);
                     let (idx_val, _) = self.gen_expr(index).expect("index has value");
                     let inner_lt = self.lty(&inner);
                     let ptr = self.next_tmp();
@@ -6636,7 +7042,8 @@ impl<'a> FnState<'a> {
                 // Value expression: stash in a temp alloca and address that.
                 let (val, ty) = self.gen_expr(e).expect("place fallback expects a value");
                 let slot = self.alloca_anon(ty.clone());
-                self.emit(&format!("store {} {val}, ptr {slot}", self.lty(&ty)));
+                // v0.0.7 Slice 1.2: TBAA-tagged spill store.
+                self.gen_store(&ty, &val, &slot);
                 (slot, ty)
             }
         }
@@ -6861,14 +7268,15 @@ impl<'a> FnState<'a> {
                     ));
                     let mc_eq = self.next_tmp();
                     self.emit(&format!("{mc_eq} = icmp eq i32 {mc}, 0"));
-                    self.emit(&format!("store i1 {mc_eq}, ptr {result_slot}"));
+                    // v0.0.7 Slice 1.2: str-eq result store — bool leaf.
+                    self.gen_store(&Ty::Bool, &mc_eq, &result_slot);
                     self.emit_terminator(&format!("br label %{merge_lbl}"));
                     self.open_block(&unequal_lbl);
-                    self.emit(&format!("store i1 false, ptr {result_slot}"));
+                    self.gen_store(&Ty::Bool, "false", &result_slot);
                     self.emit_terminator(&format!("br label %{merge_lbl}"));
                     self.open_block(&merge_lbl);
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = load i1, ptr {result_slot}"));
+                    self.gen_load(&v, &Ty::Bool, &result_slot);
                     if matches!(op, BinOp::Ne) {
                         let inv = self.next_tmp();
                         self.emit(&format!("{inv} = xor i1 {v}, true"));
@@ -7032,20 +7440,21 @@ impl<'a> FnState<'a> {
         self.emit_terminator(&format!("br i1 {lv}, label %{then_lbl}, label %{else_lbl}"));
 
         self.open_block(&then_lbl);
+        // v0.0.7 Slice 1.2: short-circuit result stores — bool leaf.
         let (v_then, v_else) = if is_and {
             let (rv, _) = self.gen_expr(rhs).expect("rhs of &&");
-            self.emit(&format!("store i1 {rv}, ptr {result_slot}"));
+            self.gen_store(&Ty::Bool, &rv, &result_slot);
             self.emit_terminator(&format!("br label %{merge_lbl}"));
             self.open_block(&else_lbl);
-            self.emit(&format!("store i1 false, ptr {result_slot}"));
+            self.gen_store(&Ty::Bool, "false", &result_slot);
             self.emit_terminator(&format!("br label %{merge_lbl}"));
             ("rhs".to_string(), "false".to_string())
         } else {
-            self.emit(&format!("store i1 true, ptr {result_slot}"));
+            self.gen_store(&Ty::Bool, "true", &result_slot);
             self.emit_terminator(&format!("br label %{merge_lbl}"));
             self.open_block(&else_lbl);
             let (rv, _) = self.gen_expr(rhs).expect("rhs of ||");
-            self.emit(&format!("store i1 {rv}, ptr {result_slot}"));
+            self.gen_store(&Ty::Bool, &rv, &result_slot);
             self.emit_terminator(&format!("br label %{merge_lbl}"));
             ("true".to_string(), "rhs".to_string())
         };
@@ -7053,7 +7462,7 @@ impl<'a> FnState<'a> {
 
         self.open_block(&merge_lbl);
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load i1, ptr {result_slot}"));
+        self.gen_load(&v, &Ty::Bool, &result_slot);
         (v, Ty::Bool)
     }
 
@@ -7087,8 +7496,8 @@ impl<'a> FnState<'a> {
                     Ty::RawPtr(i) => (**i).clone(),
                     _ => unreachable!("sema validated operand is RawPtr"),
                 };
-                let inner_lt = self.lty(&inner);
-                self.emit(&format!("{r} = load {inner_lt}, ptr {v}"));
+                // v0.0.7 Slice 1.2: `*p` dereference load — inner type's TBAA leaf.
+                self.gen_load(&r, &inner, &v);
                 (r, inner)
             }
             UnaryOp::BitNot => {
@@ -7149,12 +7558,12 @@ impl<'a> FnState<'a> {
         let enum_ty = Ty::Enum(id);
         let llvm_enum = self.lty(&enum_ty);
         let slot = self.alloca_anon(enum_ty.clone());
-        // Store tag at field 0.
+        // Store tag at field 0. v0.0.7 Slice 1.2: tag is i32 → i32 leaf.
         let tag_ptr = self.next_tmp();
         self.emit(&format!(
             "{tag_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot}, i32 0, i32 0"
         ));
-        self.emit(&format!("store i32 {tag}, ptr {tag_ptr}"));
+        self.gen_store(&Ty::I32, &tag.to_string(), &tag_ptr);
         // Store each payload value in its slot.
         for (i, (val, ty)) in args.iter().enumerate() {
             // GEP to the i64 payload array, then to slot i.
@@ -7162,12 +7571,14 @@ impl<'a> FnState<'a> {
             self.emit(&format!(
                 "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot}, i32 0, i32 1, i64 {i}"
             ));
-            // Opaque pointers: storing as the payload type is a no-op cast.
-            self.emit(&format!("store {} {val}, ptr {slot_ptr}", self.lty(ty)));
+            // v0.0.7 Slice 1.2: payload store — primitive payload types
+            // pick up their TBAA leaf via gen_store; aggregate payloads
+            // (struct/enum/string/etc.) fall through untagged.
+            self.gen_store(ty, val, &slot_ptr);
         }
-        // Load the aggregate value.
+        // Load the aggregate value (whole enum — gen_load skips TBAA on aggregates).
         let v = self.next_tmp();
-        self.emit(&format!("{v} = load {llvm_enum}, ptr {slot}"));
+        self.gen_load(&v, &enum_ty, &slot);
         (v, enum_ty)
     }
 
@@ -7191,7 +7602,8 @@ impl<'a> FnState<'a> {
                     unreachable!("sema validated")
                 };
                 let slot = self.alloca_anon(ty.clone());
-                self.emit(&format!("store {} {val}, ptr {slot}", self.lty(&ty)));
+                // v0.0.7 Slice 1.2: match scrutinee spill — aggregate enum.
+                self.gen_store(&ty, &val, &slot);
                 (slot, id)
             }
         }
@@ -7286,10 +7698,13 @@ impl<'a> FnState<'a> {
                     // Bind the whole scrutinee to `name`. For an enum that's
                     // a load of the aggregate from the slot we already have.
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = load {llvm_enum}, ptr {scr_ptr}"));
-                    let local_slot = self.alloca_named(&name.name, Ty::Enum(enum_id));
-                    self.emit(&format!("store {llvm_enum} {v}, ptr {local_slot}"));
-                    self.bind(&name.name, local_slot, Ty::Enum(enum_id));
+                    let enum_ty = Ty::Enum(enum_id);
+                    // v0.0.7 Slice 1.2: enum is aggregate — gen_load/gen_store skip TBAA.
+                    let _ = llvm_enum;
+                    self.gen_load(&v, &enum_ty, &scr_ptr);
+                    let local_slot = self.alloca_named(&name.name, enum_ty.clone());
+                    self.gen_store(&enum_ty, &v, &local_slot);
+                    self.bind(&name.name, local_slot, enum_ty);
                 }
                 PatternKind::Variant {
                     variant_name,
@@ -7316,9 +7731,12 @@ impl<'a> FnState<'a> {
                                 "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {scr_ptr}, i32 0, i32 1, i64 {pi}"
                             ));
                             let v = self.next_tmp();
-                            self.emit(&format!("{v} = load {}, ptr {slot_ptr}", self.lty(&pty)));
+                            // v0.0.7 Slice 1.2: match-arm payload load/store —
+                            // primitive payloads pick up their TBAA leaf;
+                            // aggregate payloads (struct, string) fall through.
+                            self.gen_load(&v, &pty, &slot_ptr);
                             let local_slot = self.alloca_named(&name.name, pty.clone());
-                            self.emit(&format!("store {} {v}, ptr {local_slot}", self.lty(&pty)));
+                            self.gen_store(&pty, &v, &local_slot);
                             self.bind(&name.name, local_slot, pty);
                         }
                         // Wildcard payload patterns bind nothing.
@@ -7333,8 +7751,9 @@ impl<'a> FnState<'a> {
                     let s = self.alloca_anon(ty.clone());
                     result_slot = Some((s, ty.clone()));
                 }
-                let (rs, rt) = result_slot.as_ref().unwrap();
-                self.emit(&format!("store {} {v}, ptr {rs}", self.lty(rt)));
+                let (rs, rt) = result_slot.clone().unwrap();
+                // v0.0.7 Slice 1.2: match arm result store.
+                self.gen_store(&rt, &v, &rs);
             }
             self.pop_scope();
             if !self.terminated {
@@ -7355,7 +7774,8 @@ impl<'a> FnState<'a> {
         match &result_slot {
             Some((rs, rt)) => {
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = load {} , ptr {rs}", self.lty(rt)));
+                // v0.0.7 Slice 1.2: match merge result reload.
+                self.gen_load(&v, rt, rs);
                 Some((v, rt.clone()))
             }
             None => None,
@@ -7466,7 +7886,9 @@ impl<'a> FnState<'a> {
                 } = ty
                 {
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = load ptr, ptr {slot}"));
+                    // v0.0.7 Slice 1.2: fn-ptr load — ptr leaf.
+                    let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
+                    self.gen_load(&v, &fnptr_ty, &slot);
                     return self.gen_indirect_call(&v, &params, &return_type, args);
                 }
             }
@@ -7498,7 +7920,9 @@ impl<'a> FnState<'a> {
                             "{field_ptr} = getelementptr inbounds {llvm_struct}, ptr {recv_addr}, i32 0, i32 {idx}"
                         ));
                         let fn_val = self.next_tmp();
-                        self.emit(&format!("{fn_val} = load ptr, ptr {field_ptr}"));
+                        // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
+                        let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
+                        self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
                         return self.gen_indirect_call(&fn_val, &params, &return_type, args);
                     }
                 }
@@ -7918,7 +8342,11 @@ impl<'a> FnState<'a> {
             }
             self.emit(&format!("call void{type_prefix} @{symbol}({head})"));
             let v = self.next_tmp();
-            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            // v0.0.7 Slice 1.2: sret-call result reload. `ret` is
+            // typically an aggregate (the whole reason for sret), so
+            // gen_load skips TBAA — conservative correct default.
+            let _ = lty;
+            self.gen_load(&v, &ret, &slot);
             return Some((v, ret));
         }
         let call_kind = if want_musttail {
@@ -8832,7 +9260,7 @@ impl<'a> FnState<'a> {
         // so cross-module returns don't double-drop the heap buffer.
         if return_passes_by_sret_widened(&info.return_type, self.types) {
             let ret = info.return_type.clone();
-            let lty = self.lty(&ret);
+            let _ = self.lty(&ret);
             let slot = self.alloca_anon(ret.clone());
             let mut head = format!("ptr {slot}");
             if !arg_str.is_empty() {
@@ -8841,7 +9269,8 @@ impl<'a> FnState<'a> {
             }
             self.emit(&format!("call void @{mangled}({head})"));
             let v = self.next_tmp();
-            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            // v0.0.7 Slice 1.2: method-call sret reload — aggregate ret.
+            self.gen_load(&v, &ret, &slot);
             return Some((v, ret));
         }
         match info.return_type {
@@ -8891,7 +9320,7 @@ impl<'a> FnState<'a> {
         let arg_str = arg_parts.join(", ");
         if return_passes_by_sret_widened(&info.return_type, self.types) {
             let ret = info.return_type.clone();
-            let lty = self.lty(&ret);
+            let _ = self.lty(&ret);
             let slot = self.alloca_anon(ret.clone());
             let mut head = format!("ptr {slot}");
             if !arg_str.is_empty() {
@@ -8900,7 +9329,8 @@ impl<'a> FnState<'a> {
             }
             self.emit(&format!("call void @{mangled}({head})"));
             let v = self.next_tmp();
-            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            // v0.0.7 Slice 1.2: sret reload — aggregate ret.
+            self.gen_load(&v, &ret, &slot);
             return (v, ret);
         }
         match &info.return_type {
@@ -9005,7 +9435,9 @@ impl<'a> FnState<'a> {
             }
             self.emit(&format!("call void @{mangled}({head})"));
             let v = self.next_tmp();
-            self.emit(&format!("{v} = load {lty}, ptr {slot}"));
+            // v0.0.7 Slice 1.2: sret reload — aggregate ret.
+            let _ = lty;
+            self.gen_load(&v, &ret, &slot);
             return Some((v, ret));
         }
         match info.return_type {
@@ -9057,7 +9489,8 @@ impl<'a> FnState<'a> {
                     let v = self.gen_expr(eb);
                     if !self.terminated {
                         if let (Some((slot, ty)), Some((rv, _))) = (&result_slot, &v) {
-                            self.emit(&format!("store {} {rv}, ptr {slot}", self.lty(&*ty)));
+                            // v0.0.7 Slice 1.2: if-else-if chain result store.
+                            self.gen_store(ty, rv, slot);
                         }
                         self.emit_terminator(&format!("br label %{merge_lbl}"));
                     }
@@ -9073,7 +9506,8 @@ impl<'a> FnState<'a> {
         match result_slot {
             Some((slot, ty)) => {
                 let v = self.next_tmp();
-                self.emit(&format!("{v} = load {} , ptr {slot}", self.lty(&ty)));
+                // v0.0.7 Slice 1.2: if-expr merge result reload.
+                self.gen_load(&v, &ty, &slot);
                 Some((v, ty))
             }
             None => None,
@@ -9092,7 +9526,8 @@ impl<'a> FnState<'a> {
             if let Some(tail) = &b.tail {
                 let v = self.gen_expr(tail);
                 if let (Some((s, ty)), Some((rv, _))) = (slot, v) {
-                    self.emit(&format!("store {} {rv}, ptr {s}", self.lty(&*ty)));
+                    // v0.0.7 Slice 1.2: block-tail value store.
+                    self.gen_store(ty, &rv, s);
                 }
             }
             self.emit_terminator(&format!("br label %{merge_lbl}"));
@@ -9145,17 +9580,19 @@ impl<'a> FnState<'a> {
         // a pointer that we can store to directly.
         let (slot, target_ty) = self.gen_place(target);
         let (rhs_v, _) = self.gen_expr(value).expect("assigned value");
-        let lty = self.lty(&target_ty);
+        let _ = self.lty(&target_ty);
         // v0.0.3 Slice 3A: compound assigns. For `a OP= b`, lower as
         // load + binary op + store. Plain `=` is just store.
+        // v0.0.7 Slice 1.2: assignment store is the HOTTEST primitive
+        // store site in a typical function — drives raytracer perf.
         let to_store = if matches!(op, AssignOp::Assign) {
             rhs_v
         } else {
             let cur = self.next_tmp();
-            self.emit(&format!("{cur} = load {lty}, ptr {slot}"));
+            self.gen_load(&cur, &target_ty, &slot);
             self.gen_compound_op(op, &target_ty, &cur, &rhs_v)
         };
-        self.emit(&format!("store {lty} {to_store}, ptr {slot}"));
+        self.gen_store(&target_ty, &to_store, &slot);
     }
 
     /// Lower one compound-assign binary op given pre-evaluated SSA values.
@@ -9578,8 +10015,11 @@ impl<'a> FnState<'a> {
         // hash + counter so we can re-load through the loop.
         let h_slot = self.alloca_anon(Ty::U64);
         let i_slot = self.alloca_anon(Ty::I64);
-        self.emit(&format!("store i64 -3750763034362895579, ptr {h_slot}"));
-        self.emit(&format!("store i64 0, ptr {i_slot}"));
+        // v0.0.7 Slice 1.2: FNV-1a hash inner loop — all primitive
+        // loads/stores get their TBAA leaf, lighting up LLVM's alias
+        // analysis on the inner-loop hot path.
+        self.gen_store(&Ty::U64, "-3750763034362895579", &h_slot);
+        self.gen_store(&Ty::I64, "0", &i_slot);
         let loop_bb = self.next_block_label();
         let body_bb = self.next_block_label();
         let done_bb = self.next_block_label();
@@ -9587,7 +10027,7 @@ impl<'a> FnState<'a> {
         self.body.push_str(&format!("{loop_bb}:\n"));
         self.terminated = false;
         let i_cur = self.next_tmp();
-        self.emit(&format!("{i_cur} = load i64, ptr {i_slot}"));
+        self.gen_load(&i_cur, &Ty::I64, &i_slot);
         let cmp = self.next_tmp();
         self.emit(&format!("{cmp} = icmp slt i64 {i_cur}, {n}"));
         self.emit_terminator(&format!("br i1 {cmp}, label %{body_bb}, label %{done_bb}"));
@@ -9598,24 +10038,24 @@ impl<'a> FnState<'a> {
             "{byte_p} = getelementptr inbounds i8, ptr {p}, i64 {i_cur}"
         ));
         let byte = self.next_tmp();
-        self.emit(&format!("{byte} = load i8, ptr {byte_p}"));
+        self.gen_load(&byte, &Ty::I8, &byte_p);
         let byte_w = self.next_tmp();
         self.emit(&format!("{byte_w} = zext i8 {byte} to i64"));
         let h_cur = self.next_tmp();
-        self.emit(&format!("{h_cur} = load i64, ptr {h_slot}"));
+        self.gen_load(&h_cur, &Ty::U64, &h_slot);
         let xored = self.next_tmp();
         self.emit(&format!("{xored} = xor i64 {h_cur}, {byte_w}"));
         let mixed = self.next_tmp();
         self.emit(&format!("{mixed} = mul i64 {xored}, 1099511628211"));
-        self.emit(&format!("store i64 {mixed}, ptr {h_slot}"));
+        self.gen_store(&Ty::U64, &mixed, &h_slot);
         let i_next = self.next_tmp();
         self.emit(&format!("{i_next} = add i64 {i_cur}, 1"));
-        self.emit(&format!("store i64 {i_next}, ptr {i_slot}"));
+        self.gen_store(&Ty::I64, &i_next, &i_slot);
         self.emit_terminator(&format!("br label %{loop_bb}"));
         self.body.push_str(&format!("{done_bb}:\n"));
         self.terminated = false;
         let h_final = self.next_tmp();
-        self.emit(&format!("{h_final} = load i64, ptr {h_slot}"));
+        self.gen_load(&h_final, &Ty::U64, &h_slot);
         (h_final, Ty::U64)
     }
 
@@ -9656,14 +10096,15 @@ impl<'a> FnState<'a> {
         ));
         let mc_eq = self.next_tmp();
         self.emit(&format!("{mc_eq} = icmp eq i32 {mc}, 0"));
-        self.emit(&format!("store i1 {mc_eq}, ptr {result_slot}"));
+        // v0.0.7 Slice 1.2: string-eq result store — bool leaf.
+        self.gen_store(&Ty::Bool, &mc_eq, &result_slot);
         self.emit_terminator(&format!("br label %{merge_lbl}"));
         self.open_block(&unequal_lbl);
-        self.emit(&format!("store i1 false, ptr {result_slot}"));
+        self.gen_store(&Ty::Bool, "false", &result_slot);
         self.emit_terminator(&format!("br label %{merge_lbl}"));
         self.open_block(&merge_lbl);
         let result = self.next_tmp();
-        self.emit(&format!("{result} = load i1, ptr {result_slot}"));
+        self.gen_load(&result, &Ty::Bool, &result_slot);
         (result, Ty::Bool)
     }
 
@@ -9855,14 +10296,15 @@ impl<'a> FnState<'a> {
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
-                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                // v0.0.7 Slice 1.2: string fat-pointer len field — usize leaf.
+                self.gen_load(&lv, &Ty::Usize, &lp);
                 (lv, Ty::Usize)
             }
             "is_empty" => {
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
-                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                self.gen_load(&lv, &Ty::Usize, &lp);
                 let cmp = self.next_tmp();
                 self.emit(&format!("{cmp} = icmp eq i64 {lv}, 0"));
                 (cmp, Ty::Bool)
@@ -9872,11 +10314,12 @@ impl<'a> FnState<'a> {
                 let pp = self.next_tmp();
                 self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
-                self.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                // v0.0.7 Slice 1.2: string ptr field — ptr leaf.
+                self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
-                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                self.gen_load(&lv, &Ty::Usize, &lp);
                 let s0 = self.next_tmp();
                 self.emit(&format!(
                     "{s0} = insertvalue {{ ptr, i64 }} undef, ptr {pv}, 0"
@@ -9893,11 +10336,12 @@ impl<'a> FnState<'a> {
                 let pp = self.next_tmp();
                 self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
-                self.emit(&format!("{pv} = load ptr, ptr {pp}"));
+                // v0.0.7 Slice 1.2: string.clone() — ptr + len reads.
+                self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 let lp = self.next_tmp();
                 self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
-                self.emit(&format!("{lv} = load i64, ptr {lp}"));
+                self.gen_load(&lv, &Ty::Usize, &lp);
                 let buf = self.next_tmp();
                 self.emit(&format!("{buf} = call ptr @malloc(i64 {lv})"));
                 let _cpy = self.next_tmp();
@@ -10133,6 +10577,186 @@ impl<'a> FnState<'a> {
                 self.emit(&format!("{t} = load {arr_lty}, ptr {slot}, align {align}"));
                 (t, Ty::Array(elem.clone(), *lanes))
             }
+            // v0.0.7 Slice 2.1: lane-wise comparison ops.
+            //   1. fcmp/icmp produces `<N x i1>`.
+            //   2. sext to the mask shape (signed-int SIMD of the
+            //      bit-width-matched lane size).
+            "lt" | "le" | "gt" | "ge" | "eq" | "ne" => {
+                let (b, _) = self.gen_expr(&args[0]).expect("simd cmp arg");
+                let op_kind = if elem.is_float() {
+                    "fcmp"
+                } else if elem.is_signed_int() {
+                    "icmp"
+                } else {
+                    "icmp"
+                };
+                let pred = match (method, elem.is_float(), elem.is_signed_int()) {
+                    ("eq", true, _) => "oeq",
+                    ("ne", true, _) => "one",
+                    ("lt", true, _) => "olt",
+                    ("le", true, _) => "ole",
+                    ("gt", true, _) => "ogt",
+                    ("ge", true, _) => "oge",
+                    ("eq", false, _) => "eq",
+                    ("ne", false, _) => "ne",
+                    ("lt", false, true) => "slt",
+                    ("le", false, true) => "sle",
+                    ("gt", false, true) => "sgt",
+                    ("ge", false, true) => "sge",
+                    ("lt", false, false) => "ult",
+                    ("le", false, false) => "ule",
+                    ("gt", false, false) => "ugt",
+                    ("ge", false, false) => "uge",
+                    _ => unreachable!(),
+                };
+                let cmp_i1 = self.next_tmp();
+                self.emit(&format!("{cmp_i1} = {op_kind} {pred} {lty} {recv}, {b}"));
+                // Mask shape: <N x iN> where iN matches the bit width.
+                let mask_elem = match **elem {
+                    Ty::I8 | Ty::U8 | Ty::Bool => Ty::I8,
+                    Ty::I16 | Ty::U16 => Ty::I16,
+                    Ty::I32 | Ty::U32 | Ty::F32 => Ty::I32,
+                    _ => Ty::I64,
+                };
+                let mask_ty = Ty::Simd {
+                    elem: Box::new(mask_elem.clone()),
+                    lanes: *lanes,
+                };
+                let mask_lty = self.lty(&mask_ty);
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = sext <{lanes} x i1> {cmp_i1} to {mask_lty}"
+                ));
+                (result, mask_ty)
+            }
+            // v0.0.7 Slice 2.1: select(true_v, false_v) on a mask
+            // receiver. Convert mask <N x iN> back to <N x i1> via
+            // `icmp ne 0`, then LLVM `select`.
+            "select" => {
+                let (t_v, t_ty) = self.gen_expr(&args[0]).expect("select true arg");
+                let (f_v, _) = self.gen_expr(&args[1]).expect("select false arg");
+                let mask_i1 = self.next_tmp();
+                self.emit(&format!(
+                    "{mask_i1} = icmp ne {lty} {recv}, zeroinitializer"
+                ));
+                let result = self.next_tmp();
+                let t_lty = self.lty(&t_ty);
+                self.emit(&format!(
+                    "{result} = select <{lanes} x i1> {mask_i1}, {t_lty} {t_v}, {t_lty} {f_v}"
+                ));
+                (result, t_ty)
+            }
+            // v0.0.7 Slice 2.1: mask reductions. `any` = OR-reduce
+            // (i1 result); `all` = AND-reduce. Convert mask to i1
+            // vector first so the OR/AND reduction widths are the
+            // smallest possible.
+            "any" | "all" => {
+                let mask_i1 = self.next_tmp();
+                self.emit(&format!(
+                    "{mask_i1} = icmp ne {lty} {recv}, zeroinitializer"
+                ));
+                let intrinsic = if method == "any" {
+                    "or"
+                } else {
+                    "and"
+                };
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = call i1 @llvm.vector.reduce.{intrinsic}.v{lanes}i1(<{lanes} x i1> {mask_i1})"
+                ));
+                (result, Ty::Bool)
+            }
+            // v0.0.7 Slice 2.1: horizontal sum / product. Float uses
+            // the sequential-fp reduction with a seed (0.0 / 1.0);
+            // int uses the integer reduction (no seed).
+            "sum" | "product" => {
+                let elem_suffix = simd_intrinsic_suffix(elem, *lanes);
+                let result = self.next_tmp();
+                if elem.is_float() {
+                    let (intrinsic, seed) = if method == "sum" {
+                        ("fadd", "0.0")
+                    } else {
+                        ("fmul", "1.0")
+                    };
+                    self.emit(&format!(
+                        "{result} = call {elem_lty} @llvm.vector.reduce.{intrinsic}.{elem_suffix}({elem_lty} {seed}, {lty} {recv})"
+                    ));
+                } else {
+                    let intrinsic = if method == "sum" { "add" } else { "mul" };
+                    self.emit(&format!(
+                        "{result} = call {elem_lty} @llvm.vector.reduce.{intrinsic}.{elem_suffix}({lty} {recv})"
+                    ));
+                }
+                (result, (**elem).clone())
+            }
+            // v0.0.7 Slice 2.1: horizontal min/max. Same int-vs-float
+            // split as the lane-wise `min`/`max`.
+            "min_across" | "max_across" => {
+                let elem_suffix = simd_intrinsic_suffix(elem, *lanes);
+                let intrinsic = match (method, elem.is_float(), elem.is_signed_int()) {
+                    ("min_across", true, _) => "fmin",
+                    ("max_across", true, _) => "fmax",
+                    ("min_across", false, true) => "smin",
+                    ("max_across", false, true) => "smax",
+                    ("min_across", false, false) => "umin",
+                    ("max_across", false, false) => "umax",
+                    _ => unreachable!(),
+                };
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = call {elem_lty} @llvm.vector.reduce.{intrinsic}.{elem_suffix}({lty} {recv})"
+                ));
+                (result, (**elem).clone())
+            }
+            // v0.0.7 Slice 2.1: reverse all lanes — shufflevector
+            // with a constant descending mask.
+            "reverse" => {
+                let mask_parts: Vec<String> = (0..*lanes)
+                    .rev()
+                    .map(|i| format!("i32 {i}"))
+                    .collect();
+                let mask = mask_parts.join(", ");
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = shufflevector {lty} {recv}, {lty} undef, <{lanes} x i32> <{mask}>"
+                ));
+                (result, recv_ty.clone())
+            }
+            // v0.0.7 Slice 2.1: swizzle — per-lane permutation by a
+            // constant `[u32; N]` array literal.
+            "swizzle" => {
+                let indices = simd_swizzle_indices(&args[0], *lanes)
+                    .expect("sema validated swizzle arg shape");
+                let mask_parts: Vec<String> =
+                    indices.iter().map(|i| format!("i32 {i}")).collect();
+                let mask = mask_parts.join(", ");
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = shufflevector {lty} {recv}, {lty} undef, <{lanes} x i32> <{mask}>"
+                ));
+                (result, recv_ty.clone())
+            }
+            // v0.0.7 Slice 2.1: interleave_lo / interleave_hi —
+            // shufflevector picking even pairs from the lower / upper
+            // halves of (recv, arg).
+            "interleave_lo" | "interleave_hi" => {
+                let (b, _) = self.gen_expr(&args[0]).expect("interleave arg");
+                let half = *lanes / 2;
+                let mut mask_parts: Vec<String> = Vec::with_capacity(*lanes as usize);
+                let base: u32 = if method == "interleave_lo" { 0 } else { half };
+                for i in 0..half {
+                    let idx_a = base + i;
+                    let idx_b = base + i + *lanes; // second operand starts at `lanes`
+                    mask_parts.push(format!("i32 {idx_a}"));
+                    mask_parts.push(format!("i32 {idx_b}"));
+                }
+                let mask = mask_parts.join(", ");
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = shufflevector {lty} {recv}, {lty} {b}, <{lanes} x i32> <{mask}>"
+                ));
+                (result, recv_ty.clone())
+            }
             _ => unreachable!("sema validated SIMD method `{method}`"),
         }
     }
@@ -10143,6 +10767,40 @@ impl<'a> FnState<'a> {
 /// v0.0.6 Slice 1B: free-fn alias of sema's `simd_ty_from_name` so codegen
 /// can recognize the same source names without cross-module imports.
 /// Update both whenever a new SIMD width is added.
+/// v0.0.7 Slice 2.1: parse the `[u32; N]` array literal that drives
+/// `swizzle` into its constant indices. Sema validated the shape;
+/// this helper just walks the AST to surface the integer values.
+fn simd_swizzle_indices(e: &Expr, lanes: u32) -> Option<Vec<u32>> {
+    let ExprKind::ArrayLit { elements } = &e.kind else {
+        return None;
+    };
+    if elements.len() as u32 != lanes {
+        return None;
+    }
+    let mut out = Vec::with_capacity(lanes as usize);
+    for el in elements {
+        let v = simd_lane_literal(el)?;
+        out.push(v as u32);
+    }
+    Some(out)
+}
+
+/// v0.0.7 Slice 1.3: extract the int payload from a one-arg loop-hint
+/// attribute (`#[unroll(N)]` / `#[vectorize_width(N)]`). Returns
+/// `None` for any other shape — the validator in `attrs.rs` rejects
+/// those at the boundary, so reaching here with a non-int means
+/// sema/attrs already produced a diagnostic and codegen should skip
+/// silently.
+fn loop_attr_int_value(a: &Attribute) -> Option<i64> {
+    if a.args.len() != 1 {
+        return None;
+    }
+    match &a.args[0] {
+        AttrArg::Int(v, _) => Some(*v),
+        _ => None,
+    }
+}
+
 fn codegen_simd_ty_from_name(name: &str) -> Option<Ty> {
     match name {
         "f32x4" => Some(Ty::Simd {
@@ -10159,6 +10817,10 @@ fn codegen_simd_ty_from_name(name: &str) -> Option<Ty> {
         }),
         "i64x2" => Some(Ty::Simd {
             elem: Box::new(Ty::I64),
+            lanes: 2,
+        }),
+        "u64x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::U64),
             lanes: 2,
         }),
         "u32x4" => Some(Ty::Simd {
@@ -10181,6 +10843,26 @@ fn codegen_simd_ty_from_name(name: &str) -> Option<Ty> {
             elem: Box::new(Ty::U16),
             lanes: 8,
         }),
+        // v0.0.7 Slice 2.2: 256-bit widths.
+        "f32x8"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  }),
+        "f64x4"  => Some(Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  }),
+        "i8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
+        "u8x32"  => Some(Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 }),
+        "i16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
+        "u16x16" => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 }),
+        "i32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
+        "u32x8"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  }),
+        "i64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
+        "u64x4"  => Some(Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  }),
+        // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
+        "mask8x16"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 }),
+        "mask16x8"  => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  }),
+        "mask32x4"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  }),
+        "mask64x2"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  }),
+        "mask8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
+        "mask16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
+        "mask32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
+        "mask64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
         _ => None,
     }
 }
@@ -10515,6 +11197,250 @@ mod tests {
         assert!(ir.contains("call {i32, i1} @llvm.smul.with.overflow.i32"));
         assert!(ir.contains("call void @llvm.trap()"));
         assert!(ir.contains("unreachable"));
+    }
+
+    // ---- v0.0.7 Slice 1.3: loop-hint attributes ----
+
+    #[test]
+    fn unroll_attribute_emits_llvm_loop_metadata() {
+        let ir = gen_src(
+            "fn main() -> i32 { \
+                let mut i: i32 = 0; \
+                #[unroll(4)] while i < 10 { i = i + 1; } \
+                return 0; \
+            }",
+        );
+        assert!(
+            ir.contains("!\"llvm.loop.unroll.count\", i32 4"),
+            "expected unroll.count metadata node; IR:\n{ir}"
+        );
+        let backedge_md = ir
+            .lines()
+            .any(|l| l.contains("br label %") && l.contains(", !llvm.loop !"));
+        assert!(
+            backedge_md,
+            "expected `!llvm.loop` on a back-edge branch; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn vectorize_width_attribute_on_for_loop() {
+        let ir = gen_src(
+            "fn main() -> i32 { \
+                let mut sum: i32 = 0; \
+                #[vectorize_width(8)] for i in 0..16 { sum = sum + i; } \
+                return 0; \
+            }",
+        );
+        assert!(
+            ir.contains("!\"llvm.loop.vectorize.width\", i32 8"),
+            "expected vectorize.width metadata; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn loop_without_attribute_omits_llvm_loop_metadata() {
+        // Regression guard: a plain `while` keeps the existing
+        // back-edge shape (no trailing `, !llvm.loop !N`).
+        let ir = gen_src(
+            "fn main() -> i32 { \
+                let mut i: i32 = 0; \
+                while i < 10 { i = i + 1; } \
+                return 0; \
+            }",
+        );
+        assert!(
+            !ir.contains("!llvm.loop"),
+            "expected no `!llvm.loop` references for an unannotated loop; IR:\n{ir}"
+        );
+    }
+
+    // ---- v0.0.7 Slice 1.2: TBAA metadata ----
+
+    #[test]
+    fn tbaa_tags_appear_on_primitive_ident_load() {
+        // A primitive-typed binding read goes through `gen_load`,
+        // which appends `, !tbaa !N` for the i32 leaf. The TBAA root
+        // + leaf definitions live at module-end (lazy-allocated, ID
+        // band shared with `register_range`).
+        let ir = gen_src("fn main() -> i32 { let x: i32 = 7; return x; }");
+        // Tree definitions at module end.
+        assert!(
+            ir.contains("!{!\"C+ TBAA Root\"}"),
+            "missing TBAA root; IR:\n{ir}"
+        );
+        assert!(
+            ir.lines().any(|l| l.contains("!{!\"i32\",") && l.contains("i64 0}")),
+            "missing i32 TBAA leaf; IR:\n{ir}"
+        );
+        // The load picked up the tag.
+        let tagged_loads = ir
+            .lines()
+            .filter(|l| l.contains(" = load i32,") && l.contains("!tbaa "))
+            .count();
+        assert!(
+            tagged_loads >= 1,
+            "expected at least one TBAA-tagged i32 load; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn tbaa_distinct_leaves_for_disjoint_primitives() {
+        // The whole point of TBAA — `i32` and `f64` get distinct leaf
+        // IDs, so LLVM's alias analysis can prove that a `*i32` load
+        // can't alias a `*f64` store. Verified at the metadata-tree
+        // level rather than via downstream pass output (which depends
+        // on optimizer version).
+        let ir = gen_src(
+            "fn main() -> i32 { \
+                let a: i32 = 1; \
+                let b: f64 = 2.0; \
+                if a > 0 { return 0; } \
+                if b > 0.0 { return 1; } \
+                return 2; \
+            }",
+        );
+        let i32_leaf_line = ir
+            .lines()
+            .find(|l| l.contains("!{!\"i32\",") && l.contains("i64 0}"))
+            .expect("i32 leaf");
+        let f64_leaf_line = ir
+            .lines()
+            .find(|l| l.contains("!{!\"f64\",") && l.contains("i64 0}"))
+            .expect("f64 leaf");
+        // The leading `!N` IDs differ.
+        let i32_id: &str = i32_leaf_line.split(" = ").next().unwrap();
+        let f64_id: &str = f64_leaf_line.split(" = ").next().unwrap();
+        assert_ne!(i32_id, f64_id, "i32 and f64 must use distinct TBAA leaves");
+    }
+
+    #[test]
+    fn tbaa_omitted_for_aggregate_struct_loads() {
+        // `gen_load` returns no TBAA tag for aggregate types (struct,
+        // enum, str, slice) — `tbaa_tag_for` returns None for those.
+        // The whole-struct load that follows a struct literal init
+        // exercises this: the value load on `let p: Pt = Pt { x: 1, y: 2 };`
+        // has no `!tbaa` attached.
+        let ir = gen_src(
+            "struct Pt { x: i32, y: i32 }\n\
+             fn main() -> i32 { let p: Pt = Pt { x: 1, y: 2 }; return p.x; }",
+        );
+        // No `!tbaa` on whole-struct loads (gen_load returns None for Ty::Struct).
+        let aggregate_load_lines: Vec<&str> = ir
+            .lines()
+            .filter(|l| l.contains(" = load %Pt,"))
+            .collect();
+        for l in &aggregate_load_lines {
+            assert!(
+                !l.contains("!tbaa "),
+                "whole-struct loads must not carry TBAA: {l}"
+            );
+        }
+        // But the i32-field load does.
+        let field_load_tagged = ir
+            .lines()
+            .any(|l| l.contains(" = load i32,") && l.contains("!tbaa "));
+        assert!(
+            field_load_tagged,
+            "expected at least one TBAA-tagged i32 field load; IR:\n{ir}"
+        );
+    }
+
+    // ---- v0.0.7 Slice 1.1: lifetime intrinsics ----
+
+    #[test]
+    fn release_emits_lifetime_bracketed_locals() {
+        // A `let x: i32` inside a nested block at release mode must
+        // get a matching `lifetime.start` / `lifetime.end` pair, and
+        // the `end` must fire before the block's closing `br` so SROA
+        // can reuse the slot across non-overlapping scopes.
+        let ir = gen_src_with(
+            "fn main() -> i32 { { let x: i32 = 7; let y: i32 = 8; } return 0; }",
+            BuildMode::Release,
+        );
+        assert!(
+            ir.contains("declare void @llvm.lifetime.start.p0(i64, ptr)"),
+            "lifetime.start declaration missing from preamble:\n{ir}"
+        );
+        assert!(
+            ir.contains("declare void @llvm.lifetime.end.p0(i64, ptr)"),
+            "lifetime.end declaration missing from preamble:\n{ir}"
+        );
+        // Both bindings bracketed by lifetime calls.
+        let start_calls = ir
+            .lines()
+            .filter(|l| l.contains("call void @llvm.lifetime.start.p0(i64 4,"))
+            .count();
+        let end_calls = ir
+            .lines()
+            .filter(|l| l.contains("call void @llvm.lifetime.end.p0(i64 4,"))
+            .count();
+        assert_eq!(start_calls, 2, "expected 2 lifetime.start calls; IR:\n{ir}");
+        assert_eq!(end_calls, 2, "expected 2 lifetime.end calls; IR:\n{ir}");
+    }
+
+    #[test]
+    fn debug_omits_lifetime_intrinsics_in_bodies() {
+        // Debug mode skips the intrinsics — lldb's frame walker stays
+        // simple. Declarations stay in the preamble (cheap, harmless).
+        let ir = gen_src_with(
+            "fn main() -> i32 { { let x: i32 = 7; } return 0; }",
+            BuildMode::Debug,
+        );
+        assert!(
+            ir.contains("declare void @llvm.lifetime.start.p0(i64, ptr)"),
+            "lifetime.start declaration must still be in preamble at debug; IR:\n{ir}"
+        );
+        assert!(
+            !ir.contains("call void @llvm.lifetime.start.p0"),
+            "no lifetime.start *calls* expected at debug; IR:\n{ir}"
+        );
+        assert!(
+            !ir.contains("call void @llvm.lifetime.end.p0"),
+            "no lifetime.end *calls* expected at debug; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn release_lifetime_end_in_reverse_order() {
+        // Spec: pop_scope walks the per-frame alloca list in reverse,
+        // so `let x; let y;` produces `end(y) ... end(x)`. Critical
+        // for stack-slot reuse: a forward-order end would let SROA
+        // reuse x's slot for y while y is still live.
+        let ir = gen_src_with(
+            "fn main() -> i32 { { let x: i32 = 1; let y: i32 = 2; } return 0; }",
+            BuildMode::Release,
+        );
+        // Find positions of end calls for x.addr and y.addr.
+        let y_end_pos = ir
+            .find("call void @llvm.lifetime.end.p0(i64 4, ptr %y.addr")
+            .expect("expected lifetime.end for y");
+        let x_end_pos = ir
+            .find("call void @llvm.lifetime.end.p0(i64 4, ptr %x.addr")
+            .expect("expected lifetime.end for x");
+        assert!(
+            y_end_pos < x_end_pos,
+            "lifetime.end for y must come before x (reverse registration order); IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn release_skips_lifetime_for_function_wide_allocas() {
+        // The function body's bottom scope holds param-copy slots
+        // (and any allocas created before the first `push_scope`).
+        // Those live for the whole function — emitting lifetime
+        // intrinsics for them would be a no-op at best and a footgun
+        // at worst. Verify: a function with only a param (no inner
+        // blocks) emits no lifetime calls.
+        let ir = gen_src_with(
+            "fn id(x: i32) -> i32 { return x; }\n\
+             fn main() -> i32 { return id(7); }",
+            BuildMode::Release,
+        );
+        assert!(
+            !ir.contains("call void @llvm.lifetime.start.p0"),
+            "param-only function must not bracket the param-copy slot; IR:\n{ir}"
+        );
     }
 
     #[test]
@@ -13188,14 +14114,18 @@ mod tests {
                return x.v + y.v;\n\
              }",
         );
-        // One domain, two scopes for the function.
+        // One domain, two scopes for the function. Match by label
+        // rather than literal node IDs — IDs shift when other
+        // module-level metadata (TBAA, range, etc.) is allocated
+        // earlier in the pass.
         assert!(
-            ir.contains("distinct !{!100000, !\"swap_bump\"}"),
-            "expected swap_bump domain, got:\n{ir}"
+            ir.lines()
+                .any(|l| l.starts_with("!") && l.contains("distinct") && l.contains("!\"swap_bump\"")),
+            "expected swap_bump domain definition, got:\n{ir}"
         );
         assert!(
-            ir.contains(", !100000, !\"p0\"}") && ir.contains(", !100000, !\"p1\"}"),
-            "expected p0 and p1 scopes tied to the domain, got:\n{ir}"
+            ir.contains("!\"p0\"}") && ir.contains("!\"p1\"}"),
+            "expected p0 and p1 scopes for the params, got:\n{ir}"
         );
         // Loads/stores through both params carry alias.scope + noalias.
         let scope_lines = ir

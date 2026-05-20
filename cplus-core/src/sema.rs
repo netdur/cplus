@@ -454,17 +454,21 @@ pub struct MonoInfo {
     /// of the default enum/struct-variant lowering. Keyed by the
     /// outer call's span (matching the AST node's span).
     pub assoc_free_fn_dispatches: HashMap<ByteSpan, String>,
-    /// v0.0.6 Slice 1A: `include_bytes!("path")` resolved entries.
-    /// Keyed by the call expression's span. Each entry carries the
-    /// resolved absolute path (for dedup) and the file bytes read at
-    /// sema time. Codegen consumes this to emit one private constant
-    /// `[N x i8]` global per unique absolute path.
-    pub include_bytes: HashMap<ByteSpan, IncludeBytesEntry>,
+    /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: `include_bytes!("path")` and
+    /// `include_str!("path")` resolved entries. Keyed by the call
+    /// expression's span. Each entry carries the resolved absolute path
+    /// (for dedup) and the file bytes read at sema time. Codegen consumes
+    /// this to emit one private constant `[N x i8]` global per unique
+    /// absolute path; the AST node variant (`IncludeBytes` vs
+    /// `IncludeStr`) determines whether the lowered expression is a raw
+    /// pointer or a `str` fat-pointer aggregate.
+    pub compile_time_blobs: HashMap<ByteSpan, CompileTimeBlobEntry>,
 }
 
-/// v0.0.6 Slice 1A: one resolved `include_bytes!` call.
+/// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: one resolved `include_bytes!` or
+/// `include_str!` call.
 #[derive(Debug, Clone)]
-pub struct IncludeBytesEntry {
+pub struct CompileTimeBlobEntry {
     pub abs_path: std::path::PathBuf,
     pub bytes: Vec<u8>,
 }
@@ -589,7 +593,7 @@ fn check_with_files_inner<'a>(
         enum_instantiations: std::collections::BTreeMap::new(),
         method_instantiations: std::collections::BTreeSet::new(),
         generic_impl_methods: HashMap::new(),
-        include_bytes_table: HashMap::new(),
+        compile_time_blobs_table: HashMap::new(),
     };
     cx.register_builtins();
     // Type collection order:
@@ -724,7 +728,7 @@ fn check_with_files_inner<'a>(
         enum_instantiations,
         method_instantiations,
         type_aliases,
-        include_bytes: std::mem::take(&mut cx.include_bytes_table),
+        compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
     };
     (sink.into_vec(), mono)
 }
@@ -885,11 +889,13 @@ struct SemaCx<'a> {
     /// instantiated. Method bodies remain in the original ItemKind::Impl
     /// AST and are walked by the monomorphize pass.
     generic_impl_methods: HashMap<String, Vec<GenericImplMethodTemplate>>,
-    /// v0.0.6 Slice 1A: `include_bytes!` resolutions. Sema reads the
-    /// file at type-check time to compute the result type's `N`; the
-    /// bytes are stashed here for codegen to materialize. See
-    /// [`IncludeBytesEntry`] / [`MonoInfo::include_bytes`].
-    include_bytes_table: HashMap<ByteSpan, IncludeBytesEntry>,
+    /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: `include_bytes!` and
+    /// `include_str!` resolutions. Sema reads the file at type-check
+    /// time to compute the result type's `N` (and to UTF-8-validate
+    /// for `include_str!`); the bytes are stashed here for codegen to
+    /// materialize. See [`CompileTimeBlobEntry`] /
+    /// [`MonoInfo::compile_time_blobs`].
+    compile_time_blobs_table: HashMap<ByteSpan, CompileTimeBlobEntry>,
 }
 
 /// Slice 7GEN.5e step 3: method template stored on a generic-typed
@@ -2696,11 +2702,11 @@ impl SemaCx<'_> {
             | StmtKind::Return(Some(e))
             | StmtKind::Defer(e)
             | StmtKind::Assert(e) => self.walk_expr_for_param_compare(e, param_idents),
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, .. } => {
                 self.walk_expr_for_param_compare(cond, param_idents);
                 self.walk_block_for_param_compare(body, param_idents);
             }
-            StmtKind::Loop(b) => self.walk_block_for_param_compare(b, param_idents),
+            StmtKind::Loop(b, _) => self.walk_block_for_param_compare(b, param_idents),
             StmtKind::IfLet {
                 scrutinee,
                 body,
@@ -2727,7 +2733,7 @@ impl SemaCx<'_> {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
                 self.walk_block_for_param_compare(else_body, param_idents);
             }
-            StmtKind::For(_) | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::For(_, _) | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
         }
     }
 
@@ -3221,7 +3227,8 @@ impl SemaCx<'_> {
                     }
                 }
             }
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, attributes } => {
+                self.check_loop_attrs(attributes);
                 let _ = self.check_cond(cond);
                 self.scopes.push(HashMap::new());
                 self.loop_depth += 1;
@@ -3229,7 +3236,8 @@ impl SemaCx<'_> {
                 self.loop_depth -= 1;
                 self.scopes.pop();
             }
-            StmtKind::For(fl) => {
+            StmtKind::For(fl, attributes) => {
+                self.check_loop_attrs(attributes);
                 self.loop_depth += 1;
                 self.check_for(fl);
                 self.loop_depth -= 1;
@@ -3283,7 +3291,8 @@ impl SemaCx<'_> {
             // runs in a fresh scope with the loop-depth incremented so
             // any nested break/continue type-checks. Loops always
             // produce unit at the statement level.
-            StmtKind::Loop(body) => {
+            StmtKind::Loop(body, attributes) => {
+                self.check_loop_attrs(attributes);
                 self.loop_depth += 1;
                 self.scopes.push(HashMap::new());
                 for stmt in &body.stmts {
@@ -3294,6 +3303,34 @@ impl SemaCx<'_> {
                 }
                 self.scopes.pop();
                 self.loop_depth -= 1;
+            }
+        }
+    }
+
+    /// v0.0.7 Slice 1.3: validate `#[unroll(N)]` / `#[vectorize_width(N)]`
+    /// on loop statements. Range validation: N is a literal in
+    /// `[1, 256]` — emit **E0510** on out-of-range. Unknown attribute
+    /// names + bad arg shapes are caught at the boundary in
+    /// `attrs.rs::check`; this pass only enforces the range rule
+    /// which is per-attribute and needs the loop-statement context.
+    fn check_loop_attrs(&mut self, attributes: &[crate::ast::Attribute]) {
+        for a in attributes {
+            if a.path.name != "unroll" && a.path.name != "vectorize_width" {
+                continue;
+            }
+            let n = match a.args.as_slice() {
+                [crate::ast::AttrArg::Int(v, _)] => *v,
+                _ => continue, // shape error fires from attrs.rs
+            };
+            if !(1..=256).contains(&n) {
+                self.err(
+                    "E0510",
+                    format!(
+                        "`#[{}]` requires an integer in [1, 256], got {}",
+                        a.path.name, n
+                    ),
+                    a.span,
+                );
             }
         }
     }
@@ -3545,6 +3582,7 @@ impl SemaCx<'_> {
                 self.check_match(scrutinee, arms, expected, e.span)
             }
             ExprKind::IncludeBytes { path } => self.check_include_bytes(path, e.span),
+            ExprKind::IncludeStr { path } => self.check_include_str(path, e.span),
         }
     }
 
@@ -3560,9 +3598,58 @@ impl SemaCx<'_> {
     /// matches `include_bytes!(StringLit)` exactly; any other form is a
     /// parse error before sema sees it.
     fn check_include_bytes(&mut self, path: &str, span: ByteSpan) -> Ty {
-        // Resolve relative to the directory of the source file that
-        // contains this call. In multi-file mode we route through
-        // `current_file`; otherwise fall back to the entry file.
+        let Some((abs_path, bytes)) = self.resolve_compile_time_blob(path, span, "include_bytes")
+        else {
+            return Ty::Error;
+        };
+        let len = bytes.len() as u32;
+        self.compile_time_blobs_table
+            .insert(span, CompileTimeBlobEntry { abs_path, bytes });
+        Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len)))
+    }
+
+    /// v0.0.7 Slice 3.1: `include_str!("path")` resolution.
+    ///
+    /// Companion to `include_bytes!`. Same path resolution + same dedup
+    /// table, but the bytes are UTF-8-validated at sema time and the
+    /// returned type is `str` (the fat-pointer view). Errors:
+    ///   - **E0870**: file not found (shared with `include_bytes!`).
+    ///   - **E0872**: file exceeds 64 MiB (shared sanity cap).
+    ///   - **E0875**: file contains invalid UTF-8; the message includes
+    ///     the byte offset of the first bad byte.
+    fn check_include_str(&mut self, path: &str, span: ByteSpan) -> Ty {
+        let Some((abs_path, bytes)) = self.resolve_compile_time_blob(path, span, "include_str")
+        else {
+            return Ty::Error;
+        };
+        if let Err(e) = std::str::from_utf8(&bytes) {
+            self.err(
+                "E0875",
+                format!(
+                    "`include_str!` file `{}` is not valid UTF-8 (first invalid byte at offset {})",
+                    abs_path.display(),
+                    e.valid_up_to(),
+                ),
+                span,
+            );
+            return Ty::Error;
+        }
+        self.compile_time_blobs_table
+            .insert(span, CompileTimeBlobEntry { abs_path, bytes });
+        Ty::Str
+    }
+
+    /// Shared path resolution + read used by `include_bytes!` and
+    /// `include_str!`. Returns `(canonicalized_path, bytes)` on success;
+    /// emits E0870 (read error) or E0872 (size cap) and returns `None`
+    /// on failure. The caller picks the result type and (for `str`)
+    /// runs UTF-8 validation.
+    fn resolve_compile_time_blob(
+        &mut self,
+        path: &str,
+        span: ByteSpan,
+        macro_name: &'static str,
+    ) -> Option<(std::path::PathBuf, Vec<u8>)> {
         let base_dir: std::path::PathBuf =
             match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
                 Some(fc) => fc
@@ -3588,13 +3675,13 @@ impl SemaCx<'_> {
                 self.err(
                     "E0870",
                     format!(
-                        "`include_bytes!` cannot find file `{}` (resolved to `{}`)",
+                        "`{macro_name}!` cannot find file `{}` (resolved to `{}`)",
                         path,
                         resolved.display(),
                     ),
                     span,
                 );
-                return Ty::Error;
+                return None;
             }
         };
         let bytes = match std::fs::read(&abs_path) {
@@ -3603,13 +3690,13 @@ impl SemaCx<'_> {
                 self.err(
                     "E0870",
                     format!(
-                        "`include_bytes!` failed to read `{}`: {}",
+                        "`{macro_name}!` failed to read `{}`: {}",
                         abs_path.display(),
                         e,
                     ),
                     span,
                 );
-                return Ty::Error;
+                return None;
             }
         };
         const MAX_INCLUDE_BYTES: usize = 64 * 1024 * 1024;
@@ -3617,18 +3704,15 @@ impl SemaCx<'_> {
             self.err(
                 "E0872",
                 format!(
-                    "`include_bytes!` file `{}` is {} bytes; exceeds 64 MiB sanity limit",
+                    "`{macro_name}!` file `{}` is {} bytes; exceeds 64 MiB sanity limit",
                     abs_path.display(),
                     bytes.len(),
                 ),
                 span,
             );
-            return Ty::Error;
+            return None;
         }
-        let len = bytes.len() as u32;
-        self.include_bytes_table
-            .insert(span, IncludeBytesEntry { abs_path, bytes });
-        Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len)))
+        Some((abs_path, bytes))
     }
 
     fn check_array_lit(&mut self, elements: &[Expr], expected: Option<Ty>, span: ByteSpan) -> Ty {
@@ -6669,6 +6753,155 @@ impl SemaCx<'_> {
                 let _ = self.check_expr(&args[0], Some(want));
                 Ty::Unit
             }
+            // v0.0.7 Slice 2.1: lane-wise comparisons. Result is the
+            // bit-width-matched signed-int SIMD (i.e. the "mask" view).
+            // Float widths use `fcmp`, int widths `icmp` (signed for
+            // signed-int lanes, unsigned for unsigned-int lanes); the
+            // result is sext'd to the mask shape.
+            "lt" | "le" | "gt" | "ge" | "eq" | "ne" => {
+                if !elem_ty.is_numeric() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "comparison `{}` requires a numeric SIMD type, not `{}`",
+                            name.name, ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args { let _ = self.check_expr(a, None); }
+                    return Ty::Error;
+                }
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                // Result type: signed-int SIMD of matching lane size.
+                Ty::Simd { elem: Box::new(matching_signed_int_lane(&elem_ty)), lanes: lanes_u }
+            }
+            // v0.0.7 Slice 2.1: blend per lane. Receiver is a mask
+            // (int SIMD); the two value args must match each other
+            // and must be the same lane count as the mask. Returns
+            // the value-arg type.
+            "select" => {
+                if !elem_ty.is_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`select` requires a mask (signed-integer SIMD) receiver, not `{}`",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args { let _ = self.check_expr(a, None); }
+                    return Ty::Error;
+                }
+                if !arity_err(self, 2) {
+                    return Ty::Error;
+                }
+                let t_ty = self.check_expr(&args[0], None);
+                let _ = self.check_expr(&args[1], Some(t_ty.clone()));
+                // Constrain: t_ty must be a SIMD with `lanes_u` lanes.
+                match &t_ty {
+                    Ty::Simd { lanes: tl, .. } if *tl == lanes_u => t_ty,
+                    _ => {
+                        self.err(
+                            "E0324",
+                            format!(
+                                "`select` arms must be a SIMD value of the same lane count as the mask `{}`",
+                                ty_display(recv)
+                            ),
+                            name.span,
+                        );
+                        Ty::Error
+                    }
+                }
+            }
+            // v0.0.7 Slice 2.1: mask reductions. `any` is true iff any
+            // lane is non-zero; `all` is true iff every lane is.
+            "any" | "all" => {
+                if !elem_ty.is_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}` requires a mask (signed-integer SIMD) receiver, not `{}`",
+                            name.name, ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                Ty::Bool
+            }
+            // v0.0.7 Slice 2.1: horizontal reductions. `sum` and
+            // `product` available on every numeric width. Result type
+            // is the lane scalar.
+            "sum" | "product" => {
+                if !elem_ty.is_numeric() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}` requires a numeric SIMD type, not `{}`",
+                            name.name, ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                elem_ty.clone()
+            }
+            // v0.0.7 Slice 2.1: horizontal min/max. Float widths use
+            // `llvm.vector.reduce.fmin/fmax`; int widths use the
+            // signed (`smin`/`smax`) or unsigned (`umin`/`umax`) variant.
+            "min_across" | "max_across" => {
+                if !elem_ty.is_numeric() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}` requires a numeric SIMD type, not `{}`",
+                            name.name, ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                elem_ty.clone()
+            }
+            // v0.0.7 Slice 2.1: per-lane permutations. `reverse` is
+            // zero-arg; `swizzle` takes a `[u32; N]` array literal
+            // whose values index into the source vector (validated
+            // at codegen via `simd_lane_literal`-style helper).
+            "reverse" => {
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                recv.clone()
+            }
+            "swizzle" => {
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let want = Ty::Array(Box::new(Ty::U32), lanes_u);
+                let _ = self.check_expr(&args[0], Some(want));
+                recv.clone()
+            }
+            // v0.0.7 Slice 2.1: even/odd interleaves with another
+            // same-shape vector. Returns the same shape.
+            "interleave_lo" | "interleave_hi" => {
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                recv.clone()
+            }
             _ => {
                 self.err(
                     "E0324",
@@ -7767,6 +8000,10 @@ impl SemaCx<'_> {
                 elem: Box::new(Ty::I64),
                 lanes: 2,
             },
+            "u64x2" => Ty::Simd {
+                elem: Box::new(Ty::U64),
+                lanes: 2,
+            },
             "u32x4" => Ty::Simd {
                 elem: Box::new(Ty::U32),
                 lanes: 4,
@@ -7787,6 +8024,35 @@ impl SemaCx<'_> {
                 elem: Box::new(Ty::U16),
                 lanes: 8,
             },
+            // v0.0.7 Slice 2.2: 256-bit widths. AArch64 splits these
+            // into two 128-bit ops at codegen; AVX2 / SVE2 hosts use
+            // native 256-bit vectors. Same elem-type leaves as the
+            // 128-bit family — the type-name and lane-count are the
+            // only thing that changes.
+            "f32x8"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  },
+            "f64x4"  => Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  },
+            "i8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
+            "u8x32"  => Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 },
+            "i16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
+            "u16x16" => Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 },
+            "i32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
+            "u32x8"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  },
+            "i64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
+            "u64x4"  => Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  },
+            // v0.0.7 Slice 2.1: mask types — aliases for the
+            // bit-width-matched signed-int SIMD. Codegen treats them
+            // identically; the source-level name is a documentation
+            // hint that this value came from a comparison and is
+            // intended for `select` / `any` / `all`. Tighter
+            // distinction-tracking is future work.
+            "mask8x16"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 },
+            "mask16x8"  => Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  },
+            "mask32x4"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  },
+            "mask64x2"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  },
+            "mask8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
+            "mask16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
+            "mask32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
+            "mask64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
             _ => {
                 // Slice 7GEN.4: `Self` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
@@ -8703,11 +8969,11 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
             StmtKind::Expr(e) => walk_variant_patterns_in_expr(e, f),
             StmtKind::Return(Some(e)) => walk_variant_patterns_in_expr(e, f),
             StmtKind::Return(None) => {}
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, .. } => {
                 walk_variant_patterns_in_expr(cond, f);
                 walk_variant_patterns_in_block(body, f);
             }
-            StmtKind::For(forloop) => match forloop {
+            StmtKind::For(forloop, _) => match forloop {
                 ForLoop::Range { iter, body, .. } => {
                     walk_variant_patterns_in_expr(iter, f);
                     walk_variant_patterns_in_block(body, f);
@@ -8736,7 +9002,7 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
                 }
             },
             StmtKind::Defer(e) | StmtKind::Assert(e) => walk_variant_patterns_in_expr(e, f),
-            StmtKind::Loop(body) => walk_variant_patterns_in_block(body, f),
+            StmtKind::Loop(body, _) => walk_variant_patterns_in_block(body, f),
             StmtKind::IfLet {
                 pattern,
                 scrutinee,
@@ -8872,6 +9138,19 @@ fn walk_variant_patterns_in_pat(pat: &Pattern, f: &mut impl FnMut(&str, &[Type])
     }
 }
 
+/// v0.0.7 Slice 2.1: pick the signed-integer type whose bit width
+/// matches `elem`. Used by comparison ops to produce the "mask"
+/// shape — a signed-int SIMD with the same lane count as the source.
+fn matching_signed_int_lane(elem: &Ty) -> Ty {
+    match elem {
+        Ty::I8 | Ty::U8 | Ty::Bool => Ty::I8,
+        Ty::I16 | Ty::U16 => Ty::I16,
+        Ty::I32 | Ty::U32 | Ty::F32 => Ty::I32,
+        Ty::I64 | Ty::U64 | Ty::F64 | Ty::Isize | Ty::Usize => Ty::I64,
+        _ => Ty::I32, // shouldn't reach here on numeric SIMD
+    }
+}
+
 /// v0.0.6 Slice 1B: parse a SIMD type name (`f32x4`, etc.) back to its
 /// `Ty::Simd` representation. Used by `check_assoc_call` to recognize
 /// `f32x4::splat(...)`-style paths before falling through to enum/struct
@@ -8895,6 +9174,10 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
             elem: Box::new(Ty::I64),
             lanes: 2,
         }),
+        "u64x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::U64),
+            lanes: 2,
+        }),
         "u32x4" => Some(Ty::Simd {
             elem: Box::new(Ty::U32),
             lanes: 4,
@@ -8915,6 +9198,26 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
             elem: Box::new(Ty::U16),
             lanes: 8,
         }),
+        // v0.0.7 Slice 2.2: 256-bit widths.
+        "f32x8"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  }),
+        "f64x4"  => Some(Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  }),
+        "i8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
+        "u8x32"  => Some(Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 }),
+        "i16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
+        "u16x16" => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 }),
+        "i32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
+        "u32x8"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  }),
+        "i64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
+        "u64x4"  => Some(Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  }),
+        // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
+        "mask8x16"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 }),
+        "mask16x8"  => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  }),
+        "mask32x4"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  }),
+        "mask64x2"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  }),
+        "mask8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
+        "mask16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
+        "mask32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
+        "mask64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
         _ => None,
     }
 }
@@ -12147,6 +12450,339 @@ mod tests {
         );
     }
 
+    // ---- v0.0.7 Slice 2.1: SIMD shuffles + reductions + masked ops ----
+
+    #[test]
+    fn simd_compare_returns_mask_clean() {
+        // `f32x4.lt(b)` produces a mask32x4 (signed-int SIMD of
+        // matching width). Sema accepts assigning the result to a
+        // mask32x4 binding.
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::splat(1.0f32); \
+                let b: f32x4 = f32x4::splat(2.0f32); \
+                let m: mask32x4 = a.lt(b); \
+                let _r: i32 = m.lane(0 as u32); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_select_on_mask_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::splat(1.0f32); \
+                let b: f32x4 = f32x4::splat(2.0f32); \
+                let m: mask32x4 = a.lt(b); \
+                let blended: f32x4 = m.select(a, b); \
+                let _r: f32 = blended.lane(0 as u32); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_any_all_on_mask_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: i32x4 = i32x4::splat(5); \
+                let m: mask32x4 = a.gt(i32x4::splat(0)); \
+                let h: bool = m.any(); \
+                let q: bool = m.all(); \
+                if h { if q { return 0; } } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_reductions_return_lane_scalar() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let s: f32 = v.sum(); \
+                let p: f32 = v.product(); \
+                let lo: f32 = v.min_across(); \
+                let hi: f32 = v.max_across(); \
+                if s != 0.0f32 { return 1; } \
+                if p != 0.0f32 { return 2; } \
+                if lo != 0.0f32 { return 3; } \
+                if hi != 0.0f32 { return 4; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_reverse_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let r: f32x4 = v.reverse(); \
+                let _x: f32 = r.lane(0 as u32); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_swizzle_clean() {
+        // Swizzle accepts a `[u32; N]` array literal.
+        assert_clean(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32); \
+                let s: f32x4 = v.swizzle([3 as u32, 2 as u32, 1 as u32, 0 as u32]); \
+                let _y: f32 = s.lane(0 as u32); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_interleave_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: i32x4 = i32x4::splat(1); \
+                let b: i32x4 = i32x4::splat(2); \
+                let lo: i32x4 = a.interleave_lo(b); \
+                let hi: i32x4 = a.interleave_hi(b); \
+                let _l: i32 = lo.lane(0 as u32); \
+                let _h: i32 = hi.lane(0 as u32); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_select_on_non_mask_e0324() {
+        // `.select` on a float SIMD (not a mask) must reject.
+        let codes = errors(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let r: f32x4 = v.select(v, v); \
+                if r.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+        );
+        assert!(codes.contains(&"E0324"), "expected E0324, got {:?}", codes);
+    }
+
+    // ---- v0.0.7 Slice 2.2: 256-bit SIMD widths ----
+
+    #[test]
+    fn simd_f32x8_resolves_and_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f32x8 = f32x8::splat(1.0f32); \
+                let b: f32x8 = f32x8::splat(2.0f32); \
+                let c: f32x8 = a.add(b).mul(b).fma(a, b); \
+                let s: f32x8 = c.sqrt(); \
+                let lane: f32 = s.lane(7 as u32); \
+                if lane != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_f64x4_resolves_and_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f64x4 = f64x4::new(1.0, 2.0, 3.0, 4.0); \
+                let b: f64x4 = a.add(f64x4::splat(0.5)).min(f64x4::splat(10.0)); \
+                if b.lane(0 as u32) != 0.0 { return 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_i32x8_int_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: i32x8 = i32x8::splat(5); \
+                let b: i32x8 = a.add(i32x8::splat(3)).abs(); \
+                let c: i32x8 = b.and(i32x8::splat(0x0F)).shl(1 as u32); \
+                if c.lane(0 as u32) != 0 { return 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_u64x4_unsigned_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: u64x4 = u64x4::splat(10 as u64); \
+                let b: u64x4 = a.min(u64x4::splat(5 as u64)).max(u64x4::splat(2 as u64)); \
+                if b.lane(0 as u32) != (0 as u64) { return 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_256bit_widths_lane_out_of_range_e0874() {
+        // f32x8 has 8 lanes; lane(8) is out of range.
+        let codes = errors(
+            "fn main() -> i32 { \
+                let v: f32x8 = f32x8::splat(1.0f32); \
+                let x: f32 = v.lane(8 as u32); \
+                if x != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+        );
+        assert!(codes.contains(&"E0874"), "expected E0874, got {:?}", codes);
+    }
+
+    // ---- v0.0.7 Slice 1.3: loop-hint attributes ----
+
+    #[test]
+    fn loop_unroll_in_range_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let mut i: i32 = 0; \
+                #[unroll(4)] while i < 10 { i = i + 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn loop_vectorize_width_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let mut s: i32 = 0; \
+                #[vectorize_width(8)] for i in 0..16 { s = s + i; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn loop_unroll_zero_e0510() {
+        // N == 0 is out of range — must fire E0510.
+        let codes = errors(
+            "fn main() -> i32 { \
+                let mut i: i32 = 0; \
+                #[unroll(0)] while i < 10 { i = i + 1; } \
+                return 0; \
+            }",
+        );
+        assert!(codes.contains(&"E0510"), "expected E0510, got {:?}", codes);
+    }
+
+    #[test]
+    fn loop_unroll_above_cap_e0510() {
+        // N == 257 is out of range.
+        let codes = errors(
+            "fn main() -> i32 { \
+                let mut i: i32 = 0; \
+                #[unroll(257)] while i < 10 { i = i + 1; } \
+                return 0; \
+            }",
+        );
+        assert!(codes.contains(&"E0510"), "expected E0510, got {:?}", codes);
+    }
+
+    #[test]
+    fn loop_attr_on_non_loop_e0356() {
+        // The attrs walker rejects `#[unroll]` placement on a `let`
+        // (well — actually a Pound followed by anything that isn't
+        // while/loop/for is a parser error). Verify that the error
+        // fires at the parsing boundary by attempting the construct.
+        let toks = tokenize("fn main() -> i32 { #[unroll(4)] let x: i32 = 7; return x; }")
+            .expect("lex");
+        assert!(
+            parse(toks).is_err(),
+            "expected parse error: loop-attr on a non-loop statement"
+        );
+    }
+
+    // ---- v0.0.7 Slice 3.1: include_str! ----
+
+    #[test]
+    fn include_str_clean_when_file_is_utf8() {
+        let diags = check_with_asset(
+            "fn main() -> i32 { let s: str = include_str!(\"hello.txt\"); return 0; }",
+            "hello.txt",
+            "hello, world\n".as_bytes(),
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:#?}", diags);
+    }
+
+    #[test]
+    fn include_str_accepts_non_ascii_utf8() {
+        // Multibyte UTF-8 (emoji + accented chars) must validate cleanly.
+        let diags = check_with_asset(
+            "fn main() -> i32 { let s: str = include_str!(\"utf8.txt\"); return 0; }",
+            "utf8.txt",
+            "café — résumé 🎉\n".as_bytes(),
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:#?}", diags);
+    }
+
+    #[test]
+    fn include_str_rejects_invalid_utf8_with_e0875() {
+        // 0xFF is never valid as a UTF-8 leading byte; sema must reject.
+        let diags = check_with_asset(
+            "fn main() -> i32 { let s: str = include_str!(\"bad.bin\"); return 0; }",
+            "bad.bin",
+            &[b'o', b'k', 0xFF, b'!'],
+        );
+        let codes: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(codes.contains(&"E0875"), "expected E0875, got {:?}", codes);
+    }
+
+    #[test]
+    fn include_str_missing_file_e0870() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src_path = dir.path().join("src.cplus");
+        let src = "fn main() -> i32 { let s: str = include_str!(\"missing.txt\"); return 0; }";
+        std::fs::write(&src_path, src).expect("write");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = check(&prog, src_path, src);
+        let codes: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(codes.contains(&"E0870"), "expected E0870, got {:?}", codes);
+    }
+
+    #[test]
+    fn include_str_non_literal_arg_parse_error() {
+        // Strict form: `include_str!(StringLit)` only.
+        let src = "fn main() -> i32 { let s: str = include_str!(some_var); return 0; }";
+        let toks = tokenize(src).expect("lex");
+        assert!(
+            parse(toks).is_err(),
+            "expected parse error on non-literal include_str! arg"
+        );
+    }
+
+    #[test]
+    fn include_str_wrong_target_type_mismatch() {
+        // Assigning the `str` result to a `*[u8; N]` typed local is a
+        // type mismatch — `include_str!` and `include_bytes!` produce
+        // different shapes.
+        let diags = check_with_asset(
+            "fn main() -> i32 { let p: *[u8; 5] = include_str!(\"hi.txt\"); return 0; }",
+            "hi.txt",
+            b"hello",
+        );
+        assert!(
+            diags.iter().any(|d| matches!(d.severity, Severity::Error)),
+            "expected type mismatch (str vs *[u8; 5])"
+        );
+    }
+
     // ---- v0.0.6 Slice 1B: SIMD types ----
 
     #[test]
@@ -12391,6 +13027,46 @@ mod tests {
                 if d.lane(0 as u32) != (0 as u32) { return 2; } \
                 return 0; \
             }",
+        );
+    }
+
+    #[test]
+    fn simd_u64x2_resolves_and_unsigned_methods_clean() {
+        // v0.0.7 Slice 2.2 audit fix: `u64x2` was the missing 128-bit
+        // 8-byte-lane width (only `i64x2` shipped in 1B). Exercises
+        // the full method matrix the umin/umax intrinsic declarations
+        // back, plus the methods that lower to native LLVM ops.
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: u64x2 = u64x2::new(1 as u64, 2 as u64); \
+                let b: u64x2 = u64x2::splat(10 as u64); \
+                let c: u64x2 = a.add(b).sub(a).mul(b).div(u64x2::splat(2 as u64)); \
+                let d: u64x2 = c.min(b).max(a); \
+                let e: u64x2 = d.and(u64x2::splat(0xFF as u64)).or(a).xor(b).not(); \
+                let f: u64x2 = e.shl(1 as u32).shr(2 as u32); \
+                let lane: u64 = f.lane(0 as u32); \
+                let with: u64x2 = f.with_lane(1 as u32, 99 as u64); \
+                let arr: [u64; 2] = with.to_array(); \
+                let from: u64x2 = u64x2::from_array(arr); \
+                if lane != (0 as u64) { return 1; } \
+                if from.lane(1 as u32) != (0 as u64) { return 2; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_u64x2_abs_rejected_e0324() {
+        // `abs` is gated to float + signed-int SIMD; unsigned widths
+        // (u64x2 included) reject it with E0324.
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: u64x2 = u64x2::splat(1 as u64); \
+                let r: u64x2 = v.abs(); \
+                if r.lane(0 as u32) != (0 as u64) { return 1; } \
+                return 0; \
+            }",
+            "E0324",
         );
     }
 

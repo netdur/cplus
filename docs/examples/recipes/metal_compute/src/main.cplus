@@ -6,19 +6,35 @@
 // device-side codegen in cpc itself.
 //
 // Build via the shipped build.sh (compiles shaders/double.metal first,
-// writes shaders/shader_size.txt with the resulting .metallib byte
-// count, then links against -framework Metal / Foundation -lobjc).
+// writes shaders/double.metallib.size with the resulting byte count,
+// then runs `cpc build` against the Metal / Foundation / -lobjc link
+// args declared in Cplus.toml).
 
-// Shader byte length — `__SHADER_LEN__` is a placeholder that
-// build.sh sed-substitutes with the actual `.metallib` size before
-// invoking cpc.
-//
-// `include_bytes!` returns a `*[u8; N]` where N is fixed at compile
-// time; the runtime FFI call (`NSData::dataWithBytesNoCopy:length:`)
-// needs the same N as a `usize`. cpc's `include_str!` companion is a
-// v0.0.7 candidate that would obviate this build-side patching —
-// see [plan.md] open questions.
-fn shader_len() -> usize { return __SHADER_LEN__ as usize; }
+// Shader byte length — read at compile time from a sibling text file
+// that `build.sh` writes after running `xcrun metallib`. Using
+// `include_str!` + a 5-line digit parser drops the v0.0.6
+// `sed s/__SHADER_LEN__/.../` build-time patching dance entirely.
+fn parse_usize(s: str) -> usize {
+    let p: *u8 = str_ptr(s);
+    let n: usize = str_len(s);
+    let mut acc: usize = 0 as usize;
+    let mut i: usize = 0 as usize;
+    while i < n {
+        let b: u8 = unsafe { p[i] };
+        // Stop on the first non-digit so a trailing newline (the
+        // default `echo > file.size` adds one) doesn't poison the
+        // result.
+        if b < (48 as u8) { return acc; }
+        if b > (57 as u8) { return acc; }
+        acc = acc *% (10 as usize) +% ((b -% (48 as u8)) as usize);
+        i = i +% (1 as usize);
+    }
+    return acc;
+}
+
+fn shader_len() -> usize {
+    return parse_usize(include_str!("../shaders/double.metallib.size"));
+}
 
 // ===========================================================================
 // ObjC runtime — same shape as proves/03-hello-appkit.

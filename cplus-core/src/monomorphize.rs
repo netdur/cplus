@@ -606,11 +606,15 @@ fn rewrite_stmt_self(stmt: &Stmt, mangled_name: &str) -> Stmt {
         StmtKind::Return(e) => {
             StmtKind::Return(e.as_ref().map(|e| rewrite_expr_self(e, mangled_name)))
         }
-        StmtKind::While { cond, body } => StmtKind::While {
+        StmtKind::While { cond, body, attributes } => StmtKind::While {
             cond: rewrite_expr_self(cond, mangled_name),
             body: rewrite_block_self(body, mangled_name),
+            attributes: attributes.clone(),
         },
-        StmtKind::For(forloop) => StmtKind::For(rewrite_for_self(forloop, mangled_name)),
+        StmtKind::For(forloop, attributes) => StmtKind::For(
+            rewrite_for_self(forloop, mangled_name),
+            attributes.clone(),
+        ),
         other => other.clone(),
     };
     Stmt {
@@ -976,11 +980,11 @@ fn visit_ident_calls_in_block(
                     visit_ident_calls(e, f);
                 }
             }
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, .. } => {
                 visit_ident_calls(cond, f);
                 visit_ident_calls_in_block(body, f);
             }
-            StmtKind::For(forloop) => match forloop {
+            StmtKind::For(forloop, _) => match forloop {
                 ForLoop::Range { iter, body, .. } => {
                     visit_ident_calls(iter, f);
                     visit_ident_calls_in_block(body, f);
@@ -1009,7 +1013,7 @@ fn visit_ident_calls_in_block(
                 }
             },
             StmtKind::Defer(e) | StmtKind::Assert(e) => visit_ident_calls(e, f),
-            StmtKind::Loop(body) => visit_ident_calls_in_block(body, f),
+            StmtKind::Loop(body, _) => visit_ident_calls_in_block(body, f),
             // Lowering pass converts IfLet / WhileLet / GuardLet to
             // match/loop+match before monomorphize, but cover them
             // defensively in case a sample reaches us pre-lowering.
@@ -1588,7 +1592,7 @@ fn rewrite_stmt(
                 struct_lookup,
             )
         })),
-        StmtKind::While { cond, body } => StmtKind::While {
+        StmtKind::While { cond, body, attributes } => StmtKind::While {
             cond: rewrite_expr(
                 cond,
                 subst,
@@ -1607,16 +1611,20 @@ fn rewrite_stmt(
                 type_name_of,
                 struct_lookup,
             ),
+            attributes: attributes.clone(),
         },
-        StmtKind::For(forloop) => StmtKind::For(rewrite_for(
-            forloop,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
+        StmtKind::For(forloop, attributes) => StmtKind::For(
+            rewrite_for(
+                forloop,
+                subst,
+                generic_names,
+                inst_lookup,
+                mono,
+                type_name_of,
+                struct_lookup,
+            ),
+            attributes.clone(),
+        ),
         StmtKind::Expr(e) => StmtKind::Expr(rewrite_expr(
             e,
             subst,
@@ -1712,15 +1720,18 @@ fn rewrite_stmt(
             ),
             complement: complement.clone(),
         },
-        StmtKind::Loop(body) => StmtKind::Loop(rewrite_block(
-            body,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
+        StmtKind::Loop(body, attributes) => StmtKind::Loop(
+            rewrite_block(
+                body,
+                subst,
+                generic_names,
+                inst_lookup,
+                mono,
+                type_name_of,
+                struct_lookup,
+            ),
+            attributes.clone(),
+        ),
         StmtKind::WhileLet {
             pattern,
             scrutinee,
@@ -2535,12 +2546,12 @@ fn rewrite_alias_stmt(s: &mut Stmt, aliases: &std::collections::BTreeMap<String,
                 rewrite_alias_expr(e, aliases);
             }
         }
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             rewrite_alias_expr(cond, aliases);
             rewrite_alias_block(body, aliases);
         }
-        StmtKind::Loop(b) => rewrite_alias_block(b, aliases),
-        StmtKind::For(fl) => match fl {
+        StmtKind::Loop(b, _) => rewrite_alias_block(b, aliases),
+        StmtKind::For(fl, _) => match fl {
             ForLoop::Range { iter, body, .. } => {
                 rewrite_alias_expr(iter, aliases);
                 rewrite_alias_block(body, aliases);

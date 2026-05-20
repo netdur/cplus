@@ -10002,6 +10002,53 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.7 Slice 2.2 audit: `u64x2` — the 1B gap among 128-bit 8-byte-lane
+/// widths (only `i64x2` shipped). Exercises arithmetic, the
+/// umin/umax intrinsics that were just declared, and lane round-trip.
+#[test]
+fn simd_u64x2_min_max_and_arithmetic_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("u64x2.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: u64x2 = u64x2::new(10 as u64, 5 as u64);
+    let b: u64x2 = u64x2::new(3 as u64, 20 as u64);
+    let lo: u64x2 = a.min(b);
+    let hi: u64x2 = a.max(b);
+    if lo.lane(0 as u32) != (3 as u64)  { return 1; }
+    if lo.lane(1 as u32) != (5 as u64)  { return 2; }
+    if hi.lane(0 as u32) != (10 as u64) { return 3; }
+    if hi.lane(1 as u32) != (20 as u64) { return 4; }
+    let sum: u64x2 = a.add(b);
+    if sum.lane(0 as u32) != (13 as u64) { return 5; }
+    if sum.lane(1 as u32) != (25 as u64) { return 6; }
+    let mask: u64x2 = a.and(u64x2::splat(0xFF as u64));
+    if mask.lane(0 as u32) != (10 as u64) { return 7; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("u64x2");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for u64x2 e2e");
+    let run = Command::new(&bin).status().expect("run u64x2");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "u64x2 min/max/arithmetic failed; exit {:?}",
+        run.code()
+    );
+}
+
 /// v0.0.6 Slice 1B: `f32x4::fma` + `sqrt` + `to_array` round-trip.
 #[test]
 fn simd_f32x4_fma_sqrt_and_to_array() {
@@ -10526,6 +10573,129 @@ fn main() -> i32 {
     assert_eq!(
         bytes_defs, 1,
         "expected exactly one `@.bytes.N` definition (dedup), saw {bytes_defs}; IR:\n{ir}"
+    );
+}
+
+/// v0.0.7 Slice 3.1: `include_str!` end-to-end.
+/// Embeds a UTF-8 file at compile time and round-trips length + bytes.
+#[test]
+fn include_str_embeds_utf8_file_and_reads_back() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let asset = dir.join("greet.txt");
+    // ASCII payload so we can compare individual bytes by code point
+    // without dragging in a UTF-8 multibyte boundary fixture.
+    std::fs::write(&asset, b"hi!").unwrap();
+    let src = dir.join("is.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let s: str = include_str!(\"greet.txt\");
+    if str_len(s) != (3 as usize) { return 1 as i32; }
+    let p: *u8 = str_ptr(s);
+    let b0: u8 = unsafe { p[0 as usize] };
+    let b1: u8 = unsafe { p[1 as usize] };
+    let b2: u8 = unsafe { p[2 as usize] };
+    if b0 != (104 as u8) { return 2 as i32; }
+    if b1 != (105 as u8) { return 3 as i32; }
+    if b2 != (33 as u8)  { return 4 as i32; }
+    return 0 as i32;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("is");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for include_str! e2e");
+    let run = Command::new(&bin).status().expect("run is");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "include_str! bytes did not round-trip; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.7 Slice 3.1: a `.cplus` file that calls `include_str!` on a
+/// file containing a stray 0xFF byte must fail to build, reporting E0875.
+#[test]
+fn include_str_rejects_non_utf8_file_with_e0875() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("bad.bin"), [b'o', b'k', 0xFF, b'!']).unwrap();
+    let src = dir.join("bad.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let s: str = include_str!(\"bad.bin\");
+    return 0 as i32;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(dir.join("bad"))
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected build failure for non-UTF-8 include_str! input"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0875"),
+        "expected E0875 in stderr; got:\n{stderr}"
+    );
+}
+
+/// v0.0.7 Slice 3.1: include_str! + include_bytes! on the same path
+/// share one underlying `[N x i8]` global (dedup keyed by abs_path).
+#[test]
+fn include_str_and_include_bytes_share_global() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("shared.txt"), b"abc").unwrap();
+    let src = dir.join("share.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let s: str = include_str!(\"shared.txt\");
+    let b: *[u8; 3] = include_bytes!(\"shared.txt\");
+    if str_len(s) != (3 as usize) { return 1 as i32; }
+    return 0 as i32;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-llvm");
+    assert!(
+        out.status.success(),
+        "cpc emit-llvm failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    let bytes_defs = ir
+        .lines()
+        .filter(|l| l.contains("@.bytes.") && l.contains("= private"))
+        .count();
+    assert_eq!(
+        bytes_defs, 1,
+        "expected exactly one shared `@.bytes.N` definition across \
+         include_str! + include_bytes! on the same path, saw {bytes_defs}; IR:\n{ir}"
     );
 }
 

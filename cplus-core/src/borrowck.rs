@@ -983,11 +983,11 @@ fn check_stmt_returns_e3(
             Some(e) => check_expr_returns_e3(e, param_names, roots, found),
             None => true,
         },
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             check_expr_returns_e3(cond, param_names, roots, found)
                 && check_block_returns_e3(body, param_names, roots, found)
         }
-        StmtKind::For(fl) => match fl {
+        StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle {
                 init,
                 cond,
@@ -1016,7 +1016,7 @@ fn check_stmt_returns_e3(
                     && check_block_returns_e3(body, param_names, roots, found)
             }
         },
-        StmtKind::Loop(b) => check_block_returns_e3(b, param_names, roots, found),
+        StmtKind::Loop(b, _) =>check_block_returns_e3(b, param_names, roots, found),
         StmtKind::Break | StmtKind::Continue => true,
         // `assert EXPR;` cannot contain a `return` (it's an expression
         // statement), so it never affects the rooted-returns set. We
@@ -1182,10 +1182,10 @@ fn check_stmt_returns(s: &Stmt, root: &str, found: &mut bool) -> bool {
             Some(e) => check_expr_returns(e, root, found),
             None => true,
         },
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             check_expr_returns(cond, root, found) && check_block_returns(body, root, found)
         }
-        StmtKind::For(fl) => match fl {
+        StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle {
                 init,
                 cond,
@@ -1213,7 +1213,7 @@ fn check_stmt_returns(s: &Stmt, root: &str, found: &mut bool) -> bool {
                 check_expr_returns(iter, root, found) && check_block_returns(body, root, found)
             }
         },
-        StmtKind::Loop(b) => check_block_returns(b, root, found),
+        StmtKind::Loop(b, _) =>check_block_returns(b, root, found),
         StmtKind::Break | StmtKind::Continue => true,
         StmtKind::Assert(e) => check_expr_returns(e, root, found),
         // Lowered away pre-borrowck.
@@ -2033,11 +2033,11 @@ fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
         StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
             any_return_rooted_in_expr(e, param_names)
         }
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             any_return_rooted_in_expr(cond, param_names)
                 || any_return_rooted_at_param(body, param_names)
         }
-        StmtKind::For(fl) => match fl {
+        StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle {
                 init,
                 cond,
@@ -2059,7 +2059,7 @@ fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
                     || any_return_rooted_at_param(body, param_names)
             }
         },
-        StmtKind::Loop(body) => any_return_rooted_at_param(body, param_names),
+        StmtKind::Loop(body, _) =>any_return_rooted_at_param(body, param_names),
         // Lowered before borrowck — should not be present here.
         StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => false,
     }
@@ -2256,11 +2256,11 @@ impl Analyzer<'_> {
                 // codegen's concern; here we just walk the AST.
                 self.apply_expr(e, state);
             }
-            StmtKind::While { cond, body } => {
+            StmtKind::While { cond, body, .. } => {
                 self.apply_expr(cond, state);
                 self.walk_loop_body(body, state);
             }
-            StmtKind::For(fl) => match fl {
+            StmtKind::For(fl, _) => match fl {
                 ForLoop::CStyle {
                     init,
                     cond,
@@ -2297,7 +2297,7 @@ impl Analyzer<'_> {
                     *state = merge_branches(&pre_loop, &[&pre_loop, &body_state], &[false, false]);
                 }
             },
-            StmtKind::Loop(b) => self.walk_loop_body(b, state),
+            StmtKind::Loop(b, _) =>self.walk_loop_body(b, state),
             // Lowered away by `crate::lower`.
             StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => {}
         }
@@ -2352,6 +2352,7 @@ impl Analyzer<'_> {
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
             | ExprKind::IncludeBytes { .. }
+            | ExprKind::IncludeStr { .. }
             | ExprKind::Path { .. } => {}
 
             ExprKind::InterpStr { parts } => {
@@ -3178,7 +3179,8 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
-        | ExprKind::IncludeBytes { .. } => false,
+        | ExprKind::IncludeBytes { .. }
+        | ExprKind::IncludeStr { .. } => false,
         ExprKind::InterpStr { parts } => parts.iter().any(|p| match p {
             crate::ast::InterpStrPart::Expr(e) => expr_reads_ident(e, name),
             _ => false,
@@ -3250,7 +3252,7 @@ fn stmt_reads_ident(s: &Stmt, name: &str) -> bool {
         }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => false,
         StmtKind::Assert(e) => expr_reads_ident(e, name),
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             expr_reads_ident(cond, name)
                 || body.stmts.iter().any(|s| stmt_reads_ident(s, name))
                 || body
@@ -3258,7 +3260,7 @@ fn stmt_reads_ident(s: &Stmt, name: &str) -> bool {
                     .as_deref()
                     .is_some_and(|t| expr_reads_ident(t, name))
         }
-        StmtKind::For(fl) => match fl {
+        StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle {
                 init,
                 cond,
@@ -3283,7 +3285,7 @@ fn stmt_reads_ident(s: &Stmt, name: &str) -> bool {
                         .is_some_and(|t| expr_reads_ident(t, name))
             }
         },
-        StmtKind::Loop(b) => {
+        StmtKind::Loop(b, _) =>{
             b.stmts.iter().any(|s| stmt_reads_ident(s, name))
                 || b.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
         }

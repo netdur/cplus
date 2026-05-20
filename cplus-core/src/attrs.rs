@@ -24,12 +24,15 @@ use crate::diagnostics::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const TARGET_FN: u8       = 0b00_0001;
-const TARGET_METHOD: u8   = 0b00_0010;
-const TARGET_STRUCT: u8   = 0b00_0100;
-const TARGET_ENUM: u8     = 0b00_1000;
-const TARGET_FIELD: u8    = 0b01_0000;
-const TARGET_VARIANT: u8  = 0b10_0000;
+const TARGET_FN: u8       = 0b0_0000_0001;
+const TARGET_METHOD: u8   = 0b0_0000_0010;
+const TARGET_STRUCT: u8   = 0b0_0000_0100;
+const TARGET_ENUM: u8     = 0b0_0000_1000;
+const TARGET_FIELD: u8    = 0b0_0001_0000;
+const TARGET_VARIANT: u8  = 0b0_0010_0000;
+/// v0.0.7 Slice 1.3: attribute on a loop statement (`while`, `loop`,
+/// `for`). Used by `#[unroll(N)]` / `#[vectorize_width(N)]`.
+const TARGET_LOOP_STMT: u8 = 0b0_0100_0000;
 
 enum ArgsSpec {
     /// `#[name]` — no args allowed.
@@ -41,6 +44,10 @@ enum ArgsSpec {
     /// No allow-list — the value is opaque (e.g. a linker symbol name).
     /// Used by `#[link_name = "..."]` (Phase 11 / ObjC interop).
     ExactlyOneStr,
+    /// v0.0.7 Slice 1.3: `#[name(N)]` — exactly one integer-literal
+    /// arg. Range validation is per-attribute and lives in sema (so
+    /// the diagnostic carries the loop-statement context).
+    ExactlyOneInt,
 }
 
 struct AttrSpec {
@@ -88,6 +95,23 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_FN,
         allow_duplicate: false,
     },
+    // v0.0.7 Slice 1.3: `#[unroll(N)]` on a loop statement. Codegen
+    // attaches `!{!"llvm.loop.unroll.count", i32 N}` to the back-edge
+    // branch's `!llvm.loop` group. Sema validates N ∈ [1, 256] (E0510).
+    AttrSpec {
+        name: "unroll",
+        args: ArgsSpec::ExactlyOneInt,
+        targets: TARGET_LOOP_STMT,
+        allow_duplicate: false,
+    },
+    // v0.0.7 Slice 1.3: `#[vectorize_width(N)]` — hint LLVM's loop
+    // vectorizer to a specific vector width. Same shape as `unroll`.
+    AttrSpec {
+        name: "vectorize_width",
+        args: ArgsSpec::ExactlyOneInt,
+        targets: TARGET_LOOP_STMT,
+        allow_duplicate: false,
+    },
 ];
 
 /// Single-file entry point. Mirrors `sema::check`.
@@ -113,6 +137,7 @@ pub fn check_multi(
         match &item.kind {
             ItemKind::Function(f) => {
                 ctx.check_attrs(&f.attributes, TARGET_FN, "function");
+                ctx.walk_block_for_loop_attrs(&f.body);
             }
             ItemKind::Struct(s) => {
                 ctx.check_attrs(&s.attributes, TARGET_STRUCT, "struct");
@@ -129,6 +154,7 @@ pub fn check_multi(
             ItemKind::Impl(b) => {
                 for method in &b.methods {
                     ctx.check_attrs(&method.attributes, TARGET_METHOD, "method");
+                    ctx.walk_block_for_loop_attrs(&method.body);
                 }
             }
             // Slice 7GEN.3: interface declarations carry attributes
@@ -180,6 +206,104 @@ impl Ctx {
 
     fn set_current_file(&mut self, id: Option<&str>) {
         self.current_file = id.map(String::from);
+    }
+
+    /// v0.0.7 Slice 1.3: descend into a function body and validate
+    /// statement-level attributes on `while` / `loop` / `for`. Other
+    /// statement kinds carry no attributes today and are walked only
+    /// to reach their nested bodies (`if let`, etc. — irrelevant for
+    /// loop-stmt attrs since the lowering pass hasn't yet run, but
+    /// recursing is cheap and future-proofs the walker).
+    fn walk_block_for_loop_attrs(&mut self, block: &Block) {
+        for s in &block.stmts {
+            self.walk_stmt_for_loop_attrs(s);
+        }
+        if let Some(tail) = &block.tail {
+            self.walk_expr_for_loop_attrs(tail);
+        }
+    }
+
+    fn walk_stmt_for_loop_attrs(&mut self, stmt: &Stmt) {
+        match &stmt.kind {
+            StmtKind::While { cond, body, attributes } => {
+                self.check_attrs(attributes, TARGET_LOOP_STMT, "loop statement");
+                self.walk_expr_for_loop_attrs(cond);
+                self.walk_block_for_loop_attrs(body);
+            }
+            StmtKind::Loop(body, attributes) => {
+                self.check_attrs(attributes, TARGET_LOOP_STMT, "loop statement");
+                self.walk_block_for_loop_attrs(body);
+            }
+            StmtKind::For(fl, attributes) => {
+                self.check_attrs(attributes, TARGET_LOOP_STMT, "loop statement");
+                match fl {
+                    ForLoop::Range { iter, body, .. } => {
+                        self.walk_expr_for_loop_attrs(iter);
+                        self.walk_block_for_loop_attrs(body);
+                    }
+                    ForLoop::CStyle { init, cond, update, body } => {
+                        if let Some(s) = init {
+                            self.walk_stmt_for_loop_attrs(s);
+                        }
+                        if let Some(c) = cond {
+                            self.walk_expr_for_loop_attrs(c);
+                        }
+                        for u in update {
+                            self.walk_expr_for_loop_attrs(u);
+                        }
+                        self.walk_block_for_loop_attrs(body);
+                    }
+                }
+            }
+            StmtKind::Let { init: Some(e), .. }
+            | StmtKind::Expr(e)
+            | StmtKind::Return(Some(e))
+            | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => self.walk_expr_for_loop_attrs(e),
+            StmtKind::Let { init: None, .. }
+            | StmtKind::Return(None)
+            | StmtKind::Break
+            | StmtKind::Continue => {}
+            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+                self.walk_expr_for_loop_attrs(scrutinee);
+                self.walk_block_for_loop_attrs(body);
+                if let Some(eb) = else_body {
+                    self.walk_block_for_loop_attrs(eb);
+                }
+            }
+            StmtKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr_for_loop_attrs(scrutinee);
+                self.walk_block_for_loop_attrs(body);
+            }
+            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+                self.walk_expr_for_loop_attrs(scrutinee);
+                self.walk_block_for_loop_attrs(else_body);
+            }
+        }
+    }
+
+    fn walk_expr_for_loop_attrs(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.walk_block_for_loop_attrs(b),
+            ExprKind::If { cond, then, else_branch } => {
+                self.walk_expr_for_loop_attrs(cond);
+                self.walk_block_for_loop_attrs(then);
+                if let Some(eb) = else_branch {
+                    self.walk_expr_for_loop_attrs(eb);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr_for_loop_attrs(scrutinee);
+                for arm in arms {
+                    self.walk_expr_for_loop_attrs(&arm.body);
+                }
+            }
+            // Other expression kinds either carry no statement
+            // contexts or carry sub-expressions whose loop-stmt
+            // children (rare) are exercised via the more direct
+            // statement walker above.
+            _ => {}
+        }
     }
 
     /// Get the (path, source, LineMap) for the current item's file.
@@ -259,7 +383,29 @@ impl Ctx {
                     self.emit_expected_str_arg(attr, spec);
                 }
             }
+            ArgsSpec::ExactlyOneInt => {
+                let ok = matches!(attr.args.as_slice(), [AttrArg::Int(_, _)]);
+                if !ok {
+                    self.emit_expected_int_arg(attr, spec);
+                }
+            }
         }
+    }
+
+    fn emit_expected_int_arg(&mut self, attr: &Attribute, spec: &AttrSpec) {
+        let primary = self.make_span(attr.span);
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode("E0355"),
+            message: format!(
+                "attribute `#[{}]` requires exactly one integer-literal argument (e.g. `#[{}(4)]`)",
+                spec.name, spec.name
+            ),
+            primary,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
     }
 
     fn emit_expected_str_arg(&mut self, attr: &Attribute, spec: &AttrSpec) {

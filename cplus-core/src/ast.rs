@@ -66,6 +66,10 @@ pub enum AttrArg {
     Ident(Ident),
     /// A string literal argument: `#[deprecated("use parse_v2 instead")]`.
     Str(String, Span),
+    /// v0.0.7 Slice 1.3: an integer literal argument — `#[unroll(4)]`,
+    /// `#[vectorize_width(8)]`. Parser stores the raw value; attrs
+    /// validation + sema check the per-attribute range.
+    Int(i64, Span),
     /// `name = VALUE` form: `#[link(name = "z", kind = "static")]`. Not used
     /// by any Phase 5 attribute; parser admits the shape for forward-compat.
     KeyValue(Ident, AttrValue),
@@ -429,8 +433,12 @@ pub enum StmtKind {
     While {
         cond: Expr,
         body: Block,
+        /// v0.0.7 Slice 1.3: statement-level loop-hint attributes
+        /// (`#[unroll(N)]`, `#[vectorize_width(N)]`). Codegen emits
+        /// `!llvm.loop` metadata on the back-edge branch.
+        attributes: Vec<Attribute>,
     },
-    For(ForLoop),
+    For(ForLoop, Vec<Attribute>),
     Expr(Expr),
     /// `defer EXPR;` — registers the expression to run at the enclosing
     /// scope's exit, in LIFO order with any `Drop` calls. See
@@ -469,8 +477,9 @@ pub enum StmtKind {
     Assert(Expr),
     /// `loop { BODY }` — unconditional loop. Exits only via `break`,
     /// `return`, or a no-return call. Codegen emits a simple back-edge
-    /// from end-of-body to start-of-body.
-    Loop(Block),
+    /// from end-of-body to start-of-body. v0.0.7 Slice 1.3: optional
+    /// loop-hint attributes (`#[unroll(N)]`, `#[vectorize_width(N)]`).
+    Loop(Block, Vec<Attribute>),
     /// `while let PATTERN = SCRUTINEE { BODY }` — loop body runs each
     /// iteration the pattern matches; loop exits as soon as it doesn't.
     /// Lowered (in `crate::lower`) to `loop { match SCRUTINEE { PAT =>
@@ -670,11 +679,21 @@ pub enum ExprKind {
     /// v0.0.6 Slice 1A: `include_bytes!("relative/path")` compiler builtin.
     /// `path` is the raw string-literal payload (lexer-decoded). Sema
     /// resolves it relative to the containing source file, reads the bytes
-    /// at compile time, stashes them in `IncludeBytesTable`, and assigns
-    /// type `*const [u8; N]`. Codegen emits a private constant `[N x i8]`
-    /// global and returns its address. The `!` token after `include_bytes`
-    /// marks the form as a compiler builtin — no user-defined macros.
+    /// at compile time, stashes them in the compile-time-blob table, and
+    /// assigns type `*const [u8; N]`. Codegen emits a private constant
+    /// `[N x i8]` global and returns its address. The `!` token after
+    /// `include_bytes` marks the form as a compiler builtin — no
+    /// user-defined macros.
     IncludeBytes {
+        path: String,
+    },
+    /// v0.0.7 Slice 3.1: `include_str!("relative/path")` companion to
+    /// `include_bytes!`. Same path resolution + same compile-time read,
+    /// but the bytes are UTF-8-validated at sema time (E0875 on invalid)
+    /// and the result type is `str` (the fat-pointer view). Codegen
+    /// shares the underlying `[N x i8]` global with any `include_bytes!`
+    /// call on the same path and builds the `{ ptr, i64 }` aggregate.
+    IncludeStr {
         path: String,
     },
 }

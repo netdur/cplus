@@ -23,6 +23,15 @@ impl Window {
         rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
+    // v0.0.7 Slice 5.1: pre-built-NSString variant. Use this from
+    // callers that already have an `NSString*` (e.g. from
+    // `bridge::cplus_string_to_nsstring` on dynamic content); the
+    // `set_title` variant above wraps a C-string literal via
+    // `rt::ns_string` and is the right choice for `"Hi\0"`-shape args.
+    pub fn set_title_ns(self, title_ns: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), title_ns);
+    }
+
     pub fn center(self) {
         rt::msg_void(self.obj, rt::sel(str_ptr("center\0")));
     }

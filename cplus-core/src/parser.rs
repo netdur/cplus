@@ -323,8 +323,21 @@ impl Parser {
     }
 
     fn parse_attr_arg(&mut self) -> Result<AttrArg, ParseError> {
-        // Three shapes: bare ident, string literal, or `name = VALUE`.
+        // Four shapes: bare ident, string literal, integer literal, or
+        // `name = VALUE`. (Integer literal added in v0.0.7 Slice 1.3
+        // for `#[unroll(N)]` / `#[vectorize_width(N)]`.)
         match self.peek_kind() {
+            TokenKind::Int(..) => {
+                let tok = self.peek().clone();
+                let TokenKind::Int(v, _) = tok.kind else {
+                    unreachable!()
+                };
+                self.bump();
+                // Token's payload is u64; AttrArg::Int is i64 (loop
+                // hints don't need values > i64::MAX). Cast is safe
+                // since attribute ranges sema-validates downstream.
+                Ok(AttrArg::Int(v as i64, tok.span))
+            }
             TokenKind::Str(_) => {
                 let tok = self.peek().clone();
                 let TokenKind::Str(s) = tok.kind else {
@@ -356,7 +369,9 @@ impl Parser {
                     Ok(AttrArg::Ident(name))
                 }
             }
-            _ => Err(self.err_at_peek("attribute argument (identifier or string literal)")),
+            _ => Err(self.err_at_peek(
+                "attribute argument (identifier, string literal, or integer literal)",
+            )),
         }
     }
 
@@ -1289,6 +1304,65 @@ impl Parser {
             if matches!(self.peek_kind(), TokenKind::Eof) {
                 return Err(self.err_at_peek("`}`"));
             }
+            // v0.0.7 Slice 1.3: statement-level attributes precede a
+            // loop keyword. Accept `#[NAME(ARGS)] while|loop|for ...`;
+            // route the attribute list into the corresponding stmt-kind
+            // variant so codegen can attach `!llvm.loop` metadata.
+            if matches!(self.peek_kind(), TokenKind::Pound) {
+                let attrs = self.parse_attributes()?;
+                match self.peek_kind() {
+                    TokenKind::While
+                        if matches!(
+                            self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                            Some(TokenKind::Let)
+                        ) =>
+                    {
+                        // while-let attributes — lower to `loop { match }`
+                        // attaches the attrs to the synthesized loop in
+                        // crate::lower.
+                        let mut s = self.parse_while_let_stmt()?;
+                        if let StmtKind::WhileLet { .. } = &s.kind {
+                            // attach via a wrapping Loop after lowering;
+                            // for v0.0.7 we surface a parse error to
+                            // keep the loop-attr surface minimal.
+                            let _ = &attrs;
+                            return Err(ParseError {
+                                kind: ParseErrorKind::Unexpected {
+                                    found: "while-let".into(),
+                                    expected: "while|loop|for after #[loop-attr] (while-let not supported in v0.0.7)",
+                                },
+                                span: s.span,
+                            });
+                        }
+                        let _ = &mut s;
+                        unreachable!();
+                    }
+                    TokenKind::While => {
+                        let s = self.parse_while_stmt_with_attrs(attrs)?;
+                        stmts.push(s);
+                        continue;
+                    }
+                    TokenKind::Loop => {
+                        let s = self.parse_loop_stmt_with_attrs(attrs)?;
+                        stmts.push(s);
+                        continue;
+                    }
+                    TokenKind::For => {
+                        let s = self.parse_for_stmt_with_attrs(attrs)?;
+                        stmts.push(s);
+                        continue;
+                    }
+                    _ => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                found: tok_name(self.peek_kind()).into(),
+                                expected: "while|loop|for after statement-level `#[...]`",
+                            },
+                            span: self.peek().span,
+                        });
+                    }
+                }
+            }
             // Statements introduced by a keyword always end with `;`.
             match self.peek_kind() {
                 TokenKind::Let => {
@@ -1513,12 +1587,19 @@ impl Parser {
     }
 
     fn parse_while_stmt(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_while_stmt_with_attrs(Vec::new())
+    }
+
+    fn parse_while_stmt_with_attrs(
+        &mut self,
+        attributes: Vec<Attribute>,
+    ) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::While, "`while`")?.span;
         let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let span = start.merge(body.span);
         Ok(Stmt {
-            kind: StmtKind::While { cond, body },
+            kind: StmtKind::While { cond, body, attributes },
             span,
         })
     }
@@ -1546,11 +1627,18 @@ impl Parser {
     /// `loop { BODY }` — infinite loop. Exits only via `break`,
     /// `return`, or a no-return call.
     fn parse_loop_stmt(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_loop_stmt_with_attrs(Vec::new())
+    }
+
+    fn parse_loop_stmt_with_attrs(
+        &mut self,
+        attributes: Vec<Attribute>,
+    ) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::Loop, "`loop`")?.span;
         let body = self.parse_block()?;
         let span = start.merge(body.span);
         Ok(Stmt {
-            kind: StmtKind::Loop(body),
+            kind: StmtKind::Loop(body, attributes),
             span,
         })
     }
@@ -1576,6 +1664,13 @@ impl Parser {
     }
 
     fn parse_for_stmt(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_for_stmt_with_attrs(Vec::new())
+    }
+
+    fn parse_for_stmt_with_attrs(
+        &mut self,
+        attributes: Vec<Attribute>,
+    ) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::For, "`for`")?.span;
         if self.eat(&TokenKind::LParen) {
             // C-style: for (init; cond; update) body
@@ -1609,12 +1704,15 @@ impl Parser {
             let body = self.parse_block()?;
             let span = start.merge(body.span);
             return Ok(Stmt {
-                kind: StmtKind::For(ForLoop::CStyle {
-                    init,
-                    cond,
-                    update,
-                    body,
-                }),
+                kind: StmtKind::For(
+                    ForLoop::CStyle {
+                        init,
+                        cond,
+                        update,
+                        body,
+                    },
+                    attributes,
+                ),
                 span,
             });
         }
@@ -1625,7 +1723,7 @@ impl Parser {
         let body = self.parse_block()?;
         let span = start.merge(body.span);
         Ok(Stmt {
-            kind: StmtKind::For(ForLoop::Range { var, iter, body }),
+            kind: StmtKind::For(ForLoop::Range { var, iter, body }, attributes),
             span,
         })
     }
@@ -2226,15 +2324,25 @@ impl Parser {
             TokenKind::Ident(s) => {
                 let n = s.clone();
                 self.bump();
-                // v0.0.6 Slice 1A: `include_bytes!("path")` compiler builtin.
-                // Routed before any other postfix handling. The `!` marks
-                // this as the (only) builtin macro form; sema/codegen treat
-                // the resulting node as an opaque pointer-to-byte-array
-                // constant. The form is strict: `Ident("include_bytes") +
-                // ! + ( + StringLit + )`. Any deviation is a parse error.
-                if n == "include_bytes" && matches!(self.peek_kind(), TokenKind::Bang) {
+                // v0.0.6 Slice 1A / v0.0.7 Slice 3.1: `include_bytes!`
+                // and `include_str!` compiler builtins. Routed before any
+                // other postfix handling. The `!` marks the (only) builtin
+                // macro form; sema/codegen treat the result as either an
+                // opaque pointer-to-byte-array constant (bytes) or a `str`
+                // fat-pointer view (str). The form is strict: `Ident(name)
+                // + ! + ( + StringLit + )`. Any deviation is a parse error.
+                let is_include_bytes = n == "include_bytes";
+                let is_include_str = n == "include_str";
+                if (is_include_bytes || is_include_str)
+                    && matches!(self.peek_kind(), TokenKind::Bang)
+                {
+                    let macro_name = if is_include_bytes { "include_bytes" } else { "include_str" };
                     self.bump(); // `!`
-                    self.expect(&TokenKind::LParen, "`(` after `include_bytes!`")?;
+                    self.expect(&TokenKind::LParen, if is_include_bytes {
+                        "`(` after `include_bytes!`"
+                    } else {
+                        "`(` after `include_str!`"
+                    })?;
                     let path_tok = self.peek().clone();
                     let path = match &path_tok.kind {
                         TokenKind::Str(s) => {
@@ -2246,17 +2354,31 @@ impl Parser {
                             return Err(ParseError {
                                 kind: ParseErrorKind::Unexpected {
                                     found: tok_name(&path_tok.kind).into(),
-                                    expected: "string literal path in `include_bytes!`",
+                                    expected: if is_include_bytes {
+                                        "string literal path in `include_bytes!`"
+                                    } else {
+                                        "string literal path in `include_str!`"
+                                    },
                                 },
                                 span: path_tok.span,
                             })
                         }
                     };
                     let end = self
-                        .expect(&TokenKind::RParen, "`)` after `include_bytes!` path")?
+                        .expect(&TokenKind::RParen, if is_include_bytes {
+                            "`)` after `include_bytes!` path"
+                        } else {
+                            "`)` after `include_str!` path"
+                        })?
                         .span;
+                    let _ = macro_name;
+                    let kind = if is_include_bytes {
+                        ExprKind::IncludeBytes { path }
+                    } else {
+                        ExprKind::IncludeStr { path }
+                    };
                     return Ok(Expr {
-                        kind: ExprKind::IncludeBytes { path },
+                        kind,
                         span: tok.span.merge(end),
                     });
                 }
@@ -2999,7 +3121,7 @@ mod tests {
             panic!("expected fn");
         };
         match &f.body.stmts[0].kind {
-            StmtKind::For(ForLoop::Range { iter, .. }) => match &iter.kind {
+            StmtKind::For(ForLoop::Range { iter, .. }, _) => match &iter.kind {
                 ExprKind::Range {
                     end: Some(end),
                     inclusive: false,
@@ -4260,6 +4382,53 @@ mod tests {
         // Without the `!`, `include_bytes("foo.bin")` parses as a
         // normal function call (which sema will reject as undefined).
         let p = parse_src("fn main() -> i32 { let x = include_bytes(\"foo.bin\"); return 0; }")
+            .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("fn");
+        };
+        let StmtKind::Let { init, .. } = &f.body.stmts[0].kind else {
+            panic!("let");
+        };
+        match &init.as_ref().unwrap().kind {
+            ExprKind::Call { .. } => {}
+            other => panic!("expected Call, got {other:?}"),
+        }
+    }
+
+    // ---- v0.0.7 Slice 3.1: include_str! ----
+
+    #[test]
+    fn include_str_macro_produces_include_str_node() {
+        let p = parse_src("fn main() -> i32 { let x = include_str!(\"foo.txt\"); return 0; }")
+            .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("fn");
+        };
+        let StmtKind::Let { init, .. } = &f.body.stmts[0].kind else {
+            panic!("let");
+        };
+        match &init.as_ref().unwrap().kind {
+            ExprKind::IncludeStr { path } => assert_eq!(path, "foo.txt"),
+            other => panic!("expected IncludeStr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn include_str_with_non_literal_arg_is_parse_error() {
+        let err = parse_src("fn main() -> i32 { let x = include_str!(some_var); return 0; }")
+            .unwrap_err();
+        assert!(
+            matches!(err.kind, ParseErrorKind::Unexpected { .. }),
+            "expected Unexpected, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn include_str_without_bang_is_regular_call() {
+        // Without the `!`, `include_str("foo.txt")` parses as a normal
+        // function call (which sema will reject as undefined).
+        let p = parse_src("fn main() -> i32 { let x = include_str(\"foo.txt\"); return 0; }")
             .unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!("fn");

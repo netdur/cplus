@@ -1733,11 +1733,11 @@ fn rewrite_stmt(
                 rewrite_expr(e, ctx, scope)?;
             }
         }
-        StmtKind::While { cond, body } => {
+        StmtKind::While { cond, body, .. } => {
             rewrite_expr(cond, ctx, scope)?;
             rewrite_block(body, ctx, scope)?;
         }
-        StmtKind::For(fl) => match fl {
+        StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle {
                 init,
                 cond,
@@ -1786,7 +1786,7 @@ fn rewrite_stmt(
             // Pure control-flow markers — nothing to rewrite.
         }
         StmtKind::Assert(e) => rewrite_expr(e, ctx, scope)?,
-        StmtKind::Loop(body) => {
+        StmtKind::Loop(body, _) => {
             rewrite_block(body, ctx, scope)?;
         }
         StmtKind::WhileLet {
@@ -1838,7 +1838,8 @@ fn rewrite_expr(
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
-        | ExprKind::IncludeBytes { .. } => {}
+        | ExprKind::IncludeBytes { .. }
+        | ExprKind::IncludeStr { .. } => {}
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let crate::ast::InterpStrPart::Expr(inner) = p {
