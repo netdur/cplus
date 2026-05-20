@@ -434,6 +434,15 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
         }
     }
 
+    // v0.0.6 Slice 1A: `include_bytes!("path")` macro form. The
+    // parser only accepts `Ident Bang LParen Str RParen` as a single
+    // construct, so any `Ident Bang` sequence is the macro form —
+    // print it tight. `!=` is `BangEq` (a separate token) so this rule
+    // doesn't affect comparisons.
+    if matches!(prev, Ident(_)) && matches!(curr, Bang) {
+        return false;
+    }
+
     // After `,` always one space.
     if matches!(prev, Comma) { return true; }
     // After `;` (rare in inline contexts: `for (init; cond; update)`) → space.

@@ -1,0 +1,9 @@
+[package]
+name    = "metal_compute"
+version = "0.0.1"
+edition = "2026"
+
+# No [[bin]] section — `cpc build` doesn't yet know about Apple framework
+# search paths. Use the shipped build.sh which calls cpc + clang
+# directly. See ../../../../docs/design/v0.0.6-external-package-enable.md
+# for the rationale.

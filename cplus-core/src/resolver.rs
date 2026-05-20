@@ -61,9 +61,7 @@ pub enum ResolveError {
         prefix: String,
     },
     /// Cyclic import dependency. (E0404 — wired in slice 4C.)
-    Cycle {
-        chain: Vec<PathBuf>,
-    },
+    Cycle { chain: Vec<PathBuf> },
     /// Cross-file reference to a non-`pub` item. (E0403, slice 4B.)
     /// `kind` distinguishes the surface form so the message can use the
     /// right phrasing — function, struct, enum, method, or field.
@@ -71,8 +69,8 @@ pub enum ResolveError {
         file: PathBuf,
         span: Span,
         kind: PrivateKind,
-        owner: String,    // for methods: the type name; for fields: the struct; else the file id
-        name: String,     // the item being denied
+        owner: String, // for methods: the type name; for fields: the struct; else the file id
+        name: String,  // the item being denied
     },
     /// Generic I/O error while reading a `.cplus` file the import graph
     /// reaches. Distinct from `ImportNotFound`: the file exists but
@@ -130,26 +128,57 @@ pub enum ResolveError {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum PrivateKind { Function, Struct, Enum, Method, Interface, TypeAlias }
+pub enum PrivateKind {
+    Function,
+    Struct,
+    Enum,
+    Method,
+    Interface,
+    TypeAlias,
+}
 
 impl std::fmt::Display for ResolveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResolveError::ImportNotFound { importing_file, requested, resolved, .. } => {
-                write!(f, "[E0401] {}: import `{requested}` not found (resolved to {})",
-                    importing_file.display(), resolved.display())
+            ResolveError::ImportNotFound {
+                importing_file,
+                requested,
+                resolved,
+                ..
+            } => {
+                write!(
+                    f,
+                    "[E0401] {}: import `{requested}` not found (resolved to {})",
+                    importing_file.display(),
+                    resolved.display()
+                )
             }
             ResolveError::DuplicatePrefix { file, prefix, .. } => {
-                write!(f, "[E0405] {}: duplicate import prefix `{prefix}`", file.display())
+                write!(
+                    f,
+                    "[E0405] {}: duplicate import prefix `{prefix}`",
+                    file.display()
+                )
             }
             ResolveError::UnknownPrefix { file, prefix, .. } => {
-                write!(f, "[E0402] {}: unknown import prefix `{prefix}`", file.display())
+                write!(
+                    f,
+                    "[E0402] {}: unknown import prefix `{prefix}`",
+                    file.display()
+                )
             }
             ResolveError::Cycle { chain } => {
-                let chain_str: Vec<String> = chain.iter().map(|p| p.display().to_string()).collect();
+                let chain_str: Vec<String> =
+                    chain.iter().map(|p| p.display().to_string()).collect();
                 write!(f, "[E0404] cyclic import: {}", chain_str.join(" -> "))
             }
-            ResolveError::PrivateAccess { file, kind, owner, name, .. } => {
+            ResolveError::PrivateAccess {
+                file,
+                kind,
+                owner,
+                name,
+                ..
+            } => {
                 let what = match kind {
                     PrivateKind::Function => "function",
                     PrivateKind::Struct => "struct",
@@ -180,28 +209,45 @@ impl std::fmt::Display for ResolveError {
             ResolveError::Lex { path, source } => {
                 write!(f, "{}: {source}", path.display())
             }
-            ResolveError::UnknownPackage { importing_file, requested, package, .. } => {
+            ResolveError::UnknownPackage {
+                importing_file,
+                requested,
+                package,
+                ..
+            } => {
                 write!(
                     f,
                     "[E0852] {}: import `{requested}` — first segment `{package}` is not a declared dependency in `Cplus.toml`",
                     importing_file.display(),
                 )
             }
-            ResolveError::BareImport { importing_file, requested, .. } => {
+            ResolveError::BareImport {
+                importing_file,
+                requested,
+                ..
+            } => {
                 write!(
                     f,
                     "[E0853] {}: bare import `{requested}` — paths must start with `./`/`../` for file-relative or match a declared `[dependencies]` entry",
                     importing_file.display(),
                 )
             }
-            ResolveError::StaleExtension { importing_file, requested, .. } => {
+            ResolveError::StaleExtension {
+                importing_file,
+                requested,
+                ..
+            } => {
                 write!(
                     f,
                     "[E0858] {}: import `{requested}` has a `.cplus` extension — drop the extension (Phase 2 imports are extension-less)",
                     importing_file.display(),
                 )
             }
-            ResolveError::VendorEscape { importing_file, requested, .. } => {
+            ResolveError::VendorEscape {
+                importing_file,
+                requested,
+                ..
+            } => {
                 write!(
                     f,
                     "[E0859] {}: vendor import `{requested}` contains `..` — packages cannot reach outside their own `src/` directory",
@@ -221,10 +267,7 @@ impl std::fmt::Display for ResolveError {
 /// per-file source map collected up to the failure point — so the driver
 /// can render the diagnostic with the right path / line/col / source
 /// snippet via `LoadFailure::to_diagnostic`.
-pub fn load_project(
-    entry_path: &Path,
-    manifest_root: &Path,
-) -> Result<LoadedProject, LoadFailure> {
+pub fn load_project(entry_path: &Path, manifest_root: &Path) -> Result<LoadedProject, LoadFailure> {
     load_project_with_mode(entry_path, manifest_root, false)
 }
 
@@ -272,7 +315,8 @@ pub fn load_project_full(
     let LoaderState { files, edges } = loader.into_state();
 
     if let Err(e) = detect_cycle(&entry_file_id, &edges, &files) {
-        let sources = files.iter()
+        let sources = files
+            .iter()
             .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
             .collect();
         return Err(LoadFailure { error: e, sources });
@@ -289,9 +333,21 @@ pub fn load_project_full(
         .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
         .collect();
 
-    let merged = match merge(files, &entry_file_id, is_lib, manifest_root, &loader_deps_snapshot, project_mode) {
+    let merged = match merge(
+        files,
+        &entry_file_id,
+        is_lib,
+        manifest_root,
+        &loader_deps_snapshot,
+        project_mode,
+    ) {
         Ok(p) => p,
-        Err(e) => return Err(LoadFailure { error: e, sources: sources_by_path }),
+        Err(e) => {
+            return Err(LoadFailure {
+                error: e,
+                sources: sources_by_path,
+            })
+        }
     };
     Ok(LoadedProject {
         program: merged,
@@ -315,7 +371,9 @@ pub struct LoadFailure {
 
 impl LoadFailure {
     fn new(error: ResolveError, loader: &Loader) -> Self {
-        let sources = loader.files.iter()
+        let sources = loader
+            .files
+            .iter()
             .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
             .collect();
         Self { error, sources }
@@ -346,7 +404,9 @@ impl LoadFailure {
         let p = self.primary_path()?;
         // Try canonical first, then fall back to the raw path.
         let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-        self.sources.get(&canon).map(|s| s.as_str())
+        self.sources
+            .get(&canon)
+            .map(|s| s.as_str())
             .or_else(|| self.sources.get(p).map(|s| s.as_str()))
     }
 
@@ -354,7 +414,10 @@ impl LoadFailure {
     /// through the primary file's line-map so JSON/short/human renderers
     /// all see the right (file, line, col).
     pub fn to_diagnostic(&self) -> crate::diagnostics::Diagnostic {
-        use crate::diagnostics::{Applicability, DiagCode, Diagnostic, LineMap, Position, Severity, SourceSpan, Suggestion};
+        use crate::diagnostics::{
+            Applicability, DiagCode, Diagnostic, LineMap, Position, Severity, SourceSpan,
+            Suggestion,
+        };
 
         // Helper: build a SourceSpan for `(path, span)` using whatever
         // source we have. If no source is available (rare — file went
@@ -367,8 +430,16 @@ impl LoadFailure {
             } else {
                 SourceSpan {
                     file: path.to_path_buf(),
-                    start: Position { line: 1, col: 1, byte: span.start },
-                    end: Position { line: 1, col: 1, byte: span.end },
+                    start: Position {
+                        line: 1,
+                        col: 1,
+                        byte: span.start,
+                    },
+                    end: Position {
+                        line: 1,
+                        col: 1,
+                        byte: span.end,
+                    },
                 }
             }
         };
@@ -378,8 +449,16 @@ impl LoadFailure {
         let pathless_span = |path: &Path| -> SourceSpan {
             SourceSpan {
                 file: path.to_path_buf(),
-                start: Position { line: 1, col: 1, byte: 0 },
-                end: Position { line: 1, col: 1, byte: 0 },
+                start: Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
+                end: Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
             }
         };
 
@@ -387,7 +466,12 @@ impl LoadFailure {
         let mut notes: Vec<String> = Vec::new();
 
         let (code, message, primary): (&'static str, String, SourceSpan) = match &self.error {
-            ResolveError::ImportNotFound { importing_file, import_span, requested, resolved } => {
+            ResolveError::ImportNotFound {
+                importing_file,
+                import_span,
+                requested,
+                resolved,
+            } => {
                 // Did-you-mean: scan the importing file's directory tree
                 // for `.cplus` files and suggest the closest basename.
                 if let Some(close) = closest_cplus(importing_file, requested) {
@@ -405,38 +489,51 @@ impl LoadFailure {
                     span_in(importing_file, *import_span),
                 )
             }
-            ResolveError::DuplicatePrefix { file, prefix, first_span, second_span } => {
+            ResolveError::DuplicatePrefix {
+                file,
+                prefix,
+                first_span,
+                second_span,
+            } => {
                 notes.push("each `import` must use a distinct `as` name".to_string());
                 let primary = span_in(file, *second_span);
                 // Point at the first import as well, via a note (Label
                 // would also fit but we keep it simple).
                 let first = span_in(file, *first_span);
-                notes.push(format!("first import at {}:{}:{}", first.file.display(), first.start.line, first.start.col));
+                notes.push(format!(
+                    "first import at {}:{}:{}",
+                    first.file.display(),
+                    first.start.line,
+                    first.start.col
+                ));
                 (
                     "E0405",
                     format!("duplicate import prefix `{prefix}`"),
                     primary,
                 )
             }
-            ResolveError::UnknownPrefix { file, span, prefix } => {
-                (
-                    "E0402",
-                    format!("unknown import prefix `{prefix}`"),
-                    span_in(file, *span),
-                )
-            }
+            ResolveError::UnknownPrefix { file, span, prefix } => (
+                "E0402",
+                format!("unknown import prefix `{prefix}`"),
+                span_in(file, *span),
+            ),
             ResolveError::Cycle { chain } => {
-                let chain_str: Vec<String> = chain.iter().map(|p| p.display().to_string()).collect();
+                let chain_str: Vec<String> =
+                    chain.iter().map(|p| p.display().to_string()).collect();
                 notes.push(format!("cycle: {}", chain_str.join(" -> ")));
-                let primary = chain.first().map(|p| pathless_span(p))
+                let primary = chain
+                    .first()
+                    .map(|p| pathless_span(p))
                     .unwrap_or_else(|| pathless_span(Path::new("<unknown>")));
-                (
-                    "E0404",
-                    "cyclic import dependency".to_string(),
-                    primary,
-                )
+                ("E0404", "cyclic import dependency".to_string(), primary)
             }
-            ResolveError::PrivateAccess { file, span, kind, owner, name } => {
+            ResolveError::PrivateAccess {
+                file,
+                span,
+                kind,
+                owner,
+                name,
+            } => {
                 let what = match kind {
                     PrivateKind::Function => "function",
                     PrivateKind::Struct => "struct",
@@ -455,9 +552,11 @@ impl LoadFailure {
                 };
                 ("E0403", msg, span_in(file, *span))
             }
-            ResolveError::Io { path, source } => {
-                ("E0401", format!("I/O error reading `{}`: {source}", path.display()), pathless_span(path))
-            }
+            ResolveError::Io { path, source } => (
+                "E0401",
+                format!("I/O error reading `{}`: {source}", path.display()),
+                pathless_span(path),
+            ),
             ResolveError::Parse { path, source } => {
                 // Parse / lex errors in non-entry files already carry their
                 // own structured shape; rewrap minimally for now. (A full
@@ -471,7 +570,12 @@ impl LoadFailure {
                 let primary = span_in(path, source.span);
                 ("E00XX", format!("{source}"), primary)
             }
-            ResolveError::UnknownPackage { importing_file, import_span, requested, package } => {
+            ResolveError::UnknownPackage {
+                importing_file,
+                import_span,
+                requested,
+                package,
+            } => {
                 notes.push(format!(
                     "add `{package} = \"*\"` to `[dependencies]` in `Cplus.toml`, or change the import to `./{requested}` for a file-relative path"
                 ));
@@ -481,7 +585,11 @@ impl LoadFailure {
                     span_in(importing_file, *import_span),
                 )
             }
-            ResolveError::BareImport { importing_file, import_span, requested } => {
+            ResolveError::BareImport {
+                importing_file,
+                import_span,
+                requested,
+            } => {
                 suggestions.push(Suggestion {
                     description: "use `./` for a file-relative import".to_string(),
                     span: span_in(importing_file, *import_span),
@@ -497,7 +605,11 @@ impl LoadFailure {
                     span_in(importing_file, *import_span),
                 )
             }
-            ResolveError::StaleExtension { importing_file, import_span, requested } => {
+            ResolveError::StaleExtension {
+                importing_file,
+                import_span,
+                requested,
+            } => {
                 let stripped = requested.trim_end_matches(".cplus");
                 suggestions.push(Suggestion {
                     description: "drop the `.cplus` extension".to_string(),
@@ -511,7 +623,11 @@ impl LoadFailure {
                     span_in(importing_file, *import_span),
                 )
             }
-            ResolveError::VendorEscape { importing_file, import_span, requested } => {
+            ResolveError::VendorEscape {
+                importing_file,
+                import_span,
+                requested,
+            } => {
                 notes.push(
                     "packages cannot reach files outside their own `src/` directory via static imports".to_string()
                 );
@@ -549,7 +665,10 @@ fn closest_cplus(importing_file: &Path, requested: &str) -> Option<String> {
     // Phase 2: import paths are extension-less. Strip a stale `.cplus`
     // (if the user wrote it) so the edit-distance comparison against
     // on-disk basenames (which keep the extension) is symmetric.
-    let want_stem = want_basename.strip_suffix(".cplus").unwrap_or(&want_basename).to_string();
+    let want_stem = want_basename
+        .strip_suffix(".cplus")
+        .unwrap_or(&want_basename)
+        .to_string();
     let dir = importing_file.parent()?;
     let mut candidates: Vec<(String, String)> = Vec::new();
     push_cplus_files(dir, dir, &mut candidates, 0);
@@ -559,7 +678,9 @@ fn closest_cplus(importing_file: &Path, requested: &str) -> Option<String> {
         // would re-type, not the on-disk extension.
         let basename_stem = basename.strip_suffix(".cplus").unwrap_or(basename);
         let d = edit_distance(&want_stem, basename_stem);
-        if d > 2 { continue; }
+        if d > 2 {
+            continue;
+        }
         match &best {
             None => best = Some((d, rel.clone())),
             Some((bd, _)) if d < *bd => best = Some((d, rel.clone())),
@@ -570,16 +691,26 @@ fn closest_cplus(importing_file: &Path, requested: &str) -> Option<String> {
 }
 
 fn push_cplus_files(root: &Path, dir: &Path, out: &mut Vec<(String, String)>, depth: u32) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() && depth < 1 {
             push_cplus_files(root, &p, out, depth + 1);
         } else if p.is_file() {
-            let Some(ext) = p.extension() else { continue; };
-            if ext != "cplus" { continue; }
+            let Some(ext) = p.extension() else {
+                continue;
+            };
+            if ext != "cplus" {
+                continue;
+            }
             let basename = p.file_name().unwrap().to_string_lossy().to_string();
-            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().to_string();
+            let rel = p
+                .strip_prefix(root)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .to_string();
             out.push((rel, basename));
         }
     }
@@ -595,8 +726,8 @@ fn edit_distance(a: &str, b: &str) -> usize {
     for i in 1..=a.len() {
         curr[0] = i;
         for j in 1..=b.len() {
-            let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j-1] + 1).min(prev[j-1] + cost);
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -621,9 +752,9 @@ pub struct LoadedProject {
 
 struct Loader {
     manifest_root: PathBuf,
-    files: BTreeMap<String, FileUnit>,           // file_id → unit
-    by_canonical: BTreeMap<PathBuf, String>,     // canonical_path → file_id
-    edges: BTreeMap<String, Vec<String>>,        // file_id → imported file_ids
+    files: BTreeMap<String, FileUnit>,       // file_id → unit
+    by_canonical: BTreeMap<PathBuf, String>, // canonical_path → file_id
+    edges: BTreeMap<String, Vec<String>>,    // file_id → imported file_ids
     /// Phase 2 Slice 2B: declared dependencies (consumer's `[dependencies]`).
     /// Used to classify vendor imports — bare paths whose first segment is
     /// in this set resolve under `vendor/<name>/src/`; others fail with
@@ -680,10 +811,16 @@ impl Loader {
             Ok(p) => p,
             Err(_) => {
                 return Err(ResolveError::ImportNotFound {
-                    importing_file: importing_file.map(|p| p.to_path_buf())
+                    importing_file: importing_file
+                        .map(|p| p.to_path_buf())
                         .unwrap_or_else(|| path.to_path_buf()),
-                    import_span: import_span.as_ref().map(|(s, _)| *s).unwrap_or(Span::new(0, 0)),
-                    requested: import_span.map(|(_, r)| r).unwrap_or_else(|| path.display().to_string()),
+                    import_span: import_span
+                        .as_ref()
+                        .map(|(s, _)| *s)
+                        .unwrap_or(Span::new(0, 0)),
+                    requested: import_span
+                        .map(|(_, r)| r)
+                        .unwrap_or_else(|| path.display().to_string()),
                     resolved: path.to_path_buf(),
                 });
             }
@@ -723,10 +860,13 @@ impl Loader {
         self.edges.insert(file_id.clone(), Vec::new());
 
         // Recurse into imports.
-        let import_dir = canonical.parent().map(|p| p.to_path_buf())
+        let import_dir = canonical
+            .parent()
+            .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
         for imp in &program.imports {
-            let target_path = self.classify_import_path(&imp.path, &import_dir, &canonical, imp.span)?;
+            let target_path =
+                self.classify_import_path(&imp.path, &import_dir, &canonical, imp.span)?;
             let target_id = self.load_recursive(
                 &target_path,
                 Some(&canonical),
@@ -746,8 +886,13 @@ impl Loader {
         span: Span,
     ) -> Result<PathBuf, ResolveError> {
         classify_import_path(
-            path_str, import_dir, importing_canonical, span,
-            &self.manifest_root, &self.deps, self.project_mode,
+            path_str,
+            import_dir,
+            importing_canonical,
+            span,
+            &self.manifest_root,
+            &self.deps,
+            self.project_mode,
         )
     }
 }
@@ -863,8 +1008,8 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
     // fails (file lives outside the project — e.g. a vendor symlink resolving
     // outside the consumer's tree), fall back to the basename chain — better
     // than nothing.
-    let canonical_root = std::fs::canonicalize(manifest_root)
-        .unwrap_or_else(|_| manifest_root.to_path_buf());
+    let canonical_root =
+        std::fs::canonicalize(manifest_root).unwrap_or_else(|_| manifest_root.to_path_buf());
     let rel = canonical.strip_prefix(&canonical_root).unwrap_or(canonical);
     let mut parts: Vec<String> = Vec::new();
     for c in rel.components() {
@@ -893,7 +1038,13 @@ fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {
     // step every fallback file_id would be unlinkable.
     joined
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -921,8 +1072,12 @@ fn detect_cycle(
                 let chain: Vec<PathBuf> = stack[cut..]
                     .iter()
                     .chain(std::iter::once(&node.to_string()))
-                    .map(|id| files.get(id).map(|f| f.canonical_path.clone())
-                        .unwrap_or_else(|| PathBuf::from(id)))
+                    .map(|id| {
+                        files
+                            .get(id)
+                            .map(|f| f.canonical_path.clone())
+                            .unwrap_or_else(|| PathBuf::from(id))
+                    })
                     .collect();
                 Err(ResolveError::Cycle { chain })
             }
@@ -984,27 +1139,37 @@ fn merge(
                     // `all` insertion so call-site rewriting doesn't try
                     // to prefix the name. Pub is rejected by the parser
                     // for extern fns; nothing to record there.
-                    if f.is_extern { continue; }
+                    if f.is_extern {
+                        continue;
+                    }
                     all.insert(f.name.name.clone());
                     kinds.insert(f.name.name.clone(), ItemKindTag::Function);
-                    if f.is_pub { pubs.insert(f.name.name.clone()); }
+                    if f.is_pub {
+                        pubs.insert(f.name.name.clone());
+                    }
                 }
                 ItemKind::Enum(e) => {
                     all.insert(e.name.name.clone());
                     enums.insert(e.name.name.clone());
                     kinds.insert(e.name.name.clone(), ItemKindTag::Enum);
-                    if e.is_pub { pubs.insert(e.name.name.clone()); }
+                    if e.is_pub {
+                        pubs.insert(e.name.name.clone());
+                    }
                 }
                 ItemKind::Struct(s) => {
                     all.insert(s.name.name.clone());
                     structs.insert(s.name.name.clone());
                     kinds.insert(s.name.name.clone(), ItemKindTag::Struct);
-                    if s.is_pub { pubs.insert(s.name.name.clone()); }
+                    if s.is_pub {
+                        pubs.insert(s.name.name.clone());
+                    }
                 }
                 ItemKind::Impl(b) => {
                     let entry = methods.entry(b.target.name.clone()).or_default();
                     for m in &b.methods {
-                        if m.is_pub { entry.insert(m.name.name.clone()); }
+                        if m.is_pub {
+                            entry.insert(m.name.name.clone());
+                        }
                     }
                 }
                 // Slice 7GEN.3: interface declarations register as items.
@@ -1013,7 +1178,9 @@ fn merge(
                 ItemKind::Interface(i) => {
                     all.insert(i.name.name.clone());
                     kinds.insert(i.name.name.clone(), ItemKindTag::Interface);
-                    if i.is_pub { pubs.insert(i.name.name.clone()); }
+                    if i.is_pub {
+                        pubs.insert(i.name.name.clone());
+                    }
                 }
                 // Phase 11 polish: aliases register as ordinary type-level
                 // names so cross-file `pub use` lookups + import-alias
@@ -1021,7 +1188,9 @@ fn merge(
                 ItemKind::TypeAlias(a) => {
                     all.insert(a.name.name.clone());
                     kinds.insert(a.name.name.clone(), ItemKindTag::TypeAlias);
-                    if a.is_pub { pubs.insert(a.name.name.clone()); }
+                    if a.is_pub {
+                        pubs.insert(a.name.name.clone());
+                    }
                 }
             }
         }
@@ -1033,10 +1202,8 @@ fn merge(
         item_kind.insert(fid.clone(), kinds);
     }
 
-    let mut merged_items: Vec<Item> = Vec::new();
+    let mut imports_by_file: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for (fid, unit) in &files {
-        // Build the per-file import-alias → target-file-id map. Detect
-        // duplicate prefixes (E0405) here so each file reports its own.
         let mut imports_map: BTreeMap<String, String> = BTreeMap::new();
         let mut first_span_for: BTreeMap<String, Span> = BTreeMap::new();
         for imp in &unit.program.imports {
@@ -1048,32 +1215,56 @@ fn merge(
                     second_span: imp.as_name.span,
                 });
             }
-            // Resolve to the target file's file_id. The loader already
-            // recorded each canonical path → file_id; redo the resolution
-            // here through the same Phase 2 classifier so vendor and
-            // local imports map to the same files the loader saw.
-            let import_dir = unit.canonical_path.parent()
+            let import_dir = unit
+                .canonical_path
+                .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from("."));
             let target_path = classify_import_path(
-                &imp.path, &import_dir, &unit.canonical_path, imp.span,
-                manifest_root, deps, project_mode,
+                &imp.path,
+                &import_dir,
+                &unit.canonical_path,
+                imp.span,
+                manifest_root,
+                deps,
+                project_mode,
             )?;
-            let target_canon = std::fs::canonicalize(&target_path)
-                .unwrap_or(target_path);
-            // Find the file_id whose canonical_path equals target_canon.
-            let target_id = files.iter()
+            let target_canon = std::fs::canonicalize(&target_path).unwrap_or(target_path);
+            if let Some(target_id) = files
+                .iter()
                 .find(|(_, u)| u.canonical_path == target_canon)
-                .map(|(id, _)| id.clone());
-            if let Some(target_id) = target_id {
+                .map(|(id, _)| id.clone())
+            {
                 imports_map.insert(imp.as_name.name.clone(), target_id);
                 first_span_for.insert(imp.as_name.name.clone(), imp.as_name.span);
             }
-            // If the loader didn't find the file we'd already have returned
-            // ImportNotFound during load; here being missing means we hit
-            // some race condition — just skip and let sema report the
-            // dangling prefix.
         }
+        imports_by_file.insert(fid.clone(), imports_map);
+    }
+
+    let mut alias_targets: BTreeMap<String, BTreeMap<String, AliasTarget>> = BTreeMap::new();
+    for (fid, unit) in &files {
+        let Some(imports) = imports_by_file.get(fid) else {
+            continue;
+        };
+        for it in &unit.program.items {
+            let ItemKind::TypeAlias(a) = &it.kind else {
+                continue;
+            };
+            if let Some(target) =
+                resolve_alias_target(fid, &a.target, imports, &local_items, &item_kind)
+            {
+                alias_targets
+                    .entry(fid.clone())
+                    .or_default()
+                    .insert(a.name.name.clone(), target);
+            }
+        }
+    }
+
+    let mut merged_items: Vec<Item> = Vec::new();
+    for (fid, unit) in &files {
+        let imports_map = imports_by_file.get(fid).cloned().unwrap_or_default();
 
         let ctx = RewriteCtx {
             self_file_id: fid.clone(),
@@ -1087,6 +1278,7 @@ fn merge(
             pub_items: pub_items.clone(),
             pub_methods: pub_methods.clone(),
             item_kind: item_kind.clone(),
+            alias_targets: alias_targets.clone(),
         };
 
         for it in &unit.program.items {
@@ -1095,11 +1287,27 @@ fn merge(
         }
     }
 
-    Ok(Program { imports: Vec::new(), items: merged_items })
+    Ok(Program {
+        imports: Vec::new(),
+        items: merged_items,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ItemKindTag { Function, Struct, Enum, Interface, TypeAlias }
+enum ItemKindTag {
+    Function,
+    Struct,
+    Enum,
+    Interface,
+    TypeAlias,
+}
+
+#[derive(Debug, Clone)]
+struct AliasTarget {
+    target_id: String,
+    name: String,
+    kind: ItemKindTag,
+}
 
 struct RewriteCtx {
     self_file_id: String,
@@ -1133,6 +1341,9 @@ struct RewriteCtx {
     /// to decide if a 3-segment path is `Enum::Variant` (variants inherit
     /// the enum's pub) vs `Struct::method` (per-method pub check).
     item_kind: BTreeMap<String, BTreeMap<String, ItemKindTag>>,
+    /// Public type aliases can act as small facade re-exports. This maps
+    /// `file_id::Alias` to the concrete type item it names.
+    alias_targets: BTreeMap<String, BTreeMap<String, AliasTarget>>,
 }
 
 impl RewriteCtx {
@@ -1174,7 +1385,9 @@ impl RewriteCtx {
         if target_id == self.self_file_id {
             return Ok(());
         }
-        let kind = self.item_kind.get(target_id)
+        let kind = self
+            .item_kind
+            .get(target_id)
             .and_then(|m| m.get(name))
             .copied()
             .map(|k| match k {
@@ -1185,7 +1398,9 @@ impl RewriteCtx {
                 ItemKindTag::TypeAlias => PrivateKind::TypeAlias,
             })
             .unwrap_or(PrivateKind::Function);
-        let is_pub = self.pub_items.get(target_id)
+        let is_pub = self
+            .pub_items
+            .get(target_id)
             .map(|s| s.contains(name))
             .unwrap_or(false);
         if !is_pub {
@@ -1212,7 +1427,9 @@ impl RewriteCtx {
         if target_id == self.self_file_id {
             return Ok(());
         }
-        let is_pub = self.pub_methods.get(target_id)
+        let is_pub = self
+            .pub_methods
+            .get(target_id)
             .and_then(|m| m.get(type_name))
             .map(|s| s.contains(method))
             .unwrap_or(false);
@@ -1230,11 +1447,64 @@ impl RewriteCtx {
 
     /// Is the named local item an enum?
     fn external_is_enum(&self, target_id: &str, name: &str) -> bool {
+        if let Some(target) = self.resolve_alias_target(target_id, name) {
+            return target.kind == ItemKindTag::Enum;
+        }
         matches!(
             self.item_kind.get(target_id).and_then(|m| m.get(name)),
             Some(ItemKindTag::Enum)
         )
     }
+
+    fn resolve_alias_target(&self, target_id: &str, name: &str) -> Option<AliasTarget> {
+        let mut current_id = target_id.to_string();
+        let mut current_name = name.to_string();
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        loop {
+            if !seen.insert((current_id.clone(), current_name.clone())) {
+                return None;
+            }
+            let target = self
+                .alias_targets
+                .get(&current_id)
+                .and_then(|m| m.get(&current_name))
+                .cloned()?;
+            if target.kind != ItemKindTag::TypeAlias {
+                return Some(target);
+            }
+            current_id = target.target_id;
+            current_name = target.name;
+        }
+    }
+}
+
+fn resolve_alias_target(
+    fid: &str,
+    target: &Type,
+    imports: &BTreeMap<String, String>,
+    local_items: &BTreeMap<String, BTreeSet<String>>,
+    item_kind: &BTreeMap<String, BTreeMap<String, ItemKindTag>>,
+) -> Option<AliasTarget> {
+    let TypeKind::Path(path) = &target.kind else {
+        return None;
+    };
+    let (target_id, name) = if let Some((prefix, rest)) = path.split_once("::") {
+        (imports.get(prefix)?.clone(), rest.to_string())
+    } else if local_items
+        .get(fid)
+        .map(|s| s.contains(path))
+        .unwrap_or(false)
+    {
+        (fid.to_string(), path.clone())
+    } else {
+        return None;
+    };
+    let kind = *item_kind.get(&target_id)?.get(&name)?;
+    Some(AliasTarget {
+        target_id,
+        name,
+        kind,
+    })
 }
 
 fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
@@ -1304,7 +1574,11 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
             ItemKind::TypeAlias(a)
         }
     };
-    Ok(Item { kind, span: item.span, origin_file: Some(ctx.self_file_id.clone()) })
+    Ok(Item {
+        kind,
+        span: item.span,
+        origin_file: Some(ctx.self_file_id.clone()),
+    })
 }
 
 fn rewrite_fn(f: &Function, ctx: &RewriteCtx) -> Result<Function, ResolveError> {
@@ -1368,21 +1642,32 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
         // qualified types).
         TypeKind::Generic { name, args } => {
             *name = rewrite_type_name(name, ty.span, ctx)?;
-            for a in args.iter_mut() { rewrite_type(a, ctx)?; }
+            for a in args.iter_mut() {
+                rewrite_type(a, ctx)?;
+            }
         }
         TypeKind::RawPtr(inner) => rewrite_type(inner, ctx)?,
         // Slice 11.FN_PTR: function pointer types — recurse into each
         // param type and the return type so cross-file references in
         // signature components are qualified.
-        TypeKind::FnPtr { params, return_type } => {
-            for p in params.iter_mut() { rewrite_type(p, ctx)?; }
-            if let Some(rt) = return_type.as_mut() { rewrite_type(rt, ctx)?; }
+        TypeKind::FnPtr {
+            params,
+            return_type,
+        } => {
+            for p in params.iter_mut() {
+                rewrite_type(p, ctx)?;
+            }
+            if let Some(rt) = return_type.as_mut() {
+                rewrite_type(rt, ctx)?;
+            }
         }
         TypeKind::Slice(inner) => rewrite_type(inner, ctx)?,
         // v0.0.5 Phase 3 Slice 3B: tuple element types may themselves
         // reference cross-file types — recurse into each.
         TypeKind::Tuple(elems) => {
-            for t in elems.iter_mut() { rewrite_type(t, ctx)?; }
+            for t in elems.iter_mut() {
+                rewrite_type(t, ctx)?;
+            }
         }
     }
     Ok(())
@@ -1411,7 +1696,11 @@ fn rewrite_type_name(s: &str, span: Span, ctx: &RewriteCtx) -> Result<String, Re
     Ok(s.to_string())
 }
 
-fn rewrite_block(b: &mut Block, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> Result<(), ResolveError> {
+fn rewrite_block(
+    b: &mut Block,
+    ctx: &RewriteCtx,
+    scope: &mut HashSet<String>,
+) -> Result<(), ResolveError> {
     // Save the scope so locals declared inside this block don't leak out.
     let snapshot = scope.clone();
     for s in &mut b.stmts {
@@ -1424,7 +1713,11 @@ fn rewrite_block(b: &mut Block, ctx: &RewriteCtx, scope: &mut HashSet<String>) -
     Ok(())
 }
 
-fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> Result<(), ResolveError> {
+fn rewrite_stmt(
+    s: &mut Stmt,
+    ctx: &RewriteCtx,
+    scope: &mut HashSet<String>,
+) -> Result<(), ResolveError> {
     match &mut s.kind {
         StmtKind::Let { name, ty, init, .. } => {
             if let Some(t) = ty {
@@ -1436,20 +1729,31 @@ fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
             scope.insert(name.name.clone());
         }
         StmtKind::Return(opt) => {
-            if let Some(e) = opt { rewrite_expr(e, ctx, scope)?; }
+            if let Some(e) = opt {
+                rewrite_expr(e, ctx, scope)?;
+            }
         }
         StmtKind::While { cond, body } => {
             rewrite_expr(cond, ctx, scope)?;
             rewrite_block(body, ctx, scope)?;
         }
         StmtKind::For(fl) => match fl {
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 let snapshot = scope.clone();
                 if let Some(init) = init {
                     rewrite_stmt(init, ctx, scope)?;
                 }
-                if let Some(c) = cond { rewrite_expr(c, ctx, scope)?; }
-                for u in update { rewrite_expr(u, ctx, scope)?; }
+                if let Some(c) = cond {
+                    rewrite_expr(c, ctx, scope)?;
+                }
+                for u in update {
+                    rewrite_expr(u, ctx, scope)?;
+                }
                 rewrite_block(body, ctx, scope)?;
                 *scope = snapshot;
             }
@@ -1460,10 +1764,15 @@ fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
                 rewrite_block(body, ctx, scope)?;
                 *scope = snapshot;
             }
-        }
+        },
         StmtKind::Expr(e) => rewrite_expr(e, ctx, scope)?,
         StmtKind::Defer(e) => rewrite_expr(e, ctx, scope)?,
-        StmtKind::IfLet { pattern, scrutinee, body, else_body } => {
+        StmtKind::IfLet {
+            pattern,
+            scrutinee,
+            body,
+            else_body,
+        } => {
             rewrite_expr(scrutinee, ctx, scope)?;
             let snapshot = scope.clone();
             rewrite_pattern(pattern, ctx, scope)?;
@@ -1480,7 +1789,11 @@ fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
         StmtKind::Loop(body) => {
             rewrite_block(body, ctx, scope)?;
         }
-        StmtKind::WhileLet { pattern, scrutinee, body } => {
+        StmtKind::WhileLet {
+            pattern,
+            scrutinee,
+            body,
+        } => {
             rewrite_expr(scrutinee, ctx, scope)?;
             // Bindings from the loop pattern live inside the body only.
             let snapshot = scope.clone();
@@ -1488,7 +1801,12 @@ fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
             rewrite_block(body, ctx, scope)?;
             *scope = snapshot;
         }
-        StmtKind::GuardLet { pattern, scrutinee, complement, else_body } => {
+        StmtKind::GuardLet {
+            pattern,
+            scrutinee,
+            complement,
+            else_body,
+        } => {
             rewrite_expr(scrutinee, ctx, scope)?;
             // Else block runs in a scope that has NEITHER the pattern's
             // bindings (it didn't match) nor the post-statement scope.
@@ -1510,9 +1828,17 @@ fn rewrite_stmt(s: &mut Stmt, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
     Ok(())
 }
 
-fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> Result<(), ResolveError> {
+fn rewrite_expr(
+    e: &mut Expr,
+    ctx: &RewriteCtx,
+    scope: &mut HashSet<String>,
+) -> Result<(), ResolveError> {
     match &mut e.kind {
-        ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _) | ExprKind::BoolLit(_) | ExprKind::StrLit(_) => {}
+        ExprKind::IntLit(_, _)
+        | ExprKind::FloatLit(_, _)
+        | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::IncludeBytes { .. } => {}
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let crate::ast::InterpStrPart::Expr(inner) = p {
@@ -1537,18 +1863,32 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
         ExprKind::Unsafe(b) => rewrite_block(b, ctx, scope)?,
         ExprKind::Await(inner) => rewrite_expr(inner, ctx, scope)?,
         ExprKind::Yield(inner) => rewrite_expr(inner, ctx, scope)?,
-        ExprKind::If { cond, then, else_branch } => {
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
             rewrite_expr(cond, ctx, scope)?;
             rewrite_block(then, ctx, scope)?;
-            if let Some(eb) = else_branch { rewrite_expr(eb, ctx, scope)?; }
+            if let Some(eb) = else_branch {
+                rewrite_expr(eb, ctx, scope)?;
+            }
         }
-        ExprKind::Call { callee, args, type_args } => {
+        ExprKind::Call {
+            callee,
+            args,
+            type_args,
+        } => {
             rewrite_expr(callee, ctx, scope)?;
-            for a in args { rewrite_expr(a, ctx, scope)?; }
+            for a in args {
+                rewrite_expr(a, ctx, scope)?;
+            }
             // v0.0.3 Slice 1P.3: turbofish type-args carry their own type
             // references (`foo::[mod::T, other::U](...)`); qualify them
             // the same way as types in declared positions.
-            for ta in type_args.iter_mut() { rewrite_type(ta, ctx)?; }
+            for ta in type_args.iter_mut() {
+                rewrite_type(ta, ctx)?;
+            }
         }
         ExprKind::Binary { lhs, rhs, .. } => {
             rewrite_expr(lhs, ctx, scope)?;
@@ -1556,8 +1896,12 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
         }
         ExprKind::Unary { operand, .. } => rewrite_expr(operand, ctx, scope)?,
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { rewrite_expr(s, ctx, scope)?; }
-            if let Some(en) = end { rewrite_expr(en, ctx, scope)?; }
+            if let Some(s) = start {
+                rewrite_expr(s, ctx, scope)?;
+            }
+            if let Some(en) = end {
+                rewrite_expr(en, ctx, scope)?;
+            }
         }
         ExprKind::Assign { target, value, .. } => {
             rewrite_expr(target, ctx, scope)?;
@@ -1601,14 +1945,24 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
                     // Slice 4B: the type itself must be `pub` to be
                     // referenced cross-file at all.
                     ctx.check_pub_item(target_id, &type_name, type_span)?;
+                    let resolved_alias = ctx.resolve_alias_target(target_id, &type_name);
+                    let (actual_target_id, actual_type_name) = match &resolved_alias {
+                        Some(target) => (target.target_id.as_str(), target.name.as_str()),
+                        None => (target_id.as_str(), type_name.as_str()),
+                    };
                     // If the type is an enum, variants inherit the enum's
                     // pub (no per-variant flag) — the `check_pub_item`
                     // above covers it. If the type is a struct, the method
                     // also needs its own `pub`.
-                    if !ctx.external_is_enum(target_id, &type_name) {
-                        ctx.check_pub_method(target_id, &type_name, &method_or_variant, leaf_span)?;
+                    if !ctx.external_is_enum(actual_target_id, actual_type_name) {
+                        ctx.check_pub_method(
+                            actual_target_id,
+                            actual_type_name,
+                            &method_or_variant,
+                            leaf_span,
+                        )?;
                     }
-                    let new_type_name = ctx.qualify_external(target_id, &type_name);
+                    let new_type_name = ctx.qualify_external(actual_target_id, actual_type_name);
                     segments.remove(0);
                     segments[0].name = new_type_name;
                     segments[0].span = type_span;
@@ -1626,13 +1980,22 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
         ExprKind::StructLit { name, fields } => {
             if ctx.local_items.contains(&name.name) {
                 name.name = ctx.qualify_local(&name.name);
-            } else if let Some((prefix, rest)) = name.name.clone().split_once("::").map(|(a, b)| (a.to_string(), b.to_string())) {
+            } else if let Some((prefix, rest)) = name
+                .name
+                .clone()
+                .split_once("::")
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+            {
                 if let Some(target_id) = ctx.imports.get(&prefix) {
                     // Slice 4B: cross-file struct literal requires the
                     // struct to be `pub`. Field-pub is enforced by sema
                     // (it has the field-level info after resolver-rewrite).
                     ctx.check_pub_item(target_id, &rest, name.span)?;
-                    name.name = ctx.qualify_external(target_id, &rest);
+                    if let Some(target) = ctx.resolve_alias_target(target_id, &rest) {
+                        name.name = ctx.qualify_external(&target.target_id, &target.name);
+                    } else {
+                        name.name = ctx.qualify_external(target_id, &rest);
+                    }
                 }
             }
             for f in fields {
@@ -1643,36 +2006,65 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
         // + recurse into type args + field exprs. The pattern mirrors
         // `StructLit`, but resolver doesn't know about generic instantiation
         // names — those are synthesized by sema and live only post-mono.
-        ExprKind::GenericStructLit { name, type_args, fields } => {
+        ExprKind::GenericStructLit {
+            name,
+            type_args,
+            fields,
+        } => {
             if ctx.local_items.contains(&name.name) {
                 name.name = ctx.qualify_local(&name.name);
-            } else if let Some((prefix, rest)) = name.name.clone().split_once("::").map(|(a, b)| (a.to_string(), b.to_string())) {
+            } else if let Some((prefix, rest)) = name
+                .name
+                .clone()
+                .split_once("::")
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+            {
                 if let Some(target_id) = ctx.imports.get(&prefix) {
                     ctx.check_pub_item(target_id, &rest, name.span)?;
                     name.name = ctx.qualify_external(target_id, &rest);
                 }
             }
-            for ta in type_args.iter_mut() { rewrite_type(ta, ctx)?; }
-            for f in fields { rewrite_expr(&mut f.value, ctx, scope)?; }
+            for ta in type_args.iter_mut() {
+                rewrite_type(ta, ctx)?;
+            }
+            for f in fields {
+                rewrite_expr(&mut f.value, ctx, scope)?;
+            }
         }
         ExprKind::Field { receiver, .. } => rewrite_expr(receiver, ctx, scope)?,
         ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
-            for el in elements { rewrite_expr(el, ctx, scope)?; }
+            for el in elements {
+                rewrite_expr(el, ctx, scope)?;
+            }
         }
         // v0.0.3 1P.1: qualify the enum_name for cross-module generic enum
         // constructors (`mod::Enum[T, E]::Variant(args)`). Pattern mirrors
         // GenericStructLit above. Also rewrite type-args + arg expressions.
-        ExprKind::GenericEnumCall { enum_name, type_args, args, .. } => {
+        ExprKind::GenericEnumCall {
+            enum_name,
+            type_args,
+            args,
+            ..
+        } => {
             if ctx.local_items.contains(&enum_name.name) {
                 enum_name.name = ctx.qualify_local(&enum_name.name);
-            } else if let Some((prefix, rest)) = enum_name.name.clone().split_once("::").map(|(a, b)| (a.to_string(), b.to_string())) {
+            } else if let Some((prefix, rest)) = enum_name
+                .name
+                .clone()
+                .split_once("::")
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+            {
                 if let Some(target_id) = ctx.imports.get(&prefix) {
                     ctx.check_pub_item(target_id, &rest, enum_name.span)?;
                     enum_name.name = ctx.qualify_external(target_id, &rest);
                 }
             }
-            for ta in type_args.iter_mut() { rewrite_type(ta, ctx)?; }
-            for el in args { rewrite_expr(el, ctx, scope)?; }
+            for ta in type_args.iter_mut() {
+                rewrite_type(ta, ctx)?;
+            }
+            for el in args {
+                rewrite_expr(el, ctx, scope)?;
+            }
         }
         ExprKind::Index { receiver, index } => {
             rewrite_expr(receiver, ctx, scope)?;
@@ -1691,20 +2083,32 @@ fn rewrite_expr(e: &mut Expr, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> 
     Ok(())
 }
 
-fn rewrite_pattern(p: &mut Pattern, ctx: &RewriteCtx, scope: &mut HashSet<String>) -> Result<(), ResolveError> {
+fn rewrite_pattern(
+    p: &mut Pattern,
+    ctx: &RewriteCtx,
+    scope: &mut HashSet<String>,
+) -> Result<(), ResolveError> {
     match &mut p.kind {
         PatternKind::Wildcard => {}
         PatternKind::Binding(ident) => {
             scope.insert(ident.name.clone());
         }
-        PatternKind::Variant { enum_name, type_args, payload, .. } => {
+        PatternKind::Variant {
+            enum_name,
+            type_args,
+            payload,
+            ..
+        } => {
             // Three shapes (slice 4-end completes the cross-file case):
             //   `Variant`                  — `enum_name = "EnumName"`        (local)
             //   `Enum::Variant`            — `enum_name = "EnumName"`        (local; payload captured)
             //   `prefix::Enum::Variant`    — `enum_name = "prefix::Enum"`    (cross-file)
             //   `Option[i32]::Variant`     — generic-enum pattern (slice 7GEN.5e); type_args walked below.
-            if let Some((prefix, rest)) = enum_name.name.clone()
-                .split_once("::").map(|(a, b)| (a.to_string(), b.to_string()))
+            if let Some((prefix, rest)) = enum_name
+                .name
+                .clone()
+                .split_once("::")
+                .map(|(a, b)| (a.to_string(), b.to_string()))
             {
                 // Cross-file: rewrite to the qualified enum name.
                 if let Some(target_id) = ctx.imports.get(&prefix) {
@@ -1729,10 +2133,18 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "println"
-            | "i8" | "i16" | "i32" | "i64"
-            | "u8" | "u16" | "u32" | "u64"
-            | "isize" | "usize"
-            | "f32" | "f64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "isize"
+            | "usize"
+            | "f32"
+            | "f64"
             | "bool"
     )
 }
@@ -1762,8 +2174,14 @@ mod tests {
     #[test]
     fn derive_file_id_basics() {
         let root = PathBuf::from("/tmp/proj");
-        assert_eq!(derive_file_id(Path::new("/tmp/proj/src/main.cplus"), &root), "src.main");
-        assert_eq!(derive_file_id(Path::new("/tmp/proj/src/util/strings.cplus"), &root), "src.util.strings");
+        assert_eq!(
+            derive_file_id(Path::new("/tmp/proj/src/main.cplus"), &root),
+            "src.main"
+        );
+        assert_eq!(
+            derive_file_id(Path::new("/tmp/proj/src/util/strings.cplus"), &root),
+            "src.util.strings"
+        );
     }
 
     #[test]
@@ -1775,10 +2193,15 @@ mod tests {
         fs::write(&main, "fn main() -> i32 { return 0; }").unwrap();
         let p = load_project(&main, &dir).unwrap();
         // `main` stays bare in the entry file.
-        let names: Vec<String> = p.program.items.iter().map(|it| match &it.kind {
-            ItemKind::Function(f) => f.name.name.clone(),
-            _ => String::new(),
-        }).collect();
+        let names: Vec<String> = p
+            .program
+            .items
+            .iter()
+            .map(|it| match &it.kind {
+                ItemKind::Function(f) => f.name.name.clone(),
+                _ => String::new(),
+            })
+            .collect();
         assert!(names.contains(&"main".to_string()));
     }
 
@@ -1787,7 +2210,11 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/math.cplus"), "pub fn square(n: i32) -> i32 { return n * n; }").unwrap();
+        fs::write(
+            dir.join("src/math.cplus"),
+            "pub fn square(n: i32) -> i32 { return n * n; }",
+        )
+        .unwrap();
         let main_src = r#"
             import "math.cplus" as math;
             fn main() -> i32 { return math::square(7); }
@@ -1796,10 +2223,15 @@ mod tests {
         fs::write(&main, main_src).unwrap();
         let p = load_project(&main, &dir).unwrap();
         // `math::square` should have been rewritten to qualified Ident.
-        let main_fn = p.program.items.iter().find_map(|it| match &it.kind {
-            ItemKind::Function(f) if f.name.name == "main" => Some(f),
-            _ => None,
-        }).unwrap();
+        let main_fn = p
+            .program
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "main" => Some(f),
+                _ => None,
+            })
+            .unwrap();
         // Inspect the call expr in main's body.
         let return_expr = match &main_fn.body.stmts[0].kind {
             StmtKind::Return(Some(e)) => e,
@@ -1818,7 +2250,10 @@ mod tests {
             ItemKind::Function(f) if f.name.name == "src.math.square" => Some(f),
             _ => None,
         });
-        assert!(square.is_some(), "expected qualified `src.math.square` in merged program");
+        assert!(
+            square.is_some(),
+            "expected qualified `src.math.square` in merged program"
+        );
     }
 
     #[test]
@@ -1859,14 +2294,22 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/a.cplus"), r#"
+        fs::write(
+            dir.join("src/a.cplus"),
+            r#"
             import "b.cplus" as b;
             fn from_a() -> i32 { return 1; }
-        "#).unwrap();
-        fs::write(dir.join("src/b.cplus"), r#"
+        "#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/b.cplus"),
+            r#"
             import "a.cplus" as a;
             fn from_b() -> i32 { return 2; }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let main_src = r#"
             import "a.cplus" as a;
             fn main() -> i32 { return 0; }
@@ -1883,7 +2326,11 @@ mod tests {
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
         // No `pub` — private to math.cplus.
-        fs::write(dir.join("src/math.cplus"), "fn square(n: i32) -> i32 { return n * n; }").unwrap();
+        fs::write(
+            dir.join("src/math.cplus"),
+            "fn square(n: i32) -> i32 { return n * n; }",
+        )
+        .unwrap();
         let main_src = r#"
             import "math.cplus" as math;
             fn main() -> i32 { return math::square(7); }
@@ -1891,8 +2338,16 @@ mod tests {
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
         let err = load_project(&main, &dir).unwrap_err();
-        assert!(matches!(err.error, ResolveError::PrivateAccess { kind: PrivateKind::Function, .. }),
-            "expected PrivateAccess Function, got {err:?}");
+        assert!(
+            matches!(
+                err.error,
+                ResolveError::PrivateAccess {
+                    kind: PrivateKind::Function,
+                    ..
+                }
+            ),
+            "expected PrivateAccess Function, got {err:?}"
+        );
     }
 
     #[test]
@@ -1900,8 +2355,11 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/geom.cplus"),
-            "struct Point { x: i32, y: i32 }\n").unwrap();
+        fs::write(
+            dir.join("src/geom.cplus"),
+            "struct Point { x: i32, y: i32 }\n",
+        )
+        .unwrap();
         // Slice 4C: cross-file struct literal `g::Point { ... }` now
         // parses, so the E0403 check fires on the construction site.
         let main_src = r#"
@@ -1911,8 +2369,16 @@ mod tests {
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
         let err = load_project(&main, &dir).unwrap_err();
-        assert!(matches!(err.error, ResolveError::PrivateAccess { kind: PrivateKind::Struct, .. }),
-            "expected PrivateAccess Struct, got {err:?}");
+        assert!(
+            matches!(
+                err.error,
+                ResolveError::PrivateAccess {
+                    kind: PrivateKind::Struct,
+                    ..
+                }
+            ),
+            "expected PrivateAccess Struct, got {err:?}"
+        );
     }
 
     #[test]
@@ -1921,12 +2387,16 @@ mod tests {
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
         // Struct is pub but method isn't.
-        fs::write(dir.join("src/geom.cplus"), r#"
+        fs::write(
+            dir.join("src/geom.cplus"),
+            r#"
             pub struct Point { pub x: i32, pub y: i32 }
             impl Point {
                 fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
             }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let main_src = r#"
             import "geom.cplus" as g;
             fn main() -> i32 { let p: g::Point = g::Point::new(1, 2); return 0; }
@@ -1934,8 +2404,16 @@ mod tests {
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
         let err = load_project(&main, &dir).unwrap_err();
-        assert!(matches!(err.error, ResolveError::PrivateAccess { kind: PrivateKind::Method, .. }),
-            "expected PrivateAccess Method, got {err:?}");
+        assert!(
+            matches!(
+                err.error,
+                ResolveError::PrivateAccess {
+                    kind: PrivateKind::Method,
+                    ..
+                }
+            ),
+            "expected PrivateAccess Method, got {err:?}"
+        );
     }
 
     #[test]
@@ -1962,8 +2440,11 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/colors.cplus"),
-            "pub enum Color { Red, Green(i32), Blue }\n").unwrap();
+        fs::write(
+            dir.join("src/colors.cplus"),
+            "pub enum Color { Red, Green(i32), Blue }\n",
+        )
+        .unwrap();
         let main_src = r#"
             import "colors.cplus" as c;
             fn name(co: c::Color) -> i32 {
@@ -1980,10 +2461,15 @@ mod tests {
         let project = load_project(&main, &dir).expect("project loads");
         // Walk to `name` fn's match arms and confirm the enum_name was
         // rewritten to `src.colors.Color`.
-        let name_fn = project.program.items.iter().find_map(|it| match &it.kind {
-            ItemKind::Function(f) if f.name.name == "src.main.name" => Some(f),
-            _ => None,
-        }).expect("found name fn");
+        let name_fn = project
+            .program
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "src.main.name" => Some(f),
+                _ => None,
+            })
+            .expect("found name fn");
         let return_expr = match &name_fn.body.stmts[0].kind {
             StmtKind::Return(Some(e)) => e,
             _ => panic!("expected return"),
@@ -1994,8 +2480,11 @@ mod tests {
         };
         for arm in arms {
             if let PatternKind::Variant { enum_name, .. } = &arm.pattern.kind {
-                assert_eq!(enum_name.name, "src.colors.Color",
-                    "expected qualified enum name; got `{}`", enum_name.name);
+                assert_eq!(
+                    enum_name.name, "src.colors.Color",
+                    "expected qualified enum name; got `{}`",
+                    enum_name.name
+                );
             }
         }
     }
@@ -2006,8 +2495,11 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/colors.cplus"),
-            "pub enum Color { Red, Green, Blue }\n").unwrap();
+        fs::write(
+            dir.join("src/colors.cplus"),
+            "pub enum Color { Red, Green, Blue }\n",
+        )
+        .unwrap();
         let main_src = r#"
             import "colors.cplus" as c;
             fn main() -> i32 {
@@ -2025,8 +2517,11 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/colors.cplus"),
-            "enum Color { Red, Green, Blue }\n").unwrap();
+        fs::write(
+            dir.join("src/colors.cplus"),
+            "enum Color { Red, Green, Blue }\n",
+        )
+        .unwrap();
         let main_src = r#"
             import "colors.cplus" as c;
             fn main() -> i32 { let r: c::Color = c::Color::Red; return 0; }
@@ -2034,8 +2529,16 @@ mod tests {
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
         let err = load_project(&main, &dir).unwrap_err();
-        assert!(matches!(err.error, ResolveError::PrivateAccess { kind: PrivateKind::Enum, .. }),
-            "expected PrivateAccess Enum, got {err:?}");
+        assert!(
+            matches!(
+                err.error,
+                ResolveError::PrivateAccess {
+                    kind: PrivateKind::Enum,
+                    ..
+                }
+            ),
+            "expected PrivateAccess Enum, got {err:?}"
+        );
     }
 
     #[test]
@@ -2043,12 +2546,16 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        fs::write(dir.join("src/geom.cplus"), r#"
+        fs::write(
+            dir.join("src/geom.cplus"),
+            r#"
             pub struct Point { pub x: i32, pub y: i32 }
             impl Point {
                 pub fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
             }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let main_src = r#"
             import "geom.cplus" as g;
             fn main() -> i32 {

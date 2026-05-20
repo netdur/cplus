@@ -1,0 +1,97 @@
+import "./runtime" as rt;
+
+pub struct ViewController {
+    pub obj: *u8,
+}
+
+impl ViewController {
+    pub fn new() -> ViewController {
+        return ViewController { obj: rt::alloc_init(str_ptr("NSViewController\0")) };
+    }
+
+    pub fn set_view(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setView:\0")), view);
+    }
+
+    pub fn view(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(str_ptr("view\0")));
+    }
+}
+
+pub struct WindowController {
+    pub obj: *u8,
+}
+
+impl WindowController {
+    pub fn new() -> WindowController {
+        return WindowController { obj: rt::alloc_init(str_ptr("NSWindowController\0")) };
+    }
+
+    pub fn set_window(self, window: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setWindow:\0")), window);
+    }
+
+    pub fn window(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(str_ptr("window\0")));
+    }
+
+    pub fn show_window(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("showWindow:\0")), sender);
+    }
+}
+
+pub struct TabViewController {
+    pub obj: *u8,
+}
+
+impl TabViewController {
+    pub fn new() -> TabViewController {
+        return TabViewController { obj: rt::alloc_init(str_ptr("NSTabViewController\0")) };
+    }
+
+    pub fn add_tab_view_item(self, item: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("addTabViewItem:\0")), item);
+    }
+}
+
+pub struct SplitViewController {
+    pub obj: *u8,
+}
+
+impl SplitViewController {
+    pub fn new() -> SplitViewController {
+        return SplitViewController { obj: rt::alloc_init(str_ptr("NSSplitViewController\0")) };
+    }
+
+    pub fn add_split_view_item(self, item: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("addSplitViewItem:\0")), item);
+    }
+}
+
+pub struct ArrayController {
+    pub obj: *u8,
+}
+
+impl ArrayController {
+    pub fn new() -> ArrayController {
+        return ArrayController { obj: rt::alloc_init(str_ptr("NSArrayController\0")) };
+    }
+
+    pub fn set_content(self, content: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setContent:\0")), content);
+    }
+}
+
+pub struct ObjectController {
+    pub obj: *u8,
+}
+
+impl ObjectController {
+    pub fn new() -> ObjectController {
+        return ObjectController { obj: rt::alloc_init(str_ptr("NSObjectController\0")) };
+    }
+
+    pub fn set_content(self, content: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setContent:\0")), content);
+    }
+}

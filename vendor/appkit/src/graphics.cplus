@@ -1,0 +1,105 @@
+import "./runtime" as rt;
+
+pub struct ImageView {
+    pub obj: *u8,
+}
+
+impl ImageView {
+    pub fn new(frame: rt::Rect) -> ImageView {
+        let cls: *u8 = rt::get_class(str_ptr("NSImageView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
+        let iv: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+        return ImageView { obj: iv };
+    }
+
+    pub fn set_image(self, image: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setImage:\0")), image);
+    }
+
+    pub fn set_scaling(self, scaling: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setImageScaling:\0")), scaling);
+    }
+}
+
+pub struct Image {
+    pub obj: *u8,
+}
+
+impl Image {
+    pub fn by_name(name: *u8) -> *u8 {
+        let ns_name = rt::ns_string(name);
+        let cls = rt::get_class(str_ptr("NSImage\0"));
+        return rt::msg_id_id(cls, rt::sel(str_ptr("imageNamed:\0")), ns_name);
+    }
+
+    pub fn init_with_file(path: *u8) -> *u8 {
+        let ns_path = rt::ns_string(path);
+        let cls = rt::get_class(str_ptr("NSImage\0"));
+        let img_alloc = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
+        return rt::msg_id_id(img_alloc, rt::sel(str_ptr("initWithContentsOfFile:\0")), ns_path);
+    }
+}
+
+pub struct Font {
+    pub obj: *u8,
+}
+
+impl Font {
+    pub fn system_font_of_size(size: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(str_ptr("NSFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(str_ptr("systemFontOfSize:\0")), size);
+    }
+
+    pub fn bold_system_font_of_size(size: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(str_ptr("NSFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(str_ptr("boldSystemFontOfSize:\0")), size);
+    }
+
+    pub fn label_font_of_size(size: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(str_ptr("NSFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(str_ptr("labelFontOfSize:\0")), size);
+    }
+}
+
+pub struct Color {
+    pub obj: *u8,
+}
+
+impl Color {
+    pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> *u8 {
+        let cls: *u8 = rt::get_class(str_ptr("NSColor\0"));
+        return rt::msg_id_rgba(cls, rt::sel(str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), r, g, b, a);
+    }
+
+    pub fn red() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("redColor\0")));
+    }
+
+    pub fn green() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("greenColor\0")));
+    }
+
+    pub fn blue() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("blueColor\0")));
+    }
+
+    pub fn black() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("blackColor\0")));
+    }
+
+    pub fn white() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("whiteColor\0")));
+    }
+
+    pub fn clear() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("clearColor\0")));
+    }
+
+    pub fn gray() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("grayColor\0")));
+    }
+
+    pub fn yellow() -> *u8 {
+        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("yellowColor\0")));
+    }
+}

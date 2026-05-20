@@ -50,13 +50,21 @@ pub struct StructId(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Ty {
     // Signed integers
-    I8, I16, I32, I64,
+    I8,
+    I16,
+    I32,
+    I64,
     // Unsigned integers
-    U8, U16, U32, U64,
+    U8,
+    U16,
+    U32,
+    U64,
     // Pointer-sized
-    Isize, Usize,
+    Isize,
+    Usize,
     // Floats
-    F32, F64,
+    F32,
+    F64,
     // Other
     Bool,
     Unit,
@@ -86,11 +94,24 @@ pub enum Ty {
     /// closures in C+); the pointer is just the symbol's address.
     /// Calling convention is always ccc. Two FnPtr values are equal
     /// iff their parameter types and return type are equal.
-    FnPtr { params: Vec<Ty>, return_type: Box<Ty> },
+    FnPtr {
+        params: Vec<Ty>,
+        return_type: Box<Ty>,
+    },
     Enum(EnumId),
     Struct(StructId),
     /// Fixed-size array: element type + length.
     Array(Box<Ty>, u32),
+    /// v0.0.6 Slice 1B: fixed-width SIMD vector. `elem` is the per-lane
+    /// scalar type (one of the numeric primitives); `lanes` is the lane
+    /// count. Lowered to LLVM `<lanes x elem>`. Distinct from `Array`
+    /// because arithmetic + intrinsic methods dispatch through a SIMD
+    /// method table and codegen uses vector ops (`fadd <4 x float>` vs
+    /// scalar `fadd float` element-by-element). Copy.
+    Simd {
+        elem: Box<Ty>,
+        lanes: u32,
+    },
     /// Slice 7GEN.4: a generic type parameter, identified by name. Appears
     /// inside the body of a generic fn / method / struct / enum or inside an
     /// `interface` / `impl Interface for ...` block (where `Self` is
@@ -99,7 +120,7 @@ pub enum Ty {
     /// Substitution at instantiation time (slice 7GEN.5) replaces each
     /// `Param` with a concrete type.
     Param(String),
-    Error,   // sentinel for recovery; matches anything
+    Error, // sentinel for recovery; matches anything
 }
 
 impl Ty {
@@ -108,10 +129,18 @@ impl Ty {
     /// needed in a diagnostic message.
     pub fn name(&self) -> &'static str {
         match self {
-            Ty::I8 => "i8", Ty::I16 => "i16", Ty::I32 => "i32", Ty::I64 => "i64",
-            Ty::U8 => "u8", Ty::U16 => "u16", Ty::U32 => "u32", Ty::U64 => "u64",
-            Ty::Isize => "isize", Ty::Usize => "usize",
-            Ty::F32 => "f32", Ty::F64 => "f64",
+            Ty::I8 => "i8",
+            Ty::I16 => "i16",
+            Ty::I32 => "i32",
+            Ty::I64 => "i64",
+            Ty::U8 => "u8",
+            Ty::U16 => "u16",
+            Ty::U32 => "u32",
+            Ty::U64 => "u64",
+            Ty::Isize => "isize",
+            Ty::Usize => "usize",
+            Ty::F32 => "f32",
+            Ty::F64 => "f64",
             Ty::Bool => "bool",
             Ty::Unit => "()",
             Ty::Str => "str",
@@ -122,6 +151,7 @@ impl Ty {
             Ty::Enum(_) => "enum",
             Ty::Struct(_) => "struct",
             Ty::Array(_, _) => "array",
+            Ty::Simd { .. } => "simd",
             Ty::Param(_) => "type-param",
             Ty::Error => "<error>",
         }
@@ -133,12 +163,24 @@ impl Ty {
     pub fn is_unsigned_int(&self) -> bool {
         matches!(self, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize)
     }
-    pub fn is_int(&self) -> bool { self.is_signed_int() || self.is_unsigned_int() }
-    pub fn is_float(&self) -> bool { matches!(self, Ty::F32 | Ty::F64) }
-    pub fn is_numeric(&self) -> bool { self.is_int() || self.is_float() }
-    pub fn is_enum(&self) -> bool { matches!(self, Ty::Enum(_)) }
-    pub fn is_struct(&self) -> bool { matches!(self, Ty::Struct(_)) }
-    pub fn is_array(&self) -> bool { matches!(self, Ty::Array(_, _)) }
+    pub fn is_int(&self) -> bool {
+        self.is_signed_int() || self.is_unsigned_int()
+    }
+    pub fn is_float(&self) -> bool {
+        matches!(self, Ty::F32 | Ty::F64)
+    }
+    pub fn is_numeric(&self) -> bool {
+        self.is_int() || self.is_float()
+    }
+    pub fn is_enum(&self) -> bool {
+        matches!(self, Ty::Enum(_))
+    }
+    pub fn is_struct(&self) -> bool {
+        matches!(self, Ty::Struct(_))
+    }
+    pub fn is_array(&self) -> bool {
+        matches!(self, Ty::Array(_, _))
+    }
 
     /// Phase 3 conservative `Copy` rule: primitives, `bool`, `()`, and plain
     /// Atomic `Copy` rule: types whose `Copy`-ness is fixed by the type itself,
@@ -149,15 +191,25 @@ impl Ty {
     /// the type table (a tagged enum is Copy iff every payload is Copy).
     pub fn is_atomic_copy(&self) -> bool {
         match self {
-            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
-            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
-            | Ty::Isize | Ty::Usize
-            | Ty::F32 | Ty::F64
-            | Ty::Bool | Ty::Unit
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::Isize
+            | Ty::Usize
+            | Ty::F32
+            | Ty::F64
+            | Ty::Bool
+            | Ty::Unit
             | Ty::Str
             | Ty::Slice(_)
             | Ty::RawPtr(_)
             | Ty::FnPtr { .. }
+            | Ty::Simd { .. }
             | Ty::Error => true,
             // Phase 8 slice 8.STR.3: owned `string` is non-Copy and Drop.
             Ty::Struct(_) | Ty::Array(_, _) | Ty::Enum(_) | Ty::String => false,
@@ -278,16 +330,18 @@ pub struct MethodSig {
 
 impl StructDef {
     pub fn field(&self, name: &str) -> Option<(u32, Ty)> {
-        self.fields.iter().enumerate().find_map(|(i, (n, t, _))| {
-            (n == name).then(|| (i as u32, t.clone()))
-        })
+        self.fields
+            .iter()
+            .enumerate()
+            .find_map(|(i, (n, t, _))| (n == name).then(|| (i as u32, t.clone())))
     }
 
     /// Like `field` but also returns the field's `pub` flag.
     pub fn field_with_pub(&self, name: &str) -> Option<(u32, Ty, bool)> {
-        self.fields.iter().enumerate().find_map(|(i, (n, t, p))| {
-            (n == name).then(|| (i as u32, t.clone(), *p))
-        })
+        self.fields
+            .iter()
+            .enumerate()
+            .find_map(|(i, (n, t, p))| (n == name).then(|| (i as u32, t.clone(), *p)))
     }
 }
 
@@ -380,7 +434,8 @@ pub struct MonoInfo {
     /// `(generic_name, [concrete_args])` to the synthesized
     /// `StructDef` (cloned out of sema's table so monomorphize can
     /// emit AST items + look up mangled names).
-    pub struct_instantiations: std::collections::BTreeMap<(String, Vec<Ty>), StructInstantiationInfo>,
+    pub struct_instantiations:
+        std::collections::BTreeMap<(String, Vec<Ty>), StructInstantiationInfo>,
     /// Slice 7GEN.5d: generic-enum instantiations.
     pub enum_instantiations: std::collections::BTreeMap<(String, Vec<Ty>), EnumInstantiationInfo>,
     /// Slice 7GEN.5e: generic-method instantiations.
@@ -399,6 +454,19 @@ pub struct MonoInfo {
     /// of the default enum/struct-variant lowering. Keyed by the
     /// outer call's span (matching the AST node's span).
     pub assoc_free_fn_dispatches: HashMap<ByteSpan, String>,
+    /// v0.0.6 Slice 1A: `include_bytes!("path")` resolved entries.
+    /// Keyed by the call expression's span. Each entry carries the
+    /// resolved absolute path (for dedup) and the file bytes read at
+    /// sema time. Codegen consumes this to emit one private constant
+    /// `[N x i8]` global per unique absolute path.
+    pub include_bytes: HashMap<ByteSpan, IncludeBytesEntry>,
+}
+
+/// v0.0.6 Slice 1A: one resolved `include_bytes!` call.
+#[derive(Debug, Clone)]
+pub struct IncludeBytesEntry {
+    pub abs_path: std::path::PathBuf,
+    pub bytes: Vec<u8>,
 }
 
 /// Slice 7GEN.5c: per-instantiation info handed to monomorphize.
@@ -474,7 +542,14 @@ fn check_with_files_inner<'a>(
         .into_iter()
         .map(|(fid, (p, s))| {
             let lm = LineMap::new(&s);
-            (fid, FileCtx { path: p, src: s, lm })
+            (
+                fid,
+                FileCtx {
+                    path: p,
+                    src: s,
+                    lm,
+                },
+            )
         })
         .collect();
     let mut cx = SemaCx {
@@ -514,6 +589,7 @@ fn check_with_files_inner<'a>(
         enum_instantiations: std::collections::BTreeMap::new(),
         method_instantiations: std::collections::BTreeSet::new(),
         generic_impl_methods: HashMap::new(),
+        include_bytes_table: HashMap::new(),
     };
     cx.register_builtins();
     // Type collection order:
@@ -648,6 +724,7 @@ fn check_with_files_inner<'a>(
         enum_instantiations,
         method_instantiations,
         type_aliases,
+        include_bytes: std::mem::take(&mut cx.include_bytes_table),
     };
     (sink.into_vec(), mono)
 }
@@ -808,6 +885,11 @@ struct SemaCx<'a> {
     /// instantiated. Method bodies remain in the original ItemKind::Impl
     /// AST and are walked by the monomorphize pass.
     generic_impl_methods: HashMap<String, Vec<GenericImplMethodTemplate>>,
+    /// v0.0.6 Slice 1A: `include_bytes!` resolutions. Sema reads the
+    /// file at type-check time to compute the result type's `N`; the
+    /// bytes are stashed here for codegen to materialize. See
+    /// [`IncludeBytesEntry`] / [`MonoInfo::include_bytes`].
+    include_bytes_table: HashMap<ByteSpan, IncludeBytesEntry>,
 }
 
 /// Slice 7GEN.5e step 3: method template stored on a generic-typed
@@ -816,11 +898,11 @@ struct SemaCx<'a> {
 pub struct GenericImplMethodTemplate {
     pub name: String,
     pub receiver: Option<Receiver>,
-    pub params: Vec<ParamSig>,             // may contain Ty::Param
-    pub return_type: Ty,                   // may contain Ty::Param
-    pub impl_generic_params: Vec<String>,  // T from `impl Vec[T]`
+    pub params: Vec<ParamSig>,              // may contain Ty::Param
+    pub return_type: Ty,                    // may contain Ty::Param
+    pub impl_generic_params: Vec<String>,   // T from `impl Vec[T]`
     pub method_generic_params: Vec<String>, // U from `fn map[U]`
-    pub is_drop: bool,                     // marker for cached Drop bookkeeping (always false today)
+    pub is_drop: bool, // marker for cached Drop bookkeeping (always false today)
 }
 
 impl SemaCx<'_> {
@@ -853,7 +935,11 @@ impl SemaCx<'_> {
         self.fns.insert(
             "println".to_string(),
             FnSig {
-                params: vec![ParamSig { ty: Ty::I32, mutable: false, move_: false }],
+                params: vec![ParamSig {
+                    ty: Ty::I32,
+                    mutable: false,
+                    move_: false,
+                }],
                 return_type: Ty::Unit,
                 is_variadic: false,
                 link_name: None,
@@ -885,7 +971,8 @@ impl SemaCx<'_> {
                             );
                             continue;
                         }
-                        self.enum_generic_templates.insert(e.name.name.clone(), e.clone());
+                        self.enum_generic_templates
+                            .insert(e.name.name.clone(), e.clone());
                         continue;
                     }
                     let mut seen: HashMap<String, ()> = HashMap::new();
@@ -894,7 +981,10 @@ impl SemaCx<'_> {
                         if seen.contains_key(&v.name.name) {
                             self.err(
                                 "E0318",
-                                format!("duplicate variant `{}` in enum `{}`", v.name.name, e.name.name),
+                                format!(
+                                    "duplicate variant `{}` in enum `{}`",
+                                    v.name.name, e.name.name
+                                ),
                                 v.name.span,
                             );
                             continue;
@@ -921,7 +1011,7 @@ impl SemaCx<'_> {
                     self.enums.push(EnumDef {
                         name: e.name.name.clone(),
                         variants,
-                        is_copy: false,   // computed later
+                        is_copy: false, // computed later
                         is_tagged,
                         generic_base: None,
                         generic_origin: None,
@@ -945,7 +1035,8 @@ impl SemaCx<'_> {
                     // sema synthesizes a concrete StructDef per unique
                     // instantiation lazily via `resolve_generic_instantiation`.
                     if !s.generic_params.is_empty() {
-                        self.struct_generic_templates.insert(s.name.name.clone(), s.clone());
+                        self.struct_generic_templates
+                            .insert(s.name.name.clone(), s.clone());
                         continue;
                     }
                     let id = StructId(self.structs.len() as u32);
@@ -985,7 +1076,8 @@ impl SemaCx<'_> {
                         );
                         continue;
                     }
-                    self.type_aliases.insert(a.name.name.clone(), a.target.clone());
+                    self.type_aliases
+                        .insert(a.name.name.clone(), a.target.clone());
                 }
                 ItemKind::Function(_) | ItemKind::Impl(_) | ItemKind::Interface(_) => {}
             }
@@ -1004,11 +1096,17 @@ impl SemaCx<'_> {
     fn collect_struct_fields(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
-            let ItemKind::Struct(s) = &item.kind else { continue; };
+            let ItemKind::Struct(s) = &item.kind else {
+                continue;
+            };
             // Slice 7GEN.5c: skip generic struct templates — they
             // don't have concrete fields until instantiated.
-            if !s.generic_params.is_empty() { continue; }
-            let Some(&id) = self.struct_by_name.get(&s.name.name) else { continue; };
+            if !s.generic_params.is_empty() {
+                continue;
+            }
+            let Some(&id) = self.struct_by_name.get(&s.name.name) else {
+                continue;
+            };
             // Slice 7GEN.4: generic-param names declared on the struct
             // (`struct Pair[A, B]`) are visible in field type positions.
             self.push_type_params(&s.generic_params);
@@ -1018,7 +1116,10 @@ impl SemaCx<'_> {
                 if seen.contains_key(&f.name.name) {
                     self.err(
                         "E0319",
-                        format!("duplicate field `{}` in struct `{}`", f.name.name, s.name.name),
+                        format!(
+                            "duplicate field `{}` in struct `{}`",
+                            f.name.name, s.name.name
+                        ),
                         f.name.span,
                     );
                     continue;
@@ -1130,11 +1231,16 @@ impl SemaCx<'_> {
         // we don't track. Skip in that case — concrete-only enforcement
         // is sound because every Param eventually resolves at a real
         // call site that passes the args through this same check.
-        if args.iter().any(|a| ty_contains_param(a, &self.structs, &self.enums)) {
+        if args
+            .iter()
+            .any(|a| ty_contains_param(a, &self.structs, &self.enums))
+        {
             return;
         }
         for (i, arg_ty) in args.iter().enumerate() {
-            let Some(param_bounds) = bounds.get(i) else { continue; };
+            let Some(param_bounds) = bounds.get(i) else {
+                continue;
+            };
             for b in param_bounds {
                 if !self.satisfies_bound(arg_ty, b) {
                     let pname = param_names.get(i).map(|s| s.as_str()).unwrap_or("?");
@@ -1142,7 +1248,10 @@ impl SemaCx<'_> {
                         "E0502",
                         format!(
                             "type `{}` does not satisfy bound `{}` on type parameter `{}` of {}",
-                            ty_display(arg_ty), b, pname, context_desc
+                            ty_display(arg_ty),
+                            b,
+                            pname,
+                            context_desc
                         ),
                         span,
                     );
@@ -1178,11 +1287,13 @@ impl SemaCx<'_> {
         match ty {
             Ty::Struct(id) => {
                 let name = &self.structs[id.0 as usize].name;
-                self.interface_impls.contains(&(bound.to_string(), name.clone()))
+                self.interface_impls
+                    .contains(&(bound.to_string(), name.clone()))
             }
             Ty::Enum(id) => {
                 let name = &self.enums[id.0 as usize].name;
-                self.interface_impls.contains(&(bound.to_string(), name.clone()))
+                self.interface_impls
+                    .contains(&(bound.to_string(), name.clone()))
             }
             _ => false,
         }
@@ -1195,11 +1306,17 @@ impl SemaCx<'_> {
     fn collect_enum_payloads(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
-            let ItemKind::Enum(e) = &item.kind else { continue; };
+            let ItemKind::Enum(e) = &item.kind else {
+                continue;
+            };
             // Slice 7GEN.5d: generic enum templates have no concrete
             // payloads until instantiation. Skip.
-            if !e.generic_params.is_empty() { continue; }
-            let Some(&id) = self.enum_by_name.get(&e.name.name) else { continue; };
+            if !e.generic_params.is_empty() {
+                continue;
+            }
+            let Some(&id) = self.enum_by_name.get(&e.name.name) else {
+                continue;
+            };
             // Slice 7GEN.4: generic-param names declared on the enum
             // (`enum Option[T]`) are visible in variant payload types.
             self.push_type_params(&e.generic_params);
@@ -1208,7 +1325,9 @@ impl SemaCx<'_> {
             // duplicates which were skipped in step 1).
             let mut sema_idx = 0usize;
             for sv in &e.variants {
-                if sema_idx >= self.enums[id.0 as usize].variants.len() { break; }
+                if sema_idx >= self.enums[id.0 as usize].variants.len() {
+                    break;
+                }
                 // Skip variants whose names don't match — those were
                 // duplicates rejected in pass 1.
                 if self.enums[id.0 as usize].variants[sema_idx].name != sv.name.name {
@@ -1248,14 +1367,22 @@ impl SemaCx<'_> {
         }
         let mut diags: Vec<DropDiag> = Vec::new();
         for item in &p.items {
-            let ItemKind::Enum(e) = &item.kind else { continue; };
-            let Some(&id) = self.enum_by_name.get(&e.name.name) else { continue; };
+            let ItemKind::Enum(e) = &item.kind else {
+                continue;
+            };
+            let Some(&id) = self.enum_by_name.get(&e.name.name) else {
+                continue;
+            };
             let def = &self.enums[id.0 as usize];
-            if !def.is_tagged { continue; }
+            if !def.is_tagged {
+                continue;
+            }
             for (vi, vdef) in def.variants.iter().enumerate() {
                 for (pi, pty) in vdef.payload.iter().enumerate() {
                     if self.ty_carries_drop(pty) {
-                        let span = e.variants.get(vi)
+                        let span = e
+                            .variants
+                            .get(vi)
                             .and_then(|sv| sv.payload.get(pi).map(|t| t.span))
                             .unwrap_or(e.name.span);
                         diags.push(DropDiag {
@@ -1284,11 +1411,15 @@ impl SemaCx<'_> {
         loop {
             let mut changed = false;
             for i in 0..self.enums.len() {
-                if self.enums[i].is_copy { continue; }
+                if self.enums[i].is_copy {
+                    continue;
+                }
                 let copy_now = if !self.enums[i].is_tagged {
-                    true   // plain enum — always Copy
+                    true // plain enum — always Copy
                 } else {
-                    let all_payloads_copy = self.enums[i].variants.iter()
+                    let all_payloads_copy = self.enums[i]
+                        .variants
+                        .iter()
                         .all(|v| v.payload.iter().all(|t| self.is_copy(t)));
                     all_payloads_copy
                 };
@@ -1297,7 +1428,9 @@ impl SemaCx<'_> {
                     changed = true;
                 }
             }
-            if !changed { break; }
+            if !changed {
+                break;
+            }
         }
     }
 
@@ -1328,7 +1461,9 @@ impl SemaCx<'_> {
         // E0324 even though sema sees the generic impl right there.
         for item in &p.items {
             self.current_file = item.origin_file.clone();
-            let ItemKind::Impl(b) = &item.kind else { continue; };
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
             if !b.target_generic_params.is_empty() {
                 self.collect_generic_impl_methods(b);
             }
@@ -1336,7 +1471,9 @@ impl SemaCx<'_> {
         self.current_file = None;
         for item in &p.items {
             self.current_file = item.origin_file.clone();
-            let ItemKind::Impl(b) = &item.kind else { continue; };
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
             // Generic impls were handled in phase 1 above.
             if !b.target_generic_params.is_empty() {
                 continue;
@@ -1368,13 +1505,19 @@ impl SemaCx<'_> {
                 // type-param scope so `resolve_type` recognizes them as
                 // `Ty::Param(name)` rather than firing E0303.
                 let mut mscope = std::collections::HashSet::new();
-                for gp in &m.generic_params { mscope.insert(gp.name.name.clone()); }
+                for gp in &m.generic_params {
+                    mscope.insert(gp.name.name.clone());
+                }
                 self.type_params_stack.push(mscope);
-                let params: Vec<ParamSig> = m.params.iter().map(|p| ParamSig {
-                    ty: self.resolve_type(&p.ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                }).collect();
+                let params: Vec<ParamSig> = m
+                    .params
+                    .iter()
+                    .map(|p| ParamSig {
+                        ty: self.resolve_type(&p.ty),
+                        mutable: p.mutable,
+                        move_: p.move_,
+                    })
+                    .collect();
                 let declared_ret = match &m.return_type {
                     Some(t) => self.resolve_type(t),
                     None => Ty::Unit,
@@ -1391,10 +1534,16 @@ impl SemaCx<'_> {
                     declared_ret
                 };
                 self.type_params_stack.pop();
-                if self.structs[id.0 as usize].methods.contains_key(&m.name.name) {
+                if self.structs[id.0 as usize]
+                    .methods
+                    .contains_key(&m.name.name)
+                {
                     self.err(
                         "E0326",
-                        format!("duplicate method `{}` in impl `{}`", m.name.name, b.target.name),
+                        format!(
+                            "duplicate method `{}` in impl `{}`",
+                            m.name.name, b.target.name
+                        ),
                         m.name.span,
                     );
                     continue;
@@ -1419,15 +1568,25 @@ impl SemaCx<'_> {
                         self.structs[id.0 as usize].is_drop = true;
                     }
                 }
-                let generic_params: Vec<String> = m.generic_params.iter()
+                let generic_params: Vec<String> = m
+                    .generic_params
+                    .iter()
                     .map(|gp| gp.name.name.clone())
                     .collect();
-                let generic_bounds: Vec<Vec<String>> = m.generic_params.iter()
+                let generic_bounds: Vec<Vec<String>> = m
+                    .generic_params
+                    .iter()
                     .map(|gp| gp.bounds.iter().map(|b| b.name.clone()).collect())
                     .collect();
                 self.structs[id.0 as usize].methods.insert(
                     m.name.name.clone(),
-                    MethodSig { receiver: m.receiver, params, return_type, generic_params, generic_bounds },
+                    MethodSig {
+                        receiver: m.receiver,
+                        params,
+                        return_type,
+                        generic_params,
+                        generic_bounds,
+                    },
                 );
             }
             self.self_type_stack.pop();
@@ -1444,13 +1603,19 @@ impl SemaCx<'_> {
         self.self_type_stack.push(Ty::Enum(enum_id));
         for m in &b.methods {
             let mut mscope = std::collections::HashSet::new();
-            for gp in &m.generic_params { mscope.insert(gp.name.name.clone()); }
+            for gp in &m.generic_params {
+                mscope.insert(gp.name.name.clone());
+            }
             self.type_params_stack.push(mscope);
-            let params: Vec<ParamSig> = m.params.iter().map(|p| ParamSig {
-                ty: self.resolve_type(&p.ty),
-                mutable: p.mutable,
-                move_: p.move_,
-            }).collect();
+            let params: Vec<ParamSig> = m
+                .params
+                .iter()
+                .map(|p| ParamSig {
+                    ty: self.resolve_type(&p.ty),
+                    mutable: p.mutable,
+                    move_: p.move_,
+                })
+                .collect();
             let declared_ret = match &m.return_type {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
@@ -1463,10 +1628,16 @@ impl SemaCx<'_> {
                 declared_ret
             };
             self.type_params_stack.pop();
-            if self.enums[enum_id.0 as usize].methods.contains_key(&m.name.name) {
+            if self.enums[enum_id.0 as usize]
+                .methods
+                .contains_key(&m.name.name)
+            {
                 self.err(
                     "E0326",
-                    format!("duplicate method `{}` in impl `{}`", m.name.name, b.target.name),
+                    format!(
+                        "duplicate method `{}` in impl `{}`",
+                        m.name.name, b.target.name
+                    ),
                     m.name.span,
                 );
                 continue;
@@ -1477,20 +1648,33 @@ impl SemaCx<'_> {
             if m.name.name == "drop" {
                 self.err(
                     "E0338",
-                    format!("destructor methods on enums are not yet supported (`impl {}::drop`)", b.target.name),
+                    format!(
+                        "destructor methods on enums are not yet supported (`impl {}::drop`)",
+                        b.target.name
+                    ),
                     m.name.span,
                 );
                 continue;
             }
-            let generic_params: Vec<String> = m.generic_params.iter()
+            let generic_params: Vec<String> = m
+                .generic_params
+                .iter()
                 .map(|gp| gp.name.name.clone())
                 .collect();
-            let generic_bounds: Vec<Vec<String>> = m.generic_params.iter()
+            let generic_bounds: Vec<Vec<String>> = m
+                .generic_params
+                .iter()
                 .map(|gp| gp.bounds.iter().map(|b| b.name.clone()).collect())
                 .collect();
             self.enums[enum_id.0 as usize].methods.insert(
                 m.name.name.clone(),
-                MethodSig { receiver: m.receiver, params, return_type, generic_params, generic_bounds },
+                MethodSig {
+                    receiver: m.receiver,
+                    params,
+                    return_type,
+                    generic_params,
+                    generic_bounds,
+                },
             );
         }
         self.self_type_stack.pop();
@@ -1514,18 +1698,25 @@ impl SemaCx<'_> {
         if !is_struct && !is_enum {
             self.err(
                 "E0325",
-                format!("`impl` target `{}` is not a known generic type", b.target.name),
+                format!(
+                    "`impl` target `{}` is not a known generic type",
+                    b.target.name
+                ),
                 b.target.span,
             );
             return;
         }
         // Push impl-level generic params onto the type-param stack so
         // method param/return types can reference `T`.
-        let impl_param_names: Vec<String> = b.target_generic_params.iter()
+        let impl_param_names: Vec<String> = b
+            .target_generic_params
+            .iter()
             .map(|g| g.name.name.clone())
             .collect();
         let mut impl_scope = std::collections::HashSet::new();
-        for n in &impl_param_names { impl_scope.insert(n.clone()); }
+        for n in &impl_param_names {
+            impl_scope.insert(n.clone());
+        }
         self.type_params_stack.push(impl_scope);
         // `Self` inside the impl body resolves to the (uninstantiated)
         // generic — represent it as Ty::Param("Self") for now;
@@ -1537,22 +1728,34 @@ impl SemaCx<'_> {
             if !seen.insert(m.name.name.clone()) {
                 self.err(
                     "E0326",
-                    format!("duplicate method `{}` in impl `{}`", m.name.name, b.target.name),
+                    format!(
+                        "duplicate method `{}` in impl `{}`",
+                        m.name.name, b.target.name
+                    ),
                     m.name.span,
                 );
                 continue;
             }
             // Method-level generic params.
-            let method_param_names: Vec<String> = m.generic_params.iter()
-                .map(|g| g.name.name.clone()).collect();
+            let method_param_names: Vec<String> = m
+                .generic_params
+                .iter()
+                .map(|g| g.name.name.clone())
+                .collect();
             let mut method_scope = std::collections::HashSet::new();
-            for n in &method_param_names { method_scope.insert(n.clone()); }
+            for n in &method_param_names {
+                method_scope.insert(n.clone());
+            }
             self.type_params_stack.push(method_scope);
-            let params: Vec<ParamSig> = m.params.iter().map(|p| ParamSig {
-                ty: self.resolve_type(&p.ty),
-                mutable: p.mutable,
-                move_: p.move_,
-            }).collect();
+            let params: Vec<ParamSig> = m
+                .params
+                .iter()
+                .map(|p| ParamSig {
+                    ty: self.resolve_type(&p.ty),
+                    mutable: p.mutable,
+                    move_: p.move_,
+                })
+                .collect();
             let declared_ret = match &m.return_type {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
@@ -1609,7 +1812,11 @@ impl SemaCx<'_> {
         // Copy: marker, no methods.
         self.interfaces.insert(
             "Copy".to_string(),
-            InterfaceDef { name: "Copy".to_string(), methods: HashMap::new(), origin_file: None },
+            InterfaceDef {
+                name: "Copy".to_string(),
+                methods: HashMap::new(),
+                origin_file: None,
+            },
         );
         // v0.0.4 Phase 2 Slice 2A: Send and Sync — marker interfaces
         // gating cross-thread transfer (Send) and cross-thread sharing
@@ -1621,19 +1828,27 @@ impl SemaCx<'_> {
         // opted-in.
         self.interfaces.insert(
             "Send".to_string(),
-            InterfaceDef { name: "Send".to_string(), methods: HashMap::new(), origin_file: None },
+            InterfaceDef {
+                name: "Send".to_string(),
+                methods: HashMap::new(),
+                origin_file: None,
+            },
         );
         self.interfaces.insert(
             "Sync".to_string(),
-            InterfaceDef { name: "Sync".to_string(), methods: HashMap::new(), origin_file: None },
+            InterfaceDef {
+                name: "Sync".to_string(),
+                methods: HashMap::new(),
+                origin_file: None,
+            },
         );
         // Single-method interfaces with shared shape.
         // (name, method_name, return_type, takes_other_param)
         let single: &[(&str, &str, Ty, bool)] = &[
-            ("Eq",       "eq",        Ty::Bool, true),
-            ("Ord",      "cmp",       Ty::I32,  true),
-            ("Hash",     "hash",      Ty::U64,  false),
-            ("Clone",    "clone",     Ty::Param("Self".to_string()), false),
+            ("Eq", "eq", Ty::Bool, true),
+            ("Ord", "cmp", Ty::I32, true),
+            ("Hash", "hash", Ty::U64, false),
+            ("Clone", "clone", Ty::Param("Self".to_string()), false),
             // Phase 8 slice 8.STR.6: `ToString` — produces an owned
             // string. Blessed impls cover every primitive + str +
             // string; user types add their own via the usual
@@ -1644,20 +1859,31 @@ impl SemaCx<'_> {
         for (name, mname, ret, has_other) in single {
             let mut methods = HashMap::new();
             let params: Vec<ParamSig> = if *has_other {
-                vec![ParamSig { ty: Ty::Param("Self".to_string()), mutable: false, move_: false }]
+                vec![ParamSig {
+                    ty: Ty::Param("Self".to_string()),
+                    mutable: false,
+                    move_: false,
+                }]
             } else {
                 Vec::new()
             };
-            methods.insert((*mname).to_string(), MethodSig {
-                receiver: Some(Receiver::Read),
-                params,
-                return_type: ret.clone(),
-                generic_params: Vec::new(),
-                generic_bounds: Vec::new(),
-            });
+            methods.insert(
+                (*mname).to_string(),
+                MethodSig {
+                    receiver: Some(Receiver::Read),
+                    params,
+                    return_type: ret.clone(),
+                    generic_params: Vec::new(),
+                    generic_bounds: Vec::new(),
+                },
+            );
             self.interfaces.insert(
                 (*name).to_string(),
-                InterfaceDef { name: (*name).to_string(), methods, origin_file: None },
+                InterfaceDef {
+                    name: (*name).to_string(),
+                    methods,
+                    origin_file: None,
+                },
             );
         }
     }
@@ -1665,7 +1891,9 @@ impl SemaCx<'_> {
     fn collect_interfaces(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
-            let ItemKind::Interface(idecl) = &item.kind else { continue; };
+            let ItemKind::Interface(idecl) = &item.kind else {
+                continue;
+            };
             // Name collision with any other type in scope (struct, enum,
             // or another interface).
             if self.type_name_taken(&idecl.name.name)
@@ -1687,11 +1915,15 @@ impl SemaCx<'_> {
             self.type_params_stack.push(self_frame);
             let mut methods: HashMap<String, MethodSig> = HashMap::new();
             for m in &idecl.methods {
-                let params: Vec<ParamSig> = m.params.iter().map(|p| ParamSig {
-                    ty: self.resolve_type(&p.ty),
-                    mutable: p.mutable,
-                    move_: p.move_,
-                }).collect();
+                let params: Vec<ParamSig> = m
+                    .params
+                    .iter()
+                    .map(|p| ParamSig {
+                        ty: self.resolve_type(&p.ty),
+                        mutable: p.mutable,
+                        move_: p.move_,
+                    })
+                    .collect();
                 let return_type = match &m.return_type {
                     Some(t) => self.resolve_type(t),
                     None => Ty::Unit,
@@ -1699,14 +1931,23 @@ impl SemaCx<'_> {
                 if methods.contains_key(&m.name.name) {
                     self.err(
                         "E0326",
-                        format!("duplicate method `{}` in interface `{}`", m.name.name, idecl.name.name),
+                        format!(
+                            "duplicate method `{}` in interface `{}`",
+                            m.name.name, idecl.name.name
+                        ),
                         m.name.span,
                     );
                     continue;
                 }
                 methods.insert(
                     m.name.name.clone(),
-                    MethodSig { receiver: m.receiver, params, return_type, generic_params: Vec::new(), generic_bounds: Vec::new() },
+                    MethodSig {
+                        receiver: m.receiver,
+                        params,
+                        return_type,
+                        generic_params: Vec::new(),
+                        generic_bounds: Vec::new(),
+                    },
                 );
             }
             self.type_params_stack.pop();
@@ -1750,8 +1991,12 @@ impl SemaCx<'_> {
         }
         let mut diags: Vec<Diag> = Vec::new();
         for item in &p.items {
-            let ItemKind::Impl(b) = &item.kind else { continue; };
-            let Some(iface_name) = b.interface_name.as_ref() else { continue; };
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            let Some(iface_name) = b.interface_name.as_ref() else {
+                continue;
+            };
             // Slice 7GEN.6: `Copy` is structurally inferred — manual
             // `impl Copy for X` is rejected with E0510. The structural
             // Copy flag (`is_copy` on StructDef/EnumDef) is what
@@ -1781,7 +2026,10 @@ impl SemaCx<'_> {
             let Some(&target_id) = self.struct_by_name.get(&b.target.name) else {
                 diags.push(Diag {
                     code: "E0325",
-                    msg: format!("`impl {} for {}` — `{}` is not a known struct", iface_name.name, b.target.name, b.target.name),
+                    msg: format!(
+                        "`impl {} for {}` — `{}` is not a known struct",
+                        iface_name.name, b.target.name, b.target.name
+                    ),
                     span: b.target.span,
                     origin_file: item.origin_file.clone(),
                 });
@@ -1828,7 +2076,11 @@ impl SemaCx<'_> {
             for (mname, iface_sig) in &iface.methods {
                 let Some(impl_sig) = target_def.methods.get(mname) else {
                     // E0503 — missing method.
-                    let span = b.methods.iter().next().map(|m| m.name.span)
+                    let span = b
+                        .methods
+                        .iter()
+                        .next()
+                        .map(|m| m.name.span)
                         .unwrap_or(b.target.span);
                     diags.push(Diag {
                         code: "E0503",
@@ -1843,7 +2095,9 @@ impl SemaCx<'_> {
                 };
                 // E0505 — signature equality after Self substitution.
                 if !method_sig_matches(iface_sig, impl_sig, &target_ty) {
-                    let span = b.methods.iter()
+                    let span = b
+                        .methods
+                        .iter()
                         .find(|m| &m.name.name == mname)
                         .map(|m| m.name.span)
                         .unwrap_or(b.target.span);
@@ -1887,7 +2141,9 @@ impl SemaCx<'_> {
     /// Type-check every method body. Runs after function bodies.
     fn check_methods(&mut self, p: &Program) {
         for item in &p.items {
-            let ItemKind::Impl(b) = &item.kind else { continue; };
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
             self.current_file = item.origin_file.clone();
             // Slice 4C: per-item context. Methods inherit their impl
             // block's origin_file — every impl block lives in the same
@@ -1914,7 +2170,11 @@ impl SemaCx<'_> {
     /// `Self` resolves to `Ty::Enum(enum_id)` and receiver bindings
     /// take the enum's type.
     fn check_enum_method(&mut self, enum_id: EnumId, m: &Method) {
-        let Some(sig) = self.enums[enum_id.0 as usize].methods.get(&m.name.name).cloned() else {
+        let Some(sig) = self.enums[enum_id.0 as usize]
+            .methods
+            .get(&m.name.name)
+            .cloned()
+        else {
             return;
         };
         self.self_type_stack.push(Ty::Enum(enum_id));
@@ -1922,7 +2182,8 @@ impl SemaCx<'_> {
         let body_return = if m.is_gen {
             Ty::Unit
         } else if m.is_async {
-            self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+            self.unwrap_future(&sig.return_type)
+                .unwrap_or_else(|| sig.return_type.clone())
         } else {
             sig.return_type.clone()
         };
@@ -1942,7 +2203,12 @@ impl SemaCx<'_> {
             let mutable = matches!(rcv, Receiver::Mut);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
-                LocalInfo { ty: Ty::Enum(enum_id), mutable, moved: false, assigned: true },
+                LocalInfo {
+                    ty: Ty::Enum(enum_id),
+                    mutable,
+                    moved: false,
+                    assigned: true,
+                },
             );
         }
         for (param, psig) in m.params.iter().zip(sig.params.iter()) {
@@ -1953,7 +2219,12 @@ impl SemaCx<'_> {
             }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
-                LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
+                LocalInfo {
+                    ty: psig.ty.clone(),
+                    mutable: param.mutable,
+                    moved: false,
+                    assigned: true,
+                },
             );
         }
         self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
@@ -1966,7 +2237,11 @@ impl SemaCx<'_> {
     }
 
     fn check_method(&mut self, struct_id: StructId, m: &Method) {
-        let Some(sig) = self.structs[struct_id.0 as usize].methods.get(&m.name.name).cloned() else {
+        let Some(sig) = self.structs[struct_id.0 as usize]
+            .methods
+            .get(&m.name.name)
+            .cloned()
+        else {
             return;
         };
         // Slice 7GEN.4: re-push the impl's `Self` mapping so `Self`
@@ -1987,7 +2262,8 @@ impl SemaCx<'_> {
         let body_return = if m.is_gen {
             Ty::Unit
         } else if m.is_async {
-            self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+            self.unwrap_future(&sig.return_type)
+                .unwrap_or_else(|| sig.return_type.clone())
         } else {
             sig.return_type.clone()
         };
@@ -2012,7 +2288,12 @@ impl SemaCx<'_> {
             let mutable = matches!(rcv, Receiver::Mut);
             self.scopes.last_mut().unwrap().insert(
                 "self".to_string(),
-                LocalInfo { ty: Ty::Struct(struct_id), mutable, moved: false, assigned: true },
+                LocalInfo {
+                    ty: Ty::Struct(struct_id),
+                    mutable,
+                    moved: false,
+                    assigned: true,
+                },
             );
         }
         // Register non-receiver params.
@@ -2027,7 +2308,12 @@ impl SemaCx<'_> {
             }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
-                LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
+                LocalInfo {
+                    ty: psig.ty.clone(),
+                    mutable: param.mutable,
+                    moved: false,
+                    assigned: true,
+                },
             );
         }
         self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
@@ -2042,7 +2328,9 @@ impl SemaCx<'_> {
     fn collect_functions(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
-            let ItemKind::Function(f) = &item.kind else { continue; };
+            let ItemKind::Function(f) = &item.kind else {
+                continue;
+            };
             // Slice 10.FFI.3: record extern fns so call sites can gate
             // them behind `unsafe { ... }`. The signature still goes
             // into `fns` (so calls type-check normally); the membership
@@ -2055,7 +2343,9 @@ impl SemaCx<'_> {
             let link_name = extract_link_name(&f.attributes);
             if link_name.is_some() && !f.is_extern {
                 // Find the attribute's span for the diagnostic primary.
-                let attr_span = f.attributes.iter()
+                let attr_span = f
+                    .attributes
+                    .iter()
                     .find(|a| a.path.name == "link_name")
                     .map(|a| a.span)
                     .unwrap_or(f.name.span);
@@ -2079,11 +2369,15 @@ impl SemaCx<'_> {
             // consume the source — callers needing to retain ownership
             // clone explicitly. Explicit `mut` keeps its pointer-pass
             // semantics; explicit `move` is preserved verbatim.
-            let params: Vec<ParamSig> = f.params.iter().map(|p| ParamSig {
-                ty: self.resolve_type(&p.ty),
-                mutable: p.mutable,
-                move_: p.move_,
-            }).collect();
+            let params: Vec<ParamSig> = f
+                .params
+                .iter()
+                .map(|p| ParamSig {
+                    ty: self.resolve_type(&p.ty),
+                    mutable: p.mutable,
+                    move_: p.move_,
+                })
+                .collect();
             let declared_ret = match &f.return_type {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
@@ -2123,8 +2417,14 @@ impl SemaCx<'_> {
                 self.fns_generic.insert(
                     f.name.name.clone(),
                     GenericFnSig {
-                        generic_params: f.generic_params.iter().map(|g| g.name.name.clone()).collect(),
-                        bounds: f.generic_params.iter()
+                        generic_params: f
+                            .generic_params
+                            .iter()
+                            .map(|g| g.name.name.clone())
+                            .collect(),
+                        bounds: f
+                            .generic_params
+                            .iter()
                             .map(|g| g.bounds.iter().map(|b| b.name.clone()).collect())
                             .collect(),
                         params,
@@ -2149,7 +2449,15 @@ impl SemaCx<'_> {
                 );
                 continue;
             }
-            self.fns.insert(f.name.name.clone(), FnSig { params, return_type: ret, is_variadic: f.is_variadic, link_name: link_name.clone() });
+            self.fns.insert(
+                f.name.name.clone(),
+                FnSig {
+                    params,
+                    return_type: ret,
+                    is_variadic: f.is_variadic,
+                    link_name: link_name.clone(),
+                },
+            );
         }
         self.current_file = None;
     }
@@ -2163,7 +2471,9 @@ impl SemaCx<'_> {
     /// The `Iterator` template must be in scope — it lives at
     /// `stdlib/iterator.cplus`.
     fn wrap_in_iterator(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
-        let key = self.struct_generic_templates.keys()
+        let key = self
+            .struct_generic_templates
+            .keys()
             .find(|k| k.as_str() == "Iterator" || k.ends_with(".Iterator"))
             .cloned();
         let template_name = match key {
@@ -2177,7 +2487,11 @@ impl SemaCx<'_> {
                 return Ty::Error;
             }
         };
-        let template = self.struct_generic_templates.get(&template_name).cloned().unwrap();
+        let template = self
+            .struct_generic_templates
+            .get(&template_name)
+            .cloned()
+            .unwrap();
         self.instantiate_struct_from_arg_tys(&template_name, &template, vec![inner.clone()])
     }
 
@@ -2185,7 +2499,9 @@ impl SemaCx<'_> {
     /// `stdlib/option`. Used by `Iterator::next()`'s blessed-method
     /// return type and by `for x in ...` desugaring.
     fn instantiate_option(&mut self, inner: &Ty, span: ByteSpan) -> Ty {
-        let key = self.enum_generic_templates.keys()
+        let key = self
+            .enum_generic_templates
+            .keys()
             .find(|k| k.as_str() == "Option" || k.ends_with(".Option"))
             .cloned();
         let template_name = match key {
@@ -2199,7 +2515,11 @@ impl SemaCx<'_> {
                 return Ty::Error;
             }
         };
-        let template = self.enum_generic_templates.get(&template_name).cloned().unwrap();
+        let template = self
+            .enum_generic_templates
+            .get(&template_name)
+            .cloned()
+            .unwrap();
         self.instantiate_enum_from_arg_tys(&template_name, &template, vec![inner.clone()])
     }
 
@@ -2211,7 +2531,10 @@ impl SemaCx<'_> {
                 match &def.generic_origin {
                     Some((name, args))
                         if (name == "Iterator" || name.ends_with(".Iterator"))
-                            && args.len() == 1 => Some(args[0].clone()),
+                            && args.len() == 1 =>
+                    {
+                        Some(args[0].clone())
+                    }
                     _ => None,
                 }
             }
@@ -2224,7 +2547,9 @@ impl SemaCx<'_> {
         // names per-file (`<file_id>.Future`), so a bare-name lookup
         // misses imports. Suffix-match `.Future` (or the bare name in
         // single-file builds) like Slice 5B's JoinHandle path.
-        let key = self.struct_generic_templates.keys()
+        let key = self
+            .struct_generic_templates
+            .keys()
             .find(|k| k.as_str() == "Future" || k.ends_with(".Future"))
             .cloned();
         let template_name = match key {
@@ -2238,7 +2563,11 @@ impl SemaCx<'_> {
                 return Ty::Error;
             }
         };
-        let template = self.struct_generic_templates.get(&template_name).cloned().unwrap();
+        let template = self
+            .struct_generic_templates
+            .get(&template_name)
+            .cloned()
+            .unwrap();
         self.instantiate_struct_from_arg_tys(&template_name, &template, vec![inner.clone()])
     }
 
@@ -2253,8 +2582,10 @@ impl SemaCx<'_> {
                 let def = &self.structs[id.0 as usize];
                 match &def.generic_origin {
                     Some((name, args))
-                        if (name == "Future" || name.ends_with(".Future"))
-                            && args.len() == 1 => Some(args[0].clone()),
+                        if (name == "Future" || name.ends_with(".Future")) && args.len() == 1 =>
+                    {
+                        Some(args[0].clone())
+                    }
                     _ => None,
                 }
             }
@@ -2263,14 +2594,23 @@ impl SemaCx<'_> {
     }
 
     fn check_main_signature(&mut self, p: &Program) {
-        let Some(sig) = self.fns.get("main").cloned() else { return; };
+        let Some(sig) = self.fns.get("main").cloned() else {
+            return;
+        };
         let Some((no_params, span, origin)) = p.items.iter().find_map(|it| {
-            let ItemKind::Function(f) = &it.kind else { return None; };
-            (f.name.name == "main").then(|| (f.params.is_empty(), f.name.span, it.origin_file.clone()))
-        }) else { return; };
+            let ItemKind::Function(f) = &it.kind else {
+                return None;
+            };
+            (f.name.name == "main")
+                .then(|| (f.params.is_empty(), f.name.span, it.origin_file.clone()))
+        }) else {
+            return;
+        };
         self.current_file = origin;
         // If we already errored resolving the return type, don't pile on.
-        if sig.return_type == Ty::Error { return; }
+        if sig.return_type == Ty::Error {
+            return;
+        }
         if !no_params || sig.return_type != Ty::I32 {
             self.err(
                 "E0309",
@@ -2300,8 +2640,12 @@ impl SemaCx<'_> {
     /// write; the diagnostic points there.
     fn lint_generic_fn_bodies(&mut self, p: &Program) {
         for item in &p.items {
-            let ItemKind::Function(f) = &item.kind else { continue; };
-            if f.generic_params.is_empty() { continue; }
+            let ItemKind::Function(f) = &item.kind else {
+                continue;
+            };
+            if f.generic_params.is_empty() {
+                continue;
+            }
             // Build the set of bare-param-typed parameter NAMES — these
             // are the idents that, when compared with `<`/etc., produce
             // the codegen failure.
@@ -2314,7 +2658,9 @@ impl SemaCx<'_> {
                     }
                 }
             }
-            if param_typed.is_empty() { continue; }
+            if param_typed.is_empty() {
+                continue;
+            }
             self.walk_block_for_param_compare(&f.body, &param_typed);
         }
     }
@@ -2342,7 +2688,9 @@ impl SemaCx<'_> {
         param_idents: &std::collections::HashSet<String>,
     ) {
         match &stmt.kind {
-            StmtKind::Let { init: Some(e), .. } => self.walk_expr_for_param_compare(e, param_idents),
+            StmtKind::Let { init: Some(e), .. } => {
+                self.walk_expr_for_param_compare(e, param_idents)
+            }
             StmtKind::Let { init: None, .. } => {}
             StmtKind::Expr(e)
             | StmtKind::Return(Some(e))
@@ -2353,21 +2701,33 @@ impl SemaCx<'_> {
                 self.walk_block_for_param_compare(body, param_idents);
             }
             StmtKind::Loop(b) => self.walk_block_for_param_compare(b, param_idents),
-            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            StmtKind::IfLet {
+                scrutinee,
+                body,
+                else_body,
+                ..
+            } => {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
                 self.walk_block_for_param_compare(body, param_idents);
-                if let Some(eb) = else_body { self.walk_block_for_param_compare(eb, param_idents); }
+                if let Some(eb) = else_body {
+                    self.walk_block_for_param_compare(eb, param_idents);
+                }
             }
-            StmtKind::WhileLet { scrutinee, body, .. } => {
+            StmtKind::WhileLet {
+                scrutinee, body, ..
+            } => {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
                 self.walk_block_for_param_compare(body, param_idents);
             }
-            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            StmtKind::GuardLet {
+                scrutinee,
+                else_body,
+                ..
+            } => {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
                 self.walk_block_for_param_compare(else_body, param_idents);
             }
-            StmtKind::For(_)
-            | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::For(_) | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
         }
     }
 
@@ -2403,17 +2763,27 @@ impl SemaCx<'_> {
                 self.walk_expr_for_param_compare(lhs, param_idents);
                 self.walk_expr_for_param_compare(rhs, param_idents);
             }
-            ExprKind::Unary { operand, .. } => self.walk_expr_for_param_compare(operand, param_idents),
+            ExprKind::Unary { operand, .. } => {
+                self.walk_expr_for_param_compare(operand, param_idents)
+            }
             ExprKind::Call { callee, args, .. } => {
                 self.walk_expr_for_param_compare(callee, param_idents);
-                for a in args { self.walk_expr_for_param_compare(a, param_idents); }
+                for a in args {
+                    self.walk_expr_for_param_compare(a, param_idents);
+                }
             }
-            ExprKind::Field { receiver, .. } => self.walk_expr_for_param_compare(receiver, param_idents),
+            ExprKind::Field { receiver, .. } => {
+                self.walk_expr_for_param_compare(receiver, param_idents)
+            }
             ExprKind::Index { receiver, index } => {
                 self.walk_expr_for_param_compare(receiver, param_idents);
                 self.walk_expr_for_param_compare(index, param_idents);
             }
-            ExprKind::If { cond, then, else_branch } => {
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
                 self.walk_expr_for_param_compare(cond, param_idents);
                 self.walk_block_for_param_compare(then, param_idents);
                 if let Some(eb) = else_branch {
@@ -2424,21 +2794,27 @@ impl SemaCx<'_> {
             ExprKind::Unsafe(b) => self.walk_block_for_param_compare(b, param_idents),
             ExprKind::Match { scrutinee, arms } => {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
-                for arm in arms { self.walk_expr_for_param_compare(&arm.body, param_idents); }
+                for arm in arms {
+                    self.walk_expr_for_param_compare(&arm.body, param_idents);
+                }
             }
             ExprKind::Assign { target, value, .. } => {
                 self.walk_expr_for_param_compare(target, param_idents);
                 self.walk_expr_for_param_compare(value, param_idents);
             }
             ExprKind::Cast { expr, .. } => self.walk_expr_for_param_compare(expr, param_idents),
-            ExprKind::Await(inner) | ExprKind::Yield(inner) => self.walk_expr_for_param_compare(inner, param_idents),
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => {
+                self.walk_expr_for_param_compare(inner, param_idents)
+            }
             _ => {}
         }
     }
 
     fn check_functions(&mut self, p: &Program) {
         for item in &p.items {
-            let ItemKind::Function(f) = &item.kind else { continue; };
+            let ItemKind::Function(f) = &item.kind else {
+                continue;
+            };
             // Slice 4C: per-item context for field-pub gate.
             self.current_file = item.origin_file.clone();
             self.check_function(f);
@@ -2460,7 +2836,9 @@ impl SemaCx<'_> {
         // Find the #[test] attribute (if any) — span is used for diagnostic
         // primary location so the error points at the attribute, not the fn.
         let test_attr = f.attributes.iter().find(|a| a.path.name == "test");
-        let Some(attr) = test_attr else { return; };
+        let Some(attr) = test_attr else {
+            return;
+        };
         // E0359 — `pub` rejection.
         if f.is_pub {
             self.err(
@@ -2502,8 +2880,10 @@ impl SemaCx<'_> {
             }
         }
         let sig = self.fns.get(&f.name.name).cloned();
-        let Some(sig) = sig else { return; }; // duplicate def already errored
-        // Phase 5 slice 5ATTR.2 — sema rules specific to `#[test]` fns.
+        let Some(sig) = sig else {
+            return;
+        }; // duplicate def already errored
+           // Phase 5 slice 5ATTR.2 — sema rules specific to `#[test]` fns.
         self.check_test_attribute_rules(f, &sig);
         // Slice 7GEN.4: generic params remain in scope across body checking.
         self.push_type_params(&f.generic_params);
@@ -2512,7 +2892,8 @@ impl SemaCx<'_> {
         // that the signature exposes to callers. The wrap happens at
         // codegen time (Slice 5E.3).
         let body_return = if f.is_async {
-            self.unwrap_future(&sig.return_type).unwrap_or_else(|| sig.return_type.clone())
+            self.unwrap_future(&sig.return_type)
+                .unwrap_or_else(|| sig.return_type.clone())
         } else if f.is_gen {
             // v0.0.4 Phase 4 Slice 4A: gen fn body sees Unit return.
             // The body's job is to `yield` values; falling off the end
@@ -2569,9 +2950,7 @@ impl SemaCx<'_> {
             if f.is_async {
                 let pty = &psig.ty;
                 let is_borrow_shape = matches!(pty, Ty::Str | Ty::Slice(_));
-                let is_mut_pointer_passed = param.mutable
-                    && !param.move_
-                    && !self.is_copy(pty);
+                let is_mut_pointer_passed = param.mutable && !param.move_ && !self.is_copy(pty);
                 if is_borrow_shape {
                     self.err(
                         "E0900",
@@ -2595,7 +2974,12 @@ impl SemaCx<'_> {
             }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
-                LocalInfo { ty: psig.ty.clone(), mutable: param.mutable, moved: false, assigned: true },
+                LocalInfo {
+                    ty: psig.ty.clone(),
+                    mutable: param.mutable,
+                    moved: false,
+                    assigned: true,
+                },
             );
         }
         self.check_function_body(&f.body, body_return, f.body.span);
@@ -2620,7 +3004,7 @@ impl SemaCx<'_> {
         // collection — we use resolve_type here for span fidelity.)
         for p in &f.params {
             let pty = self.resolve_type(&p.ty);
-            if let Some(reason) = self.c_exportable_diagnosis(&pty, /*is_return=*/false) {
+            if let Some(reason) = self.c_exportable_diagnosis(&pty, /*is_return=*/ false) {
                 self.err(
                     "E0410",
                     format!(
@@ -2633,7 +3017,7 @@ impl SemaCx<'_> {
         }
         if let Some(rt) = &f.return_type {
             let ret_ty = self.resolve_type(rt);
-            if let Some(reason) = self.c_exportable_diagnosis(&ret_ty, /*is_return=*/true) {
+            if let Some(reason) = self.c_exportable_diagnosis(&ret_ty, /*is_return=*/ true) {
                 self.err(
                     "E0410",
                     format!(
@@ -2735,6 +3119,14 @@ impl SemaCx<'_> {
             Ty::Param(name) => Some(format!(
                 "generic type parameter `{name}` cannot appear in a `pub extern fn` signature; monomorphize manually by exposing one concrete overload per type",
             )),
+            // v0.0.6 Slice 1B: SIMD types are not C-ABI compatible by
+            // default (no portable C representation; cf. NEON's `float32x4_t`
+            // vs SSE's `__m128`). Bitcast to `[T; N]` via `to_array` at the
+            // boundary.
+            Ty::Simd { lanes, elem } => Some(format!(
+                "SIMD type `{}` has no portable C-ABI representation; cast to `[{}; {}]` via `.to_array()` at the boundary",
+                ty_display(ty), ty_display(elem), lanes,
+            )),
             Ty::Error => None,  // Type already errored; don't double-report.
         }
     }
@@ -2773,7 +3165,12 @@ impl SemaCx<'_> {
 
     fn check_stmt(&mut self, s: &Stmt) {
         match &s.kind {
-            StmtKind::Let { mutable, name, ty, init } => {
+            StmtKind::Let {
+                mutable,
+                name,
+                ty,
+                init,
+            } => {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
                 let (final_ty, assigned) = match init {
                     Some(init_expr) => {
@@ -2815,7 +3212,10 @@ impl SemaCx<'_> {
                     (None, _) => {
                         self.err(
                             "E0307",
-                            format!("`return` without a value, but function returns `{}`", ret.name()),
+                            format!(
+                                "`return` without a value, but function returns `{}`",
+                                ret.name()
+                            ),
                             s.span,
                         );
                     }
@@ -2857,12 +3257,12 @@ impl SemaCx<'_> {
             // level or in a non-loop nested scope.
             StmtKind::Break | StmtKind::Continue => {
                 if self.loop_depth == 0 {
-                    let kw = if matches!(s.kind, StmtKind::Break) { "break" } else { "continue" };
-                    self.err(
-                        "E0353",
-                        format!("`{kw}` used outside of a loop"),
-                        s.span,
-                    );
+                    let kw = if matches!(s.kind, StmtKind::Break) {
+                        "break"
+                    } else {
+                        "continue"
+                    };
+                    self.err("E0353", format!("`{kw}` used outside of a loop"), s.span);
                 }
             }
             // Phase 5 slice 5ATTR.3: `assert EXPR;` — expression must be
@@ -2874,10 +3274,7 @@ impl SemaCx<'_> {
                 if !matches!(actual, Ty::Bool | Ty::Error) {
                     self.err(
                         "E0302",
-                        format!(
-                            "`assert` condition must be `bool`, got `{}`",
-                            actual.name()
-                        ),
+                        format!("`assert` condition must be `bool`, got `{}`", actual.name()),
                         e.span,
                     );
                 }
@@ -2905,13 +3302,23 @@ impl SemaCx<'_> {
         match fl {
             ForLoop::Range { var, iter, body } => {
                 // First try the literal-range form `for x in 0..n`.
-                if let ExprKind::Range { start: Some(s), end: Some(e), .. } = &iter.kind {
+                if let ExprKind::Range {
+                    start: Some(s),
+                    end: Some(e),
+                    ..
+                } = &iter.kind
+                {
                     self.check_expr(s, Some(Ty::I32));
                     self.check_expr(e, Some(Ty::I32));
                     self.scopes.push(HashMap::new());
                     self.scopes.last_mut().unwrap().insert(
                         var.name.clone(),
-                        LocalInfo { ty: Ty::I32, mutable: false, moved: false, assigned: true },
+                        LocalInfo {
+                            ty: Ty::I32,
+                            mutable: false,
+                            moved: false,
+                            assigned: true,
+                        },
                     );
                     self.check_block_as_stmt(body);
                     self.scopes.pop();
@@ -2921,7 +3328,9 @@ impl SemaCx<'_> {
                 // where expr is an `Iterator[T]`. Bind `var: T` inside
                 // the body. Lowering happens in codegen.
                 let it_ty = self.check_expr(iter, None);
-                if matches!(it_ty, Ty::Error) { return; }
+                if matches!(it_ty, Ty::Error) {
+                    return;
+                }
                 let elem_ty = match self.unwrap_iterator(&it_ty) {
                     Some(t) => t,
                     None => {
@@ -2939,16 +3348,32 @@ impl SemaCx<'_> {
                 self.scopes.push(HashMap::new());
                 self.scopes.last_mut().unwrap().insert(
                     var.name.clone(),
-                    LocalInfo { ty: elem_ty, mutable: false, moved: false, assigned: true },
+                    LocalInfo {
+                        ty: elem_ty,
+                        mutable: false,
+                        moved: false,
+                        assigned: true,
+                    },
                 );
                 self.check_block_as_stmt(body);
                 self.scopes.pop();
             }
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 self.scopes.push(HashMap::new());
-                if let Some(init) = init { self.check_stmt(init); }
-                if let Some(cond) = cond { let _ = self.check_cond(cond); }
-                for u in update { let _ = self.check_expr(u, None); }
+                if let Some(init) = init {
+                    self.check_stmt(init);
+                }
+                if let Some(cond) = cond {
+                    let _ = self.check_cond(cond);
+                }
+                for u in update {
+                    let _ = self.check_expr(u, None);
+                }
                 self.check_block_as_stmt(body);
                 self.scopes.pop();
             }
@@ -2958,7 +3383,9 @@ impl SemaCx<'_> {
     /// Type-check a block used in statement position (its value is discarded).
     fn check_block_as_stmt(&mut self, b: &Block) {
         self.scopes.push(HashMap::new());
-        for s in &b.stmts { self.check_stmt(s); }
+        for s in &b.stmts {
+            self.check_stmt(s);
+        }
         if let Some(tail) = &b.tail {
             let _ = self.check_expr(tail, None);
         }
@@ -2986,7 +3413,11 @@ impl SemaCx<'_> {
             if exp != Ty::Error && actual != Ty::Error && exp != actual {
                 self.err(
                     "E0302",
-                    format!("type mismatch: expected `{}`, found `{}`", exp.name(), actual.name()),
+                    format!(
+                        "type mismatch: expected `{}`, found `{}`",
+                        exp.name(),
+                        actual.name()
+                    ),
                     e.span,
                 );
             }
@@ -3029,13 +3460,18 @@ impl SemaCx<'_> {
                     );
                     return Ty::Error;
                 }
-                if matches!(inner_ty, Ty::Error) { return Ty::Error; }
+                if matches!(inner_ty, Ty::Error) {
+                    return Ty::Error;
+                }
                 match self.unwrap_future(&inner_ty) {
                     Some(t) => t,
                     None => {
                         self.err(
                             "E0902",
-                            format!("`await` requires a `Future[T]` expression, got `{}`", ty_display(&inner_ty)),
+                            format!(
+                                "`await` requires a `Future[T]` expression, got `{}`",
+                                ty_display(&inner_ty)
+                            ),
                             inner.span,
                         );
                         Ty::Error
@@ -3065,17 +3501,24 @@ impl SemaCx<'_> {
                 let _inner_ty = self.check_expr(inner, expected.clone());
                 Ty::Unit
             }
-            ExprKind::If { cond, then, else_branch } => {
-                self.check_if(cond, then, else_branch.as_deref())
-            }
-            ExprKind::Call { callee, args, type_args } => self.check_call(callee, args, type_args, e.span),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => self.check_if(cond, then, else_branch.as_deref()),
+            ExprKind::Call {
+                callee,
+                args,
+                type_args,
+            } => self.check_call(callee, args, type_args, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, e.span),
             ExprKind::Assign { op, target, value } => self.check_assign(*op, target, value, e.span),
             ExprKind::Range { .. } => {
                 self.err(
                     "E0312",
-                    "range expressions are only supported as the iterator in `for ... in`".to_string(),
+                    "range expressions are only supported as the iterator in `for ... in`"
+                        .to_string(),
                     e.span,
                 );
                 Ty::Error
@@ -3083,25 +3526,117 @@ impl SemaCx<'_> {
             ExprKind::Cast { expr, ty } => self.check_cast(expr, ty, e.span),
             ExprKind::Path { segments } => self.check_path(segments, e.span),
             ExprKind::StructLit { name, fields } => self.check_struct_lit(name, fields, e.span),
-            ExprKind::GenericStructLit { name, type_args, fields } => {
-                self.check_generic_struct_lit(name, type_args, fields, e.span)
-            }
-            ExprKind::GenericEnumCall { enum_name, type_args, variant, args } => {
-                self.check_generic_enum_call(enum_name, type_args, variant, args, e.span)
-            }
+            ExprKind::GenericStructLit {
+                name,
+                type_args,
+                fields,
+            } => self.check_generic_struct_lit(name, type_args, fields, e.span),
+            ExprKind::GenericEnumCall {
+                enum_name,
+                type_args,
+                variant,
+                args,
+            } => self.check_generic_enum_call(enum_name, type_args, variant, args, e.span),
             ExprKind::Field { receiver, name } => self.check_field(receiver, name),
             ExprKind::ArrayLit { elements } => self.check_array_lit(elements, expected, e.span),
             ExprKind::TupleLit { elements } => self.check_tuple_lit(elements, expected, e.span),
             ExprKind::Index { receiver, index } => self.check_index(receiver, index, e.span),
-            ExprKind::Match { scrutinee, arms } => self.check_match(scrutinee, arms, expected, e.span),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_match(scrutinee, arms, expected, e.span)
+            }
+            ExprKind::IncludeBytes { path } => self.check_include_bytes(path, e.span),
         }
+    }
+
+    /// v0.0.6 Slice 1A: `include_bytes!("path")` resolution.
+    ///
+    /// Read the file at type-check time so we know its byte length N
+    /// (the result type is `*const [u8; N]`). Errors:
+    ///   - **E0870**: file not found at the resolved absolute path.
+    ///   - **E0872**: file exceeds 64 MiB (sanity cap).
+    ///
+    /// E0871 (non-string-literal argument) fires at parse time — the
+    /// parser only constructs `ExprKind::IncludeBytes` when the source
+    /// matches `include_bytes!(StringLit)` exactly; any other form is a
+    /// parse error before sema sees it.
+    fn check_include_bytes(&mut self, path: &str, span: ByteSpan) -> Ty {
+        // Resolve relative to the directory of the source file that
+        // contains this call. In multi-file mode we route through
+        // `current_file`; otherwise fall back to the entry file.
+        let base_dir: std::path::PathBuf =
+            match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
+                Some(fc) => fc
+                    .path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default(),
+                None => self
+                    .file
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default(),
+            };
+        let raw = std::path::PathBuf::from(path);
+        let resolved = if raw.is_absolute() {
+            raw
+        } else {
+            base_dir.join(&raw)
+        };
+        let abs_path = match resolved.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                self.err(
+                    "E0870",
+                    format!(
+                        "`include_bytes!` cannot find file `{}` (resolved to `{}`)",
+                        path,
+                        resolved.display(),
+                    ),
+                    span,
+                );
+                return Ty::Error;
+            }
+        };
+        let bytes = match std::fs::read(&abs_path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.err(
+                    "E0870",
+                    format!(
+                        "`include_bytes!` failed to read `{}`: {}",
+                        abs_path.display(),
+                        e,
+                    ),
+                    span,
+                );
+                return Ty::Error;
+            }
+        };
+        const MAX_INCLUDE_BYTES: usize = 64 * 1024 * 1024;
+        if bytes.len() > MAX_INCLUDE_BYTES {
+            self.err(
+                "E0872",
+                format!(
+                    "`include_bytes!` file `{}` is {} bytes; exceeds 64 MiB sanity limit",
+                    abs_path.display(),
+                    bytes.len(),
+                ),
+                span,
+            );
+            return Ty::Error;
+        }
+        let len = bytes.len() as u32;
+        self.include_bytes_table
+            .insert(span, IncludeBytesEntry { abs_path, bytes });
+        Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len)))
     }
 
     fn check_array_lit(&mut self, elements: &[Expr], expected: Option<Ty>, span: ByteSpan) -> Ty {
         if elements.is_empty() {
             self.err(
                 "E0332",
-                "empty array literals not supported in Phase 2; provide at least one element".to_string(),
+                "empty array literals not supported in Phase 2; provide at least one element"
+                    .to_string(),
                 span,
             );
             return Ty::Error;
@@ -3117,7 +3652,11 @@ impl SemaCx<'_> {
             if got != first_ty && got != Ty::Error && first_ty != Ty::Error {
                 self.err(
                     "E0329",
-                    format!("mixed element types in array literal: expected `{}`, found `{}`", first_ty.name(), got.name()),
+                    format!(
+                        "mixed element types in array literal: expected `{}`, found `{}`",
+                        first_ty.name(),
+                        got.name()
+                    ),
                     e.span,
                 );
             }
@@ -3128,7 +3667,10 @@ impl SemaCx<'_> {
             if *declared_len != len {
                 self.err(
                     "E0330",
-                    format!("array literal has {} element(s); expected {}", len, declared_len),
+                    format!(
+                        "array literal has {} element(s); expected {}",
+                        len, declared_len
+                    ),
                     span,
                 );
                 return Ty::Error;
@@ -3157,9 +3699,7 @@ impl SemaCx<'_> {
             Some(Ty::Struct(id)) => {
                 let def = &self.structs[id.0 as usize];
                 match &def.generic_origin {
-                    Some((name, args))
-                        if name == "__Tuple" && args.len() == elements.len() =>
-                    {
+                    Some((name, args)) if name == "__Tuple" && args.len() == elements.len() => {
                         args.iter().map(|t| Some(t.clone())).collect()
                     }
                     _ => vec![None; elements.len()],
@@ -3167,7 +3707,9 @@ impl SemaCx<'_> {
             }
             _ => vec![None; elements.len()],
         };
-        let elem_tys: Vec<Ty> = elements.iter().zip(expected_elem_tys.iter())
+        let elem_tys: Vec<Ty> = elements
+            .iter()
+            .zip(expected_elem_tys.iter())
             .map(|(e, exp)| self.check_expr(e, exp.clone()))
             .collect();
         if elem_tys.iter().any(|t| matches!(t, Ty::Error)) {
@@ -3190,12 +3732,15 @@ impl SemaCx<'_> {
         }
         let mangled = format!(
             "__tuple_{}",
-            elem_tys.iter()
+            elem_tys
+                .iter()
                 .map(|t| mangle_ty_for_name(t, &self.structs, &self.enums))
                 .collect::<Vec<_>>()
                 .join("_")
         );
-        let fields: Vec<(String, Ty, bool)> = elem_tys.iter().enumerate()
+        let fields: Vec<(String, Ty, bool)> = elem_tys
+            .iter()
+            .enumerate()
             .map(|(i, t)| (format!("_{}", i), t.clone(), true))
             .collect();
         let id = StructId(self.structs.len() as u32);
@@ -3229,7 +3774,8 @@ impl SemaCx<'_> {
                 if self.unsafe_depth == 0 {
                     self.err(
                         "E0801",
-                        "indexing through a raw pointer is unsafe; wrap in `unsafe { ... }`".to_string(),
+                        "indexing through a raw pointer is unsafe; wrap in `unsafe { ... }`"
+                            .to_string(),
                         span,
                     );
                 }
@@ -3247,7 +3793,13 @@ impl SemaCx<'_> {
         }
     }
 
-    fn check_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], expected: Option<Ty>, span: ByteSpan) -> Ty {
+    fn check_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[MatchArm],
+        expected: Option<Ty>,
+        span: ByteSpan,
+    ) -> Ty {
         let scrutinee_ty = self.check_expr(scrutinee, None);
         // Only enums are matchable in Phase 3. Literal patterns (`match n { 0 => ... }`)
         // are E0343 (deferred), and matching arbitrary types isn't supported.
@@ -3278,7 +3830,9 @@ impl SemaCx<'_> {
         };
 
         let enum_name = self.enums[enum_id.0 as usize].name.clone();
-        let variant_names: Vec<String> = self.enums[enum_id.0 as usize].variants.iter()
+        let variant_names: Vec<String> = self.enums[enum_id.0 as usize]
+            .variants
+            .iter()
             .map(|v| v.name.clone())
             .collect();
 
@@ -3297,7 +3851,13 @@ impl SemaCx<'_> {
             // Check the pattern: validate against the scrutinee's enum,
             // bind any payload names. Returns false if the pattern is
             // structurally invalid (errors emitted inline).
-            self.check_pattern(&arm.pattern, enum_id, &enum_name, &mut covered, &mut has_catchall);
+            self.check_pattern(
+                &arm.pattern,
+                enum_id,
+                &enum_name,
+                &mut covered,
+                &mut has_catchall,
+            );
             // Check the arm body with the expected result type.
             let arm_ty = self.check_expr(&arm.body, expected.clone());
             // First arm sets the result type; later arms must agree —
@@ -3316,7 +3876,11 @@ impl SemaCx<'_> {
                     Some(rt) if *rt != arm_ty => {
                         self.err(
                             "E0302",
-                            format!("match arms produce different types: expected `{}`, found `{}`", rt.name(), arm_ty.name()),
+                            format!(
+                                "match arms produce different types: expected `{}`, found `{}`",
+                                rt.name(),
+                                arm_ty.name()
+                            ),
                             arm.span,
                         );
                     }
@@ -3337,16 +3901,20 @@ impl SemaCx<'_> {
         // Exhaustiveness: every variant must be covered, or there must be
         // a catch-all wildcard / binding arm.
         if !has_catchall {
-            let mut missing: Vec<String> = variant_names.iter()
+            let mut missing: Vec<String> = variant_names
+                .iter()
                 .filter(|n| !covered.contains_key(*n))
                 .cloned()
                 .collect();
             if !missing.is_empty() {
-                missing.sort();   // deterministic for diagnostics
+                missing.sort(); // deterministic for diagnostics
                 let list = missing.join(", ");
                 self.err(
                     "E0340",
-                    format!("non-exhaustive `match` on enum `{}`: missing variant(s) {}", enum_name, list),
+                    format!(
+                        "non-exhaustive `match` on enum `{}`: missing variant(s) {}",
+                        enum_name, list
+                    ),
                     span,
                 );
             }
@@ -3382,10 +3950,20 @@ impl SemaCx<'_> {
                 *has_catchall = true;
                 self.scopes.last_mut().unwrap().insert(
                     name.name.clone(),
-                    LocalInfo { ty: Ty::Enum(enum_id), mutable: false, moved: false, assigned: true },
+                    LocalInfo {
+                        ty: Ty::Enum(enum_id),
+                        mutable: false,
+                        moved: false,
+                        assigned: true,
+                    },
                 );
             }
-            PatternKind::Variant { enum_name: pat_enum, type_args, variant_name, payload } => {
+            PatternKind::Variant {
+                enum_name: pat_enum,
+                type_args,
+                variant_name,
+                payload,
+            } => {
                 // Pattern's enum-segment must match the scrutinee's enum.
                 //
                 // Three acceptance shapes (slice 7GEN.5e — "no mangled
@@ -3431,19 +4009,27 @@ impl SemaCx<'_> {
                     };
                     self.err(
                         "E0341",
-                        format!("pattern type `{}` does not match scrutinee enum `{}`", display, enum_name),
+                        format!(
+                            "pattern type `{}` does not match scrutinee enum `{}`",
+                            display, enum_name
+                        ),
                         pat.span,
                     );
                     return;
                 }
                 // Look up the variant by name; capture its payload types.
-                let variant_info = self.enums[enum_id.0 as usize].variants.iter()
+                let variant_info = self.enums[enum_id.0 as usize]
+                    .variants
+                    .iter()
                     .find(|v| v.name == variant_name.name)
                     .cloned();
                 let Some(vdef) = variant_info else {
                     self.err(
                         "E0317",
-                        format!("enum `{}` has no variant `{}`", enum_name, variant_name.name),
+                        format!(
+                            "enum `{}` has no variant `{}`",
+                            enum_name, variant_name.name
+                        ),
                         variant_name.span,
                     );
                     return;
@@ -3455,7 +4041,10 @@ impl SemaCx<'_> {
                         "E0342",
                         format!(
                             "variant `{}::{}` takes {} payload value(s); pattern has {}",
-                            enum_name, variant_name.name, vdef.payload.len(), payload.len()
+                            enum_name,
+                            variant_name.name,
+                            vdef.payload.len(),
+                            payload.len()
                         ),
                         pat.span,
                     );
@@ -3469,7 +4058,12 @@ impl SemaCx<'_> {
                         PatternKind::Binding(name) => {
                             self.scopes.last_mut().unwrap().insert(
                                 name.name.clone(),
-                                LocalInfo { ty: pty.clone(), mutable: false, moved: false, assigned: true },
+                                LocalInfo {
+                                    ty: pty.clone(),
+                                    mutable: false,
+                                    moved: false,
+                                    assigned: true,
+                                },
                             );
                         }
                         PatternKind::Variant { .. } => {
@@ -3505,17 +4099,26 @@ impl SemaCx<'_> {
         // the name. Struct path lowers to a 2-segment `Path` assoc-call
         // on the mangled instantiation.
         if self.struct_generic_templates.contains_key(&enum_name.name) {
-            let sty = self.resolve_generic_instantiation(&enum_name.name, type_args, enum_name.span);
+            let sty =
+                self.resolve_generic_instantiation(&enum_name.name, type_args, enum_name.span);
             let Ty::Struct(sid) = sty else {
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             };
             let mangled = self.structs[sid.0 as usize].name.clone();
             // First try the impl-block method on the instantiated struct.
             // If present, dispatch like any other `Type::method(...)` call.
-            if self.structs[sid.0 as usize].methods.contains_key(&variant.name) {
+            if self.structs[sid.0 as usize]
+                .methods
+                .contains_key(&variant.name)
+            {
                 let segments = vec![
-                    Ident { name: mangled, span: enum_name.span },
+                    Ident {
+                        name: mangled,
+                        span: enum_name.span,
+                    },
                     variant.clone(),
                 ];
                 return self.check_assoc_call(&segments, &[], args, enum_name.span, span);
@@ -3527,7 +4130,8 @@ impl SemaCx<'_> {
             // segment to get the enclosing module prefix and looking up
             // `<module>.<variant>` in the generic-fn table. The Type[args]
             // bracket's type-args become the free fn's type-args.
-            let module_prefix = enum_name.name
+            let module_prefix = enum_name
+                .name
                 .rsplit_once('.')
                 .map(|(prefix, _)| prefix.to_string());
             let qualified_fn_name = match &module_prefix {
@@ -3535,9 +4139,14 @@ impl SemaCx<'_> {
                 _ => variant.name.clone(),
             };
             if let Some(gsig) = self.fns_generic.get(&qualified_fn_name).cloned() {
-                self.assoc_free_fn_dispatches.insert(span, qualified_fn_name.clone());
+                self.assoc_free_fn_dispatches
+                    .insert(span, qualified_fn_name.clone());
                 return self.check_generic_named_call(
-                    &qualified_fn_name, &gsig, args, type_args, span,
+                    &qualified_fn_name,
+                    &gsig,
+                    args,
+                    type_args,
+                    span,
                 );
             }
             self.err(
@@ -3548,12 +4157,17 @@ impl SemaCx<'_> {
                 ),
                 variant.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
-        let ty = self.resolve_generic_enum_instantiation(&enum_name.name, type_args, enum_name.span);
+        let ty =
+            self.resolve_generic_enum_instantiation(&enum_name.name, type_args, enum_name.span);
         let Ty::Enum(id) = ty else {
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         // Slice 7GEN.5d: for payload-less variants accessed without
@@ -3571,12 +4185,17 @@ impl SemaCx<'_> {
                 format!("enum `{}` has no variant `{}`", def.name, variant.name),
                 variant.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let mangled = self.enums[id.0 as usize].name.clone();
         let segments = vec![
-            Ident { name: mangled, span: enum_name.span },
+            Ident {
+                name: mangled,
+                span: enum_name.span,
+            },
             variant.clone(),
         ];
         self.check_assoc_call(&segments, &[], args, enum_name.span, span)
@@ -3595,21 +4214,47 @@ impl SemaCx<'_> {
     ) -> Ty {
         let ty = self.resolve_generic_instantiation(&name.name, type_args, name.span);
         let Ty::Struct(id) = ty else {
-            for f in fields { let _ = self.check_expr(&f.value, None); }
+            for f in fields {
+                let _ = self.check_expr(&f.value, None);
+            }
             return Ty::Error;
         };
         let mangled = self.structs[id.0 as usize].name.clone();
-        let mangled_ident = Ident { name: mangled, span: name.span };
+        let mangled_ident = Ident {
+            name: mangled,
+            span: name.span,
+        };
         self.check_struct_lit(&mangled_ident, fields, span)
     }
 
     fn check_struct_lit(&mut self, name: &Ident, fields: &[StructLitField], span: ByteSpan) -> Ty {
-        let Some(&id) = self.struct_by_name.get(&name.name) else {
-            self.err("E0303", format!("unknown type `{}`", name.name), name.span);
-            // Still walk the field exprs so we surface their errors.
-            for f in fields { let _ = self.check_expr(&f.value, None); }
-            return Ty::Error;
-        };
+        let mut struct_id = self.struct_by_name.get(&name.name).copied();
+        if struct_id.is_none() {
+            let temp_ast_ty = crate::ast::Type {
+                kind: crate::ast::TypeKind::Path(name.name.clone()),
+                span: name.span,
+            };
+            let ty = self.resolve_type(&temp_ast_ty);
+            match ty {
+                Ty::Struct(id) => {
+                    struct_id = Some(id);
+                }
+                Ty::Error => {
+                    for f in fields {
+                        let _ = self.check_expr(&f.value, None);
+                    }
+                    return Ty::Error;
+                }
+                _ => {
+                    self.err("E0303", format!("unknown type `{}`", name.name), name.span);
+                    for f in fields {
+                        let _ = self.check_expr(&f.value, None);
+                    }
+                    return Ty::Error;
+                }
+            }
+        }
+        let id = struct_id.unwrap();
         // Snapshot the declared fields so we can borrow self mutably below.
         let declared: Vec<(String, Ty, bool)> = self.structs[id.0 as usize].fields.clone();
         let struct_name = self.structs[id.0 as usize].name.clone();
@@ -3621,17 +4266,17 @@ impl SemaCx<'_> {
             if provided.contains_key(&lit_field.name.name) {
                 self.err(
                     "E0319",
-                    format!("duplicate field `{}` in literal of struct `{}`",
-                            lit_field.name.name, struct_name),
+                    format!(
+                        "duplicate field `{}` in literal of struct `{}`",
+                        lit_field.name.name, struct_name
+                    ),
                     lit_field.name.span,
                 );
                 let _ = self.check_expr(&lit_field.value, None);
                 continue;
             }
             provided.insert(lit_field.name.name.clone(), ());
-            let declared_field = declared
-                .iter()
-                .find(|(n, _, _)| n == &lit_field.name.name);
+            let declared_field = declared.iter().find(|(n, _, _)| n == &lit_field.name.name);
             match declared_field {
                 Some((_, t, is_pub)) => {
                     // Slice 4C: cross-file field-pub gate. Same-file
@@ -3648,7 +4293,10 @@ impl SemaCx<'_> {
                 None => {
                     self.err(
                         "E0322",
-                        format!("struct `{struct_name}` has no field `{}`", lit_field.name.name),
+                        format!(
+                            "struct `{struct_name}` has no field `{}`",
+                            lit_field.name.name
+                        ),
                         lit_field.name.span,
                     );
                     let _ = self.check_expr(&lit_field.value, None);
@@ -3759,7 +4407,11 @@ impl SemaCx<'_> {
         if !cast_allowed(&from, &to) {
             self.err(
                 "E0315",
-                format!("invalid cast: `{}` cannot be cast to `{}`", from.name(), to.name()),
+                format!(
+                    "invalid cast: `{}` cannot be cast to `{}`",
+                    from.name(),
+                    to.name()
+                ),
                 span,
             );
             return Ty::Error;
@@ -3782,7 +4434,11 @@ impl SemaCx<'_> {
         // `unsafe`. The cast is mechanically free (both ends lower to LLVM
         // `ptr`), but the caller is asserting the reinterpreted bytes have
         // the new pointee's layout.
-        if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) && from != to && self.unsafe_depth == 0 {
+        if matches!(from, Ty::RawPtr(_))
+            && matches!(to, Ty::RawPtr(_))
+            && from != to
+            && self.unsafe_depth == 0
+        {
             self.err(
                 "E0801",
                 "raw-pointer reinterpretation cast requires `unsafe { ... }`".to_string(),
@@ -3798,7 +4454,9 @@ impl SemaCx<'_> {
         // E0306 fires only at the function-body level, where "value required"
         // is unambiguous.
         self.scopes.push(HashMap::new());
-        for s in &b.stmts { self.check_stmt(s); }
+        for s in &b.stmts {
+            self.check_stmt(s);
+        }
         let ty = match &b.tail {
             Some(t) => self.check_expr(t, None),
             None => Ty::Unit,
@@ -3839,7 +4497,8 @@ impl SemaCx<'_> {
                 "E0302",
                 format!(
                     "`if` and `else` branches have incompatible types: `{}` vs `{}`",
-                    then_ty.name(), else_ty.name()
+                    then_ty.name(),
+                    else_ty.name()
                 ),
                 then.span,
             );
@@ -3851,7 +4510,8 @@ impl SemaCx<'_> {
     /// Snapshot the assigned-state of every binding currently in scope.
     /// Used for definite-assignment flow merging at `if`/`match` boundaries.
     fn snapshot_assigned(&self) -> Vec<Vec<(String, bool)>> {
-        self.scopes.iter()
+        self.scopes
+            .iter()
             .map(|scope| scope.iter().map(|(k, v)| (k.clone(), v.assigned)).collect())
             .collect()
     }
@@ -3872,15 +4532,29 @@ impl SemaCx<'_> {
     /// Intersect two assigned-state snapshots: a binding is "assigned" in
     /// the merge iff it was assigned in BOTH inputs. Used post-`if`/`match`
     /// to compute the flow-merged state.
-    fn intersect_assigned(&self, a: &[Vec<(String, bool)>], b: &[Vec<(String, bool)>]) -> Vec<Vec<(String, bool)>> {
-        a.iter().zip(b.iter()).map(|(fa, fb)| {
-            fa.iter().zip(fb.iter()).map(|((name, av), (_, bv))| {
-                (name.clone(), *av && *bv)
-            }).collect()
-        }).collect()
+    fn intersect_assigned(
+        &self,
+        a: &[Vec<(String, bool)>],
+        b: &[Vec<(String, bool)>],
+    ) -> Vec<Vec<(String, bool)>> {
+        a.iter()
+            .zip(b.iter())
+            .map(|(fa, fb)| {
+                fa.iter()
+                    .zip(fb.iter())
+                    .map(|((name, av), (_, bv))| (name.clone(), *av && *bv))
+                    .collect()
+            })
+            .collect()
     }
 
-    fn check_call(&mut self, callee: &Expr, args: &[Expr], type_args: &[Type], call_span: ByteSpan) -> Ty {
+    fn check_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
         // Slice 11.FN_PTR: when the callee is an Ident bound to a local
         // of FnPtr type, this is an indirect call. Validate args against
         // the pointer's param types, return the pointer's return type.
@@ -3888,11 +4562,16 @@ impl SemaCx<'_> {
         // fn name (or unknown — that path emits E0300).
         if let ExprKind::Ident(name) = &callee.kind {
             if let Some(info) = self.lookup_local(name) {
-                if let Ty::FnPtr { params, return_type } = info.ty.clone() {
+                if let Ty::FnPtr {
+                    params,
+                    return_type,
+                } = info.ty.clone()
+                {
                     if !type_args.is_empty() {
                         self.err(
                             "E0501",
-                            "indirect calls through a fn-pointer do not accept type arguments".to_string(),
+                            "indirect calls through a fn-pointer do not accept type arguments"
+                                .to_string(),
                             callee.span,
                         );
                     }
@@ -3913,7 +4592,9 @@ impl SemaCx<'_> {
                             ),
                             call_span,
                         );
-                        for a in args { let _ = self.check_expr(a, None); }
+                        for a in args {
+                            let _ = self.check_expr(a, None);
+                        }
                         return *return_type;
                     }
                     for (a, p) in args.iter().zip(params.iter()) {
@@ -3933,7 +4614,11 @@ impl SemaCx<'_> {
             if let Ty::Struct(id) = &recv_ty {
                 let sdef = &self.structs[id.0 as usize];
                 if let Some((_, ft, _)) = sdef.field_with_pub(&name.name) {
-                    if let Ty::FnPtr { params, return_type } = ft {
+                    if let Ty::FnPtr {
+                        params,
+                        return_type,
+                    } = ft
+                    {
                         if !type_args.is_empty() {
                             self.err(
                                 "E0501",
@@ -3952,7 +4637,9 @@ impl SemaCx<'_> {
                                 ),
                                 call_span,
                             );
-                            for a in args { let _ = self.check_expr(a, None); }
+                            for a in args {
+                                let _ = self.check_expr(a, None);
+                            }
                             return *return_type;
                         }
                         for (a, p) in args.iter().zip(params.iter()) {
@@ -3978,17 +4665,28 @@ impl SemaCx<'_> {
             _ => {
                 self.err(
                     "E0312",
-                    "callee must be a function name, a method, or a `Type::function` path".to_string(),
+                    "callee must be a function name, a method, or a `Type::function` path"
+                        .to_string(),
                     callee.span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 Ty::Error
             }
         }
     }
 
-    fn check_named_call(&mut self, callee: &Expr, args: &[Expr], type_args: &[Type], call_span: ByteSpan) -> Ty {
-        let ExprKind::Ident(name) = &callee.kind else { unreachable!(); };
+    fn check_named_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Ty {
+        let ExprKind::Ident(name) = &callee.kind else {
+            unreachable!();
+        };
         // Slice 7GEN.5a: dispatch generic fns through inference.
         // Slice 7GEN.5b: when type_args are explicit, use them directly.
         if let Some(gsig) = self.fns_generic.get(name).cloned() {
@@ -4011,20 +4709,20 @@ impl SemaCx<'_> {
                     ),
                     callee.span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Usize;
             }
             if !args.is_empty() {
                 self.err(
                     "E0302",
-                    format!(
-                        "`{}` takes no value arguments, got {}",
-                        name,
-                        args.len()
-                    ),
+                    format!("`{}` takes no value arguments, got {}", name, args.len()),
                     call_span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
             }
             // Resolve the type argument so unresolved names produce
             // diagnostics here rather than reaching codegen.
@@ -4045,23 +4743,39 @@ impl SemaCx<'_> {
         // their storage. Unsafe (raw-pointer write semantics).
         if name == "__cplus_drop_in_place" {
             if type_args.len() != 1 {
-                self.err("E0501",
-                    format!("`__cplus_drop_in_place` takes exactly 1 type argument, got {}", type_args.len()),
-                    callee.span);
-                for a in args { let _ = self.check_expr(a, None); }
+                self.err(
+                    "E0501",
+                    format!(
+                        "`__cplus_drop_in_place` takes exactly 1 type argument, got {}",
+                        type_args.len()
+                    ),
+                    callee.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Unit;
             }
             if args.len() != 1 {
-                self.err("E0308",
-                    format!("`__cplus_drop_in_place` takes 1 value argument, got {}", args.len()),
-                    call_span);
-                for a in args { let _ = self.check_expr(a, None); }
+                self.err(
+                    "E0308",
+                    format!(
+                        "`__cplus_drop_in_place` takes 1 value argument, got {}",
+                        args.len()
+                    ),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Unit;
             }
             if self.unsafe_depth == 0 {
-                self.err("E0801",
+                self.err(
+                    "E0801",
                     "`__cplus_drop_in_place` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    call_span);
+                    call_span,
+                );
             }
             let target_ty = self.resolve_type(&type_args[0]);
             let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty))));
@@ -4104,11 +4818,14 @@ impl SemaCx<'_> {
                 "E0501",
                 format!(
                     "function `{}` takes no type arguments but {} were provided",
-                    name, type_args.len()
+                    name,
+                    type_args.len()
                 ),
                 callee.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         // Phase 8 slice 8.STR.2: `println` is a compiler intrinsic that
@@ -4121,7 +4838,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::I32 | Ty::Str | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`println` accepts `i32` or `str`; got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`println` accepts `i32` or `str`; got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -4138,7 +4858,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::Str | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`str_ptr` requires a `str` argument, got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`str_ptr` requires a `str` argument, got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -4149,7 +4872,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::Str | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`str_len` requires a `str` argument, got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`str_len` requires a `str` argument, got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -4173,7 +4899,10 @@ impl SemaCx<'_> {
             if !matches!(p_ty, Ty::RawPtr(_) | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`str_from_raw_parts` first arg must be `*u8`, got `{}`", ty_display(&p_ty)),
+                    format!(
+                        "`str_from_raw_parts` first arg must be `*u8`, got `{}`",
+                        ty_display(&p_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -4194,7 +4923,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`slice_ptr` requires a slice argument (e.g. `i32[]`), got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`slice_ptr` requires a slice argument (e.g. `i32[]`), got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -4208,7 +4940,7 @@ impl SemaCx<'_> {
         if let Some(bswap_ty) = match name.as_str() {
             "bswap16" | "htons" | "ntohs" => Some(Ty::U16),
             "bswap32" | "htonl" | "ntohl" => Some(Ty::U32),
-            "bswap64"                     => Some(Ty::U64),
+            "bswap64" => Some(Ty::U64),
             _ => None,
         } {
             if args.len() != 1 {
@@ -4217,7 +4949,9 @@ impl SemaCx<'_> {
                     format!("`{name}` takes exactly 1 argument, got {}", args.len()),
                     call_span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             }
             let _ = self.check_expr(&args[0], Some(bswap_ty.clone()));
@@ -4228,7 +4962,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::Slice(_) | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`slice_len` requires a slice argument (e.g. `i32[]`), got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`slice_len` requires a slice argument (e.g. `i32[]`), got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -4250,7 +4987,10 @@ impl SemaCx<'_> {
                 _ => {
                     self.err(
                         "E0302",
-                        format!("`slice_from_raw_parts` first arg must be a raw pointer `*T`, got `{}`", ty_display(&p_ty)),
+                        format!(
+                            "`slice_from_raw_parts` first arg must be a raw pointer `*T`, got `{}`",
+                            ty_display(&p_ty)
+                        ),
                         args[0].span,
                     );
                     return Ty::Error;
@@ -4275,25 +5015,46 @@ impl SemaCx<'_> {
             if args.len() != expected_args {
                 self.err(
                     "E0308",
-                    format!("`{}` takes {} argument(s), got {}", name, expected_args, args.len()),
+                    format!(
+                        "`{}` takes {} argument(s), got {}",
+                        name,
+                        expected_args,
+                        args.len()
+                    ),
                     call_span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
-                return if spec.returns_value() { spec.ty.clone() } else { Ty::Unit };
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return if spec.returns_value() {
+                    spec.ty.clone()
+                } else {
+                    Ty::Unit
+                };
             }
             let ptr_ty = Ty::RawPtr(Box::new(spec.ty.clone()));
             let p_actual = self.check_expr(&args[0], Some(ptr_ty.clone()));
             if !matches!(p_actual, Ty::RawPtr(_) | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`{}` first argument must be `*{}`, got `{}`", name, spec.ty.name(), ty_display(&p_actual)),
+                    format!(
+                        "`{}` first argument must be `*{}`, got `{}`",
+                        name,
+                        spec.ty.name(),
+                        ty_display(&p_actual)
+                    ),
                     args[0].span,
                 );
             } else if let Ty::RawPtr(inner) = &p_actual {
                 if **inner != spec.ty {
                     self.err(
                         "E0302",
-                        format!("`{}` first argument must be `*{}`, got `{}`", name, spec.ty.name(), ty_display(&p_actual)),
+                        format!(
+                            "`{}` first argument must be `*{}`, got `{}`",
+                            name,
+                            spec.ty.name(),
+                            ty_display(&p_actual)
+                        ),
                         args[0].span,
                     );
                 }
@@ -4301,11 +5062,17 @@ impl SemaCx<'_> {
             for a in args.iter().skip(1) {
                 let _ = self.check_expr(a, Some(spec.ty.clone()));
             }
-            return if spec.returns_value() { spec.ty.clone() } else { Ty::Unit };
+            return if spec.returns_value() {
+                spec.ty.clone()
+            } else {
+                Ty::Unit
+            };
         }
         let Some(sig) = self.fns.get(name).cloned() else {
             self.err("E0300", format!("undefined function `{name}`"), callee.span);
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         // Slice 10.FFI.3: extern fn calls require `unsafe { ... }`.
@@ -4314,7 +5081,10 @@ impl SemaCx<'_> {
         if self.extern_fns.contains(name) && self.unsafe_depth == 0 {
             self.err(
                 "E0801",
-                format!("calling extern fn `{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
+                format!(
+                    "calling extern fn `{}` is unsafe; wrap in `unsafe {{ ... }}`",
+                    name
+                ),
                 call_span,
             );
         }
@@ -4325,14 +5095,24 @@ impl SemaCx<'_> {
             if args.len() < sig.params.len() {
                 self.err(
                     "E0308",
-                    format!("variadic function `{}` requires at least {} fixed argument(s), got {}", name, sig.params.len(), args.len()),
+                    format!(
+                        "variadic function `{}` requires at least {} fixed argument(s), got {}",
+                        name,
+                        sig.params.len(),
+                        args.len()
+                    ),
                     call_span,
                 );
             }
         } else if args.len() != sig.params.len() {
             self.err(
                 "E0308",
-                format!("function `{}` takes {} argument(s), got {}", name, sig.params.len(), args.len()),
+                format!(
+                    "function `{}` takes {} argument(s), got {}",
+                    name,
+                    sig.params.len(),
+                    args.len()
+                ),
                 call_span,
             );
         }
@@ -4397,7 +5177,9 @@ impl SemaCx<'_> {
                 format!("`{}` takes 1 type argument, got {}", name, type_args.len()),
                 callee.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         if args.len() != 1 {
@@ -4406,7 +5188,9 @@ impl SemaCx<'_> {
                 format!("`{}` takes 1 value argument, got {}", name, args.len()),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let o_ty = self.resolve_type(&type_args[0]);
@@ -4419,12 +5203,16 @@ impl SemaCx<'_> {
             return Ty::Error;
         };
         if name == "__cplus_thread_spawn" {
-            let expected_f = Ty::FnPtr { params: vec![], return_type: Box::new(o_ty.clone()) };
+            let expected_f = Ty::FnPtr {
+                params: vec![],
+                return_type: Box::new(o_ty.clone()),
+            };
             let _f_ty = self.check_expr(&args[0], Some(expected_f));
             return self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty]);
         }
         // __cplus_thread_join
-        let expected_h = self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty.clone()]);
+        let expected_h =
+            self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty.clone()]);
         let _h_ty = self.check_expr(&args[0], Some(expected_h));
         o_ty
     }
@@ -4449,24 +5237,36 @@ impl SemaCx<'_> {
         if type_args.len() != 1 {
             self.err(
                 "E0501",
-                format!("`__cplus_block_on` takes 1 type argument, got {}", type_args.len()),
+                format!(
+                    "`__cplus_block_on` takes 1 type argument, got {}",
+                    type_args.len()
+                ),
                 callee.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         if args.len() != 1 {
             self.err(
                 "E0308",
-                format!("`__cplus_block_on` takes 1 value argument, got {}", args.len()),
+                format!(
+                    "`__cplus_block_on` takes 1 value argument, got {}",
+                    args.len()
+                ),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let t_ty = self.resolve_type(&type_args[0]);
         let expected_future = self.wrap_in_future(&t_ty, call_span);
-        if matches!(expected_future, Ty::Error) { return Ty::Error; }
+        if matches!(expected_future, Ty::Error) {
+            return Ty::Error;
+        }
         let _ = self.check_expr(&args[0], Some(expected_future));
         t_ty
     }
@@ -4484,25 +5284,38 @@ impl SemaCx<'_> {
         call_span: ByteSpan,
     ) -> Ty {
         if self.unsafe_depth == 0 {
-            self.err("E0801",
+            self.err(
+                "E0801",
                 "`__cplus_reactor_wait_read` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !self.current_fn_is_async {
-            self.err("E0901",
+            self.err(
+                "E0901",
                 "`__cplus_reactor_wait_read` is only valid inside an `async fn` body".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !type_args.is_empty() {
-            self.err("E0501",
+            self.err(
+                "E0501",
                 "`__cplus_reactor_wait_read` takes 0 type arguments".to_string(),
-                callee.span);
+                callee.span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0308",
-                format!("`__cplus_reactor_wait_read` takes 1 value argument, got {}", args.len()),
-                call_span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0308",
+                format!(
+                    "`__cplus_reactor_wait_read` takes 1 value argument, got {}",
+                    args.len()
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let _ = self.check_expr(&args[0], Some(Ty::I32));
@@ -4519,25 +5332,38 @@ impl SemaCx<'_> {
         call_span: ByteSpan,
     ) -> Ty {
         if self.unsafe_depth == 0 {
-            self.err("E0801",
+            self.err(
+                "E0801",
                 "`__cplus_reactor_wait_write` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !self.current_fn_is_async {
-            self.err("E0901",
+            self.err(
+                "E0901",
                 "`__cplus_reactor_wait_write` is only valid inside an `async fn` body".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !type_args.is_empty() {
-            self.err("E0501",
+            self.err(
+                "E0501",
                 "`__cplus_reactor_wait_write` takes 0 type arguments".to_string(),
-                callee.span);
+                callee.span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0308",
-                format!("`__cplus_reactor_wait_write` takes 1 value argument, got {}", args.len()),
-                call_span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0308",
+                format!(
+                    "`__cplus_reactor_wait_write` takes 1 value argument, got {}",
+                    args.len()
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let _ = self.check_expr(&args[0], Some(Ty::I32));
@@ -4556,25 +5382,38 @@ impl SemaCx<'_> {
         call_span: ByteSpan,
     ) -> Ty {
         if self.unsafe_depth == 0 {
-            self.err("E0801",
+            self.err(
+                "E0801",
                 "`__cplus_reactor_wait_timer` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !self.current_fn_is_async {
-            self.err("E0901",
+            self.err(
+                "E0901",
                 "`__cplus_reactor_wait_timer` is only valid inside an `async fn` body".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !type_args.is_empty() {
-            self.err("E0501",
+            self.err(
+                "E0501",
                 "`__cplus_reactor_wait_timer` takes 0 type arguments".to_string(),
-                callee.span);
+                callee.span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0308",
-                format!("`__cplus_reactor_wait_timer` takes 1 value argument, got {}", args.len()),
-                call_span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0308",
+                format!(
+                    "`__cplus_reactor_wait_timer` takes 1 value argument, got {}",
+                    args.len()
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let _ = self.check_expr(&args[0], Some(Ty::U64));
@@ -4592,20 +5431,31 @@ impl SemaCx<'_> {
         call_span: ByteSpan,
     ) -> Ty {
         if self.unsafe_depth == 0 {
-            self.err("E0801",
+            self.err(
+                "E0801",
                 "`__cplus_reactor_spawn_local` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !type_args.is_empty() {
-            self.err("E0501",
+            self.err(
+                "E0501",
                 "`__cplus_reactor_spawn_local` takes 0 type arguments".to_string(),
-                callee.span);
+                callee.span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0308",
-                format!("`__cplus_reactor_spawn_local` takes 1 value argument, got {}", args.len()),
-                call_span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0308",
+                format!(
+                    "`__cplus_reactor_spawn_local` takes 1 value argument, got {}",
+                    args.len()
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         // Accept any Future[T] type. Sema doesn't enforce the specific
@@ -4624,25 +5474,38 @@ impl SemaCx<'_> {
         call_span: ByteSpan,
     ) -> Ty {
         if self.unsafe_depth == 0 {
-            self.err("E0801",
+            self.err(
+                "E0801",
                 "`__cplus_reactor_yield_now` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !self.current_fn_is_async {
-            self.err("E0901",
+            self.err(
+                "E0901",
                 "`__cplus_reactor_yield_now` is only valid inside an `async fn` body".to_string(),
-                call_span);
+                call_span,
+            );
         }
         if !type_args.is_empty() {
-            self.err("E0501",
+            self.err(
+                "E0501",
                 "`__cplus_reactor_yield_now` takes 0 type arguments".to_string(),
-                callee.span);
+                callee.span,
+            );
         }
         if !args.is_empty() {
-            self.err("E0308",
-                format!("`__cplus_reactor_yield_now` takes 0 value arguments, got {}", args.len()),
-                call_span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0308",
+                format!(
+                    "`__cplus_reactor_yield_now` takes 0 value arguments, got {}",
+                    args.len()
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
         }
         Ty::Unit
     }
@@ -4668,26 +5531,41 @@ impl SemaCx<'_> {
         if type_args.len() != 2 {
             self.err(
                 "E0501",
-                format!("`__cplus_thread_spawn_with` takes 2 type arguments, got {}", type_args.len()),
+                format!(
+                    "`__cplus_thread_spawn_with` takes 2 type arguments, got {}",
+                    type_args.len()
+                ),
                 callee.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         if args.len() != 2 {
             self.err(
                 "E0308",
-                format!("`__cplus_thread_spawn_with` takes 2 value arguments, got {}", args.len()),
+                format!(
+                    "`__cplus_thread_spawn_with` takes 2 value arguments, got {}",
+                    args.len()
+                ),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let i_ty = self.resolve_type(&type_args[0]);
         let o_ty = self.resolve_type(&type_args[1]);
-        let _input = self.check_arg_with_move(&args[0], &ParamSig {
-            ty: i_ty.clone(), mutable: false, move_: true,
-        });
+        let _input = self.check_arg_with_move(
+            &args[0],
+            &ParamSig {
+                ty: i_ty.clone(),
+                mutable: false,
+                move_: true,
+            },
+        );
         let expected_f = Ty::FnPtr {
             params: vec![i_ty.clone()],
             return_type: Box::new(o_ty.clone()),
@@ -4696,7 +5574,8 @@ impl SemaCx<'_> {
         let Some(template) = self.struct_generic_templates.get("JoinHandle").cloned() else {
             self.err(
                 "E0300",
-                "`__cplus_thread_spawn_with` requires `JoinHandle[O]` from `stdlib/thread`".to_string(),
+                "`__cplus_thread_spawn_with` requires `JoinHandle[O]` from `stdlib/thread`"
+                    .to_string(),
                 call_span,
             );
             return Ty::Error;
@@ -4715,10 +5594,17 @@ impl SemaCx<'_> {
         if args.len() != gsig.params.len() {
             self.err(
                 "E0308",
-                format!("function `{}` takes {} argument(s), got {}", name, gsig.params.len(), args.len()),
+                format!(
+                    "function `{}` takes {} argument(s), got {}",
+                    name,
+                    gsig.params.len(),
+                    args.len()
+                ),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         // Slice 7GEN.5b: explicit `::[T1, T2]` turbofish path. When the
@@ -4733,11 +5619,15 @@ impl SemaCx<'_> {
                     "E0501",
                     format!(
                         "function `{}` takes {} type argument(s), got {}",
-                        name, gsig.generic_params.len(), type_args.len()
+                        name,
+                        gsig.generic_params.len(),
+                        type_args.len()
                     ),
                     call_span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             }
             for (gp_name, ta) in gsig.generic_params.iter().zip(type_args.iter()) {
@@ -4761,7 +5651,9 @@ impl SemaCx<'_> {
                         "E0302",
                         format!(
                             "type mismatch in call to `{}`: expected `{}`, got `{}`",
-                            name, ty_display(&expected), actual_before.name()
+                            name,
+                            ty_display(&expected),
+                            actual_before.name()
                         ),
                         arg.span,
                     );
@@ -4786,7 +5678,9 @@ impl SemaCx<'_> {
                     }
                 }
             }
-            if had_err { return Ty::Error; }
+            if had_err {
+                return Ty::Error;
+            }
             // Slice 7GEN.5e step 4: bound check at the turbofish path.
             self.check_generic_bounds(
                 &gsig.generic_params,
@@ -4795,7 +5689,8 @@ impl SemaCx<'_> {
                 call_span,
                 &format!("function `{}`", name),
             );
-            self.fn_instantiations.insert((name.to_string(), concrete_args.clone()));
+            self.fn_instantiations
+                .insert((name.to_string(), concrete_args.clone()));
             self.call_monos.insert(call_span, concrete_args.clone());
             return self.subst_ty_deep(&gsig.return_type, &subst);
         }
@@ -4805,7 +5700,10 @@ impl SemaCx<'_> {
         // natural type, then unify against the generic param type.
         let arg_tys: Vec<Ty> = args.iter().map(|a| self.check_expr(a, None)).collect();
         for (param, arg_ty) in gsig.params.iter().zip(arg_tys.iter()) {
-            if matches!(arg_ty, Ty::Error) { had_err = true; continue; }
+            if matches!(arg_ty, Ty::Error) {
+                had_err = true;
+                continue;
+            }
             if !unify_param_against_concrete(&param.ty, arg_ty, &mut subst) {
                 self.err(
                     "E0302",
@@ -4818,7 +5716,9 @@ impl SemaCx<'_> {
                 had_err = true;
             }
         }
-        if had_err { return Ty::Error; }
+        if had_err {
+            return Ty::Error;
+        }
         // Ensure every declared generic param got bound.
         for gp in &gsig.generic_params {
             match subst.get(gp) {
@@ -4847,37 +5747,65 @@ impl SemaCx<'_> {
         );
         // Record the instantiation. The mangled name is built by the
         // monomorphize pass; sema only records the concrete args.
-        self.fn_instantiations.insert((name.to_string(), concrete_args.clone()));
+        self.fn_instantiations
+            .insert((name.to_string(), concrete_args.clone()));
         self.call_monos.insert(call_span, concrete_args.clone());
         // Substitute the return type and return it as the call's type.
         self.subst_ty_deep(&gsig.return_type, &subst)
     }
 
-    fn check_method_call(&mut self, receiver: &Expr, name: &Ident, type_args: &[Type], args: &[Expr], call_span: ByteSpan) -> Ty {
+    fn check_method_call(
+        &mut self,
+        receiver: &Expr,
+        name: &Ident,
+        type_args: &[Type],
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) -> Ty {
         let recv_ty = self.check_expr(receiver, None);
         if recv_ty == Ty::Error {
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         // Phase 8 slice 8.STR.3: blessed methods on owned `string`.
         if matches!(recv_ty, Ty::String) {
             if !type_args.is_empty() {
-                self.err("E0501",
+                self.err(
+                    "E0501",
                     "blessed `string` methods take no type arguments".to_string(),
-                    call_span);
+                    call_span,
+                );
             }
             return self.check_string_method_call(name, args, call_span);
+        }
+        // v0.0.6 Slice 1B: blessed methods on SIMD vector receivers.
+        if let Ty::Simd { .. } = &recv_ty {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    "SIMD method calls take no type arguments".to_string(),
+                    call_span,
+                );
+            }
+            return self.check_simd_method_call(&recv_ty, name, args, call_span);
         }
         // Phase 8 slice 8.STR.6: blessed `to_string()` on every primitive
         // + `str`. Returns `string` (owned). User-defined structs hit
         // the normal method-lookup below; if they provide
         // `impl ToString for Foo { fn to_string(self) -> string }`, that
         // path handles them.
-        if name.name == "to_string" && args.is_empty() && Self::is_blessed_to_string_receiver(&recv_ty) {
+        if name.name == "to_string"
+            && args.is_empty()
+            && Self::is_blessed_to_string_receiver(&recv_ty)
+        {
             if !type_args.is_empty() {
-                self.err("E0501",
+                self.err(
+                    "E0501",
                     "`to_string` takes no type arguments".to_string(),
-                    call_span);
+                    call_span,
+                );
             }
             return Ty::String;
         }
@@ -4889,9 +5817,11 @@ impl SemaCx<'_> {
         if name.name == "next" && args.is_empty() {
             if let Some(elem) = self.unwrap_iterator(&recv_ty) {
                 if !type_args.is_empty() {
-                    self.err("E0501",
+                    self.err(
+                        "E0501",
                         "`Iterator::next` takes no type arguments".to_string(),
-                        call_span);
+                        call_span,
+                    );
                 }
                 return self.instantiate_option(&elem, call_span);
             }
@@ -4903,9 +5833,11 @@ impl SemaCx<'_> {
         // the normal method-lookup below (they must provide `impl Hash`).
         if name.name == "hash" && args.is_empty() && Self::is_blessed_hash_receiver(&recv_ty) {
             if !type_args.is_empty() {
-                self.err("E0501",
+                self.err(
+                    "E0501",
                     "`hash` takes no type arguments".to_string(),
-                    call_span);
+                    call_span,
+                );
             }
             return Ty::U64;
         }
@@ -4916,9 +5848,11 @@ impl SemaCx<'_> {
         // monomorphized code over primitive K uses the blessed lowering.
         if name.name == "eq" && args.len() == 1 && Self::is_blessed_eq_receiver(&recv_ty) {
             if !type_args.is_empty() {
-                self.err("E0501",
+                self.err(
+                    "E0501",
                     "`eq` takes no type arguments".to_string(),
-                    call_span);
+                    call_span,
+                );
             }
             let _ = self.check_expr(&args[0], Some(recv_ty.clone()));
             return Ty::Bool;
@@ -4934,10 +5868,13 @@ impl SemaCx<'_> {
                     format!("no method `{}` on enum `{}`", name.name, enum_name),
                     name.span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             };
-            return self.check_enum_method_call(eid, &enum_name, name, &sig, args, call_span, receiver);
+            return self
+                .check_enum_method_call(eid, &enum_name, name, &sig, args, call_span, receiver);
         }
         // v0.0.5: method call on a generic-parameter receiver — `t.cmp(o)`
         // where `t: T` and the enclosing fn declared `T: Ord`. Resolve via
@@ -4955,14 +5892,18 @@ impl SemaCx<'_> {
                 subst.insert("Self".to_string(), recv_ty.clone());
                 let mut arg_idx = 0;
                 for psig in &msig.params {
-                    if arg_idx >= args.len() { break; }
+                    if arg_idx >= args.len() {
+                        break;
+                    }
                     let want = self.subst_ty_deep(&psig.ty, &subst);
                     let _ = self.check_expr(&args[arg_idx], Some(want));
                     arg_idx += 1;
                 }
                 // Drain any extra args (sema-error fallback) so type
                 // checking still walks them.
-                for a in &args[arg_idx..] { let _ = self.check_expr(a, None); }
+                for a in &args[arg_idx..] {
+                    let _ = self.check_expr(a, None);
+                }
                 return self.subst_ty_deep(&msig.return_type, &subst);
             }
         }
@@ -4972,7 +5913,9 @@ impl SemaCx<'_> {
                 format!("no method `{}` on type `{}`", name.name, recv_ty.name()),
                 name.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         let struct_name = self.structs[id.0 as usize].name.clone();
@@ -4982,22 +5925,32 @@ impl SemaCx<'_> {
                 format!("no method `{}` on struct `{}`", name.name, struct_name),
                 name.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         let Some(rcv) = sig.receiver else {
             self.err(
                 "E0327",
-                format!("`{}::{}` is an associated function; call it as `{}::{}(...)`", struct_name, name.name, struct_name, name.name),
+                format!(
+                    "`{}::{}` is an associated function; call it as `{}::{}(...)`",
+                    struct_name, name.name, struct_name, name.name
+                ),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
             self.err(
                 "E0328",
-                format!("method `{}::{}` requires a mutable receiver", struct_name, name.name),
+                format!(
+                    "method `{}::{}` requires a mutable receiver",
+                    struct_name, name.name
+                ),
                 receiver.span,
             );
         }
@@ -5011,7 +5964,13 @@ impl SemaCx<'_> {
         if args.len() != sig.params.len() {
             self.err(
                 "E0308",
-                format!("method `{}::{}` takes {} argument(s), got {}", struct_name, name.name, sig.params.len(), args.len()),
+                format!(
+                    "method `{}::{}` takes {} argument(s), got {}",
+                    struct_name,
+                    name.name,
+                    sig.params.len(),
+                    args.len()
+                ),
                 call_span,
             );
         }
@@ -5021,7 +5980,13 @@ impl SemaCx<'_> {
         // bookkeeping.
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
-                id, &struct_name, name, &sig, type_args, args, call_span,
+                id,
+                &struct_name,
+                name,
+                &sig,
+                type_args,
+                args,
+                call_span,
             );
         }
         if !type_args.is_empty() {
@@ -5029,7 +5994,9 @@ impl SemaCx<'_> {
                 "E0501",
                 format!(
                     "method `{}::{}` takes no type arguments but {} were provided",
-                    struct_name, name.name, type_args.len()
+                    struct_name,
+                    name.name,
+                    type_args.len()
                 ),
                 name.span,
             );
@@ -5061,16 +6028,24 @@ impl SemaCx<'_> {
         let Some(rcv) = sig.receiver else {
             self.err(
                 "E0327",
-                format!("`{}::{}` is an associated function; call it as `{}::{}(...)`", enum_name, name.name, enum_name, name.name),
+                format!(
+                    "`{}::{}` is an associated function; call it as `{}::{}(...)`",
+                    enum_name, name.name, enum_name, name.name
+                ),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
             self.err(
                 "E0328",
-                format!("method `{}::{}` requires a mutable receiver", enum_name, name.name),
+                format!(
+                    "method `{}::{}` requires a mutable receiver",
+                    enum_name, name.name
+                ),
                 receiver.span,
             );
         }
@@ -5080,7 +6055,13 @@ impl SemaCx<'_> {
         if args.len() != sig.params.len() {
             self.err(
                 "E0308",
-                format!("method `{}::{}` takes {} argument(s), got {}", enum_name, name.name, sig.params.len(), args.len()),
+                format!(
+                    "method `{}::{}` takes {} argument(s), got {}",
+                    enum_name,
+                    name.name,
+                    sig.params.len(),
+                    args.len()
+                ),
                 call_span,
             );
         }
@@ -5117,17 +6098,24 @@ impl SemaCx<'_> {
                     "E0501",
                     format!(
                         "method `{}::{}` takes {} type argument(s), got {}",
-                        struct_name, name.name, arity, type_args.len()
+                        struct_name,
+                        name.name,
+                        arity,
+                        type_args.len()
                     ),
                     name.span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             }
             for (gp, ta) in sig.generic_params.iter().zip(type_args.iter()) {
                 let resolved = self.resolve_type(ta);
                 if matches!(resolved, Ty::Error) {
-                    for a in args { let _ = self.check_expr(a, None); }
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
                     return Ty::Error;
                 }
                 subst.insert(gp.clone(), resolved);
@@ -5136,7 +6124,9 @@ impl SemaCx<'_> {
             // Infer: walk params, unify Ty::Param against arg type.
             for (param_sig, arg) in sig.params.iter().zip(args.iter()) {
                 let arg_ty = self.check_expr(arg, None);
-                if matches!(arg_ty, Ty::Error) { continue; }
+                if matches!(arg_ty, Ty::Error) {
+                    continue;
+                }
                 unify_param_against_concrete(&param_sig.ty, &arg_ty, &mut subst);
             }
             // Every declared generic param must be pinned.
@@ -5164,7 +6154,8 @@ impl SemaCx<'_> {
                     "E0302",
                     format!(
                         "type mismatch in method `{}::{}` arg: expected `{}`, got `{}`",
-                        struct_name, name.name,
+                        struct_name,
+                        name.name,
                         ty_display(&expected_ty),
                         ty_display(&arg_ty),
                     ),
@@ -5176,7 +6167,9 @@ impl SemaCx<'_> {
             let _ = self.check_expr(a, None);
         }
         // Record the instantiation for monomorphize.
-        let arg_tys: Vec<Ty> = sig.generic_params.iter()
+        let arg_tys: Vec<Ty> = sig
+            .generic_params
+            .iter()
             .map(|gp| subst.get(gp).cloned().unwrap_or(Ty::Error))
             .collect();
         // Slice 7GEN.5e step 4: bound check for method-level generics.
@@ -5202,14 +6195,16 @@ impl SemaCx<'_> {
         for part in parts {
             if let InterpStrPart::Expr(e) = part {
                 let ty = self.check_expr(e, None);
-                if matches!(ty, Ty::Error) { continue; }
+                if matches!(ty, Ty::Error) {
+                    continue;
+                }
                 let ok = Self::is_blessed_to_string_receiver(&ty)
                     || matches!(&ty, Ty::String)
                     || matches!(&ty, Ty::Struct(id)
-                        if self.interface_impls.contains(&(
-                            "ToString".to_string(),
-                            self.structs[id.0 as usize].name.clone(),
-                        )));
+                    if self.interface_impls.contains(&(
+                        "ToString".to_string(),
+                        self.structs[id.0 as usize].name.clone(),
+                    )));
                 if !ok {
                     self.err(
                         "E0612",
@@ -5238,58 +6233,635 @@ impl SemaCx<'_> {
     /// — they go through the normal method-lookup with an
     /// `impl ToString for Foo` provided by the user.
     fn is_blessed_to_string_receiver(ty: &Ty) -> bool {
-        matches!(ty,
-            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
-            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
-            | Ty::F32 | Ty::F64
-            | Ty::Bool
-            | Ty::Str)
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize
+                | Ty::F32
+                | Ty::F64
+                | Ty::Bool
+                | Ty::Str
+        )
     }
 
     /// v0.0.4 Phase 3 Slice 3B.5: blessed `hash()` for primitive
     /// receivers. Integer types + str. (Bool and floats aren't typical
     /// hashmap keys; add if motivated.)
     fn is_blessed_hash_receiver(ty: &Ty) -> bool {
-        matches!(ty,
-            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
-            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
-            | Ty::Str)
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize
+                | Ty::Str
+        )
     }
 
     /// v0.0.4 Phase 3 Slice 3B.5: blessed `eq(other)` for primitive
     /// receivers. Same set as Hash plus Bool — anywhere `==` works
     /// today.
     fn is_blessed_eq_receiver(ty: &Ty) -> bool {
-        matches!(ty,
-            Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::Isize
-            | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::Usize
-            | Ty::Bool
-            | Ty::Str)
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize
+                | Ty::Bool
+                | Ty::Str
+        )
     }
 
     /// Phase 8 slice 8.STR.3: dispatch `s.method(args)` on a `string`
     /// receiver. Methods: `len() -> usize`, `is_empty() -> bool`,
     /// `as_str() -> str`, `clone() -> string`. Anything else fires E0324.
+    /// v0.0.6 Slice 1B: dispatch a SIMD instance method on a `Ty::Simd`
+    /// receiver. Methods are blessed (no user-defined SIMD impls); the
+    /// table here is the source of truth for which methods exist and
+    /// their per-method signatures.
+    ///
+    /// First cut: only `f32x4` works end-to-end. Methods accepted:
+    ///   - `add(b: Self)`, `sub(b: Self)`, `mul(b: Self)`, `div(b: Self)` → Self
+    ///   - `fma(b: Self, c: Self) -> Self` (uses `llvm.fma.<vN>`)
+    ///   - `sqrt() -> Self` (uses `llvm.sqrt.<vN>`)
+    ///   - `lane(i: u32) -> elem` (i must be a literal `u32` in `0..lanes`)
+    ///   - `with_lane(i: u32, x: elem) -> Self`
+    ///   - `to_array() -> [elem; lanes]`
+    ///
+    /// E0873: non-literal lane index.
+    /// E0874: lane index out of range.
+    /// E0324: unknown method on Ty::Simd.
+    fn check_simd_method_call(
+        &mut self,
+        recv: &Ty,
+        name: &Ident,
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) -> Ty {
+        let Ty::Simd { elem, lanes } = recv else {
+            return Ty::Error;
+        };
+        let elem_ty = (**elem).clone();
+        let lanes_u = *lanes;
+        let arity_err = |this: &mut Self, expected: usize| -> bool {
+            if args.len() != expected {
+                this.err(
+                    "E0308",
+                    format!(
+                        "`{}::{}` takes {} argument(s), got {}",
+                        ty_display(recv),
+                        name.name,
+                        expected,
+                        args.len()
+                    ),
+                    call_span,
+                );
+                for a in args {
+                    let _ = this.check_expr(a, None);
+                }
+                false
+            } else {
+                true
+            }
+        };
+        match name.name.as_str() {
+            "add" | "sub" | "mul" | "div" => {
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                recv.clone()
+            }
+            "fma" => {
+                if !elem_ty.is_float() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`fma` is only available on floating-point SIMD types, not `{}`",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if !arity_err(self, 2) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                let _ = self.check_expr(&args[1], Some(recv.clone()));
+                recv.clone()
+            }
+            "sqrt" => {
+                if !elem_ty.is_float() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`sqrt` is only available on floating-point SIMD types, not `{}`",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                recv.clone()
+            }
+            "abs" => {
+                // `abs` available on signed-integer + float SIMD widths.
+                // Unsigned-integer `abs` would be a no-op; reject to keep
+                // the matrix clear.
+                if !(elem_ty.is_float() || elem_ty.is_signed_int()) {
+                    self.err(
+                        "E0324",
+                        format!("`abs` is only available on float and signed-integer SIMD types, not `{}`",
+                            ty_display(recv)),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                recv.clone()
+            }
+            "min" | "max" => {
+                // Available on all numeric SIMD widths. Float widths use
+                // `llvm.minnum`/`maxnum` (treats NaN as missing); integer
+                // widths use the signed (`smin`/`smax`) or unsigned
+                // (`umin`/`umax`) intrinsic per the lane type.
+                if !elem_ty.is_numeric() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}` requires a numeric SIMD type, not `{}`",
+                            name.name,
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                recv.clone()
+            }
+            "and" | "or" | "xor" => {
+                // Bitwise ops: integer SIMD only. Float bitwise is
+                // useful (sign masking, etc.) but requires bitcast
+                // boilerplate at the source level; defer until a real
+                // use case surfaces.
+                if !elem_ty.is_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "bitwise `{}` requires an integer SIMD type, not `{}`",
+                            name.name,
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                recv.clone()
+            }
+            "not" => {
+                if !elem_ty.is_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "bitwise `not` requires an integer SIMD type, not `{}`",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                recv.clone()
+            }
+            "shl" | "shr" => {
+                // Element-wise shift by a scalar count (every lane shifted
+                // by the same amount). The amount must be `u32` and a
+                // literal in `0..lane_bits` — sema enforces both. `shr`
+                // is arithmetic for signed lanes (`ashr`), logical for
+                // unsigned (`lshr`).
+                if !elem_ty.is_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "shift `{}` requires an integer SIMD type, not `{}`",
+                            name.name,
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let count_lit = match &args[0].kind {
+                    ExprKind::IntLit(v, _) => Some(*v),
+                    ExprKind::Cast { expr, .. } => {
+                        if let ExprKind::IntLit(v, _) = &expr.kind {
+                            Some(*v)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let _ = self.check_expr(&args[0], Some(Ty::U32));
+                let lane_bits: u64 = match &elem_ty {
+                    Ty::I8 | Ty::U8 => 8,
+                    Ty::I16 | Ty::U16 => 16,
+                    Ty::I32 | Ty::U32 => 32,
+                    Ty::I64 | Ty::U64 => 64,
+                    _ => 0,
+                };
+                match count_lit {
+                    None => {
+                        self.err(
+                            "E0873",
+                            format!(
+                                "shift count for `{}.{}(...)` must be a literal `u32`",
+                                ty_display(recv),
+                                name.name
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                    Some(c) if c >= lane_bits => {
+                        self.err(
+                            "E0874",
+                            format!(
+                                "shift count {c} out of range for `{}` ({} bits per lane)",
+                                ty_display(recv),
+                                lane_bits
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                    _ => {}
+                }
+                recv.clone()
+            }
+            "lane" => {
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                // Lane index must be a literal so codegen can emit
+                // `extractelement <N x T> v, i32 <const>`.
+                let idx_lit = match &args[0].kind {
+                    ExprKind::IntLit(v, _) => Some(*v),
+                    ExprKind::Cast { expr, .. } => {
+                        if let ExprKind::IntLit(v, _) = &expr.kind {
+                            Some(*v)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let _ = self.check_expr(&args[0], Some(Ty::U32));
+                match idx_lit {
+                    None => {
+                        self.err(
+                            "E0873",
+                            format!(
+                                "lane index for `{}.lane(...)` must be a literal `u32`",
+                                ty_display(recv)
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                    Some(i) if (i as u32) >= lanes_u => {
+                        self.err(
+                            "E0874",
+                            format!(
+                                "lane index {i} out of range for `{}` ({} lanes)",
+                                ty_display(recv),
+                                lanes_u
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                    Some(_) => {}
+                }
+                elem_ty
+            }
+            "with_lane" => {
+                if !arity_err(self, 2) {
+                    return Ty::Error;
+                }
+                let idx_lit = match &args[0].kind {
+                    ExprKind::IntLit(v, _) => Some(*v),
+                    ExprKind::Cast { expr, .. } => {
+                        if let ExprKind::IntLit(v, _) = &expr.kind {
+                            Some(*v)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let _ = self.check_expr(&args[0], Some(Ty::U32));
+                let _ = self.check_expr(&args[1], Some(elem_ty.clone()));
+                match idx_lit {
+                    None => {
+                        self.err(
+                            "E0873",
+                            format!(
+                                "lane index for `{}.with_lane(...)` must be a literal `u32`",
+                                ty_display(recv)
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                    Some(i) if (i as u32) >= lanes_u => {
+                        self.err(
+                            "E0874",
+                            format!(
+                                "lane index {i} out of range for `{}` ({} lanes)",
+                                ty_display(recv),
+                                lanes_u
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                    Some(_) => {}
+                }
+                recv.clone()
+            }
+            "to_array" => {
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                Ty::Array(Box::new(elem_ty), lanes_u)
+            }
+            "store" => {
+                // Unsafe — writes through a raw pointer. Caller owns
+                // alignment (lane-sized minimum; misaligned addresses
+                // are UB).
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                if self.unsafe_depth == 0 {
+                    self.err(
+                        "E0801",
+                        format!(
+                            "`{}.store` is unsafe; wrap in `unsafe {{ ... }}`",
+                            ty_display(recv)
+                        ),
+                        call_span,
+                    );
+                }
+                let want = Ty::RawPtr(Box::new(elem_ty));
+                let _ = self.check_expr(&args[0], Some(want));
+                Ty::Unit
+            }
+            _ => {
+                self.err(
+                    "E0324",
+                    format!(
+                        "no method `{}` on SIMD type `{}`",
+                        name.name,
+                        ty_display(recv)
+                    ),
+                    name.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                Ty::Error
+            }
+        }
+    }
+
+    /// v0.0.6 Slice 1B: dispatch a SIMD associated function — `f32x4::splat(s)`,
+    /// `f32x4::new(a, b, c, d)`, `f32x4::from_array(a)`. The path is parsed
+    /// as `Path { segments: ["f32x4", "splat"] }` and routes here when sema
+    /// recognizes the first segment as a SIMD type name.
+    fn check_simd_assoc_call(
+        &mut self,
+        recv: &Ty,
+        method: &Ident,
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) -> Ty {
+        let Ty::Simd { elem, lanes } = recv else {
+            return Ty::Error;
+        };
+        let elem_ty = (**elem).clone();
+        let lanes_u = *lanes;
+        match method.name.as_str() {
+            "splat" => {
+                if args.len() != 1 {
+                    self.err(
+                        "E0308",
+                        format!(
+                            "`{}::splat` takes 1 argument, got {}",
+                            ty_display(recv),
+                            args.len()
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(elem_ty));
+                recv.clone()
+            }
+            "new" => {
+                if args.len() != lanes_u as usize {
+                    self.err(
+                        "E0308",
+                        format!(
+                            "`{}::new` takes {} argument(s), got {}",
+                            ty_display(recv),
+                            lanes_u,
+                            args.len()
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                for a in args {
+                    let _ = self.check_expr(a, Some(elem_ty.clone()));
+                }
+                recv.clone()
+            }
+            "from_array" => {
+                if args.len() != 1 {
+                    self.err(
+                        "E0308",
+                        format!(
+                            "`{}::from_array` takes 1 argument, got {}",
+                            ty_display(recv),
+                            args.len()
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let want = Ty::Array(Box::new(elem_ty), lanes_u);
+                let _ = self.check_expr(&args[0], Some(want));
+                recv.clone()
+            }
+            "load" => {
+                // Unsafe — reads through a raw pointer. Caller owns
+                // alignment (lane-sized minimum; misaligned addresses
+                // are UB).
+                if args.len() != 1 {
+                    self.err(
+                        "E0308",
+                        format!(
+                            "`{}::load` takes 1 argument, got {}",
+                            ty_display(recv),
+                            args.len()
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if self.unsafe_depth == 0 {
+                    self.err(
+                        "E0801",
+                        format!(
+                            "`{}::load` is unsafe; wrap in `unsafe {{ ... }}`",
+                            ty_display(recv)
+                        ),
+                        call_span,
+                    );
+                }
+                let want = Ty::RawPtr(Box::new(elem_ty));
+                let _ = self.check_expr(&args[0], Some(want));
+                recv.clone()
+            }
+            _ => {
+                self.err(
+                    "E0324",
+                    format!(
+                        "no associated function `{}` on SIMD type `{}`",
+                        method.name,
+                        ty_display(recv)
+                    ),
+                    method.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                Ty::Error
+            }
+        }
+    }
+
     fn check_string_method_call(&mut self, name: &Ident, args: &[Expr], call_span: ByteSpan) -> Ty {
         let no_args = |this: &mut Self| -> bool {
             if !args.is_empty() {
-                this.err("E0308",
-                    format!("`string::{}` takes 0 argument(s), got {}", name.name, args.len()),
-                    call_span);
-                for a in args { let _ = this.check_expr(a, None); }
+                this.err(
+                    "E0308",
+                    format!(
+                        "`string::{}` takes 0 argument(s), got {}",
+                        name.name,
+                        args.len()
+                    ),
+                    call_span,
+                );
+                for a in args {
+                    let _ = this.check_expr(a, None);
+                }
                 false
-            } else { true }
+            } else {
+                true
+            }
         };
         match name.name.as_str() {
-            "len" => { let _ = no_args(self); Ty::Usize }
-            "is_empty" => { let _ = no_args(self); Ty::Bool }
-            "as_str" => { let _ = no_args(self); Ty::Str }
-            "clone" => { let _ = no_args(self); Ty::String }
+            "len" => {
+                let _ = no_args(self);
+                Ty::Usize
+            }
+            "is_empty" => {
+                let _ = no_args(self);
+                Ty::Bool
+            }
+            "as_str" => {
+                let _ = no_args(self);
+                Ty::Str
+            }
+            "clone" => {
+                let _ = no_args(self);
+                Ty::String
+            }
             _ => {
-                self.err("E0324",
+                self.err(
+                    "E0324",
                     format!("no method `{}` on type `string`", name.name),
-                    name.span);
-                for a in args { let _ = self.check_expr(a, None); }
+                    name.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 Ty::Error
             }
         }
@@ -5299,46 +6871,82 @@ impl SemaCx<'_> {
     /// associated fns ship in v1: `new` (no args, returns empty `string`)
     /// and `with_capacity(n: usize)` (returns a string with `n` bytes
     /// pre-allocated). Anything else fires E0324.
-    fn check_string_assoc_call(&mut self, method: &Ident, args: &[Expr], call_span: ByteSpan) -> Ty {
+    fn check_string_assoc_call(
+        &mut self,
+        method: &Ident,
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) -> Ty {
         match method.name.as_str() {
             "new" => {
                 if !args.is_empty() {
-                    self.err("E0308",
+                    self.err(
+                        "E0308",
                         format!("`string::new` takes 0 argument(s), got {}", args.len()),
-                        call_span);
+                        call_span,
+                    );
                 }
                 Ty::String
             }
             "with_capacity" => {
                 if args.len() != 1 {
-                    self.err("E0308",
-                        format!("`string::with_capacity` takes 1 argument, got {}", args.len()),
-                        call_span);
-                    for a in args { let _ = self.check_expr(a, None); }
+                    self.err(
+                        "E0308",
+                        format!(
+                            "`string::with_capacity` takes 1 argument, got {}",
+                            args.len()
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
                     return Ty::Error;
                 }
                 let arg_ty = self.check_expr(&args[0], Some(Ty::Usize));
                 if !matches!(arg_ty, Ty::Usize | Ty::Error) {
-                    self.err("E0302",
-                        format!("`string::with_capacity` expects `usize`, got `{}`", ty_display(&arg_ty)),
-                        args[0].span);
+                    self.err(
+                        "E0302",
+                        format!(
+                            "`string::with_capacity` expects `usize`, got `{}`",
+                            ty_display(&arg_ty)
+                        ),
+                        args[0].span,
+                    );
                 }
                 Ty::String
             }
             _ => {
-                self.err("E0324",
+                self.err(
+                    "E0324",
                     format!("no associated function `{}` on type `string`", method.name),
-                    method.span);
-                for a in args { let _ = self.check_expr(a, None); }
+                    method.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 Ty::Error
             }
         }
     }
 
-    fn check_assoc_call(&mut self, segments: &[Ident], type_args: &[Type], args: &[Expr], path_span: ByteSpan, call_span: ByteSpan) -> Ty {
+    fn check_assoc_call(
+        &mut self,
+        segments: &[Ident],
+        type_args: &[Type],
+        args: &[Expr],
+        path_span: ByteSpan,
+        call_span: ByteSpan,
+    ) -> Ty {
         if segments.len() != 2 {
-            self.err("E0312", "Phase 2 paths have exactly two segments".to_string(), path_span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0312",
+                "Phase 2 paths have exactly two segments".to_string(),
+                path_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let type_seg = &segments[0];
@@ -5349,27 +6957,69 @@ impl SemaCx<'_> {
         // interpolation literals — slice 8.STR.B).
         if type_seg.name == "string" {
             if !type_args.is_empty() {
-                self.err("E0501",
+                self.err(
+                    "E0501",
                     "`string::{new,with_capacity}` take no type arguments".to_string(),
-                    call_span);
+                    call_span,
+                );
             }
             return self.check_string_assoc_call(method_seg, args, call_span);
+        }
+        // v0.0.6 Slice 1B: SIMD type associated functions —
+        // `f32x4::splat(s)`, `f32x4::new(a, b, c, d)`, `f32x4::from_array(a)`.
+        if let Some(recv) = simd_ty_from_name(&type_seg.name) {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    format!(
+                        "`{}::{{splat,new,from_array}}` take no type arguments",
+                        type_seg.name
+                    ),
+                    call_span,
+                );
+            }
+            return self.check_simd_assoc_call(&recv, method_seg, args, call_span);
         }
         // Enums: a call shape `Name::Variant(args)` constructs a tagged
         // variant. Look up the variant; verify it has a payload (call form
         // is illegal for payload-less variants — use the bare path); check
         // arg count and types against the payload.
-        if let Some(&id) = self.enum_by_name.get(&type_seg.name) {
+        let mut enum_id = self.enum_by_name.get(&type_seg.name).copied();
+        let mut struct_id = self.struct_by_name.get(&type_seg.name).copied();
+        if enum_id.is_none() && struct_id.is_none() {
+            let temp_ast_ty = crate::ast::Type {
+                kind: crate::ast::TypeKind::Path(type_seg.name.clone()),
+                span: type_seg.span,
+            };
+            let ty = self.resolve_type(&temp_ast_ty);
+            match ty {
+                Ty::Enum(id) => enum_id = Some(id),
+                Ty::Struct(id) => struct_id = Some(id),
+                Ty::Error => {
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(id) = enum_id {
             let enum_def = self.enums[id.0 as usize].clone();
-            let variant = enum_def.variants.iter()
-                .find(|v| v.name == method_seg.name);
+            let variant = enum_def.variants.iter().find(|v| v.name == method_seg.name);
             let Some(vdef) = variant else {
                 self.err(
                     "E0317",
-                    format!("enum `{}` has no variant `{}`", type_seg.name, method_seg.name),
+                    format!(
+                        "enum `{}` has no variant `{}`",
+                        type_seg.name, method_seg.name
+                    ),
                     method_seg.span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             };
             if vdef.payload.is_empty() {
@@ -5377,16 +7027,27 @@ impl SemaCx<'_> {
                 // the bare path syntax.
                 self.err(
                     "E0327",
-                    format!("variant `{}::{}` has no payload; use the bare path `{}::{}`", type_seg.name, method_seg.name, type_seg.name, method_seg.name),
+                    format!(
+                        "variant `{}::{}` has no payload; use the bare path `{}::{}`",
+                        type_seg.name, method_seg.name, type_seg.name, method_seg.name
+                    ),
                     call_span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             }
             if args.len() != vdef.payload.len() {
                 self.err(
                     "E0342",
-                    format!("variant `{}::{}` takes {} payload value(s); got {}", type_seg.name, method_seg.name, vdef.payload.len(), args.len()),
+                    format!(
+                        "variant `{}::{}` takes {} payload value(s); got {}",
+                        type_seg.name,
+                        method_seg.name,
+                        vdef.payload.len(),
+                        args.len()
+                    ),
                     call_span,
                 );
             }
@@ -5398,34 +7059,60 @@ impl SemaCx<'_> {
             }
             return Ty::Enum(id);
         }
-        let Some(&id) = self.struct_by_name.get(&type_seg.name) else {
-            self.err("E0303", format!("unknown type `{}`", type_seg.name), type_seg.span);
-            for a in args { let _ = self.check_expr(a, None); }
+        let Some(id) = struct_id else {
+            self.err(
+                "E0303",
+                format!("unknown type `{}`", type_seg.name),
+                type_seg.span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         let struct_name = self.structs[id.0 as usize].name.clone();
-        let Some(sig) = self.structs[id.0 as usize].methods.get(&method_seg.name).cloned() else {
+        let Some(sig) = self.structs[id.0 as usize]
+            .methods
+            .get(&method_seg.name)
+            .cloned()
+        else {
             self.err(
                 "E0324",
-                format!("struct `{}` has no method `{}`", struct_name, method_seg.name),
+                format!(
+                    "struct `{}` has no method `{}`",
+                    struct_name, method_seg.name
+                ),
                 method_seg.span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         };
         if sig.receiver.is_some() {
             self.err(
                 "E0327",
-                format!("`{}::{}` is an instance method; call it as `value.{}(...)`", struct_name, method_seg.name, method_seg.name),
+                format!(
+                    "`{}::{}` is an instance method; call it as `value.{}(...)`",
+                    struct_name, method_seg.name, method_seg.name
+                ),
                 call_span,
             );
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         if args.len() != sig.params.len() {
             self.err(
                 "E0308",
-                format!("function `{}::{}` takes {} argument(s), got {}", struct_name, method_seg.name, sig.params.len(), args.len()),
+                format!(
+                    "function `{}::{}` takes {} argument(s), got {}",
+                    struct_name,
+                    method_seg.name,
+                    sig.params.len(),
+                    args.len()
+                ),
                 call_span,
             );
         }
@@ -5433,7 +7120,13 @@ impl SemaCx<'_> {
         // (`Type::method(...)` / `Type::method::[T](...)`).
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
-                id, &struct_name, method_seg, &sig, type_args, args, call_span,
+                id,
+                &struct_name,
+                method_seg,
+                &sig,
+                type_args,
+                args,
+                call_span,
             );
         }
         if !type_args.is_empty() {
@@ -5441,7 +7134,9 @@ impl SemaCx<'_> {
                 "E0501",
                 format!(
                     "associated function `{}::{}` takes no type arguments but {} were provided",
-                    struct_name, method_seg.name, type_args.len()
+                    struct_name,
+                    method_seg.name,
+                    type_args.len()
                 ),
                 method_seg.span,
             );
@@ -5547,7 +7242,11 @@ impl SemaCx<'_> {
                 if !lhs_ty.is_numeric() && lhs_ty != Ty::Error {
                     self.err(
                         "E0302",
-                        format!("`{}` requires numeric operands, found `{}`", op_str(op), lhs_ty.name()),
+                        format!(
+                            "`{}` requires numeric operands, found `{}`",
+                            op_str(op),
+                            lhs_ty.name()
+                        ),
                         span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -5621,7 +7320,10 @@ impl SemaCx<'_> {
                 if !lhs_ty.is_numeric() && lhs_ty != Ty::Error {
                     self.err(
                         "E0302",
-                        format!("ordered comparison requires numeric operands, found `{}`", lhs_ty.name()),
+                        format!(
+                            "ordered comparison requires numeric operands, found `{}`",
+                            lhs_ty.name()
+                        ),
                         span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -5640,7 +7342,11 @@ impl SemaCx<'_> {
                 if !lhs_ty.is_int() && lhs_ty != Ty::Error {
                     self.err(
                         "E0302",
-                        format!("`{}` requires integer operands, found `{}`", op_str(op), lhs_ty.name()),
+                        format!(
+                            "`{}` requires integer operands, found `{}`",
+                            op_str(op),
+                            lhs_ty.name()
+                        ),
                         span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -5662,7 +7368,11 @@ impl SemaCx<'_> {
                 if !lhs_ty.is_int() {
                     self.err(
                         "E0302",
-                        format!("`{}` requires integer operands, found `{}`", op_str(op), lhs_ty.name()),
+                        format!(
+                            "`{}` requires integer operands, found `{}`",
+                            op_str(op),
+                            lhs_ty.name()
+                        ),
                         span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -5687,7 +7397,11 @@ impl SemaCx<'_> {
                 if !lhs_ty.is_int() {
                     self.err(
                         "E0302",
-                        format!("`{}` requires an integer left operand, found `{}`", op_str(op), lhs_ty.name()),
+                        format!(
+                            "`{}` requires an integer left operand, found `{}`",
+                            op_str(op),
+                            lhs_ty.name()
+                        ),
                         span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -5714,11 +7428,16 @@ impl SemaCx<'_> {
         match op {
             UnaryOp::Neg => {
                 let t = self.check_expr(operand, None);
-                if t == Ty::Error { return Ty::Error; }
+                if t == Ty::Error {
+                    return Ty::Error;
+                }
                 if t.is_unsigned_int() {
                     self.err(
                         "E0302",
-                        format!("cannot negate unsigned type `{}`; use a signed type instead", t.name()),
+                        format!(
+                            "cannot negate unsigned type `{}`; use a signed type instead",
+                            t.name()
+                        ),
                         span,
                     );
                     return Ty::Error;
@@ -5733,12 +7452,17 @@ impl SemaCx<'_> {
                 }
                 t
             }
-            UnaryOp::Not => { self.check_expr(operand, Some(Ty::Bool)); Ty::Bool }
+            UnaryOp::Not => {
+                self.check_expr(operand, Some(Ty::Bool));
+                Ty::Bool
+            }
             UnaryOp::BitNot => {
                 // Phase 3A: bitwise NOT is defined on every integer type.
                 // Codegen lowers via `xor i<N> v, -1` per LLVM idiom.
                 let t = self.check_expr(operand, None);
-                if t == Ty::Error { return Ty::Error; }
+                if t == Ty::Error {
+                    return Ty::Error;
+                }
                 if !t.is_int() {
                     self.err(
                         "E0302",
@@ -5750,7 +7474,11 @@ impl SemaCx<'_> {
                 t
             }
             UnaryOp::Ref { .. } => {
-                self.err("E0312", "references are not yet supported (Phase 5/6)".to_string(), span);
+                self.err(
+                    "E0312",
+                    "references are not yet supported (Phase 5/6)".to_string(),
+                    span,
+                );
                 let _ = self.check_expr(operand, None);
                 Ty::Error
             }
@@ -5762,7 +7490,8 @@ impl SemaCx<'_> {
                 if matches!(op_ty, Ty::RawPtr(_)) && self.unsafe_depth == 0 {
                     self.err(
                         "E0801",
-                        "dereferencing a raw pointer is unsafe; wrap in `unsafe { ... }`".to_string(),
+                        "dereferencing a raw pointer is unsafe; wrap in `unsafe { ... }`"
+                            .to_string(),
                         span,
                     );
                 }
@@ -5772,7 +7501,10 @@ impl SemaCx<'_> {
                     other => {
                         self.err(
                             "E0302",
-                            format!("dereference requires a raw pointer (`*T`), got `{}`", ty_display(&other)),
+                            format!(
+                                "dereference requires a raw pointer (`*T`), got `{}`",
+                                ty_display(&other)
+                            ),
                             span,
                         );
                         Ty::Error
@@ -5792,11 +7524,15 @@ impl SemaCx<'_> {
         // plain `=` takes this path.
         if matches!(op, AssignOp::Assign) {
             if let ExprKind::Ident(name) = &target.kind {
-                let unassigned = self.lookup_local(name)
+                let unassigned = self
+                    .lookup_local(name)
                     .map(|info| !info.assigned)
                     .unwrap_or(false);
                 if unassigned {
-                    let target_ty = self.lookup_local(name).map(|i| i.ty.clone()).unwrap_or(Ty::Error);
+                    let target_ty = self
+                        .lookup_local(name)
+                        .map(|i| i.ty.clone())
+                        .unwrap_or(Ty::Error);
                     if target_ty != Ty::Error {
                         self.check_expr(value, Some(target_ty));
                     } else {
@@ -5824,7 +7560,14 @@ impl SemaCx<'_> {
         // type-rules as the standalone binary op. The +%/-%/*%/etc. wrapping
         // variants are NOT covered — wrapping ops don't have compound forms
         // in C+ (use `a = a +% b` explicitly).
-        let value_ty = self.check_expr(value, if target_ty == Ty::Error { None } else { Some(target_ty.clone()) });
+        let value_ty = self.check_expr(
+            value,
+            if target_ty == Ty::Error {
+                None
+            } else {
+                Some(target_ty.clone())
+            },
+        );
         if !matches!(op, AssignOp::Assign) && target_ty != Ty::Error && value_ty != Ty::Error {
             // Check the op is type-compatible with target_ty. For arithmetic
             // ops (+=, -=, *=, /=, %=) — operand must be a numeric type
@@ -5837,10 +7580,10 @@ impl SemaCx<'_> {
                 AssignOp::DivAssign => ("`/=`", true, false),
                 AssignOp::ModAssign => ("`%=`", true, false),
                 AssignOp::BitAndAssign => ("`&=`", false, true),
-                AssignOp::BitOrAssign  => ("`|=`", false, true),
+                AssignOp::BitOrAssign => ("`|=`", false, true),
                 AssignOp::BitXorAssign => ("`^=`", false, true),
-                AssignOp::ShlAssign    => ("`<<=`", false, true),
-                AssignOp::ShrAssign    => ("`>>=`", false, true),
+                AssignOp::ShlAssign => ("`<<=`", false, true),
+                AssignOp::ShrAssign => ("`>>=`", false, true),
                 AssignOp::Assign => unreachable!(),
             };
             let int_ok = target_ty.is_signed_int() || target_ty.is_unsigned_int();
@@ -5848,14 +7591,20 @@ impl SemaCx<'_> {
             if is_arith && !arith_ok {
                 self.err(
                     "E0302",
-                    format!("{op_label} requires a numeric type, got `{}`", ty_display(&target_ty)),
+                    format!(
+                        "{op_label} requires a numeric type, got `{}`",
+                        ty_display(&target_ty)
+                    ),
                     span,
                 );
             }
             if is_bitwise && !int_ok {
                 self.err(
                     "E0302",
-                    format!("{op_label} requires an integer type, got `{}`", ty_display(&target_ty)),
+                    format!(
+                        "{op_label} requires an integer type, got `{}`",
+                        ty_display(&target_ty)
+                    ),
                     span,
                 );
             }
@@ -5876,7 +7625,9 @@ impl SemaCx<'_> {
                 if !info.mutable {
                     self.err(
                         "E0305",
-                        format!("cannot assign to immutable binding `{name}`; declare it as `let mut`"),
+                        format!(
+                            "cannot assign to immutable binding `{name}`; declare it as `let mut`"
+                        ),
                         target.span,
                     );
                     return false;
@@ -5900,12 +7651,18 @@ impl SemaCx<'_> {
             // being mutated is the target memory, not the binding.
             // The deref's writability is gated by `operand` being a
             // pointer type (sema checks during `check_expr`).
-            ExprKind::Unary { op: UnaryOp::Deref, operand } => {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
                 let op_ty = self.check_expr(operand, None);
                 if !matches!(op_ty, Ty::RawPtr(_) | Ty::Error) {
                     self.err(
                         "E0302",
-                        format!("dereference assignment target must be a raw pointer, got `{}`", ty_display(&op_ty)),
+                        format!(
+                            "dereference assignment target must be a raw pointer, got `{}`",
+                            ty_display(&op_ty)
+                        ),
                         target.span,
                     );
                     return false;
@@ -5947,13 +7704,20 @@ impl SemaCx<'_> {
                 return Ty::RawPtr(Box::new(inner_ty));
             }
             // Slice 11.FN_PTR: function pointer type.
-            TypeKind::FnPtr { params, return_type } => {
-                let resolved_params: Vec<Ty> = params.iter().map(|p| self.resolve_type(p)).collect();
+            TypeKind::FnPtr {
+                params,
+                return_type,
+            } => {
+                let resolved_params: Vec<Ty> =
+                    params.iter().map(|p| self.resolve_type(p)).collect();
                 let resolved_ret = match return_type {
                     Some(rt) => self.resolve_type(rt),
                     None => Ty::Unit,
                 };
-                return Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) };
+                return Ty::FnPtr {
+                    params: resolved_params,
+                    return_type: Box::new(resolved_ret),
+                };
             }
             // Phase 11 polish (2026-05-14): slice type `T[]`.
             TypeKind::Slice(inner) => {
@@ -5969,13 +7733,60 @@ impl SemaCx<'_> {
             }
         };
         match name.as_str() {
-            "i8" => Ty::I8, "i16" => Ty::I16, "i32" => Ty::I32, "i64" => Ty::I64,
-            "u8" => Ty::U8, "u16" => Ty::U16, "u32" => Ty::U32, "u64" => Ty::U64,
-            "isize" => Ty::Isize, "usize" => Ty::Usize,
-            "f32" => Ty::F32, "f64" => Ty::F64,
+            "i8" => Ty::I8,
+            "i16" => Ty::I16,
+            "i32" => Ty::I32,
+            "i64" => Ty::I64,
+            "u8" => Ty::U8,
+            "u16" => Ty::U16,
+            "u32" => Ty::U32,
+            "u64" => Ty::U64,
+            "isize" => Ty::Isize,
+            "usize" => Ty::Usize,
+            "f32" => Ty::F32,
+            "f64" => Ty::F64,
             "bool" => Ty::Bool,
             "str" => Ty::Str,
             "string" => Ty::String,
+            // v0.0.6 Slice 1B: SIMD type names. Each entry here must also
+            // appear in `simd_ty_from_name` (free fn below) for path
+            // dispatch, and in codegen's `simd_ty_from_name` mirror.
+            "f32x4" => Ty::Simd {
+                elem: Box::new(Ty::F32),
+                lanes: 4,
+            },
+            "f64x2" => Ty::Simd {
+                elem: Box::new(Ty::F64),
+                lanes: 2,
+            },
+            "i32x4" => Ty::Simd {
+                elem: Box::new(Ty::I32),
+                lanes: 4,
+            },
+            "i64x2" => Ty::Simd {
+                elem: Box::new(Ty::I64),
+                lanes: 2,
+            },
+            "u32x4" => Ty::Simd {
+                elem: Box::new(Ty::U32),
+                lanes: 4,
+            },
+            "i8x16" => Ty::Simd {
+                elem: Box::new(Ty::I8),
+                lanes: 16,
+            },
+            "i16x8" => Ty::Simd {
+                elem: Box::new(Ty::I16),
+                lanes: 8,
+            },
+            "u8x16" => Ty::Simd {
+                elem: Box::new(Ty::U8),
+                lanes: 16,
+            },
+            "u16x8" => Ty::Simd {
+                elem: Box::new(Ty::U16),
+                lanes: 8,
+            },
             _ => {
                 // Slice 7GEN.4: `Self` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
@@ -6044,23 +7855,14 @@ impl SemaCx<'_> {
     /// Reports:
     /// - **E0303** — unknown generic name.
     /// - **E0501** — wrong number of type arguments.
-    fn resolve_generic_instantiation(
-        &mut self,
-        name: &str,
-        args: &[Type],
-        span: ByteSpan,
-    ) -> Ty {
+    fn resolve_generic_instantiation(&mut self, name: &str, args: &[Type], span: ByteSpan) -> Ty {
         // Slice 7GEN.5d: try enum templates first. Struct + enum names
         // live in different tables but the resolution shape is parallel.
         if self.enum_generic_templates.contains_key(name) {
             return self.resolve_generic_enum_instantiation(name, args, span);
         }
         let Some(template) = self.struct_generic_templates.get(name).cloned() else {
-            self.err(
-                "E0303",
-                format!("unknown generic type `{}`", name),
-                span,
-            );
+            self.err("E0303", format!("unknown generic type `{}`", name), span);
             return Ty::Error;
         };
         if args.len() != template.generic_params.len() {
@@ -6068,7 +7870,9 @@ impl SemaCx<'_> {
                 "E0501",
                 format!(
                     "type `{}` takes {} type argument(s), got {}",
-                    name, template.generic_params.len(), args.len()
+                    name,
+                    template.generic_params.len(),
+                    args.len()
                 ),
                 span,
             );
@@ -6082,13 +7886,23 @@ impl SemaCx<'_> {
         // Slice 7GEN.5e step 4: bound check (only at AST-originating call
         // sites — substitution paths via `subst_ty` skip this because the
         // template's bounds were already checked at the originating site).
-        let param_names: Vec<String> = template.generic_params.iter()
-            .map(|g| g.name.name.clone()).collect();
-        let bounds: Vec<Vec<String>> = template.generic_params.iter()
+        let param_names: Vec<String> = template
+            .generic_params
+            .iter()
+            .map(|g| g.name.name.clone())
+            .collect();
+        let bounds: Vec<Vec<String>> = template
+            .generic_params
+            .iter()
             .map(|g| g.bounds.iter().map(|b| b.name.clone()).collect())
             .collect();
-        self.check_generic_bounds(&param_names, &bounds, &arg_tys, span,
-            &format!("generic struct `{}`", name));
+        self.check_generic_bounds(
+            &param_names,
+            &bounds,
+            &arg_tys,
+            span,
+            &format!("generic struct `{}`", name),
+        );
         self.instantiate_struct_from_arg_tys(name, &template, arg_tys)
     }
 
@@ -6138,9 +7952,9 @@ impl SemaCx<'_> {
             name: mangled.clone(),
             fields,
             methods: HashMap::new(),
-            is_copy: false,   // recomputed by compute_struct_copy_flags? not for late-synthesized
+            is_copy: false, // recomputed by compute_struct_copy_flags? not for late-synthesized
             is_drop: false,
-            is_repr_c: false,   // generic instantiations don't inherit repr(C); revisit when use case appears
+            is_repr_c: false, // generic instantiations don't inherit repr(C); revisit when use case appears
             origin_file: None,
             generic_origin: Some((name.to_string(), arg_tys.clone())),
         });
@@ -6163,12 +7977,21 @@ impl SemaCx<'_> {
                 // (e.g. `fn new(v: T) -> Box[T]` inside `impl Box[T]`)
                 // get their inner T substituted at instantiation time.
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool)> = t.params.iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_)).collect();
-                    raw.into_iter().map(|(ty, mutable, move_)| {
-                        let s = self.subst_ty_deep(&ty, &method_subst);
-                        ParamSig { ty: subst_self(&s, &self_ty), mutable, move_ }
-                    }).collect()
+                    let raw: Vec<(Ty, bool, bool)> = t
+                        .params
+                        .iter()
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_))
+                        .collect();
+                    raw.into_iter()
+                        .map(|(ty, mutable, move_)| {
+                            let s = self.subst_ty_deep(&ty, &method_subst);
+                            ParamSig {
+                                ty: subst_self(&s, &self_ty),
+                                mutable,
+                                move_,
+                            }
+                        })
+                        .collect()
                 };
                 let resolved_return = {
                     let s = self.subst_ty_deep(&t.return_type, &method_subst);
@@ -6209,29 +8032,50 @@ impl SemaCx<'_> {
             // got a slice-of-Param instead of `u8[]`.
             Ty::Slice(elem) => Ty::Slice(Box::new(self.subst_ty_deep(elem, subst))),
             Ty::RawPtr(inner) => Ty::RawPtr(Box::new(self.subst_ty_deep(inner, subst))),
-            Ty::FnPtr { params, return_type } => {
-                let params = params.iter().map(|p| self.subst_ty_deep(p, subst)).collect();
+            Ty::FnPtr {
+                params,
+                return_type,
+            } => {
+                let params = params
+                    .iter()
+                    .map(|p| self.subst_ty_deep(p, subst))
+                    .collect();
                 let return_type = Box::new(self.subst_ty_deep(return_type, subst));
-                Ty::FnPtr { params, return_type }
+                Ty::FnPtr {
+                    params,
+                    return_type,
+                }
             }
             Ty::Struct(id) => {
                 let origin = self.structs[id.0 as usize].generic_origin.clone();
-                let Some((name, args)) = origin else { return ty.clone(); };
+                let Some((name, args)) = origin else {
+                    return ty.clone();
+                };
                 let new_args: Vec<Ty> = args.iter().map(|a| self.subst_ty_deep(a, subst)).collect();
-                if new_args == args { return ty.clone(); }
+                if new_args == args {
+                    return ty.clone();
+                }
                 // Re-instantiate. The template lookup must succeed — we
                 // wouldn't have a generic_origin recorded otherwise.
-                let template = self.struct_generic_templates.get(&name)
+                let template = self
+                    .struct_generic_templates
+                    .get(&name)
                     .cloned()
                     .expect("generic_origin names a template not in struct_generic_templates");
                 self.instantiate_struct_from_arg_tys(&name, &template, new_args)
             }
             Ty::Enum(id) => {
                 let origin = self.enums[id.0 as usize].generic_origin.clone();
-                let Some((name, args)) = origin else { return ty.clone(); };
+                let Some((name, args)) = origin else {
+                    return ty.clone();
+                };
                 let new_args: Vec<Ty> = args.iter().map(|a| self.subst_ty_deep(a, subst)).collect();
-                if new_args == args { return ty.clone(); }
-                let template = self.enum_generic_templates.get(&name)
+                if new_args == args {
+                    return ty.clone();
+                }
+                let template = self
+                    .enum_generic_templates
+                    .get(&name)
                     .cloned()
                     .expect("generic_origin names a template not in enum_generic_templates");
                 self.instantiate_enum_from_arg_tys(&name, &template, new_args)
@@ -6254,11 +8098,7 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         let Some(template) = self.enum_generic_templates.get(name).cloned() else {
-            self.err(
-                "E0303",
-                format!("unknown generic enum `{}`", name),
-                span,
-            );
+            self.err("E0303", format!("unknown generic enum `{}`", name), span);
             return Ty::Error;
         };
         if args.len() != template.generic_params.len() {
@@ -6266,7 +8106,9 @@ impl SemaCx<'_> {
                 "E0501",
                 format!(
                     "enum `{}` takes {} type argument(s), got {}",
-                    name, template.generic_params.len(), args.len()
+                    name,
+                    template.generic_params.len(),
+                    args.len()
                 ),
                 span,
             );
@@ -6278,13 +8120,23 @@ impl SemaCx<'_> {
         }
         // Slice 7GEN.5e step 4: bound check (only at AST-originating call
         // sites — see the parallel comment in resolve_generic_instantiation).
-        let param_names: Vec<String> = template.generic_params.iter()
-            .map(|g| g.name.name.clone()).collect();
-        let bounds: Vec<Vec<String>> = template.generic_params.iter()
+        let param_names: Vec<String> = template
+            .generic_params
+            .iter()
+            .map(|g| g.name.name.clone())
+            .collect();
+        let bounds: Vec<Vec<String>> = template
+            .generic_params
+            .iter()
             .map(|g| g.bounds.iter().map(|b| b.name.clone()).collect())
             .collect();
-        self.check_generic_bounds(&param_names, &bounds, &arg_tys, span,
-            &format!("generic enum `{}`", name));
+        self.check_generic_bounds(
+            &param_names,
+            &bounds,
+            &arg_tys,
+            span,
+            &format!("generic enum `{}`", name),
+        );
         self.instantiate_enum_from_arg_tys(name, &template, arg_tys)
     }
 
@@ -6308,16 +8160,28 @@ impl SemaCx<'_> {
         let seed: Vec<(String, Vec<Ty>)> = self
             .struct_instantiations
             .iter()
-            .filter(|(key, _)| !key.1.iter().any(|t| ty_contains_param(t, &self.structs, &self.enums)))
+            .filter(|(key, _)| {
+                !key.1
+                    .iter()
+                    .any(|t| ty_contains_param(t, &self.structs, &self.enums))
+            })
             .map(|(key, _)| key.clone())
             .collect();
         for (sname, sargs) in seed {
             // Find the generic impl block matching this struct's template.
             for item in &program.items {
-                let ItemKind::Impl(b) = &item.kind else { continue; };
-                if b.target_generic_params.is_empty() { continue; }
-                if b.target.name != sname { continue; }
-                if b.target_generic_params.len() != sargs.len() { continue; }
+                let ItemKind::Impl(b) = &item.kind else {
+                    continue;
+                };
+                if b.target_generic_params.is_empty() {
+                    continue;
+                }
+                if b.target.name != sname {
+                    continue;
+                }
+                if b.target_generic_params.len() != sargs.len() {
+                    continue;
+                }
                 // Build a name → concrete-Ty subst from the impl's
                 // target generic params.
                 let subst: HashMap<String, Ty> = b
@@ -6333,7 +8197,9 @@ impl SemaCx<'_> {
                 let mut discoveries: Vec<(String, Vec<Type>)> = Vec::new();
                 for m in &b.methods {
                     walk_variant_patterns_in_block(&m.body, &mut |enum_name, type_args| {
-                        if type_args.is_empty() { return; }
+                        if type_args.is_empty() {
+                            return;
+                        }
                         discoveries.push((enum_name.to_string(), type_args.to_vec()));
                     });
                 }
@@ -6350,14 +8216,24 @@ impl SemaCx<'_> {
         let fn_seed: Vec<(String, Vec<Ty>)> = self
             .fn_instantiations
             .iter()
-            .filter(|(_, args)| !args.iter().any(|t| ty_contains_param(t, &self.structs, &self.enums)))
+            .filter(|(_, args)| {
+                !args
+                    .iter()
+                    .any(|t| ty_contains_param(t, &self.structs, &self.enums))
+            })
             .cloned()
             .collect();
         for (fname, fargs) in fn_seed {
             for item in &program.items {
-                let ItemKind::Function(f) = &item.kind else { continue; };
-                if f.name.name != fname { continue; }
-                if f.generic_params.len() != fargs.len() { continue; }
+                let ItemKind::Function(f) = &item.kind else {
+                    continue;
+                };
+                if f.name.name != fname {
+                    continue;
+                }
+                if f.generic_params.len() != fargs.len() {
+                    continue;
+                }
                 let subst: HashMap<String, Ty> = f
                     .generic_params
                     .iter()
@@ -6366,7 +8242,9 @@ impl SemaCx<'_> {
                     .collect();
                 let mut discoveries: Vec<(String, Vec<Type>)> = Vec::new();
                 walk_variant_patterns_in_block(&f.body, &mut |enum_name, type_args| {
-                    if type_args.is_empty() { return; }
+                    if type_args.is_empty() {
+                        return;
+                    }
                     discoveries.push((enum_name.to_string(), type_args.to_vec()));
                 });
                 for (enum_name, type_args) in discoveries {
@@ -6390,8 +8268,12 @@ impl SemaCx<'_> {
         type_args: &[Type],
         subst: &HashMap<String, Ty>,
     ) {
-        let Some(template) = self.enum_generic_templates.get(enum_name).cloned() else { return; };
-        if template.generic_params.len() != type_args.len() { return; }
+        let Some(template) = self.enum_generic_templates.get(enum_name).cloned() else {
+            return;
+        };
+        if template.generic_params.len() != type_args.len() {
+            return;
+        }
         let resolved_args: Vec<Ty> = type_args
             .iter()
             .map(|t| {
@@ -6399,7 +8281,10 @@ impl SemaCx<'_> {
                 self.resolve_field_type_with_subst(&substituted, subst)
             })
             .collect();
-        if resolved_args.iter().any(|t| ty_contains_param(t, &self.structs, &self.enums) || matches!(t, Ty::Error)) {
+        if resolved_args
+            .iter()
+            .any(|t| ty_contains_param(t, &self.structs, &self.enums) || matches!(t, Ty::Error))
+        {
             return;
         }
         self.instantiate_enum_from_arg_tys(enum_name, &template, resolved_args);
@@ -6465,12 +8350,21 @@ impl SemaCx<'_> {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool)> = t.params.iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_)).collect();
-                    raw.into_iter().map(|(ty, mutable, move_)| {
-                        let s = self.subst_ty_deep(&ty, &method_subst);
-                        ParamSig { ty: subst_self(&s, &self_ty), mutable, move_ }
-                    }).collect()
+                    let raw: Vec<(Ty, bool, bool)> = t
+                        .params
+                        .iter()
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_))
+                        .collect();
+                    raw.into_iter()
+                        .map(|(ty, mutable, move_)| {
+                            let s = self.subst_ty_deep(&ty, &method_subst);
+                            ParamSig {
+                                ty: subst_self(&s, &self_ty),
+                                mutable,
+                                move_,
+                            }
+                        })
+                        .collect()
                 };
                 let resolved_return = {
                     let s = self.subst_ty_deep(&t.return_type, &method_subst);
@@ -6491,11 +8385,7 @@ impl SemaCx<'_> {
         Ty::Enum(id)
     }
 
-    fn resolve_field_type_with_subst(
-        &mut self,
-        ty: &Type,
-        subst: &HashMap<String, Ty>,
-    ) -> Ty {
+    fn resolve_field_type_with_subst(&mut self, ty: &Type, subst: &HashMap<String, Ty>) -> Ty {
         match &ty.kind {
             TypeKind::Path(name) => {
                 if let Some(concrete) = subst.get(name) {
@@ -6517,7 +8407,10 @@ impl SemaCx<'_> {
                     .map(|a| substitute_param_in_type_ast(a, subst))
                     .collect();
                 let synthetic = Type {
-                    kind: TypeKind::Generic { name: name.clone(), args: substituted_args },
+                    kind: TypeKind::Generic {
+                        name: name.clone(),
+                        args: substituted_args,
+                    },
                     span: ty.span,
                 };
                 self.resolve_type(&synthetic)
@@ -6526,22 +8419,30 @@ impl SemaCx<'_> {
                 let inner_ty = self.resolve_field_type_with_subst(inner, subst);
                 Ty::RawPtr(Box::new(inner_ty))
             }
-            TypeKind::FnPtr { params, return_type } => {
-                let resolved_params: Vec<Ty> = params.iter()
+            TypeKind::FnPtr {
+                params,
+                return_type,
+            } => {
+                let resolved_params: Vec<Ty> = params
+                    .iter()
                     .map(|p| self.resolve_field_type_with_subst(p, subst))
                     .collect();
                 let resolved_ret = match return_type {
                     Some(rt) => self.resolve_field_type_with_subst(rt, subst),
                     None => Ty::Unit,
                 };
-                Ty::FnPtr { params: resolved_params, return_type: Box::new(resolved_ret) }
+                Ty::FnPtr {
+                    params: resolved_params,
+                    return_type: Box::new(resolved_ret),
+                }
             }
             TypeKind::Slice(inner) => {
                 let inner_ty = self.resolve_field_type_with_subst(inner, subst);
                 Ty::Slice(Box::new(inner_ty))
             }
             TypeKind::Tuple(elems) => {
-                let elem_tys: Vec<Ty> = elems.iter()
+                let elem_tys: Vec<Ty> = elems
+                    .iter()
                     .map(|e| self.resolve_field_type_with_subst(e, subst))
                     .collect();
                 self.synthesize_tuple_struct(&elem_tys, ty.span)
@@ -6554,7 +8455,9 @@ impl SemaCx<'_> {
     /// outer ones is irrelevant here — we just need to know whether the
     /// name is a type-parameter anywhere up the chain).
     fn type_param_in_scope(&self, name: &str) -> bool {
-        self.type_params_stack.iter().any(|frame| frame.contains(name))
+        self.type_params_stack
+            .iter()
+            .any(|frame| frame.contains(name))
     }
 
     fn push_type_params(&mut self, params: &[GenericParam]) {
@@ -6566,11 +8469,14 @@ impl SemaCx<'_> {
         // calls `t.cmp(other)` with `t: T` and the active generic context
         // declares `T: Ord`, we resolve `cmp` against `Ord`'s method table
         // rather than emitting E0324.
-        let bound_frame: HashMap<String, Vec<String>> = params.iter()
-            .map(|p| (
-                p.name.name.clone(),
-                p.bounds.iter().map(|b| b.name.clone()).collect(),
-            ))
+        let bound_frame: HashMap<String, Vec<String>> = params
+            .iter()
+            .map(|p| {
+                (
+                    p.name.name.clone(),
+                    p.bounds.iter().map(|b| b.name.clone()).collect(),
+                )
+            })
             .collect();
         self.param_bounds_stack.push(bound_frame);
     }
@@ -6617,7 +8523,11 @@ impl SemaCx<'_> {
         let enum_seg = &segments[0];
         let variant_seg = &segments[1];
         let Some(&id) = self.enum_by_name.get(&enum_seg.name) else {
-            self.err("E0303", format!("unknown type `{}`", enum_seg.name), enum_seg.span);
+            self.err(
+                "E0303",
+                format!("unknown type `{}`", enum_seg.name),
+                enum_seg.span,
+            );
             return Ty::Error;
         };
         let def = &self.enums[id.0 as usize];
@@ -6638,11 +8548,7 @@ impl SemaCx<'_> {
             let moved = info.moved;
             let assigned = info.assigned;
             if moved {
-                self.err(
-                    "E0335",
-                    format!("use of moved value `{name}`"),
-                    span,
-                );
+                self.err("E0335", format!("use of moved value `{name}`"), span);
             } else if !assigned {
                 self.err(
                     "E0345",
@@ -6690,7 +8596,9 @@ impl SemaCx<'_> {
 
     fn lookup_local(&self, name: &str) -> Option<&LocalInfo> {
         for scope in self.scopes.iter().rev() {
-            if let Some(info) = scope.get(name) { return Some(info); }
+            if let Some(info) = scope.get(name) {
+                return Some(info);
+            }
         }
         None
     }
@@ -6734,7 +8642,9 @@ fn unify_param_against_concrete(
             }
         }
         (Ty::Array(a_elem, a_len), Ty::Array(b_elem, b_len)) => {
-            if a_len != b_len { return false; }
+            if a_len != b_len {
+                return false;
+            }
             unify_param_against_concrete(a_elem, b_elem, subst)
         }
         (a, b) => a == b,
@@ -6754,7 +8664,10 @@ fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool 
         Ty::Param(_) => true,
         Ty::Array(elem, _) => ty_contains_param(elem, structs, enums),
         Ty::RawPtr(inner) => ty_contains_param(inner, structs, enums),
-        Ty::FnPtr { params, return_type } => {
+        Ty::FnPtr {
+            params,
+            return_type,
+        } => {
             params.iter().any(|p| ty_contains_param(p, structs, enums))
                 || ty_contains_param(return_type, structs, enums)
         }
@@ -6799,39 +8712,72 @@ fn walk_variant_patterns_in_block(block: &Block, f: &mut impl FnMut(&str, &[Type
                     walk_variant_patterns_in_expr(iter, f);
                     walk_variant_patterns_in_block(body, f);
                 }
-                ForLoop::CStyle { init, cond, update, body } => {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
                     if let Some(s) = init.as_deref() {
-                        let wrap = Block { stmts: vec![s.clone()], tail: None, span: stmt.span };
+                        let wrap = Block {
+                            stmts: vec![s.clone()],
+                            tail: None,
+                            span: stmt.span,
+                        };
                         walk_variant_patterns_in_block(&wrap, f);
                     }
-                    if let Some(c) = cond { walk_variant_patterns_in_expr(c, f); }
-                    for u in update { walk_variant_patterns_in_expr(u, f); }
+                    if let Some(c) = cond {
+                        walk_variant_patterns_in_expr(c, f);
+                    }
+                    for u in update {
+                        walk_variant_patterns_in_expr(u, f);
+                    }
                     walk_variant_patterns_in_block(body, f);
                 }
             },
             StmtKind::Defer(e) | StmtKind::Assert(e) => walk_variant_patterns_in_expr(e, f),
             StmtKind::Loop(body) => walk_variant_patterns_in_block(body, f),
-            StmtKind::IfLet { pattern, scrutinee, body, else_body } => {
+            StmtKind::IfLet {
+                pattern,
+                scrutinee,
+                body,
+                else_body,
+            } => {
                 walk_variant_patterns_in_pat(pattern, f);
                 walk_variant_patterns_in_expr(scrutinee, f);
                 walk_variant_patterns_in_block(body, f);
-                if let Some(b) = else_body { walk_variant_patterns_in_block(b, f); }
+                if let Some(b) = else_body {
+                    walk_variant_patterns_in_block(b, f);
+                }
             }
-            StmtKind::WhileLet { pattern, scrutinee, body } => {
+            StmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            } => {
                 walk_variant_patterns_in_pat(pattern, f);
                 walk_variant_patterns_in_expr(scrutinee, f);
                 walk_variant_patterns_in_block(body, f);
             }
-            StmtKind::GuardLet { pattern, scrutinee, complement, else_body } => {
+            StmtKind::GuardLet {
+                pattern,
+                scrutinee,
+                complement,
+                else_body,
+            } => {
                 walk_variant_patterns_in_pat(pattern, f);
                 walk_variant_patterns_in_expr(scrutinee, f);
-                if let Some(c) = complement { walk_variant_patterns_in_pat(c, f); }
+                if let Some(c) = complement {
+                    walk_variant_patterns_in_pat(c, f);
+                }
                 walk_variant_patterns_in_block(else_body, f);
             }
             StmtKind::Break | StmtKind::Continue => {}
         }
     }
-    if let Some(t) = &block.tail { walk_variant_patterns_in_expr(t, f); }
+    if let Some(t) = &block.tail {
+        walk_variant_patterns_in_expr(t, f);
+    }
 }
 
 fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type])) {
@@ -6845,13 +8791,21 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
         }
         ExprKind::Call { callee, args, .. } => {
             walk_variant_patterns_in_expr(callee, f);
-            for a in args { walk_variant_patterns_in_expr(a, f); }
+            for a in args {
+                walk_variant_patterns_in_expr(a, f);
+            }
         }
         ExprKind::Block(b) | ExprKind::Unsafe(b) => walk_variant_patterns_in_block(b, f),
-        ExprKind::If { cond, then, else_branch } => {
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
             walk_variant_patterns_in_expr(cond, f);
             walk_variant_patterns_in_block(then, f);
-            if let Some(e) = else_branch { walk_variant_patterns_in_expr(e, f); }
+            if let Some(e) = else_branch {
+                walk_variant_patterns_in_expr(e, f);
+            }
         }
         ExprKind::Binary { lhs, rhs, .. } => {
             walk_variant_patterns_in_expr(lhs, f);
@@ -6859,8 +8813,12 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
         }
         ExprKind::Unary { operand, .. } => walk_variant_patterns_in_expr(operand, f),
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { walk_variant_patterns_in_expr(s, f); }
-            if let Some(e) = end { walk_variant_patterns_in_expr(e, f); }
+            if let Some(s) = start {
+                walk_variant_patterns_in_expr(s, f);
+            }
+            if let Some(e) = end {
+                walk_variant_patterns_in_expr(e, f);
+            }
         }
         ExprKind::Assign { target, value, .. } => {
             walk_variant_patterns_in_expr(target, f);
@@ -6873,18 +8831,26 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
         }
         ExprKind::Cast { expr, .. } => walk_variant_patterns_in_expr(expr, f),
         ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
-            for sf in fields { walk_variant_patterns_in_expr(&sf.value, f); }
+            for sf in fields {
+                walk_variant_patterns_in_expr(&sf.value, f);
+            }
         }
         ExprKind::ArrayLit { elements } => {
-            for e in elements { walk_variant_patterns_in_expr(e, f); }
+            for e in elements {
+                walk_variant_patterns_in_expr(e, f);
+            }
         }
         ExprKind::GenericEnumCall { args, .. } => {
-            for a in args { walk_variant_patterns_in_expr(a, f); }
+            for a in args {
+                walk_variant_patterns_in_expr(a, f);
+            }
         }
         ExprKind::Await(inner) | ExprKind::Yield(inner) => walk_variant_patterns_in_expr(inner, f),
         ExprKind::InterpStr { parts } => {
             for p in parts {
-                if let InterpStrPart::Expr(e) = p { walk_variant_patterns_in_expr(e, f); }
+                if let InterpStrPart::Expr(e) = p {
+                    walk_variant_patterns_in_expr(e, f);
+                }
             }
         }
         _ => {}
@@ -6892,9 +8858,64 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
 }
 
 fn walk_variant_patterns_in_pat(pat: &Pattern, f: &mut impl FnMut(&str, &[Type])) {
-    if let PatternKind::Variant { enum_name, type_args, payload, .. } = &pat.kind {
+    if let PatternKind::Variant {
+        enum_name,
+        type_args,
+        payload,
+        ..
+    } = &pat.kind
+    {
         f(&enum_name.name, type_args);
-        for p in payload { walk_variant_patterns_in_pat(p, f); }
+        for p in payload {
+            walk_variant_patterns_in_pat(p, f);
+        }
+    }
+}
+
+/// v0.0.6 Slice 1B: parse a SIMD type name (`f32x4`, etc.) back to its
+/// `Ty::Simd` representation. Used by `check_assoc_call` to recognize
+/// `f32x4::splat(...)`-style paths before falling through to enum/struct
+/// dispatch. First cut: only `f32x4`; other widths land in follow-on
+/// slices.
+fn simd_ty_from_name(name: &str) -> Option<Ty> {
+    match name {
+        "f32x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 4,
+        }),
+        "f64x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::F64),
+            lanes: 2,
+        }),
+        "i32x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 4,
+        }),
+        "i64x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::I64),
+            lanes: 2,
+        }),
+        "u32x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 4,
+        }),
+        "i8x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 16,
+        }),
+        "i16x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 8,
+        }),
+        "u8x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 16,
+        }),
+        "u16x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 8,
+        }),
+        _ => None,
     }
 }
 
@@ -6903,7 +8924,10 @@ fn ty_display(ty: &Ty) -> String {
         Ty::Param(name) => name.clone(),
         Ty::Array(elem, n) => format!("[{}; {}]", ty_display(elem), n),
         Ty::RawPtr(inner) => format!("*{}", ty_display(inner)),
-        Ty::FnPtr { params, return_type } => {
+        Ty::FnPtr {
+            params,
+            return_type,
+        } => {
             let params_s = params.iter().map(ty_display).collect::<Vec<_>>().join(", ");
             if matches!(**return_type, Ty::Unit) {
                 format!("fn({params_s})")
@@ -6911,6 +8935,9 @@ fn ty_display(ty: &Ty) -> String {
                 format!("fn({params_s}) -> {}", ty_display(return_type))
             }
         }
+        // v0.0.6 Slice 1B: SIMD vectors render as `<elem>x<lanes>`,
+        // matching the source-level type names (`f32x4`, etc.).
+        Ty::Simd { elem, lanes } => format!("{}x{}", ty_display(elem), lanes),
         other => other.name().to_string(),
     }
 }
@@ -6945,19 +8972,40 @@ fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type 
         },
         TypeKind::Generic { name, args } => TypeKind::Generic {
             name: name.clone(),
-            args: args.iter().map(|a| substitute_param_in_type_ast(a, subst)).collect(),
+            args: args
+                .iter()
+                .map(|a| substitute_param_in_type_ast(a, subst))
+                .collect(),
         },
-        TypeKind::RawPtr(inner) => TypeKind::RawPtr(Box::new(substitute_param_in_type_ast(inner, subst))),
-        TypeKind::FnPtr { params, return_type } => TypeKind::FnPtr {
-            params: params.iter().map(|p| substitute_param_in_type_ast(p, subst)).collect(),
-            return_type: return_type.as_ref().map(|rt| Box::new(substitute_param_in_type_ast(rt, subst))),
+        TypeKind::RawPtr(inner) => {
+            TypeKind::RawPtr(Box::new(substitute_param_in_type_ast(inner, subst)))
+        }
+        TypeKind::FnPtr {
+            params,
+            return_type,
+        } => TypeKind::FnPtr {
+            params: params
+                .iter()
+                .map(|p| substitute_param_in_type_ast(p, subst))
+                .collect(),
+            return_type: return_type
+                .as_ref()
+                .map(|rt| Box::new(substitute_param_in_type_ast(rt, subst))),
         },
-        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(substitute_param_in_type_ast(inner, subst))),
+        TypeKind::Slice(inner) => {
+            TypeKind::Slice(Box::new(substitute_param_in_type_ast(inner, subst)))
+        }
         TypeKind::Tuple(elems) => TypeKind::Tuple(
-            elems.iter().map(|e| substitute_param_in_type_ast(e, subst)).collect()
+            elems
+                .iter()
+                .map(|e| substitute_param_in_type_ast(e, subst))
+                .collect(),
         ),
     };
-    Type { kind, span: ty.span }
+    Type {
+        kind,
+        span: ty.span,
+    }
 }
 
 /// Slice 7GEN.5c: render a `Ty` to a source-level name string suitable
@@ -6965,11 +9013,20 @@ fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type 
 /// primitive + struct/enum cases that field substitution needs.
 fn ty_to_source_name(ty: &Ty) -> String {
     match ty {
-        Ty::I8 => "i8".into(), Ty::I16 => "i16".into(), Ty::I32 => "i32".into(), Ty::I64 => "i64".into(),
-        Ty::U8 => "u8".into(), Ty::U16 => "u16".into(), Ty::U32 => "u32".into(), Ty::U64 => "u64".into(),
-        Ty::Isize => "isize".into(), Ty::Usize => "usize".into(),
-        Ty::F32 => "f32".into(), Ty::F64 => "f64".into(),
-        Ty::Bool => "bool".into(), Ty::Unit => "()".into(),
+        Ty::I8 => "i8".into(),
+        Ty::I16 => "i16".into(),
+        Ty::I32 => "i32".into(),
+        Ty::I64 => "i64".into(),
+        Ty::U8 => "u8".into(),
+        Ty::U16 => "u16".into(),
+        Ty::U32 => "u32".into(),
+        Ty::U64 => "u64".into(),
+        Ty::Isize => "isize".into(),
+        Ty::Usize => "usize".into(),
+        Ty::F32 => "f32".into(),
+        Ty::F64 => "f64".into(),
+        Ty::Bool => "bool".into(),
+        Ty::Unit => "()".into(),
         Ty::Str => "str".into(),
         Ty::String => "string".into(),
         Ty::Slice(_) => "<slice>".into(),
@@ -6980,6 +9037,7 @@ fn ty_to_source_name(ty: &Ty) -> String {
         // Ty is what sema actually uses, not the rendered name.
         Ty::Struct(_) | Ty::Enum(_) => "<concrete>".into(),
         Ty::Array(_, _) => "<array>".into(),
+        Ty::Simd { elem, lanes } => format!("{}x{}", ty_to_source_name(elem), lanes),
         Ty::Param(name) => name.clone(),
         Ty::Error => "<error>".into(),
     }
@@ -7004,16 +9062,28 @@ fn mangle_generic_struct_name(
 
 fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> String {
     match ty {
-        Ty::I8 => "i8".into(), Ty::I16 => "i16".into(), Ty::I32 => "i32".into(), Ty::I64 => "i64".into(),
-        Ty::U8 => "u8".into(), Ty::U16 => "u16".into(), Ty::U32 => "u32".into(), Ty::U64 => "u64".into(),
-        Ty::Isize => "isize".into(), Ty::Usize => "usize".into(),
-        Ty::F32 => "f32".into(), Ty::F64 => "f64".into(),
-        Ty::Bool => "bool".into(), Ty::Unit => "unit".into(),
+        Ty::I8 => "i8".into(),
+        Ty::I16 => "i16".into(),
+        Ty::I32 => "i32".into(),
+        Ty::I64 => "i64".into(),
+        Ty::U8 => "u8".into(),
+        Ty::U16 => "u16".into(),
+        Ty::U32 => "u32".into(),
+        Ty::U64 => "u64".into(),
+        Ty::Isize => "isize".into(),
+        Ty::Usize => "usize".into(),
+        Ty::F32 => "f32".into(),
+        Ty::F64 => "f64".into(),
+        Ty::Bool => "bool".into(),
+        Ty::Unit => "unit".into(),
         Ty::Str => "str".into(),
         Ty::String => "string".into(),
         Ty::Slice(inner) => format!("slice_{}", mangle_ty_for_name(inner, structs, enums)),
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty_for_name(inner, structs, enums)),
-        Ty::FnPtr { params, return_type } => {
+        Ty::FnPtr {
+            params,
+            return_type,
+        } => {
             let mut s = String::from("fn");
             for p in params {
                 s.push('_');
@@ -7028,6 +9098,9 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::Struct(id) => structs[id.0 as usize].name.clone(),
         Ty::Enum(id) => enums[id.0 as usize].name.clone(),
         Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty_for_name(elem, structs, enums)),
+        Ty::Simd { elem, lanes } => {
+            format!("{}x{}", mangle_ty_for_name(elem, structs, enums), lanes)
+        }
         Ty::Param(n) => format!("Param_{n}"),
         Ty::Error => "ERR".into(),
     }
@@ -7055,36 +9128,58 @@ fn subst_self(ty: &Ty, target: &Ty) -> Ty {
 /// markers (`mut` / `move`), parameter types, and return type all must
 /// match.
 fn method_sig_matches(iface: &MethodSig, impl_: &MethodSig, target: &Ty) -> bool {
-    if iface.receiver != impl_.receiver { return false; }
-    if iface.params.len() != impl_.params.len() { return false; }
+    if iface.receiver != impl_.receiver {
+        return false;
+    }
+    if iface.params.len() != impl_.params.len() {
+        return false;
+    }
     for (a, b) in iface.params.iter().zip(impl_.params.iter()) {
-        if a.mutable != b.mutable { return false; }
-        if a.move_ != b.move_ { return false; }
-        if subst_self(&a.ty, target) != b.ty { return false; }
+        if a.mutable != b.mutable {
+            return false;
+        }
+        if a.move_ != b.move_ {
+            return false;
+        }
+        if subst_self(&a.ty, target) != b.ty {
+            return false;
+        }
     }
     subst_self(&iface.return_type, target) == impl_.return_type
 }
 
 fn cast_allowed(from: &Ty, to: &Ty) -> bool {
-    if from == to { return true; }
+    if from == to {
+        return true;
+    }
     // numeric → numeric (any pair)
-    if from.is_numeric() && to.is_numeric() { return true; }
+    if from.is_numeric() && to.is_numeric() {
+        return true;
+    }
     // bool → integer (zext to width)
-    if *from == Ty::Bool && to.is_int() { return true; }
+    if *from == Ty::Bool && to.is_int() {
+        return true;
+    }
     // enum → integer (read the variant index)
-    if from.is_enum() && to.is_int() { return true; }
+    if from.is_enum() && to.is_int() {
+        return true;
+    }
     // Phase 11 / P3 (FFI null + integer-to-pointer): integer → raw pointer.
     // The cast itself just reinterprets bits as an address (LLVM `inttoptr`).
     // The unsafe gate lives in `check_cast` — `cast_allowed` answers only
     // the type-pair shape question.
-    if from.is_int() && matches!(to, Ty::RawPtr(_)) { return true; }
+    if from.is_int() && matches!(to, Ty::RawPtr(_)) {
+        return true;
+    }
     // Phase 11: raw-pointer → raw-pointer reinterpretation (`*u8 as *T`).
     // The standard C / Rust idiom for treating an allocator-returned byte
     // buffer as a typed pointer. Codegen is a no-op at the LLVM level
     // (every raw pointer lowers to `ptr` already). The unsafe gate in
     // `check_cast` covers the soundness side — caller asserts the
     // reinterpretation is valid.
-    if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) { return true; }
+    if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) {
+        return true;
+    }
     // Forbidden:
     //   - integer/float → bool (use `!= 0`)
     //   - bool → float
@@ -7099,7 +9194,9 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
 /// `link_name` here is guaranteed to have the right arg shape.
 fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
     attrs.iter().find_map(|a| {
-        if a.path.name != "link_name" { return None; }
+        if a.path.name != "link_name" {
+            return None;
+        }
         match a.args.as_slice() {
             [AttrArg::Str(s, _)] => Some(s.clone()),
             _ => None,
@@ -7108,7 +9205,9 @@ fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
 }
 
 fn body_ends_with_return(b: &Block) -> bool {
-    b.stmts.last().is_some_and(|s| matches!(s.kind, StmtKind::Return(_)))
+    b.stmts
+        .last()
+        .is_some_and(|s| matches!(s.kind, StmtKind::Return(_)))
 }
 
 #[cfg(test)]
@@ -7203,18 +9302,26 @@ mod tests {
 
     #[test]
     fn trailing_semi_discards_value_e0306() {
-        assert_only_code("fn f() -> i32 { 1; }\nfn main() -> i32 { return f(); }", "E0306");
+        assert_only_code(
+            "fn f() -> i32 { 1; }\nfn main() -> i32 { return f(); }",
+            "E0306",
+        );
     }
 
     #[test]
     fn nonbool_condition_e0304() {
-        assert_only_code("fn main() -> i32 { return if 1 { 1 } else { 2 }; }", "E0304");
+        assert_only_code(
+            "fn main() -> i32 { return if 1 { 1 } else { 2 }; }",
+            "E0304",
+        );
     }
 
     #[test]
     fn u64_literal_now_supported() {
         // Phase 2: all integer suffixes supported.
-        assert_clean("fn main() -> i32 { let x: u64 = 1u64; let y: u64 = x; let _z = y; return 0; }");
+        assert_clean(
+            "fn main() -> i32 { let x: u64 = 1u64; let y: u64 = x; let _z = y; return 0; }",
+        );
     }
 
     #[test]
@@ -7225,7 +9332,10 @@ mod tests {
 
     #[test]
     fn return_without_value_e0307() {
-        assert_only_code("fn f() -> i32 { return; }\nfn main() -> i32 { return f(); }", "E0307");
+        assert_only_code(
+            "fn f() -> i32 { return; }\nfn main() -> i32 { return f(); }",
+            "E0307",
+        );
     }
 
     // ---- additional rules ----
@@ -7284,20 +9394,30 @@ mod tests {
 
     #[test]
     fn bitwise_on_float_e0302() {
-        let codes = errors("fn main() -> i32 { let x: f64 = 1.0; let y: f64 = x & 1.0; return 0; }");
-        assert!(codes.contains(&"E0302"), "expected E0302 on float &, got: {codes:?}");
+        let codes =
+            errors("fn main() -> i32 { let x: f64 = 1.0; let y: f64 = x & 1.0; return 0; }");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 on float &, got: {codes:?}"
+        );
     }
 
     #[test]
     fn bitwise_on_bool_e0302() {
         let codes = errors("fn main() -> i32 { let b: bool = true | false; return 0; }");
-        assert!(codes.contains(&"E0302"), "expected E0302 on bool |, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 on bool |, got: {codes:?}"
+        );
     }
 
     #[test]
     fn bit_not_on_float_e0302() {
         let codes = errors("fn main() -> i32 { let x: f64 = 1.0; let y: f64 = ~x; return 0; }");
-        assert!(codes.contains(&"E0302"), "expected E0302 on ~f64, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 on ~f64, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -7309,15 +9429,14 @@ mod tests {
                let n: u8 = 3 as u8;\n\
                let y: i64 = x << n;\n\
                return 0;\n\
-             }"
+             }",
         );
     }
 
     #[test]
     fn shift_count_must_be_integer_e0302() {
-        let codes = errors(
-            "fn main() -> i32 { let x: i64 = 1 as i64; let y: i64 = x << 1.0; return 0; }"
-        );
+        let codes =
+            errors("fn main() -> i32 { let x: i64 = 1 as i64; let y: i64 = x << 1.0; return 0; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
@@ -7328,17 +9447,14 @@ mod tests {
 
     #[test]
     fn wrapping_op_on_float_e0302() {
-        let codes = errors(
-            "fn main() -> i32 { let x: f64 = 1.0; let y: f64 = x +% 2.0; return 0; }",
-        );
+        let codes =
+            errors("fn main() -> i32 { let x: f64 = 1.0; let y: f64 = x +% 2.0; return 0; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
     #[test]
     fn wrapping_op_on_bool_e0302() {
-        let codes = errors(
-            "fn main() -> i32 { let _b: bool = true +% false; return 0; }",
-        );
+        let codes = errors("fn main() -> i32 { let _b: bool = true +% false; return 0; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
@@ -7349,7 +9465,10 @@ mod tests {
 
     #[test]
     fn ref_not_supported_e0312() {
-        assert_only_code("fn main() -> i32 { let x = 1; let y = &x; return 0; }", "E0312");
+        assert_only_code(
+            "fn main() -> i32 { let x = 1; let y = &x; return 0; }",
+            "E0312",
+        );
     }
 
     #[test]
@@ -7400,14 +9519,18 @@ mod tests {
 
     #[test]
     fn equality_on_bool_clean() {
-        assert_clean("fn main() -> i32 { let b: bool = true == false; return if b { 1 } else { 0 }; }");
+        assert_clean(
+            "fn main() -> i32 { let b: bool = true == false; return if b { 1 } else { 0 }; }",
+        );
     }
 
     // ---- Phase 2 slice 1: full primitive types + casts ----
 
     #[test]
     fn all_integer_types_resolve() {
-        for t in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize"] {
+        for t in [
+            "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize",
+        ] {
             let src = format!("fn main() -> i32 {{ let x: {t} = 0; let _y: {t} = x; return 0; }}");
             assert_clean(&src);
         }
@@ -7433,17 +9556,25 @@ mod tests {
     #[test]
     fn mixed_int_arithmetic_rejected() {
         let codes = errors("fn main() -> i32 { let x: i32 = 1i32 + 1u32; return x; }");
-        assert!(codes.contains(&"E0302"), "expected mixed-type error, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected mixed-type error, got: {codes:?}"
+        );
     }
 
     #[test]
     fn float_arithmetic_clean() {
-        assert_clean("fn main() -> i32 { let x: f64 = 1.0 + 2.0 * 3.0; let _y: f64 = x; return 0; }");
+        assert_clean(
+            "fn main() -> i32 { let x: f64 = 1.0 + 2.0 * 3.0; let _y: f64 = x; return 0; }",
+        );
     }
 
     #[test]
     fn float_modulo_rejected_e0316() {
-        assert_only_code("fn main() -> i32 { let x: f64 = 1.0 % 2.0; let _y: f64 = x; return 0; }", "E0316");
+        assert_only_code(
+            "fn main() -> i32 { let x: f64 = 1.0 % 2.0; let _y: f64 = x; return 0; }",
+            "E0316",
+        );
     }
 
     #[test]
@@ -7486,24 +9617,35 @@ mod tests {
 
     #[test]
     fn cast_int_to_bool_rejected_e0315() {
-        assert_only_code("fn main() -> i32 { let _b: bool = 1 as bool; return 0; }", "E0315");
+        assert_only_code(
+            "fn main() -> i32 { let _b: bool = 1 as bool; return 0; }",
+            "E0315",
+        );
     }
 
     #[test]
     fn cast_float_to_bool_rejected_e0315() {
-        assert_only_code("fn main() -> i32 { let _b: bool = 1.0 as bool; return 0; }", "E0315");
+        assert_only_code(
+            "fn main() -> i32 { let _b: bool = 1.0 as bool; return 0; }",
+            "E0315",
+        );
     }
 
     #[test]
     fn cast_bool_to_float_rejected_e0315() {
-        assert_only_code("fn main() -> i32 { let _b: f64 = true as f64; return 0; }", "E0315");
+        assert_only_code(
+            "fn main() -> i32 { let _b: f64 = true as f64; return 0; }",
+            "E0315",
+        );
     }
 
     #[test]
     fn comparison_works_on_all_numeric_types() {
         assert_clean("fn main() -> i32 { return if 1u64 < 2u64 { 1 } else { 0 }; }");
         assert_clean("fn main() -> i32 { return if 1.0 < 2.0 { 1 } else { 0 }; }");
-        assert_clean("fn main() -> i32 { let a: i8 = 1; let b: i8 = 2; return if a < b { 1 } else { 0 }; }");
+        assert_clean(
+            "fn main() -> i32 { let a: i8 = 1; let b: i8 = 2; return if a < b { 1 } else { 0 }; }",
+        );
     }
 
     // ---- Phase 2 slice 2A: plain enums + paths ----
@@ -7517,7 +9659,7 @@ mod tests {
     fn enum_variant_path_clean() {
         assert_clean(
             "enum Color { Red, Green, Blue }\n\
-             fn main() -> i32 { let _c: Color = Color::Red; return 0; }"
+             fn main() -> i32 { let _c: Color = Color::Red; return 0; }",
         );
     }
 
@@ -7543,7 +9685,7 @@ mod tests {
     #[test]
     fn unknown_enum_variant_e0317() {
         let codes = errors(
-            "enum Color { Red }\nfn main() -> i32 { let _c: Color = Color::Purple; return 0; }"
+            "enum Color { Red }\nfn main() -> i32 { let _c: Color = Color::Purple; return 0; }",
         );
         assert!(codes.contains(&"E0317"));
     }
@@ -7557,9 +9699,7 @@ mod tests {
 
     #[test]
     fn ordering_on_enum_rejected_e0302() {
-        let codes = errors(
-            "enum E { A, B }\nfn main() -> i32 { if E::A < E::B { 1 } else { 0 } }"
-        );
+        let codes = errors("enum E { A, B }\nfn main() -> i32 { if E::A < E::B { 1 } else { 0 } }");
         assert!(codes.contains(&"E0302"));
     }
 
@@ -7567,31 +9707,28 @@ mod tests {
     fn enum_to_int_cast_clean() {
         assert_clean(
             "enum Color { Red, Green, Blue }\n\
-             fn main() -> i32 { return Color::Green as i32; }"
+             fn main() -> i32 { return Color::Green as i32; }",
         );
     }
 
     #[test]
     fn int_to_enum_cast_rejected_e0315() {
         let codes = errors(
-            "enum Color { Red }\nfn main() -> i32 { let _c: Color = 0 as Color; return 0; }"
+            "enum Color { Red }\nfn main() -> i32 { let _c: Color = 0 as Color; return 0; }",
         );
         assert!(codes.contains(&"E0315"));
     }
 
     #[test]
     fn assigning_int_to_enum_rejected_e0302() {
-        let codes = errors(
-            "enum Color { Red }\nfn main() -> i32 { let _c: Color = 0; return 0; }"
-        );
+        let codes = errors("enum Color { Red }\nfn main() -> i32 { let _c: Color = 0; return 0; }");
         assert!(codes.contains(&"E0302"));
     }
 
     #[test]
     fn assigning_enum_to_int_rejected_e0302() {
-        let codes = errors(
-            "enum Color { Red }\nfn main() -> i32 { let _x: i32 = Color::Red; return 0; }"
-        );
+        let codes =
+            errors("enum Color { Red }\nfn main() -> i32 { let _x: i32 = Color::Red; return 0; }");
         assert!(codes.contains(&"E0302"));
     }
 
@@ -7599,7 +9736,7 @@ mod tests {
     fn cross_enum_comparison_rejected_e0302() {
         let codes = errors(
             "enum A { X }\nenum B { Y }\n\
-             fn main() -> i32 { if A::X == B::Y { 1 } else { 0 } }"
+             fn main() -> i32 { if A::X == B::Y { 1 } else { 0 } }",
         );
         assert!(codes.contains(&"E0302"));
     }
@@ -7621,7 +9758,7 @@ mod tests {
     fn struct_literal_clean() {
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
-             fn main() -> i32 { let _p: Point = Point { x: 1, y: 2 }; return 0; }"
+             fn main() -> i32 { let _p: Point = Point { x: 1, y: 2 }; return 0; }",
         );
     }
 
@@ -7629,7 +9766,7 @@ mod tests {
     fn empty_struct_clean() {
         assert_clean(
             "struct Empty {}\n\
-             fn main() -> i32 { let _e: Empty = Empty {}; return 0; }"
+             fn main() -> i32 { let _e: Empty = Empty {}; return 0; }",
         );
     }
 
@@ -7645,7 +9782,7 @@ mod tests {
     fn struct_field_write_clean() {
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
-             fn main() -> i32 { let mut p: Point = Point { x: 1, y: 2 }; p.x = 10; return 0; }"
+             fn main() -> i32 { let mut p: Point = Point { x: 1, y: 2 }; p.x = 10; return 0; }",
         );
     }
 
@@ -7674,7 +9811,7 @@ mod tests {
     fn unknown_field_in_access_e0320() {
         let codes = errors(
             "struct A { x: i32 }\n\
-             fn main() -> i32 { let a: A = A { x: 1 }; let _v: i32 = a.y; return 0; }"
+             fn main() -> i32 { let a: A = A { x: 1 }; let _v: i32 = a.y; return 0; }",
         );
         assert!(codes.contains(&"E0320"));
     }
@@ -7683,7 +9820,7 @@ mod tests {
     fn missing_field_in_literal_e0321() {
         let codes = errors(
             "struct A { x: i32, y: i32 }\n\
-             fn main() -> i32 { let _a: A = A { x: 1 }; return 0; }"
+             fn main() -> i32 { let _a: A = A { x: 1 }; return 0; }",
         );
         assert!(codes.contains(&"E0321"));
     }
@@ -7692,16 +9829,14 @@ mod tests {
     fn extra_field_in_literal_e0322() {
         let codes = errors(
             "struct A { x: i32 }\n\
-             fn main() -> i32 { let _a: A = A { x: 1, y: 2 }; return 0; }"
+             fn main() -> i32 { let _a: A = A { x: 1, y: 2 }; return 0; }",
         );
         assert!(codes.contains(&"E0322"));
     }
 
     #[test]
     fn field_access_on_non_struct_e0323() {
-        let codes = errors(
-            "fn main() -> i32 { let x: i32 = 5; let _v: i32 = x.foo; return 0; }"
-        );
+        let codes = errors("fn main() -> i32 { let x: i32 = 5; let _v: i32 = x.foo; return 0; }");
         assert!(codes.contains(&"E0323"));
     }
 
@@ -7709,7 +9844,7 @@ mod tests {
     fn field_assign_on_immutable_e0305() {
         let codes = errors(
             "struct A { x: i32 }\n\
-             fn main() -> i32 { let a: A = A { x: 1 }; a.x = 2; return 0; }"
+             fn main() -> i32 { let a: A = A { x: 1 }; a.x = 2; return 0; }",
         );
         assert!(codes.contains(&"E0305"));
     }
@@ -7718,14 +9853,15 @@ mod tests {
     fn assign_to_temporary_struct_e0313() {
         let codes = errors(
             "struct A { x: i32 }\n\
-             fn main() -> i32 { A { x: 1 }.x = 2; return 0; }"
+             fn main() -> i32 { A { x: 1 }.x = 2; return 0; }",
         );
         assert!(codes.contains(&"E0313"));
     }
 
     #[test]
     fn duplicate_struct_name_e0301() {
-        let codes = errors("struct P { x: i32 }\nstruct P { y: i32 }\nfn main() -> i32 { return 0; }");
+        let codes =
+            errors("struct P { x: i32 }\nstruct P { y: i32 }\nfn main() -> i32 { return 0; }");
         assert!(codes.contains(&"E0301"));
     }
 
@@ -7756,9 +9892,7 @@ mod tests {
     #[test]
     fn forward_ref_struct_field_clean() {
         // Struct B references A which is declared later.
-        assert_clean(
-            "struct B { a: A }\nstruct A { x: i32 }\nfn main() -> i32 { return 0; }"
-        );
+        assert_clean("struct B { a: A }\nstruct A { x: i32 }\nfn main() -> i32 { return 0; }");
     }
 
     // ---- Phase 2 slice 2C: methods + impl blocks ----
@@ -7773,7 +9907,7 @@ mod tests {
         assert_clean(
             "struct P { x: i32 }\n\
              impl P { fn new(x: i32) -> P { return P { x: x }; } }\n\
-             fn main() -> i32 { let _p: P = P::new(5); return 0; }"
+             fn main() -> i32 { let _p: P = P::new(5); return 0; }",
         );
     }
 
@@ -7782,7 +9916,7 @@ mod tests {
         assert_clean(
             "struct P { x: i32 }\n\
              impl P { fn get(self) -> i32 { return self.x; } }\n\
-             fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }"
+             fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }",
         );
     }
 
@@ -7791,7 +9925,7 @@ mod tests {
         assert_clean(
             "struct P { x: i32 }\n\
              impl P { fn set(mut self, v: i32) { self.x = v; } }\n\
-             fn main() -> i32 { let mut p: P = P { x: 0 }; p.set(5); return p.x; }"
+             fn main() -> i32 { let mut p: P = P { x: 0 }; p.set(5); return p.x; }",
         );
     }
 
@@ -7800,7 +9934,7 @@ mod tests {
         assert_clean(
             "struct P { x: i32 }\n\
              impl P { fn into_x(self) -> i32 { return self.x; } }\n\
-             fn main() -> i32 { let p: P = P { x: 7 }; return p.into_x(); }"
+             fn main() -> i32 { let p: P = P { x: 7 }; return p.into_x(); }",
         );
     }
 
@@ -7821,17 +9955,18 @@ mod tests {
         // enum is now accepted; the old E0325 rejection lifted. Generic
         // enum impls (e.g. `impl Option[T]`) still error pending the
         // monomorphize-side synthesis.
-        let codes = errors(
-            "enum E { A }\nimpl E { fn f(self) {} }\nfn main() -> i32 { return 0; }"
+        let codes =
+            errors("enum E { A }\nimpl E { fn f(self) {} }\nfn main() -> i32 { return 0; }");
+        assert!(
+            !codes.contains(&"E0325"),
+            "expected non-generic enum impl to be accepted; got: {codes:?}"
         );
-        assert!(!codes.contains(&"E0325"),
-            "expected non-generic enum impl to be accepted; got: {codes:?}");
     }
 
     #[test]
     fn duplicate_method_e0326() {
         let codes = errors(
-            "struct P {}\nimpl P { fn f(self) {} fn f(self) {} }\nfn main() -> i32 { return 0; }"
+            "struct P {}\nimpl P { fn f(self) {} fn f(self) {} }\nfn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0326"));
     }
@@ -7839,7 +9974,7 @@ mod tests {
     #[test]
     fn no_such_method_e0324() {
         let codes = errors(
-            "struct P {}\nimpl P {}\nfn main() -> i32 { let p: P = P {}; return p.missing(); }"
+            "struct P {}\nimpl P {}\nfn main() -> i32 { let p: P = P {}; return p.missing(); }",
         );
         assert!(codes.contains(&"E0324"));
     }
@@ -7849,7 +9984,7 @@ mod tests {
         let codes = errors(
             "struct P { x: i32 }\n\
              impl P { fn make() -> P { return P { x: 0 }; } }\n\
-             fn main() -> i32 { let p: P = P { x: 0 }; let _q: P = p.make(); return 0; }"
+             fn main() -> i32 { let p: P = P { x: 0 }; let _q: P = p.make(); return 0; }",
         );
         assert!(codes.contains(&"E0327"));
     }
@@ -7859,7 +9994,7 @@ mod tests {
         let codes = errors(
             "struct P { x: i32 }\n\
              impl P { fn get(self) -> i32 { return self.x; } }\n\
-             fn main() -> i32 { return P::get(); }"
+             fn main() -> i32 { return P::get(); }",
         );
         assert!(codes.contains(&"E0327"));
     }
@@ -7869,7 +10004,7 @@ mod tests {
         let codes = errors(
             "struct P { x: i32 }\n\
              impl P { fn bump(mut self) { self.x = self.x + 1; } }\n\
-             fn main() -> i32 { let p: P = P { x: 0 }; p.bump(); return 0; }"
+             fn main() -> i32 { let p: P = P { x: 0 }; p.bump(); return 0; }",
         );
         assert!(codes.contains(&"E0328"));
     }
@@ -7879,7 +10014,7 @@ mod tests {
         let codes = errors(
             "struct P { x: i32 }\n\
              impl P { fn bad() -> i32 { return self.x; } }\n\
-             fn main() -> i32 { return 0; }"
+             fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0300"));
     }
@@ -7898,7 +10033,7 @@ mod tests {
     fn enum_variant_not_callable_e0327() {
         let codes = errors(
             "enum E { A }\n\
-             fn main() -> i32 { return E::A(); }"
+             fn main() -> i32 { return E::A(); }",
         );
         assert!(codes.contains(&"E0327"));
     }
@@ -7907,15 +10042,13 @@ mod tests {
 
     #[test]
     fn array_decl_and_literal_clean() {
-        assert_clean(
-            "fn main() -> i32 { let _xs: [i32; 3] = [1, 2, 3]; return 0; }"
-        );
+        assert_clean("fn main() -> i32 { let _xs: [i32; 3] = [1, 2, 3]; return 0; }");
     }
 
     #[test]
     fn array_indexing_clean() {
         assert_clean(
-            "fn main() -> i32 { let xs: [i32; 3] = [10, 20, 30]; return xs[0 as usize]; }"
+            "fn main() -> i32 { let xs: [i32; 3] = [10, 20, 30]; return xs[0 as usize]; }",
         );
     }
 
@@ -7964,7 +10097,7 @@ mod tests {
     fn array_field_indexed_write_on_immutable_e0305() {
         let codes = errors(
             "struct C { xs: [i32; 2] }\n\
-             fn main() -> i32 { let c: C = C { xs: [0, 0] }; c.xs[0 as usize] = 5; return 0; }"
+             fn main() -> i32 { let c: C = C { xs: [0, 0] }; c.xs[0 as usize] = 5; return 0; }",
         );
         assert!(codes.contains(&"E0305"));
     }
@@ -7973,7 +10106,7 @@ mod tests {
     fn array_in_function_signature_clean() {
         assert_clean(
             "fn first(xs: [i32; 3]) -> i32 { return xs[0 as usize]; }\n\
-             fn main() -> i32 { return first([10, 20, 30]); }"
+             fn main() -> i32 { return first([10, 20, 30]); }",
         );
     }
 
@@ -8291,9 +10424,7 @@ mod tests {
     fn defer_with_type_error_e0302() {
         // The deferred expression is type-checked; passing the wrong type
         // to println surfaces the regular type-error.
-        let codes = errors(
-            "fn main() -> i32 { defer println(true); return 0; }",
-        );
+        let codes = errors("fn main() -> i32 { defer println(true); return 0; }");
         // println takes i32; bool argument is a mismatch.
         assert!(
             codes.contains(&"E0302") || codes.contains(&"E0308"),
@@ -8303,9 +10434,7 @@ mod tests {
 
     #[test]
     fn defer_in_inner_block_clean() {
-        assert_clean(
-            "fn main() -> i32 { if 1 == 1 { defer println(42); } return 0; }",
-        );
+        assert_clean("fn main() -> i32 { if 1 == 1 { defer println(42); } return 0; }");
     }
 
     // ----- Phase 3 slice 3I: tagged unions + match -----
@@ -8363,9 +10492,7 @@ mod tests {
 
     #[test]
     fn match_on_non_enum_e0341() {
-        let codes = errors(
-            "fn main() -> i32 { let x: i32 = 5; return match x { _ => 0 }; }",
-        );
+        let codes = errors("fn main() -> i32 { let x: i32 = 5; return match x { _ => 0 }; }");
         assert!(codes.contains(&"E0341"), "expected E0341, got: {codes:?}");
     }
 
@@ -8412,24 +10539,18 @@ mod tests {
 
     #[test]
     fn uninit_let_then_assign_then_read_clean() {
-        assert_clean(
-            "fn main() -> i32 { let x: i32; x = 5; return x; }",
-        );
+        assert_clean("fn main() -> i32 { let x: i32; x = 5; return x; }");
     }
 
     #[test]
     fn uninit_let_read_before_assign_e0345() {
-        let codes = errors(
-            "fn main() -> i32 { let x: i32; return x; }",
-        );
+        let codes = errors("fn main() -> i32 { let x: i32; return x; }");
         assert!(codes.contains(&"E0345"), "expected E0345, got: {codes:?}");
     }
 
     #[test]
     fn uninit_let_no_type_e0346() {
-        let codes = errors(
-            "fn main() -> i32 { let x; x = 5; return x; }",
-        );
+        let codes = errors("fn main() -> i32 { let x; x = 5; return x; }");
         assert!(codes.contains(&"E0346"), "expected E0346, got: {codes:?}");
     }
 
@@ -8446,9 +10567,7 @@ mod tests {
     fn one_branch_assigns_e0345() {
         // Only the then-branch assigns. Flow merge says "maybe assigned"
         // — reading x after the if must error.
-        let codes = errors(
-            "fn main() -> i32 { let x: i32; if 1 == 1 { x = 1; } return x; }",
-        );
+        let codes = errors("fn main() -> i32 { let x: i32; if 1 == 1 { x = 1; } return x; }");
         assert!(codes.contains(&"E0345"), "expected E0345, got: {codes:?}");
     }
 
@@ -8469,9 +10588,7 @@ mod tests {
     fn first_write_to_immutable_uninit_clean() {
         // The first write to an unassigned binding doesn't need `mut`.
         // A second write would. (This test only verifies the first write.)
-        assert_clean(
-            "fn main() -> i32 { let x: i32; x = 5; return x; }",
-        );
+        assert_clean("fn main() -> i32 { let x: i32; x = 5; return x; }");
     }
 
     #[test]
@@ -8480,9 +10597,7 @@ mod tests {
         // writes need `mut`. This test confirms the second write is
         // rejected with the same E0305 rule that governs assignment to
         // already-initialized immutable bindings.
-        let codes = errors(
-            "fn main() -> i32 { let x: i32; x = 5; x = 6; return x; }",
-        );
+        let codes = errors("fn main() -> i32 { let x: i32; x = 5; x = 6; return x; }");
         assert!(codes.contains(&"E0305"), "expected E0305, got: {codes:?}");
     }
 
@@ -8591,29 +10706,26 @@ mod tests {
 
     #[test]
     fn generic_fn_multi_param_clean() {
-        assert_clean(
-            "fn pick[A, B](a: A, b: B) -> A { return a; } fn main() -> i32 { return 0; }",
-        );
+        assert_clean("fn pick[A, B](a: A, b: B) -> A { return a; } fn main() -> i32 { return 0; }");
     }
 
     #[test]
     fn generic_struct_field_uses_param_clean() {
-        assert_clean(
-            "struct Pair[A, B] { first: A, second: B } fn main() -> i32 { return 0; }",
-        );
+        assert_clean("struct Pair[A, B] { first: A, second: B } fn main() -> i32 { return 0; }");
     }
 
     #[test]
     fn generic_enum_payload_uses_param_clean() {
-        assert_clean(
-            "enum Maybe[T] { Some(T), None } fn main() -> i32 { return 0; }",
-        );
+        assert_clean("enum Maybe[T] { Some(T), None } fn main() -> i32 { return 0; }");
     }
 
     #[test]
     fn unknown_type_param_still_e0303() {
         let codes = errors("fn id[T](x: T) -> U { return x; } fn main() -> i32 { return 0; }");
-        assert!(codes.contains(&"E0303"), "expected E0303 for unknown U, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0303"),
+            "expected E0303 for unknown U, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -8762,7 +10874,10 @@ mod tests {
             "fn id[T](x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = id::[i32, bool](7); return a; }",
         );
-        assert!(codes.contains(&"E0501"), "expected E0501 for arity mismatch, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 for arity mismatch, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -8771,7 +10886,10 @@ mod tests {
             "fn plain(x: i32) -> i32 { return x; } \
              fn main() -> i32 { return plain::[i32](7); }",
         );
-        assert!(codes.contains(&"E0501"), "expected E0501 on non-generic fn turbofish, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 on non-generic fn turbofish, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -8781,7 +10899,10 @@ mod tests {
             "fn identity[T](x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = identity::[i32](true); return a; }",
         );
-        assert!(codes.contains(&"E0302"), "expected E0302 for arg/type-arg mismatch, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 for arg/type-arg mismatch, got: {codes:?}"
+        );
     }
 
     // ---- Slice 7GEN.5c: generic-struct instantiation ----
@@ -8876,9 +10997,8 @@ mod tests {
 
     #[test]
     fn generic_enum_unknown_template_e0303() {
-        let codes = errors(
-            "fn main() -> i32 { let a: Bogus[i32] = Bogus[i32]::Some(7); return 0; }",
-        );
+        let codes =
+            errors("fn main() -> i32 { let a: Bogus[i32] = Bogus[i32]::Some(7); return 0; }");
         assert!(codes.contains(&"E0303"), "expected E0303, got: {codes:?}");
     }
 
@@ -8962,9 +11082,7 @@ mod tests {
 
     #[test]
     fn pointer_deref_non_pointer_e0302() {
-        let codes = errors(
-            "fn main() -> i32 { let x: i32 = 7; return *x; }",
-        );
+        let codes = errors("fn main() -> i32 { let x: i32 = 7; return *x; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
@@ -9079,33 +11197,25 @@ mod tests {
 
     #[test]
     fn str_literal_has_str_type_clean() {
-        assert_clean(
-            "fn main() -> i32 { let s: str = \"hello\"; return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let s: str = \"hello\"; return 0; }");
     }
 
     #[test]
     fn str_literal_typed_inferred_clean() {
         // No type annotation; literal's natural type is `str`.
-        assert_clean(
-            "fn main() -> i32 { let s = \"hello\"; return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let s = \"hello\"; return 0; }");
     }
 
     #[test]
     fn println_accepts_str_clean() {
         // 8.STR.2: println overload accepts str.
-        assert_clean(
-            "fn main() -> i32 { println(\"hi\"); return 0; }",
-        );
+        assert_clean("fn main() -> i32 { println(\"hi\"); return 0; }");
     }
 
     #[test]
     fn println_rejects_non_int_non_str_arg_e0302() {
         // Phase 8 narrowed println: bool, structs, etc. all rejected.
-        let codes = errors(
-            "fn main() -> i32 { println(true); return 0; }",
-        );
+        let codes = errors("fn main() -> i32 { println(true); return 0; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
@@ -9407,16 +11517,12 @@ mod tests {
 
     #[test]
     fn size_of_primitive_clean() {
-        assert_clean(
-            "fn main() -> i32 { let n: usize = size_of::[i32](); return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let n: usize = size_of::[i32](); return 0; }");
     }
 
     #[test]
     fn align_of_primitive_clean() {
-        assert_clean(
-            "fn main() -> i32 { let a: usize = align_of::[i32](); return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let a: usize = align_of::[i32](); return 0; }");
     }
 
     #[test]
@@ -9438,46 +11544,53 @@ mod tests {
     #[test]
     fn size_of_no_type_arg_rejected_e0501() {
         let codes = errors("fn main() -> i32 { let n: usize = size_of(); return 0; }");
-        assert!(codes.contains(&"E0501"), "expected E0501 for missing type arg, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 for missing type arg, got: {codes:?}"
+        );
     }
 
     #[test]
     fn size_of_two_type_args_rejected_e0501() {
-        let codes = errors(
-            "fn main() -> i32 { let n: usize = size_of::[i32, bool](); return 0; }",
+        let codes = errors("fn main() -> i32 { let n: usize = size_of::[i32, bool](); return 0; }");
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 for two type args, got: {codes:?}"
         );
-        assert!(codes.contains(&"E0501"), "expected E0501 for two type args, got: {codes:?}");
     }
 
     #[test]
     fn size_of_with_value_arg_rejected_e0302() {
-        let codes = errors(
-            "fn main() -> i32 { let n: usize = size_of::[i32](7); return 0; }",
+        let codes = errors("fn main() -> i32 { let n: usize = size_of::[i32](7); return 0; }");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 for value arg, got: {codes:?}"
         );
-        assert!(codes.contains(&"E0302"), "expected E0302 for value arg, got: {codes:?}");
     }
 
     #[test]
     fn size_of_unknown_type_rejected_e0303() {
-        let codes = errors(
-            "fn main() -> i32 { let n: usize = size_of::[Bogus](); return 0; }",
+        let codes = errors("fn main() -> i32 { let n: usize = size_of::[Bogus](); return 0; }");
+        assert!(
+            codes.contains(&"E0303"),
+            "expected E0303 for unknown type, got: {codes:?}"
         );
-        assert!(codes.contains(&"E0303"), "expected E0303 for unknown type, got: {codes:?}");
     }
 
     #[test]
     fn align_of_no_type_arg_rejected_e0501() {
         let codes = errors("fn main() -> i32 { let n: usize = align_of(); return 0; }");
-        assert!(codes.contains(&"E0501"), "expected E0501 for missing type arg, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 for missing type arg, got: {codes:?}"
+        );
     }
 
     #[test]
     fn size_of_raw_pointer_type_clean() {
         // Verifies size_of works for raw-pointer types — needed for
         // allocator implementations that hand out typed pointers.
-        assert_clean(
-            "fn main() -> i32 { let n: usize = size_of::[*u8](); return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let n: usize = size_of::[*u8](); return 0; }");
     }
 
     // Phase 11 / P3 from null design (design.md): integer-to-raw-pointer
@@ -9487,17 +11600,16 @@ mod tests {
 
     #[test]
     fn int_to_raw_pointer_cast_in_unsafe_clean() {
-        assert_clean(
-            "fn main() -> i32 { let p: *u8 = unsafe { 0 as *u8 }; return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let p: *u8 = unsafe { 0 as *u8 }; return 0; }");
     }
 
     #[test]
     fn int_to_raw_pointer_cast_outside_unsafe_rejected_e0801() {
-        let codes = errors(
-            "fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }",
+        let codes = errors("fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }");
+        assert!(
+            codes.contains(&"E0801"),
+            "expected E0801 outside unsafe, got: {codes:?}"
         );
-        assert!(codes.contains(&"E0801"), "expected E0801 outside unsafe, got: {codes:?}");
     }
 
     #[test]
@@ -9511,9 +11623,7 @@ mod tests {
 
     #[test]
     fn cast_to_double_indirection_pointer_clean() {
-        assert_clean(
-            "fn main() -> i32 { let p: **i32 = unsafe { 0 as **i32 }; return 0; }",
-        );
+        assert_clean("fn main() -> i32 { let p: **i32 = unsafe { 0 as **i32 }; return 0; }");
     }
 
     // Phase 11 / ObjC interop: `#[link_name = "..."]` attribute.
@@ -9535,7 +11645,10 @@ mod tests {
             "#[link_name = \"foo\"] fn local(x: i32) -> i32 { return x; } \
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.contains(&"E0356"), "expected E0356 on non-extern link_name, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0356"),
+            "expected E0356 on non-extern link_name, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9591,7 +11704,10 @@ mod tests {
             "fn double(x: i32) -> i32 { return x +% x; } \
              fn main() -> i32 { let f: fn(i32, i32) -> i32 = double; return 0; }",
         );
-        assert!(codes.contains(&"E0302"), "expected E0302 for signature mismatch, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 for signature mismatch, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9603,7 +11719,10 @@ mod tests {
             "fn double(x: i32) -> i32 { return x +% x; } \
              fn main() -> i32 { let f = double; return 0; }",
         );
-        assert!(codes.contains(&"E0312"), "expected E0312 for bare fn-as-value without expected type, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0312"),
+            "expected E0312 for bare fn-as-value without expected type, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9612,7 +11731,10 @@ mod tests {
             "fn identity[T](x: T) -> T { return x; } \
              fn main() -> i32 { let f: fn(i32) -> i32 = identity; return 0; }",
         );
-        assert!(codes.contains(&"E0821"), "expected E0821 for generic fn as pointer, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0821"),
+            "expected E0821 for generic fn as pointer, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9621,7 +11743,10 @@ mod tests {
             "fn double(x: i32) -> i32 { return x +% x; } \
              fn main() -> i32 { let f: fn(i32) -> i32 = double; return f(1, 2); }",
         );
-        assert!(codes.contains(&"E0308"), "expected E0308 for wrong arity, got: {codes:?}");
+        assert!(
+            codes.contains(&"E0308"),
+            "expected E0308 for wrong arity, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9649,16 +11774,12 @@ mod tests {
 
     #[test]
     fn pub_extern_fn_with_scalar_args_clean() {
-        assert_clean(
-            "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }"
-        );
+        assert_clean("pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }");
     }
 
     #[test]
     fn pub_extern_fn_with_raw_pointer_clean() {
-        assert_clean(
-            "pub extern fn load(p: *i32) -> i32 { return unsafe { *p }; }"
-        );
+        assert_clean("pub extern fn load(p: *i32) -> i32 { return unsafe { *p }; }");
     }
 
     #[test]
@@ -9666,7 +11787,7 @@ mod tests {
         assert_clean(
             "#[repr(C)]\n\
              struct Point { x: i32, y: i32 }\n\
-             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }"
+             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }",
         );
     }
 
@@ -9692,7 +11813,7 @@ mod tests {
     fn pub_extern_fn_with_tagged_enum_rejected_e0410() {
         let codes = errors(
             "enum Opt { Some(i32), None }\n\
-             pub extern fn take(o: Opt) -> i32 { return 0; }"
+             pub extern fn take(o: Opt) -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -9702,7 +11823,7 @@ mod tests {
         // Plain (untagged) enum lowers to i32 — fine across the C ABI.
         assert_clean(
             "enum Color { Red, Green, Blue }\n\
-             pub extern fn pick(c: Color) -> i32 { return 0; }"
+             pub extern fn pick(c: Color) -> i32 { return 0; }",
         );
     }
 
@@ -9710,7 +11831,7 @@ mod tests {
     fn pub_extern_fn_with_non_repr_c_struct_rejected_e0410() {
         let codes = errors(
             "struct Point { x: i32, y: i32 }\n\
-             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }"
+             pub extern fn sum(p: Point) -> i32 { return p.x + p.y; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -9721,7 +11842,7 @@ mod tests {
             "#[repr(C)]\n\
              struct R { fd: i32 }\n\
              impl R { fn drop(mut self) { return; } }\n\
-             pub extern fn use_it(r: R) -> i32 { return r.fd; }"
+             pub extern fn use_it(r: R) -> i32 { return r.fd; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -9729,35 +11850,27 @@ mod tests {
     #[test]
     fn pub_extern_fn_with_unit_return_clean() {
         // Unit return is fine — maps to C `void`.
-        assert_clean(
-            "pub extern fn noop() { return; }"
-        );
+        assert_clean("pub extern fn noop() { return; }");
     }
 
     #[test]
     fn pub_extern_fn_with_array_clean() {
         // Fixed-size array of C-compatible element is layout-compatible
         // with C `T[N]`.
-        assert_clean(
-            "pub extern fn first(xs: [i32; 4]) -> i32 { return xs[0 as usize]; }"
-        );
+        assert_clean("pub extern fn first(xs: [i32; 4]) -> i32 { return xs[0 as usize]; }");
     }
 
     #[test]
     fn pub_extern_fn_with_fn_ptr_clean() {
         // Function-pointer params/returns work when their own signatures
         // are C-exportable.
-        assert_clean(
-            "pub extern fn invoke(f: fn(i32) -> i32, x: i32) -> i32 { return f(x); }"
-        );
+        assert_clean("pub extern fn invoke(f: fn(i32) -> i32, x: i32) -> i32 { return f(x); }");
     }
 
     #[test]
     fn pub_extern_fn_with_fn_ptr_of_slice_rejected_e0410() {
         // A fn-ptr whose param uses a non-C type propagates the rejection.
-        let codes = errors(
-            "pub extern fn bad(f: fn(i32[]) -> i32) -> i32 { return 0; }"
-        );
+        let codes = errors("pub extern fn bad(f: fn(i32[]) -> i32) -> i32 { return 0; }");
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
@@ -9767,7 +11880,7 @@ mod tests {
         let codes = errors(
             "#[repr(C)]\n\
              struct Outer { inner: str }\n\
-             pub extern fn use_it(o: Outer) -> i32 { return 0; }"
+             pub extern fn use_it(o: Outer) -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
@@ -9781,7 +11894,9 @@ mod tests {
         // `async fn foo() -> i32` body uses `return X` for X: i32,
         // NOT for X: Future[i32]. The `Future[i32]` wrap is sema's
         // view at call sites only.
-        assert_clean(&format!("{FUTURE_PRELUDE}async fn fetch() -> i32 {{ return 42 as i32; }}"));
+        assert_clean(&format!(
+            "{FUTURE_PRELUDE}async fn fetch() -> i32 {{ return 42 as i32; }}"
+        ));
     }
 
     #[test]
@@ -9809,7 +11924,10 @@ mod tests {
         let codes = errors(&format!(
             "{FUTURE_PRELUDE}async fn bad() -> i32 {{ let x: i32 = await (7 as i32); return x; }}"
         ));
-        assert!(codes.contains(&"E0902"), "expected E0902 (await of non-Future), got: {codes:?}");
+        assert!(
+            codes.contains(&"E0902"),
+            "expected E0902 (await of non-Future), got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9827,7 +11945,10 @@ mod tests {
     fn async_fn_without_future_in_scope_e0300() {
         // No Future template imported → wrap_in_future fails.
         let codes = errors("async fn fetch() -> i32 { return 0 as i32; }");
-        assert!(codes.contains(&"E0300"), "expected E0300 (Future not in scope), got: {codes:?}");
+        assert!(
+            codes.contains(&"E0300"),
+            "expected E0300 (Future not in scope), got: {codes:?}"
+        );
     }
 
     // ---- v0.0.4 Phase 1D: E0900 borrow-across-await parameter guard ----
@@ -9837,7 +11958,10 @@ mod tests {
         let codes = errors(&format!(
             "{FUTURE_PRELUDE}async fn fetch(url: str) -> i32 {{ return 0 as i32; }}"
         ));
-        assert!(codes.contains(&"E0900"), "expected E0900 (str borrow in async param), got: {codes:?}");
+        assert!(
+            codes.contains(&"E0900"),
+            "expected E0900 (str borrow in async param), got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9845,7 +11969,10 @@ mod tests {
         let codes = errors(&format!(
             "{FUTURE_PRELUDE}async fn proc(buf: i32[]) -> i32 {{ return 0 as i32; }}"
         ));
-        assert!(codes.contains(&"E0900"), "expected E0900 (slice borrow in async param), got: {codes:?}");
+        assert!(
+            codes.contains(&"E0900"),
+            "expected E0900 (slice borrow in async param), got: {codes:?}"
+        );
     }
 
     #[test]
@@ -9871,7 +11998,10 @@ mod tests {
         let codes = errors(&format!(
             "{FUTURE_PRELUDE}async fn proc(mut buf: string) -> i32 {{ return 0 as i32; }}"
         ));
-        assert!(codes.contains(&"E0900"), "expected E0900 (mut non-Copy param), got: {codes:?}");
+        assert!(
+            codes.contains(&"E0900"),
+            "expected E0900 (mut non-Copy param), got: {codes:?}"
+        );
     }
 
     // ---- v0.0.4 Phase 2 Slice 2A: Send / Sync marker interfaces ----
@@ -9883,7 +12013,7 @@ mod tests {
         // Send — so this is the canonical "vocabulary works" check.
         assert_clean(
             "fn worker[T: Send](x: T) -> T { return x; }\n\
-             fn main() -> i32 { return worker::[i32](42); }"
+             fn main() -> i32 { return worker::[i32](42); }",
         );
     }
 
@@ -9897,7 +12027,7 @@ mod tests {
                  let p: Pt = Pt { x: 1, y: 2 };\n\
                  let q: Pt = ship::[Pt](p);\n\
                  return q.x;\n\
-             }"
+             }",
         );
     }
 
@@ -9906,7 +12036,7 @@ mod tests {
         // Same shape, Sync bound.
         assert_clean(
             "fn share[T: Sync](x: T) -> T { return x; }\n\
-             fn main() -> i32 { return share::[i32](42); }"
+             fn main() -> i32 { return share::[i32](42); }",
         );
     }
 
@@ -9916,7 +12046,441 @@ mod tests {
         // parsing/resolution sees Send / Sync as first-class.
         assert_clean(
             "fn need_both[T: Send + Sync](x: T) -> T { return x; }\n\
-             fn main() -> i32 { return need_both::[i32](7); }"
+             fn main() -> i32 { return need_both::[i32](7); }",
         );
+    }
+
+    // ---- v0.0.6 Slice 1A: include_bytes! ----
+
+    /// Helper: write `src` to `<dir>/src.cplus`, write `bytes` to
+    /// `<dir>/<asset_name>`, and run sema against the source file using
+    /// the temp source's path so relative include_bytes! paths resolve.
+    fn check_with_asset(src: &str, asset_name: &str, bytes: &[u8]) -> Vec<Diagnostic> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src_path = dir.path().join("src.cplus");
+        let asset_path = dir.path().join(asset_name);
+        std::fs::write(&src_path, src).expect("write src");
+        std::fs::write(&asset_path, bytes).expect("write asset");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = check(&prog, src_path, src);
+        drop(dir);
+        diags
+    }
+
+    #[test]
+    fn include_bytes_clean_when_file_exists() {
+        let diags = check_with_asset(
+            "fn main() -> i32 { let p = include_bytes!(\"hello.bin\"); return 0; }",
+            "hello.bin",
+            b"hello",
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:#?}", diags);
+    }
+
+    #[test]
+    fn include_bytes_missing_file_e0870() {
+        // Reference a sibling file that does not exist.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src_path = dir.path().join("src.cplus");
+        let src = "fn main() -> i32 { let p = include_bytes!(\"missing.bin\"); return 0; }";
+        std::fs::write(&src_path, src).expect("write");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = check(&prog, src_path, src);
+        let codes: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0)
+            .collect();
+        assert!(codes.contains(&"E0870"), "expected E0870, got {:?}", codes);
+    }
+
+    #[test]
+    fn include_bytes_non_literal_arg_parse_error() {
+        // The parser only constructs ExprKind::IncludeBytes for the
+        // strict `include_bytes!(StringLit)` form. A bare identifier
+        // fails parse before sema sees it.
+        let src = "fn main() -> i32 { let p = include_bytes!(some_var); return 0; }";
+        let toks = tokenize(src).expect("lex");
+        assert!(
+            parse(toks).is_err(),
+            "expected parse error on non-literal include_bytes! arg"
+        );
+    }
+
+    #[test]
+    fn include_bytes_type_is_rawptr_to_byte_array() {
+        // Round-trip: assigning the result to a `*[u8; N]` typed local
+        // succeeds; assigning to a wrong N is a type mismatch.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src_path = dir.path().join("src.cplus");
+        let asset_path = dir.path().join("bytes.bin");
+        std::fs::write(&src_path, "").expect("write");
+        std::fs::write(&asset_path, b"abc").expect("write"); // len 3
+        let src = "fn main() -> i32 { let p: *[u8; 3] = include_bytes!(\"bytes.bin\"); return 0; }";
+        std::fs::write(&src_path, src).expect("write");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = check(&prog, src_path, src);
+        assert!(
+            !diags.iter().any(|d| matches!(d.severity, Severity::Error)),
+            "expected clean assignment to *[u8; 3], got: {:#?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn include_bytes_wrong_length_type_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let src_path = dir.path().join("src.cplus");
+        let asset_path = dir.path().join("bytes.bin");
+        std::fs::write(&asset_path, b"abc").expect("write"); // len 3
+        let src = "fn main() -> i32 { let p: *[u8; 5] = include_bytes!(\"bytes.bin\"); return 0; }";
+        std::fs::write(&src_path, src).expect("write");
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = check(&prog, src_path, src);
+        assert!(
+            diags.iter().any(|d| matches!(d.severity, Severity::Error)),
+            "expected a type-mismatch diagnostic for [u8; 5] vs [u8; 3]"
+        );
+    }
+
+    // ---- v0.0.6 Slice 1B: SIMD types ----
+
+    #[test]
+    fn simd_f32x4_type_resolves_and_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32); \
+                let b: f32x4 = f32x4::splat(0.5f32); \
+                let c: f32x4 = a.add(b); \
+                let d: f32x4 = c.mul(a).fma(b, c); \
+                let e: f32x4 = d.sqrt(); \
+                let lane: f32 = e.lane(0 as u32); \
+                let with: f32x4 = e.with_lane(1 as u32, 9.0f32); \
+                let arr: [f32; 4] = with.to_array(); \
+                let from: f32x4 = f32x4::from_array(arr); \
+                if lane != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_lane_out_of_range_e0874() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let x: f32 = v.lane(7 as u32); \
+                if x != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+            "E0874",
+        );
+    }
+
+    #[test]
+    fn simd_lane_non_literal_e0873() {
+        let codes = errors(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let mut i: u32 = 0 as u32; \
+                let x: f32 = v.lane(i); \
+                if x != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+        );
+        assert!(codes.contains(&"E0873"), "expected E0873, got {:?}", codes);
+    }
+
+    #[test]
+    fn simd_unknown_method_e0324() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let r: f32x4 = v.frobnicate(v); \
+                if r.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn simd_wrong_arity_for_new_e0308() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::new(1.0f32, 2.0f32); \
+                if v.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+            "E0308",
+        );
+    }
+
+    #[test]
+    fn simd_in_pub_extern_fn_rejected_e0410() {
+        let codes = errors("pub extern fn f(v: f32x4) -> f32x4 { return v; }");
+        assert!(codes.contains(&"E0410"), "expected E0410, got {:?}", codes);
+    }
+
+    #[test]
+    fn simd_f64x2_type_resolves_and_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f64x2 = f64x2::new(1.0, 2.0); \
+                let b: f64x2 = f64x2::splat(0.5); \
+                let c: f64x2 = a.add(b).mul(b).fma(a, b); \
+                let s: f64x2 = c.sqrt(); \
+                let lane: f64 = s.lane(0 as u32); \
+                let with: f64x2 = s.with_lane(1 as u32, 9.0); \
+                let arr: [f64; 2] = with.to_array(); \
+                let from: f64x2 = f64x2::from_array(arr); \
+                if lane != 0.0 { return 1; } \
+                if from.lane(1 as u32) != 0.0 { return 2; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_f64x2_lane_out_of_range_e0874() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f64x2 = f64x2::splat(1.0); \
+                let x: f64 = v.lane(5 as u32); \
+                if x != 0.0 { return 1; } \
+                return 0; \
+            }",
+            "E0874",
+        );
+    }
+
+    #[test]
+    fn simd_f64x2_wrong_arity_for_new_e0308() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f64x2 = f64x2::new(1.0, 2.0, 3.0); \
+                if v.lane(0 as u32) != 0.0 { return 1; } \
+                return 0; \
+            }",
+            "E0308",
+        );
+    }
+
+    #[test]
+    fn simd_i32x4_type_and_int_methods_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: i32x4 = i32x4::new(1, 2, 3, 4); \
+                let b: i32x4 = i32x4::splat(10); \
+                let c: i32x4 = a.add(b).sub(b).mul(b).div(i32x4::splat(2)); \
+                let d: i32x4 = c.abs(); \
+                let lane: i32 = d.lane(0 as u32); \
+                let with: i32x4 = d.with_lane(1 as u32, 99); \
+                let arr: [i32; 4] = with.to_array(); \
+                let from: i32x4 = i32x4::from_array(arr); \
+                if lane != 0 { return 1; } \
+                if from.lane(1 as u32) != 0 { return 2; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_i32x4_sqrt_rejected_e0324() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(1); \
+                let r: i32x4 = v.sqrt(); \
+                if r.lane(0 as u32) != 0 { return 1; } \
+                return 0; \
+            }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn simd_i32x4_fma_rejected_e0324() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(1); \
+                let r: i32x4 = v.fma(v, v); \
+                if r.lane(0 as u32) != 0 { return 1; } \
+                return 0; \
+            }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn simd_min_max_clean_across_widths() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a4: f32x4 = f32x4::splat(1.0f32); \
+                let b4: f32x4 = f32x4::splat(2.0f32); \
+                let _f32: f32x4 = a4.min(b4).max(a4); \
+                let a2: f64x2 = f64x2::splat(1.0); \
+                let b2: f64x2 = f64x2::splat(2.0); \
+                let _f64: f64x2 = a2.min(b2).max(a2); \
+                let i4: i32x4 = i32x4::splat(1); \
+                let j4: i32x4 = i32x4::splat(2); \
+                let _i32: i32x4 = i4.min(j4).max(i4); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_min_wrong_arity_e0308() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let r: f32x4 = v.min(); \
+                if r.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+            "E0308",
+        );
+    }
+
+    #[test]
+    fn simd_load_store_clean_under_unsafe() {
+        assert_clean(
+            "extern fn malloc(n: usize) -> *u8; \
+             extern fn free(p: *u8); \
+             fn main() -> i32 { \
+                let buf: *u8 = unsafe { malloc(16 as usize) }; \
+                let fp: *f32 = unsafe { buf as *f32 }; \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                unsafe { v.store(fp); } \
+                let r: f32x4 = unsafe { f32x4::load(fp) }; \
+                unsafe { free(buf); } \
+                if r.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn simd_load_outside_unsafe_e0801() {
+        let codes = errors(
+            "extern fn malloc(n: usize) -> *u8; \
+             fn main() -> i32 { \
+                let buf: *u8 = unsafe { malloc(16 as usize) }; \
+                let fp: *f32 = unsafe { buf as *f32 }; \
+                let r: f32x4 = f32x4::load(fp); \
+                if r.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0801"), "expected E0801, got {:?}", codes);
+    }
+
+    #[test]
+    fn simd_i64x2_and_u32x4_resolve_and_arithmetic_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: i64x2 = i64x2::new(1 as i64, 2 as i64); \
+                let b: i64x2 = a.add(i64x2::splat(10 as i64)).abs(); \
+                let c: u32x4 = u32x4::new(1 as u32, 2 as u32, 3 as u32, 4 as u32); \
+                let d: u32x4 = c.mul(u32x4::splat(2 as u32)).min(c); \
+                if b.lane(0 as u32) != (0 as i64) { return 1; } \
+                if d.lane(0 as u32) != (0 as u32) { return 2; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_bitwise_and_shifts_clean_on_int() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: i32x4 = i32x4::splat(0xFF); \
+                let b: i32x4 = a.and(i32x4::splat(0x0F)); \
+                let c: i32x4 = a.or(b).xor(a).not(); \
+                let d: i32x4 = c.shl(2 as u32).shr(1 as u32); \
+                if d.lane(0 as u32) != 0 { return 1; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_bitwise_rejected_on_float_e0324() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                let r: f32x4 = v.and(v); \
+                if r.lane(0 as u32) != 0.0f32 { return 1; } \
+                return 0; \
+            }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn simd_shift_non_literal_e0873() {
+        let codes = errors(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(1); \
+                let mut n: u32 = 2 as u32; \
+                let r: i32x4 = v.shl(n); \
+                if r.lane(0 as u32) != 0 { return 1; } \
+                return 0; \
+            }",
+        );
+        assert!(codes.contains(&"E0873"), "expected E0873, got {:?}", codes);
+    }
+
+    #[test]
+    fn simd_shift_out_of_range_e0874() {
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(1); \
+                let r: i32x4 = v.shl(64 as u32); \
+                if r.lane(0 as u32) != 0 { return 1; } \
+                return 0; \
+            }",
+            "E0874",
+        );
+    }
+
+    #[test]
+    fn simd_byte_short_widths_clean() {
+        // i8x16 / i16x8 / u8x16 / u16x8 all resolve and admit the full
+        // int-SIMD method matrix (arithmetic, bitwise, shifts, min/max,
+        // abs on signed widths).
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: u8x16 = u8x16::splat(10 as u8); \
+                let b: u8x16 = a.add(u8x16::splat(5 as u8)).and(u8x16::splat(0x0F as u8)); \
+                let c: i8x16 = i8x16::splat(-3 as i8).abs().min(i8x16::splat(100 as i8)); \
+                let d: u16x8 = u16x8::splat(0x00FF as u16).shl(4 as u32); \
+                let e: i16x8 = i16x8::splat(-5 as i16).abs().max(i16x8::splat(0 as i16)); \
+                if b.lane(0 as u32) != (0 as u8) { return 1; } \
+                if c.lane(0 as u32) != (0 as i8) { return 2; } \
+                if d.lane(0 as u32) != (0 as u16) { return 3; } \
+                if e.lane(0 as u32) != (0 as i16) { return 4; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_store_outside_unsafe_e0801() {
+        let codes = errors(
+            "extern fn malloc(n: usize) -> *u8; \
+             fn main() -> i32 { \
+                let buf: *u8 = unsafe { malloc(16 as usize) }; \
+                let fp: *f32 = unsafe { buf as *f32 }; \
+                let v: f32x4 = f32x4::splat(1.0f32); \
+                v.store(fp); \
+                return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0801"), "expected E0801, got {:?}", codes);
     }
 }

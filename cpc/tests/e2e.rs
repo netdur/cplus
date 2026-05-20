@@ -15,7 +15,11 @@ fn hello_world_compiles_and_runs() {
     assert!(compile.success(), "cpc exited non-zero: {compile}");
 
     let run = Command::new(&bin).output().expect("run produced binary");
-    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    assert!(
+        run.status.success(),
+        "binary exited non-zero: {}",
+        run.status
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "hello, world\n");
     assert!(run.stderr.is_empty(), "unexpected stderr: {:?}", run.stderr);
 }
@@ -23,7 +27,10 @@ fn hello_world_compiles_and_runs() {
 #[test]
 fn emit_ir_prints_module() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("--emit-ir").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--emit-ir")
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("define i32 @main()"), "missing main: {s}");
@@ -50,8 +57,14 @@ fn diagnostics_json_emits_ndjson() {
     let v: serde_json::Value = serde_json::from_str(line).expect("stderr line is valid JSON");
     assert_eq!(v["severity"], "error");
     assert_eq!(v["code"], "E0102");
-    assert!(v["primary"]["file"].as_str().unwrap().ends_with("bad.cplus"));
-    assert!(v["message"].as_str().unwrap().contains("non-chainable") || v["message"].as_str().unwrap().contains("comparison"));
+    assert!(v["primary"]["file"]
+        .as_str()
+        .unwrap()
+        .ends_with("bad.cplus"));
+    assert!(
+        v["message"].as_str().unwrap().contains("non-chainable")
+            || v["message"].as_str().unwrap().contains("comparison")
+    );
 }
 
 #[test]
@@ -70,8 +83,14 @@ fn diagnostics_short_format() {
     assert!(!out.status.success());
 
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("error[E0100]"), "expected E0100 in stderr: {stderr}");
-    assert!(stderr.contains("bad.cplus:"), "expected file path in stderr: {stderr}");
+    assert!(
+        stderr.contains("error[E0100]"),
+        "expected E0100 in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("bad.cplus:"),
+        "expected file path in stderr: {stderr}"
+    );
 }
 
 // ---- Phase 1 end-to-end: each sample program compiles, runs, prints expected output ----
@@ -83,7 +102,8 @@ fn compile_and_run(sample: &str) -> std::process::Output {
     std::fs::copy(
         format!("{}/../docs/examples/{sample}", env!("CARGO_MANIFEST_DIR")),
         &src,
-    ).expect("copy sample");
+    )
+    .expect("copy sample");
     let bin = dir.join("prog");
     let compile = Command::new(cpc)
         .arg(&src)
@@ -220,13 +240,22 @@ fn array_out_of_bounds_traps() {
     let src = dir.join("oob.cplus");
     std::fs::write(
         &src,
-        "fn main() -> i32 { let xs: [i32; 3] = [1, 2, 3]; return xs[10 as usize]; }"
-    ).unwrap();
+        "fn main() -> i32 { let xs: [i32; 3] = [1, 2, 3]; return xs[10 as usize]; }",
+    )
+    .unwrap();
     let bin = dir.join("oob");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run");
-    assert!(!run.status.success(), "expected trap on out-of-bounds index");
+    assert!(
+        !run.status.success(),
+        "expected trap on out-of-bounds index"
+    );
 }
 
 // Phase 3 slice 3B: wrapping operators `+% -% *%`
@@ -251,7 +280,12 @@ fn wrapping_add_does_not_trap_in_debug() {
     )
     .unwrap();
     let bin = dir.join("wrap_no_trap");
-    let status = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(status.success(), "compile failed");
     let run = Command::new(&bin).output().expect("run");
     assert!(run.status.success(), "wrapping add must not trap in debug");
@@ -291,10 +325,21 @@ fn use_after_move_rejected_at_compile_time() {
     )
     .unwrap();
     let bin = dir.join("uaf");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for use-after-move");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for use-after-move"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0335"), "expected E0335 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0335"),
+        "expected E0335 in stderr, got: {stderr}"
+    );
 }
 
 #[test]
@@ -315,10 +360,21 @@ fn move_param_use_after_call_rejected() {
     )
     .unwrap();
     let bin = dir.join("uam");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for double-consume");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for double-consume"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0335"), "expected E0335 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0335"),
+        "expected E0335 in stderr, got: {stderr}"
+    );
 }
 
 // Phase 3 slice 3C: Copy auto-derive
@@ -391,8 +447,16 @@ fn break_outside_loop_rejected() {
     let src = dir.join("bad.cplus");
     std::fs::write(&src, "fn main() -> i32 { break; return 0; }\n").unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure on bare `break`");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure on bare `break`"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0353"), "expected E0353, got: {stderr}");
 }
@@ -405,8 +469,16 @@ fn continue_outside_loop_rejected() {
     let src = dir.join("bad.cplus");
     std::fs::write(&src, "fn main() -> i32 { continue; return 0; }\n").unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure on bare `continue`");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure on bare `continue`"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0353"), "expected E0353, got: {stderr}");
 }
@@ -421,7 +493,9 @@ fn longest_move_either_input_while_borrowed_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn longest(a: B, b: B) -> B {
@@ -438,10 +512,20 @@ fn main() -> i32 {
     drain(a);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move-while-multi-source-borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move-while-multi-source-borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
 }
@@ -457,7 +541,9 @@ fn move_while_return_borrow_live_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn passthrough(b: B) -> B { return b; }
@@ -468,10 +554,20 @@ fn main() -> i32 {
     drain(x);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move-while-borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move-while-borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
 }
@@ -489,7 +585,9 @@ fn move_and_borrow_in_same_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn drain(n: i32, move b: B) { return; }
@@ -499,10 +597,20 @@ fn main() -> i32 {
     drain(peek(y), y);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move-and-borrow conflict");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move-and-borrow conflict"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0370"), "expected E0370, got: {stderr}");
 }
@@ -512,16 +620,23 @@ fn uninit_read_before_assign_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("ua.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 { let x: i32; return x; }\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "fn main() -> i32 { let x: i32; return x; }\n").unwrap();
     let bin = dir.join("ua");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure on read-before-assign");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure on read-before-assign"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0345"), "expected E0345 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0345"),
+        "expected E0345 in stderr, got: {stderr}"
+    );
 }
 
 #[test]
@@ -539,10 +654,21 @@ fn non_exhaustive_match_rejected() {
     )
     .unwrap();
     let bin = dir.join("nonex");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for non-exhaustive match");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for non-exhaustive match"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0340"), "expected E0340 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0340"),
+        "expected E0340 in stderr, got: {stderr}"
+    );
 }
 
 // Phase 3 slice 3G: defer
@@ -564,7 +690,10 @@ fn defer_drop_interleave_runs() {
     //   Drop(b)            -> -2
     //   defer println(100) -> 100
     //   Drop(a)            -> -1
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n2\n200\n-2\n100\n-1\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1\n2\n200\n-2\n100\n-1\n"
+    );
 }
 
 // ---- runtime trap behavior for overflow + divide-by-zero ----
@@ -582,8 +711,15 @@ fn compile_program(src: &str, release: bool) -> (std::path::PathBuf, std::path::
     std::fs::write(&path, src).unwrap();
     let bin = dir.join("prog");
     let mut cmd = Command::new(cpc);
-    if release { cmd.arg("--release"); }
-    let status = cmd.arg(&path).arg("-o").arg(&bin).status().expect("invoke cpc");
+    if release {
+        cmd.arg("--release");
+    }
+    let status = cmd
+        .arg(&path)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(status.success(), "compile failed");
     (dir, bin)
 }
@@ -608,7 +744,8 @@ fn release_mode_wraps_on_overflow() {
     assert!(
         run.status.success(),
         "expected release wrap to succeed; status={:?} stderr={:?}",
-        run.status, String::from_utf8_lossy(&run.stderr)
+        run.status,
+        String::from_utf8_lossy(&run.stderr)
     );
     // INT_MAX + 1 wraps to INT_MIN.
     assert_eq!(String::from_utf8_lossy(&run.stdout), "-2147483648\n");
@@ -645,9 +782,15 @@ fn sema_error_in_compile_emits_diagnostic() {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
-    assert!(!result.status.success(), "expected sema failure to fail compilation");
+    assert!(
+        !result.status.success(),
+        "expected sema failure to fail compilation"
+    );
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stderr.contains("E0305"), "expected E0305 (immutable assign), got: {stderr}");
+    assert!(
+        stderr.contains("E0305"),
+        "expected E0305 (immutable assign), got: {stderr}"
+    );
 }
 
 // ---- Phase 4 slice 4A.5: `if let` / `guard let` ----
@@ -687,10 +830,21 @@ fn irrefutable_if_let_rejected() {
     )
     .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure on irrefutable if-let");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure on irrefutable if-let"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0347"), "expected E0347 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0347"),
+        "expected E0347 in stderr, got: {stderr}"
+    );
 }
 
 #[test]
@@ -710,10 +864,21 @@ fn main() -> i32 {
     )
     .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure on non-diverging guard-let else");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure on non-diverging guard-let else"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0348"), "expected E0348 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0348"),
+        "expected E0348 in stderr, got: {stderr}"
+    );
 }
 
 // ---- Phase 4 slice 4A: multi-file projects via `cpc build` ----
@@ -743,8 +908,73 @@ fn hello_mods_project_builds_and_runs() {
     let bin = dir.join("target/debug/hello_mods");
     assert!(bin.is_file(), "expected binary at {}", bin.display());
     let out = Command::new(&bin).output().expect("run binary");
-    assert!(out.status.success(), "binary exited non-zero: {}", out.status);
+    assert!(
+        out.status.success(),
+        "binary exited non-zero: {}",
+        out.status
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "49\n");
+}
+
+#[test]
+fn public_type_alias_facade_reexports_struct_literals_and_methods() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"alias_facade\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/types.cplus"),
+        r#"
+pub struct Point {
+    pub x: i32,
+}
+
+impl Point {
+    pub fn new(x: i32) -> Point {
+        return Point { x: x };
+    }
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/facade.cplus"),
+        r#"
+import "./types" as types;
+
+pub type Point = types::Point;
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"
+import "./facade" as facade;
+
+fn main() -> i32 {
+    let a = facade::Point { x: 20 };
+    let b = facade::Point::new(22);
+    return a.x + b.x;
+}
+"#,
+    )
+    .unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+
+    let out = Command::new(dir.join("target/debug/alias_facade"))
+        .output()
+        .expect("run binary");
+    assert_eq!(out.status.code(), Some(42));
 }
 
 /// v0.0.2 AppKit-via-Cplus.toml: a manifest declaring `frameworks` and
@@ -773,7 +1003,8 @@ fn manifest_libs_links_libobjc() {
            let cls: *u8 = unsafe { objc_getClass(p) };\n\
            return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let status = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
@@ -802,13 +1033,17 @@ fn manifest_frameworks_passes_dash_framework() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let status = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
         .status()
         .expect("invoke cpc build");
-    assert!(status.success(), "cpc build with frameworks failed: {status}");
+    assert!(
+        status.success(),
+        "cpc build with frameworks failed: {status}"
+    );
 }
 
 /// `cpc build` without a `Cplus.toml` in cwd should fail with a manifest
@@ -923,10 +1158,19 @@ fn cross_file_private_field_read_emits_e0403() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "expected E0403 from private-field read");
+    assert!(
+        !out.status.success(),
+        "expected E0403 from private-field read"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0403"), "expected E0403 in stderr, got: {stderr}");
-    assert!(stderr.contains("private"), "expected diagnostic to mention 'private': {stderr}");
+    assert!(
+        stderr.contains("E0403"),
+        "expected E0403 in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("private"),
+        "expected diagnostic to mention 'private': {stderr}"
+    );
 }
 
 /// Slice 4C: reading a `pub` field across a file boundary works.
@@ -980,9 +1224,15 @@ fn cross_file_struct_literal_private_field_emits_e0403() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "expected E0403 from private-field bind");
+    assert!(
+        !out.status.success(),
+        "expected E0403 from private-field bind"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0403"), "expected E0403 in stderr, got: {stderr}");
+    assert!(
+        stderr.contains("E0403"),
+        "expected E0403 in stderr, got: {stderr}"
+    );
 }
 
 /// Slice 4C: same-file private field access is unaffected.
@@ -1048,11 +1298,19 @@ fn calc_5file_project_builds_and_runs() {
     // build is fully self-contained (and we don't write to the source
     // tree from a test).
     let proj_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap().join("docs/examples/projects/calc");
+        .parent()
+        .unwrap()
+        .join("docs/examples/projects/calc");
     let manifest = std::fs::read_to_string(proj_root.join("Cplus.toml")).unwrap();
     std::fs::write(dir.join("Cplus.toml"), manifest).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    for f in ["main.cplus", "eval.cplus", "util.cplus", "expr.cplus", "ops.cplus"] {
+    for f in [
+        "main.cplus",
+        "eval.cplus",
+        "util.cplus",
+        "expr.cplus",
+        "ops.cplus",
+    ] {
         let src = std::fs::read_to_string(proj_root.join("src").join(f)).unwrap();
         std::fs::write(dir.join("src").join(f), src).unwrap();
     }
@@ -1067,7 +1325,11 @@ fn calc_5file_project_builds_and_runs() {
     let bin = dir.join("target/debug/calc");
     assert!(bin.is_file(), "expected binary at {}", bin.display());
     let out = Command::new(&bin).output().expect("run binary");
-    assert!(out.status.success(), "binary exited non-zero: {}", out.status);
+    assert!(
+        out.status.success(),
+        "binary exited non-zero: {}",
+        out.status
+    );
     // (3 + 4) * (-2) = -14.
     assert_eq!(String::from_utf8_lossy(&out.stdout), "-14\n");
 }
@@ -1094,14 +1356,19 @@ fn e0401_json_shape() {
         .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let line = stderr.lines().next().expect("expected at least one diagnostic line");
+    let line = stderr
+        .lines()
+        .next()
+        .expect("expected at least one diagnostic line");
     let v: serde_json::Value = serde_json::from_str(line)
         .unwrap_or_else(|e| panic!("stderr line not valid JSON: {e}\nline: {line}"));
     assert_eq!(v["severity"], "error");
     assert_eq!(v["code"], "E0401");
     let primary_file = v["primary"]["file"].as_str().expect("primary.file");
-    assert!(primary_file.ends_with("main.cplus"),
-        "primary file should be the importing file, got: {primary_file}");
+    assert!(
+        primary_file.ends_with("main.cplus"),
+        "primary file should be the importing file, got: {primary_file}"
+    );
 }
 
 /// Slice 4C-tail: did-you-mean suggestion for E0401 picks the closest
@@ -1228,12 +1495,18 @@ fn fmt_stdin_normalizes() {
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("spawn cpc fmt --stdin");
-    child.stdin.as_mut().unwrap()
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
         .write_all(b"fn  f( x:i32 )->i32{return x+1;}\n")
         .unwrap();
     let out = child.wait_with_output().expect("wait");
     assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "fn f(x: i32) -> i32 { return x + 1; }\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "fn f(x: i32) -> i32 { return x + 1; }\n"
+    );
 }
 
 /// `cpc fmt --check PATH/` over the in-tree samples must succeed with
@@ -1243,7 +1516,9 @@ fn fmt_stdin_normalizes() {
 fn fmt_check_all_samples_clean() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap().join("docs/examples");
+        .parent()
+        .unwrap()
+        .join("docs/examples");
     let out = Command::new(cpc)
         .arg("fmt")
         .arg("--check")
@@ -1271,11 +1546,23 @@ fn fmt_check_reports_diff() {
         .arg(&f)
         .output()
         .expect("invoke cpc fmt --check");
-    assert!(!out.status.success(), "expected non-zero exit on dirty file");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit on dirty file"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("bad.cplus"), "expected file path in diff header, got: {stderr}");
-    assert!(stderr.contains("-fn"), "expected `-` lines in diff, got: {stderr}");
-    assert!(stderr.contains("+fn"), "expected `+` lines in diff, got: {stderr}");
+    assert!(
+        stderr.contains("bad.cplus"),
+        "expected file path in diff header, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("-fn"),
+        "expected `-` lines in diff, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("+fn"),
+        "expected `+` lines in diff, got: {stderr}"
+    );
 }
 
 /// Default mode rewrites in place.
@@ -1310,7 +1597,10 @@ fn fmt_emit_leaves_file_alone() {
         .output()
         .expect("invoke cpc fmt --emit");
     assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "fn main() -> i32 { return 0; }\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "fn main() -> i32 { return 0; }\n"
+    );
     // File on disk untouched.
     let after = std::fs::read_to_string(&f).unwrap();
     assert_eq!(after, orig);
@@ -1323,10 +1613,18 @@ fn fmt_idempotent_in_place() {
     let dir = tempdir();
     let f = dir.join("u.cplus");
     std::fs::write(&f, "fn  main()->i32{let x:i32=1+2;return x;}\n").unwrap();
-    let once = Command::new(cpc).arg("fmt").arg(&f).status().expect("invoke");
+    let once = Command::new(cpc)
+        .arg("fmt")
+        .arg(&f)
+        .status()
+        .expect("invoke");
     assert!(once.success());
     let first = std::fs::read_to_string(&f).unwrap();
-    let twice = Command::new(cpc).arg("fmt").arg(&f).status().expect("invoke");
+    let twice = Command::new(cpc)
+        .arg("fmt")
+        .arg(&f)
+        .status()
+        .expect("invoke");
     assert!(twice.success());
     let second = std::fs::read_to_string(&f).unwrap();
     assert_eq!(first, second, "fmt(fmt(x)) must equal fmt(x)");
@@ -1342,7 +1640,9 @@ fn mut_param_noncopy_struct_mutation_propagates() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("prog.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Tag { v: i32 }
 impl Tag { fn drop(mut self) { return; } }
 fn bump(mut t: Tag) {
@@ -1355,12 +1655,27 @@ fn main() -> i32 {
     println(x.v);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("prog");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(compile.status.success(), "compile failed: {}", String::from_utf8_lossy(&compile.stderr));
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
-    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    assert!(
+        run.status.success(),
+        "binary exited non-zero: {}",
+        run.status
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "11\n");
 }
 
@@ -1373,7 +1688,9 @@ fn mut_param_copy_struct_does_not_propagate() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("prog.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct P { v: i32 }
 fn bump(mut p: P) {
     p.v = p.v + 1;
@@ -1385,10 +1702,21 @@ fn main() -> i32 {
     println(q.v);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("prog");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(compile.status.success(), "compile failed: {}", String::from_utf8_lossy(&compile.stderr));
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert!(run.status.success());
     // Copy semantics: caller's q.v is unchanged.
@@ -1407,7 +1735,9 @@ fn mut_param_noncopy_struct_no_double_drop_at_runtime() {
     let src = dir.join("prog.cplus");
     // The drop body prints -id; one Tracker means one drop must print "-7"
     // exactly once. If the callee double-dropped we'd see "-7" twice.
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Tracker { id: i32 }
 impl Tracker {
     fn drop(mut self) {
@@ -1425,10 +1755,21 @@ fn main() -> i32 {
     println(x.id);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("prog");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(compile.status.success(), "compile failed: {}", String::from_utf8_lossy(&compile.stderr));
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert!(run.status.success());
     // Expected: 7 (bumped value) then -7 (single drop). One drop only.
@@ -1444,10 +1785,22 @@ fn unknown_attribute_rejected_e0354() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "#[tset]\nfn f() { return; }\nfn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        &src,
+        "#[tset]\nfn f() { return; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for unknown attribute");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for unknown attribute"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0354"), "expected E0354, got: {stderr}");
 }
@@ -1459,10 +1812,22 @@ fn test_attribute_on_struct_rejected_e0356() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "#[test]\nstruct P { v: i32 }\nfn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        &src,
+        "#[test]\nstruct P { v: i32 }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for misplaced #[test]");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for misplaced #[test]"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0356"), "expected E0356, got: {stderr}");
 }
@@ -1475,10 +1840,22 @@ fn test_attribute_bad_signature_rejected_e0358() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "#[test] fn t(n: i32) { return; }\nfn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        &src,
+        "#[test] fn t(n: i32) { return; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for bad test signature");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for bad test signature"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0358"), "expected E0358, got: {stderr}");
 }
@@ -1491,10 +1868,22 @@ fn test_attribute_pub_rejected_e0359() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "#[test] pub fn t() { return; }\nfn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        &src,
+        "#[test] pub fn t() { return; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for pub on #[test]");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for pub on #[test]"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0359"), "expected E0359, got: {stderr}");
 }
@@ -1510,11 +1899,23 @@ fn assert_true_runs_to_completion() {
     let src = dir.join("ok.cplus");
     std::fs::write(&src, "fn main() -> i32 {\n  assert 1 == 1;\n  assert 2 + 2 == 4;\n  println(42);\n  return 0;\n}\n").unwrap();
     let bin = dir.join("ok");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(compile.status.success(),
-        "expected clean compile, stderr: {}", String::from_utf8_lossy(&compile.stderr));
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "expected clean compile, stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
-    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    assert!(
+        run.status.success(),
+        "binary exited non-zero: {}",
+        run.status
+    );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
 }
 
@@ -1528,16 +1929,35 @@ fn assert_false_traps_at_runtime() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "fn main() -> i32 {\n  assert 1 == 2;\n  println(999);\n  return 0;\n}\n").unwrap();
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n  assert 1 == 2;\n  println(999);\n  return 0;\n}\n",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(compile.status.success(),
-        "expected clean compile, stderr: {}", String::from_utf8_lossy(&compile.stderr));
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "expected clean compile, stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
-    assert!(!run.status.success(), "expected non-zero exit on trap, got: {}", run.status);
+    assert!(
+        !run.status.success(),
+        "expected non-zero exit on trap, got: {}",
+        run.status
+    );
     // The `println(999)` after the failing assertion must not have run.
-    assert!(!String::from_utf8_lossy(&run.stdout).contains("999"),
-        "code after failing assert ran: {:?}", run.stdout);
+    assert!(
+        !String::from_utf8_lossy(&run.stdout).contains("999"),
+        "code after failing assert ran: {:?}",
+        run.stdout
+    );
 }
 
 /// Phase 5 slice 5ATTR.3 — `assert` with a non-bool expression is rejected
@@ -1550,8 +1970,16 @@ fn assert_non_bool_rejected_e0302() {
     let src = dir.join("bad.cplus");
     std::fs::write(&src, "fn main() -> i32 { assert 42; return 0; }\n").unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected sema rejection of non-bool assert");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected sema rejection of non-bool assert"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0302"), "expected E0302, got: {stderr}");
 }
@@ -1565,13 +1993,29 @@ fn test_attribute_clean_compile() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("prog.cplus");
-    std::fs::write(&src, "#[test]\nfn t1() { return; }\nfn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        &src,
+        "#[test]\nfn t1() { return; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     let bin = dir.join("prog");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "expected clean compile, stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "expected clean compile, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run produced binary");
-    assert!(run.status.success(), "binary exited non-zero: {}", run.status);
+    assert!(
+        run.status.success(),
+        "binary exited non-zero: {}",
+        run.status
+    );
 }
 
 // ---- Phase 5 slice 5ATTR.4 — `cpc test` subcommand ----
@@ -1585,12 +2029,19 @@ fn cpc_test_runs_passing_tests() {
         &src,
         "#[test]\nfn passes() { assert 1 + 1 == 2; }\n\
          #[test]\nfn also_passes() { assert true; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "expected all-pass, stderr: {}\nstdout: {}",
         String::from_utf8_lossy(&out.stderr),
-        String::from_utf8_lossy(&out.stdout));
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("test passes ... ok"));
     assert!(stdout.contains("test also_passes ... ok"));
@@ -1606,9 +2057,17 @@ fn cpc_test_reports_failing_test() {
         &src,
         "#[test]\nfn passes() { assert true; }\n\
          #[test]\nfn fails() { assert false; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected non-zero exit on failing test");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit on failing test"
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("test passes ... ok"));
     assert!(stdout.contains("test fails ... FAILED"));
@@ -1624,12 +2083,21 @@ fn cpc_test_json_output() {
         &src,
         "#[test]\nfn ok1() { assert 1 == 1; }\n\
          #[test]\nfn bad() { assert 1 == 2; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).arg("--json").output()
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .arg("--json")
+        .output()
         .expect("invoke cpc");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 3, "expected 3 lines (2 tests + 1 summary): {stdout}");
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected 3 lines (2 tests + 1 summary): {stdout}"
+    );
     // Each line must be valid JSON.
     let v0: serde_json::Value = serde_json::from_str(lines[0]).expect("line 0 JSON");
     let v1: serde_json::Value = serde_json::from_str(lines[1]).expect("line 1 JSON");
@@ -1648,10 +2116,17 @@ fn cpc_test_no_tests_zero_exit() {
     let dir = tempdir();
     let src = dir.join("t.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success(), "no tests should exit 0");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("0 passed; 0 failed"), "got stdout: {stdout}");
+    assert!(
+        stdout.contains("0 passed; 0 failed"),
+        "got stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -1663,8 +2138,13 @@ fn cpc_test_i32_return_form() {
         &src,
         "#[test]\nfn zero_ok() -> i32 { return 0; }\n\
          #[test]\nfn nonzero_fails() -> i32 { return 7; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failing exit");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("test zero_ok ... ok"));
@@ -1681,10 +2161,18 @@ fn cpc_test_calls_helper_functions() {
         &src,
         "fn double(n: i32) -> i32 { return n + n; }\n\
          #[test]\nfn doubles_correctly() { assert double(3) == 6; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "expected pass, stderr: {}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "expected pass, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -1699,10 +2187,18 @@ fn cpc_test_skips_user_main() {
         &src,
         "fn main() -> i32 { return 42; }\n\
          #[test]\nfn t() { assert true; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "expected pass, stderr: {}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "expected pass, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // The driver should return the failed-count (0), not the user's 42.
     assert_eq!(out.status.code(), Some(0));
 }
@@ -1714,7 +2210,9 @@ fn e0380_two_mut_borrows_of_same_binding_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn modify_both(mut a: B, mut b: B) { return; }
@@ -1723,10 +2221,20 @@ fn main() -> i32 {
     modify_both(y, y);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for two mut borrows");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for two mut borrows"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0380"), "expected E0380, got: {stderr}");
 }
@@ -1736,7 +2244,9 @@ fn e0381_mut_and_shared_borrow_in_same_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn write_thing(mut a: B, n: i32) { return; }
@@ -1746,10 +2256,20 @@ fn main() -> i32 {
     write_thing(y, peek(y));
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for mut+shared");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for mut+shared"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0381"), "expected E0381, got: {stderr}");
 }
@@ -1759,7 +2279,9 @@ fn e0382_mut_and_move_in_same_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn write_and_take(mut a: B, move b: B) { return; }
@@ -1768,15 +2290,28 @@ fn main() -> i32 {
     write_and_take(y, y);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for mut+move");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for mut+move"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0382"), "expected E0382, got: {stderr}");
     // E0370 must NOT fire for the same pair — E0382 is the more specific
     // diagnostic and suppresses cascading errors.
-    assert!(!stderr.contains("E0370"), "E0370 should be suppressed for mut+move pair, got: {stderr}");
+    assert!(
+        !stderr.contains("E0370"),
+        "E0370 should be suppressed for mut+move pair, got: {stderr}"
+    );
 }
 
 #[test]
@@ -1784,7 +2319,9 @@ fn mut_borrows_of_different_bindings_accepted() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn modify_both(mut a: B, mut b: B) { return; }
@@ -1794,11 +2331,21 @@ fn main() -> i32 {
     modify_both(y, z);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(), "two mut borrows of distinct places should compile; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "two mut borrows of distinct places should compile; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -1808,18 +2355,30 @@ fn mut_borrows_of_copy_type_accepted() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 fn modify_both(mut a: i32, mut b: i32) { return; }
 fn main() -> i32 {
     let y: i32 = 1;
     modify_both(y, y);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(), "Copy mut args should compile; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "Copy mut args should compile; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // ---- Phase 6 exit criterion — iterator invalidation rejected ----
@@ -1832,7 +2391,9 @@ fn phase6_exit_iterator_invalidation_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("vec_invalid.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct VecI32 { data: [i32; 8], len: usize }
 impl VecI32 {
     fn drop(mut self) { return; }
@@ -1845,15 +2406,26 @@ fn main() -> i32 {
     v.push(42);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bin");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
         "Phase-6 exit: iterator invalidation must reject; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0381"),
-        "expected E0381 on iterator-invalidation; got: {stderr}");
+    assert!(
+        stderr.contains("E0381"),
+        "expected E0381 on iterator-invalidation; got: {stderr}"
+    );
 }
 
 #[test]
@@ -1862,7 +2434,9 @@ fn phase6_exit_sequential_pushes_accepted() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("vec_ok.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct VecI32 { data: [i32; 8], len: usize }
 impl VecI32 {
     fn drop(mut self) { return; }
@@ -1875,12 +2449,21 @@ fn main() -> i32 {
     v.push(3);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bin");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "sequential pushes should compile; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // ---- Phase 6 slice 6BC.opt — static drop-flag specialization ----
@@ -1893,24 +2476,36 @@ fn never_moved_drop_binding_elides_flag() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn main() -> i32 {
     let x: B = B { x: 7 };
     return x.x;
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(!ir.contains("%x.drop_flag"),
-        "drop flag should be elided when binding is never moved; got: {ir}");
+    assert!(
+        !ir.contains("%x.drop_flag"),
+        "drop flag should be elided when binding is never moved; got: {ir}"
+    );
     // Direct unconditional drop call must still appear. Slice 1F changed
     // the call to use `preserve_nonecc` to match the cold-path CC on the
     // drop method's `define` line.
-    assert!(ir.contains("call preserve_nonecc void @B.drop(ptr %x"),
-        "expected unconditional drop call (preserve_nonecc); got: {ir}");
+    assert!(
+        ir.contains("call preserve_nonecc void @B.drop(ptr %x"),
+        "expected unconditional drop call (preserve_nonecc); got: {ir}"
+    );
 }
 
 #[test]
@@ -1921,7 +2516,9 @@ fn moved_drop_binding_keeps_runtime_flag() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn consume(move b: B) { return; }
@@ -1930,14 +2527,24 @@ fn main() -> i32 {
     consume(x);
     return 0;
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("%x.drop_flag = alloca i1"),
-        "drop flag alloca should remain for moved binding; got: {ir}");
-    assert!(ir.contains("load i1, ptr %x.drop_flag"),
-        "flag load should remain at scope exit; got: {ir}");
+    assert!(
+        ir.contains("%x.drop_flag = alloca i1"),
+        "drop flag alloca should remain for moved binding; got: {ir}"
+    );
+    assert!(
+        ir.contains("load i1, ptr %x.drop_flag"),
+        "flag load should remain at scope exit; got: {ir}"
+    );
 }
 
 #[test]
@@ -1948,16 +2555,25 @@ fn never_moved_drop_runtime_behavior_unchanged() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src_path = dir.join("drop_basic.cplus");
-    let sample = format!("{}/../docs/examples/drop_basic.cplus", env!("CARGO_MANIFEST_DIR"));
+    let sample = format!(
+        "{}/../docs/examples/drop_basic.cplus",
+        env!("CARGO_MANIFEST_DIR")
+    );
     std::fs::copy(&sample, &src_path).expect("copy sample");
     let bin = dir.join("drop_basic");
-    let compile = Command::new(cpc).arg(&src_path).arg("-o").arg(&bin)
-        .status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src_path)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run");
     let stdout = String::from_utf8_lossy(&run.stdout);
-    assert_eq!(stdout, "1\n2\n-2\n-1\n",
-        "drop_basic output changed after 6BC.opt optimization; got: {stdout:?}");
+    assert_eq!(
+        stdout, "1\n2\n-2\n-1\n",
+        "drop_basic output changed after 6BC.opt optimization; got: {stdout:?}"
+    );
 }
 
 // ---- Phase 6 slice 6BC.codegen — noalias / readonly param attributes ----
@@ -1967,7 +2583,9 @@ fn mut_param_tagged_noalias_in_ir() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn bump(mut b: B) -> i32 { b.x = b.x + 1; return b.x; }
@@ -1975,13 +2593,24 @@ fn main() -> i32 {
     let mut v: B = B { x: 1 };
     return bump(v);
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "expected clean emit; stderr: {}", String::from_utf8_lossy(&out.stderr));
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "expected clean emit; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("i32 @bump(ptr noalias "),
-        "expected `mut b: B` to lower to `ptr noalias`; got: {ir}");
+    assert!(
+        ir.contains("i32 @bump(ptr noalias "),
+        "expected `mut b: B` to lower to `ptr noalias`; got: {ir}"
+    );
 }
 
 #[test]
@@ -1989,7 +2618,9 @@ fn shared_param_tagged_readonly_in_ir() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn peek(b: B) -> i32 { return b.x; }
@@ -1997,16 +2628,29 @@ fn main() -> i32 {
     let v: B = B { x: 7 };
     return peek(v);
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "expected clean emit; stderr: {}", String::from_utf8_lossy(&out.stderr));
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "expected clean emit; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("i32 @peek(ptr readonly "),
-        "expected shared `b: B` to lower to `ptr readonly`; got: {ir}");
+    assert!(
+        ir.contains("i32 @peek(ptr readonly "),
+        "expected shared `b: B` to lower to `ptr readonly`; got: {ir}"
+    );
     // And NOT `noalias` — shared borrows can alias per §2.9.
-    assert!(!ir.contains("@peek(ptr noalias"),
-        "shared borrow must not get `noalias`; got: {ir}");
+    assert!(
+        !ir.contains("@peek(ptr noalias"),
+        "shared borrow must not get `noalias`; got: {ir}"
+    );
 }
 
 #[test]
@@ -2016,19 +2660,29 @@ fn copy_struct_param_stays_by_value_no_attr() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Point { x: i32, y: i32 }
 fn shift(mut p: Point) -> i32 { p.x = p.x + 1; return p.x; }
 fn main() -> i32 {
     let v: Point = Point { x: 1, y: 2 };
     return shift(v);
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("i32 @shift(%Point "),
-        "Copy struct should stay struct-by-value; got: {ir}");
+    assert!(
+        ir.contains("i32 @shift(%Point "),
+        "Copy struct should stay struct-by-value; got: {ir}"
+    );
 }
 
 // ---- Phase 6 slice 6BC.5 — explicit `borrow REGION T` syntax ----
@@ -2038,7 +2692,9 @@ fn borrow_region_annotation_compiles_and_links() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
@@ -2051,12 +2707,21 @@ fn main() -> i32 {
     let r: B = merge(a, b);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "annotated function should compile and link; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -2067,7 +2732,9 @@ fn borrow_region_annotation_establishes_multi_source_borrow() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
@@ -2082,10 +2749,20 @@ fn main() -> i32 {
     drain(a);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move-while-multi-borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move-while-multi-borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
 }
@@ -2098,7 +2775,9 @@ fn borrow_region_with_mut_marker_is_exclusive() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut buf: borrow A B) -> borrow A B { return buf; }
@@ -2109,10 +2788,20 @@ fn main() -> i32 {
     let n: i32 = peek(v);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for read while exclusively borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for read while exclusively borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0383"), "expected E0383, got: {stderr}");
 }
@@ -2122,18 +2811,32 @@ fn move_with_borrow_annotation_rejected_at_parse() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 fn take(move x: borrow A B) { return; }
 fn main() -> i32 { return 0; }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move+borrow");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move+borrow"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Parser error — E0100 with text about region annotations.
-    assert!(stderr.contains("E0100") || stderr.contains("borrow"),
-        "expected parse error mentioning borrow, got: {stderr}");
+    assert!(
+        stderr.contains("E0100") || stderr.contains("borrow"),
+        "expected parse error mentioning borrow, got: {stderr}"
+    );
 }
 
 #[test]
@@ -2143,7 +2846,9 @@ fn explicit_annotation_fixes_e0384() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
@@ -2151,12 +2856,21 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     return B { x: 0 };
 }
 fn main() -> i32 { return 0; }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "explicit annotation should suppress E0384; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // ---- Phase 6 slice 6BC.4 — Rule E3-mut + E0384 ----
@@ -2166,7 +2880,9 @@ fn e3_mut_longest_pattern_compiles_cleanly() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn longest_mut(mut a: B, mut b: B) -> B {
@@ -2179,12 +2895,21 @@ fn main() -> i32 {
     let r: B = longest_mut(a, b);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "E3-mut should admit the longest-mut pattern; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -2192,7 +2917,9 @@ fn e3_mut_move_of_either_source_while_borrowed_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn longest_mut(mut a: B, mut b: B) -> B {
@@ -2207,14 +2934,26 @@ fn main() -> i32 {
     drain(a);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move-while-multi-borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move-while-multi-borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
-    assert!(stderr.contains("exclusively borrowed"),
-        "E0372 should report exclusive flavor under E3-mut; got: {stderr}");
+    assert!(
+        stderr.contains("exclusively borrowed"),
+        "E0372 should report exclusive flavor under E3-mut; got: {stderr}"
+    );
 }
 
 #[test]
@@ -2222,7 +2961,9 @@ fn e0384_mixed_rooting_requires_annotation() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn merge(a: B, b: B) -> B {
@@ -2230,14 +2971,26 @@ fn merge(a: B, b: B) -> B {
     return B { x: 0 };
 }
 fn main() -> i32 { return 0; }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for ambiguous elision");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for ambiguous elision"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0384"), "expected E0384, got: {stderr}");
-    assert!(stderr.contains("borrow REGION T"),
-        "E0384 suggestion should reference `borrow REGION T`; got: {stderr}");
+    assert!(
+        stderr.contains("borrow REGION T"),
+        "E0384 suggestion should reference `borrow REGION T`; got: {stderr}"
+    );
 }
 
 #[test]
@@ -2245,17 +2998,28 @@ fn e0384_does_not_fire_on_fresh_value_returns() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn fresh(a: B, b: B) -> B { return B { x: 0 }; }
 fn main() -> i32 { return 0; }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "always-fresh returns should not trigger E0384; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // ---- Phase 6 slice 6BC.3 — partial-place activation ----
@@ -2265,7 +3029,9 @@ fn disjoint_subfield_borrows_accepted_in_one_call() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Inner { v: i32 }
 impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
@@ -2276,12 +3042,21 @@ fn main() -> i32 {
     modify_both(p.left, p.right);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "disjoint sub-places should admit; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -2289,7 +3064,9 @@ fn e0374_parent_and_subfield_in_one_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Inner { v: i32 }
 impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
@@ -2300,10 +3077,20 @@ fn main() -> i32 {
     write_pair(p, p.left);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for parent+sub-place");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for parent+sub-place"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0374"), "expected E0374, got: {stderr}");
 }
@@ -2313,7 +3100,9 @@ fn e0374_cross_statement_subfield_borrow_blocks_parent_read() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Inner { v: i32 }
 impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
@@ -2326,10 +3115,20 @@ fn main() -> i32 {
     let n: i32 = peek_pair(p);
     return n;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for read of parent while sub-place borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for read of parent while sub-place borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0374"), "expected E0374, got: {stderr}");
 }
@@ -2339,7 +3138,9 @@ fn disjoint_subfield_cross_statement_accepted() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Inner { v: i32 }
 impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
@@ -2352,12 +3153,21 @@ fn main() -> i32 {
     let n: i32 = peek(p.right);
     return n;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "disjoint sub-places should admit cross-statement; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // ---- Phase 6 slice 6BC.2 — cross-statement exclusive-borrow tracking ----
@@ -2367,7 +3177,9 @@ fn e0383_read_of_exclusively_borrowed_place_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
@@ -2378,10 +3190,20 @@ fn main() -> i32 {
     let n: i32 = peek(v);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for read of exclusively-borrowed place");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for read of exclusively-borrowed place"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0383"), "expected E0383, got: {stderr}");
 }
@@ -2391,7 +3213,9 @@ fn e0383_does_not_fire_when_borrower_consumed_first() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
@@ -2404,12 +3228,21 @@ fn main() -> i32 {
     let n: i32 = peek(v);
     return n;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "moving the exclusive borrower should release the borrow; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -2417,7 +3250,9 @@ fn e0372_message_refined_when_borrow_is_exclusive() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
@@ -2428,17 +3263,31 @@ fn main() -> i32 {
     drain(v);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for move while exclusively borrowed");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for move while exclusively borrowed"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
-    assert!(stderr.contains("exclusively borrowed"),
-        "E0372 should report 'exclusively borrowed' for the mut-borrow case; got: {stderr}");
+    assert!(
+        stderr.contains("exclusively borrowed"),
+        "E0372 should report 'exclusively borrowed' for the mut-borrow case; got: {stderr}"
+    );
     // E0383 must NOT fire for the same conflict.
-    assert!(!stderr.contains("E0383"),
-        "E0383 should be suppressed for move-while-exclusive; got: {stderr}");
+    assert!(
+        !stderr.contains("E0383"),
+        "E0383 should be suppressed for move-while-exclusive; got: {stderr}"
+    );
 }
 
 #[test]
@@ -2446,7 +3295,9 @@ fn e2_mut_method_call_establishes_exclusive_borrow() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bad.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B {
     fn drop(mut self) { return; }
@@ -2459,10 +3310,20 @@ fn main() -> i32 {
     let n: i32 = peek(v);
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("bad");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for read while mut-self method's return is alive");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for read while mut-self method's return is alive"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0383"), "expected E0383, got: {stderr}");
 }
@@ -2473,7 +3334,9 @@ fn reading_the_exclusive_borrower_itself_accepted() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("good.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
@@ -2484,12 +3347,21 @@ fn main() -> i32 {
     let n: i32 = peek(cur);
     return n;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("good");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "reading the borrower itself should compile; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // ---- Phase 5 slice 5DOC — doctest extraction ----
@@ -2505,14 +3377,24 @@ fn doctest_extracts_and_runs() {
          /// assert 1 + 1 == 2;\n\
          /// ```\n\
          fn helper() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "expected pass, stderr: {}\nstdout: {}",
         String::from_utf8_lossy(&out.stderr),
-        String::from_utf8_lossy(&out.stdout));
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("DOC_TEST::helper::0 ... ok"), "got: {stdout}");
+    assert!(
+        stdout.contains("DOC_TEST::helper::0 ... ok"),
+        "got: {stdout}"
+    );
 }
 
 #[test]
@@ -2526,11 +3408,19 @@ fn doctest_failure_reports_doc_test_name() {
          /// assert false;\n\
          /// ```\n\
          fn bad() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failing exit");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("DOC_TEST::bad::0 ... FAILED"), "got: {stdout}");
+    assert!(
+        stdout.contains("DOC_TEST::bad::0 ... FAILED"),
+        "got: {stdout}"
+    );
 }
 
 #[test]
@@ -2544,12 +3434,19 @@ fn doctest_can_call_documented_item() {
          /// assert square(3) == 9;\n\
          /// ```\n\
          fn square(n: i32) -> i32 { return n * n; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "stderr: {}\nstdout: {}",
         String::from_utf8_lossy(&out.stderr),
-        String::from_utf8_lossy(&out.stdout));
+        String::from_utf8_lossy(&out.stdout)
+    );
 }
 
 #[test]
@@ -2567,8 +3464,13 @@ fn doctest_multiple_fences_get_distinct_names() {
          /// assert 1 == 1;\n\
          /// ```\n\
          fn item() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("DOC_TEST::item::0 ... ok"), "got: {stdout}");
@@ -2586,12 +3488,19 @@ fn doctest_unchanged_for_source_without_fences() {
         &src,
         "/// Plain doc comment, no example.\n\
          fn f() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("test").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("0 passed; 0 failed"),
-        "no tests should be discovered, got: {stdout}");
+    assert!(
+        stdout.contains("0 passed; 0 failed"),
+        "no tests should be discovered, got: {stdout}"
+    );
 }
 
 #[test]
@@ -2608,11 +3517,20 @@ fn doctest_does_not_interfere_with_cpc_build() {
          /// ```\n\
          fn helper() -> i32 { return 7; }\n\
          fn main() -> i32 { return helper(); }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("prog");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "build with doctests failed: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "build with doctests failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(7), "user's main should produce 7");
 }
@@ -2639,11 +3557,20 @@ fn phase7_generic_decls_and_impl_interface_clean() {
          impl Compare for Point { fn compare(self, other: i32) -> i32 { return 0; } }\n\
          fn identity[T](x: T) -> T { return x; }\n\
          fn main() -> i32 { return 7; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "phase 7 syntax should sema-clean: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "phase 7 syntax should sema-clean: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(7), "main returns 7");
 }
@@ -2659,11 +3586,19 @@ fn phase7_impl_interface_missing_method_rejected_e0503() {
          struct P { x: i32 }\n\
          impl Two for P { fn a(self) -> i32 { return 0; } }\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "missing method should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0503"), "expected E0503 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0503"),
+        "expected E0503 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -2681,13 +3616,26 @@ fn phase7_generic_fn_inferred_call_runs() {
              let b: i32 = identity(35);\n\
              return a + b;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7gen5");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "generic fn should build cleanly: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic fn should build cleanly: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42), "identity(7) + identity(35) should yield 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "identity(7) + identity(35) should yield 42"
+    );
 }
 
 #[test]
@@ -2705,10 +3653,18 @@ fn phase7_generic_fn_distinct_instantiations_emit_distinct_symbols() {
              let b: i64 = id(99i64);\n\
              return a;\n\
          }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "build failed: stderr={}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "build failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(ir.contains("@id__i32"), "missing id__i32 in IR: {ir}");
     assert!(ir.contains("@id__i64"), "missing id__i64 in IR: {ir}");
@@ -2729,13 +3685,26 @@ fn phase7_turbofish_explicit_type_args_runs() {
              let b: i32 = identity::[i32](35);\n\
              return a + b;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7tb");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "turbofish call should build cleanly: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "turbofish call should build cleanly: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42), "identity::[i32](7) + identity::[i32](35) should yield 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "identity::[i32](7) + identity::[i32](35) should yield 42"
+    );
 }
 
 #[test]
@@ -2747,11 +3716,19 @@ fn phase7_turbofish_arity_mismatch_rejected_e0501() {
         &src,
         "fn id[T](x: T) -> T { return x; }\n\
          fn main() -> i32 { let a: i32 = id::[i32, bool](7); return a; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "arity mismatch should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0501"), "expected E0501 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0501"),
+        "expected E0501 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -2772,13 +3749,26 @@ fn phase7_generic_struct_instantiation_runs() {
              let b: i32 = use_mixed(Pair[bool, i32] { first: true, second: 12 });\n\
              return a + b;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7c");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "generic struct should build cleanly: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic struct should build cleanly: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42), "use_int(Pair{{10,20}}) + use_mixed(Pair{{true,12}}) = 30 + 12 = 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "use_int(Pair{{10,20}}) + use_mixed(Pair{{true,12}}) = 30 + 12 = 42"
+    );
 }
 
 #[test]
@@ -2792,13 +3782,27 @@ fn phase7_generic_struct_emits_distinct_mangled_types() {
          fn f(p: Pair[i32, i32]) -> i32 { return p.first; }\n\
          fn g(p: Pair[bool, i32]) -> i32 { return p.second; }\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "build failed: stderr={}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "build failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("%Pair__i32__i32"), "missing %Pair__i32__i32 in IR: {ir}");
-    assert!(ir.contains("%Pair__bool__i32"), "missing %Pair__bool__i32 in IR: {ir}");
+    assert!(
+        ir.contains("%Pair__i32__i32"),
+        "missing %Pair__i32__i32 in IR: {ir}"
+    );
+    assert!(
+        ir.contains("%Pair__bool__i32"),
+        "missing %Pair__bool__i32 in IR: {ir}"
+    );
 }
 
 #[test]
@@ -2823,11 +3827,20 @@ fn phase7_generic_enum_option_runs() {
              let b: Option[i32] = Option[i32]::None;\n\
              return unwrap_or(a, 0) + unwrap_or(b, 7);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7d");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "Option[T] should build cleanly: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "Option[T] should build cleanly: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "Some(35) + None|7 = 42");
 }
@@ -2851,11 +3864,20 @@ fn phase7_generic_typed_impl_mut_self_runs() {
              b.set(42);\n\
              return b.get();\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7e_genimpl_mut");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "mut-self generic-typed impl should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "mut-self generic-typed impl should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "expected Box.set(42).get() → 42");
 }
@@ -2869,9 +3891,17 @@ fn phase7_exit_demo_runs() {
     let dir = tempdir();
     let bin = dir.join("p7demo");
     let src = std::path::PathBuf::from("../docs/examples/phase7_generics.cplus");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "Phase-7 exit demo should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "Phase-7 exit demo should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "Phase-7 exit demo should return 42");
 }
@@ -2890,11 +3920,20 @@ fn phase10_extern_fn_abs_runs() {
          fn main() -> i32 {\n\
              return unsafe { abs(0 -% 42) };\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p10a");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "extern fn abs should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "extern fn abs should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "abs(-42) → 42");
 }
@@ -2909,18 +3948,33 @@ fn phase10_extern_fn_emits_declare_not_define() {
         &src,
         "extern fn abs(x: i32) -> i32;\n\
          fn main() -> i32 { return unsafe { abs(7) }; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg(&src).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "extern fn should emit IR cleanly: stderr={}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "extern fn should emit IR cleanly: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("declare i32 @abs(i32)"),
-        "expected `declare i32 @abs(i32)`, got IR:\n{ir}");
-    assert!(!ir.contains("define i32 @abs(") && !ir.contains("define internal i32 @abs("),
-        "extern fn must not emit a body, got IR:\n{ir}");
+    assert!(
+        ir.contains("declare i32 @abs(i32)"),
+        "expected `declare i32 @abs(i32)`, got IR:\n{ir}"
+    );
+    assert!(
+        !ir.contains("define i32 @abs(") && !ir.contains("define internal i32 @abs("),
+        "extern fn must not emit a body, got IR:\n{ir}"
+    );
     // Call site uses the literal symbol name (no module prefix).
-    assert!(ir.contains("call i32 @abs(i32"),
-        "expected call to literal `@abs`, got IR:\n{ir}");
+    assert!(
+        ir.contains("call i32 @abs(i32"),
+        "expected call to literal `@abs`, got IR:\n{ir}"
+    );
 }
 
 #[test]
@@ -2932,9 +3986,17 @@ fn phase10_exit_demo_runs() {
     let dir = tempdir();
     let bin = dir.join("p10exit");
     let src = std::path::PathBuf::from("../docs/examples/phase10_ffi.cplus");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "Phase-10 exit demo should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "Phase-10 exit demo should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(42), "Phase-10 exit demo exit code");
     let stdout = String::from_utf8_lossy(&run.stdout);
@@ -2957,11 +4019,20 @@ fn phase10_repr_c_struct_runs() {
              let p: Point = Point { x: 7, y: 35 };\n\
              return p.x + p.y;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p10rc");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "#[repr(C)] struct should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "#[repr(C)] struct should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -2980,13 +4051,26 @@ fn phase10_varargs_printf_runs() {
              let fmt: str = \"answer = %d\\n\";\n\
              return unsafe { printf(str_ptr(fmt), 42) };\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p10va");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "varargs printf should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "varargs printf should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(12), "printf returns bytes written = 12");
+    assert_eq!(
+        run.status.code(),
+        Some(12),
+        "printf returns bytes written = 12"
+    );
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert_eq!(stdout, "answer = 42\n");
 }
@@ -3002,9 +4086,17 @@ fn phase10_owned_string_sample_runs() {
     let dir = tempdir();
     let bin = dir.join("p10os");
     let src = std::path::PathBuf::from("../docs/examples/owned_string.cplus");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "owned-string sample should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "owned-string sample should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(13), "len(`Hello, world!`) = 13");
     let stdout = String::from_utf8_lossy(&run.stdout);
@@ -3030,13 +4122,26 @@ fn phase10_pointer_roundtrip_via_malloc_runs() {
                  b as i32\n\
              };\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p10rt");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "pointer roundtrip should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "pointer roundtrip should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42), "malloc + store + load roundtrips → 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "malloc + store + load roundtrips → 42"
+    );
 }
 
 #[test]
@@ -3062,11 +4167,20 @@ fn phase10_pointer_index_and_arithmetic_runs() {
                  (a + b) as i32\n\
              };\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p10ia");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "pointer index+arith should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "pointer index+arith should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(32), "20 + 12 = 32 via pointer index+arith");
 }
@@ -3083,13 +4197,24 @@ fn phase10_raw_pointer_in_extern_signature_compiles() {
         "extern fn strlen(s: *u8) -> usize;\n\
          extern fn abs(x: i32) -> i32;\n\
          fn main() -> i32 { return unsafe { abs(0 -% 5) }; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg(&src).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "raw pointer in extern signature should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "raw pointer in extern signature should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("declare i64 @strlen(ptr)"),
-        "expected `declare i64 @strlen(ptr)`, got IR:\n{ir}");
+    assert!(
+        ir.contains("declare i64 @strlen(ptr)"),
+        "expected `declare i64 @strlen(ptr)`, got IR:\n{ir}"
+    );
 }
 
 #[test]
@@ -3101,11 +4226,20 @@ fn phase8_println_str_runs() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n    println(\"Hello, C+!\");\n    return 0;\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p8s");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "println(str) should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "println(str) should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&run.stdout);
@@ -3131,13 +4265,26 @@ fn phase8_str_equality_runs() {
              }\n\
              return 1;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p8e");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "str equality should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "str equality should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42), "expected a==b && a!=c to take us to 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "expected a==b && a!=c to take us to 42"
+    );
 }
 
 #[test]
@@ -3150,17 +4297,31 @@ fn phase8_fizzbuzz_exit_demo_runs() {
     let dir = tempdir();
     let bin = dir.join("p8fb");
     let src = std::path::PathBuf::from("../docs/examples/fizzbuzz.cplus");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "Phase-8 FizzBuzz exit demo should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "Phase-8 FizzBuzz exit demo should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&run.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 15, "expected 15 lines, got {}: {:?}", lines.len(), lines);
+    assert_eq!(
+        lines.len(),
+        15,
+        "expected 15 lines, got {}: {:?}",
+        lines.len(),
+        lines
+    );
     assert_eq!(lines[0], "1");
-    assert_eq!(lines[2], "Fizz");      // i=3
-    assert_eq!(lines[4], "Buzz");      // i=5
+    assert_eq!(lines[2], "Fizz"); // i=3
+    assert_eq!(lines[4], "Buzz"); // i=5
     assert_eq!(lines[14], "FizzBuzz"); // i=15
 }
 
@@ -3174,11 +4335,20 @@ fn phase7_bound_satisfied_runs() {
         &src,
         "fn pick[T: Copy](a: T, b: T) -> T { return a; }\n\
          fn main() -> i32 { return pick(42, 0); }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7e_bound");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "bound-satisfied call should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "bound-satisfied call should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "expected pick(42, 0) → 42");
 }
@@ -3198,11 +4368,24 @@ fn phase7_bound_violated_rejected_e0502() {
              let r: Point = max(p, p);\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg(&src).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "bound violation should fail compilation");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "bound violation should fail compilation"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0502"), "expected E0502 in stderr, got: {}", stderr);
+    assert!(
+        stderr.contains("E0502"),
+        "expected E0502 in stderr, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -3222,11 +4405,20 @@ fn phase7_generic_typed_impl_runs() {
              let b: Box[i32] = Box[i32] { value: 42 };\n\
              return b.get();\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7e_genimpl");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "generic-typed impl should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic-typed impl should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "expected Box[i32]::get() → 42");
 }
@@ -3248,11 +4440,20 @@ fn phase7_generic_method_with_turbofish_runs() {
              let p: P = P { x: 0 };\n\
              return p.cast::[i32](42);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7e_meth");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "generic method with turbofish should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic method with turbofish should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "expected cast::[i32](42) → 42");
 }
@@ -3272,11 +4473,20 @@ fn phase7_generic_assoc_call_with_turbofish_runs() {
          fn main() -> i32 {\n\
              return P::ident::[i32](42);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7e_assoc");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "generic assoc call with turbofish should build: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic assoc call with turbofish should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "expected P::ident::[i32](42) → 42");
 }
@@ -3302,13 +4512,26 @@ fn phase7_generic_enum_unqualified_pattern_runs() {
              let b: Option[i32] = Option[i32]::None;\n\
              return unwrap_or(a, 0) + unwrap_or(b, 7);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("p7e_unqual");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "unqualified Option pattern should build cleanly: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "unqualified Option pattern should build cleanly: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42), "Some(35) + None|7 = 42 (unqualified pattern)");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "Some(35) + None|7 = 42 (unqualified pattern)"
+    );
 }
 
 #[test]
@@ -3326,10 +4549,18 @@ fn phase7_generic_enum_emits_distinct_types() {
          fn use_i32(o: Option[i32]) -> i32 { return 0; }\n\
          fn use_bool(o: Option[bool]) -> i32 { return 0; }\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "build failed: stderr={}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "build failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
     // Two enum types declared in the IR preamble.
     assert!(ir.contains("%enum.0 = type"), "missing %enum.0: {ir}");
@@ -3345,11 +4576,22 @@ fn phase7_self_outside_impl_rejected_e0508() {
         &src,
         "fn loose(x: Self) -> i32 { return 0; }\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "Self outside impl/interface should reject");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "Self outside impl/interface should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0508"), "expected E0508 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0508"),
+        "expected E0508 in stderr: {stderr}"
+    );
 }
 
 // Phase 11 cocoa-min — full ObjC interop integration test.
@@ -3371,17 +4613,27 @@ fn phase11_cocoa_min_compiles_and_links() {
     );
     let ll = dir.join("hello_appkit.ll");
     // Emit IR.
-    let emit = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(emit.status.success(), "cpc --emit-ll failed: {}", String::from_utf8_lossy(&emit.stderr));
+    let emit = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        emit.status.success(),
+        "cpc --emit-ll failed: {}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
     std::fs::write(&ll, &emit.stdout).unwrap();
     // Link with Cocoa.
     let bin = dir.join("hello_appkit");
     let link = Command::new("clang")
         .arg(&ll)
-        .arg("-framework").arg("Cocoa")
+        .arg("-framework")
+        .arg("Cocoa")
         .arg("-lobjc")
         .arg("-Wno-override-module")
-        .arg("-o").arg(&bin)
+        .arg("-o")
+        .arg(&bin)
         .status()
         .expect("invoke clang");
     assert!(link.success(), "clang link failed");
@@ -3416,9 +4668,15 @@ fn phase11_raw_ptr_reinterpret_cast_in_unsafe_compiles() {
              unsafe { *q = 42; }\n\
              return unsafe { *q };\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("ptr_reinterpret");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(42));
@@ -3437,11 +4695,22 @@ fn phase11_raw_ptr_reinterpret_outside_unsafe_rejected_e0801() {
              let q: *i32 = p as *i32;\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "ptr-to-ptr reinterpret outside unsafe should reject");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "ptr-to-ptr reinterpret outside unsafe should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0801"), "expected E0801 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0801"),
+        "expected E0801 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -3457,9 +4726,15 @@ fn phase11_if_expr_with_usize_arms_compiles() {
              let x: usize = if 1 == 1 { 8 as usize } else { 16 as usize };\n\
              return x as i32;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("if_usize");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(8));
@@ -3471,7 +4746,11 @@ fn phase11_if_expr_with_usize_arms_compiles() {
 fn phase11_fn_pointer_demo_runs() {
     let out = compile_and_run("phase11_fn_pointers.cplus");
     // Exit 42 = handle_click(0) + handle_hover(0) = 35 + 7.
-    assert_eq!(out.status.code(), Some(42), "phase11_fn_pointers should exit 42");
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "phase11_fn_pointers should exit 42"
+    );
 }
 
 #[test]
@@ -3486,9 +4765,15 @@ fn phase11_fn_pointer_indirect_call_via_local_runs() {
              let f: fn(i32) -> i32 = double;\n\
              return f(21);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("fnptr_local");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(42));
@@ -3509,9 +4794,15 @@ fn phase11_fn_pointer_struct_field_runs() {
              let a: Actions = Actions { on_click: handler };\n\
              return a.on_click(7);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("fnptr_struct");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(42));
@@ -3530,9 +4821,15 @@ fn phase11_fn_pointer_to_libc_atexit_runs() {
         "extern fn atexit(cb: fn()) -> i32;\n\
          fn cleanup() { println(42); }\n\
          fn main() -> i32 { unsafe { atexit(cleanup); } return 0; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("fnptr_atexit");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success(), "fn pointer to atexit should compile");
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
@@ -3549,11 +4846,19 @@ fn phase11_fn_pointer_signature_mismatch_rejected_e0302() {
         &src,
         "fn double(x: i32) -> i32 { return x +% x; }\n\
          fn main() -> i32 { let f: fn(bool) -> i32 = double; return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0302"),
+        "expected E0302 in stderr: {stderr}"
+    );
 }
 
 // Phase 11 / P3 from null design: integer-to-raw-pointer cast.
@@ -3573,9 +4878,15 @@ fn phase11_int_to_ptr_cast_inside_unsafe_compiles() {
              unsafe { free(null_ptr); }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("int_to_ptr");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success(), "0 as *u8 inside unsafe should compile");
     // libc's free(NULL) is a no-op per POSIX, so the binary should exit 0.
     let run = Command::new(&bin).output().expect("run binary");
@@ -3590,11 +4901,22 @@ fn phase11_int_to_ptr_cast_outside_unsafe_rejected_e0801() {
     std::fs::write(
         &src,
         "fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "0 as *u8 outside unsafe should reject");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "0 as *u8 outside unsafe should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0801"), "expected E0801 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0801"),
+        "expected E0801 in stderr: {stderr}"
+    );
 }
 
 // Phase 11 / ObjC interop: `#[link_name = "..."]` attribute.
@@ -3611,9 +4933,15 @@ fn phase11_link_name_aliases_symbol_runs() {
         &src,
         "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32;\n\
          fn main() -> i32 { return unsafe { my_abs(0 -% 42) }; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("link_name_abs");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success(), "link_name extern fn should compile");
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(42), "abs(-42) should return 42");
@@ -3630,13 +4958,27 @@ fn phase11_link_name_emits_alias_in_ir() {
         &src,
         "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32;\n\
          fn main() -> i32 { return unsafe { my_abs(0 -% 7) }; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success(), "compile should succeed");
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("declare i32 @abs("), "expected `declare i32 @abs(...)` in IR: {ir}");
-    assert!(ir.contains("@abs(i32"), "expected call to use `@abs` not `@my_abs`: {ir}");
-    assert!(!ir.contains("@my_abs"), "should NOT emit `@my_abs` anywhere: {ir}");
+    assert!(
+        ir.contains("declare i32 @abs("),
+        "expected `declare i32 @abs(...)` in IR: {ir}"
+    );
+    assert!(
+        ir.contains("@abs(i32"),
+        "expected call to use `@abs` not `@my_abs`: {ir}"
+    );
+    assert!(
+        !ir.contains("@my_abs"),
+        "should NOT emit `@my_abs` anywhere: {ir}"
+    );
 }
 
 #[test]
@@ -3651,17 +4993,37 @@ fn phase11_link_name_dedups_multiple_decls() {
         "#[link_name = \"abs\"] extern fn abs_i32(x: i32) -> i32;\n\
          #[link_name = \"abs\"] extern fn abs_again(x: i32) -> i32;\n\
          fn main() -> i32 { return unsafe { abs_i32(0 -% 7) + abs_again(0 -% 35) }; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(), "two link_name aliases for same symbol should compile");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "two link_name aliases for same symbol should compile"
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
     let declare_count = ir.matches("declare i32 @abs(").count();
-    assert_eq!(declare_count, 1, "expected exactly one `declare @abs`, got {declare_count}: {ir}");
+    assert_eq!(
+        declare_count, 1,
+        "expected exactly one `declare @abs`, got {declare_count}: {ir}"
+    );
     // And the binary still runs.
     let bin = dir.join("link_name_dedup");
-    let _ = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let _ = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(42), "abs(-7) + abs(-35) should be 42");
+    assert_eq!(
+        run.status.code(),
+        Some(42),
+        "abs(-7) + abs(-35) should be 42"
+    );
 }
 
 #[test]
@@ -3673,11 +5035,22 @@ fn phase11_link_name_on_non_extern_fn_rejected() {
         &src,
         "#[link_name = \"foo\"] fn local(x: i32) -> i32 { return x; }\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "link_name on non-extern fn should reject");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "link_name on non-extern fn should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0356"), "expected E0356 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0356"),
+        "expected E0356 in stderr: {stderr}"
+    );
 }
 
 // Phase 11 slice 11.LAYOUT: size_of[T]() / align_of[T]() intrinsics.
@@ -3693,7 +5066,11 @@ fn phase11_size_of_align_of_demo_runs() {
     // 6 primitive-layout lines (s_i8, s_i32, s_i64, a_i8, a_i32, a_i64) + 1 aggregate (s_point).
     let expected = "1\n4\n8\n1\n4\n8\n8\n";
     assert_eq!(stdout, expected, "stdout mismatch");
-    assert_eq!(out.status.code(), Some(8), "exit code should be size_of[Point] = 8");
+    assert_eq!(
+        out.status.code(),
+        Some(8),
+        "exit code should be size_of[Point] = 8"
+    );
 }
 
 #[test]
@@ -3708,12 +5085,25 @@ fn phase11_size_of_inside_generic_fn_runs() {
         &src,
         "fn typed_size[T]() -> usize { return size_of::[T](); }\n\
          fn main() -> i32 { let n: usize = typed_size::[i32](); return n as i32; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("size_of_generic");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(compile.success(), "size_of inside generic fn should compile cleanly");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        compile.success(),
+        "size_of inside generic fn should compile cleanly"
+    );
     let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(4), "typed_size::[i32]() should return 4");
+    assert_eq!(
+        run.status.code(),
+        Some(4),
+        "typed_size::[i32]() should return 4"
+    );
 }
 
 #[test]
@@ -3724,11 +5114,22 @@ fn phase11_size_of_no_type_arg_rejected() {
     std::fs::write(
         &src,
         "fn main() -> i32 { let n: usize = size_of(); return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "size_of() with no type arg should reject");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "size_of() with no type arg should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0501"), "expected E0501 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0501"),
+        "expected E0501 in stderr: {stderr}"
+    );
 }
 
 // Slice 7GEN.5c carry-forward (closed 2026-05-13): a generic fn whose
@@ -3749,12 +5150,20 @@ fn phase7_generic_fn_returning_generic_struct_runs() {
              let b: Box[i32] = boxed::[i32](42);\n\
              return b.value;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("g_ret");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "generic fn returning Box[T] should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3772,12 +5181,20 @@ fn phase7_generic_fn_returning_generic_struct_inferred_runs() {
              let b: Box[i32] = boxed(7);\n\
              return b.value * 6;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("g_ret_inf");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "generic fn returning Box[T] via inference should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3800,12 +5217,20 @@ fn phase7_generic_fn_returning_nested_generic_struct_runs() {
              let p: Pair[Box[i32], i32] = wrap::[i32](20, 22);\n\
              return p.first.value + p.second;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("g_nested");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "generic fn returning nested generic should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3830,12 +5255,20 @@ fn phase7_generic_type_assoc_fn_call_runs() {
              let b: Box[i32] = Box[i32]::new(42);\n\
              return b.value;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("g_assoc");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "Box[i32]::new should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3857,12 +5290,20 @@ fn phase7_generic_type_assoc_fn_multi_args_runs() {
              let p: Pair[i32, bool] = Pair[i32, bool]::make(42, true);\n\
              return p.sum_first_and_b();\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("g_assoc_multi");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "Pair[i32,bool]::make should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3876,14 +5317,24 @@ fn phase11_vec_generic_demo_runs() {
     let dir = tempdir();
     let src = "/Users/adel/Workspace/C+/docs/examples/phase11_vec_generic.cplus";
     let bin = dir.join("vec_generic");
-    let out = Command::new(cpc).arg(src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg(src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "Vec[T, A] sample should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(36),
+    assert_eq!(
+        run.status.code(),
+        Some(36),
         "Vec generic demo should exit with sum 1..=8 = 36; stdout={}",
-        String::from_utf8_lossy(&run.stdout));
+        String::from_utf8_lossy(&run.stdout)
+    );
 }
 
 // Phase 11 polish (2026-05-13): `type Foo = Bar;` aliases.
@@ -3900,11 +5351,20 @@ fn phase11_type_alias_primitive_runs() {
         &src,
         "type Byte = i32;\n\
          fn main() -> i32 { let n: Byte = 42; return n; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("alias_prim");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "type alias should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "type alias should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3922,11 +5382,20 @@ fn phase11_type_alias_struct_runs() {
              let p: Coord = Point { x: 20, y: 22 };\n\
              return p.x + p.y;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("alias_struct");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "struct alias should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "struct alias should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3942,11 +5411,20 @@ fn phase11_type_alias_chained_runs() {
          type B = A;\n\
          type C = B;\n\
          fn main() -> i32 { let n: C = 42; return n; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("alias_chain");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "chained alias should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "chained alias should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -3961,11 +5439,19 @@ fn phase11_type_alias_cycle_rejected_e0510() {
         "type A = B;\n\
          type B = A;\n\
          fn main() -> i32 { let x: A = 0; return x; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "cyclic alias should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0510"), "expected E0510 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0510"),
+        "expected E0510 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -3978,11 +5464,22 @@ fn phase11_type_alias_duplicate_rejected_e0301() {
         "struct Foo { x: i32 }\n\
          type Foo = i32;\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "duplicate type definition should reject");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "duplicate type definition should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0301"), "expected E0301 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0301"),
+        "expected E0301 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -3995,11 +5492,20 @@ fn phase11_type_alias_in_fn_signature_runs() {
         "type Bytes = usize;\n\
          fn measure(n: Bytes) -> Bytes { return n; }\n\
          fn main() -> i32 { let n: Bytes = 42 as usize; return measure(n) as i32; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("alias_fn");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "alias in fn signature should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "alias in fn signature should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -4023,11 +5529,20 @@ fn phase8_string_new_and_methods_runs() {
              if empty { return 42; }\n\
              return n;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("s");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "string methods should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "string methods should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -4045,11 +5560,20 @@ fn phase8_to_string_on_primitives_runs() {
              println(s.as_str());\n\
              return s.len() as i32;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("ts");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "to_string should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "to_string should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(5), "len of \"-1234\" is 5");
     let stdout = String::from_utf8_lossy(&run.stdout);
@@ -4070,11 +5594,20 @@ fn phase8_interp_simple_runs() {
              println(g.as_str());\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("ip");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "interpolation should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "interpolation should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&run.stdout);
@@ -4094,11 +5627,20 @@ fn phase8_interp_expressions_runs() {
              println(s.as_str());\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("ipe");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "expr-inside-interp should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "expr-inside-interp should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("sum: 10, doubled: 14"), "stdout: {stdout}");
@@ -4116,11 +5658,20 @@ fn phase8_interp_double_dollar_escape_runs() {
              println(s);\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("dd");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "$$ escape should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "$$ escape should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("price: $5"), "stdout: {stdout}");
@@ -4139,11 +5690,19 @@ fn phase8_interp_non_tostring_type_rejected_e0612() {
              let s: string = \"point: ${p}\";\n\
              return s.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "non-ToString type should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0612"), "expected E0612 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0612"),
+        "expected E0612 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -4152,9 +5711,17 @@ fn phase8_interp_demo_sample_runs() {
     let dir = tempdir();
     let src = "/Users/adel/Workspace/C+/docs/examples/phase8_interpolation.cplus";
     let bin = dir.join("interp_demo");
-    let out = Command::new(cpc).arg(src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "interpolation demo should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "interpolation demo should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
 }
@@ -4172,23 +5739,40 @@ fn phase11_debuginfo_g_emits_di_metadata() {
         &src,
         "fn helper(x: i32) -> i32 { return x +% 1; }\n\
          fn main() -> i32 { return helper(41); }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("-g").arg("--emit-ll").arg(&src)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "-g should emit IR: stderr={}", String::from_utf8_lossy(&out.stderr));
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("-g")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "-g should emit IR: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("!llvm.module.flags"), "missing module flags: {ir}");
+    assert!(
+        ir.contains("!llvm.module.flags"),
+        "missing module flags: {ir}"
+    );
     assert!(ir.contains("!DICompileUnit"), "missing DICompileUnit: {ir}");
     assert!(ir.contains("!DIFile"), "missing DIFile: {ir}");
-    assert!(ir.contains("!DISubprogram(name: \"main\""),
-        "missing DISubprogram for main: {ir}");
-    assert!(ir.contains("!DISubprogram(name: \"helper\""),
-        "missing DISubprogram for helper: {ir}");
+    assert!(
+        ir.contains("!DISubprogram(name: \"main\""),
+        "missing DISubprogram for main: {ir}"
+    );
+    assert!(
+        ir.contains("!DISubprogram(name: \"helper\""),
+        "missing DISubprogram for helper: {ir}"
+    );
     assert!(ir.contains("!DILocation"), "missing DILocation: {ir}");
     // define lines should reference !dbg.
-    assert!(ir.contains("i32 @main()") && ir.contains("!dbg "),
-        "main define should carry !dbg: {ir}");
+    assert!(
+        ir.contains("i32 @main()") && ir.contains("!dbg "),
+        "main define should carry !dbg: {ir}"
+    );
 }
 
 #[test]
@@ -4196,15 +5780,20 @@ fn phase11_debuginfo_g_binary_links() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("dbg_bin.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 { return 42; }\n",
-    ).unwrap();
+    std::fs::write(&src, "fn main() -> i32 { return 42; }\n").unwrap();
     let bin = dir.join("dbg_bin");
-    let out = Command::new(cpc).arg("-g").arg(&src).arg("-o").arg(&bin)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "cpc -g should link the binary: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg("-g")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "cpc -g should link the binary: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42));
 }
@@ -4215,15 +5804,18 @@ fn phase11_debuginfo_off_by_default_no_di() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("nodbg.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src)
-        .output().expect("invoke cpc");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(!ir.contains("!DICompileUnit"), "DI should be absent without -g: {ir}");
+    assert!(
+        !ir.contains("!DICompileUnit"),
+        "DI should be absent without -g: {ir}"
+    );
 }
 
 // Phase 11 polish (2026-05-13): sanitizer flags. `--asan` / `--ubsan` /
@@ -4238,12 +5830,22 @@ fn phase11_asan_attaches_function_attr() {
     let dir = tempdir();
     let src = dir.join("ok.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("--asan").arg("--emit-ll").arg(&src)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg("--asan")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(ir.contains("i32 @main() sanitize_address"),
-        "main should carry sanitize_address attr: {ir}");
+    assert!(
+        ir.contains("i32 @main() sanitize_address"),
+        "main should carry sanitize_address attr: {ir}"
+    );
 }
 
 #[test]
@@ -4254,11 +5856,18 @@ fn phase11_ubsan_no_function_attr() {
     let dir = tempdir();
     let src = dir.join("u.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("--ubsan").arg("--emit-ll").arg(&src)
-        .output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--ubsan")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
-    assert!(!ir.contains("sanitize_"), "UBSan should not attach a sanitize_ attr: {ir}");
+    assert!(
+        !ir.contains("sanitize_"),
+        "UBSan should not attach a sanitize_ attr: {ir}"
+    );
 }
 
 #[test]
@@ -4268,9 +5877,14 @@ fn phase11_sanitizer_exclusive_combo_rejected() {
     let src = dir.join("x.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
     let bin = dir.join("x");
-    let out = Command::new(cpc).arg("--asan").arg("--tsan")
-        .arg(&src).arg("-o").arg(&bin)
-        .output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--asan")
+        .arg("--tsan")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "asan + tsan should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("mutually exclusive"), "stderr: {stderr}");
@@ -4293,17 +5907,29 @@ fn phase11_asan_catches_heap_overflow() {
              }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("oob");
-    let out = Command::new(cpc).arg("--asan").arg(&src).arg("-o").arg(&bin)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "asan build should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg("--asan")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "asan build should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     // ASan exits non-zero and prints "AddressSanitizer:" on stderr.
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(stderr.contains("AddressSanitizer"),
-        "ASan didn't fire on heap overflow; stderr={stderr}, status={:?}", run.status);
+    assert!(
+        stderr.contains("AddressSanitizer"),
+        "ASan didn't fire on heap overflow; stderr={stderr}, status={:?}",
+        run.status
+    );
 }
 
 // Phase 11 polish (2026-05-13): borrow-conflict diagnostics surface a
@@ -4315,7 +5941,9 @@ fn phase11_borrow_diagnostic_includes_secondary_label() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bdiag.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn longest(a: B, b: B) -> B {
@@ -4330,14 +5958,21 @@ fn main() -> i32 {
     drain(a);
     return 0;
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src)
-        .output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0372"), "stderr: {stderr}");
-    assert!(stderr.contains("note: `r` borrows `a` here"),
-        "secondary label missing; stderr: {stderr}");
+    assert!(
+        stderr.contains("note: `r` borrows `a` here"),
+        "secondary label missing; stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -4345,7 +5980,9 @@ fn phase11_borrow_diagnostic_json_carries_labels_field() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bjson.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn longest(a: B, b: B) -> B {
@@ -4360,13 +5997,21 @@ fn main() -> i32 {
     drain(a);
     return 0;
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--diagnostics=json").arg("--emit-ll").arg(&src)
-        .output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--diagnostics=json")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("\"labels\""),
-        "JSON output should carry a labels field; stderr: {stderr}");
+    assert!(
+        stderr.contains("\"labels\""),
+        "JSON output should carry a labels field; stderr: {stderr}"
+    );
     assert!(stderr.contains("borrows `a` here"), "stderr: {stderr}");
 }
 
@@ -4389,10 +6034,16 @@ fn phase11_cli_check_subcommand_on_clean_file_exits_zero() {
     let dir = tempdir();
     let src = dir.join("clean.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(),
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
         "check on clean file should exit 0: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -4401,7 +6052,11 @@ fn phase11_cli_check_subcommand_on_broken_file_exits_nonzero() {
     let dir = tempdir();
     let src = dir.join("broken.cplus");
     std::fs::write(&src, "fn main() -> i32 { return foo; }\n").unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "check on broken file should fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0300"), "stderr: {stderr}");
@@ -4417,8 +6072,12 @@ fn phase11_cli_check_subcommand_no_codegen_artifact() {
     let src = dir.join("ok.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
     let cwd = dir.clone();
-    let out = Command::new(cpc).current_dir(&cwd).arg("check").arg(&src)
-        .output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .current_dir(&cwd)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let aout = cwd.join("a.out");
     assert!(!aout.exists(), "`check` should not create a.out");
@@ -4427,13 +6086,21 @@ fn phase11_cli_check_subcommand_no_codegen_artifact() {
 #[test]
 fn phase11_cli_subcommand_help_returns_only_relevant_slice() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("test").arg("--help").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg("--help")
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.starts_with("cpc test"),
-        "`cpc test --help` should print only the test usage: {stdout}");
-    assert!(!stdout.contains("cpc build"),
-        "subcommand help should NOT include other subcommands: {stdout}");
+    assert!(
+        stdout.starts_with("cpc test"),
+        "`cpc test --help` should print only the test usage: {stdout}"
+    );
+    assert!(
+        !stdout.contains("cpc build"),
+        "subcommand help should NOT include other subcommands: {stdout}"
+    );
 }
 
 #[test]
@@ -4441,12 +6108,28 @@ fn phase11_cli_help_documents_sanitizer_and_debuginfo_flags() {
     // Regression — these landed earlier but weren't in --help until
     // the CLI polish pass.
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("--help").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--help")
+        .output()
+        .expect("invoke cpc");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    for flag in &["--asan", "--ubsan", "--tsan", "--msan", "-g", "--debug-info"] {
-        assert!(stdout.contains(flag), "--help should document {flag}: {stdout}");
+    for flag in &[
+        "--asan",
+        "--ubsan",
+        "--tsan",
+        "--msan",
+        "-g",
+        "--debug-info",
+    ] {
+        assert!(
+            stdout.contains(flag),
+            "--help should document {flag}: {stdout}"
+        );
     }
-    assert!(stdout.contains("cpc check FILE"), "--help should document `check`: {stdout}");
+    assert!(
+        stdout.contains("cpc check FILE"),
+        "--help should document `check`: {stdout}"
+    );
 }
 
 // Phase 11 polish (2026-05-14): doc generator.
@@ -4456,7 +6139,9 @@ fn phase11_doc_generator_writes_markdown() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("demo.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 /// A point in 2D space.
 pub struct Point { pub x: i32, pub y: i32 }
 
@@ -4465,11 +6150,20 @@ pub fn add(a: i32, b: i32) -> i32 { return a +% b; }
 
 /// Internal helper — not documented (and not pub).
 fn private(n: i32) -> i32 { return n; }
-").unwrap();
-    let out = Command::new(cpc).current_dir(&dir).arg("doc").arg(&src)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "doc should succeed: stderr={}", String::from_utf8_lossy(&out.stderr));
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("doc")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "doc should succeed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let md_path_rel = stdout.trim();
     assert!(md_path_rel.ends_with("demo.md"), "stdout: {stdout}");
@@ -4478,7 +6172,10 @@ fn private(n: i32) -> i32 { return n; }
     assert!(md.contains("# `demo.cplus`"));
     assert!(md.contains("`struct Point`"));
     assert!(md.contains("`fn add`"));
-    assert!(!md.contains("private"), "private item should not appear: {md}");
+    assert!(
+        !md.contains("private"),
+        "private item should not appear: {md}"
+    );
 }
 
 #[test]
@@ -4486,21 +6183,31 @@ fn phase11_doc_generator_preserves_fenced_doctests() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("d.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 /// Adds two integers.
 ///
 /// ```
 /// assert add(2, 3) == 5;
 /// ```
 pub fn add(a: i32, b: i32) -> i32 { return a +% b; }
-").unwrap();
-    let out = Command::new(cpc).current_dir(&dir).arg("doc").arg(&src)
-        .output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("doc")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let md_path_rel = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let md = std::fs::read_to_string(dir.join(&md_path_rel)).expect("read md");
-    assert!(md.contains("assert add(2, 3) == 5"),
-        "fenced doctest body should appear in output: {md}");
+    assert!(
+        md.contains("assert add(2, 3) == 5"),
+        "fenced doctest body should appear in output: {md}"
+    );
 }
 
 #[test]
@@ -4515,11 +6222,17 @@ fn phase11_doc_generator_no_arg_errors() {
 #[test]
 fn phase11_doc_help_in_subcommand_help() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("doc").arg("--help").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("doc")
+        .arg("--help")
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.starts_with("cpc doc FILE"),
-        "subcommand help should be doc-specific: {stdout}");
+    assert!(
+        stdout.starts_with("cpc doc FILE"),
+        "subcommand help should be doc-specific: {stdout}"
+    );
 }
 
 // Phase 11 polish (2026-05-14): owned `string` Drop integration.
@@ -4542,19 +6255,32 @@ fn phase11_string_drop_no_leaks_under_asan() {
              let t: string = n.to_string();\n\
              return s.len() as i32 +% t.len() as i32;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("nl");
-    let out = Command::new(cpc).arg("--asan").arg(&src).arg("-o").arg(&bin)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "asan build should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg("--asan")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "asan build should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).output().expect("run binary");
     let stderr = String::from_utf8_lossy(&run.stderr);
     // ASan reports leaks on exit. If Drop is wired, stderr is clean.
-    assert!(!stderr.contains("LeakSanitizer"),
-        "ASan reported a leak — string Drop not freeing: stderr={stderr}");
-    assert!(!stderr.contains("AddressSanitizer"),
-        "ASan reported a bug: stderr={stderr}");
+    assert!(
+        !stderr.contains("LeakSanitizer"),
+        "ASan reported a leak — string Drop not freeing: stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("AddressSanitizer"),
+        "ASan reported a bug: stderr={stderr}"
+    );
 }
 
 #[test]
@@ -4570,10 +6296,16 @@ fn phase11_string_drop_handles_empty_string_new_safely() {
              let s: string = string::new();\n\
              return s.len() as i32;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("en");
-    let out = Command::new(cpc).arg("--asan").arg(&src).arg("-o").arg(&bin)
-        .output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--asan")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
@@ -4589,7 +6321,9 @@ fn phase11_slice_type_parse_and_use_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("sl.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 extern fn malloc(n: usize) -> *u8;
 
 fn sum_i32(xs: i32[]) -> i32 {
@@ -4615,11 +6349,21 @@ fn main() -> i32 {
     let xs: i32[] = unsafe { slice_from_raw_parts(p, 3 as usize) };
     return sum_i32(xs);
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("sl");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
-    assert!(out.status.success(),
-        "slice sample should compile: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "slice sample should compile: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "sum of [10,20,12] = 42");
 }
@@ -4629,17 +6373,31 @@ fn phase11_slice_from_raw_parts_outside_unsafe_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("nu.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 fn main() -> i32 {
     let p: *i32 = unsafe { 0 as *i32 };
     let xs: i32[] = slice_from_raw_parts(p, 0 as usize);
     return slice_len(xs) as i32;
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "slice_from_raw_parts outside unsafe should reject");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "slice_from_raw_parts outside unsafe should reject"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0801"), "expected E0801 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0801"),
+        "expected E0801 in stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -4647,18 +6405,32 @@ fn phase11_slice_ptr_on_non_slice_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("ns.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 fn main() -> i32 {
     let n: i32 = 42;
     let p: *i32 = slice_ptr(n);
     return 0;
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
-    assert!(stderr.contains("slice"), "stderr should mention 'slice': {stderr}");
+    assert!(
+        stderr.contains("E0302"),
+        "expected E0302 in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("slice"),
+        "stderr should mention 'slice': {stderr}"
+    );
 }
 
 #[test]
@@ -4668,18 +6440,29 @@ fn phase11_slice_type_distinct_element_types() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("dt.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 fn takes_i32_slice(xs: i32[]) -> i32 { return slice_len(xs) as i32; }
 fn main() -> i32 {
     let p: *u8 = unsafe { 0 as *u8 };
     let bytes: u8[] = unsafe { slice_from_raw_parts(p, 0 as usize) };
     return takes_i32_slice(bytes);
 }
-").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "u8[] to i32[] should reject");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0302"), "expected E0302 in stderr: {stderr}");
+    assert!(
+        stderr.contains("E0302"),
+        "expected E0302 in stderr: {stderr}"
+    );
 }
 
 // ---- Phase v0.0.2 Slice 1G: --emit-ll-opt and --emit-asm ----
@@ -4704,8 +6487,11 @@ fn emit_ll_opt_prints_post_pass_ir() {
         .arg(&src)
         .output()
         .expect("invoke cpc");
-    assert!(out.status.success(), "cpc --emit-ll-opt exited non-zero; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "cpc --emit-ll-opt exited non-zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("define"), "missing define in post-pass IR: {s}");
     assert!(s.contains("@main"), "missing @main: {s}");
@@ -4728,10 +6514,16 @@ fn emit_ll_opt_release_runs_optimization() {
         .arg(&src)
         .output()
         .expect("invoke cpc");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("ret i32 6"),
-        "expected constant-folded `ret i32 6` at -O2, got:\n{s}");
+    assert!(
+        s.contains("ret i32 6"),
+        "expected constant-folded `ret i32 6` at -O2, got:\n{s}"
+    );
 }
 
 #[test]
@@ -4747,32 +6539,47 @@ fn emit_asm_prints_assembly() {
         .arg(&src)
         .output()
         .expect("invoke cpc");
-    assert!(out.status.success(), "cpc --emit-asm exited non-zero; stderr: {}",
-        String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "cpc --emit-asm exited non-zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8_lossy(&out.stdout);
     // Either `_main:` (Mach-O) or `main:` (ELF). Both contain `main:`.
-    assert!(s.contains("main:") || s.contains("main "),
-        "missing main label in asm: {s}");
+    assert!(
+        s.contains("main:") || s.contains("main "),
+        "missing main label in asm: {s}"
+    );
 }
 
 #[test]
 fn emit_ll_opt_without_file_arg_fails() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("--emit-ll-opt").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--emit-ll-opt")
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failure without FILE arg");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("--emit-ll-opt requires a FILE argument"),
-        "missing diagnostic, got: {stderr}");
+    assert!(
+        stderr.contains("--emit-ll-opt requires a FILE argument"),
+        "missing diagnostic, got: {stderr}"
+    );
 }
 
 #[test]
 fn emit_asm_without_file_arg_fails() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("--emit-asm").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--emit-asm")
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failure without FILE arg");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("--emit-asm requires a FILE argument"),
-        "missing diagnostic, got: {stderr}");
+    assert!(
+        stderr.contains("--emit-asm requires a FILE argument"),
+        "missing diagnostic, got: {stderr}"
+    );
 }
 
 #[test]
@@ -4789,8 +6596,10 @@ fn emit_ll_opt_propagates_sema_errors() {
         .expect("invoke cpc");
     assert!(!out.status.success(), "expected sema failure to propagate");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0302") || stderr.contains("error"),
-        "expected sema diagnostic, got: {stderr}");
+    assert!(
+        stderr.contains("E0302") || stderr.contains("error"),
+        "expected sema diagnostic, got: {stderr}"
+    );
 }
 
 #[test]
@@ -4800,18 +6609,27 @@ fn emit_ll_opt_preserves_slice_1a_attrs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("attr.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn double(x: i32) -> i32 { return x + x; }\n\
-         fn main() -> i32 { return double(21); }\n").unwrap();
+         fn main() -> i32 { return double(21); }\n",
+    )
+    .unwrap();
     let out = Command::new(cpc)
         .arg("--emit-ll-opt")
         .arg(&src)
         .output()
         .expect("invoke cpc");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("noundef"),
-        "expected `noundef` attr to survive clang round-trip, got:\n{s}");
+    assert!(
+        s.contains("noundef"),
+        "expected `noundef` attr to survive clang round-trip, got:\n{s}"
+    );
 }
 
 // ---- Phase 2 Slices 2A/2B: package system MVP ----
@@ -4836,17 +6654,24 @@ fn vendor_import_round_trips_end_to_end() {
     std::fs::write(
         dir.join("vendor/utils/Cplus.toml"),
         "[package]\nname = \"utils\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"utils/math\" as math;\n\
          fn main() -> i32 { return math::add(20, 22); }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/app");
     let run = Command::new(&bin).status().expect("run");
@@ -4857,21 +6682,25 @@ fn vendor_import_round_trips_end_to_end() {
 fn undeclared_vendor_package_emits_e0852() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    std::fs::write(
-        dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n",
-    ).unwrap();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"app\"\n").unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"nope/foo\" as f;\nfn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0852"), "expected E0852, got: {stderr}");
-    assert!(stderr.contains("not a declared dependency"),
-        "diagnostic should explain the cause: {stderr}");
+    assert!(
+        stderr.contains("not a declared dependency"),
+        "diagnostic should explain the cause: {stderr}"
+    );
 }
 
 #[test]
@@ -4881,22 +6710,30 @@ fn stale_cplus_extension_in_import_emits_e0858() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
     std::fs::write(
         dir.join("vendor/utils/Cplus.toml"),
         "[package]\nname = \"utils\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"utils/math.cplus\" as math;\nfn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0858"), "expected E0858, got: {stderr}");
@@ -4909,22 +6746,30 @@ fn vendor_escape_emits_e0859() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
     std::fs::write(
         dir.join("vendor/utils/Cplus.toml"),
         "[package]\nname = \"utils\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"utils/../escape\" as e;\nfn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0859"), "expected E0859, got: {stderr}");
@@ -4937,22 +6782,30 @@ fn bare_import_emits_e0853() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
     std::fs::write(
         dir.join("vendor/utils/Cplus.toml"),
         "[package]\nname = \"utils\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/math.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"bare\" as b;\nfn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0853"), "expected E0853, got: {stderr}");
@@ -4967,29 +6820,40 @@ fn local_relative_imports_still_work_with_deps_declared() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
     std::fs::write(
         dir.join("vendor/utils/Cplus.toml"),
         "[package]\nname = \"utils\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("vendor/utils/src/_dummy.cplus"),
         "pub fn unused() -> i32 { return 0; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/helper.cplus"),
         "pub fn local() -> i32 { return 7; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"./helper\" as helper;\n\
          fn main() -> i32 { return helper::local(); }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "local import broke after introducing deps");
-    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run");
     assert_eq!(run.code(), Some(7));
 }
 
@@ -5029,18 +6893,27 @@ fn dep_link_table_libs_flow_through_to_linker() {
     std::fs::write(
         dir.join("vendor/mathy/Cplus.toml"),
         "[package]\nname = \"mathy\"\n\n[link]\nlibs = [\"m\"]\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("vendor/mathy/src/api.cplus"),
         "pub fn answer() -> i32 { return 42; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"mathy/api\" as m;\nfn main() -> i32 { return m::answer(); }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "dep with [link].libs should still build");
-    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run");
     assert_eq!(run.code(), Some(42));
 }
 
@@ -5061,14 +6934,20 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     std::fs::write(&c_src, "int tiny_double(int n) { return n * 2; }\n").unwrap();
     let obj = dir.join("tiny.o");
     let cc = Command::new("clang")
-        .arg("-c").arg(&c_src)
-        .arg("-o").arg(&obj)
-        .status().expect("invoke clang -c");
+        .arg("-c")
+        .arg(&c_src)
+        .arg("-o")
+        .arg(&obj)
+        .status()
+        .expect("invoke clang -c");
     assert!(cc.success(), "clang -c on tiny.c failed");
     let archive = lib_dir.join("libtiny.a");
     let ar = Command::new("ar")
-        .arg("rcs").arg(&archive).arg(&obj)
-        .status().expect("invoke ar");
+        .arg("rcs")
+        .arg(&archive)
+        .arg(&obj)
+        .status()
+        .expect("invoke ar");
     assert!(ar.success(), "ar rcs failed");
     let _ = std::fs::remove_file(&obj);
     let _ = std::fs::remove_file(&c_src);
@@ -5085,7 +6964,8 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
         dir.join("vendor/tiny/src/api.cplus"),
         "pub fn double(n: i32) -> i32 { return unsafe { tiny_double(n) }; }\n\
          extern fn tiny_double(n: i32) -> i32;\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     // 3. Consumer.
     std::fs::write(
@@ -5096,11 +6976,18 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"tiny/api\" as tiny;\nfn main() -> i32 { return tiny::double(21); }\n",
-    ).unwrap();
+    )
+    .unwrap();
 
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "bundled-artifact build failed");
-    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run");
     assert_eq!(run.code(), Some(42), "expected tiny::double(21) == 42");
 }
 
@@ -5111,19 +6998,28 @@ fn missing_vendor_manifest_emits_e0854() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nghost = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     // vendor/ghost/ exists as a dir but no Cplus.toml inside.
     std::fs::create_dir_all(dir.join("vendor/ghost/src")).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0854"), "expected E0854, got: {stderr}");
-    assert!(stderr.contains("is missing `Cplus.toml`"), "diagnostic should explain: {stderr}");
+    assert!(
+        stderr.contains("is missing `Cplus.toml`"),
+        "diagnostic should explain: {stderr}"
+    );
 }
 
 #[test]
@@ -5133,24 +7029,33 @@ fn vendor_name_dir_mismatch_emits_e0855() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
     // Vendor lives in vendor/foo/ but its Cplus.toml claims name = "bar".
     std::fs::write(
         dir.join("vendor/foo/Cplus.toml"),
         "[package]\nname = \"bar\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0855"), "expected E0855, got: {stderr}");
-    assert!(stderr.contains("must match its directory name"),
-        "diagnostic should explain: {stderr}");
+    assert!(
+        stderr.contains("must match its directory name"),
+        "diagnostic should explain: {stderr}"
+    );
 }
 
 #[test]
@@ -5161,7 +7066,8 @@ fn bundled_declared_but_file_missing_emits_e0860() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
     // The triples list includes the host so we route past the E0862
@@ -5173,12 +7079,20 @@ fn bundled_declared_but_file_missing_emits_e0860() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0860"), "expected E0860, got: {stderr}");
-    assert!(stderr.contains("libmissing.a"), "diagnostic should name the file: {stderr}");
+    assert!(
+        stderr.contains("libmissing.a"),
+        "diagnostic should name the file: {stderr}"
+    );
 }
 
 // ---- v0.0.3 Slice 1A: stdlib/io end-to-end ----
@@ -5199,7 +7113,8 @@ fn stdlib_io_end_to_end() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/io.cplus"), io_src).unwrap();
     std::fs::write(
@@ -5211,13 +7126,22 @@ fn stdlib_io_end_to_end() {
              io::eprintln(\"to stderr\");\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
 
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/io_smoke");
     let out = Command::new(&bin).output().expect("run io_smoke");
-    assert!(out.status.success(), "binary exited non-zero: {}", out.status);
+    assert!(
+        out.status.success(),
+        "binary exited non-zero: {}",
+        out.status
+    );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "hello world\n",
@@ -5240,14 +7164,8 @@ fn stdlib_io_end_to_end() {
 fn concurrent_cpc_invocations_no_temp_collision() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    std::fs::write(
-        dir.join("a.cplus"),
-        "fn main() -> i32 { return 7; }\n",
-    ).unwrap();
-    std::fs::write(
-        dir.join("b.cplus"),
-        "fn main() -> i32 { return 11; }\n",
-    ).unwrap();
+    std::fs::write(dir.join("a.cplus"), "fn main() -> i32 { return 7; }\n").unwrap();
+    std::fs::write(dir.join("b.cplus"), "fn main() -> i32 { return 11; }\n").unwrap();
 
     let cpc_a = cpc.to_string();
     let dir_a = dir.clone();
@@ -5255,7 +7173,8 @@ fn concurrent_cpc_invocations_no_temp_collision() {
         let out = dir_a.join("a.out");
         let st = Command::new(&cpc_a)
             .arg(dir_a.join("a.cplus"))
-            .arg("-o").arg(&out)
+            .arg("-o")
+            .arg(&out)
             .status()
             .expect("invoke cpc a");
         assert!(st.success(), "cpc a failed");
@@ -5268,7 +7187,8 @@ fn concurrent_cpc_invocations_no_temp_collision() {
         let out = dir_b.join("b.out");
         let st = Command::new(&cpc_b)
             .arg(dir_b.join("b.cplus"))
-            .arg("-o").arg(&out)
+            .arg("-o")
+            .arg(&out)
             .status()
             .expect("invoke cpc b");
         assert!(st.success(), "cpc b failed");
@@ -5294,13 +7214,16 @@ fn stdlib_env_var_into() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     for name in &["vec", "env", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
+                .parent()
+                .unwrap()
                 .join(format!("vendor/stdlib/src/{name}.cplus")),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
     }
     std::fs::write(
@@ -5314,8 +7237,13 @@ fn stdlib_env_var_into() {
              if env::argc() < (1 as usize) { return 3; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/envt");
     let run = Command::new(&bin).status().expect("run");
@@ -5335,7 +7263,11 @@ fn cpc_bindgen_round_trips_via_c_library() {
     let mut target_dir = exe.parent().unwrap(); // .../deps
     target_dir = target_dir.parent().unwrap(); // .../<mode>
     let bindgen = target_dir.join("cpc-bindgen");
-    assert!(bindgen.is_file(), "cpc-bindgen binary not built at {}", bindgen.display());
+    assert!(
+        bindgen.is_file(),
+        "cpc-bindgen binary not built at {}",
+        bindgen.display()
+    );
     let bindgen = bindgen.to_string_lossy().to_string();
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
@@ -5343,34 +7275,53 @@ fn cpc_bindgen_round_trips_via_c_library() {
     // Tiny C library: 4 fns covering scalar return, scalar args, pointer
     // args, and a double round-trip.
     let header = dir.join("api.h");
-    std::fs::write(&header,
+    std::fs::write(
+        &header,
         "int add_ints(int a, int b);\n\
          unsigned int max_u32(unsigned int a, unsigned int b);\n\
          long count_bytes(const char *s);\n\
          double area_of_rect(double w, double h);\n",
-    ).unwrap();
+    )
+    .unwrap();
     let c_src = dir.join("api.c");
-    std::fs::write(&c_src,
+    std::fs::write(
+        &c_src,
         "#include \"api.h\"\n\
          int add_ints(int a, int b) { return a + b; }\n\
          unsigned int max_u32(unsigned int a, unsigned int b) { return a > b ? a : b; }\n\
          long count_bytes(const char *s) { long n = 0; while (s[n]) n++; return n; }\n\
          double area_of_rect(double w, double h) { return w * h; }\n",
-    ).unwrap();
+    )
+    .unwrap();
     // Compile + archive the C source into libtiny.a.
     let c_obj = dir.join("api.o");
     let st = Command::new("clang")
-        .arg("-c").arg(&c_src).arg("-o").arg(&c_obj)
-        .status().expect("invoke clang");
+        .arg("-c")
+        .arg(&c_src)
+        .arg("-o")
+        .arg(&c_obj)
+        .status()
+        .expect("invoke clang");
     assert!(st.success(), "clang -c failed");
     let lib = dir.join("libtiny.a");
-    let st = Command::new("ar").arg("rcs").arg(&lib).arg(&c_obj).status().expect("invoke ar");
+    let st = Command::new("ar")
+        .arg("rcs")
+        .arg(&lib)
+        .arg(&c_obj)
+        .status()
+        .expect("invoke ar");
     assert!(st.success(), "ar failed");
 
     // Run cpc-bindgen to produce the C+ bindings.
-    let bg_out = Command::new(bindgen).arg(&header).output().expect("invoke cpc-bindgen");
-    assert!(bg_out.status.success(),
-        "cpc-bindgen failed: {}", String::from_utf8_lossy(&bg_out.stderr));
+    let bg_out = Command::new(bindgen)
+        .arg(&header)
+        .output()
+        .expect("invoke cpc-bindgen");
+    assert!(
+        bg_out.status.success(),
+        "cpc-bindgen failed: {}",
+        String::from_utf8_lossy(&bg_out.stderr)
+    );
     let bindings = String::from_utf8_lossy(&bg_out.stdout);
     assert!(bindings.contains("extern fn add_ints(a: i32, b: i32) -> i32;"));
     assert!(bindings.contains("extern fn max_u32(a: u32, b: u32) -> u32;"));
@@ -5392,19 +7343,28 @@ fn cpc_bindgen_round_trips_via_c_library() {
              let a: f64 = unsafe {{ area_of_rect(3.0 as f64, 4.0 as f64) }};\n\
              if a != (12.0 as f64) {{ return 4; }}\n\
              return 0;\n\
-         }}\n");
+         }}\n"
+    );
     std::fs::write(&cplus, driver).unwrap();
 
     // cpc → .o, then clang to link with libtiny.a.
     let cplus_obj = dir.join("main.o");
     let st = Command::new(cpc)
-        .arg("--emit-obj").arg(&cplus).arg("-o").arg(&cplus_obj)
-        .status().expect("invoke cpc --emit-obj");
+        .arg("--emit-obj")
+        .arg(&cplus)
+        .arg("-o")
+        .arg(&cplus_obj)
+        .status()
+        .expect("invoke cpc --emit-obj");
     assert!(st.success(), "cpc --emit-obj failed");
     let bin = dir.join("smoke");
     let st = Command::new("clang")
-        .arg(&cplus_obj).arg(&lib).arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg(&cplus_obj)
+        .arg(&lib)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success(), "clang link failed");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0), "bindgen round-trip should exit 0");
@@ -5418,7 +7378,8 @@ fn compound_assigns_run() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("ca.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn main() -> i32 {\n\
              let mut x: i32 = 10 as i32;\n\
              x += 5 as i32;            // 15\n\
@@ -5434,9 +7395,15 @@ fn compound_assigns_run() {
              b >>= 2 as u32;           // 0x47 = 71\n\
              return x +% (b as i32);   // 3 + 71 = 74\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("ca");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(74), "compound-assigns should produce 74");
@@ -5456,13 +7423,16 @@ fn stdlib_hash_map_str_int() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     for name in &["result", "hash_map"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
+                .parent()
+                .unwrap()
                 .join(format!("vendor/stdlib/src/{name}.cplus")),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
     }
     std::fs::write(
@@ -5486,8 +7456,13 @@ fn stdlib_hash_map_str_int() {
              if m.len() != (3 as usize) { fails = fails +% (1 as i32); }\n\
              return fails;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/hm");
     let run = Command::new(&bin).status().expect("run");
@@ -5513,7 +7488,8 @@ fn stdlib_hash_map_generic_k_v() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let hm_src = include_str!("../../vendor/stdlib/src/hash_map.cplus");
     let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/hash_map.cplus"), hm_src).unwrap();
@@ -5567,8 +7543,13 @@ fn stdlib_hash_map_generic_k_v() {
              if sum != (49500 as i32) { return 12 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (generic HashMap)");
     let bin = dir.join("target/debug/hmg");
     let run = Command::new(&bin).status().expect("run");
@@ -5591,16 +7572,21 @@ fn stdlib_net_tcp_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     // v0.0.4 Phase 3 Slice 3A.3: net.cplus now imports stdlib/reactor for
     // the async I/O wrappers; its async fns also implicitly need
     // stdlib/future for the `Future[T]` shape. Stage both alongside net.
-    for name in &["result", "vec", "net", "io", "reactor", "future", "iterator", "option"] {
+    for name in &[
+        "result", "vec", "net", "io", "reactor", "future", "iterator", "option",
+    ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
+                .parent()
+                .unwrap()
                 .join(format!("vendor/stdlib/src/{name}.cplus")),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
     }
     // Pick a port that's almost certainly unused on the test runner.
@@ -5661,7 +7647,11 @@ fn stdlib_net_tcp_round_trip() {
              }}\n"
         ),
     ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/netrt");
     let run = Command::new(&bin).status().expect("run");
@@ -5689,13 +7679,16 @@ fn cross_module_vec_in_result_no_double_free() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     for name in &["vec", "result", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
+                .parent()
+                .unwrap()
                 .join(format!("vendor/stdlib/src/{name}.cplus")),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
     }
     // helper module that constructs the Vec + wraps in Result, lives in
@@ -5711,7 +7704,8 @@ fn cross_module_vec_in_result_no_double_free() {
              v.push(9 as u8);\n\
              return result::io_ok::[vec::Vec[u8]](v);\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
@@ -5722,13 +7716,24 @@ fn cross_module_vec_in_result_no_double_free() {
                  maker::make_three_bytes()\n\
                  else {{ return 1; }};\n\
              return got.len() as i32;\n\
-         }\n".replace("{{ return 1; }}", "{ return 1; }").as_str(),
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+         }\n"
+        .replace("{{ return 1; }}", "{ return 1; }")
+        .as_str(),
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/dtrk");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(3), "Vec[u8] len after cross-module Result move must be 3");
+    assert_eq!(
+        run.code(),
+        Some(3),
+        "Vec[u8] len after cross-module Result move must be 3"
+    );
 }
 
 /// v0.0.3 Slice 1B: stdlib/fs round-trip — write 3 bytes via fs::create +
@@ -5748,15 +7753,20 @@ fn stdlib_fs_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     // v0.0.5 Phase 4 Slice 4C: fs.cplus now imports net + reactor +
     // future (for File::read_async). Stage them too.
-    for name in &["result", "vec", "fs", "io", "iterator", "option", "net", "reactor", "future"] {
+    for name in &[
+        "result", "vec", "fs", "io", "iterator", "option", "net", "reactor", "future",
+    ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
+                .parent()
+                .unwrap()
                 .join(format!("vendor/stdlib/src/{name}.cplus")),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
     }
     let tmp_file = dir.join("fsrt.txt");
@@ -5798,7 +7808,11 @@ fn stdlib_fs_round_trip() {
              }}\n"
         ),
     ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/fsrt");
     let run = Command::new(&bin).status().expect("run");
@@ -5822,7 +7836,8 @@ fn stdlib_cross_module_turbofish_with_qualified_type_arg() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(
@@ -5836,8 +7851,13 @@ fn stdlib_cross_module_turbofish_with_qualified_type_arg() {
                  result::Result[i32, result::IoError]::Err(_) => 0 -% 1 as i32,\n\
              };\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/tbf");
     let run = Command::new(&bin).status().expect("run");
@@ -5863,7 +7883,8 @@ fn stdlib_cross_module_generic_method_propagation() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
@@ -5888,7 +7909,8 @@ fn stdlib_cross_module_generic_method_propagation() {
                  return buf;\n\
              }\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
@@ -5899,8 +7921,13 @@ fn stdlib_cross_module_generic_method_propagation() {
              v.push(2 as u8);\n\
              return v.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/xmm");
     let run = Command::new(&bin).status().expect("run");
@@ -5930,7 +7957,8 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
@@ -5948,7 +7976,8 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
          pub fn make_empty_buf() -> vec::Vec[u8] {\n\
              return vec::new::[u8]();\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     // Consumer pushes onto the producer's returned Vec.
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -5960,8 +7989,13 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
              buf.push(9 as u8);\n\
              return buf.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (musttail+sret regression?)");
     let bin = dir.join("target/debug/mts");
     let run = Command::new(&bin).status().expect("run");
@@ -5999,7 +8033,8 @@ fn generic_fn_returning_generic_struct_transitive_instantiation() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
@@ -6025,8 +8060,13 @@ fn generic_fn_returning_generic_struct_transitive_instantiation() {
              io::println(\"ok\");\n\
              return b.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (Phase 1B regression?)");
     let bin = dir.join("target/debug/gpb");
     let run = Command::new(&bin).status().expect("run");
@@ -6054,7 +8094,8 @@ fn assoc_free_fn_dispatch_via_type_brackets() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     let io_src = include_str!("../../vendor/stdlib/src/io.cplus");
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
@@ -6075,8 +8116,13 @@ fn assoc_free_fn_dispatch_via_type_brackets() {
              io::println(\"ok\");\n\
              return b.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (Phase 1C regression?)");
     let bin = dir.join("target/debug/ats");
     let run = Command::new(&bin).status().expect("run");
@@ -6103,12 +8149,17 @@ fn stdlib_thread_spawn_join_non_copy_string() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6119,12 +8170,25 @@ fn stdlib_thread_spawn_join_non_copy_string() {
              let s: string = h.join();\n\
              return s.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 1E thread sret regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 1E thread sret regression?)"
+    );
     let bin = dir.join("target/debug/tsj");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(17), "expected len(\"hello from worker\") = 17, got {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(17),
+        "expected len(\"hello from worker\") = 17, got {:?}",
+        run.code()
+    );
 }
 
 /// v0.0.4 Phase 1E: `async fn` returning non-Copy `T`.
@@ -6148,12 +8212,17 @@ fn async_fn_returning_string_through_block_on() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     // v0.0.4 Phase 3 Slice 3A.1: executor.cplus now imports reactor.
     let __reactor_for_executor = include_str!("../../vendor/stdlib/src/reactor.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), __reactor_for_executor).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor.cplus"),
+        __reactor_for_executor,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(
@@ -6172,12 +8241,25 @@ fn async_fn_returning_string_through_block_on() {
              let s: string = executor::block_on::[string](f);\n\
              return s.len() as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 1E async sret regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 1E async sret regression?)"
+    );
     let bin = dir.join("target/debug/asr");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(15), "expected len(\"hello from coro\") = 15, got {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(15),
+        "expected len(\"hello from coro\") = 15, got {:?}",
+        run.code()
+    );
 }
 
 /// v0.0.4 Phase 1F: recursive `mangle_o_for_tramp` — raw pointer O.
@@ -6200,12 +8282,17 @@ fn stdlib_thread_spawn_join_raw_pointer_o() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6219,9 +8306,17 @@ fn stdlib_thread_spawn_join_raw_pointer_o() {
              unsafe { free(p); }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 1F raw-pointer mangler regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 1F raw-pointer mangler regression?)"
+    );
     let bin = dir.join("target/debug/tsp");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0), "expected clean round-trip");
@@ -6243,12 +8338,17 @@ fn stdlib_thread_spawn_join_fn_pointer_o() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -6260,9 +8360,17 @@ fn stdlib_thread_spawn_join_fn_pointer_o() {
              let f: fn() -> i32 = h.join();\n\
              return f();\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 1F fn-pointer mangler regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 1F fn-pointer mangler regression?)"
+    );
     let bin = dir.join("target/debug/tsf");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(42), "expected pick_42() = 42");
@@ -6289,12 +8397,17 @@ fn generic_async_fn_multi_instantiation_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     // v0.0.4 Phase 3 Slice 3A.1: executor.cplus now imports reactor.
     let __reactor_for_executor = include_str!("../../vendor/stdlib/src/reactor.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), __reactor_for_executor).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor.cplus"),
+        __reactor_for_executor,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(
@@ -6314,12 +8427,24 @@ fn generic_async_fn_multi_instantiation_round_trip() {
              if !b { return 3; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 1G generic async fn regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 1G generic async fn regression?)"
+    );
     let bin = dir.join("target/debug/gar");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "expected all generic async instantiations to round-trip clean");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected all generic async instantiations to round-trip clean"
+    );
 }
 
 /// v0.0.4 Phase 2 Slice 2B: `Box[T]` — single heap-allocated owned value.
@@ -6344,7 +8469,8 @@ fn stdlib_box_round_trip_copy_and_non_copy() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let box_src = include_str!("../../vendor/stdlib/src/box.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/box.cplus"), box_src).unwrap();
     std::fs::write(
@@ -6362,8 +8488,13 @@ fn stdlib_box_round_trip_copy_and_non_copy() {
              if recovered.len() != (12 as usize) { return 4; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (Phase 2B Box regression?)");
     let bin = dir.join("target/debug/boxr");
     let run = Command::new(&bin).status().expect("run");
@@ -6387,7 +8518,8 @@ fn stdlib_arc_cross_thread_share() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let arc_src = include_str!("../../vendor/stdlib/src/arc.cplus");
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
@@ -6420,7 +8552,9 @@ fn stdlib_arc_cross_thread_share() {
     for sanitizer in &["", "--asan", "--tsan"] {
         let mut cmd = Command::new(cpc);
         cmd.arg("build").current_dir(&dir);
-        if !sanitizer.is_empty() { cmd.arg(sanitizer); }
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
         let st = cmd.status().expect("invoke cpc");
         assert!(st.success(), "cpc build failed with {}", sanitizer);
         let bin = dir.join("target/debug/arct");
@@ -6428,7 +8562,9 @@ fn stdlib_arc_cross_thread_share() {
         assert!(
             run.status.success(),
             "arct exit non-zero with {}: code={:?} stderr={}",
-            sanitizer, run.status.code(), String::from_utf8_lossy(&run.stderr),
+            sanitizer,
+            run.status.code(),
+            String::from_utf8_lossy(&run.stderr),
         );
     }
 }
@@ -6449,7 +8585,8 @@ fn stdlib_rc_clone_chain_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let rc_src = include_str!("../../vendor/stdlib/src/rc.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/rc.cplus"), rc_src).unwrap();
     std::fs::write(
@@ -6466,8 +8603,13 @@ fn stdlib_rc_clone_chain_round_trip() {
              if c.get() != 42 { return 5; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (Phase 2D Rc regression?)");
     let bin = dir.join("target/debug/rcr");
     let run = Command::new(&bin).status().expect("run");
@@ -6492,7 +8634,8 @@ fn stdlib_mutex_cross_thread_increment() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let mutex_src = include_str!("../../vendor/stdlib/src/mutex.cplus");
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
@@ -6528,7 +8671,9 @@ fn stdlib_mutex_cross_thread_increment() {
     for sanitizer in &["", "--asan", "--tsan"] {
         let mut cmd = Command::new(cpc);
         cmd.arg("build").current_dir(&dir);
-        if !sanitizer.is_empty() { cmd.arg(sanitizer); }
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
         let st = cmd.status().expect("invoke cpc");
         assert!(st.success(), "cpc build failed with {}", sanitizer);
         let bin = dir.join("target/debug/mux");
@@ -6536,7 +8681,9 @@ fn stdlib_mutex_cross_thread_increment() {
         assert!(
             run.status.success(),
             "mux exit non-zero with {}: code={:?} stderr={}",
-            sanitizer, run.status.code(), String::from_utf8_lossy(&run.stderr),
+            sanitizer,
+            run.status.code(),
+            String::from_utf8_lossy(&run.stderr),
         );
     }
 }
@@ -6560,7 +8707,8 @@ fn stdlib_channel_mpmc_stress() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let channel_src = include_str!("../../vendor/stdlib/src/channel.cplus");
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
@@ -6613,7 +8761,9 @@ fn stdlib_channel_mpmc_stress() {
     for sanitizer in &["", "--asan", "--tsan"] {
         let mut cmd = Command::new(cpc);
         cmd.arg("build").current_dir(&dir);
-        if !sanitizer.is_empty() { cmd.arg(sanitizer); }
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
         let st = cmd.status().expect("invoke cpc");
         assert!(st.success(), "cpc build failed with {}", sanitizer);
         let bin = dir.join("target/debug/ch");
@@ -6621,7 +8771,9 @@ fn stdlib_channel_mpmc_stress() {
         assert!(
             run.status.success(),
             "channel test exit non-zero with {}: code={:?} stderr={}",
-            sanitizer, run.status.code(), String::from_utf8_lossy(&run.stderr),
+            sanitizer,
+            run.status.code(),
+            String::from_utf8_lossy(&run.stderr),
         );
     }
 }
@@ -6644,7 +8796,8 @@ fn stdlib_cow_str_view_and_owned_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let cow_src = include_str!("../../vendor/stdlib/src/cow.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/cow.cplus"), cow_src).unwrap();
     std::fs::write(
@@ -6667,9 +8820,17 @@ fn stdlib_cow_str_view_and_owned_round_trip() {
              if s4.len() != (5 as usize) { return 6; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 2G CowStr regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 2G CowStr regression?)"
+    );
     let bin = dir.join("target/debug/cowr");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0), "expected all CowStr checks to pass");
@@ -6693,7 +8854,8 @@ fn stdlib_thread_drop_is_non_blocking() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
@@ -6743,18 +8905,30 @@ fn stdlib_thread_drop_is_non_blocking() {
              }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build --asan failed");
     let bin = dir.join("target/debug/detach_fast");
     let run = Command::new(&bin).output().expect("run");
     let code = run.status.code();
-    assert_eq!(code, Some(0),
+    assert_eq!(
+        code,
+        Some(0),
         "drop blocked for {:?} ms (expected non-blocking < 50ms); stderr={}",
-        code, String::from_utf8_lossy(&run.stderr));
+        code,
+        String::from_utf8_lossy(&run.stderr)
+    );
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(!stderr.contains("AddressSanitizer"),
-        "expected ASan-clean run, got:\n{stderr}");
+    assert!(
+        !stderr.contains("AddressSanitizer"),
+        "expected ASan-clean run, got:\n{stderr}"
+    );
 }
 
 /// v0.0.4 Phase 3 Slice 3A.2: executor::yield_now round-trips through
@@ -6776,7 +8950,8 @@ fn phase4_gen_fn_for_in_round_trips() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
     let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
@@ -6816,8 +8991,13 @@ fn phase4_gen_fn_for_in_round_trips() {
              }\n\
              return 3 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (gen fn / for-in)");
     let bin = dir.join("target/debug/genf");
     let run = Command::new(&bin).status().expect("run");
@@ -6840,7 +9020,8 @@ fn stdlib_executor_yield_now_round_trips() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -6863,8 +9044,13 @@ fn stdlib_executor_yield_now_round_trips() {
              let f: future::Future[i32] = count_with_yields();\n\
              return executor::block_on::[i32](f);\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (yield_now regression?)");
     let bin = dir.join("target/debug/yt");
     let run = Command::new(&bin).status().expect("run");
@@ -6889,7 +9075,8 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -6933,12 +9120,24 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
              unsafe { free(fds_buf); }\n\
              return got;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (reactor wait_read regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (reactor wait_read regression?)"
+    );
     let bin = dir.join("target/debug/rwf");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(42), "expected reactor to wake + read byte 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "expected reactor to wake + read byte 42"
+    );
 }
 
 /// v0.0.5 Phase 3 Slice 3D: `File::lines()` end-to-end. Writes a small
@@ -6961,7 +9160,8 @@ fn stdlib_fs_file_lines_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let fs_src = include_str!("../../vendor/stdlib/src/fs.cplus");
     let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
     let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
@@ -7001,8 +9201,15 @@ fn stdlib_fs_file_lines_round_trip() {
          }}\n",
     );
     std::fs::write(dir.join("src/main.cplus"), main).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 3 Slice 3D regression?)");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 3 Slice 3D regression?)"
+    );
     let bin = dir.join("target/debug/flt");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0), "expected 3 lines totaling 19 bytes");
@@ -7033,7 +9240,8 @@ fn stdlib_fs_file_read_async_compiles() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let fs_src = include_str!("../../vendor/stdlib/src/fs.cplus");
     let net_src = include_str!("../../vendor/stdlib/src/net.cplus");
     let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
@@ -7084,11 +9292,22 @@ fn stdlib_fs_file_read_async_compiles() {
          }}\n",
     );
     std::fs::write(dir.join("src/main.cplus"), main).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 4 Slice 4C regression?)");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 4 Slice 4C regression?)"
+    );
     let bin = dir.join("target/debug/fra");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "expected to read 'x' (0x78) asynchronously");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected to read 'x' (0x78) asynchronously"
+    );
 }
 
 /// v0.0.5 Phase 3 Slice 3B: tuple types end-to-end. Exercises
@@ -7108,7 +9327,8 @@ fn phase3b_tuple_construct_projection_round_trip() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"tup\"\n\n[[bin]]\nname = \"tup\"\npath = \"src/main.cplus\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -7131,12 +9351,24 @@ fn phase3b_tuple_construct_projection_round_trip() {
              if mixed.0 != (99 as i32) { return 4 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 3 Slice 3B regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 3 Slice 3B regression?)"
+    );
     let bin = dir.join("target/debug/tup");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "tuple construct + project should round-trip");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "tuple construct + project should round-trip"
+    );
 }
 
 /// v0.0.5 Phase 4 Slice 4F: concurrent-async stress. Spawns N
@@ -7169,7 +9401,8 @@ fn phase4f_concurrent_n_sleeps_stress() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -7230,13 +9463,24 @@ fn phase4f_concurrent_n_sleeps_stress() {
              if elapsed > (500 as u64) { return 2 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 4 Slice 4F regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 4 Slice 4F regression?)"
+    );
     let bin = dir.join("target/debug/cns");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0),
-        "expected 50 concurrent sleeps to complete in ~50ms (not sequential ~2500ms)");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected 50 concurrent sleeps to complete in ~50ms (not sequential ~2500ms)"
+    );
 }
 
 /// v0.0.5 Phase 4 Slice 4B: async method form on a user-defined struct.
@@ -7261,7 +9505,8 @@ fn async_method_on_user_struct_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -7320,13 +9565,24 @@ fn async_method_on_user_struct_round_trip() {
              unsafe { free(fds_buf); }\n\
              return got;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 4 Slice 4B regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 4 Slice 4B regression?)"
+    );
     let bin = dir.join("target/debug/asm");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(42),
-        "expected async method call to drive reactor + return read byte 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "expected async method call to drive reactor + return read byte 42"
+    );
 }
 
 /// v0.0.5 Phase 4 Slice 4A: `time::sleep(ms)` round-trip via kqueue
@@ -7356,7 +9612,8 @@ fn stdlib_time_sleep_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -7393,12 +9650,24 @@ fn stdlib_time_sleep_round_trip() {
              if elapsed > (500 as u64) { return 2 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 4 Slice 4A regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 4 Slice 4A regression?)"
+    );
     let bin = dir.join("target/debug/slp");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "expected ~80ms sleep to complete within bounds");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected ~80ms sleep to complete within bounds"
+    );
 }
 
 /// v0.0.4 Phase 3 Slice 3A.3: stdlib `net::read_fd_async` round-trip.
@@ -7424,7 +9693,8 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -7483,13 +9753,21 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
              unsafe { free(fds_buf); }\n\
              return got;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed (net::read_fd_async)");
     let bin = dir.join("target/debug/rfa");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(42),
-        "expected reactor EAGAIN→wait_read→resume to yield byte 42");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "expected reactor EAGAIN→wait_read→resume to yield byte 42"
+    );
 }
 
 /// v0.0.3 Slice 1P.1: cross-module generic enum construction
@@ -7508,7 +9786,8 @@ fn stdlib_qualified_generic_enum_construct_and_match() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let result_src = include_str!("../../vendor/stdlib/src/result.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(
@@ -7521,8 +9800,13 @@ fn stdlib_qualified_generic_enum_construct_and_match() {
                  result::Result[i32, i32]::Err(_) => 0 -% 1 as i32,\n\
              };\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/qge");
     let run = Command::new(&bin).status().expect("run");
@@ -7560,7 +9844,9 @@ fn generic_max_with_ord_bound_calls_cmp_in_body() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("max.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct Point { x: i32, y: i32 }
 impl Ord for Point {
     fn cmp(self, other: Point) -> i32 {
@@ -7579,9 +9865,16 @@ fn main() -> i32 {
     let r: Point = max(p, q);
     return r.x;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("max");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed for max[T: Ord] with cmp");
     let run = Command::new(&bin).status().expect("run max");
     assert_eq!(run.code(), Some(3), "max(p, q).x should be 3 (q's x)");
@@ -7601,15 +9894,24 @@ fn ordered_compare_on_generic_param_rejected_e0302() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("badmax.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 fn max_lt[T: Ord](a: T, b: T) -> T {
     if a < b { return b; }
     return a;
 }
 fn main() -> i32 { return 0; }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("badmax");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "cpc should reject `<` on T: Ord");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -7617,7 +9919,8 @@ fn main() -> i32 { return 0; }
         "expected E0302 in stderr; got: {stderr}"
     );
     assert!(
-        stderr.contains("cmp") && (stderr.contains("§2.6") || stderr.contains("operator overloading")),
+        stderr.contains("cmp")
+            && (stderr.contains("§2.6") || stderr.contains("operator overloading")),
         "diagnostic should point at .cmp() and the §2.6 no-overloading policy; got: {stderr}"
     );
 }
@@ -7627,7 +9930,9 @@ fn echo_string_param_does_not_double_free() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("echo.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 fn echo(x: string) -> string {
     return x;
 }
@@ -7637,14 +9942,591 @@ fn main() -> i32 {
     if t.len() != (5 as usize) { return 1 as i32; }
     return 0 as i32;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("echo");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for echo-double-free regression");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for echo-double-free regression"
+    );
     let run = Command::new(&bin).status().expect("run echo");
-    assert_eq!(run.code(), Some(0),
+    assert_eq!(
+        run.code(),
+        Some(0),
         "echo(x: string) returning x should not double-free; got exit {:?}",
-        run.code());
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B: `f32x4` SIMD dot product end-to-end.
+#[test]
+fn simd_f32x4_dot_product_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("dot.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+    let b: f32x4 = f32x4::new(5.0f32, 6.0f32, 7.0f32, 8.0f32);
+    let p: f32x4 = a.mul(b);
+    let s: f32 = p.lane(0 as u32) + p.lane(1 as u32) + p.lane(2 as u32) + p.lane(3 as u32);
+    if s != 70.0f32 { return 1; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("dot");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD dot-product e2e");
+    let run = Command::new(&bin).status().expect("run dot");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "f32x4 dot product expected 70.0; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B: `f32x4::fma` + `sqrt` + `to_array` round-trip.
+#[test]
+fn simd_f32x4_fma_sqrt_and_to_array() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fma.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: f32x4 = f32x4::splat(2.0f32);
+    let b: f32x4 = f32x4::splat(3.0f32);
+    let c: f32x4 = f32x4::splat(1.0f32);
+    let r: f32x4 = a.fma(b, c);
+    let s: f32x4 = r.sqrt();
+    let arr: [f32; 4] = s.to_array();
+    if arr[0] < 2.6f32 { return 1; }
+    if arr[0] > 2.7f32 { return 2; }
+    if arr[3] < 2.6f32 { return 3; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("fma");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD fma+sqrt e2e");
+    let run = Command::new(&bin).status().expect("run fma");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "fma+sqrt round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: `f64x2` end-to-end (dot product + fma + sqrt).
+#[test]
+fn simd_f64x2_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("f64x2.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: f64x2 = f64x2::new(3.0, 4.0);
+    let b: f64x2 = f64x2::splat(2.0);
+    let p: f64x2 = a.mul(b);
+    let dot: f64 = p.lane(0 as u32) + p.lane(1 as u32);
+    if dot != 14.0 { return 1; }
+    let s: f64x2 = a.mul(a).fma(b, b).sqrt();
+    if s.lane(0 as u32) < 4.4 { return 2; }
+    if s.lane(0 as u32) > 4.5 { return 3; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("f64x2");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for f64x2 e2e");
+    let run = Command::new(&bin).status().expect("run f64x2");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "f64x2 dot/fma/sqrt round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: `i32x4` end-to-end (add/sub/mul/abs lanes).
+#[test]
+fn simd_i32x4_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("i32x4.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: i32x4 = i32x4::new(1, 2, 3, 4);
+    let b: i32x4 = i32x4::splat(10);
+    let c: i32x4 = a.mul(b);
+    let d: i32x4 = c.sub(i32x4::splat(25));
+    let f: i32x4 = d.abs();
+    let s: i32 = f.lane(0 as u32) + f.lane(1 as u32) + f.lane(2 as u32) + f.lane(3 as u32);
+    // |(10-25)| + |(20-25)| + |(30-25)| + |(40-25)| = 15+5+5+15 = 40
+    if s != 40 { return 1; }
+    let arr: [i32; 4] = f.to_array();
+    let g: i32x4 = i32x4::from_array(arr);
+    if g.lane(2 as u32) != 5 { return 2; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("i32x4");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for i32x4 e2e");
+    let run = Command::new(&bin).status().expect("run i32x4");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "i32x4 add/sub/mul/abs round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: byte and short SIMD widths
+/// (`i8x16`, `i16x8`, `u8x16`, `u16x8`) — completes the 128-bit family.
+#[test]
+fn simd_byte_and_short_widths_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bs.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    // u8x16: ASCII case-shift idiom.
+    let upper: u8x16 = u8x16::splat(65 as u8);
+    let delta: u8x16 = u8x16::splat(32 as u8);
+    if upper.add(delta).lane(7 as u32) != (97 as u8) { return 1; }
+    // i8x16: signed clamp to non-negative.
+    let neg: i8x16 = i8x16::splat(-5 as i8);
+    if neg.max(i8x16::splat(0 as i8)).lane(15 as u32) != (0 as i8) { return 2; }
+    // i16x8: abs + lane reduction shape.
+    let mixed: i16x8 = i16x8::new(
+        10 as i16, -20 as i16, 30 as i16, -40 as i16,
+        5 as i16, -5 as i16, 1 as i16, -1 as i16,
+    );
+    if mixed.abs().lane(3 as u32) != (40 as i16) { return 3; }
+    // u16x8: bit-shift + mask round-trip.
+    let v: u16x8 = u16x8::splat(0xABCD as u16);
+    if v.shr(8 as u32).lane(0 as u32) != (0x00AB as u16) { return 4; }
+    if v.and(u16x8::splat(0x00FF as u16)).lane(0 as u32) != (0x00CD as u16) { return 5; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("bs");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for byte/short SIMD e2e");
+    let run = Command::new(&bin).status().expect("run bs");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "byte/short SIMD round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: integer SIMD widths beyond i32x4
+/// (`i64x2`, `u32x4`) and bitwise/shift ops on integer SIMD.
+#[test]
+fn simd_integer_widths_and_bitwise_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bits.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: i32x4 = i32x4::new(255, 240, 15, 85);
+    let mask: i32x4 = i32x4::splat(15);
+    if a.and(mask).lane(0 as u32) != 15 { return 1; }
+    if a.or(mask).lane(2 as u32) != 15 { return 2; }
+    if a.xor(mask).lane(1 as u32) != 255 { return 3; }
+    let inv: i32x4 = mask.not();
+    if inv.lane(0 as u32) != (0 -% 16) { return 4; }
+    if a.shl(4 as u32).lane(2 as u32) != 240 { return 5; }
+    if a.shr(4 as u32).lane(3 as u32) != 5 { return 6; }
+    let big: i64x2 = i64x2::new(100 as i64, -50 as i64);
+    if big.abs().lane(1 as u32) != (50 as i64) { return 7; }
+    if big.shl(2 as u32).lane(0 as u32) != (400 as i64) { return 8; }
+    let unsi: u32x4 = u32x4::new(10 as u32, 20 as u32, 30 as u32, 40 as u32);
+    let other: u32x4 = u32x4::splat(25 as u32);
+    if unsi.min(other).lane(0 as u32) != (10 as u32) { return 9; }
+    if unsi.max(other).lane(0 as u32) != (25 as u32) { return 10; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("bits");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD bitwise e2e");
+    let run = Command::new(&bin).status().expect("run bits");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "SIMD bitwise + new widths round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: SIMD `load` / `store` round-trip through a
+/// `malloc`'d buffer. Exercises both raw-pointer interop and the
+/// `unsafe { ... }` requirement.
+#[test]
+fn simd_load_store_through_malloc_buffer() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ls.cplus");
+    std::fs::write(
+        &src,
+        "\
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn main() -> i32 {
+    let buf: *u8 = unsafe { malloc(16 as usize) };
+    let fp: *f32 = unsafe { buf as *f32 };
+    let v: f32x4 = f32x4::new(2.0f32, 4.0f32, 6.0f32, 8.0f32);
+    unsafe { v.store(fp); }
+    let r: f32x4 = unsafe { f32x4::load(fp) };
+    let s: f32 = r.lane(0 as u32) + r.lane(1 as u32) + r.lane(2 as u32) + r.lane(3 as u32);
+    unsafe { free(buf); }
+    if s != 20.0f32 { return 1; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("ls");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD load/store e2e");
+    let run = Command::new(&bin).status().expect("run ls");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "SIMD load/store round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: `min` / `max` across float + signed-int SIMD.
+#[test]
+fn simd_min_max_across_widths_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("minmax.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: f32x4 = f32x4::new(1.0f32, -2.0f32, 3.0f32, -4.0f32);
+    let b: f32x4 = f32x4::new(0.0f32, -1.0f32, 5.0f32, -3.0f32);
+    if a.min(b).lane(1 as u32) != -2.0f32 { return 1; }
+    if a.max(b).lane(2 as u32) != 5.0f32 { return 2; }
+    let ia: i32x4 = i32x4::new(1, 2, 3, 4);
+    let ib: i32x4 = i32x4::new(5, 1, 10, 0);
+    if ia.min(ib).lane(0 as u32) != 1 { return 3; }
+    if ia.max(ib).lane(2 as u32) != 10 { return 4; }
+    if ia.min(ib).lane(3 as u32) != 0 { return 5; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("minmax");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD min/max e2e");
+    let run = Command::new(&bin).status().expect("run minmax");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "SIMD min/max round-trip failed; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: i32x4 IR shape (`<4 x i32>`) + integer `mul`.
+#[test]
+fn simd_i32x4_emits_integer_vector_ir() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("i32x4vir.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: i32x4 = i32x4::splat(3);
+    let b: i32x4 = i32x4::splat(7);
+    let c: i32x4 = a.mul(b);
+    if c.lane(0 as u32) != 21 { return 1; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    assert!(
+        out.status.success(),
+        "cpc --emit-ll failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("<4 x i32>"),
+        "expected `<4 x i32>` in IR; got:\n{ir}"
+    );
+    // Integer mul has no `contract` flag (that's float-only).
+    assert!(
+        ir.contains("mul <4 x i32>")
+            || ir.contains("mul nsw <4 x i32>")
+            || ir.contains("mul nuw <4 x i32>"),
+        "expected vector `mul <4 x i32>` in IR; got:\n{ir}"
+    );
+}
+
+/// v0.0.6 Slice 1B expansion: f64x2 IR shape (`<2 x double>`).
+#[test]
+fn simd_f64x2_emits_vector_ir() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("f64x2vir.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: f64x2 = f64x2::splat(1.0);
+    let b: f64x2 = f64x2::splat(2.0);
+    let c: f64x2 = a.mul(b);
+    if c.lane(0 as u32) != 2.0 { return 1; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    assert!(
+        out.status.success(),
+        "cpc --emit-ll failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("<2 x double>"),
+        "expected `<2 x double>` in IR; got:\n{ir}"
+    );
+    assert!(
+        ir.contains("fmul contract <2 x double>"),
+        "expected `fmul contract <2 x double>` in IR; got:\n{ir}"
+    );
+}
+
+/// v0.0.6 Slice 1B: verify codegen emits `<4 x float>` vector IR.
+#[test]
+fn simd_f32x4_emits_vector_ir() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("vir.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let a: f32x4 = f32x4::splat(1.0f32);
+    let b: f32x4 = f32x4::splat(2.0f32);
+    let c: f32x4 = a.mul(b);
+    if c.lane(0 as u32) != 2.0f32 { return 1; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    assert!(
+        out.status.success(),
+        "cpc --emit-ll failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("<4 x float>"),
+        "expected `<4 x float>` in IR; got:\n{ir}"
+    );
+    assert!(
+        ir.contains("fmul contract <4 x float>"),
+        "expected `fmul contract <4 x float>` in IR; got:\n{ir}"
+    );
+}
+
+/// v0.0.6 Slice 1A: `include_bytes!` end-to-end.
+/// Embeds a 6-byte asset at compile time, asserts each byte at runtime.
+#[test]
+fn include_bytes_embeds_file_and_reads_bytes_back() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let asset = dir.join("hello.bin");
+    std::fs::write(&asset, b"hello\n").unwrap();
+    let src = dir.join("ib.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let p: *[u8; 6] = include_bytes!(\"hello.bin\");
+    let bytes: *u8 = unsafe { p as *u8 };
+    let b0: u8 = unsafe { bytes[0 as usize] };
+    let b1: u8 = unsafe { bytes[1 as usize] };
+    let b4: u8 = unsafe { bytes[4 as usize] };
+    let b5: u8 = unsafe { bytes[5 as usize] };
+    if b0 != (104 as u8) { return 1 as i32; }
+    if b1 != (101 as u8) { return 2 as i32; }
+    if b4 != (111 as u8) { return 3 as i32; }
+    if b5 != (10  as u8) { return 4 as i32; }
+    return 0 as i32;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("ib");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for include_bytes! e2e");
+    let run = Command::new(&bin).status().expect("run ib");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "include_bytes! bytes did not round-trip; exit {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.6 Slice 1A: two `include_bytes!` calls on the same path emit one
+/// shared `@.bytes.N` global. Inspect emitted IR via `cpc emit-llvm` to
+/// verify only one `private unnamed_addr constant` is generated.
+#[test]
+fn include_bytes_dedupes_repeated_path() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("a.bin"), b"abc").unwrap();
+    let src = dir.join("dup.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let p1: *[u8; 3] = include_bytes!(\"a.bin\");
+    let p2: *[u8; 3] = include_bytes!(\"a.bin\");
+    let b1: *u8 = unsafe { p1 as *u8 };
+    let b2: *u8 = unsafe { p2 as *u8 };
+    let v1: u8 = unsafe { b1[0 as usize] };
+    let v2: u8 = unsafe { b2[0 as usize] };
+    if v1 != v2 { return 1 as i32; }
+    if v1 != (97 as u8) { return 2 as i32; }
+    return 0 as i32;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-llvm");
+    assert!(
+        out.status.success(),
+        "cpc emit-llvm failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    // Count `@.bytes.` global *definitions* only: one line per
+    // `private unnamed_addr constant`. References at use sites also
+    // contain the symbol, but they don't have `= private`.
+    let bytes_defs = ir
+        .lines()
+        .filter(|l| l.contains("@.bytes.") && l.contains("= private"))
+        .count();
+    assert_eq!(
+        bytes_defs, 1,
+        "expected exactly one `@.bytes.N` definition (dedup), saw {bytes_defs}; IR:\n{ir}"
+    );
 }
 
 #[test]
@@ -7652,7 +10534,9 @@ fn block_tail_ident_non_copy_does_not_double_free() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("blkmv.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 extern fn printf(fmt: *u8, ...) -> i32;
 fn main() -> i32 {
     // Block-tail rebind.
@@ -7672,12 +10556,26 @@ fn main() -> i32 {
     if g.len() != (4 as usize) { return 2 as i32; }
     return 0 as i32;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("blkmv");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for block-tail-rebind regression");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for block-tail-rebind regression"
+    );
     let run = Command::new(&bin).status().expect("run blkmv");
-    assert_eq!(run.code(), Some(0), "block-tail rebind should not double-free");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "block-tail rebind should not double-free"
+    );
 }
 
 /// v0.0.5 Phase 1C: container `drop` invokes inner-T Drop via the
@@ -7704,13 +10602,18 @@ fn phase1c_container_inner_drop_runs_without_crash() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
-    for name in &["box", "vec", "arc", "rc", "hash_map", "atomic", "result", "iterator", "option"] {
+    )
+    .unwrap();
+    for name in &[
+        "box", "vec", "arc", "rc", "hash_map", "atomic", "result", "iterator", "option",
+    ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
+                .parent()
+                .unwrap()
                 .join(format!("vendor/stdlib/src/{name}.cplus")),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
     }
     std::fs::write(
@@ -7754,11 +10657,22 @@ fn phase1c_container_inner_drop_runs_without_crash() {
              return 0 as i32;\n\
          }\n",
     ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 1C inner-Drop regression?)");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 1C inner-Drop regression?)"
+    );
     let bin = dir.join("target/debug/idrop");
     let run = Command::new(&bin).status().expect("run idrop");
-    assert_eq!(run.code(), Some(0), "inner-T Drop sites should all run cleanly");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "inner-T Drop sites should all run cleanly"
+    );
 }
 
 /// v0.0.5 Phase 1D: async fns drive cleanly under `--asan`. The
@@ -7784,7 +10698,8 @@ fn phase1d_async_runs_clean_under_asan() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
@@ -7816,13 +10731,25 @@ fn phase1d_async_runs_clean_under_asan() {
              if executor::block_on::[i32](f3) != (115 as i32) { return 4; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status()
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
         .expect("invoke cpc --asan");
-    assert!(st.success(), "cpc build --asan failed (Phase 1D async-under-ASan regression?)");
+    assert!(
+        st.success(),
+        "cpc build --asan failed (Phase 1D async-under-ASan regression?)"
+    );
     let bin = dir.join("target/debug/asanasync");
     let run = Command::new(&bin).status().expect("run asanasync");
-    assert_eq!(run.code(), Some(0), "async fns under --asan should return their declared values");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "async fns under --asan should return their declared values"
+    );
 }
 
 /// v0.0.5 Phase 2B: `pub gen fn iter(self) -> T` on a user struct.
@@ -7845,7 +10772,8 @@ fn phase2b_gen_method_on_struct() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
     let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
@@ -7874,12 +10802,24 @@ fn phase2b_gen_method_on_struct() {
              if sum != (10 as i32) { return 1 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 2B gen-method regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 2B gen-method regression?)"
+    );
     let bin = dir.join("target/debug/genm");
     let run = Command::new(&bin).status().expect("run genm");
-    assert_eq!(run.code(), Some(0), "gen-method + for-in should sum 0..5 to 10");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "gen-method + for-in should sum 0..5 to 10"
+    );
 }
 
 /// v0.0.5 Phase 2C: `impl EnumName { fn ... }` on a non-generic enum.
@@ -7898,7 +10838,9 @@ fn phase2c_enum_impl_methods_dispatch() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("enumimpl.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 extern fn printf(fmt: *u8, ...) -> i32;
 pub enum Tag { Yes, No }
 impl Tag {
@@ -7935,12 +10877,26 @@ fn main() -> i32 {
     if s.area() != (9 as i32) { return 4 as i32; }
     return 0 as i32;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("enumimpl");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 2C enum impl regression?)");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 2C enum impl regression?)"
+    );
     let run = Command::new(&bin).status().expect("run enumimpl");
-    assert_eq!(run.code(), Some(0), "enum impl methods should dispatch correctly");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "enum impl methods should dispatch correctly"
+    );
 }
 
 /// free-function constructors `vec::new::[T]()` + `vec::with_capacity::[T](n)`.
@@ -7958,7 +10914,8 @@ fn stdlib_vec_push_and_get() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
@@ -7987,8 +10944,13 @@ fn stdlib_vec_push_and_get() {
              }\n\
              return total;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/vec_smoke");
     let run = Command::new(&bin).status().expect("run");
@@ -8012,7 +10974,8 @@ fn stdlib_vec_iter_for_in() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
@@ -8034,9 +10997,17 @@ fn stdlib_vec_iter_for_in() {
              if sum != (60 as i32) { return 1 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 3 Slice 3A regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 3 Slice 3A regression?)"
+    );
     let bin = dir.join("target/debug/vec_iter");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0), "Vec::iter for-in sum should be 60");
@@ -8057,7 +11028,8 @@ fn phase2c_generic_enum_impl_synthesis() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"gei\"\n\n[[bin]]\nname = \"gei\"\npath = \"src/main.cplus\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8081,12 +11053,24 @@ fn phase2c_generic_enum_impl_synthesis() {
              if !sb.is_some() { return 3 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (generic-enum impl synthesis regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (generic-enum impl synthesis regression?)"
+    );
     let bin = dir.join("target/debug/gei");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "expected generic-enum methods to dispatch correctly");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected generic-enum methods to dispatch correctly"
+    );
 }
 
 /// v0.0.5 Phase 3 Slice 3C follow-on: `vec::collect[T]` drains an
@@ -8106,7 +11090,8 @@ fn stdlib_vec_collect_drains_iterator() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
     let option_src = include_str!("../../vendor/stdlib/src/option.cplus");
@@ -8135,12 +11120,24 @@ fn stdlib_vec_collect_drains_iterator() {
              if sum != (11 as i32) { return 2 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (collect adapter regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (collect adapter regression?)"
+    );
     let bin = dir.join("target/debug/col");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "expected collected positives to total 11");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "expected collected positives to total 11"
+    );
 }
 
 /// v0.0.5 Phase 3 Slice 3C: iterator adapters end-to-end. Exercises
@@ -8164,7 +11161,8 @@ fn stdlib_iterator_adapters_filter_take_map() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     let iterator_src = include_str!("../../vendor/stdlib/src/iterator.cplus");
@@ -8205,12 +11203,24 @@ fn stdlib_iterator_adapters_filter_take_map() {
              if sum2 != (42 as i32) { return 3 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed (Phase 3 Slice 3C regression?)");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed (Phase 3 Slice 3C regression?)"
+    );
     let bin = dir.join("target/debug/itad");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "iterator adapters round-trip should exit 0");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "iterator adapters round-trip should exit 0"
+    );
 }
 
 /// v0.0.4 Phase 3 Slice 3B.3: `Vec[T]::extend_from_slice(s: T[])` —
@@ -8231,7 +11241,8 @@ fn stdlib_vec_extend_from_slice_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let vec_src = include_str!("../../vendor/stdlib/src/vec.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     // v0.0.5 Phase 3 Slice 3A: vec.cplus imports stdlib/iterator (for
@@ -8272,12 +11283,21 @@ fn stdlib_vec_extend_from_slice_round_trip() {
              if sum != (153 as i32) { return 91 as i32; }\n\
              return 0 as i32;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/vex");
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(0), "extend_from_slice round-trip mismatched");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "extend_from_slice round-trip mismatched"
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5A: stdlib/atomic end-to-end.
@@ -8301,7 +11321,8 @@ fn stdlib_atomic_round_trips() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
     std::fs::write(
@@ -8343,11 +11364,20 @@ fn stdlib_atomic_round_trips() {
              return 0;\n\
          }\n",
     ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/atomic_smoke");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "atomic_smoke exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "atomic_smoke exited non-zero: {:?} stderr={}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5A: every atomic ordering keyword reaches LLVM.
@@ -8368,7 +11398,8 @@ fn stdlib_atomic_ir_contains_every_ordering() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
     // Three calls — one with relaxed, one with acquire, one with seqcst
@@ -8387,12 +11418,18 @@ fn stdlib_atomic_ir_contains_every_ordering() {
              let _b: u64 = atomic::atomic_fetch_add_u64(p, 1 as u64, atomic::Ordering::SeqCst);\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let out = Command::new(cpc)
         .arg("--emit-ll-project")
         .current_dir(&dir)
-        .output().expect("invoke cpc");
-    assert!(out.status.success(), "cpc --emit-ll-project failed: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "cpc --emit-ll-project failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // The wrapper module's match arms instantiate every per-ordering
     // intrinsic, so the linked IR must mention every LLVM ordering
     // keyword even with only three call sites in main.
@@ -8423,12 +11460,17 @@ fn stdlib_thread_spawn_join_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8451,12 +11493,22 @@ fn stdlib_thread_spawn_join_round_trip() {
              if hb.join() != true { return 4; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/thread_smoke");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "thread_smoke exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "thread_smoke exited non-zero: {:?} stderr={}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5C: spawn_with end-to-end. Two threads each
@@ -8475,12 +11527,20 @@ fn stdlib_thread_spawn_with_round_trip() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8509,12 +11569,20 @@ fn stdlib_thread_spawn_with_round_trip() {
              return 0;\n\
          }\n",
     ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let bin = dir.join("target/debug/sw");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(),
-        "spawn_with test exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "spawn_with test exited non-zero: {:?} stderr={}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5C: ASan-clean run of the spawn_with path with
@@ -8531,12 +11599,20 @@ fn stdlib_thread_spawn_with_string_input_asan_clean() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8549,14 +11625,33 @@ fn stdlib_thread_spawn_with_string_input_asan_clean() {
              if n != (21 as i64) { return 1; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status().expect("build");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "cpc build --asan failed");
-    let run = Command::new(dir.join("target/debug/sw_asan")).output().expect("run");
-    assert!(run.status.success(), "exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    let run = Command::new(dir.join("target/debug/sw_asan"))
+        .output()
+        .expect("run");
+    assert!(
+        run.status.success(),
+        "exited non-zero: {:?} stderr={}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(!stderr.contains("LeakSanitizer"), "leak detected:\n{stderr}");
-    assert!(!stderr.contains("AddressSanitizer"), "ASan error:\n{stderr}");
+    assert!(
+        !stderr.contains("LeakSanitizer"),
+        "leak detected:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("AddressSanitizer"),
+        "ASan error:\n{stderr}"
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5C borrow-check negative: post-move use of a
@@ -8574,12 +11669,20 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8593,12 +11696,22 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
              let _r: i64 = h.join();\n\
              return n as i32;\n\
          }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
-    assert!(!out.status.success(), "expected build to fail on post-move use");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected build to fail on post-move use"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0335") || stderr.contains("use of moved value"),
-        "expected E0335 (use of moved value), got:\n{stderr}");
+    assert!(
+        stderr.contains("E0335") || stderr.contains("use of moved value"),
+        "expected E0335 (use of moved value), got:\n{stderr}"
+    );
 }
 
 /// v0.0.4 Phase 2 Slice 2H — true fire-and-forget thread detach. Drop
@@ -8623,12 +11736,17 @@ fn stdlib_thread_drop_detaches_unjoined_handle() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -8644,16 +11762,33 @@ fn stdlib_thread_drop_detaches_unjoined_handle() {
              while i < (5000000 as i64) { i = i +% (1 as i64); }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--asan").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--asan")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build --asan failed");
     let bin = dir.join("target/debug/thread_detach");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "detach test exited non-zero: {:?} stderr={}", run.status.code(), String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "detach test exited non-zero: {:?} stderr={}",
+        run.status.code(),
+        String::from_utf8_lossy(&run.stderr)
+    );
     // ASan would have written its leak report to stderr if anything leaked.
     let stderr = String::from_utf8_lossy(&run.stderr);
-    assert!(!stderr.contains("LeakSanitizer"), "expected no leaks under ASan, got:\n{stderr}");
-    assert!(!stderr.contains("AddressSanitizer"), "expected no ASan errors, got:\n{stderr}");
+    assert!(
+        !stderr.contains("LeakSanitizer"),
+        "expected no leaks under ASan, got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("AddressSanitizer"),
+        "expected no ASan errors, got:\n{stderr}"
+    );
 }
 
 #[test]
@@ -8664,7 +11799,8 @@ fn orphan_static_lib_emits_e0861() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
     // Vendor declares NO `[link]` at all but has an .a file sitting under
@@ -8672,7 +11808,8 @@ fn orphan_static_lib_emits_e0861() {
     std::fs::write(
         dir.join("vendor/foo/Cplus.toml"),
         "[package]\nname = \"foo\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let lib_dir = dir.join("vendor/foo/src/lib").join(&host);
     std::fs::create_dir_all(&lib_dir).unwrap();
     // The orphan-detection is filesystem-presence only, no content read.
@@ -8680,12 +11817,20 @@ fn orphan_static_lib_emits_e0861() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0861"), "expected E0861, got: {stderr}");
-    assert!(stderr.contains("liborphan.a"), "diagnostic should name the file: {stderr}");
+    assert!(
+        stderr.contains("liborphan.a"),
+        "diagnostic should name the file: {stderr}"
+    );
 }
 
 #[test]
@@ -8695,7 +11840,8 @@ fn host_triple_unsupported_emits_e0862() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
     // Package only supports an alien triple. (`not-a-real-triple` is
@@ -8708,13 +11854,20 @@ fn host_triple_unsupported_emits_e0862() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
-    assert!(stderr.contains("not-a-real-triple"),
-        "diagnostic should list the package's supported triples: {stderr}");
+    assert!(
+        stderr.contains("not-a-real-triple"),
+        "diagnostic should list the package's supported triples: {stderr}"
+    );
 }
 
 #[test]
@@ -8728,18 +11881,25 @@ fn bundled_without_triples_emits_e0863_via_build() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"app\"\n\n[dependencies]\nfoo = \"*\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/foo/src")).unwrap();
     std::fs::write(
         dir.join("vendor/foo/Cplus.toml"),
         "[package]\nname = \"foo\"\n\n[link]\nbundled = [\"libfoo.a\"]\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0863"), "expected E0863, got: {stderr}");
@@ -8760,16 +11920,26 @@ fn lib_target_produces_staticlib() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed: {st}");
     let a_path = dir.join("target/debug/libmathlib.a");
-    assert!(a_path.is_file(), "expected libmathlib.a at {}", a_path.display());
+    assert!(
+        a_path.is_file(),
+        "expected libmathlib.a at {}",
+        a_path.display()
+    );
 }
 
 #[test]
@@ -8779,17 +11949,31 @@ fn lib_target_produces_dylib_or_so() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"cdylib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed: {st}");
-    let ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    let ext = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
     let dyn_path = dir.join(format!("target/debug/libmathlib.{ext}"));
-    assert!(dyn_path.is_file(), "expected libmathlib.{ext} at {}", dyn_path.display());
+    assert!(
+        dyn_path.is_file(),
+        "expected libmathlib.{ext} at {}",
+        dyn_path.display()
+    );
 }
 
 #[test]
@@ -8799,16 +11983,26 @@ fn lib_target_both_produces_a_and_dylib() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"both\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     assert!(dir.join("target/debug/libmathlib.a").is_file());
-    let ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+    let ext = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
     assert!(dir.join(format!("target/debug/libmathlib.{ext}")).is_file());
 }
 
@@ -8822,13 +12016,19 @@ fn lib_target_exposes_pub_symbols_unmangled() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     let nm = Command::new("nm")
         .arg("-g")
@@ -8837,10 +12037,15 @@ fn lib_target_exposes_pub_symbols_unmangled() {
         .expect("invoke nm");
     let out = String::from_utf8_lossy(&nm.stdout);
     let has_bare = out.contains(" _add") || out.contains(" T add");
-    assert!(has_bare, "expected unmangled `add` in libmathlib.a; got:\n{out}");
+    assert!(
+        has_bare,
+        "expected unmangled `add` in libmathlib.a; got:\n{out}"
+    );
     // And the mangled form must NOT appear.
-    assert!(!out.contains("src.lib.add"),
-        "expected `pub fn add` to skip path-mangling; got mangled form in:\n{out}");
+    assert!(
+        !out.contains("src.lib.add"),
+        "expected `pub fn add` to skip path-mangling; got mangled form in:\n{out}"
+    );
 }
 
 #[test]
@@ -8855,14 +12060,20 @@ fn c_consumer_links_static_and_dynamic() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"both\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
          pub fn sub(a: i32, b: i32) -> i32 { return a - b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
 
     let c_src = dir.join("c_user.c");
@@ -8872,32 +12083,52 @@ fn c_consumer_links_static_and_dynamic() {
          extern int32_t add(int32_t, int32_t);\n\
          extern int32_t sub(int32_t, int32_t);\n\
          int main(void) { return add(2, 3) - sub(10, 4); /* 5 - 6 = -1 → 255 */ }\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Static link.
     let static_bin = dir.join("c_user_static");
     let st = Command::new("clang")
         .arg(&c_src)
-        .arg("-L").arg(dir.join("target/debug"))
+        .arg("-L")
+        .arg(dir.join("target/debug"))
         .arg("-lmathlib")
-        .arg("-o").arg(&static_bin)
-        .status().expect("clang static link");
+        .arg("-o")
+        .arg(&static_bin)
+        .status()
+        .expect("clang static link");
     assert!(st.success(), "static link failed");
-    let run = Command::new(&static_bin).status().expect("run static-linked");
-    assert_eq!(run.code(), Some(255), "5 - 6 = -1 → 255 (u8) from static link");
+    let run = Command::new(&static_bin)
+        .status()
+        .expect("run static-linked");
+    assert_eq!(
+        run.code(),
+        Some(255),
+        "5 - 6 = -1 → 255 (u8) from static link"
+    );
 
     // Dynamic link.
     let dyn_bin = dir.join("c_user_dyn");
     let st = Command::new("clang")
         .arg(&c_src)
-        .arg("-L").arg(dir.join("target/debug"))
+        .arg("-L")
+        .arg(dir.join("target/debug"))
         .arg("-lmathlib")
         .arg("-Wl,-rpath,@executable_path/target/debug")
-        .arg("-o").arg(&dyn_bin)
-        .status().expect("clang dynamic link");
+        .arg("-o")
+        .arg(&dyn_bin)
+        .status()
+        .expect("clang dynamic link");
     assert!(st.success(), "dynamic link failed");
-    let run = Command::new(&dyn_bin).current_dir(&dir).status().expect("run dynamic-linked");
-    assert_eq!(run.code(), Some(255), "5 - 6 = -1 → 255 (u8) from dynamic link");
+    let run = Command::new(&dyn_bin)
+        .current_dir(&dir)
+        .status()
+        .expect("run dynamic-linked");
+    assert_eq!(
+        run.code(),
+        Some(255),
+        "5 - 6 = -1 → 255 (u8) from dynamic link"
+    );
 }
 
 #[test]
@@ -8907,14 +12138,20 @@ fn lib_target_rejects_fn_main_with_e0409() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"badlib\"\n\n[lib]\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
          fn main() -> i32 { return 0; }\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failure on lib + fn main");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0409"), "expected E0409, got: {stderr}");
@@ -8927,8 +12164,13 @@ fn bin_and_lib_in_one_manifest_emit_e0408() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"both\"\n\n[[bin]]\nname = \"exe\"\n\n[lib]\n",
-    ).unwrap();
-    let out = Command::new(cpc).arg("build").current_dir(&dir).output().expect("invoke cpc");
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failure on bin+lib");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0408"), "expected E0408, got: {stderr}");
@@ -8939,17 +12181,31 @@ fn emit_obj_produces_relocatable_object() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("foo.cplus");
-    std::fs::write(&src, "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n").unwrap();
+    std::fs::write(
+        &src,
+        "pub fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    )
+    .unwrap();
     let out = dir.join("foo.o");
-    let st = Command::new(cpc).arg("--emit-obj").arg(&src)
-        .arg("-o").arg(&out).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc --emit-obj failed: {st}");
     assert!(out.is_file(), "expected {}", out.display());
     // File magic: 0xfeedfacf on Mach-O 64, ELF starts with 0x7f 'E' 'L' 'F'.
     let bytes = std::fs::read(&out).unwrap();
-    let is_macho = bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]) || bytes.starts_with(&[0xce, 0xfa, 0xed, 0xfe]);
-    let is_elf   = bytes.starts_with(&[0x7f, b'E', b'L', b'F']);
-    assert!(is_macho || is_elf, "expected Mach-O or ELF object; first bytes: {:?}", &bytes[..4.min(bytes.len())]);
+    let is_macho = bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
+        || bytes.starts_with(&[0xce, 0xfa, 0xed, 0xfe]);
+    let is_elf = bytes.starts_with(&[0x7f, b'E', b'L', b'F']);
+    assert!(
+        is_macho || is_elf,
+        "expected Mach-O or ELF object; first bytes: {:?}",
+        &bytes[..4.min(bytes.len())]
+    );
 }
 
 #[test]
@@ -8963,16 +12219,22 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"linkage\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub fn pub_api(x: i32) -> i32 { return helper(x); }\n\
          fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
-    ).unwrap();
+    )
+    .unwrap();
     // Use release so -O2 + internal-linkage lets LTO fold helper away.
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let nm = Command::new("nm")
         .arg("-g")
@@ -8981,12 +12243,16 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
         .expect("invoke nm");
     let out = String::from_utf8_lossy(&nm.stdout);
     // `pub_api` must be exported.
-    assert!(out.contains(" _pub_api") || out.contains(" T pub_api"),
-        "expected `pub_api` in nm -g output:\n{out}");
+    assert!(
+        out.contains(" _pub_api") || out.contains(" T pub_api"),
+        "expected `pub_api` in nm -g output:\n{out}"
+    );
     // `helper` must NOT be a globally-visible symbol — either inlined
     // away by LTO or carrying internal linkage.
-    assert!(!out.contains(" _helper") && !out.contains(" T helper"),
-        "private `helper` leaked into nm -g output:\n{out}");
+    assert!(
+        !out.contains(" _helper") && !out.contains(" T helper"),
+        "private `helper` leaked into nm -g output:\n{out}"
+    );
 }
 
 #[test]
@@ -8998,7 +12264,8 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"meth\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
@@ -9008,9 +12275,14 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
            pub fn value(self) -> i32 { return self.v; }\n\
            fn priv_bump(mut self) -> Counter { return Counter { v: self.v +% (1 as i32) }; }\n\
          }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
     let nm = Command::new("nm")
         .arg("-g")
@@ -9018,8 +12290,10 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
         .output()
         .expect("invoke nm");
     let out = String::from_utf8_lossy(&nm.stdout);
-    assert!(!out.contains("priv_bump"),
-        "private method `priv_bump` leaked into nm -g output:\n{out}");
+    assert!(
+        !out.contains("priv_bump"),
+        "private method `priv_bump` leaked into nm -g output:\n{out}"
+    );
 }
 
 // ---- Phase 5 Slice 5.F: reference example + design note ----
@@ -9035,12 +12309,22 @@ fn c_consumer_reference_example_runs_clean() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // CARGO_MANIFEST_DIR for this crate is `cpc/`. The reference example
     // lives at `<repo>/docs/examples/c_consumer/`.
-    let example_root = manifest_dir.parent().unwrap()
+    let example_root = manifest_dir
+        .parent()
+        .unwrap()
         .join("docs/examples/c_consumer");
     let mathlib_dir = example_root.join("mathlib");
     let c_user_dir = example_root.join("c_user");
-    assert!(mathlib_dir.is_dir(), "expected reference mathlib at {}", mathlib_dir.display());
-    assert!(c_user_dir.is_dir(),  "expected reference c_user at {}",  c_user_dir.display());
+    assert!(
+        mathlib_dir.is_dir(),
+        "expected reference mathlib at {}",
+        mathlib_dir.display()
+    );
+    assert!(
+        c_user_dir.is_dir(),
+        "expected reference c_user at {}",
+        c_user_dir.display()
+    );
 
     // Clean any leftover artifacts so the test is hermetic.
     let _ = std::fs::remove_dir_all(mathlib_dir.join("target"));
@@ -9048,47 +12332,74 @@ fn c_consumer_reference_example_runs_clean() {
     let _ = std::fs::remove_file(c_user_dir.join("c_user_dyn"));
 
     // 1. Build the library via cpc.
-    let st = Command::new(cpc).arg("build").arg("--release")
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
         .current_dir(&mathlib_dir)
-        .status().expect("invoke cpc");
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build of reference mathlib failed");
 
     // The build must have written all three artifacts: .a, .dylib, .h.
     let release_dir = mathlib_dir.join("target/release");
-    assert!(release_dir.join("libmathlib.a").is_file(),     "missing libmathlib.a");
-    assert!(release_dir.join("libmathlib.dylib").is_file(), "missing libmathlib.dylib");
-    assert!(release_dir.join("mathlib.h").is_file(),        "missing mathlib.h");
+    assert!(
+        release_dir.join("libmathlib.a").is_file(),
+        "missing libmathlib.a"
+    );
+    assert!(
+        release_dir.join("libmathlib.dylib").is_file(),
+        "missing libmathlib.dylib"
+    );
+    assert!(release_dir.join("mathlib.h").is_file(), "missing mathlib.h");
 
     // 2. Compile + link the C consumer against the static lib.
     let c_user_bin = c_user_dir.join("c_user");
     let st = Command::new("clang")
-        .arg("-Wall").arg("-Wextra")
-        .arg("-I").arg(&release_dir)
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-I")
+        .arg(&release_dir)
         .arg(c_user_dir.join("c_user.c"))
         .arg(release_dir.join("libmathlib.a"))
-        .arg("-o").arg(&c_user_bin)
-        .status().expect("clang link");
-    assert!(st.success(), "linking C consumer against libmathlib.a failed");
+        .arg("-o")
+        .arg(&c_user_bin)
+        .status()
+        .expect("clang link");
+    assert!(
+        st.success(),
+        "linking C consumer against libmathlib.a failed"
+    );
 
     // 3. Run it. The binary returns the number of failures; expect 0.
     let run = Command::new(&c_user_bin).output().expect("run c_user");
     let stdout = String::from_utf8_lossy(&run.stdout);
-    assert!(stdout.contains("0 failure(s)"),
+    assert!(
+        stdout.contains("0 failure(s)"),
         "reference example reported failures:\nstdout=\n{stdout}\nstderr=\n{}",
-        String::from_utf8_lossy(&run.stderr));
+        String::from_utf8_lossy(&run.stderr)
+    );
     assert_eq!(run.status.code(), Some(0), "c_user exited non-zero");
 
     // 4. Also try the dynamic-link path for parity.
     let c_user_dyn = c_user_dir.join("c_user_dyn");
     let st = Command::new("clang")
-        .arg("-Wall").arg("-Wextra")
-        .arg("-I").arg(&release_dir)
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-I")
+        .arg(&release_dir)
         .arg(c_user_dir.join("c_user.c"))
-        .arg("-L").arg(&release_dir).arg("-lmathlib")
+        .arg("-L")
+        .arg(&release_dir)
+        .arg("-lmathlib")
         .arg(format!("-Wl,-rpath,{}", release_dir.display()))
-        .arg("-o").arg(&c_user_dyn)
-        .status().expect("clang link dynamic");
-    assert!(st.success(), "linking C consumer against libmathlib.dylib failed");
+        .arg("-o")
+        .arg(&c_user_dyn)
+        .status()
+        .expect("clang link dynamic");
+    assert!(
+        st.success(),
+        "linking C consumer against libmathlib.dylib failed"
+    );
     let run = Command::new(&c_user_dyn).status().expect("run c_user_dyn");
     assert_eq!(run.code(), Some(0));
 
@@ -9107,19 +12418,33 @@ fn emit_header_basic_round_trip() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("lib.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
-         pub extern fn noop() { return; }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(), "--emit-header failed: stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+         pub extern fn noop() { return; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "--emit-header failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let h = String::from_utf8_lossy(&out.stdout);
     assert!(h.contains("#pragma once"));
     assert!(h.contains("#include <stdint.h>"));
-    assert!(h.contains("int32_t add(int32_t a, int32_t b);"),
-        "missing add prototype in:\n{h}");
-    assert!(h.contains("void noop(void);"),
-        "missing noop prototype in:\n{h}");
+    assert!(
+        h.contains("int32_t add(int32_t a, int32_t b);"),
+        "missing add prototype in:\n{h}"
+    );
+    assert!(
+        h.contains("void noop(void);"),
+        "missing noop prototype in:\n{h}"
+    );
 }
 
 #[test]
@@ -9127,11 +12452,18 @@ fn emit_header_renders_repr_c_struct() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("lib.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "#[repr(C)]\n\
          pub struct Point { pub x: i32, pub y: i32 }\n\
-         pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+         pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let h = String::from_utf8_lossy(&out.stdout);
     assert!(h.contains("typedef struct Point"));
@@ -9146,10 +12478,17 @@ fn emit_header_renders_plain_enum() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("lib.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "pub enum Color { Red, Green, Blue }\n\
-         pub extern fn first() -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+         pub extern fn first() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let h = String::from_utf8_lossy(&out.stdout);
     assert!(h.contains("enum Color"), "missing enum in:\n{h}");
@@ -9164,15 +12503,24 @@ fn emit_header_skips_non_pub_items() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("lib.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "pub extern fn pub_api(x: i32) -> i32 { return helper(x); }\n\
-         fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+         fn helper(x: i32) -> i32 { return x +% (1 as i32); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let h = String::from_utf8_lossy(&out.stdout);
     assert!(h.contains("int32_t pub_api(int32_t x);"));
-    assert!(!h.contains("helper("),
-        "non-pub `helper` leaked into header:\n{h}");
+    assert!(
+        !h.contains("helper("),
+        "non-pub `helper` leaked into header:\n{h}"
+    );
 }
 
 #[test]
@@ -9183,16 +12531,27 @@ fn emit_header_skips_extern_import_declarations() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("lib.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "extern fn malloc(n: usize) -> *u8;\n\
-         pub extern fn my_alloc(n: usize) -> *u8 { return unsafe { malloc(n) }; }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+         pub extern fn my_alloc(n: usize) -> *u8 { return unsafe { malloc(n) }; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let h = String::from_utf8_lossy(&out.stdout);
-    assert!(h.contains("uint8_t * my_alloc(size_t n);"),
-        "missing my_alloc; got:\n{h}");
-    assert!(!h.contains("uint8_t * malloc"),
-        "import `malloc` leaked into header:\n{h}");
+    assert!(
+        h.contains("uint8_t * my_alloc(size_t n);"),
+        "missing my_alloc; got:\n{h}"
+    );
+    assert!(
+        !h.contains("uint8_t * malloc"),
+        "import `malloc` leaked into header:\n{h}"
+    );
 }
 
 #[test]
@@ -9203,7 +12562,8 @@ fn emit_header_passes_clang_syntax_check() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("lib.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "#[repr(C)]\n\
          pub struct Vec3 { pub x: f32, pub y: f32, pub z: f32 }\n\
          pub enum Shape { Circle, Square, Triangle }\n\
@@ -9211,24 +12571,33 @@ fn emit_header_passes_clang_syntax_check() {
            return v.x * v.x + v.y * v.y + v.z * v.z;\n\
          }\n\
          pub extern fn area(s: Shape, side: f64) -> f64 { return side; }\n\
-         pub extern fn buf_ptr(n: usize) -> *u8 { unsafe { return 0 as *u8; } }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-header").arg(&src).output().expect("invoke cpc");
+         pub extern fn buf_ptr(n: usize) -> *u8 { unsafe { return 0 as *u8; } }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(out.status.success());
     let h_path = dir.join("lib.h");
     std::fs::write(&h_path, &out.stdout).unwrap();
 
     // Wrap the header in a translation unit and ask clang to parse it.
     let tu_path = dir.join("tu.c");
-    std::fs::write(&tu_path,
-        format!("#include \"{}\"\n", h_path.display())).unwrap();
+    std::fs::write(&tu_path, format!("#include \"{}\"\n", h_path.display())).unwrap();
     let clang = Command::new("clang")
         .arg("-fsyntax-only")
-        .arg("-Wall").arg("-Wextra").arg("-Werror")
-        .arg("-x").arg("c")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg("-x")
+        .arg("c")
         .arg(&tu_path)
         .output()
         .expect("invoke clang");
-    assert!(clang.status.success(),
+    assert!(
+        clang.status.success(),
         "clang rejected generated header:\nheader=\n{}\nstderr=\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&clang.stderr),
@@ -9244,29 +12613,46 @@ fn lib_build_writes_libname_h_alongside_artifacts() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"hdrgen\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     let h_path = dir.join("target/debug/hdrgen.h");
-    assert!(h_path.is_file(), "expected generated header at {}", h_path.display());
+    assert!(
+        h_path.is_file(),
+        "expected generated header at {}",
+        h_path.display()
+    );
     let h = std::fs::read_to_string(&h_path).unwrap();
-    assert!(h.contains("int32_t add(int32_t a, int32_t b);"),
-        "header missing add prototype:\n{h}");
+    assert!(
+        h.contains("int32_t add(int32_t a, int32_t b);"),
+        "header missing add prototype:\n{h}"
+    );
 }
 
 #[test]
 fn emit_header_requires_file_argument() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
-    let out = Command::new(cpc).arg("--emit-header").output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--emit-header")
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failure without FILE");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("requires a FILE argument"),
-        "missing diagnostic, got: {stderr}");
+    assert!(
+        stderr.contains("requires a FILE argument"),
+        "missing diagnostic, got: {stderr}"
+    );
 }
 
 // ---- Phase 5 Slice 5.D: aggregate ABI coercion at the C boundary ----
@@ -9282,29 +12668,42 @@ fn aggregate_param_8_bytes_round_trips() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"abi8\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Point { x: i32, y: i32 }\n\
          pub extern fn square(p: Point) -> i32 { return p.x * p.x + p.y * p.y; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
 
     let c_src = dir.join("c_user.c");
-    std::fs::write(&c_src,
+    std::fs::write(
+        &c_src,
         "#include <stdint.h>\n\
          typedef struct { int32_t x; int32_t y; } Point;\n\
          extern int32_t square(Point);\n\
-         int main(void) { Point p = {3, 4}; return square(p); /* 9 + 16 = 25 */ }\n").unwrap();
+         int main(void) { Point p = {3, 4}; return square(p); /* 9 + 16 = 25 */ }\n",
+    )
+    .unwrap();
     let bin = dir.join("c_user");
-    let st = Command::new("clang").arg(&c_src)
-        .arg("-L").arg(dir.join("target/release"))
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/release"))
         .arg("-labi8")
-        .arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(25), "expected 25 = 3^2 + 4^2");
@@ -9318,29 +12717,42 @@ fn aggregate_param_16_bytes_round_trips() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"abi16\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
          pub extern fn sum_pair(p: Pair) -> i64 { return p.a + p.b; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
 
     let c_src = dir.join("c_user.c");
-    std::fs::write(&c_src,
+    std::fs::write(
+        &c_src,
         "#include <stdint.h>\n\
          typedef struct { int64_t a; int64_t b; } Pair;\n\
          extern int64_t sum_pair(Pair);\n\
-         int main(void) { Pair p = {10, 20}; return (int)sum_pair(p); /* 30 */ }\n").unwrap();
+         int main(void) { Pair p = {10, 20}; return (int)sum_pair(p); /* 30 */ }\n",
+    )
+    .unwrap();
     let bin = dir.join("c_user");
-    let st = Command::new("clang").arg(&c_src)
-        .arg("-L").arg(dir.join("target/release"))
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/release"))
         .arg("-labi16")
-        .arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(30));
@@ -9354,32 +12766,45 @@ fn aggregate_param_24_bytes_indirect_round_trips() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"abi24\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
          pub extern fn sum_triple(t: Triple) -> i64 { return t.a + t.b + t.c; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
 
     let c_src = dir.join("c_user.c");
-    std::fs::write(&c_src,
+    std::fs::write(
+        &c_src,
         "#include <stdint.h>\n\
          typedef struct { int64_t a; int64_t b; int64_t c; } Triple;\n\
          extern int64_t sum_triple(Triple);\n\
-         int main(void) { Triple t = {100, 200, 300}; return (int)sum_triple(t); /* 600 */ }\n").unwrap();
+         int main(void) { Triple t = {100, 200, 300}; return (int)sum_triple(t); /* 600 */ }\n",
+    )
+    .unwrap();
     let bin = dir.join("c_user");
-    let st = Command::new("clang").arg(&c_src)
-        .arg("-L").arg(dir.join("target/release"))
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/release"))
         .arg("-labi24")
-        .arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
-    assert_eq!(run.code(), Some(600 - 256 - 256));  // u8 truncation of 600 → 88
+    assert_eq!(run.code(), Some(600 - 256 - 256)); // u8 truncation of 600 → 88
 }
 
 #[test]
@@ -9392,19 +12817,26 @@ fn aggregate_return_8_bytes_coerces() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"retc8\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Point { x: i32, y: i32 }\n\
          pub extern fn make_point(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
 
     let c_src = dir.join("c_user.c");
-    std::fs::write(&c_src,
+    std::fs::write(
+        &c_src,
         "#include <stdint.h>\n\
          typedef struct { int32_t x; int32_t y; } Point;\n\
          extern Point make_point(int32_t, int32_t);\n\
@@ -9413,13 +12845,19 @@ fn aggregate_return_8_bytes_coerces() {
            if (p.x != 7) return 1;\n\
            if (p.y != 11) return 2;\n\
            return 0;\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let bin = dir.join("c_user");
-    let st = Command::new("clang").arg(&c_src)
-        .arg("-L").arg(dir.join("target/release"))
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/release"))
         .arg("-lretc8")
-        .arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0));
@@ -9433,19 +12871,25 @@ fn aggregate_return_24_bytes_sret() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"retc24\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "#[repr(C)] struct Triple { a: i64, b: i64, c: i64 }\n\
          pub extern fn make_triple() -> Triple { return Triple { a: 11 as i64, b: 22 as i64, c: 33 as i64 }; }\n",
     ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
 
     let c_src = dir.join("c_user.c");
-    std::fs::write(&c_src,
+    std::fs::write(
+        &c_src,
         "#include <stdint.h>\n\
          typedef struct { int64_t a; int64_t b; int64_t c; } Triple;\n\
          extern Triple make_triple(void);\n\
@@ -9455,13 +12899,19 @@ fn aggregate_return_24_bytes_sret() {
            if (t.b != 22) return 2;\n\
            if (t.c != 33) return 3;\n\
            return 0;\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let bin = dir.join("c_user");
-    let st = Command::new("clang").arg(&c_src)
-        .arg("-L").arg(dir.join("target/release"))
+    let st = Command::new("clang")
+        .arg(&c_src)
+        .arg("-L")
+        .arg(dir.join("target/release"))
         .arg("-lretc24")
-        .arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(0));
@@ -9479,15 +12929,21 @@ fn pub_extern_fn_round_trips_through_c() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"cexport\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
         "pub extern fn cab_add(a: i32, b: i32) -> i32 { return a + b; }\n\
          pub extern fn cab_neg(x: i32) -> i32 { return -x; }\n",
-    ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--release")
-        .current_dir(&dir).status().expect("invoke cpc");
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
 
     let c_src = dir.join("c_user.c");
@@ -9501,14 +12957,18 @@ fn pub_extern_fn_round_trips_through_c() {
            if (cab_neg(r) != -42) return 1;\n\
            return r;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let bin = dir.join("c_user");
     let st = Command::new("clang")
         .arg(&c_src)
-        .arg("-L").arg(dir.join("target/release"))
+        .arg("-L")
+        .arg(dir.join("target/release"))
         .arg("-lcexport")
-        .arg("-o").arg(&bin)
-        .status().expect("clang link");
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("clang link");
     assert!(st.success(), "C link against pub extern fn lib failed");
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(42), "expected 42 from cab_add(20, 22)");
@@ -9520,11 +12980,18 @@ fn pub_extern_fn_with_str_param_is_rejected_e0410() {
     let dir = tempdir();
     let src = dir.join("bad.cplus");
     std::fs::write(&src, "pub extern fn echo(s: str) -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected sema failure");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0410"), "expected E0410, got: {stderr}");
-    assert!(stderr.contains("fat pointer"), "diagnostic should mention the fat-pointer reason: {stderr}");
+    assert!(
+        stderr.contains("fat pointer"),
+        "diagnostic should mention the fat-pointer reason: {stderr}"
+    );
 }
 
 #[test]
@@ -9535,18 +13002,30 @@ fn exec_target_linkage_unchanged_by_5b() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("exe.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn double(x: i32) -> i32 { return x +% x; }\n\
-         fn main() -> i32 { return double(21); }\n").unwrap();
+         fn main() -> i32 { return double(21); }\n",
+    )
+    .unwrap();
     let bin = dir.join("exe");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run");
     assert_eq!(run.code(), Some(42));
     // v0.0.3 Slice 3D: non-pub fns now get `internal` linkage in
     // executable builds too (was lib-only in Slice 5.B). LTO can strip
     // unused helpers from the final binary.
-    let ll_out = Command::new(cpc).arg("--emit-ll").arg(&src).output().expect("emit-ll");
+    let ll_out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
     let ir = String::from_utf8_lossy(&ll_out.stdout);
     assert!(
         ir.contains("define internal i32 @double("),
@@ -9560,10 +13039,17 @@ fn emit_obj_requires_output_path() {
     let dir = tempdir();
     let src = dir.join("foo.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
-    let out = Command::new(cpc).arg("--emit-obj").arg(&src).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "expected failure without `-o`");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("requires `-o"), "missing diagnostic, got: {stderr}");
+    assert!(
+        stderr.contains("requires `-o"),
+        "missing diagnostic, got: {stderr}"
+    );
 }
 
 // ---- Phase 3A: bitshifts, bitwise ops, byte-swap intrinsics ----
@@ -9577,7 +13063,8 @@ fn bitshifts_and_bitwise_run_correctly() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bits.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn main() -> i32 {\n\
            let port: u16 = 8080 as u16;\n\
            let hi: u16 = (port >> 8) & (0xff as u16);\n\
@@ -9589,13 +13076,24 @@ fn bitshifts_and_bitwise_run_correctly() {
            let mask: u32 = ~(0 as u32);\n\
            if mask != (0xffffffff as u32) { return 13; }\n\
            return 0;\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let bin = dir.join("bits");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status()
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
         .expect("invoke cpc");
     assert!(st.success(), "compile failed");
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(0), "binary returned {}, expected 0", run.code().unwrap_or(-1));
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "binary returned {}, expected 0",
+        run.code().unwrap_or(-1)
+    );
 }
 
 #[test]
@@ -9604,7 +13102,8 @@ fn htons_round_trips_to_bswap() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("hs.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn main() -> i32 {\n\
            let p: u16 = 0x1234 as u16;\n\
            let s: u16 = htons(p);\n\
@@ -9613,9 +13112,16 @@ fn htons_round_trips_to_bswap() {
            let r: u16 = htons(s);\n\
            if r != p { return 2; }\n\
            return 0;\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let bin = dir.join("hs");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(0));
@@ -9626,15 +13132,23 @@ fn bswap32_byte_reverses_correctly() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bs.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn main() -> i32 {\n\
            let p: u32 = 0x12345678 as u32;\n\
            let s: u32 = bswap32(p);\n\
            if s != (0x78563412 as u32) { return 1; }\n\
            return 0;\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let bin = dir.join("bs");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(0));
@@ -9647,16 +13161,24 @@ fn shift_count_widths_compose() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("sh.cplus");
-    std::fs::write(&src,
+    std::fs::write(
+        &src,
         "fn main() -> i32 {\n\
            let x: i64 = 1 as i64;\n\
            let n: u8 = 8 as u8;\n\
            let y: i64 = x << n;\n\
            if y != (256 as i64) { return 1; }\n\
            return 0;\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let bin = dir.join("sh");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success());
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(0));
@@ -9679,8 +13201,10 @@ fn shift_count_widths_compose() {
 fn copy_recipe_to_tempdir(name: &str) -> std::path::PathBuf {
     let dir = tempdir();
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .join("docs/examples/recipes").join(name);
+        .parent()
+        .unwrap()
+        .join("docs/examples/recipes")
+        .join(name);
     let src_dir = manifest_path.join("src");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::copy(manifest_path.join("Cplus.toml"), dir.join("Cplus.toml")).unwrap();
@@ -9697,11 +13221,16 @@ fn copy_recipe_to_tempdir(name: &str) -> std::path::PathBuf {
 fn recipe_env_var_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("env_var");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "env_var build failed");
     let out = Command::new(dir.join("target/debug/env_var"))
         .env("HOME", "/tmp/recipe-test")
-        .output().expect("run");
+        .output()
+        .expect("run");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("HOME=/tmp/recipe-test"), "got: {stdout}");
 }
@@ -9711,10 +13240,16 @@ fn recipe_env_var_runs() {
 fn recipe_argv_parse_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("argv_parse");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "argv_parse build failed");
     let out = Command::new(dir.join("target/debug/argv_parse"))
-        .args(["alpha", "beta", "gamma"]).output().expect("run");
+        .args(["alpha", "beta", "gamma"])
+        .output()
+        .expect("run");
     let stdout = String::from_utf8_lossy(&out.stdout);
     // argv[0] is the binary path; check the three custom args appear.
     assert!(stdout.contains("alpha\n"), "got: {stdout}");
@@ -9727,14 +13262,23 @@ fn recipe_stdin_lines_runs() {
     use std::io::Write;
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("stdin_lines");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "stdin_lines build failed");
     let mut child = std::process::Command::new(dir.join("target/debug/stdin_lines"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .spawn().expect("spawn");
-    child.stdin.as_mut().unwrap()
-        .write_all(b"alpha\nbeta\ngamma\n").unwrap();
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"alpha\nbeta\ngamma\n")
+        .unwrap();
     let out = child.wait_with_output().expect("wait");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stdout, "1: alpha\n2: beta\n3: gamma\n", "got: {stdout}");
@@ -9745,12 +13289,18 @@ fn recipe_stdin_lines_runs() {
 fn recipe_file_read_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("file_read");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "file_read build failed");
     let test_file = dir.join("payload.txt");
     std::fs::write(&test_file, "the quick brown fox\n").unwrap();
     let out = Command::new(dir.join("target/debug/file_read"))
-        .arg(&test_file).output().expect("run");
+        .arg(&test_file)
+        .output()
+        .expect("run");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stdout, "the quick brown fox\n", "got: {stdout}");
 }
@@ -9760,11 +13310,18 @@ fn recipe_file_read_runs() {
 fn recipe_file_write_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("file_write");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "file_write build failed");
     let test_file = dir.join("out.txt");
     let st = Command::new(dir.join("target/debug/file_write"))
-        .arg(&test_file).arg("written by file_write").status().expect("run");
+        .arg(&test_file)
+        .arg("written by file_write")
+        .status()
+        .expect("run");
     assert!(st.success(), "file_write exited non-zero");
     let contents = std::fs::read_to_string(&test_file).expect("output exists");
     assert_eq!(contents, "written by file_write");
@@ -9774,9 +13331,15 @@ fn recipe_file_write_runs() {
 fn recipe_hash_table_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("hash_table");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "hash_table build failed");
-    let out = Command::new(dir.join("target/debug/hash_table")).output().expect("run");
+    let out = Command::new(dir.join("target/debug/hash_table"))
+        .output()
+        .expect("run");
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("4/4 ok"), "expected 4/4 ok, got: {stdout}");
@@ -9787,14 +13350,23 @@ fn recipe_json_parse_runs() {
     use std::io::Write;
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("json_parse");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "json_parse build failed");
     let mut child = std::process::Command::new(dir.join("target/debug/json_parse"))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .spawn().expect("spawn");
-    child.stdin.as_mut().unwrap()
-        .write_all(br#"{"k":[1,true,null]}"#).unwrap();
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(br#"{"k":[1,true,null]}"#)
+        .unwrap();
     let out = child.wait_with_output().expect("wait");
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -9811,13 +13383,18 @@ fn recipe_json_parse_rejects_malformed() {
     use std::io::Write;
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("json_parse");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success());
     let mut child = std::process::Command::new(dir.join("target/debug/json_parse"))
         .stdin(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .spawn().expect("spawn");
+        .spawn()
+        .expect("spawn");
     child.stdin.as_mut().unwrap().write_all(b"{bad:1}").unwrap();
     let out = child.wait_with_output().expect("wait");
     assert_eq!(out.status.code(), Some(1));
@@ -9830,7 +13407,11 @@ fn recipe_tcp_client_compiles() {
     // by the tcp_server recipe below. This guards the build path.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("tcp_client");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "tcp_client build failed");
 }
 
@@ -9841,8 +13422,18 @@ fn recipe_tcp_server_round_trip() {
     // Build both server and client into the same workflow.
     let server_dir = copy_recipe_to_tempdir("tcp_server");
     let client_dir = copy_recipe_to_tempdir("tcp_client");
-    assert!(Command::new(cpc).arg("build").current_dir(&server_dir).status().unwrap().success());
-    assert!(Command::new(cpc).arg("build").current_dir(&client_dir).status().unwrap().success());
+    assert!(Command::new(cpc)
+        .arg("build")
+        .current_dir(&server_dir)
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(cpc)
+        .arg("build")
+        .current_dir(&client_dir)
+        .status()
+        .unwrap()
+        .success());
 
     // Pick a high-numbered ephemeral port — collisions are unlikely
     // across parallel test runs, and the test exits even on failure
@@ -9852,11 +13443,13 @@ fn recipe_tcp_server_round_trip() {
     let client_bin = client_dir.join("target/debug/tcp_client");
     let mut server = Command::new(&server_bin)
         .arg(port.to_string())
-        .spawn().expect("spawn server");
+        .spawn()
+        .expect("spawn server");
     std::thread::sleep(std::time::Duration::from_millis(300));
     let out = Command::new(&client_bin)
         .args(["127.0.0.1", &port.to_string(), "hello, server!"])
-        .output().expect("run client");
+        .output()
+        .expect("run client");
     let _ = server.wait();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stdout, "hello, server!", "got: {stdout}");
@@ -9868,7 +13461,11 @@ fn recipe_http_get_compiles() {
     // Compile-only — DNS / network reachability not assumed in CI.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = copy_recipe_to_tempdir("http_get");
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "http_get build failed");
 }
 
@@ -9886,17 +13483,27 @@ fn recipe_concurrent_counter_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "concurrent_counter build failed");
-    let out = Command::new(dir.join("target/debug/concurrent_counter")).output().expect("run");
-    assert!(out.status.success(),
+    let out = Command::new(dir.join("target/debug/concurrent_counter"))
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
         "concurrent_counter exited non-zero: {:?} stderr={}",
-        out.status.code(), String::from_utf8_lossy(&out.stderr));
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5D ASan + TSan: real instrumentation. Builds
@@ -9921,24 +13528,41 @@ fn recipe_concurrent_counter_tsan_and_asan_clean() {
         std::fs::write(
             dir.join("vendor/stdlib/Cplus.toml"),
             "[package]\nname = \"stdlib\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
         let atomic_src = include_str!("../../vendor/stdlib/src/atomic.cplus");
         std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
         std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), atomic_src).unwrap();
-        let st = Command::new(cpc).arg("build").arg(san).current_dir(&dir).status().expect("build");
+        let st = Command::new(cpc)
+            .arg("build")
+            .arg(san)
+            .current_dir(&dir)
+            .status()
+            .expect("build");
         assert!(st.success(), "concurrent_counter build {san} failed");
-        let out = Command::new(dir.join("target/debug/concurrent_counter")).output().expect("run");
+        let out = Command::new(dir.join("target/debug/concurrent_counter"))
+            .output()
+            .expect("run");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(),
+        assert!(
+            out.status.success(),
             "concurrent_counter under {san} exited non-zero: {:?} stderr={}",
-            out.status.code(), stderr);
-        assert!(!stderr.contains("WARNING: ThreadSanitizer"),
-            "TSan flagged a race under {san}:\n{stderr}");
-        assert!(!stderr.contains("AddressSanitizer"),
-            "ASan flagged an error under {san}:\n{stderr}");
-        assert!(!stderr.contains("LeakSanitizer"),
-            "LSan flagged a leak under {san}:\n{stderr}");
+            out.status.code(),
+            stderr
+        );
+        assert!(
+            !stderr.contains("WARNING: ThreadSanitizer"),
+            "TSan flagged a race under {san}:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged an error under {san}:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("LeakSanitizer"),
+            "LSan flagged a leak under {san}:\n{stderr}"
+        );
     }
 }
 
@@ -9958,12 +13582,20 @@ fn racy_counter_provokes_tsan_warning() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -9989,12 +13621,21 @@ fn racy_counter_provokes_tsan_warning() {
              return 0;\n\
          }\n",
     ).unwrap();
-    let st = Command::new(cpc).arg("build").arg("--tsan").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .arg("--tsan")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "racy build under --tsan failed");
-    let out = Command::new(dir.join("target/debug/racy")).output().expect("run");
+    let out = Command::new(dir.join("target/debug/racy"))
+        .output()
+        .expect("run");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("WARNING: ThreadSanitizer"),
-        "expected TSan to flag the deliberate race; got:\n{stderr}");
+    assert!(
+        stderr.contains("WARNING: ThreadSanitizer"),
+        "expected TSan to flag the deliberate race; got:\n{stderr}"
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5E reference recipe: async_compute. Chained
@@ -10026,7 +13667,8 @@ fn recipe_async_fetch_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     // Stage stdlib modules the recipe imports + their transitive deps.
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
@@ -10044,7 +13686,11 @@ fn recipe_async_fetch_runs() {
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "async_fetch build failed");
     // Bind to a free port on 127.0.0.1, accept one connection, echo
     // back whatever byte the client writes. Sidecar Rust thread does
@@ -10065,12 +13711,16 @@ fn recipe_async_fetch_runs() {
     });
     let out = Command::new(dir.join("target/debug/async_fetch"))
         .env("FETCH_PORT", port.to_string())
-        .output().expect("run");
+        .output()
+        .expect("run");
     server.join().expect("server thread");
     let code = out.status.code().unwrap_or(-1);
-    assert_eq!(code, 0x41,
+    assert_eq!(
+        code,
+        0x41,
         "expected echoed 'A' (0x41); got code={code} stderr={}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -10085,19 +13735,29 @@ fn recipe_async_yield_demo_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "async_yield_demo build failed");
-    let out = Command::new(dir.join("target/debug/async_yield_demo")).output().expect("run");
-    assert!(out.status.success(),
+    let out = Command::new(dir.join("target/debug/async_yield_demo"))
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
         "async_yield_demo exited non-zero: {:?} stderr={}",
-        out.status.code(), String::from_utf8_lossy(&out.stderr));
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -10109,20 +13769,34 @@ fn recipe_async_compute_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let future_src = include_str!("../../vendor/stdlib/src/future.cplus");
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     // v0.0.4 Phase 3 Slice 3A.1: executor.cplus now imports reactor.
     let __reactor_for_executor = include_str!("../../vendor/stdlib/src/reactor.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), __reactor_for_executor).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor.cplus"),
+        __reactor_for_executor,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "async_compute build failed");
-    let out = Command::new(dir.join("target/debug/async_compute")).output().expect("run");
-    assert!(out.status.success(),
+    let out = Command::new(dir.join("target/debug/async_compute"))
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
         "async_compute exited non-zero: {:?} stderr={}",
-        out.status.code(), String::from_utf8_lossy(&out.stderr));
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// v0.0.3 Phase 5 Slice 5B reference recipe: parallel sum. Two threads
@@ -10141,18 +13815,33 @@ fn recipe_parallel_sum_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/Cplus.toml"),
         "[package]\nname = \"stdlib\"\n",
-    ).unwrap();
+    )
+    .unwrap();
     let thread_src = include_str!("../../vendor/stdlib/src/thread.cplus");
     // v0.0.4 Phase 2 Slice 2H: thread.cplus now imports stdlib/atomic
     // for the refcounted-ctx dec on Drop. Stage atomic.cplus too.
     let __atomic_for_thread = include_str!("../../vendor/stdlib/src/atomic.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/atomic.cplus"), __atomic_for_thread).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        __atomic_for_thread,
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("build");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("build");
     assert!(st.success(), "parallel_sum build failed");
-    let out = Command::new(dir.join("target/debug/parallel_sum")).output().expect("run");
-    assert!(out.status.success(), "parallel_sum exited non-zero: {:?} stderr={}",
-        out.status.code(), String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(dir.join("target/debug/parallel_sum"))
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "parallel_sum exited non-zero: {:?} stderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// v0.0.3 Phase 2 (CWE-377 hardening): use `tempfile::TempDir` so each
@@ -10172,7 +13861,9 @@ fn recipe_parallel_sum_runs() {
 /// Catches drift before it surfaces as user-build failures.
 #[test]
 fn ci_lint_imports_match_declared_deps() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     let project_roots: Vec<std::path::PathBuf> = {
         let mut roots = Vec::new();
         // Project-mode trees we care about.
@@ -10182,13 +13873,17 @@ fn ci_lint_imports_match_declared_deps() {
             root.join("proves/benchmark/programs"),
         ];
         for parent in candidate_parents {
-            if !parent.is_dir() { continue; }
+            if !parent.is_dir() {
+                continue;
+            }
             // Walk one level: each immediate subdirectory MAY be a project.
             // For proves/benchmark/programs/<N>/, projects sit one level
             // deeper (e.g. `04-curl-lite/cplus`, `04-curl-lite/cplus-stdlib`).
             for entry in std::fs::read_dir(&parent).unwrap().flatten() {
                 let p = entry.path();
-                if !p.is_dir() { continue; }
+                if !p.is_dir() {
+                    continue;
+                }
                 if p.join("Cplus.toml").is_file() {
                     roots.push(p.clone());
                     continue;
@@ -10230,26 +13925,40 @@ fn ci_lint_imports_match_declared_deps() {
         }
         // Walk every .cplus under this project's src/.
         let src_dir = proj.join("src");
-        if !src_dir.is_dir() { continue; }
+        if !src_dir.is_dir() {
+            continue;
+        }
         let mut stack = vec![src_dir];
         while let Some(d) = stack.pop() {
             for entry in std::fs::read_dir(&d).unwrap().flatten() {
                 let p = entry.path();
-                if p.is_dir() { stack.push(p); continue; }
-                if p.extension().and_then(|e| e.to_str()) != Some("cplus") { continue; }
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|e| e.to_str()) != Some("cplus") {
+                    continue;
+                }
                 let body = std::fs::read_to_string(&p).unwrap();
                 for (lineno, line) in body.lines().enumerate() {
                     let t = line.trim();
-                    if !t.starts_with("import ") { continue; }
+                    if !t.starts_with("import ") {
+                        continue;
+                    }
                     // Pull the quoted path out: import "..." as ...;
-                    let Some(start) = t.find('"') else { continue; };
+                    let Some(start) = t.find('"') else {
+                        continue;
+                    };
                     let after = &t[start + 1..];
-                    let Some(end) = after.find('"') else { continue; };
+                    let Some(end) = after.find('"') else {
+                        continue;
+                    };
                     let path = &after[..end];
                     if path.ends_with(".cplus") {
                         errors.push(format!(
                             "{}:{}: stale `.cplus` extension in `import \"{path}\"` (drop it)",
-                            p.display(), lineno + 1
+                            p.display(),
+                            lineno + 1
                         ));
                         continue;
                     }
@@ -10276,8 +13985,284 @@ fn ci_lint_imports_match_declared_deps() {
         }
     }
     if !errors.is_empty() {
-        panic!("CI lint found {} import drift(s):\n{}", errors.len(), errors.join("\n"));
+        panic!(
+            "CI lint found {} import drift(s):\n{}",
+            errors.len(),
+            errors.join("\n")
+        );
     }
+}
+
+/// v0.0.6 Phase 2B: `vendor/appkit/src/convert.cplus` C+/ObjC data
+/// bridge. Verifies the string + NSData round-trippers actually work
+/// against a real autorelease pool. Smaller than the full appkit
+/// smoke test because it touches Foundation only — no AppKit widgets,
+/// no main thread requirements.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_bridge_round_trip() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bridge_rt\"\n\n[[bin]]\nname = \"bridge_rt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nappkit = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+
+    // Symlink the in-tree vendor packages so the build picks up the
+    // current convert.cplus + runtime.cplus.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
+
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"
+import "appkit/convert" as bridge;
+import "appkit/application" as application;
+import "stdlib/vec" as vec;
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+
+    // string -> NSString -> string round-trip preserves content + length.
+    let original: string = "hello, world".to_string();
+    let ns: *u8 = bridge::cplus_string_to_nsstring(original);
+    let back: string = bridge::nsstring_to_cplus_string(ns);
+    if back.len() != (12 as usize) { return 1; }
+    if back.as_str() != "hello, world" { return 2; }
+
+    // str literal path.
+    let ns2: *u8 = bridge::cplus_str_to_nsstring("bridge");
+    let s2: string = bridge::nsstring_to_cplus_string(ns2);
+    if s2.as_str() != "bridge" { return 3; }
+
+    // Empty string is a corner the encoding-aware length path must handle.
+    let ns3: *u8 = bridge::cplus_str_to_nsstring("");
+    let s3: string = bridge::nsstring_to_cplus_string(ns3);
+    if s3.len() != (0 as usize) { return 4; }
+
+    // Vec[u8] -> NSData -> Vec[u8] copy round-trip.
+    let mut bytes: vec::Vec[u8] = vec::Vec[u8]::with_capacity(4 as usize);
+    bytes.push(10 as u8);
+    bytes.push(20 as u8);
+    bytes.push(30 as u8);
+    bytes.push(40 as u8);
+    let data: *u8 = bridge::vec_u8_to_nsdata(bytes);
+    let back_bytes: vec::Vec[u8] = bridge::nsdata_to_vec_u8(data);
+    if back_bytes.len() != (4 as usize) { return 5; }
+    if back_bytes.get(0 as usize) != (10 as u8) { return 6; }
+    if back_bytes.get(3 as usize) != (40 as u8) { return 7; }
+
+    pool.drain();
+    return 0;
+}
+"#,
+    ).unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build for bridge round-trip failed: {status}");
+
+    let bin = dir.join("target/debug/bridge_rt");
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+
+    let run = Command::new(bin).status().expect("run bridge_rt");
+    assert!(run.success(), "bridge_rt exited non-zero: {run}");
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_vendor_package_smoke() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    // Write consumer Cplus.toml
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"smoke_app\"\n\n[[bin]]\nname = \"smoke_app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nappkit = \"*\"\n",
+    ).unwrap();
+
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/appkit/src")).unwrap();
+
+    // Read and copy our implemented appkit package into the tempdir project.
+    let appkit_toml = std::fs::read_to_string("../vendor/appkit/Cplus.toml").unwrap();
+    std::fs::write(dir.join("vendor/appkit/Cplus.toml"), appkit_toml).unwrap();
+    for entry in std::fs::read_dir("../vendor/appkit/src").unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("cplus") {
+            continue;
+        }
+        let dst = dir
+            .join("vendor/appkit/src")
+            .join(path.file_name().unwrap());
+        std::fs::copy(path, dst).unwrap();
+    }
+
+    // Write consumer main.cplus
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"
+import "appkit/appkit" as appkit;
+
+fn on_click(sender: *u8) {
+    // Click action callback
+}
+
+fn main() -> i32 {
+    let pool = appkit::AutoreleasePool::new();
+    let app = appkit::Application::shared();
+    
+    let frame = appkit::Rect {
+        origin: appkit::Point { x: 0.0, y: 0.0 },
+        size: appkit::Size { width: 100.0, height: 100.0 }
+    };
+    
+    let btn = appkit::Button::new(frame);
+    btn.set_enabled(1 as i8);
+    btn.set_on_click(on_click);
+    
+    let color = appkit::Color::rgba(1.0, 0.0, 0.0, 1.0);
+    let font = appkit::Font::system_font_of_size(12.0);
+    let alert = appkit::Alert::new();
+    alert.set_message_text(str_ptr("Smoke\0"));
+    alert.add_button(str_ptr("OK\0"));
+
+    let secure = appkit::SecureTextField::new(frame);
+    secure.set_placeholder_string(str_ptr("Password\0"));
+    let search = appkit::SearchField::new(frame);
+    search.set_placeholder_string(str_ptr("Search\0"));
+    search.set_on_search(on_click);
+    let tokens = appkit::TokenField::new(frame);
+    tokens.set_string_value(str_ptr("one,two\0"));
+    let combo = appkit::ComboBox::new(frame);
+    combo.add_item(str_ptr("A\0"));
+    let text_view = appkit::TextView::new(frame);
+    text_view.set_string(str_ptr("Body\0"));
+
+    let stepper = appkit::Stepper::new(frame);
+    stepper.set_increment(1.0);
+    let sw = appkit::Switch::new(frame);
+    sw.set_state(1 as i64);
+    let segments = appkit::SegmentedControl::new(frame);
+    segments.set_segment_count(2 as i64);
+    segments.set_label_for_segment(str_ptr("One\0"), 0 as i64);
+    let date_picker = appkit::DatePicker::new(frame);
+    date_picker.set_date_picker_style(0 as i64);
+    let color_well = appkit::ColorWell::new(frame);
+    color_well.set_color(color);
+    let level = appkit::LevelIndicator::new(frame);
+    level.set_max_value(10.0);
+    let path = appkit::PathControl::new(frame);
+    path.set_path_style(0 as i64);
+
+    let split = appkit::SplitView::new(frame);
+    split.set_vertical(1 as i8);
+    let tab_view = appkit::TabView::new(frame);
+    let tab_item = appkit::TabViewItem::new(str_ptr("main\0"));
+    tab_item.set_label(str_ptr("Main\0"));
+    tab_view.add_tab_view_item(tab_item.obj);
+    let visual = appkit::VisualEffectView::new(frame);
+    visual.set_material(0 as i64);
+    let grid = appkit::GridView::new(frame);
+    grid.set_row_spacing(8.0);
+    let browser = appkit::Browser::new(frame);
+    browser.reload_column(0 as i64);
+    let matrix = appkit::Matrix::new(frame);
+    matrix.set_mode(0 as i64);
+    let clip = appkit::ClipView::new(frame);
+    clip.set_document_view(text_view.obj);
+    let ruler = appkit::RulerView::new(frame);
+    ruler.set_orientation(0 as i64);
+    let popover = appkit::Popover::new();
+    popover.set_behavior(1 as i64);
+
+    let table = appkit::TableView::new(frame);
+    let col = appkit::TableColumn::new(str_ptr("name\0"));
+    col.set_title(str_ptr("Name\0"));
+    table.add_table_column(col.obj);
+    table.reload_data();
+    let outline = appkit::OutlineView::new(frame);
+    outline.add_table_column(col.obj);
+    let cell = appkit::TableCellView::new(frame);
+    cell.set_text_field(secure.obj);
+    let row = appkit::TableRowView::new(frame);
+    let collection = appkit::CollectionView::new(frame);
+    let flow = appkit::CollectionViewFlowLayout::new();
+    flow.set_item_size(appkit::Size { width: 44.0, height: 44.0 });
+    collection.set_collection_view_layout(flow.obj);
+    let grid_layout = appkit::CollectionViewGridLayout::new();
+    grid_layout.set_minimum_item_size(appkit::Size { width: 20.0, height: 20.0 });
+    let rule = appkit::RuleEditor::new(frame);
+    rule.reload_criteria();
+    let pred = appkit::PredicateEditor::new(frame);
+    pred.reload_criteria();
+
+    let toolbar = appkit::Toolbar::new(str_ptr("main-toolbar\0"));
+    toolbar.set_display_mode(1 as i64);
+    let toolbar_item = appkit::ToolbarItem::new(str_ptr("item\0"));
+    toolbar_item.set_label(str_ptr("Item\0"));
+    let status_bar = appkit::StatusBar::system();
+    let status_item_raw = status_bar.status_item_with_length(24.0);
+    let status_item = appkit::StatusItem::from_obj(status_item_raw);
+    let status_button = appkit::StatusBarButton::from_obj(status_item.button());
+    status_button.set_title(str_ptr("S\0"));
+    let touch_bar = appkit::TouchBar::new();
+    let touch_item = appkit::TouchBarItem::new(str_ptr("touch\0"));
+
+    let vc = appkit::ViewController::new();
+    vc.set_view(text_view.obj);
+    let wc = appkit::WindowController::new();
+    let tabs = appkit::TabViewController::new();
+    // NSTabViewController insists on (a) a fresh NSTabViewItem (not
+    // one already attached to another tab parent) and (b) the item
+    // having a non-nil viewController. The original smoke had neither —
+    // it reused tab_item.obj from `tab_view` above. Fix both.
+    let tab_item2 = appkit::TabViewItem::new(str_ptr("controllers\0"));
+    tab_item2.set_label(str_ptr("Controllers\0"));
+    let tab_vc = appkit::ViewController::new();
+    tab_vc.set_view(visual.obj);
+    tab_item2.set_view_controller(tab_vc.obj);
+    tabs.add_tab_view_item(tab_item2.obj);
+    let array_controller = appkit::ArrayController::new();
+    let object_controller = appkit::ObjectController::new();
+    
+    pool.drain();
+    return 42;
+}
+"#,
+    )
+    .unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        status.success(),
+        "cpc build for appkit smoke failed: {status}"
+    );
+
+    let bin = dir.join("target/debug/smoke_app");
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+
+    let run = Command::new(bin).status().expect("run smoke_app");
+    // 42 is the sentinel "all widget constructions + method calls
+    // completed without an NSException" set at the end of the smoke
+    // source. We don't run the event loop, so 0 is unreachable —
+    // 42 is the success exit.
+    assert_eq!(
+        run.code(), Some(42),
+        "smoke_app expected exit 42 (all calls completed), got: {run}"
+    );
 }
 
 fn tempdir() -> std::path::PathBuf {

@@ -1,0 +1,100 @@
+// simd_dot — the canonical SIMD dot-product reference recipe.
+//
+// v0.0.6 Slice 1B exit-criteria item. Demonstrates that the compiler's
+// new SIMD surface (vector types + lane access + arithmetic intrinsics)
+// is sufficient to write a real vectorized inner loop without an
+// external SIMD package. The matmul / ML kernel story builds on this
+// same shape — bigger inputs, the same `f32x4::load` + `.fma` + lane
+// reduction pattern.
+//
+// The recipe stays self-contained — no stdlib import, no allocator,
+// no FFI beyond the host-libc strict minimum. Build:
+//
+//     cpc build
+//     ./target/debug/simd_dot
+//
+// Exits 0 when the SIMD result matches the scalar reference within a
+// tight epsilon. Exits 1..5 with a code naming the failing check.
+
+// Compile-time-sized input arrays. The dot-product harness compares a
+// straight-line scalar fallback against the SIMD-vectorized path; both
+// must agree on every aligned 4-lane chunk.
+//
+// 16 elements = 4 SIMD chunks of f32x4. Enough to exercise the inner
+// loop multiple times while keeping the recipe under 50 source lines.
+fn build_a() -> [f32; 16] {
+    return [
+        1.0f32, 2.0f32, 3.0f32, 4.0f32,
+        5.0f32, 6.0f32, 7.0f32, 8.0f32,
+        9.0f32, 10.0f32, 11.0f32, 12.0f32,
+        13.0f32, 14.0f32, 15.0f32, 16.0f32,
+    ];
+}
+
+fn build_b() -> [f32; 16] {
+    return [
+        0.5f32, 0.5f32, 0.5f32, 0.5f32,
+        1.0f32, 1.0f32, 1.0f32, 1.0f32,
+        2.0f32, 2.0f32, 2.0f32, 2.0f32,
+        4.0f32, 4.0f32, 4.0f32, 4.0f32,
+    ];
+}
+
+// Reference: plain scalar dot product. The compiler is welcome to
+// auto-vectorize this loop too, but we keep it explicitly scalar so we
+// have an independent oracle for the SIMD path.
+fn dot_scalar(a: [f32; 16], b: [f32; 16]) -> f32 {
+    let mut total: f32 = 0.0f32;
+    let mut i: i32 = 0;
+    while i < 16 {
+        total = total + a[i as usize] * b[i as usize];
+        i = i +% 1;
+    }
+    return total;
+}
+
+// Vectorized: process 4 lanes at a time with `f32x4::new` + `.mul` +
+// `.fma`, then reduce the final accumulator's 4 lanes to a scalar by
+// summing them. Compiles to native NEON / SSE / AVX vector
+// instructions at `--release` on every supported target.
+fn dot_simd(a: [f32; 16], b: [f32; 16]) -> f32 {
+    let mut acc: f32x4 = f32x4::splat(0.0f32);
+    let mut i: i32 = 0;
+    while i < 16 {
+        let av: f32x4 = f32x4::new(
+            a[(i +% 0) as usize],
+            a[(i +% 1) as usize],
+            a[(i +% 2) as usize],
+            a[(i +% 3) as usize],
+        );
+        let bv: f32x4 = f32x4::new(
+            b[(i +% 0) as usize],
+            b[(i +% 1) as usize],
+            b[(i +% 2) as usize],
+            b[(i +% 3) as usize],
+        );
+        // acc = av * bv + acc — single LLVM `llvm.fma.v4f32` call.
+        acc = av.fma(bv, acc);
+        i = i +% 4;
+    }
+    return acc.lane(0 as u32) + acc.lane(1 as u32) + acc.lane(2 as u32) + acc.lane(3 as u32);
+}
+
+fn abs_diff(x: f32, y: f32) -> f32 {
+    if x >= y { return x - y; }
+    return y - x;
+}
+
+pub fn main() -> i32 {
+    let a: [f32; 16] = build_a();
+    let b: [f32; 16] = build_b();
+    let s: f32 = dot_scalar(a, b);
+    let v: f32 = dot_simd(a, b);
+    // Hand-computed reference: (1+2+3+4)*0.5 + (5+6+7+8)*1.0 + (9+10+11+12)*2.0 + (13+14+15+16)*4.0
+    //                        = 5         + 26         + 84          + 232
+    //                        = 347
+    if abs_diff(s, 347.0f32) > 0.001f32 { return 1; }
+    if abs_diff(v, 347.0f32) > 0.001f32 { return 2; }
+    if abs_diff(s, v) > 0.001f32 { return 3; }
+    return 0;
+}

@@ -59,7 +59,7 @@
 //!   tracking (would let E0371 actually fire in user-visible cases).
 
 use crate::ast::*;
-use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity, Suggestion, Applicability};
+use crate::diagnostics::{Applicability, DiagCode, Diagnostic, LineMap, Severity, Suggestion};
 use crate::lexer::Span;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -84,15 +84,25 @@ pub enum Projection {
 
 impl Place {
     pub fn root(name: impl Into<String>) -> Self {
-        Place { root: name.into(), projections: Vec::new() }
+        Place {
+            root: name.into(),
+            projections: Vec::new(),
+        }
     }
 
     pub fn canonical(&self) -> String {
         let mut s = self.root.clone();
         for p in &self.projections {
             match p {
-                Projection::Field(f) => { s.push('.'); s.push_str(f); }
-                Projection::Index(n) => { s.push('['); s.push_str(&n.to_string()); s.push(']'); }
+                Projection::Field(f) => {
+                    s.push('.');
+                    s.push_str(f);
+                }
+                Projection::Index(n) => {
+                    s.push('[');
+                    s.push_str(&n.to_string());
+                    s.push(']');
+                }
                 Projection::AnyIndex => s.push_str("[*]"),
             }
         }
@@ -107,10 +117,14 @@ impl Place {
     /// — a borrow of `self` includes `other`); `Contained` is the
     /// inverse.
     pub fn overlap(&self, other: &Place) -> PlaceOverlap {
-        if self.root != other.root { return PlaceOverlap::Disjoint; }
+        if self.root != other.root {
+            return PlaceOverlap::Disjoint;
+        }
         let a = &self.projections;
         let b = &other.projections;
-        if a == b { return PlaceOverlap::Same; }
+        if a == b {
+            return PlaceOverlap::Same;
+        }
         if a.len() < b.len() && b.starts_with(a) {
             return PlaceOverlap::Contains;
         }
@@ -214,7 +228,9 @@ impl ProgramAnalysis {
                     out.push('{');
                     let mut first = true;
                     for (pl, st) in &p.state {
-                        if !first { out.push_str(", "); }
+                        if !first {
+                            out.push_str(", ");
+                        }
                         first = false;
                         out.push_str(&pl.canonical());
                         out.push('=');
@@ -279,13 +295,19 @@ impl CopyOracle {
                 ItemKind::Struct(s) => {
                     oracle.types.insert(
                         s.name.name.clone(),
-                        TypeInfo { is_copy: true, is_drop: false },
+                        TypeInfo {
+                            is_copy: true,
+                            is_drop: false,
+                        },
                     );
                 }
                 ItemKind::Enum(e) => {
                     oracle.types.insert(
                         e.name.name.clone(),
-                        TypeInfo { is_copy: true, is_drop: false },
+                        TypeInfo {
+                            is_copy: true,
+                            is_drop: false,
+                        },
                     );
                 }
                 _ => {}
@@ -315,9 +337,10 @@ impl CopyOracle {
                     ItemKind::Struct(s) => {
                         let info = oracle.types.get(&s.name.name).cloned();
                         let Some(info) = info else { continue };
-                        if !info.is_copy { continue }
-                        let all_copy = s.fields.iter()
-                            .all(|f| oracle.is_type_copy_internal(&f.ty));
+                        if !info.is_copy {
+                            continue;
+                        }
+                        let all_copy = s.fields.iter().all(|f| oracle.is_type_copy_internal(&f.ty));
                         if !all_copy {
                             oracle.types.get_mut(&s.name.name).unwrap().is_copy = false;
                             changed = true;
@@ -326,8 +349,12 @@ impl CopyOracle {
                     ItemKind::Enum(e) => {
                         let info = oracle.types.get(&e.name.name).cloned();
                         let Some(info) = info else { continue };
-                        if !info.is_copy { continue }
-                        let all_copy = e.variants.iter()
+                        if !info.is_copy {
+                            continue;
+                        }
+                        let all_copy = e
+                            .variants
+                            .iter()
                             .all(|v| v.payload.iter().all(|t| oracle.is_type_copy_internal(t)));
                         if !all_copy {
                             oracle.types.get_mut(&e.name.name).unwrap().is_copy = false;
@@ -337,7 +364,9 @@ impl CopyOracle {
                     _ => {}
                 }
             }
-            if !changed { break }
+            if !changed {
+                break;
+            }
         }
 
         oracle
@@ -360,7 +389,9 @@ impl CopyOracle {
     pub fn definitely_non_copy(&self, ty: &Type) -> bool {
         match &ty.kind {
             TypeKind::Path(name) => {
-                if is_primitive_name(name) { return false; }
+                if is_primitive_name(name) {
+                    return false;
+                }
                 self.types.get(name).map(|i| !i.is_copy).unwrap_or(false)
             }
             TypeKind::Array { elem, .. } => self.definitely_non_copy(elem),
@@ -391,7 +422,9 @@ impl CopyOracle {
     fn is_type_copy_internal(&self, ty: &Type) -> bool {
         match &ty.kind {
             TypeKind::Path(name) => {
-                if is_primitive_name(name) { return true; }
+                if is_primitive_name(name) {
+                    return true;
+                }
                 self.types.get(name).map(|i| i.is_copy).unwrap_or(true)
             }
             TypeKind::Array { elem, .. } => self.is_type_copy_internal(elem),
@@ -415,11 +448,19 @@ impl CopyOracle {
 fn is_primitive_name(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "i16" | "i32" | "i64"
-        | "u8" | "u16" | "u32" | "u64"
-        | "isize" | "usize"
-        | "f32" | "f64"
-        | "bool" | "()"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "isize"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "()"
     )
 }
 
@@ -508,7 +549,8 @@ impl SigTable {
         for item in &prog.items {
             match &item.kind {
                 ItemKind::Function(f) => {
-                    let (return_borrow, return_borrow_flavor) = detect_fn_elision_with_flavor(f, oracle);
+                    let (return_borrow, return_borrow_flavor) =
+                        detect_fn_elision_with_flavor(f, oracle);
                     t.fns.insert(
                         f.name.name.clone(),
                         FnEntry {
@@ -522,7 +564,8 @@ impl SigTable {
                 ItemKind::Impl(b) => {
                     for m in &b.methods {
                         let key = format!("{}.{}", b.target.name, m.name.name);
-                        let (return_borrow, return_borrow_flavor) = detect_method_elision_with_flavor(b, m, oracle);
+                        let (return_borrow, return_borrow_flavor) =
+                            detect_method_elision_with_flavor(b, m, oracle);
                         t.methods.insert(
                             key,
                             FnEntry {
@@ -655,25 +698,49 @@ fn detect_fn_explicit_regions(
     oracle: &CopyOracle,
 ) -> Option<(ReturnBorrowSource, BorrowFlavor)> {
     let ret = f.return_type.as_ref()?;
-    let TypeKind::Borrowed { region: ret_region, inner: ret_inner } = &ret.kind else { return None; };
-    if !oracle.definitely_non_copy(ret_inner) { return None; }
+    let TypeKind::Borrowed {
+        region: ret_region,
+        inner: ret_inner,
+    } = &ret.kind
+    else {
+        return None;
+    };
+    if !oracle.definitely_non_copy(ret_inner) {
+        return None;
+    }
     let mut indices: Vec<u32> = Vec::new();
     let mut any_mut = false;
     for (i, p) in f.params.iter().enumerate() {
-        let TypeKind::Borrowed { region, inner } = &p.ty.kind else { continue; };
-        if region != ret_region { continue; }
-        if p.move_ { continue; } // parser rejects this, but defensive
-        if !oracle.definitely_non_copy(inner) { continue; }
+        let TypeKind::Borrowed { region, inner } = &p.ty.kind else {
+            continue;
+        };
+        if region != ret_region {
+            continue;
+        }
+        if p.move_ {
+            continue;
+        } // parser rejects this, but defensive
+        if !oracle.definitely_non_copy(inner) {
+            continue;
+        }
         indices.push(i as u32);
-        if p.mutable { any_mut = true; }
+        if p.mutable {
+            any_mut = true;
+        }
     }
-    if indices.is_empty() { return None; }
+    if indices.is_empty() {
+        return None;
+    }
     let src = if indices.len() == 1 {
         ReturnBorrowSource::Param(indices[0])
     } else {
         ReturnBorrowSource::MultiParam(indices)
     };
-    let flavor = if any_mut { BorrowFlavor::Exclusive } else { BorrowFlavor::Shared };
+    let flavor = if any_mut {
+        BorrowFlavor::Exclusive
+    } else {
+        BorrowFlavor::Shared
+    };
     Some((src, flavor))
 }
 
@@ -702,11 +769,19 @@ fn detect_method_elision_with_flavor(
 /// When all checks pass, the return is an *exclusive* borrow of the parameter.
 fn detect_fn_e1_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
     let [p]: &[Param; 1] = (f.params.as_slice()).try_into().ok()?;
-    if !p.mutable || p.move_ { return None; }
-    if !oracle.definitely_non_copy(&p.ty) { return None; }
+    if !p.mutable || p.move_ {
+        return None;
+    }
+    if !oracle.definitely_non_copy(&p.ty) {
+        return None;
+    }
     let ret = f.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
-    if !body_returns_only_rooted_at(&f.body, &p.name.name) { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
+    if !body_returns_only_rooted_at(&f.body, &p.name.name) {
+        return None;
+    }
     Some(ReturnBorrowSource::Param(0))
 }
 
@@ -721,15 +796,23 @@ fn detect_method_e2_mut(
     m: &Method,
     oracle: &CopyOracle,
 ) -> Option<ReturnBorrowSource> {
-    if m.receiver != Some(Receiver::Mut) { return None; }
+    if m.receiver != Some(Receiver::Mut) {
+        return None;
+    }
     let synth = Type {
         kind: TypeKind::Path(b.target.name.clone()),
         span: Span::new(0, 0),
     };
-    if !oracle.definitely_non_copy(&synth) { return None; }
+    if !oracle.definitely_non_copy(&synth) {
+        return None;
+    }
     let ret = m.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
-    if !body_returns_only_rooted_at(&m.body, "self") { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
+    if !body_returns_only_rooted_at(&m.body, "self") {
+        return None;
+    }
     Some(ReturnBorrowSource::SelfReceiver)
 }
 
@@ -745,14 +828,22 @@ fn detect_fn_e1(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
     // Step 1: exactly one parameter.
     let [p]: &[Param; 1] = (f.params.as_slice()).try_into().ok()?;
     // Step 2: shared-borrow form (no mut, no move).
-    if p.mutable || p.move_ { return None; }
+    if p.mutable || p.move_ {
+        return None;
+    }
     // Step 3: param type non-Copy.
-    if !oracle.definitely_non_copy(&p.ty) { return None; }
+    if !oracle.definitely_non_copy(&p.ty) {
+        return None;
+    }
     // Step 4: non-Copy return.
     let ret = f.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
     // Step 5: every return rooted at the param.
-    if !body_returns_only_rooted_at(&f.body, &p.name.name) { return None; }
+    if !body_returns_only_rooted_at(&f.body, &p.name.name) {
+        return None;
+    }
     Some(ReturnBorrowSource::Param(0))
 }
 
@@ -770,13 +861,21 @@ fn detect_fn_e1(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
 /// return path roots at some parameter. Returns of fresh-constructed
 /// values (`return T::new();`) on any path disqualify.
 fn detect_fn_e3(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
-    if f.params.len() < 2 { return None; }
+    if f.params.len() < 2 {
+        return None;
+    }
     for p in &f.params {
-        if p.mutable || p.move_ { return None; }
-        if !oracle.definitely_non_copy(&p.ty) { return None; }
+        if p.mutable || p.move_ {
+            return None;
+        }
+        if !oracle.definitely_non_copy(&p.ty) {
+            return None;
+        }
     }
     let ret = f.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
     let param_names: Vec<&str> = f.params.iter().map(|p| p.name.name.as_str()).collect();
     let mut roots = std::collections::BTreeSet::new();
     let mut found_return = false;
@@ -807,13 +906,21 @@ fn detect_fn_e3(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource>
 /// Result is an exclusive multi-source borrow — the caller's binding
 /// is tied to every parameter in `indices`.
 fn detect_fn_e3_mut(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
-    if f.params.len() < 2 { return None; }
+    if f.params.len() < 2 {
+        return None;
+    }
     for p in &f.params {
-        if !p.mutable || p.move_ { return None; }
-        if !oracle.definitely_non_copy(&p.ty) { return None; }
+        if !p.mutable || p.move_ {
+            return None;
+        }
+        if !oracle.definitely_non_copy(&p.ty) {
+            return None;
+        }
     }
     let ret = f.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
     let param_names: Vec<&str> = f.params.iter().map(|p| p.name.name.as_str()).collect();
     let mut roots = std::collections::BTreeSet::new();
     let mut found_return = false;
@@ -838,10 +945,14 @@ fn check_block_returns_e3(
     found: &mut bool,
 ) -> bool {
     for s in &b.stmts {
-        if !check_stmt_returns_e3(s, param_names, roots, found) { return false; }
+        if !check_stmt_returns_e3(s, param_names, roots, found) {
+            return false;
+        }
     }
     if let Some(t) = &b.tail {
-        if !check_expr_returns_e3(t, param_names, roots, found) { return false; }
+        if !check_expr_returns_e3(t, param_names, roots, found) {
+            return false;
+        }
     }
     true
 }
@@ -855,13 +966,19 @@ fn check_stmt_returns_e3(
     match &s.kind {
         StmtKind::Return(Some(e)) => {
             *found = true;
-            let Some(root) = expr_root_ident(e) else { return false };
-            let Some(idx) = param_names.iter().position(|&n| n == root) else { return false };
+            let Some(root) = expr_root_ident(e) else {
+                return false;
+            };
+            let Some(idx) = param_names.iter().position(|&n| n == root) else {
+                return false;
+            };
             roots.insert(idx as u32);
             true
         }
         StmtKind::Return(None) => false,
-        StmtKind::Expr(e) | StmtKind::Defer(e) => check_expr_returns_e3(e, param_names, roots, found),
+        StmtKind::Expr(e) | StmtKind::Defer(e) => {
+            check_expr_returns_e3(e, param_names, roots, found)
+        }
         StmtKind::Let { init, .. } => match init {
             Some(e) => check_expr_returns_e3(e, param_names, roots, found),
             None => true,
@@ -871,15 +988,26 @@ fn check_stmt_returns_e3(
                 && check_block_returns_e3(body, param_names, roots, found)
         }
         StmtKind::For(fl) => match fl {
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 if let Some(i) = init {
-                    if !check_stmt_returns_e3(i, param_names, roots, found) { return false; }
+                    if !check_stmt_returns_e3(i, param_names, roots, found) {
+                        return false;
+                    }
                 }
                 if let Some(c) = cond {
-                    if !check_expr_returns_e3(c, param_names, roots, found) { return false; }
+                    if !check_expr_returns_e3(c, param_names, roots, found) {
+                        return false;
+                    }
                 }
                 for u in update {
-                    if !check_expr_returns_e3(u, param_names, roots, found) { return false; }
+                    if !check_expr_returns_e3(u, param_names, roots, found) {
+                        return false;
+                    }
                 }
                 check_block_returns_e3(body, param_names, roots, found)
             }
@@ -908,25 +1036,43 @@ fn check_expr_returns_e3(
     match &e.kind {
         ExprKind::Block(b) => check_block_returns_e3(b, param_names, roots, found),
         ExprKind::Unsafe(b) => check_block_returns_e3(b, param_names, roots, found),
-        ExprKind::If { cond, then, else_branch } => {
-            if !check_expr_returns_e3(cond, param_names, roots, found) { return false; }
-            if !check_block_returns_e3(then, param_names, roots, found) { return false; }
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            if !check_expr_returns_e3(cond, param_names, roots, found) {
+                return false;
+            }
+            if !check_block_returns_e3(then, param_names, roots, found) {
+                return false;
+            }
             if let Some(eb) = else_branch {
-                if !check_expr_returns_e3(eb, param_names, roots, found) { return false; }
+                if !check_expr_returns_e3(eb, param_names, roots, found) {
+                    return false;
+                }
             }
             true
         }
         ExprKind::Match { scrutinee, arms } => {
-            if !check_expr_returns_e3(scrutinee, param_names, roots, found) { return false; }
+            if !check_expr_returns_e3(scrutinee, param_names, roots, found) {
+                return false;
+            }
             for a in arms {
-                if !check_expr_returns_e3(&a.body, param_names, roots, found) { return false; }
+                if !check_expr_returns_e3(&a.body, param_names, roots, found) {
+                    return false;
+                }
             }
             true
         }
         ExprKind::Call { callee, args, .. } => {
-            if !check_expr_returns_e3(callee, param_names, roots, found) { return false; }
+            if !check_expr_returns_e3(callee, param_names, roots, found) {
+                return false;
+            }
             for a in args {
-                if !check_expr_returns_e3(a, param_names, roots, found) { return false; }
+                if !check_expr_returns_e3(a, param_names, roots, found) {
+                    return false;
+                }
             }
             true
         }
@@ -934,22 +1080,32 @@ fn check_expr_returns_e3(
             check_expr_returns_e3(lhs, param_names, roots, found)
                 && check_expr_returns_e3(rhs, param_names, roots, found)
         }
-        ExprKind::Unary { operand, .. } => check_expr_returns_e3(operand, param_names, roots, found),
+        ExprKind::Unary { operand, .. } => {
+            check_expr_returns_e3(operand, param_names, roots, found)
+        }
         ExprKind::Range { start, end, .. } => {
-            start.as_deref().is_none_or(|s| check_expr_returns_e3(s, param_names, roots, found))
-                && end.as_deref().is_none_or(|e| check_expr_returns_e3(e, param_names, roots, found))
+            start
+                .as_deref()
+                .is_none_or(|s| check_expr_returns_e3(s, param_names, roots, found))
+                && end
+                    .as_deref()
+                    .is_none_or(|e| check_expr_returns_e3(e, param_names, roots, found))
         }
         ExprKind::Assign { target, value, .. } => {
             check_expr_returns_e3(target, param_names, roots, found)
                 && check_expr_returns_e3(value, param_names, roots, found)
         }
         ExprKind::Cast { expr, .. } => check_expr_returns_e3(expr, param_names, roots, found),
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
-            fields.iter().all(|f| check_expr_returns_e3(&f.value, param_names, roots, found))
+        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => fields
+            .iter()
+            .all(|f| check_expr_returns_e3(&f.value, param_names, roots, found)),
+        ExprKind::Field { receiver, .. } => {
+            check_expr_returns_e3(receiver, param_names, roots, found)
         }
-        ExprKind::Field { receiver, .. } => check_expr_returns_e3(receiver, param_names, roots, found),
         ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
-            elements.iter().all(|e| check_expr_returns_e3(e, param_names, roots, found))
+            elements
+                .iter()
+                .all(|e| check_expr_returns_e3(e, param_names, roots, found))
         }
         ExprKind::Index { receiver, index } => {
             check_expr_returns_e3(receiver, param_names, roots, found)
@@ -966,20 +1122,24 @@ fn check_expr_returns_e3(
 /// 2. The impl target type is non-`Copy`.
 /// 3. The method's return type is non-`Copy`.
 /// 4. Every `return EXPR;` is a path rooted at `self`.
-fn detect_method_e2(
-    b: &ImplBlock,
-    m: &Method,
-    oracle: &CopyOracle,
-) -> Option<ReturnBorrowSource> {
-    if m.receiver != Some(Receiver::Read) { return None; }
+fn detect_method_e2(b: &ImplBlock, m: &Method, oracle: &CopyOracle) -> Option<ReturnBorrowSource> {
+    if m.receiver != Some(Receiver::Read) {
+        return None;
+    }
     let synth = Type {
         kind: TypeKind::Path(b.target.name.clone()),
         span: Span::new(0, 0),
     };
-    if !oracle.definitely_non_copy(&synth) { return None; }
+    if !oracle.definitely_non_copy(&synth) {
+        return None;
+    }
     let ret = m.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
-    if !body_returns_only_rooted_at(&m.body, "self") { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
+    if !body_returns_only_rooted_at(&m.body, "self") {
+        return None;
+    }
     Some(ReturnBorrowSource::SelfReceiver)
 }
 
@@ -998,10 +1158,14 @@ fn body_returns_only_rooted_at(block: &Block, root: &str) -> bool {
 
 fn check_block_returns(b: &Block, root: &str, found: &mut bool) -> bool {
     for s in &b.stmts {
-        if !check_stmt_returns(s, root, found) { return false; }
+        if !check_stmt_returns(s, root, found) {
+            return false;
+        }
     }
     if let Some(t) = &b.tail {
-        if !check_expr_returns(t, root, found) { return false; }
+        if !check_expr_returns(t, root, found) {
+            return false;
+        }
     }
     true
 }
@@ -1022,15 +1186,26 @@ fn check_stmt_returns(s: &Stmt, root: &str, found: &mut bool) -> bool {
             check_expr_returns(cond, root, found) && check_block_returns(body, root, found)
         }
         StmtKind::For(fl) => match fl {
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 if let Some(i) = init {
-                    if !check_stmt_returns(i, root, found) { return false; }
+                    if !check_stmt_returns(i, root, found) {
+                        return false;
+                    }
                 }
                 if let Some(c) = cond {
-                    if !check_expr_returns(c, root, found) { return false; }
+                    if !check_expr_returns(c, root, found) {
+                        return false;
+                    }
                 }
                 for u in update {
-                    if !check_expr_returns(u, root, found) { return false; }
+                    if !check_expr_returns(u, root, found) {
+                        return false;
+                    }
                 }
                 check_block_returns(body, root, found)
             }
@@ -1050,25 +1225,43 @@ fn check_expr_returns(e: &Expr, root: &str, found: &mut bool) -> bool {
     match &e.kind {
         ExprKind::Block(b) => check_block_returns(b, root, found),
         ExprKind::Unsafe(b) => check_block_returns(b, root, found),
-        ExprKind::If { cond, then, else_branch } => {
-            if !check_expr_returns(cond, root, found) { return false; }
-            if !check_block_returns(then, root, found) { return false; }
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            if !check_expr_returns(cond, root, found) {
+                return false;
+            }
+            if !check_block_returns(then, root, found) {
+                return false;
+            }
             if let Some(eb) = else_branch {
-                if !check_expr_returns(eb, root, found) { return false; }
+                if !check_expr_returns(eb, root, found) {
+                    return false;
+                }
             }
             true
         }
         ExprKind::Match { scrutinee, arms } => {
-            if !check_expr_returns(scrutinee, root, found) { return false; }
+            if !check_expr_returns(scrutinee, root, found) {
+                return false;
+            }
             for a in arms {
-                if !check_expr_returns(&a.body, root, found) { return false; }
+                if !check_expr_returns(&a.body, root, found) {
+                    return false;
+                }
             }
             true
         }
         ExprKind::Call { callee, args, .. } => {
-            if !check_expr_returns(callee, root, found) { return false; }
+            if !check_expr_returns(callee, root, found) {
+                return false;
+            }
             for a in args {
-                if !check_expr_returns(a, root, found) { return false; }
+                if !check_expr_returns(a, root, found) {
+                    return false;
+                }
             }
             true
         }
@@ -1077,18 +1270,24 @@ fn check_expr_returns(e: &Expr, root: &str, found: &mut bool) -> bool {
         }
         ExprKind::Unary { operand, .. } => check_expr_returns(operand, root, found),
         ExprKind::Range { start, end, .. } => {
-            start.as_deref().is_none_or(|s| check_expr_returns(s, root, found))
-                && end.as_deref().is_none_or(|e| check_expr_returns(e, root, found))
+            start
+                .as_deref()
+                .is_none_or(|s| check_expr_returns(s, root, found))
+                && end
+                    .as_deref()
+                    .is_none_or(|e| check_expr_returns(e, root, found))
         }
         ExprKind::Assign { target, value, .. } => {
             check_expr_returns(target, root, found) && check_expr_returns(value, root, found)
         }
         ExprKind::Cast { expr, .. } => check_expr_returns(expr, root, found),
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
-            fields.iter().all(|f| check_expr_returns(&f.value, root, found))
-        }
+        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => fields
+            .iter()
+            .all(|f| check_expr_returns(&f.value, root, found)),
         ExprKind::Field { receiver, .. } => check_expr_returns(receiver, root, found),
-        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => elements.iter().all(|e| check_expr_returns(e, root, found)),
+        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+            elements.iter().all(|e| check_expr_returns(e, root, found))
+        }
         ExprKind::Index { receiver, index } => {
             check_expr_returns(receiver, root, found) && check_expr_returns(index, root, found)
         }
@@ -1180,12 +1379,12 @@ fn build_direct_claim_diag(
 
     if matches!(overlap, PlaceOverlap::Contains | PlaceOverlap::Contained) {
         // Partial-place conflict — always E0374. Fire once per unordered pair.
-        if j < i { return None; }
+        if j < i {
+            return None;
+        }
         return Some(RawDiag {
             code: "E0374",
-            message: format!(
-                "partial-place conflict on `{primary_name}` in the same call"
-            ),
+            message: format!("partial-place conflict on `{primary_name}` in the same call"),
             primary: primary.span,
             suggestion: Some((
                 suggestion_span,
@@ -1194,17 +1393,23 @@ fn build_direct_claim_diag(
                     "a borrow of `{}` includes its sub-place `{}` (or vice versa). \
                      Split into two calls if the operations are independent, or \
                      restructure to operate on a single uniform place.",
-                    primary.place.canonical(), other.place.canonical()
+                    primary.place.canonical(),
+                    other.place.canonical()
                 ),
             )),
-            label: Some((other.span, format!("overlapping access to `{}` here", other.place.canonical()))),
+            label: Some((
+                other.span,
+                format!("overlapping access to `{}` here", other.place.canonical()),
+            )),
         });
     }
 
     // Same-place: dispatch by kinds.
     match (primary.kind, other.kind) {
         (Exclusive, Exclusive) => {
-            if j < i { return None; } // dedup symmetric pair
+            if j < i {
+                return None;
+            } // dedup symmetric pair
             Some(RawDiag {
                 code: "E0380",
                 message: format!(
@@ -1228,9 +1433,19 @@ fn build_direct_claim_diag(
             // Fire once per unordered pair. Emit the diagnostic with
             // the Exclusive claim as the primary span — matches the
             // 6BC.1 behavior tests pinned.
-            if j < i { return None; }
-            let mut_span = if matches!(primary.kind, Exclusive) { primary.span } else { other.span };
-            let move_span = if matches!(primary.kind, Exclusive) { other.span } else { primary.span };
+            if j < i {
+                return None;
+            }
+            let mut_span = if matches!(primary.kind, Exclusive) {
+                primary.span
+            } else {
+                other.span
+            };
+            let move_span = if matches!(primary.kind, Exclusive) {
+                other.span
+            } else {
+                primary.span
+            };
             Some(RawDiag {
                 code: "E0382",
                 message: format!(
@@ -1264,7 +1479,9 @@ fn scan_overlapping_places(
     primary: &Place,
     found: &mut Option<(PlaceOverlap, crate::lexer::Span)>,
 ) {
-    if found.is_some() { return; }
+    if found.is_some() {
+        return;
+    }
     // Is this expression itself a place that overlaps?
     if let Some(p) = place_from_expr(expr) {
         let o = primary.overlap(&p);
@@ -1281,7 +1498,9 @@ fn scan_overlapping_places(
     match &expr.kind {
         ExprKind::Call { callee, args, .. } => {
             scan_overlapping_places(callee, primary, found);
-            for a in args { scan_overlapping_places(a, primary, found); }
+            for a in args {
+                scan_overlapping_places(a, primary, found);
+            }
         }
         ExprKind::Binary { lhs, rhs, .. } => {
             scan_overlapping_places(lhs, primary, found);
@@ -1295,10 +1514,14 @@ fn scan_overlapping_places(
             scan_overlapping_places(index, primary, found);
         }
         ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
-            for f in fields { scan_overlapping_places(&f.value, primary, found); }
+            for f in fields {
+                scan_overlapping_places(&f.value, primary, found);
+            }
         }
         ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
-            for el in elements { scan_overlapping_places(el, primary, found); }
+            for el in elements {
+                scan_overlapping_places(el, primary, found);
+            }
         }
         ExprKind::If { cond, .. } => {
             scan_overlapping_places(cond, primary, found);
@@ -1308,8 +1531,12 @@ fn scan_overlapping_places(
             // need to recurse into block contents from here.
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { scan_overlapping_places(s, primary, found); }
-            if let Some(e) = end   { scan_overlapping_places(e, primary, found); }
+            if let Some(s) = start {
+                scan_overlapping_places(s, primary, found);
+            }
+            if let Some(e) = end {
+                scan_overlapping_places(e, primary, found);
+            }
         }
         ExprKind::Match { scrutinee, .. } => {
             scan_overlapping_places(scrutinee, primary, found);
@@ -1452,7 +1679,8 @@ impl<'p> Analyzer<'p> {
             .into_iter()
             .filter(|p| seen.insert(p.clone()))
             .collect();
-        self.binding_borrows_from.insert(borrower.to_string(), unique.clone());
+        self.binding_borrows_from
+            .insert(borrower.to_string(), unique.clone());
         for place in unique {
             let set = self.live_borrows.entry(place.clone()).or_default();
             set.insert(borrower.to_string(), borrower_span);
@@ -1491,11 +1719,7 @@ impl<'p> Analyzer<'p> {
 
     /// Release every borrow `borrower` is currently holding. Called
     /// when a borrowing binding goes out of scope or is moved.
-    fn drop_borrower(
-        &mut self,
-        borrower: &str,
-        state: &mut BTreeMap<Place, PlaceState>,
-    ) {
+    fn drop_borrower(&mut self, borrower: &str, state: &mut BTreeMap<Place, PlaceState>) {
         if let Some(places) = self.binding_borrows_from.remove(borrower) {
             for place in places {
                 self.release_borrow(&place, borrower, state);
@@ -1546,7 +1770,10 @@ impl<'p> Analyzer<'p> {
                 };
                 (places, flavor)
             }
-            ExprKind::Field { receiver, name: method_name } => {
+            ExprKind::Field {
+                receiver,
+                name: method_name,
+            } => {
                 let ExprKind::Ident(recv_name) = &receiver.kind else {
                     return (Vec::new(), BorrowFlavor::Shared);
                 };
@@ -1562,8 +1789,9 @@ impl<'p> Analyzer<'p> {
                 };
                 let flavor = entry.return_borrow_flavor.unwrap_or(BorrowFlavor::Shared);
                 match entry.return_borrow.as_ref() {
-                    Some(ReturnBorrowSource::SelfReceiver) =>
-                        (vec![Place::root(recv_name)], flavor),
+                    Some(ReturnBorrowSource::SelfReceiver) => {
+                        (vec![Place::root(recv_name)], flavor)
+                    }
                     _ => (Vec::new(), BorrowFlavor::Shared),
                 }
             }
@@ -1609,9 +1837,13 @@ pub fn analyze(prog: &Program) -> ProgramAnalysis {
 /// follow-up (sema-style threading via `current_file`).
 pub fn check(prog: &Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
     let (_analysis, raws) = analyze_with_diags(prog);
-    if raws.is_empty() { return Vec::new(); }
+    if raws.is_empty() {
+        return Vec::new();
+    }
     let lm = LineMap::new(src);
-    raws.into_iter().map(|r| raw_to_diagnostic(r, file, src, &lm)).collect()
+    raws.into_iter()
+        .map(|r| raw_to_diagnostic(r, file, src, &lm))
+        .collect()
 }
 
 fn raw_to_diagnostic(r: RawDiag, file: &PathBuf, src: &str, lm: &LineMap) -> Diagnostic {
@@ -1672,42 +1904,74 @@ fn collect_e0384_diagnostics(
                     }
                 }
             }
-            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
+            ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::Interface(_)
+            | ItemKind::TypeAlias(_) => {}
         }
     }
 }
 
 fn e0384_for_fn(f: &Function, sigs: &SigTable, oracle: &CopyOracle) -> Option<RawDiag> {
-    if f.params.len() < 2 { return None; }
+    if f.params.len() < 2 {
+        return None;
+    }
     // Every param must be non-Copy borrow-like (no `move`).
     for p in &f.params {
-        if p.move_ { return None; }
-        if !oracle.definitely_non_copy(&p.ty) { return None; }
+        if p.move_ {
+            return None;
+        }
+        if !oracle.definitely_non_copy(&p.ty) {
+            return None;
+        }
     }
     let ret = f.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
     // Skip if elision matched.
     let entry = sigs.fns.get(&f.name.name)?;
-    if entry.return_borrow.is_some() { return None; }
+    if entry.return_borrow.is_some() {
+        return None;
+    }
     // The trigger: at least one return rooted at a parameter.
     let param_names: Vec<&str> = f.params.iter().map(|p| p.name.name.as_str()).collect();
-    if !any_return_rooted_at_param(&f.body, &param_names) { return None; }
+    if !any_return_rooted_at_param(&f.body, &param_names) {
+        return None;
+    }
     Some(build_e0384(&f.name.name, &f.params, ret, f.name.span))
 }
 
-fn e0384_for_method(b: &ImplBlock, m: &Method, sigs: &SigTable, oracle: &CopyOracle) -> Option<RawDiag> {
-    if m.params.len() < 2 { return None; }
+fn e0384_for_method(
+    b: &ImplBlock,
+    m: &Method,
+    sigs: &SigTable,
+    oracle: &CopyOracle,
+) -> Option<RawDiag> {
+    if m.params.len() < 2 {
+        return None;
+    }
     for p in &m.params {
-        if p.move_ { return None; }
-        if !oracle.definitely_non_copy(&p.ty) { return None; }
+        if p.move_ {
+            return None;
+        }
+        if !oracle.definitely_non_copy(&p.ty) {
+            return None;
+        }
     }
     let ret = m.return_type.as_ref()?;
-    if !oracle.definitely_non_copy(ret) { return None; }
+    if !oracle.definitely_non_copy(ret) {
+        return None;
+    }
     let key = format!("{}.{}", b.target.name, m.name.name);
     let entry = sigs.methods.get(&key)?;
-    if entry.return_borrow.is_some() { return None; }
+    if entry.return_borrow.is_some() {
+        return None;
+    }
     let param_names: Vec<&str> = m.params.iter().map(|p| p.name.name.as_str()).collect();
-    if !any_return_rooted_at_param(&m.body, &param_names) { return None; }
+    if !any_return_rooted_at_param(&m.body, &param_names) {
+        return None;
+    }
     Some(build_e0384(&key, &m.params, ret, m.name.span))
 }
 
@@ -1745,37 +2009,56 @@ fn build_e0384(name: &str, params: &[Param], _ret: &Type, span: Span) -> RawDiag
 /// "always-fresh-return" case.
 fn any_return_rooted_at_param(block: &Block, param_names: &[&str]) -> bool {
     for s in &block.stmts {
-        if any_return_rooted_in_stmt(s, param_names) { return true; }
+        if any_return_rooted_in_stmt(s, param_names) {
+            return true;
+        }
     }
     if let Some(t) = &block.tail {
-        if any_return_rooted_in_expr(t, param_names) { return true; }
+        if any_return_rooted_in_expr(t, param_names) {
+            return true;
+        }
     }
     false
 }
 
 fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
     match &s.kind {
-        StmtKind::Return(Some(e)) => expr_root_ident(e)
-            .is_some_and(|root| param_names.iter().any(|n| *n == root)),
+        StmtKind::Return(Some(e)) => {
+            expr_root_ident(e).is_some_and(|root| param_names.iter().any(|n| *n == root))
+        }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => false,
-        StmtKind::Let { init, .. } => init.as_ref().is_some_and(|e| any_return_rooted_in_expr(e, param_names)),
-        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => any_return_rooted_in_expr(e, param_names),
+        StmtKind::Let { init, .. } => init
+            .as_ref()
+            .is_some_and(|e| any_return_rooted_in_expr(e, param_names)),
+        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+            any_return_rooted_in_expr(e, param_names)
+        }
         StmtKind::While { cond, body } => {
             any_return_rooted_in_expr(cond, param_names)
                 || any_return_rooted_at_param(body, param_names)
         }
         StmtKind::For(fl) => match fl {
-            ForLoop::CStyle { init, cond, update, body } => {
-                init.as_deref().is_some_and(|i| any_return_rooted_in_stmt(i, param_names))
-                    || cond.as_ref().is_some_and(|c| any_return_rooted_in_expr(c, param_names))
-                    || update.iter().any(|u| any_return_rooted_in_expr(u, param_names))
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                init.as_deref()
+                    .is_some_and(|i| any_return_rooted_in_stmt(i, param_names))
+                    || cond
+                        .as_ref()
+                        .is_some_and(|c| any_return_rooted_in_expr(c, param_names))
+                    || update
+                        .iter()
+                        .any(|u| any_return_rooted_in_expr(u, param_names))
                     || any_return_rooted_at_param(body, param_names)
             }
             ForLoop::Range { iter, body, .. } => {
                 any_return_rooted_in_expr(iter, param_names)
                     || any_return_rooted_at_param(body, param_names)
             }
-        }
+        },
         StmtKind::Loop(body) => any_return_rooted_at_param(body, param_names),
         // Lowered before borrowck — should not be present here.
         StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => false,
@@ -1786,14 +2069,22 @@ fn any_return_rooted_in_expr(e: &Expr, param_names: &[&str]) -> bool {
     match &e.kind {
         ExprKind::Block(b) => any_return_rooted_at_param(b, param_names),
         ExprKind::Unsafe(b) => any_return_rooted_at_param(b, param_names),
-        ExprKind::If { cond, then, else_branch } => {
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
             any_return_rooted_in_expr(cond, param_names)
                 || any_return_rooted_at_param(then, param_names)
-                || else_branch.as_deref().is_some_and(|eb| any_return_rooted_in_expr(eb, param_names))
+                || else_branch
+                    .as_deref()
+                    .is_some_and(|eb| any_return_rooted_in_expr(eb, param_names))
         }
         ExprKind::Match { scrutinee, arms } => {
             any_return_rooted_in_expr(scrutinee, param_names)
-                || arms.iter().any(|a| any_return_rooted_in_expr(&a.body, param_names))
+                || arms
+                    .iter()
+                    .any(|a| any_return_rooted_in_expr(&a.body, param_names))
         }
         _ => false,
     }
@@ -1802,7 +2093,9 @@ fn any_return_rooted_in_expr(e: &Expr, param_names: &[&str]) -> bool {
 fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
     let oracle = CopyOracle::build(prog);
     let sigs = SigTable::collect(prog, &oracle);
-    let mut analysis = ProgramAnalysis { functions: BTreeMap::new() };
+    let mut analysis = ProgramAnalysis {
+        functions: BTreeMap::new(),
+    };
     let mut all_diags = Vec::new();
     // Slice 6BC.4 — signature-level E0384 emission. Walks every fn /
     // method whose signature matches the "wants elision but can't be
@@ -1830,7 +2123,10 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
                     all_diags.extend(a.diags);
                 }
             }
-            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
+            ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::Interface(_)
+            | ItemKind::TypeAlias(_) => {}
         }
     }
     (analysis, all_diags)
@@ -1841,15 +2137,11 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
 // ---------------------------------------------------------------------------
 
 impl Analyzer<'_> {
-    fn analyze_function(
-        &mut self,
-        name: &str,
-        params: &[Param],
-        body: &Block,
-    ) -> FunctionAnalysis {
+    fn analyze_function(&mut self, name: &str, params: &[Param], body: &Block) -> FunctionAnalysis {
         let mut state: BTreeMap<Place, PlaceState> = BTreeMap::new();
         for p in params {
-            self.binding_types.insert(p.name.name.clone(), BindingType::Known(p.ty.clone()));
+            self.binding_types
+                .insert(p.name.name.clone(), BindingType::Known(p.ty.clone()));
             state.insert(Place::root(&p.name.name), PlaceState::Owned);
         }
         self.walk_body(name, body, state)
@@ -1871,11 +2163,13 @@ impl Analyzer<'_> {
                 kind: TypeKind::Path(target_type.to_string()),
                 span: Span::new(0, 0),
             };
-            self.binding_types.insert("self".to_string(), BindingType::Known(synth));
+            self.binding_types
+                .insert("self".to_string(), BindingType::Known(synth));
             state.insert(Place::root("self"), PlaceState::Owned);
         }
         for p in params {
-            self.binding_types.insert(p.name.name.clone(), BindingType::Known(p.ty.clone()));
+            self.binding_types
+                .insert(p.name.name.clone(), BindingType::Known(p.ty.clone()));
             state.insert(Place::root(&p.name.name), PlaceState::Owned);
         }
         self.walk_body(name, body, state)
@@ -1889,18 +2183,30 @@ impl Analyzer<'_> {
     ) -> FunctionAnalysis {
         let mut state = initial;
         let mut points = Vec::with_capacity(body.stmts.len() + 2);
-        points.push(PointSnapshot { label: "entry".into(), state: state.clone() });
+        points.push(PointSnapshot {
+            label: "entry".into(),
+            state: state.clone(),
+        });
 
         for (i, stmt) in body.stmts.iter().enumerate() {
             self.apply_stmt(stmt, &mut state);
-            points.push(PointSnapshot { label: format!("after stmt {i}"), state: state.clone() });
+            points.push(PointSnapshot {
+                label: format!("after stmt {i}"),
+                state: state.clone(),
+            });
         }
         if let Some(tail) = &body.tail {
             self.apply_expr(tail, &mut state);
         }
-        points.push(PointSnapshot { label: "exit".into(), state });
+        points.push(PointSnapshot {
+            label: "exit".into(),
+            state,
+        });
 
-        FunctionAnalysis { name: name.into(), points }
+        FunctionAnalysis {
+            name: name.into(),
+            points,
+        }
     }
 
     fn apply_stmt(&mut self, stmt: &Stmt, state: &mut BTreeMap<Place, PlaceState>) {
@@ -1931,7 +2237,13 @@ impl Analyzer<'_> {
                 // BorrowedShared(N) for shared borrows (Phase 5) or
                 // BorrowedExclusive(name) for exclusive ones (6BC.2).
                 if !borrow_sources.is_empty() {
-                    self.acquire_borrows(borrow_sources, &name.name, name.span, borrow_flavor, state);
+                    self.acquire_borrows(
+                        borrow_sources,
+                        &name.name,
+                        name.span,
+                        borrow_flavor,
+                        state,
+                    );
                 }
             }
             StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => {
@@ -1949,7 +2261,12 @@ impl Analyzer<'_> {
                 self.walk_loop_body(body, state);
             }
             StmtKind::For(fl) => match fl {
-                ForLoop::CStyle { init, cond, update, body } => {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
                     if let Some(i) = init {
                         self.apply_stmt(i, state);
                     }
@@ -1971,7 +2288,8 @@ impl Analyzer<'_> {
                         kind: TypeKind::Path("i32".to_string()),
                         span: var.span,
                     };
-                    self.binding_types.insert(var.name.clone(), BindingType::Known(synth));
+                    self.binding_types
+                        .insert(var.name.clone(), BindingType::Known(synth));
                     let mut body_state = state.clone();
                     body_state.insert(Place::root(&var.name), PlaceState::Owned);
                     let pre_loop = state.clone();
@@ -2033,6 +2351,7 @@ impl Analyzer<'_> {
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
+            | ExprKind::IncludeBytes { .. }
             | ExprKind::Path { .. } => {}
 
             ExprKind::InterpStr { parts } => {
@@ -2085,7 +2404,11 @@ impl Analyzer<'_> {
             ExprKind::Yield(inner) => {
                 self.apply_expr(inner, state);
             }
-            ExprKind::If { cond, then, else_branch } => {
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
                 self.apply_expr(cond, state);
                 let pre = state.clone();
                 let mut then_state = pre.clone();
@@ -2120,8 +2443,12 @@ impl Analyzer<'_> {
             }
             ExprKind::Unary { operand, .. } => self.apply_expr(operand, state),
             ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { self.apply_expr(s, state); }
-                if let Some(en) = end { self.apply_expr(en, state); }
+                if let Some(s) = start {
+                    self.apply_expr(s, state);
+                }
+                if let Some(en) = end {
+                    self.apply_expr(en, state);
+                }
             }
             ExprKind::Assign { target, value, .. } => {
                 self.apply_expr(target, state);
@@ -2134,7 +2461,9 @@ impl Analyzer<'_> {
                 }
             }
             ExprKind::Field { receiver, .. } => self.apply_expr(receiver, state),
-            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } | ExprKind::TupleLit { elements } => {
+            ExprKind::ArrayLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. }
+            | ExprKind::TupleLit { elements } => {
                 for el in elements {
                     self.apply_expr(el, state);
                 }
@@ -2190,18 +2519,29 @@ impl Analyzer<'_> {
         }
         // Scan state for exclusive borrows that overlap this place.
         for (other, st) in state.iter() {
-            if other.root != place.root { continue; }
-            let PlaceState::BorrowedExclusive(borrower) = st else { continue; };
+            if other.root != place.root {
+                continue;
+            }
+            let PlaceState::BorrowedExclusive(borrower) = st else {
+                continue;
+            };
             let overlap = place.overlap(other);
-            if matches!(overlap, PlaceOverlap::Disjoint) { continue; }
+            if matches!(overlap, PlaceOverlap::Disjoint) {
+                continue;
+            }
             // Self-conflict suppression: if the read is the borrower
             // itself (rare for projected places but possible), skip.
-            if borrower == &place.root { continue; }
+            if borrower == &place.root {
+                continue;
+            }
             let (code, msg) = if matches!(overlap, PlaceOverlap::Same) {
-                ("E0383", format!(
-                    "cannot read `{}` while it is exclusively borrowed by `{borrower}`",
-                    place.canonical()
-                ))
+                (
+                    "E0383",
+                    format!(
+                        "cannot read `{}` while it is exclusively borrowed by `{borrower}`",
+                        place.canonical()
+                    ),
+                )
             } else {
                 ("E0374", format!(
                     "cannot read `{}` while it overlaps the exclusive borrow `{}` held by `{borrower}`",
@@ -2209,7 +2549,9 @@ impl Analyzer<'_> {
                     other.canonical()
                 ))
             };
-            let borrow_span = self.live_borrows.get(other)
+            let borrow_span = self
+                .live_borrows
+                .get(other)
                 .and_then(|m| m.get(borrower))
                 .copied();
             self.diags.push(RawDiag {
@@ -2230,21 +2572,14 @@ impl Analyzer<'_> {
         }
     }
 
-    fn record_read(
-        &mut self,
-        name: &str,
-        span: Span,
-        state: &BTreeMap<Place, PlaceState>,
-    ) {
+    fn record_read(&mut self, name: &str, span: Span, state: &BTreeMap<Place, PlaceState>) {
         // MaybePartial check operates at the root level — Phase 5
         // branch-merging produces MaybePartial only on whole bindings.
         if let Some(PlaceState::MaybePartial) = state.get(&Place::root(name)) {
             if self.binding_is_non_copy(name) {
                 self.diags.push(RawDiag {
                     code: "E0371",
-                    message: format!(
-                        "use of possibly-moved binding `{name}`"
-                    ),
+                    message: format!("use of possibly-moved binding `{name}`"),
                     primary: span,
                     suggestion: Some((
                         span,
@@ -2267,23 +2602,36 @@ impl Analyzer<'_> {
         // borrower itself (a binding may read its own borrow).
         let target = Place::root(name);
         for (place, st) in state.iter() {
-            if place.root != name { continue; }
-            let PlaceState::BorrowedExclusive(borrower) = st else { continue; };
-            if borrower == name { continue; }
+            if place.root != name {
+                continue;
+            }
+            let PlaceState::BorrowedExclusive(borrower) = st else {
+                continue;
+            };
+            if borrower == name {
+                continue;
+            }
             let overlap = target.overlap(place);
-            if matches!(overlap, PlaceOverlap::Disjoint) { continue; }
+            if matches!(overlap, PlaceOverlap::Disjoint) {
+                continue;
+            }
             // Same place vs. partial-overlap chooses code.
             let (code, msg) = if matches!(overlap, PlaceOverlap::Same) {
-                ("E0383", format!(
-                    "cannot read `{name}` while it is exclusively borrowed by `{borrower}`"
-                ))
+                (
+                    "E0383",
+                    format!(
+                        "cannot read `{name}` while it is exclusively borrowed by `{borrower}`"
+                    ),
+                )
             } else {
                 ("E0374", format!(
                     "cannot read `{name}` while one of its sub-places (`{}`) is exclusively borrowed by `{borrower}`",
                     place.canonical()
                 ))
             };
-            let borrow_span = self.live_borrows.get(place)
+            let borrow_span = self
+                .live_borrows
+                .get(place)
                 .and_then(|m| m.get(borrower))
                 .copied();
             self.diags.push(RawDiag {
@@ -2313,19 +2661,14 @@ impl Analyzer<'_> {
     /// this split, a move-arg of an exclusively-borrowed binding would
     /// fire both E0383 and E0372 for one conflict (cascading per
     /// design note §6.3, deferred polish).
-    fn record_move_arg_use(
-        &mut self,
-        name: &str,
-        span: Span,
-        state: &BTreeMap<Place, PlaceState>,
-    ) {
-        let Some(st) = state.get(&Place::root(name)) else { return };
+    fn record_move_arg_use(&mut self, name: &str, span: Span, state: &BTreeMap<Place, PlaceState>) {
+        let Some(st) = state.get(&Place::root(name)) else {
+            return;
+        };
         if matches!(st, PlaceState::MaybePartial) && self.binding_is_non_copy(name) {
             self.diags.push(RawDiag {
                 code: "E0371",
-                message: format!(
-                    "use of possibly-moved binding `{name}`"
-                ),
+                message: format!("use of possibly-moved binding `{name}`"),
                 primary: span,
                 suggestion: Some((
                     span,
@@ -2356,7 +2699,11 @@ impl Analyzer<'_> {
         // pass; the cross-statement form of E0381 fires here. Routes
         // through `record_method_receiver_claim` before the regular
         // call walking so the diagnostic lands at the call site.
-        if let ExprKind::Field { receiver, name: method } = &callee.kind {
+        if let ExprKind::Field {
+            receiver,
+            name: method,
+        } = &callee.kind
+        {
             self.check_method_receiver_claim(receiver, &method.name, state);
         }
         self.apply_expr(callee, state);
@@ -2396,7 +2743,10 @@ impl Analyzer<'_> {
         // Copy so we don't over-track. 5BC.4 / sema integration will
         // tighten this once binding types are fully resolved.
         for (i, arg) in args.iter().enumerate() {
-            let arg_is_move = move_flags.as_ref().and_then(|v| v.get(i).copied()).unwrap_or(false);
+            let arg_is_move = move_flags
+                .as_ref()
+                .and_then(|v| v.get(i).copied())
+                .unwrap_or(false);
             if arg_is_move {
                 if let ExprKind::Ident(name) = &arg.kind {
                     // 5BC.2b / 6BC.2 — moving a MaybePartial binding
@@ -2450,50 +2800,70 @@ impl Analyzer<'_> {
         // Build per-arg claims. Copy bindings, non-place exprs, and
         // unknown-type bindings (binding_is_non_copy returns false) all
         // produce no claim — they carry no aliasing constraint.
-        let claims: Vec<Option<ArgClaim>> = args.iter().enumerate().map(|(i, arg)| {
-            let is_move = move_flags.as_ref().and_then(|v| v.get(i).copied()).unwrap_or(false);
-            let is_mut  = mut_flags .as_ref().and_then(|v| v.get(i).copied()).unwrap_or(false);
-            // For the sibling-read case (Shared claims), we use the
-            // arg's expression tree rather than its place, so even
-            // non-place exprs like `peek(buf)` count as "reads of buf".
-            // Direct (Mut/Move) claims need a real place expression.
-            let kind = if is_move {
-                ClaimKind::Move
-            } else if is_mut {
-                ClaimKind::Exclusive
-            } else {
-                ClaimKind::Shared
-            };
-            match kind {
-                ClaimKind::Move | ClaimKind::Exclusive => {
-                    let place = place_from_expr(arg)?;
-                    // Only non-Copy bindings carry borrow constraints.
-                    if !self.binding_is_non_copy(&place.root) { return None; }
-                    Some(ArgClaim { kind, place, span: arg.span })
+        let claims: Vec<Option<ArgClaim>> = args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| {
+                let is_move = move_flags
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(false);
+                let is_mut = mut_flags
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(false);
+                // For the sibling-read case (Shared claims), we use the
+                // arg's expression tree rather than its place, so even
+                // non-place exprs like `peek(buf)` count as "reads of buf".
+                // Direct (Mut/Move) claims need a real place expression.
+                let kind = if is_move {
+                    ClaimKind::Move
+                } else if is_mut {
+                    ClaimKind::Exclusive
+                } else {
+                    ClaimKind::Shared
+                };
+                match kind {
+                    ClaimKind::Move | ClaimKind::Exclusive => {
+                        let place = place_from_expr(arg)?;
+                        // Only non-Copy bindings carry borrow constraints.
+                        if !self.binding_is_non_copy(&place.root) {
+                            return None;
+                        }
+                        Some(ArgClaim {
+                            kind,
+                            place,
+                            span: arg.span,
+                        })
+                    }
+                    ClaimKind::Shared => {
+                        // Shared claims need a place if we want to fire
+                        // structural codes against them. The shared-read
+                        // path below uses `expr_reads_overlapping_place`
+                        // which doesn't require a claim — so we leave
+                        // Shared at None here and let the per-pair check
+                        // probe the arg expression tree directly.
+                        let _ = arg;
+                        None
+                    }
                 }
-                ClaimKind::Shared => {
-                    // Shared claims need a place if we want to fire
-                    // structural codes against them. The shared-read
-                    // path below uses `expr_reads_overlapping_place`
-                    // which doesn't require a claim — so we leave
-                    // Shared at None here and let the per-pair check
-                    // probe the arg expression tree directly.
-                    let _ = arg;
-                    None
-                }
-            }
-        }).collect();
+            })
+            .collect();
 
         // Pairwise walk. For each "primary" claim (Mut or Move), scan
         // every sibling for a conflict.
         for i in 0..args.len() {
             let Some(primary) = &claims[i] else { continue };
             for j in 0..args.len() {
-                if i == j { continue }
+                if i == j {
+                    continue;
+                }
                 // Direct claim on the sibling?
                 if let Some(other) = &claims[j] {
                     let overlap = primary.place.overlap(&other.place);
-                    if matches!(overlap, PlaceOverlap::Disjoint) { continue; }
+                    if matches!(overlap, PlaceOverlap::Disjoint) {
+                        continue;
+                    }
                     // Direct-claim conflict. Determine the code.
                     if let Some(diag) = build_direct_claim_diag(primary, other, i, j, overlap) {
                         self.diags.push(diag);
@@ -2517,11 +2887,7 @@ impl Analyzer<'_> {
     /// found. Used to detect E0370 (move + shared read) and E0381
     /// (mut + shared read) — the latter possibly via partial-place
     /// overlap, in which case E0374 fires instead.
-    fn find_overlapping_shared_read(
-        &self,
-        primary: &ArgClaim,
-        other: &Expr,
-    ) -> Option<RawDiag> {
+    fn find_overlapping_shared_read(&self, primary: &ArgClaim, other: &Expr) -> Option<RawDiag> {
         // Walk other's expression tree, collecting all place
         // expressions that overlap primary.place.
         let mut found = None;
@@ -2534,9 +2900,7 @@ impl Analyzer<'_> {
         if matches!(overlap, PlaceOverlap::Contains | PlaceOverlap::Contained) {
             return Some(RawDiag {
                 code: "E0374",
-                message: format!(
-                    "partial-place conflict on `{name}` in the same call"
-                ),
+                message: format!("partial-place conflict on `{name}` in the same call"),
                 primary: primary_span,
                 suggestion: Some((
                     suggestion_span,
@@ -2554,9 +2918,7 @@ impl Analyzer<'_> {
         match primary.kind {
             ClaimKind::Move => Some(RawDiag {
                 code: "E0370",
-                message: format!(
-                    "cannot move `{name}` and shared-borrow it in the same call"
-                ),
+                message: format!("cannot move `{name}` and shared-borrow it in the same call"),
                 primary: primary_span,
                 suggestion: Some((
                     suggestion_span,
@@ -2608,16 +2970,26 @@ impl Analyzer<'_> {
         method_name: &str,
         state: &BTreeMap<Place, PlaceState>,
     ) {
-        let ExprKind::Ident(recv_name) = &receiver.kind else { return };
-        let Some(bt) = self.binding_type(recv_name) else { return };
-        let TypeKind::Path(type_name) = &bt.kind else { return };
+        let ExprKind::Ident(recv_name) = &receiver.kind else {
+            return;
+        };
+        let Some(bt) = self.binding_type(recv_name) else {
+            return;
+        };
+        let TypeKind::Path(type_name) = &bt.kind else {
+            return;
+        };
         let key = format!("{type_name}.{method_name}");
-        if self.sigs.methods.get(&key).is_none() { return; }
+        if self.sigs.methods.get(&key).is_none() {
+            return;
+        }
         let place = Place::root(recv_name);
         let Some(st) = state.get(&place) else { return };
         match st {
             PlaceState::BorrowedShared(_) => {
-                let (borrower, borrow_span) = self.live_borrows.get(&place)
+                let (borrower, borrow_span) = self
+                    .live_borrows
+                    .get(&place)
                     .and_then(|s| s.iter().next().map(|(n, sp)| (n.clone(), *sp)))
                     .map(|(n, s)| (n, Some(s)))
                     .unwrap_or_else(|| ("(unknown)".to_string(), None));
@@ -2641,7 +3013,9 @@ impl Analyzer<'_> {
                 });
             }
             PlaceState::BorrowedExclusive(borrower) if borrower != recv_name => {
-                let borrow_span = self.live_borrows.get(&place)
+                let borrow_span = self
+                    .live_borrows
+                    .get(&place)
                     .and_then(|m| m.get(borrower))
                     .copied();
                 self.diags.push(RawDiag {
@@ -2684,19 +3058,33 @@ impl Analyzer<'_> {
         // pattern; partial-overlap is the 6BC.3 extension.
         let mut hit: Option<(Place, String, Span, PlaceOverlap)> = None;
         for (place, borrowers) in self.live_borrows.iter() {
-            if place.root != name { continue; }
-            if borrowers.is_empty() { continue; }
+            if place.root != name {
+                continue;
+            }
+            if borrowers.is_empty() {
+                continue;
+            }
             let overlap = target.overlap(place);
-            if matches!(overlap, PlaceOverlap::Disjoint) { continue; }
-            let (borrower, borrower_span) = borrowers.iter().next()
+            if matches!(overlap, PlaceOverlap::Disjoint) {
+                continue;
+            }
+            let (borrower, borrower_span) = borrowers
+                .iter()
+                .next()
                 .map(|(n, s)| (n.clone(), *s))
                 .unwrap();
             hit = Some((place.clone(), borrower, borrower_span, overlap));
             break;
         }
-        let Some((place, borrower, borrower_span, overlap)) = hit else { return };
+        let Some((place, borrower, borrower_span, overlap)) = hit else {
+            return;
+        };
         let is_exclusive = matches!(state.get(&place), Some(PlaceState::BorrowedExclusive(_)));
-        let flavor_label = if is_exclusive { "exclusively" } else { "shared" };
+        let flavor_label = if is_exclusive {
+            "exclusively"
+        } else {
+            "shared"
+        };
         let (msg, hint) = if matches!(overlap, PlaceOverlap::Same) {
             (
                 format!("cannot move `{name}` while it is {flavor_label} borrowed by `{borrower}`"),
@@ -2786,7 +3174,11 @@ fn merge_branches(
 fn expr_reads_ident(e: &Expr, name: &str) -> bool {
     match &e.kind {
         ExprKind::Ident(n) => n == name,
-        ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _) | ExprKind::BoolLit(_) | ExprKind::StrLit(_) => false,
+        ExprKind::IntLit(_, _)
+        | ExprKind::FloatLit(_, _)
+        | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::IncludeBytes { .. } => false,
         ExprKind::InterpStr { parts } => parts.iter().any(|p| match p {
             crate::ast::InterpStrPart::Expr(e) => expr_reads_ident(e, name),
             _ => false,
@@ -2802,11 +3194,20 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         }
         ExprKind::Await(inner) => expr_reads_ident(inner, name),
         ExprKind::Yield(inner) => expr_reads_ident(inner, name),
-        ExprKind::If { cond, then, else_branch } => {
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
             expr_reads_ident(cond, name)
                 || then.stmts.iter().any(|s| stmt_reads_ident(s, name))
-                || then.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
-                || else_branch.as_deref().is_some_and(|e| expr_reads_ident(e, name))
+                || then
+                    .tail
+                    .as_deref()
+                    .is_some_and(|t| expr_reads_ident(t, name))
+                || else_branch
+                    .as_deref()
+                    .is_some_and(|e| expr_reads_ident(e, name))
         }
         ExprKind::Call { callee, args, .. } => {
             expr_reads_ident(callee, name) || args.iter().any(|a| expr_reads_ident(a, name))
@@ -2827,12 +3228,15 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
             fields.iter().any(|f| expr_reads_ident(&f.value, name))
         }
         ExprKind::Field { receiver, .. } => expr_reads_ident(receiver, name),
-        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } | ExprKind::TupleLit { elements } => elements.iter().any(|e| expr_reads_ident(e, name)),
+        ExprKind::ArrayLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. }
+        | ExprKind::TupleLit { elements } => elements.iter().any(|e| expr_reads_ident(e, name)),
         ExprKind::Index { receiver, index } => {
             expr_reads_ident(receiver, name) || expr_reads_ident(index, name)
         }
         ExprKind::Match { scrutinee, arms } => {
-            expr_reads_ident(scrutinee, name) || arms.iter().any(|a| expr_reads_ident(&a.body, name))
+            expr_reads_ident(scrutinee, name)
+                || arms.iter().any(|a| expr_reads_ident(&a.body, name))
         }
     }
 }
@@ -2841,26 +3245,42 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
 fn stmt_reads_ident(s: &Stmt, name: &str) -> bool {
     match &s.kind {
         StmtKind::Let { init, .. } => init.as_ref().is_some_and(|e| expr_reads_ident(e, name)),
-        StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => expr_reads_ident(e, name),
+        StmtKind::Return(Some(e)) | StmtKind::Expr(e) | StmtKind::Defer(e) => {
+            expr_reads_ident(e, name)
+        }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => false,
         StmtKind::Assert(e) => expr_reads_ident(e, name),
         StmtKind::While { cond, body } => {
             expr_reads_ident(cond, name)
                 || body.stmts.iter().any(|s| stmt_reads_ident(s, name))
-                || body.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
+                || body
+                    .tail
+                    .as_deref()
+                    .is_some_and(|t| expr_reads_ident(t, name))
         }
         StmtKind::For(fl) => match fl {
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 init.as_deref().is_some_and(|i| stmt_reads_ident(i, name))
                     || cond.as_ref().is_some_and(|c| expr_reads_ident(c, name))
                     || update.iter().any(|u| expr_reads_ident(u, name))
                     || body.stmts.iter().any(|s| stmt_reads_ident(s, name))
-                    || body.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
+                    || body
+                        .tail
+                        .as_deref()
+                        .is_some_and(|t| expr_reads_ident(t, name))
             }
             ForLoop::Range { iter, body, .. } => {
                 expr_reads_ident(iter, name)
                     || body.stmts.iter().any(|s| stmt_reads_ident(s, name))
-                    || body.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
+                    || body
+                        .tail
+                        .as_deref()
+                        .is_some_and(|t| expr_reads_ident(t, name))
             }
         },
         StmtKind::Loop(b) => {
@@ -2912,13 +3332,22 @@ mod tests {
 
     #[test]
     fn merge_owned_owned_is_owned() {
-        assert_eq!(PlaceState::Owned.merge(&PlaceState::Owned), PlaceState::Owned);
+        assert_eq!(
+            PlaceState::Owned.merge(&PlaceState::Owned),
+            PlaceState::Owned
+        );
     }
 
     #[test]
     fn merge_owned_moved_is_maybe_partial() {
-        assert_eq!(PlaceState::Owned.merge(&PlaceState::Moved), PlaceState::MaybePartial);
-        assert_eq!(PlaceState::Moved.merge(&PlaceState::Owned), PlaceState::MaybePartial);
+        assert_eq!(
+            PlaceState::Owned.merge(&PlaceState::Moved),
+            PlaceState::MaybePartial
+        );
+        assert_eq!(
+            PlaceState::Moved.merge(&PlaceState::Owned),
+            PlaceState::MaybePartial
+        );
     }
 
     #[test]
@@ -3002,7 +3431,10 @@ impl B { fn drop(mut self) { return; } }";
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let oracle = CopyOracle::build(&prog);
-        let t = Type { kind: TypeKind::Path("B".into()), span: Span::new(0, 0) };
+        let t = Type {
+            kind: TypeKind::Path("B".into()),
+            span: Span::new(0, 0),
+        };
         assert!(oracle.definitely_non_copy(&t), "B should be non-Copy");
         assert!(!oracle.is_copy(&t));
     }
@@ -3013,9 +3445,15 @@ impl B { fn drop(mut self) { return; } }";
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let oracle = CopyOracle::build(&prog);
-        let t = Type { kind: TypeKind::Path("P".into()), span: Span::new(0, 0) };
+        let t = Type {
+            kind: TypeKind::Path("P".into()),
+            span: Span::new(0, 0),
+        };
         assert!(oracle.is_copy(&t));
-        assert!(!oracle.definitely_non_copy(&t), "Copy struct should not be definitely_non_copy");
+        assert!(
+            !oracle.definitely_non_copy(&t),
+            "Copy struct should not be definitely_non_copy"
+        );
     }
 
     #[test]
@@ -3024,9 +3462,14 @@ impl B { fn drop(mut self) { return; } }";
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let oracle = CopyOracle::build(&prog);
-        let t = Type { kind: TypeKind::Path("Mystery".into()), span: Span::new(0, 0) };
-        assert!(!oracle.definitely_non_copy(&t),
-            "Unknown types should not fire definitely_non_copy");
+        let t = Type {
+            kind: TypeKind::Path("Mystery".into()),
+            span: Span::new(0, 0),
+        };
+        assert!(
+            !oracle.definitely_non_copy(&t),
+            "Unknown types should not fire definitely_non_copy"
+        );
     }
 
     #[test]
@@ -3038,9 +3481,14 @@ struct Outer { b: B, n: i32 }";
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let oracle = CopyOracle::build(&prog);
-        let outer = Type { kind: TypeKind::Path("Outer".into()), span: Span::new(0, 0) };
-        assert!(oracle.definitely_non_copy(&outer),
-            "Outer should be non-Copy because it contains B");
+        let outer = Type {
+            kind: TypeKind::Path("Outer".into()),
+            span: Span::new(0, 0),
+        };
+        assert!(
+            oracle.definitely_non_copy(&outer),
+            "Outer should be non-Copy because it contains B"
+        );
     }
 
     #[test]
@@ -3048,9 +3496,15 @@ struct Outer { b: B, n: i32 }";
         let prog = parse(tokenize("fn f() { return; }").unwrap()).unwrap();
         let oracle = CopyOracle::build(&prog);
         for name in ["i32", "u64", "f64", "bool", "usize"] {
-            let t = Type { kind: TypeKind::Path(name.into()), span: Span::new(0, 0) };
+            let t = Type {
+                kind: TypeKind::Path(name.into()),
+                span: Span::new(0, 0),
+            };
             assert!(oracle.is_copy(&t), "{name} should be Copy");
-            assert!(!oracle.definitely_non_copy(&t), "{name} should not be definitely_non_copy");
+            assert!(
+                !oracle.definitely_non_copy(&t),
+                "{name} should not be definitely_non_copy"
+            );
         }
     }
 
@@ -3086,7 +3540,8 @@ fn caller() {
 }";
         let dump = analyze_src(src);
         // y should be Moved after the sink call.
-        let exit_line = dump.lines()
+        let exit_line = dump
+            .lines()
             .find(|l| l.starts_with("fn caller:") || l.contains("exit:"))
             .unwrap_or("");
         assert!(dump.contains("y=Moved"), "y should be Moved; got:\n{dump}");
@@ -3108,8 +3563,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0370"),
-            "expected E0370 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0370"),
+            "expected E0370 in {codes:?}"
+        );
     }
 
     #[test]
@@ -3123,8 +3580,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0370"),
-            "E0370 should not fire on Copy bindings; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0370"),
+            "E0370 should not fire on Copy bindings; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3140,8 +3599,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0370"),
-            "E0370 should not fire when sibling arg doesn't read the moved binding; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0370"),
+            "E0370 should not fire when sibling arg doesn't read the moved binding; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3167,8 +3628,10 @@ fn caller() {
         // We're asserting borrowck does NOT fire E0370 here; sema may or
         // may not fire E0335 — that's not our concern. We use check_src
         // which goes through borrowck only.
-        assert!(!codes.iter().any(|c| c == "E0370"),
-            "E0370 should not fire on bindings of unknown type; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0370"),
+            "E0370 should not fire on bindings of unknown type; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3200,10 +3663,14 @@ fn caller(c: bool) {
 }";
         let dump = analyze_src(src);
         // After the if statement, `y` is MaybePartial.
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 1:"))
             .unwrap_or_else(|| panic!("no after stmt 1 in:\n{dump}"));
-        assert!(line.contains("y=MaybePartial"), "expected y=MaybePartial in: {line}");
+        assert!(
+            line.contains("y=MaybePartial"),
+            "expected y=MaybePartial in: {line}"
+        );
     }
 
     #[test]
@@ -3224,7 +3691,8 @@ fn caller(c: bool) {
   return;
 }";
         let dump = analyze_src(src);
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 1:"))
             .unwrap_or_else(|| panic!("no after stmt 1 in:\n{dump}"));
         assert!(line.contains("y=Moved"), "expected y=Moved in: {line}");
@@ -3253,7 +3721,8 @@ fn caller(c: bool) -> i32 {
         // After the if (the no-then path), `y` is still Owned. The
         // diverging then-branch's Moved state is filtered out by
         // merge_branches.
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 1:"))
             .unwrap_or_else(|| panic!("no after stmt 1 in:\n{dump}"));
         assert!(line.contains("y=Owned"), "expected y=Owned in: {line}");
@@ -3273,11 +3742,18 @@ fn caller(c: bool) {
   return;
 }";
         let dump = analyze_src(src);
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 0:"))
             .unwrap_or_else(|| panic!("no after stmt 0 in:\n{dump}"));
-        assert!(!line.contains("inner"), "branch-local `inner` should not leak: {line}");
-        assert!(!line.contains("other"), "branch-local `other` should not leak: {line}");
+        assert!(
+            !line.contains("inner"),
+            "branch-local `inner` should not leak: {line}"
+        );
+        assert!(
+            !line.contains("other"),
+            "branch-local `other` should not leak: {line}"
+        );
     }
 
     #[test]
@@ -3297,10 +3773,14 @@ fn caller(c: bool) {
   return;
 }";
         let dump = analyze_src(src);
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 1:"))
             .unwrap_or_else(|| panic!("no after stmt 1 in:\n{dump}"));
-        assert!(line.contains("y=MaybePartial"), "expected y=MaybePartial in: {line}");
+        assert!(
+            line.contains("y=MaybePartial"),
+            "expected y=MaybePartial in: {line}"
+        );
     }
 
     // --- 5BC.2b E0371 emission tests ---
@@ -3320,8 +3800,10 @@ fn caller(c: bool) {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0371"),
-            "E0371 should not fire on Copy bindings; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0371"),
+            "E0371 should not fire on Copy bindings; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3647,13 +4129,18 @@ fn caller() {
   return;
 }";
         let dump = analyze_src(src);
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 2:"))
             .unwrap_or_else(|| panic!("no after stmt 2 in:\n{dump}"));
-        assert!(line.contains("a=BorrowedShared(1)"),
-            "expected a=BorrowedShared(1); got: {line}");
-        assert!(line.contains("b=BorrowedShared(1)"),
-            "expected b=BorrowedShared(1); got: {line}");
+        assert!(
+            line.contains("a=BorrowedShared(1)"),
+            "expected a=BorrowedShared(1); got: {line}"
+        );
+        assert!(
+            line.contains("b=BorrowedShared(1)"),
+            "expected b=BorrowedShared(1); got: {line}"
+        );
     }
 
     #[test]
@@ -3677,8 +4164,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0372"),
-            "expected E0372 on move of `a` while `r` borrows it; got {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "expected E0372 on move of `a` while `r` borrows it; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3700,8 +4189,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0372"),
-            "expected E0372 on move of `b` while `r` borrows it; got {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "expected E0372 on move of `b` while `r` borrows it; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3765,8 +4256,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0372"),
-            "E0372 should not fire after r's scope closes; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "E0372 should not fire after r's scope closes; got {codes:?}"
+        );
     }
 
     // --- 5BC.3b E0372 + call-site borrow tracking ---
@@ -3786,11 +4279,14 @@ fn caller() {
 }";
         let dump = analyze_src(src);
         // After stmt 1 (the `let y` line): x is BorrowedShared(1).
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 1:"))
             .unwrap_or_else(|| panic!("no after stmt 1 in:\n{dump}"));
-        assert!(line.contains("x=BorrowedShared(1)"),
-            "expected x=BorrowedShared(1); got: {line}");
+        assert!(
+            line.contains("x=BorrowedShared(1)"),
+            "expected x=BorrowedShared(1); got: {line}"
+        );
     }
 
     #[test]
@@ -3808,11 +4304,14 @@ fn caller() {
   return;
 }";
         let dump = analyze_src(src);
-        let line = dump.lines()
+        let line = dump
+            .lines()
             .find(|l| l.contains("after stmt 1:"))
             .unwrap_or_else(|| panic!("no after stmt 1 in:\n{dump}"));
-        assert!(line.contains("b=BorrowedShared(1)"),
-            "expected b=BorrowedShared(1); got: {line}");
+        assert!(
+            line.contains("b=BorrowedShared(1)"),
+            "expected b=BorrowedShared(1); got: {line}"
+        );
     }
 
     #[test]
@@ -3832,8 +4331,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0372"),
-            "expected E0372; got {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "expected E0372; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3855,8 +4356,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0372"),
-            "E0372 should not fire after borrower's scope exits; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "E0372 should not fire after borrower's scope exits; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3873,8 +4376,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0372"),
-            "E0372 should not fire on Copy params; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "E0372 should not fire on Copy params; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3901,8 +4406,10 @@ fn caller() {
         // broken — that's the real bug §2.9 implies will be fixed once
         // borrowck takes over from sema for non-Copy param passing.
         // For borrowck's static analysis, this program is clean.)
-        assert!(!codes.iter().any(|c| c == "E0372"),
-            "moving the borrower should release the borrow; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "moving the borrower should release the borrow; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3920,9 +4427,14 @@ fn caller() {
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let diags = check(&prog, &PathBuf::from("t.cplus"), src);
-        let e0370 = diags.iter().find(|d| d.code.0 == "E0370")
+        let e0370 = diags
+            .iter()
+            .find(|d| d.code.0 == "E0370")
             .expect("should have E0370");
-        assert!(!e0370.suggestions.is_empty(), "E0370 should carry a suggestion");
+        assert!(
+            !e0370.suggestions.is_empty(),
+            "E0370 should carry a suggestion"
+        );
     }
 
     // ---- 6BC.1 — intra-call exclusive-borrow conflicts ----
@@ -3939,11 +4451,16 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0380"),
-            "expected E0380 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0380"),
+            "expected E0380 in {codes:?}"
+        );
         // Exactly one E0380 per conflicting pair — not duplicated.
         let count = codes.iter().filter(|c| *c == "E0380").count();
-        assert_eq!(count, 1, "expected exactly one E0380, got {count}: {codes:?}");
+        assert_eq!(
+            count, 1,
+            "expected exactly one E0380, got {count}: {codes:?}"
+        );
     }
 
     #[test]
@@ -3957,8 +4474,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0380"),
-            "E0380 should not fire on Copy bindings; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0380"),
+            "E0380 should not fire on Copy bindings; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3974,8 +4493,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0380"),
-            "E0380 should not fire on distinct bindings; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0380"),
+            "E0380 should not fire on distinct bindings; got {codes:?}"
+        );
     }
 
     #[test]
@@ -3991,8 +4512,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0381"),
-            "expected E0381 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "expected E0381 in {codes:?}"
+        );
     }
 
     #[test]
@@ -4006,8 +4529,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0381"),
-            "E0381 should not fire on Copy bindings; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0381"),
+            "E0381 should not fire on Copy bindings; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4022,8 +4547,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0382"),
-            "expected E0382 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0382"),
+            "expected E0382 in {codes:?}"
+        );
     }
 
     #[test]
@@ -4039,8 +4566,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0382"),
-            "E0382 should not fire on distinct bindings; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0382"),
+            "E0382 should not fire on distinct bindings; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4060,7 +4589,10 @@ fn caller() {
         let codes = check_src(src);
         let e0370_count = codes.iter().filter(|c| *c == "E0370").count();
         let e0382_count = codes.iter().filter(|c| *c == "E0382").count();
-        assert_eq!(e0370_count, 0, "E0370 should be suppressed when E0382 fires; got {codes:?}");
+        assert_eq!(
+            e0370_count, 0,
+            "E0370 should be suppressed when E0382 fires; got {codes:?}"
+        );
         assert_eq!(e0382_count, 1, "expected exactly one E0382; got {codes:?}");
     }
 
@@ -4069,30 +4601,48 @@ fn caller() {
         // Each new error must carry a help suggestion so the diagnostic
         // pipeline can offer a Quick Fix in the LSP.
         for (label, src) in &[
-            ("E0380", "\
+            (
+                "E0380",
+                "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn f(mut a: B, mut b: B) { return; }
-fn c() { let y: B = B { x: 1 }; f(y, y); return; }"),
-            ("E0381", "\
+fn c() { let y: B = B { x: 1 }; f(y, y); return; }",
+            ),
+            (
+                "E0381",
+                "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn f(mut a: B, n: i32) { return; }
 fn p(b: B) -> i32 { return b.x; }
-fn c() { let y: B = B { x: 1 }; f(y, p(y)); return; }"),
-            ("E0382", "\
+fn c() { let y: B = B { x: 1 }; f(y, p(y)); return; }",
+            ),
+            (
+                "E0382",
+                "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn f(mut a: B, move b: B) { return; }
-fn c() { let y: B = B { x: 1 }; f(y, y); return; }"),
+fn c() { let y: B = B { x: 1 }; f(y, y); return; }",
+            ),
         ] {
             let toks = tokenize(src).expect("lex");
             let prog = parse(toks).expect("parse");
             let diags = check(&prog, &PathBuf::from("t.cplus"), src);
-            let d = diags.iter().find(|d| d.code.0 == *label)
-                .unwrap_or_else(|| panic!("expected {label}; got {:?}",
-                    diags.iter().map(|d| d.code.0).collect::<Vec<_>>()));
-            assert!(!d.suggestions.is_empty(), "{label} should carry a suggestion");
+            let d = diags
+                .iter()
+                .find(|d| d.code.0 == *label)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "expected {label}; got {:?}",
+                        diags.iter().map(|d| d.code.0).collect::<Vec<_>>()
+                    )
+                });
+            assert!(
+                !d.suggestions.is_empty(),
+                "{label} should carry a suggestion"
+            );
         }
     }
 
@@ -4130,8 +4680,10 @@ fn c() { let y: B = B { x: 1 }; f(y, y); return; }"),
 
     #[test]
     fn fmt_state_includes_borrowed_exclusive() {
-        assert_eq!(fmt_state(&PlaceState::BorrowedExclusive("h".to_string())),
-            "BorrowedExclusive(h)");
+        assert_eq!(
+            fmt_state(&PlaceState::BorrowedExclusive("h".to_string())),
+            "BorrowedExclusive(h)"
+        );
     }
 
     // ---- 6BC.2 — cross-statement exclusive-borrow tracking ----
@@ -4149,8 +4701,10 @@ fn caller() {
 }";
         let dump = analyze_src(src);
         // After `let cur = cursor(v);`, v should be BorrowedExclusive(cur).
-        assert!(dump.contains("v=BorrowedExclusive(cur)"),
-            "expected exclusive-borrow state on v; got:\n{dump}");
+        assert!(
+            dump.contains("v=BorrowedExclusive(cur)"),
+            "expected exclusive-borrow state on v; got:\n{dump}"
+        );
     }
 
     #[test]
@@ -4167,8 +4721,10 @@ fn caller() {
   return;
 }";
         let dump = analyze_src(src);
-        assert!(dump.contains("v=BorrowedExclusive(cur)"),
-            "expected exclusive-borrow state on v; got:\n{dump}");
+        assert!(
+            dump.contains("v=BorrowedExclusive(cur)"),
+            "expected exclusive-borrow state on v; got:\n{dump}"
+        );
     }
 
     #[test]
@@ -4185,8 +4741,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0383"),
-            "expected E0383 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0383"),
+            "expected E0383 in {codes:?}"
+        );
     }
 
     #[test]
@@ -4208,8 +4766,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0383"),
-            "E0383 should not fire after the borrower's scope exits; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0383"),
+            "E0383 should not fire after the borrower's scope exits; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4229,8 +4789,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0383"),
-            "E0383 should not fire when reading the borrower itself; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0383"),
+            "E0383 should not fire when reading the borrower itself; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4252,16 +4814,24 @@ fn caller() {
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let diags = check(&prog, &PathBuf::from("t.cplus"), src);
-        let e0372 = diags.iter().find(|d| d.code.0 == "E0372")
+        let e0372 = diags
+            .iter()
+            .find(|d| d.code.0 == "E0372")
             .expect("expected E0372");
-        assert!(e0372.message.contains("exclusively borrowed"),
-            "E0372 message should say 'exclusively borrowed'; got: {}", e0372.message);
+        assert!(
+            e0372.message.contains("exclusively borrowed"),
+            "E0372 message should say 'exclusively borrowed'; got: {}",
+            e0372.message
+        );
         // E0383 must NOT also fire for the same conflict — the move-arg
         // path suppresses it to avoid cascading errors.
         let e0383_count = diags.iter().filter(|d| d.code.0 == "E0383").count();
-        assert_eq!(e0383_count, 0,
+        assert_eq!(
+            e0383_count,
+            0,
             "E0383 should be suppressed for move-while-exclusive; got {} diagnostics",
-            diags.len());
+            diags.len()
+        );
     }
 
     #[test]
@@ -4277,8 +4847,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0383"),
-            "E0383 should not fire on Copy params; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0383"),
+            "E0383 should not fire on Copy params; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4348,7 +4920,9 @@ fn drain(move b: B) -> B { return b; }";
     fn place_overlap_parent_contains_child() {
         let parent = Place::root("buf");
         let mut child = Place::root("buf");
-        child.projections.push(Projection::Field("left".to_string()));
+        child
+            .projections
+            .push(Projection::Field("left".to_string()));
         assert_eq!(parent.overlap(&child), PlaceOverlap::Contains);
         assert_eq!(child.overlap(&parent), PlaceOverlap::Contained);
     }
@@ -4396,11 +4970,16 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        let conflict_codes: Vec<&String> = codes.iter()
-            .filter(|c| ["E0370", "E0374", "E0380", "E0381", "E0382", "E0383"].contains(&c.as_str()))
+        let conflict_codes: Vec<&String> = codes
+            .iter()
+            .filter(|c| {
+                ["E0370", "E0374", "E0380", "E0381", "E0382", "E0383"].contains(&c.as_str())
+            })
             .collect();
-        assert!(conflict_codes.is_empty(),
-            "disjoint sub-places should admit; got: {codes:?}");
+        assert!(
+            conflict_codes.is_empty(),
+            "disjoint sub-places should admit; got: {codes:?}"
+        );
     }
 
     #[test]
@@ -4419,8 +4998,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0374"),
-            "expected E0374 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0374"),
+            "expected E0374 in {codes:?}"
+        );
     }
 
     #[test]
@@ -4442,8 +5023,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0374"),
-            "expected E0374 cross-statement in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0374"),
+            "expected E0374 cross-statement in {codes:?}"
+        );
     }
 
     #[test]
@@ -4464,22 +5047,31 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        let conflict_codes: Vec<&String> = codes.iter()
+        let conflict_codes: Vec<&String> = codes
+            .iter()
             .filter(|c| ["E0374", "E0383"].contains(&c.as_str()))
             .collect();
-        assert!(conflict_codes.is_empty(),
-            "disjoint sub-places should admit cross-statement; got: {codes:?}");
+        assert!(
+            conflict_codes.is_empty(),
+            "disjoint sub-places should admit cross-statement; got: {codes:?}"
+        );
     }
 
     #[test]
     fn place_from_expr_walks_field_chain() {
         // `p.left.v` parses as Field(Field(Ident "p", "left"), "v").
         // The walker should produce a Place with two projections.
-        let toks = tokenize("fn f() { let p: Inner = Inner { v: 1 }; let n: i32 = p.left.v; return; }").expect("lex");
+        let toks =
+            tokenize("fn f() { let p: Inner = Inner { v: 1 }; let n: i32 = p.left.v; return; }")
+                .expect("lex");
         let prog = parse(toks).expect("parse");
         // Drill into the second let-init to grab the expression.
-        let ItemKind::Function(ref f) = prog.items[0].kind else { panic!() };
-        let StmtKind::Let { init: Some(e), .. } = &f.body.stmts[1].kind else { panic!() };
+        let ItemKind::Function(ref f) = prog.items[0].kind else {
+            panic!()
+        };
+        let StmtKind::Let { init: Some(e), .. } = &f.body.stmts[1].kind else {
+            panic!()
+        };
         let place = place_from_expr(e).expect("place built");
         assert_eq!(place.root, "p");
         assert_eq!(place.projections.len(), 2);
@@ -4500,7 +5092,10 @@ fn longest_mut(mut a: B, mut b: B) -> B {
         let prog = parse_prog(src);
         assert_eq!(
             return_borrow_source_with_flavor(&prog, "longest_mut"),
-            Some((ReturnBorrowSource::MultiParam(vec![0, 1]), BorrowFlavor::Exclusive))
+            Some((
+                ReturnBorrowSource::MultiParam(vec![0, 1]),
+                BorrowFlavor::Exclusive
+            ))
         );
     }
 
@@ -4547,8 +5142,10 @@ fn merge(a: B, b: B) -> B {
   return B { x: 0 };
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0384"),
-            "expected E0384 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0384"),
+            "expected E0384 in {codes:?}"
+        );
     }
 
     #[test]
@@ -4561,8 +5158,10 @@ struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn always_fresh(a: B, b: B) -> B { return B { x: 0 }; }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0384"),
-            "E0384 should not fire when no return is rooted; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0384"),
+            "E0384 should not fire when no return is rooted; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4577,8 +5176,10 @@ fn longest(a: B, b: B) -> B {
   return b;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0384"),
-            "E0384 should not fire when E3 matches; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0384"),
+            "E0384 should not fire when E3 matches; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4593,12 +5194,19 @@ fn merge(a: B, b: B) -> B {
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let diags = check(&prog, &PathBuf::from("t.cplus"), src);
-        let e0384 = diags.iter().find(|d| d.code.0 == "E0384")
+        let e0384 = diags
+            .iter()
+            .find(|d| d.code.0 == "E0384")
             .expect("expected E0384");
-        assert!(!e0384.suggestions.is_empty(), "E0384 should carry a suggestion");
+        assert!(
+            !e0384.suggestions.is_empty(),
+            "E0384 should carry a suggestion"
+        );
         let sugg_text = &e0384.suggestions[0].description;
-        assert!(sugg_text.contains("borrow REGION T"),
-            "E0384 suggestion should teach `borrow REGION T`; got: {sugg_text}");
+        assert!(
+            sugg_text.contains("borrow REGION T"),
+            "E0384 suggestion should teach `borrow REGION T`; got: {sugg_text}"
+        );
     }
 
     #[test]
@@ -4615,8 +5223,10 @@ impl B {
   }
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0384"),
-            "expected E0384 on method in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0384"),
+            "expected E0384 on method in {codes:?}"
+        );
     }
 
     // ---- 6BC.5 — explicit `borrow REGION T` annotations ----
@@ -4649,7 +5259,10 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
         let prog = parse_prog(src);
         assert_eq!(
             return_borrow_source_with_flavor(&prog, "merge"),
-            Some((ReturnBorrowSource::MultiParam(vec![0, 1]), BorrowFlavor::Shared))
+            Some((
+                ReturnBorrowSource::MultiParam(vec![0, 1]),
+                BorrowFlavor::Shared
+            ))
         );
     }
 
@@ -4699,8 +5312,10 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
   return B { x: 0 };
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0384"),
-            "E0384 should not fire when explicit annotations are present; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0384"),
+            "E0384 should not fire when explicit annotations are present; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4724,8 +5339,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0372"),
-            "expected E0372 from multi-source annotated borrow; got {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "expected E0372 from multi-source annotated borrow; got {codes:?}"
+        );
     }
 
     #[test]
@@ -4740,7 +5357,10 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B { return a; }";
         let prog = parse_prog(src);
         assert_eq!(
             return_borrow_source_with_flavor(&prog, "merge"),
-            Some((ReturnBorrowSource::MultiParam(vec![0, 1]), BorrowFlavor::Shared))
+            Some((
+                ReturnBorrowSource::MultiParam(vec![0, 1]),
+                BorrowFlavor::Shared
+            ))
         );
     }
 
@@ -4765,8 +5385,10 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(codes.iter().any(|c| c == "E0372"),
-            "expected E0372 in {codes:?}");
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "expected E0372 in {codes:?}"
+        );
     }
 
     #[test]
@@ -4786,7 +5408,9 @@ fn caller() {
   return;
 }";
         let codes = check_src(src);
-        assert!(!codes.iter().any(|c| c == "E0383"),
-            "E0383 should not fire after moving the exclusive borrower; got {codes:?}");
+        assert!(
+            !codes.iter().any(|c| c == "E0383"),
+            "E0383 should not fire after moving the exclusive borrower; got {codes:?}"
+        );
     }
 }

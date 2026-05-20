@@ -1,0 +1,240 @@
+import "./runtime" as rt;
+
+pub struct TableView {
+    pub obj: *u8,
+}
+
+impl TableView {
+    pub fn new(frame: rt::Rect) -> TableView {
+        return TableView { obj: rt::alloc_init_with_frame(str_ptr("NSTableView\0"), frame) };
+    }
+
+    pub fn add_table_column(self, column: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("addTableColumn:\0")), column);
+    }
+
+    pub fn remove_table_column(self, column: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("removeTableColumn:\0")), column);
+    }
+
+    pub fn reload_data(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn set_data_source(self, data_source: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDataSource:\0")), data_source);
+    }
+
+    pub fn set_row_height(self, height: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setRowHeight:\0")), height);
+    }
+}
+
+pub struct TableColumn {
+    pub obj: *u8,
+}
+
+impl TableColumn {
+    pub fn new(identifier: *u8) -> TableColumn {
+        return TableColumn { obj: rt::alloc_init_with_identifier(str_ptr("NSTableColumn\0"), identifier) };
+    }
+
+    pub fn set_title(self, title: *u8) {
+        let header_cell = rt::msg_id(self.obj, rt::sel(str_ptr("headerCell\0")));
+        rt::msg_void_id(header_cell, rt::sel(str_ptr("setStringValue:\0")), rt::ns_string(title));
+    }
+
+    pub fn set_width(self, width: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setWidth:\0")), width);
+    }
+
+    pub fn set_min_width(self, width: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMinWidth:\0")), width);
+    }
+
+    pub fn set_max_width(self, width: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMaxWidth:\0")), width);
+    }
+}
+
+pub struct OutlineView {
+    pub obj: *u8,
+}
+
+impl OutlineView {
+    pub fn new(frame: rt::Rect) -> OutlineView {
+        return OutlineView { obj: rt::alloc_init_with_frame(str_ptr("NSOutlineView\0"), frame) };
+    }
+
+    pub fn add_table_column(self, column: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("addTableColumn:\0")), column);
+    }
+
+    pub fn reload_data(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+    }
+
+    pub fn expand_item(self, item: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("expandItem:\0")), item);
+    }
+
+    pub fn collapse_item(self, item: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("collapseItem:\0")), item);
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn set_data_source(self, data_source: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDataSource:\0")), data_source);
+    }
+}
+
+pub struct TableCellView {
+    pub obj: *u8,
+}
+
+impl TableCellView {
+    pub fn new(frame: rt::Rect) -> TableCellView {
+        return TableCellView { obj: rt::alloc_init_with_frame(str_ptr("NSTableCellView\0"), frame) };
+    }
+
+    pub fn set_text_field(self, text_field: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTextField:\0")), text_field);
+    }
+
+    pub fn set_image_view(self, image_view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setImageView:\0")), image_view);
+    }
+}
+
+pub struct TableRowView {
+    pub obj: *u8,
+}
+
+impl TableRowView {
+    pub fn new(frame: rt::Rect) -> TableRowView {
+        return TableRowView { obj: rt::alloc_init_with_frame(str_ptr("NSTableRowView\0"), frame) };
+    }
+}
+
+pub struct CollectionView {
+    pub obj: *u8,
+}
+
+impl CollectionView {
+    pub fn new(frame: rt::Rect) -> CollectionView {
+        return CollectionView { obj: rt::alloc_init_with_frame(str_ptr("NSCollectionView\0"), frame) };
+    }
+
+    pub fn set_collection_view_layout(self, layout: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setCollectionViewLayout:\0")), layout);
+    }
+
+    pub fn reload_data(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn set_data_source(self, data_source: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDataSource:\0")), data_source);
+    }
+}
+
+pub struct CollectionViewItem {
+    pub obj: *u8,
+}
+
+impl CollectionViewItem {
+    pub fn new() -> CollectionViewItem {
+        return CollectionViewItem { obj: rt::alloc_init(str_ptr("NSCollectionViewItem\0")) };
+    }
+
+    pub fn set_view(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setView:\0")), view);
+    }
+}
+
+pub struct CollectionViewFlowLayout {
+    pub obj: *u8,
+}
+
+impl CollectionViewFlowLayout {
+    pub fn new() -> CollectionViewFlowLayout {
+        return CollectionViewFlowLayout { obj: rt::alloc_init(str_ptr("NSCollectionViewFlowLayout\0")) };
+    }
+
+    pub fn set_item_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(str_ptr("setItemSize:\0")), size);
+    }
+
+    pub fn set_minimum_line_spacing(self, spacing: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMinimumLineSpacing:\0")), spacing);
+    }
+
+    pub fn set_minimum_interitem_spacing(self, spacing: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMinimumInteritemSpacing:\0")), spacing);
+    }
+}
+
+pub struct CollectionViewGridLayout {
+    pub obj: *u8,
+}
+
+impl CollectionViewGridLayout {
+    pub fn new() -> CollectionViewGridLayout {
+        return CollectionViewGridLayout { obj: rt::alloc_init(str_ptr("NSCollectionViewGridLayout\0")) };
+    }
+
+    pub fn set_minimum_item_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(str_ptr("setMinimumItemSize:\0")), size);
+    }
+
+    pub fn set_maximum_item_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(str_ptr("setMaximumItemSize:\0")), size);
+    }
+}
+
+pub struct RuleEditor {
+    pub obj: *u8,
+}
+
+impl RuleEditor {
+    pub fn new(frame: rt::Rect) -> RuleEditor {
+        return RuleEditor { obj: rt::alloc_init_with_frame(str_ptr("NSRuleEditor\0"), frame) };
+    }
+
+    pub fn reload_criteria(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("reloadCriteria\0")));
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+    }
+}
+
+pub struct PredicateEditor {
+    pub obj: *u8,
+}
+
+impl PredicateEditor {
+    pub fn new(frame: rt::Rect) -> PredicateEditor {
+        return PredicateEditor { obj: rt::alloc_init_with_frame(str_ptr("NSPredicateEditor\0"), frame) };
+    }
+
+    pub fn reload_criteria(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("reloadCriteria\0")));
+    }
+
+    pub fn set_row_templates(self, row_templates: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setRowTemplates:\0")), row_templates);
+    }
+}

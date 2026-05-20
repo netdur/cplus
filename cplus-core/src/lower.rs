@@ -34,7 +34,11 @@ use std::path::PathBuf;
 /// `StmtKind::IfLet` / `StmtKind::GuardLet` nodes are replaced with
 /// equivalent match-using forms.
 pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
-    let mut cx = Lower { file: file.clone(), src: src.to_string(), diags: vec![] };
+    let mut cx = Lower {
+        file: file.clone(),
+        src: src.to_string(),
+        diags: vec![],
+    };
     for it in &mut prog.items {
         cx.lower_item(it);
     }
@@ -71,7 +75,10 @@ impl Lower {
             }
             // Slice 7GEN.3: interface declarations have no bodies to
             // lower (method signatures only); pass through unchanged.
-            ItemKind::Struct(_) | ItemKind::Enum(_) | ItemKind::Interface(_) | ItemKind::TypeAlias(_) => {}
+            ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::Interface(_)
+            | ItemKind::TypeAlias(_) => {}
         }
     }
 
@@ -91,35 +98,61 @@ impl Lower {
         // it with its match-using equivalent.
         match &mut s.kind {
             StmtKind::Let { init, .. } => {
-                if let Some(e) = init { self.lower_expr(e); }
+                if let Some(e) = init {
+                    self.lower_expr(e);
+                }
             }
             StmtKind::Return(opt) => {
-                if let Some(e) = opt { self.lower_expr(e); }
+                if let Some(e) = opt {
+                    self.lower_expr(e);
+                }
             }
             StmtKind::While { cond, body } => {
                 self.lower_expr(cond);
                 self.lower_block(body);
             }
             StmtKind::For(fl) => match fl {
-                ForLoop::CStyle { init, cond, update, body } => {
-                    if let Some(init) = init { self.lower_stmt(init); }
-                    if let Some(c) = cond { self.lower_expr(c); }
-                    for u in update { self.lower_expr(u); }
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    if let Some(init) = init {
+                        self.lower_stmt(init);
+                    }
+                    if let Some(c) = cond {
+                        self.lower_expr(c);
+                    }
+                    for u in update {
+                        self.lower_expr(u);
+                    }
                     self.lower_block(body);
                 }
                 ForLoop::Range { iter, body, .. } => {
                     self.lower_expr(iter);
                     self.lower_block(body);
                 }
-            }
+            },
             StmtKind::Expr(e) => self.lower_expr(e),
             StmtKind::Defer(e) => self.lower_expr(e),
-            StmtKind::IfLet { body, else_body, scrutinee, .. } => {
+            StmtKind::IfLet {
+                body,
+                else_body,
+                scrutinee,
+                ..
+            } => {
                 self.lower_expr(scrutinee);
                 self.lower_block(body);
-                if let Some(eb) = else_body { self.lower_block(eb); }
+                if let Some(eb) = else_body {
+                    self.lower_block(eb);
+                }
             }
-            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            StmtKind::GuardLet {
+                scrutinee,
+                else_body,
+                ..
+            } => {
                 self.lower_expr(scrutinee);
                 self.lower_block(else_body);
             }
@@ -130,7 +163,9 @@ impl Lower {
             StmtKind::Loop(body) => {
                 self.lower_block(body);
             }
-            StmtKind::WhileLet { scrutinee, body, .. } => {
+            StmtKind::WhileLet {
+                scrutinee, body, ..
+            } => {
                 self.lower_expr(scrutinee);
                 self.lower_block(body);
             }
@@ -138,16 +173,33 @@ impl Lower {
         // Now rewrite the outer node, if it's an if-let / guard-let.
         let stolen = std::mem::replace(
             &mut s.kind,
-            StmtKind::Expr(Expr { kind: ExprKind::BoolLit(false), span: s.span }),
+            StmtKind::Expr(Expr {
+                kind: ExprKind::BoolLit(false),
+                span: s.span,
+            }),
         );
         match stolen {
-            StmtKind::IfLet { pattern, scrutinee, body, else_body } => {
+            StmtKind::IfLet {
+                pattern,
+                scrutinee,
+                body,
+                else_body,
+            } => {
                 s.kind = self.lower_if_let(pattern, scrutinee, body, else_body, s.span);
             }
-            StmtKind::GuardLet { pattern, scrutinee, complement, else_body } => {
+            StmtKind::GuardLet {
+                pattern,
+                scrutinee,
+                complement,
+                else_body,
+            } => {
                 s.kind = self.lower_guard_let(pattern, scrutinee, complement, else_body, s.span);
             }
-            StmtKind::WhileLet { pattern, scrutinee, body } => {
+            StmtKind::WhileLet {
+                pattern,
+                scrutinee,
+                body,
+            } => {
                 s.kind = self.lower_while_let(pattern, scrutinee, body, s.span);
             }
             other => {
@@ -158,8 +210,11 @@ impl Lower {
 
     fn lower_expr(&mut self, e: &mut Expr) {
         match &mut e.kind {
-            ExprKind::IntLit(..) | ExprKind::FloatLit(..) | ExprKind::BoolLit(_)
+            ExprKind::IntLit(..)
+            | ExprKind::FloatLit(..)
+            | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
+            | ExprKind::IncludeBytes { .. }
             | ExprKind::Ident(_) => {}
             ExprKind::InterpStr { parts } => {
                 for p in parts {
@@ -172,20 +227,35 @@ impl Lower {
             ExprKind::Unsafe(b) => self.lower_block(b),
             ExprKind::Await(inner) => self.lower_expr(inner),
             ExprKind::Yield(inner) => self.lower_expr(inner),
-            ExprKind::If { cond, then, else_branch } => {
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
                 self.lower_expr(cond);
                 self.lower_block(then);
-                if let Some(eb) = else_branch { self.lower_expr(eb); }
+                if let Some(eb) = else_branch {
+                    self.lower_expr(eb);
+                }
             }
             ExprKind::Call { callee, args, .. } => {
                 self.lower_expr(callee);
-                for a in args { self.lower_expr(a); }
+                for a in args {
+                    self.lower_expr(a);
+                }
             }
-            ExprKind::Binary { lhs, rhs, .. } => { self.lower_expr(lhs); self.lower_expr(rhs); }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.lower_expr(lhs);
+                self.lower_expr(rhs);
+            }
             ExprKind::Unary { operand, .. } => self.lower_expr(operand),
             ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { self.lower_expr(s); }
-                if let Some(en) = end { self.lower_expr(en); }
+                if let Some(s) = start {
+                    self.lower_expr(s);
+                }
+                if let Some(en) = end {
+                    self.lower_expr(en);
+                }
             }
             ExprKind::Assign { target, value, .. } => {
                 self.lower_expr(target);
@@ -194,11 +264,17 @@ impl Lower {
             ExprKind::Cast { expr, .. } => self.lower_expr(expr),
             ExprKind::Path { .. } => {}
             ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
-                for f in fields { self.lower_expr(&mut f.value); }
+                for f in fields {
+                    self.lower_expr(&mut f.value);
+                }
             }
             ExprKind::Field { receiver, .. } => self.lower_expr(receiver),
-            ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } | ExprKind::TupleLit { elements } => {
-                for el in elements { self.lower_expr(el); }
+            ExprKind::ArrayLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. }
+            | ExprKind::TupleLit { elements } => {
+                for el in elements {
+                    self.lower_expr(el);
+                }
             }
             ExprKind::Index { receiver, index } => {
                 self.lower_expr(receiver);
@@ -206,7 +282,9 @@ impl Lower {
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.lower_expr(scrutinee);
-                for a in arms { self.lower_expr(&mut a.body); }
+                for a in arms {
+                    self.lower_expr(&mut a.body);
+                }
             }
         }
     }
@@ -238,17 +316,30 @@ impl Lower {
         body = into_unit_block(body);
         let else_blk = match else_body {
             Some(b) => into_unit_block(b),
-            None => Block { stmts: vec![], tail: None, span: stmt_span },
+            None => Block {
+                stmts: vec![],
+                tail: None,
+                span: stmt_span,
+            },
         };
         let success_arm = MatchArm {
             pattern,
-            body: Expr { kind: ExprKind::Block(body.clone()), span: body.span },
+            body: Expr {
+                kind: ExprKind::Block(body.clone()),
+                span: body.span,
+            },
             span: body.span,
         };
         let else_arm_span = else_blk.span;
         let fallthrough_arm = MatchArm {
-            pattern: Pattern { kind: PatternKind::Wildcard, span: else_arm_span },
-            body: Expr { kind: ExprKind::Block(else_blk.clone()), span: else_arm_span },
+            pattern: Pattern {
+                kind: PatternKind::Wildcard,
+                span: else_arm_span,
+            },
+            body: Expr {
+                kind: ExprKind::Block(else_blk.clone()),
+                span: else_arm_span,
+            },
             span: else_arm_span,
         };
         let match_expr = Expr {
@@ -316,7 +407,10 @@ impl Lower {
                 (cp, sp)
             }
             None => (
-                Pattern { kind: PatternKind::Wildcard, span: else_body.span },
+                Pattern {
+                    kind: PatternKind::Wildcard,
+                    span: else_body.span,
+                },
                 else_body.span,
             ),
         };
@@ -372,7 +466,8 @@ impl Lower {
         if !is_refutable(&pattern) {
             self.err(
                 "E0347",
-                "`while let` pattern is irrefutable; use `loop` (or rewrite without `let`) instead".to_string(),
+                "`while let` pattern is irrefutable; use `loop` (or rewrite without `let`) instead"
+                    .to_string(),
                 pattern.span,
             );
         }
@@ -384,19 +479,31 @@ impl Lower {
         // Success arm: run body.
         let success_arm = MatchArm {
             pattern,
-            body: Expr { kind: ExprKind::Block(body_block.clone()), span: body_span },
+            body: Expr {
+                kind: ExprKind::Block(body_block.clone()),
+                span: body_span,
+            },
             span: body_span,
         };
 
         // Fallback arm: `_ => break,` — a single break stmt inside a unit block.
         let fallback_block = Block {
-            stmts: vec![Stmt { kind: StmtKind::Break, span: stmt_span }],
+            stmts: vec![Stmt {
+                kind: StmtKind::Break,
+                span: stmt_span,
+            }],
             tail: None,
             span: stmt_span,
         };
         let fallback_arm = MatchArm {
-            pattern: Pattern { kind: PatternKind::Wildcard, span: stmt_span },
-            body: Expr { kind: ExprKind::Block(fallback_block), span: stmt_span },
+            pattern: Pattern {
+                kind: PatternKind::Wildcard,
+                span: stmt_span,
+            },
+            body: Expr {
+                kind: ExprKind::Block(fallback_block),
+                span: stmt_span,
+            },
             span: stmt_span,
         };
 
@@ -408,7 +515,10 @@ impl Lower {
             span: stmt_span,
         };
         let loop_body = Block {
-            stmts: vec![Stmt { kind: StmtKind::Expr(match_expr), span: stmt_span }],
+            stmts: vec![Stmt {
+                kind: StmtKind::Expr(match_expr),
+                span: stmt_span,
+            }],
             tail: None,
             span: stmt_span,
         };
@@ -425,9 +535,19 @@ impl Lower {
         }
         // Otherwise: both patterns must be Variant. Reject overlap if they
         // reference the same enum + same variant.
-        let (PatternKind::Variant { enum_name: s_enum, variant_name: s_var, .. },
-             PatternKind::Variant { enum_name: c_enum, variant_name: c_var, .. })
-            = (&success.kind, &complement.kind) else {
+        let (
+            PatternKind::Variant {
+                enum_name: s_enum,
+                variant_name: s_var,
+                ..
+            },
+            PatternKind::Variant {
+                enum_name: c_enum,
+                variant_name: c_var,
+                ..
+            },
+        ) = (&success.kind, &complement.kind)
+        else {
             // Success is wildcard/binding and complement is a Variant — the
             // success pattern is irrefutable (E0347 already fired) and the
             // complement is unreachable. No further check needed.
@@ -456,7 +576,10 @@ impl Lower {
 fn placeholder_stmt(span: Span) -> StmtKind {
     // Returned in error paths so downstream sema doesn't trip on a fully
     // malformed AST. The placeholder is a no-op expression statement.
-    StmtKind::Expr(Expr { kind: ExprKind::BoolLit(false), span })
+    StmtKind::Expr(Expr {
+        kind: ExprKind::BoolLit(false),
+        span,
+    })
 }
 
 fn is_refutable(p: &Pattern) -> bool {
@@ -472,7 +595,9 @@ fn collect_pattern_bindings(p: &Pattern) -> Vec<Ident> {
             PatternKind::Wildcard => {}
             PatternKind::Binding(i) => out.push(i.clone()),
             PatternKind::Variant { payload, .. } => {
-                for sub in payload { walk(sub, out); }
+                for sub in payload {
+                    walk(sub, out);
+                }
             }
         }
     }
@@ -484,13 +609,24 @@ fn collect_pattern_bindings(p: &Pattern) -> Vec<Ident> {
 fn into_unit_block(b: Block) -> Block {
     // Discard any tail expression so the block has type unit. Pushing the
     // tail as a `Stmt::Expr` keeps its side effects.
-    let Block { mut stmts, tail, span } = b;
+    let Block {
+        mut stmts,
+        tail,
+        span,
+    } = b;
     if let Some(tail_box) = tail {
         let tail = *tail_box;
         let tspan = tail.span;
-        stmts.push(Stmt { kind: StmtKind::Expr(tail), span: tspan });
+        stmts.push(Stmt {
+            kind: StmtKind::Expr(tail),
+            span: tspan,
+        });
     }
-    Block { stmts, tail: None, span }
+    Block {
+        stmts,
+        tail: None,
+        span,
+    }
 }
 
 pub(crate) fn block_diverges(b: &Block) -> bool {
@@ -522,7 +658,9 @@ pub(crate) fn expr_diverges(e: &Expr) -> bool {
         ExprKind::Unsafe(b) => block_diverges(b),
         ExprKind::Await(inner) => expr_diverges(inner),
         ExprKind::Yield(inner) => expr_diverges(inner),
-        ExprKind::If { then, else_branch, .. } => {
+        ExprKind::If {
+            then, else_branch, ..
+        } => {
             let then_d = block_diverges(then);
             let else_d = match else_branch {
                 Some(eb) => expr_diverges(eb),
@@ -583,7 +721,11 @@ mod tests {
             }
         "#;
         let (_, diags) = run(src);
-        assert!(first_codes(&diags).contains(&"E0347"), "expected E0347, got {:?}", first_codes(&diags));
+        assert!(
+            first_codes(&diags).contains(&"E0347"),
+            "expected E0347, got {:?}",
+            first_codes(&diags)
+        );
     }
 
     #[test]
@@ -611,11 +753,23 @@ mod tests {
         let (prog, diags) = run(src);
         assert!(diags.is_empty(), "unexpected diags: {diags:?}");
         // After lowering the guard-let becomes `let v = match ...;`.
-        let main_body = match &prog.items.iter().find_map(|it| match &it.kind {
-            ItemKind::Function(f) if f.name.name == "main" => Some(f),
-            _ => None,
-        }).unwrap().body.stmts[1].kind {
-            StmtKind::Let { name, init: Some(_), .. } => name.name.clone(),
+        let main_body = match &prog
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "main" => Some(f),
+                _ => None,
+            })
+            .unwrap()
+            .body
+            .stmts[1]
+            .kind
+        {
+            StmtKind::Let {
+                name,
+                init: Some(_),
+                ..
+            } => name.name.clone(),
             other => panic!("expected let, got {other:?}"),
         };
         assert_eq!(main_body, "v");
@@ -704,7 +858,9 @@ mod tests {
                     return true;
                 }
                 if let StmtKind::While { body, .. } = &s.kind {
-                    if walk_block(body) { return true; }
+                    if walk_block(body) {
+                        return true;
+                    }
                 }
             }
             false

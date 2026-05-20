@@ -1,0 +1,84 @@
+import "./runtime" as rt;
+
+pub struct AutoreleasePool {
+    pub obj: *u8,
+}
+
+impl AutoreleasePool {
+    pub fn new() -> AutoreleasePool {
+        let pool_cls: *u8 = rt::get_class(str_ptr("NSAutoreleasePool\0"));
+        let pool_alloc: *u8 = rt::msg_id(pool_cls, rt::sel(str_ptr("alloc\0")));
+        let pool: *u8 = rt::msg_id(pool_alloc, rt::sel(str_ptr("init\0")));
+        return AutoreleasePool { obj: pool };
+    }
+
+    pub fn drain(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("drain\0")));
+    }
+}
+
+pub struct Application {
+    pub obj: *u8,
+}
+
+impl Application {
+    pub fn shared() -> Application {
+        let nsapp_cls: *u8 = rt::get_class(str_ptr("NSApplication\0"));
+        let app: *u8 = rt::msg_id(nsapp_cls, rt::sel(str_ptr("sharedApplication\0")));
+        return Application { obj: app };
+    }
+
+    pub fn set_activation_policy(self, policy: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setActivationPolicy:\0")), policy);
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn activate(self, ignoring_other_apps: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(str_ptr("activateIgnoringOtherApps:\0")), ignoring_other_apps);
+    }
+
+    pub fn run(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("run\0")));
+    }
+
+    pub fn stop(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("stop:\0")), sender);
+    }
+
+    pub fn terminate(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("terminate:\0")), sender);
+    }
+
+    pub fn hide(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("hide:\0")), sender);
+    }
+
+    pub fn unhide(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("unhide:\0")), sender);
+    }
+
+    pub fn set_main_menu(self, menu: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setMainMenu:\0")), menu);
+    }
+}
+
+pub fn create_app_delegate(should_terminate_imp: fn(*u8, *u8, *u8) -> i8) -> *u8 {
+    let nsobject_cls: *u8 = rt::get_class(str_ptr("NSObject\0"));
+    let existing: *u8 = rt::get_class(str_ptr("CAppDelegate\0"));
+    let mut delegate_cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        delegate_cls = rt::allocate_class_pair(nsobject_cls, str_ptr("CAppDelegate\0"), 0 as usize);
+        let should_terminate_sel: *u8 = rt::sel(str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0"));
+        let _added: i8 = rt::add_terminate_method(
+            delegate_cls,
+            should_terminate_sel,
+            should_terminate_imp,
+            str_ptr("c@:@\0"),
+        );
+        rt::register_class_pair(delegate_cls);
+    }
+    return rt::msg_id(delegate_cls, rt::sel(str_ptr("new\0")));
+}

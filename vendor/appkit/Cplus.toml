@@ -1,0 +1,8 @@
+[package]
+name    = "appkit"
+version = "0.0.0"
+edition = "2026"
+
+[link]
+frameworks = ["Cocoa"]
+libs       = ["objc"]

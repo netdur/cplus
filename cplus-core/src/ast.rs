@@ -335,7 +335,10 @@ pub enum TypeKind {
     Path(String),
     /// Fixed-size array type: `[T; N]`. Length stored as a u32 (Phase 2D
     /// requires an integer literal; const expressions come later).
-    Array { elem: Box<Type>, len: u32 },
+    Array {
+        elem: Box<Type>,
+        len: u32,
+    },
     /// Slice 6BC.5: region-annotated borrow type — `borrow REGION T`.
     /// The region is a region-name identifier local to the enclosing
     /// signature (or struct definition); the inner type is the
@@ -345,7 +348,10 @@ pub enum TypeKind {
     /// parameter markers: `xs: borrow A T` is a shared borrow,
     /// `mut xs: borrow A T` an exclusive borrow; `move x: borrow A T`
     /// is a parse error (ownership transfer doesn't borrow).
-    Borrowed { region: String, inner: Box<Type> },
+    Borrowed {
+        region: String,
+        inner: Box<Type>,
+    },
     /// Slice 7GEN.5c: generic type instantiation — `Pair[i32, bool]`.
     /// `name` is the generic type's declared name; `args` is the list
     /// of concrete type arguments. Sema's `resolve_type` synthesizes
@@ -353,7 +359,10 @@ pub enum TypeKind {
     /// matching `Ty::Struct(id)`. Monomorphize rewrites every
     /// `TypeKind::Generic` reference to `TypeKind::Path(mangled_name)`
     /// before codegen so codegen only sees concrete struct paths.
-    Generic { name: String, args: Vec<Type> },
+    Generic {
+        name: String,
+        args: Vec<Type>,
+    },
     /// Slice 10.FFI.1: raw pointer `*T`. Maps to LLVM `ptr` (opaque,
     /// 8 bytes on 64-bit). Copy semantics (it's just an address). No
     /// borrow checking — caller is responsible for lifetime and
@@ -369,7 +378,10 @@ pub enum TypeKind {
     /// from a named C+ fn to a fn-pointer value is type-directed —
     /// the bare identifier in an expected-FnPtr context resolves to
     /// the symbol's address. No closures, no environment capture.
-    FnPtr { params: Vec<Type>, return_type: Option<Box<Type>> },
+    FnPtr {
+        params: Vec<Type>,
+        return_type: Option<Box<Type>>,
+    },
     /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
     /// view `{ptr, len}` over a contiguous run of `T`. Copy semantics
     /// (a view, not an owner). Constructed via `slice_from_raw_parts`
@@ -655,6 +667,16 @@ pub enum ExprKind {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    /// v0.0.6 Slice 1A: `include_bytes!("relative/path")` compiler builtin.
+    /// `path` is the raw string-literal payload (lexer-decoded). Sema
+    /// resolves it relative to the containing source file, reads the bytes
+    /// at compile time, stashes them in `IncludeBytesTable`, and assigns
+    /// type `*const [u8; N]`. Codegen emits a private constant `[N x i8]`
+    /// global and returns its address. The `!` token after `include_bytes`
+    /// marks the form as a compiler builtin — no user-defined macros.
+    IncludeBytes {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -718,17 +740,34 @@ pub enum InterpStrPart {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Mod,
-    AddWrap, SubWrap, MulWrap,
-    Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or,
-    BitAnd, BitOr, BitXor,
-    Shl, Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    AddWrap,
+    SubWrap,
+    MulWrap,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
-    Neg, Not, BitNot,
+    Neg,
+    Not,
+    BitNot,
     Ref { mutable: bool },
     Deref,
 }
@@ -736,6 +775,14 @@ pub enum UnaryOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignOp {
     Assign,
-    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign,
-    BitAndAssign, BitOrAssign, BitXorAssign, ShlAssign, ShrAssign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
+    ShlAssign,
+    ShrAssign,
 }

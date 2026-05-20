@@ -1,0 +1,8 @@
+[package]
+name    = "simd_dot"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "simd_dot"
+path = "src/main.cplus"

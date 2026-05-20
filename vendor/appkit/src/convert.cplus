@@ -1,0 +1,223 @@
+// vendor/appkit Slice 2B — C+/ObjC data bridge.
+//
+// C+ primitives + raw pointers + `#[repr(C)]` value structs cross the
+// ObjC boundary verbatim (see runtime.cplus). The richer C+ types —
+// `string`, `str`, `Vec[T]` — do NOT have direct ObjC counterparts;
+// they need explicit conversions, which is what this module ships.
+//
+// Design call: the bridge lives in the binding package, not in cpc.
+// Auto-bridging at the `extern fn` boundary would couple the language
+// to Cocoa, hide allocations, and conflict with the stdlib-model bet
+// shared across v0.0.5 / v0.0.6.
+//
+// All bridge fns are `pub fn` over already-`unsafe` ObjC sends.
+// Callers use them from safe code; the `unsafe`-tagged variants are
+// the exception (only `nsstring_to_cplus_str_unsafe`, where the
+// returned `str` borrows the NSString's autoreleased UTF8 buffer).
+
+import "./runtime" as rt;
+import "stdlib/vec" as vec;
+
+// ===========================================================================
+// objc_msgSend shapes used only by this module. The runtime.cplus set
+// is intentionally biased toward the AppKit per-widget calls; bridge
+// conversions hit different selectors (UTF8String, length, intValue,
+// dataWithBytes:length:, ...).
+// ===========================================================================
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len(recv: *u8, sel: *u8, ptr: *u8, len: usize) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_enc(recv: *u8, sel: *u8, ptr: *u8, len: usize, enc: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_free(recv: *u8, sel: *u8, ptr: *u8, len: usize, free_when_done: i8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_u64(recv: *u8, sel: *u8, arg: u64) -> u64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64(recv: *u8, sel: *u8, idx: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i32(recv: *u8, sel: *u8) -> i32;
+
+// ===========================================================================
+// Encoding constants. NSUTF8StringEncoding = 4.
+// C+ has no top-level `const`; encode as a fn — LLVM folds it.
+// ===========================================================================
+
+fn ns_utf8() -> u64 { return 4 as u64; }
+
+// ===========================================================================
+// String bridges.
+//
+//   str    → NSString : `NSString.stringWithBytes:length:encoding:`,
+//                       which copies the buffer internally — caller's
+//                       `str` (a borrow) can drop freely after.
+//   string → NSString : same, via `s.as_str()`.
+//
+//   NSString → string : owned copy via `UTF8String` + length query,
+//                       safe to outlive the source NSString and its
+//                       autorelease pool.
+//   NSString → str    : unsafe borrow path; the resulting view is
+//                       only valid for the *autorelease pool*'s
+//                       lifetime, not the caller's. Use the owned
+//                       variant unless you can prove the pool stays.
+// ===========================================================================
+
+pub fn cplus_str_to_nsstring(s: str) -> *u8 {
+    let cls: *u8 = rt::get_class(str_ptr("NSString\0"));
+    let selector: *u8 = rt::sel(str_ptr("stringWithBytes:length:encoding:\0"));
+    return unsafe { objc_msg_id_ptr_len_enc(cls, selector, str_ptr(s), str_len(s), ns_utf8()) };
+}
+
+pub fn cplus_string_to_nsstring(s: string) -> *u8 {
+    return cplus_str_to_nsstring(s.as_str());
+}
+
+pub fn nsstring_to_cplus_string(ns: *u8) -> string {
+    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(str_ptr("UTF8String\0")));
+    let len_sel: *u8 = rt::sel(str_ptr("lengthOfBytesUsingEncoding:\0"));
+    let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
+    let view: str = unsafe { str_from_raw_parts(utf8_ptr, len as usize) };
+    return view.to_string();
+}
+
+// `str` view into the NSString's autoreleased UTF8 buffer. Unsafe —
+// the view's lifetime is the autorelease pool's, NOT the caller's
+// scope. Use the owned `nsstring_to_cplus_string` when in doubt.
+pub fn nsstring_to_cplus_str_unsafe(ns: *u8) -> str {
+    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(str_ptr("UTF8String\0")));
+    let len_sel: *u8 = rt::sel(str_ptr("lengthOfBytesUsingEncoding:\0"));
+    let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
+    return unsafe { str_from_raw_parts(utf8_ptr, len as usize) };
+}
+
+// ===========================================================================
+// NSArray helpers — primitive flavors. Generic `Vec[T]` bridging is
+// deferred until cpc grows a `ToCocoa`/`FromCocoa` interface bound
+// (Phase 3 territory). For now, ship the four primitive monomorphs.
+// ===========================================================================
+
+pub fn nsarray_count(arr: *u8) -> usize {
+    let n: u64 = unsafe { objc_msg_u64(arr, rt::sel(str_ptr("count\0"))) };
+    return n as usize;
+}
+
+pub fn nsarray_obj_at(arr: *u8, idx: usize) -> *u8 {
+    return unsafe {
+        objc_msg_id_u64(arr, rt::sel(str_ptr("objectAtIndex:\0")), idx as u64)
+    };
+}
+
+pub fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
+    let n: usize = nsarray_count(arr);
+    let mut out: vec::Vec[i32] = vec::Vec[i32]::with_capacity(n);
+    let mut i: usize = 0 as usize;
+    let int_sel: *u8 = rt::sel(str_ptr("intValue\0"));
+    while i < n {
+        let num: *u8 = nsarray_obj_at(arr, i);
+        let v: i32 = unsafe { objc_msg_i32(num, int_sel) };
+        out.push(v);
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+pub fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
+    let n: usize = nsarray_count(arr);
+    let mut out: vec::Vec[i64] = vec::Vec[i64]::with_capacity(n);
+    let mut i: usize = 0 as usize;
+    // NSInteger == long long on 64-bit Apple; `longLongValue` is the
+    // exact width. `integerValue` returns NSInteger which is also
+    // 8 bytes on 64-bit but its formal contract is "platform-sized".
+    let v_sel: *u8 = rt::sel(str_ptr("longLongValue\0"));
+    while i < n {
+        let num: *u8 = nsarray_obj_at(arr, i);
+        let v: i64 = unsafe { rt::msg_i64(num, v_sel) };
+        out.push(v);
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+pub fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
+    let n: usize = nsarray_count(arr);
+    let mut out: vec::Vec[f32] = vec::Vec[f32]::with_capacity(n);
+    let mut i: usize = 0 as usize;
+    let v_sel: *u8 = rt::sel(str_ptr("floatValue\0"));
+    while i < n {
+        let num: *u8 = nsarray_obj_at(arr, i);
+        // No msg_f32 in runtime.cplus today; the double round-trip is
+        // ABI-equivalent because objc_msgSend uses the FP register
+        // class either way and float→double is a lossless widening.
+        let d: f64 = unsafe { rt::msg_f64(num, v_sel) };
+        out.push(d as f32);
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
+    let n: usize = nsarray_count(arr);
+    let mut out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n);
+    let mut i: usize = 0 as usize;
+    let v_sel: *u8 = rt::sel(str_ptr("doubleValue\0"));
+    while i < n {
+        let num: *u8 = nsarray_obj_at(arr, i);
+        let v: f64 = unsafe { rt::msg_f64(num, v_sel) };
+        out.push(v);
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// ===========================================================================
+// NSData ↔ Vec[u8].
+//
+//   NSData → Vec[u8] : owned copy via `bytes` + `length` + `extend_from_raw`.
+//                      Safe to outlive the source NSData.
+//   Vec[u8] → NSData : uses `dataWithBytes:length:` which COPIES the
+//                      buffer internally, so the caller's Vec can drop
+//                      freely afterwards.
+//
+// For the zero-copy view shape (the metal_compute recipe's embedded
+// `.metallib` case), callers go straight to
+// `dataWithBytesNoCopy:length:freeWhenDone:NO` and own the lifetime
+// pairing themselves — that's the rare path and explicit is right.
+// ===========================================================================
+
+pub fn nsdata_to_vec_u8(d: *u8) -> vec::Vec[u8] {
+    let len: u64 = unsafe { objc_msg_u64(d, rt::sel(str_ptr("length\0"))) };
+    let ptr: *u8 = rt::msg_id(d, rt::sel(str_ptr("bytes\0")));
+    let mut out: vec::Vec[u8] = vec::Vec[u8]::with_capacity(len as usize);
+    unsafe { out.extend_from_raw(ptr, len as usize); }
+    return out;
+}
+
+pub fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
+    let cls: *u8 = rt::get_class(str_ptr("NSData\0"));
+    let selector: *u8 = rt::sel(str_ptr("dataWithBytes:length:\0"));
+    let slice: u8[] = v.as_slice();
+    let p: *u8 = unsafe { slice_ptr(slice) };
+    let n: usize = v.len();
+    return unsafe { objc_msg_id_ptr_len(cls, selector, p, n) };
+}
+
+// Zero-copy view variant: NSData borrows `v.as_slice()`'s buffer; the
+// returned NSData must NOT outlive the caller's `v` (`freeWhenDone:NO`).
+// Marked `unsafe`-shape via the `_view` suffix; sema can't yet express
+// the lifetime obligation as a typing constraint.
+pub fn vec_u8_to_nsdata_view(v: vec::Vec[u8]) -> *u8 {
+    let cls: *u8 = rt::get_class(str_ptr("NSData\0"));
+    let selector: *u8 = rt::sel(str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
+    let slice: u8[] = v.as_slice();
+    let p: *u8 = unsafe { slice_ptr(slice) };
+    let n: usize = v.len();
+    return unsafe { objc_msg_id_ptr_len_free(cls, selector, p, n, 0 as i8) };
+}

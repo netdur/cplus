@@ -1,0 +1,221 @@
+// metal_compute — GPU compute dispatch via ObjC interop.
+//
+// v0.0.6 stdlib-model GPU recipe. Validates the bet that cpc's compiler
+// surface (`include_bytes!` + raw-pointer FFI) is sufficient to drive
+// a real GPU runtime — no kernel-launch syntax, no `#[kernel]`, no
+// device-side codegen in cpc itself.
+//
+// Build via the shipped build.sh (compiles shaders/double.metal first,
+// writes shaders/shader_size.txt with the resulting .metallib byte
+// count, then links against -framework Metal / Foundation -lobjc).
+
+// Shader byte length — `__SHADER_LEN__` is a placeholder that
+// build.sh sed-substitutes with the actual `.metallib` size before
+// invoking cpc.
+//
+// `include_bytes!` returns a `*[u8; N]` where N is fixed at compile
+// time; the runtime FFI call (`NSData::dataWithBytesNoCopy:length:`)
+// needs the same N as a `usize`. cpc's `include_str!` companion is a
+// v0.0.7 candidate that would obviate this build-side patching —
+// see [plan.md] open questions.
+fn shader_len() -> usize { return __SHADER_LEN__ as usize; }
+
+// ===========================================================================
+// ObjC runtime — same shape as proves/03-hello-appkit.
+// ===========================================================================
+
+extern fn objc_getClass(name: *u8) -> *u8;
+extern fn sel_registerName(name: *u8) -> *u8;
+
+// `objc_msgSend` — one C symbol, many typed signatures.
+#[link_name = "objc_msgSend"]
+extern fn msg_id(recv: *u8, sel: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_ptr(recv: *u8, sel: *u8, arg: *u8, err_out: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void(recv: *u8, sel: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_ptr_len_opt(recv: *u8, sel: *u8, ptr: *u8, len: usize, opts: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_buf_idx(recv: *u8, sel: *u8, buf: *u8, offset: usize, idx: usize);
+
+#[link_name = "objc_msgSend"]
+extern fn msg_ptr(recv: *u8, sel: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_pipeline(recv: *u8, sel: *u8, fn_obj: *u8, err_out: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_pipeline(recv: *u8, sel: *u8, pipeline: *u8);
+
+// MTLSize is { width, height, depth } — three NSUInteger fields, 24
+// bytes on 64-bit. `dispatchThreadgroups:threadsPerThreadgroup:` takes
+// two of these by value.
+#[repr(C)]
+struct MTLSize {
+    width: usize,
+    height: usize,
+    depth: usize,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_dispatch(
+    recv: *u8,
+    sel: *u8,
+    groups: MTLSize,
+    per_group: MTLSize,
+);
+
+// `MTLCreateSystemDefaultDevice` — single-function entry; not a
+// class-method call.
+extern fn MTLCreateSystemDefaultDevice() -> *u8;
+
+// libc fallbacks used by the validator.
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn printf(fmt: *u8, ...) -> i32;
+
+// ===========================================================================
+// Helpers.
+// ===========================================================================
+
+fn sel(name: *u8) -> *u8 { return unsafe { sel_registerName(name) }; }
+fn cls(name: *u8) -> *u8 { return unsafe { objc_getClass(name) }; }
+
+// Wrap the embedded `.metallib` bytes as a no-copy NSData. The bytes
+// live in `.rodata` and outlive the dispatch — `freeWhenDone:NO`
+// (encoded as the trailing `0 as u64` arg).
+fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
+    return unsafe {
+        msg_id_ptr_len_opt(
+            cls(str_ptr("NSData\0")),
+            sel(str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0")),
+            ptr, len, 0 as u64,
+        )
+    };
+}
+
+// ===========================================================================
+// main — dispatch the `double_each` kernel over a [f32; N] buffer.
+// ===========================================================================
+
+pub fn main() -> i32 {
+    let n: usize = 64 as usize;
+    let bytes: usize = n *% (4 as usize);   // f32 = 4 bytes
+
+    // ---- Host-side input + output buffers ----
+    let host_in: *u8 = unsafe { malloc(bytes) };
+    let host_out: *u8 = unsafe { malloc(bytes) };
+    let fp: *f32 = unsafe { host_in as *f32 };
+    let mut i: usize = 0 as usize;
+    while i < n {
+        unsafe { fp[i] = (i as f32); }
+        i = i +% (1 as usize);
+    }
+
+    // ---- Device + queue ----
+    let device: *u8 = unsafe { MTLCreateSystemDefaultDevice() };
+    if device == unsafe { 0 as *u8 } {
+        unsafe { printf(str_ptr("no Metal device available\n\0")); }
+        return 1;
+    }
+    let queue: *u8 = unsafe { msg_id(device, sel(str_ptr("newCommandQueue\0"))) };
+
+    // ---- Embed the compiled .metallib + load it as an MTLLibrary ----
+    let shader_bytes = include_bytes!("../shaders/double.metallib");
+    let shader_ptr: *u8 = unsafe { shader_bytes as *u8 };
+    let shader_data: *u8 = ns_data_view(shader_ptr, shader_len());
+
+    let err_slot: *u8 = unsafe { malloc(8 as usize) };
+    let library: *u8 = unsafe {
+        msg_id_id_ptr(device, sel(str_ptr("newLibraryWithData:error:\0")), shader_data, err_slot)
+    };
+    if library == unsafe { 0 as *u8 } {
+        unsafe { printf(str_ptr("newLibraryWithData:error: returned nil\n\0")); }
+        return 2;
+    }
+
+    // ---- Resolve the kernel function + compute pipeline ----
+    let fn_name: *u8 = unsafe {
+        msg_id_id(
+            cls(str_ptr("NSString\0")),
+            sel(str_ptr("stringWithUTF8String:\0")),
+            str_ptr("double_each\0"),
+        )
+    };
+    let kernel_fn: *u8 = unsafe {
+        msg_id_id(library, sel(str_ptr("newFunctionWithName:\0")), fn_name)
+    };
+    let pipeline: *u8 = unsafe {
+        msg_id_pipeline(
+            device,
+            sel(str_ptr("newComputePipelineStateWithFunction:error:\0")),
+            kernel_fn, err_slot,
+        )
+    };
+
+    // ---- Device-side buffers ----
+    let mtl_in: *u8 = unsafe {
+        msg_id_ptr_len_opt(
+            device,
+            sel(str_ptr("newBufferWithBytes:length:options:\0")),
+            host_in, bytes, 0 as u64,
+        )
+    };
+    let mtl_out: *u8 = unsafe {
+        msg_id_ptr_len_opt(
+            device,
+            sel(str_ptr("newBufferWithLength:options:\0")),
+            0 as *u8, bytes, 0 as u64,
+        )
+    };
+
+    // ---- Command buffer + compute encoder ----
+    let cmd_buf: *u8 = unsafe { msg_id(queue, sel(str_ptr("commandBuffer\0"))) };
+    let encoder: *u8 = unsafe { msg_id(cmd_buf, sel(str_ptr("computeCommandEncoder\0"))) };
+    unsafe {
+        msg_void_pipeline(encoder, sel(str_ptr("setComputePipelineState:\0")), pipeline);
+        msg_void_buf_idx(encoder, sel(str_ptr("setBuffer:offset:atIndex:\0")), mtl_in, 0 as usize, 0 as usize);
+        msg_void_buf_idx(encoder, sel(str_ptr("setBuffer:offset:atIndex:\0")), mtl_out, 0 as usize, 1 as usize);
+    }
+
+    // ---- Dispatch: 64 threads in one threadgroup ----
+    let groups: MTLSize = MTLSize { width: 1 as usize, height: 1 as usize, depth: 1 as usize };
+    let per_group: MTLSize = MTLSize { width: n, height: 1 as usize, depth: 1 as usize };
+    unsafe {
+        msg_dispatch(encoder, sel(str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), groups, per_group);
+        msg_void(encoder, sel(str_ptr("endEncoding\0")));
+        msg_void(cmd_buf, sel(str_ptr("commit\0")));
+        msg_void(cmd_buf, sel(str_ptr("waitUntilCompleted\0")));
+    }
+
+    // ---- Read back + validate ----
+    let mtl_contents: *u8 = unsafe { msg_ptr(mtl_out, sel(str_ptr("contents\0"))) };
+    unsafe { memcpy(host_out, mtl_contents, bytes); }
+    let outp: *f32 = unsafe { host_out as *f32 };
+
+    let mut bad: i32 = 0;
+    let mut j: usize = 0 as usize;
+    while j < n {
+        let expected: f32 = (j as f32) * 2.0f32;
+        let got: f32 = unsafe { outp[j] };
+        if got != expected { bad = bad +% 1; }
+        j = j +% (1 as usize);
+    }
+
+    unsafe {
+        free(host_in);
+        free(host_out);
+        free(err_slot);
+    }
+    if bad != 0 { return 3; }
+    return 0;
+}

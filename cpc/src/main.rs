@@ -1,6 +1,9 @@
 use cplus_core::codegen::BuildMode;
 use cplus_core::diagnostics::{self as diag, Diagnostic, LineMap, Severity};
-use cplus_core::{attrs, borrowck, codegen, doctest, fmt as cpfmt, lexer, lower, manifest, monomorphize, parser, resolver, sema};
+use cplus_core::{
+    attrs, borrowck, codegen, doctest, fmt as cpfmt, lexer, lower, manifest, monomorphize, parser,
+    resolver, sema,
+};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -86,7 +89,8 @@ other:
 fn subcommand_help(sub: Option<Subcommand>) -> &'static str {
     match sub {
         None => USAGE,
-        Some(Subcommand::Build) => "\
+        Some(Subcommand::Build) => {
+            "\
 cpc build [-o OUT] [--release] [-g] [--asan|--ubsan|--tsan|--msan]
 
 Multi-file build. Reads ./Cplus.toml at the current directory, walks the
@@ -94,15 +98,19 @@ declared imports, lowers + sema + borrowck + codegen the whole project,
 and writes the linked binary to `target/{debug,release}/<name>` (or to
 OUT if `-o` is given). The manifest names the project; the entry file
 must define `fn main() -> i32`.
-",
-        Some(Subcommand::Check) => "\
+"
+        }
+        Some(Subcommand::Check) => {
+            "\
 cpc check FILE
 
 Parse + sema + borrowck FILE. No codegen, no clang, no binary. Same
 diagnostics you'd get from `cpc FILE -o BIN`, but faster — the editor /
 LSP / pre-commit-hook use case. Exits 0 if clean, 1 on any error.
-",
-        Some(Subcommand::Doc) => "\
+"
+        }
+        Some(Subcommand::Doc) => {
+            "\
 cpc doc FILE
 
 Extract every `pub` item with a preceding `///` doc block from FILE
@@ -113,8 +121,10 @@ blocks — the same blocks `cpc test` runs as doctests.
 
 Private items (and `pub` items without docs) are skipped to keep the
 reference focused on the project's stable surface.
-",
-        Some(Subcommand::Test) => "\
+"
+        }
+        Some(Subcommand::Test) => {
+            "\
 cpc test [FILE] [--json]
 
 Discover and run every `#[test]` function in the project (or in FILE if
@@ -122,8 +132,10 @@ given). Each test compiles into the test driver and runs sequentially.
 Doctests embedded in `///` comments are extracted into synthesized
 `#[test]` functions before running. With `--json`, emits one JSON object
 per test plus a final summary line — for tool consumption.
-",
-        Some(Subcommand::Fmt) => "\
+"
+        }
+        Some(Subcommand::Fmt) => {
+            "\
 cpc fmt FILE|DIR [...]
 
 Format C+ source. By default rewrites each file in place. Flags:
@@ -133,25 +145,34 @@ Format C+ source. By default rewrites each file in place. Flags:
 
 Multiple paths accepted; directories are walked recursively for
 `.cplus` files.
-",
-        Some(Subcommand::Lsp) => "\
+"
+        }
+        Some(Subcommand::Lsp) => {
+            "\
 cpc lsp [--log PATH]
 
 Start the C+ language server on stdin/stdout (delegates to the
 `cpc-lsp` binary on PATH or next to this binary). All args after `lsp`
 are forwarded.
-",
-        Some(Subcommand::EmitLlProject) => "\
+"
+        }
+        Some(Subcommand::EmitLlProject) => {
+            "\
 cpc --emit-ll-project
 
 Multi-file: run the build pipeline as `cpc build` would, but print the
 merged LLVM IR to stdout instead of invoking clang. Uses ./Cplus.toml.
-",
+"
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-enum DiagMode { Human, Short, Json }
+enum DiagMode {
+    Human,
+    Short,
+    Json,
+}
 
 fn emit_diag(d: &Diagnostic, mode: DiagMode, src: &str) {
     let line = match mode {
@@ -193,7 +214,7 @@ fn main() -> ExitCode {
                 diag_mode = match rest {
                     "human" => DiagMode::Human,
                     "short" => DiagMode::Short,
-                    "json"  => DiagMode::Json,
+                    "json" => DiagMode::Json,
                     other => {
                         eprintln!("cpc: unknown --diagnostics value: {other:?} (expected human|short|json)");
                         return ExitCode::FAILURE;
@@ -235,7 +256,13 @@ fn main() -> ExitCode {
                     eprintln!("cpc: --emit-ll requires a FILE argument");
                     return ExitCode::FAILURE;
                 };
-                return dump_ll(PathBuf::from(v), diag_mode, build_mode, emit_debug_info, &sanitizers);
+                return dump_ll(
+                    PathBuf::from(v),
+                    diag_mode,
+                    build_mode,
+                    emit_debug_info,
+                    &sanitizers,
+                );
             }
             Some("--emit-ll-opt") => {
                 // Slice 1G: post-pass LLVM IR. Runs clang with
@@ -247,7 +274,10 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 };
                 return dump_ll_or_asm(
-                    PathBuf::from(v), diag_mode, build_mode, ClangOutputKind::LlvmIr,
+                    PathBuf::from(v),
+                    diag_mode,
+                    build_mode,
+                    ClangOutputKind::LlvmIr,
                 );
             }
             Some("--emit-asm") => {
@@ -259,7 +289,10 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 };
                 return dump_ll_or_asm(
-                    PathBuf::from(v), diag_mode, build_mode, ClangOutputKind::Assembly,
+                    PathBuf::from(v),
+                    diag_mode,
+                    build_mode,
+                    ClangOutputKind::Assembly,
                 );
             }
             Some("--emit-header") => {
@@ -410,7 +443,8 @@ fn main() -> ExitCode {
     // are mutually exclusive (they own the shadow memory or interpose
     // on the same syscalls); UBSan composes with any of them.
     {
-        let exclusive: Vec<&'static str> = sanitizers.iter()
+        let exclusive: Vec<&'static str> = sanitizers
+            .iter()
             .copied()
             .filter(|s| matches!(*s, "address" | "thread" | "memory"))
             .collect();
@@ -427,7 +461,11 @@ fn main() -> ExitCode {
     // (`--log PATH` is the only one cpc-lsp accepts in slice 4E.1, but
     // we don't reach into here — just pass everything past `lsp`.)
     let lsp_args: Vec<OsString> = match subcommand {
-        Some(Subcommand::Lsp) => args.into_iter().skip_while(|a| a != "lsp").skip(1).collect(),
+        Some(Subcommand::Lsp) => args
+            .into_iter()
+            .skip_while(|a| a != "lsp")
+            .skip(1)
+            .collect(),
         _ => Vec::new(),
     };
 
@@ -511,7 +549,10 @@ fn detect_host_triple() -> Result<String, ExitCode> {
         }
     };
     if !output.status.success() {
-        eprintln!("cpc: `clang -print-target-triple` exited with {:?}", output.status.code());
+        eprintln!(
+            "cpc: `clang -print-target-triple` exited with {:?}",
+            output.status.code()
+        );
         return Err(ExitCode::FAILURE);
     }
     let triple = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -538,8 +579,16 @@ fn manifest_diag(
         message,
         primary: diag::SourceSpan {
             file: path.to_path_buf(),
-            start: diag::Position { line: 1, col: 1, byte: 0 },
-            end: diag::Position { line: 1, col: 1, byte: 0 },
+            start: diag::Position {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
+            end: diag::Position {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
         },
         labels: Vec::new(),
         notes,
@@ -585,7 +634,8 @@ fn collect_dep_link_args(
                 &vendor_manifest,
                 format!(
                     "vendor package `{}` is missing `Cplus.toml` (expected at `{}`)",
-                    dep.name, vendor_manifest.display()
+                    dep.name,
+                    vendor_manifest.display()
                 ),
                 vec![format!(
                     "declared in `[dependencies]` of {}",
@@ -618,14 +668,26 @@ fn collect_dep_link_args(
             return Err(ExitCode::FAILURE);
         }
         let lib_root = vendor_dir.join("src").join("lib");
-        let bundled: &[String] = vm.link.as_ref().map(|l| l.bundled.as_slice()).unwrap_or(&[]);
-        let triples: &[String] = vm.link.as_ref().map(|l| l.triples.as_slice()).unwrap_or(&[]);
+        let bundled: &[String] = vm
+            .link
+            .as_ref()
+            .map(|l| l.bundled.as_slice())
+            .unwrap_or(&[]);
+        let triples: &[String] = vm
+            .link
+            .as_ref()
+            .map(|l| l.triples.as_slice())
+            .unwrap_or(&[]);
         if !bundled.is_empty() {
             if !triples.iter().any(|t| t == &host_triple) {
                 let supported = if triples.is_empty() {
                     "<none>".to_string()
                 } else {
-                    triples.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")
+                    triples
+                        .iter()
+                        .map(|s| format!("`{s}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 };
                 let d = manifest_diag(
                     "E0862",
@@ -670,8 +732,12 @@ fn collect_dep_link_args(
             if let Ok(triple_iter) = fs::read_dir(&lib_root) {
                 for triple_entry in triple_iter.flatten() {
                     let triple_dir = triple_entry.path();
-                    if !triple_dir.is_dir() { continue; }
-                    let Ok(file_iter) = fs::read_dir(&triple_dir) else { continue };
+                    if !triple_dir.is_dir() {
+                        continue;
+                    }
+                    let Ok(file_iter) = fs::read_dir(&triple_dir) else {
+                        continue;
+                    };
                     for entry in file_iter.flatten() {
                         let fname_os = entry.file_name();
                         let fname = fname_os.to_string_lossy().to_string();
@@ -679,7 +745,9 @@ fn collect_dep_link_args(
                             || fname.ends_with(".dylib")
                             || fname.ends_with(".so")
                             || fname.ends_with(".lib");
-                        if !is_binary { continue; }
+                        if !is_binary {
+                            continue;
+                        }
                         if !bundled.iter().any(|b| b == &fname) {
                             let triple_name = triple_dir
                                 .file_name()
@@ -727,7 +795,12 @@ fn collect_dep_link_args(
 /// in the current working directory, walks the import graph from the
 /// declared binary entry, and produces a single linked binary at
 /// `target/{debug,release}/<bin-name>` (or `-o OUT` if provided).
-fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMode, sanitizers: &[&str]) -> ExitCode {
+fn build_project(
+    out: Option<PathBuf>,
+    diag_mode: DiagMode,
+    build_mode: BuildMode,
+    sanitizers: &[&str],
+) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
         Ok(m) => m,
@@ -745,7 +818,10 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
         return build_lib_project(&m, &lib, out, diag_mode, build_mode);
     }
     if m.bins.len() != 1 {
-        eprintln!("cpc: Phase 4 slice 4A supports exactly one [[bin]]; found {}", m.bins.len());
+        eprintln!(
+            "cpc: Phase 4 slice 4A supports exactly one [[bin]]; found {}",
+            m.bins.len()
+        );
         return ExitCode::FAILURE;
     }
     let bin = &m.bins[0];
@@ -758,8 +834,16 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
             message: format!("binary entry `{}` does not exist", bin.path.display()),
             primary: diag::SourceSpan {
                 file: bin.path.clone(),
-                start: diag::Position { line: 1, col: 1, byte: 0 },
-                end: diag::Position { line: 1, col: 1, byte: 0 },
+                start: diag::Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
+                end: diag::Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
             },
             labels: Vec::new(),
             notes: vec![format!("declared in {}", manifest_path.display())],
@@ -773,24 +857,24 @@ fn build_project(out: Option<PathBuf>, diag_mode: DiagMode, build_mode: BuildMod
     // the resolver so vendor imports (`utils/math`) resolve under
     // vendor/<dep>/src/. The consumer's bin path is the entry.
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let (program, _entry_file_id) = match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
-        Ok(p) => p,
-        Err(code) => return code,
-    };
+    let (program, _entry_file_id, mono) =
+        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
     // v0.0.3 Phase 5 Slice 5D follow-up: forward --asan/--tsan/--ubsan/
     // --msan through codegen options + clang. Previously `cpc build`
     // silently dropped these flags (always emitted unsanitised IR and
     // linked without `-fsanitize=...`), which meant every e2e ASan
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
-    let ir = if sanitizers.is_empty() {
-        codegen::generate(&program, build_mode)
-    } else {
-        codegen::generate_with_options(&program, build_mode, None, sanitizers)
-    };
+    let ir = codegen::generate_with_mono(&program, build_mode, None, sanitizers, false, &mono);
 
     let out_path = out.unwrap_or_else(|| {
-        let sub = match build_mode { BuildMode::Debug => "debug", BuildMode::Release => "release" };
+        let sub = match build_mode {
+            BuildMode::Debug => "debug",
+            BuildMode::Release => "release",
+        };
         m.root.join("target").join(sub).join(&bin.name)
     });
     if let Some(parent) = out_path.parent() {
@@ -857,8 +941,16 @@ fn build_lib_project(
             message: format!("library entry `{}` does not exist", lib.path.display()),
             primary: diag::SourceSpan {
                 file: lib.path.clone(),
-                start: diag::Position { line: 1, col: 1, byte: 0 },
-                end: diag::Position { line: 1, col: 1, byte: 0 },
+                start: diag::Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
+                end: diag::Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
             },
             labels: Vec::new(),
             notes: vec!["declared in Cplus.toml".to_string()],
@@ -868,10 +960,11 @@ fn build_lib_project(
         return ExitCode::FAILURE;
     }
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let (program, _entry_file_id) = match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names)) {
-        Ok(p) => p,
-        Err(code) => return code,
-    };
+    let (program, _entry_file_id, mono) =
+        match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names)) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
 
     // Phase 2 Slice 2C: dep walk runs even for library targets — a `.dylib`
     // baked from a package that itself depends on something must record
@@ -912,9 +1005,12 @@ fn build_lib_project(
         }
     }
 
-    let ir = codegen::generate_lib(&program, build_mode);
+    let ir = codegen::generate_with_mono(&program, build_mode, None, &[], true, &mono);
 
-    let mode_subdir = match build_mode { BuildMode::Debug => "debug", BuildMode::Release => "release" };
+    let mode_subdir = match build_mode {
+        BuildMode::Debug => "debug",
+        BuildMode::Release => "release",
+    };
     let target_dir = out_override
         .as_ref()
         .and_then(|p| p.parent().map(|x| x.to_path_buf()))
@@ -944,7 +1040,10 @@ fn build_lib_project(
     };
     let tmp_ll = tmp_ll_handle.path().to_path_buf();
     let obj_path = target_dir.join(format!("{}.o", lib.name));
-    let opt = match build_mode { BuildMode::Debug => "-O0", BuildMode::Release => "-O3" };
+    let opt = match build_mode {
+        BuildMode::Debug => "-O0",
+        BuildMode::Release => "-O3",
+    };
     let obj_status = Command::new("clang")
         .arg(opt)
         .arg("-Wno-override-module")
@@ -967,13 +1066,19 @@ fn build_lib_project(
     }
 
     // Step 4 (staticlib): ar rcs libNAME.a NAME.o.
-    let want_static = matches!(lib.crate_type, manifest::CrateType::Staticlib | manifest::CrateType::Both);
-    let want_shared = matches!(lib.crate_type, manifest::CrateType::Cdylib    | manifest::CrateType::Both);
+    let want_static = matches!(
+        lib.crate_type,
+        manifest::CrateType::Staticlib | manifest::CrateType::Both
+    );
+    let want_shared = matches!(
+        lib.crate_type,
+        manifest::CrateType::Cdylib | manifest::CrateType::Both
+    );
     if want_static {
         let a_path = target_dir.join(format!("lib{}.a", lib.name));
         // `r` replace + `c` create-if-missing + `s` index. ar quietly
         // overwrites a previous archive of the same name.
-        let _ = fs::remove_file(&a_path);  // ar refuses to add a duplicate entry across runs
+        let _ = fs::remove_file(&a_path); // ar refuses to add a duplicate entry across runs
         let ar_status = Command::new("ar")
             .arg("rcs")
             .arg(&a_path)
@@ -996,12 +1101,14 @@ fn build_lib_project(
     if want_shared {
         // Platform-correct extension: .dylib on macOS, .so on Linux/other.
         // (Cross-compilation is out of scope; we use host triple via cfg.)
-        let dylib_ext = if cfg!(target_os = "macos") { "dylib" } else { "so" };
+        let dylib_ext = if cfg!(target_os = "macos") {
+            "dylib"
+        } else {
+            "so"
+        };
         let dylib_path = target_dir.join(format!("lib{}.{}", lib.name, dylib_ext));
         let mut cmd = Command::new("clang");
-        cmd.arg("-shared")
-           .arg(opt)
-           .arg("-Wno-override-module");
+        cmd.arg("-shared").arg(opt).arg("-Wno-override-module");
         for fw in &lib.frameworks {
             cmd.arg("-framework").arg(fw);
         }
@@ -1052,13 +1159,16 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
     // E0854/E0855/E0860-E0862 checks fire on `--emit-ll-project`, even
     // though no link step runs here. Catches manifest-is-truth violations
     // in CI loops that exercise this flag.
-    if let Err(code) = collect_dep_link_args(&m, diag_mode) { return code; }
+    if let Err(code) = collect_dep_link_args(&m, diag_mode) {
+        return code;
+    }
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let (program, _) = match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
-        Ok(p) => p,
-        Err(code) => return code,
-    };
-    let ir = codegen::generate(&program, build_mode);
+    let (program, _, mono) =
+        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+    let ir = codegen::generate_with_mono(&program, build_mode, None, &[], false, &mono);
     print!("{ir}");
     ExitCode::SUCCESS
 }
@@ -1070,7 +1180,7 @@ fn load_and_check_project(
     entry: &Path,
     root: &Path,
     diag_mode: DiagMode,
-) -> Result<(cplus_core::ast::Program, String), ExitCode> {
+) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
     // Legacy single-file path: no manifest, no dep list. `None` keeps
     // pre-Slice-2B file-relative resolution semantics.
     load_and_check_project_full(entry, root, diag_mode, false, None)
@@ -1084,7 +1194,7 @@ fn load_and_check_project_with_mode(
     root: &Path,
     diag_mode: DiagMode,
     is_lib: bool,
-) -> Result<(cplus_core::ast::Program, String), ExitCode> {
+) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
     load_and_check_project_full(entry, root, diag_mode, is_lib, None)
 }
 
@@ -1098,7 +1208,7 @@ fn load_and_check_project_full(
     diag_mode: DiagMode,
     is_lib: bool,
     deps: Option<&[String]>,
-) -> Result<(cplus_core::ast::Program, String), ExitCode> {
+) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
     let mut loaded = match resolver::load_project_full(entry, root, is_lib, deps) {
         Ok(l) => l,
         Err(failure) => {
@@ -1132,7 +1242,9 @@ fn load_and_check_project_full(
         &entry_src,
         loaded.files.clone(),
     );
-    let attr_errors = attr_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let attr_errors = attr_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &attr_diags {
         emit_diag(d, diag_mode, &entry_src);
     }
@@ -1141,7 +1253,9 @@ fn load_and_check_project_full(
     }
     // Lower `if let` / `guard let` (slice 4A.5) before sema.
     let lower_diags = lower::lower(&mut loaded.program, &entry.to_path_buf(), &entry_src);
-    let lower_errors = lower_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let lower_errors = lower_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &lower_diags {
         emit_diag(d, diag_mode, &entry_src);
     }
@@ -1167,7 +1281,9 @@ fn load_and_check_project_full(
     // Phase 5 borrow checker (slice 5BC.2a — active diagnostics E0370).
     // Runs after sema so it inherits type-correctness assumptions.
     let bc_diags = borrowck::check(&loaded.program, &entry.to_path_buf(), &entry_src);
-    let bc_errors = bc_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let bc_errors = bc_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &bc_diags {
         emit_diag(d, diag_mode, &entry_src);
     }
@@ -1179,7 +1295,7 @@ fn load_and_check_project_full(
     // are rewritten to mangled names. The result is a Program with no
     // generic items — codegen can consume it directly.
     let post_mono = run_monomorphize(loaded.program, &mono, &loaded.files);
-    Ok((post_mono, loaded.entry_file_id))
+    Ok((post_mono, loaded.entry_file_id, mono))
 }
 
 /// Slice 7GEN.5a wrapper: builds the type-name lookup closure from
@@ -1203,8 +1319,12 @@ fn run_monomorphize(
     let mut enum_names: Vec<String> = Vec::new();
     for item in &program.items {
         match &item.kind {
-            ItemKind::Struct(s) if s.generic_params.is_empty() => struct_names.push(s.name.name.clone()),
-            ItemKind::Enum(e) if e.generic_params.is_empty() => enum_names.push(e.name.name.clone()),
+            ItemKind::Struct(s) if s.generic_params.is_empty() => {
+                struct_names.push(s.name.name.clone())
+            }
+            ItemKind::Enum(e) if e.generic_params.is_empty() => {
+                enum_names.push(e.name.name.clone())
+            }
             _ => {}
         }
     }
@@ -1215,18 +1335,28 @@ fn run_monomorphize(
     // monomorphize like `Pair[Box[T], i32]`).
     for info in mono.struct_instantiations.values() {
         let slot = info.id as usize;
-        if struct_names.len() <= slot { struct_names.resize(slot + 1, String::from("?")); }
+        if struct_names.len() <= slot {
+            struct_names.resize(slot + 1, String::from("?"));
+        }
         struct_names[slot] = info.mangled_name.clone();
     }
     for info in mono.enum_instantiations.values() {
         let slot = info.id as usize;
-        if enum_names.len() <= slot { enum_names.resize(slot + 1, String::from("?")); }
+        if enum_names.len() <= slot {
+            enum_names.resize(slot + 1, String::from("?"));
+        }
         enum_names[slot] = info.mangled_name.clone();
     }
     let name_of = move |ty: &sema::Ty| -> String {
         match ty {
-            sema::Ty::Struct(id) => struct_names.get(id.0 as usize).cloned().unwrap_or_else(|| "?".into()),
-            sema::Ty::Enum(id) => enum_names.get(id.0 as usize).cloned().unwrap_or_else(|| "?".into()),
+            sema::Ty::Struct(id) => struct_names
+                .get(id.0 as usize)
+                .cloned()
+                .unwrap_or_else(|| "?".into()),
+            sema::Ty::Enum(id) => enum_names
+                .get(id.0 as usize)
+                .cloned()
+                .unwrap_or_else(|| "?".into()),
             other => other.name().to_string(),
         }
     };
@@ -1262,7 +1392,10 @@ fn run_fmt(paths: Vec<PathBuf>, opts: FmtOpts, diag_mode: DiagMode) -> ExitCode 
             return ExitCode::FAILURE;
         }
         match cpfmt::format_source(&src) {
-            Ok(out) => { print!("{out}"); ExitCode::SUCCESS }
+            Ok(out) => {
+                print!("{out}");
+                ExitCode::SUCCESS
+            }
             Err(e) => {
                 let d = e.to_diagnostic(Path::new("<stdin>"), &src);
                 emit_diag(&d, diag_mode, &src);
@@ -1323,8 +1456,12 @@ fn run_fmt(paths: Vec<PathBuf>, opts: FmtOpts, diag_mode: DiagMode) -> ExitCode 
                 }
             }
         }
-        if had_error { return ExitCode::FAILURE; }
-        if opts.check && had_change { return ExitCode::from(1); }
+        if had_error {
+            return ExitCode::FAILURE;
+        }
+        if opts.check && had_change {
+            return ExitCode::from(1);
+        }
         ExitCode::SUCCESS
     }
 }
@@ -1340,8 +1477,12 @@ fn collect_cplus_files(root: &Path, out: &mut Vec<PathBuf>) {
         // Hardcoded skip list to match the design note §5.4: don't
         // descend into build / VCS / vendored directories.
         let basename = root.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if matches!(basename, "target" | "node_modules" | ".git") { return; }
-        let Ok(entries) = std::fs::read_dir(root) else { return; };
+        if matches!(basename, "target" | "node_modules" | ".git") {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return;
+        };
         // Deterministic order so `--check` output is stable across runs.
         let mut sorted: Vec<_> = entries.flatten().map(|e| e.path()).collect();
         sorted.sort();
@@ -1415,7 +1556,10 @@ fn run_test(
                 }
             };
             if m.bins.len() != 1 {
-                eprintln!("cpc test: project must declare exactly one [[bin]]; found {}", m.bins.len());
+                eprintln!(
+                    "cpc test: project must declare exactly one [[bin]]; found {}",
+                    m.bins.len()
+                );
                 return ExitCode::FAILURE;
             }
             let bin = &m.bins[0];
@@ -1423,9 +1567,17 @@ fn run_test(
             // share the consumer's `[dependencies]`, so a misdeclared
             // vendor package must fail here too — silent success would let
             // bad packages ride into a passing test run.
-            if let Err(code) = collect_dep_link_args(&m, diag_mode) { return code; }
+            if let Err(code) = collect_dep_link_args(&m, diag_mode) {
+                return code;
+            }
             let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-            let (program, _) = match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
+            let (program, _, _mono) = match load_and_check_project_full(
+                &bin.path,
+                &m.root,
+                diag_mode,
+                false,
+                Some(&dep_names),
+            ) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
@@ -1480,7 +1632,11 @@ fn run_test(
             // back to a clamped u8 ExitCode so callers can distinguish
             // "all passed" (0) from "something failed" (1..=255).
             let code = s.code().unwrap_or(1);
-            if code == 0 { ExitCode::SUCCESS } else { ExitCode::from(code.clamp(1, 255) as u8) }
+            if code == 0 {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(code.clamp(1, 255) as u8)
+            }
         }
         Err(e) => {
             eprintln!("cpc test: failed to invoke test binary: {e}");
@@ -1493,7 +1649,11 @@ fn run_test(
 /// AST `Program` rather than emitting IR. The `build_ir` path inlines the
 /// final codegen step; for `cpc test` we want the same pipeline minus codegen
 /// because codegen here is `generate_test_binary` instead of `generate`.
-fn build_program(file: &Path, src: &str, mode: DiagMode) -> Result<cplus_core::ast::Program, ExitCode> {
+fn build_program(
+    file: &Path,
+    src: &str,
+    mode: DiagMode,
+) -> Result<cplus_core::ast::Program, ExitCode> {
     let extracted = doctest::extract(src);
     let src = extracted.as_str();
     let toks = match lexer::tokenize(src) {
@@ -1515,7 +1675,9 @@ fn build_program(file: &Path, src: &str, mode: DiagMode) -> Result<cplus_core::a
         }
     };
     let attr_diags = attrs::check(&prog, file.to_path_buf(), src);
-    let attr_errors = attr_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let attr_errors = attr_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &attr_diags {
         emit_diag(d, mode, src);
     }
@@ -1523,7 +1685,9 @@ fn build_program(file: &Path, src: &str, mode: DiagMode) -> Result<cplus_core::a
         return Err(ExitCode::FAILURE);
     }
     let lower_diags = lower::lower(&mut prog, &file.to_path_buf(), src);
-    let lower_errors = lower_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let lower_errors = lower_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &lower_diags {
         emit_diag(d, mode, src);
     }
@@ -1544,7 +1708,9 @@ fn build_program(file: &Path, src: &str, mode: DiagMode) -> Result<cplus_core::a
         return Err(ExitCode::FAILURE);
     }
     let bc_diags = borrowck::check(&prog, &file.to_path_buf(), src);
-    let bc_errors = bc_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let bc_errors = bc_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &bc_diags {
         emit_diag(d, mode, src);
     }
@@ -1598,7 +1764,8 @@ fn run_doc(path: PathBuf) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let basename = path.file_name()
+    let basename = path
+        .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("source.cplus");
     let items = cplus_core::docgen::extract(&src);
@@ -1623,8 +1790,13 @@ fn run_lsp(args: Vec<OsString>) -> ExitCode {
     let Some(bin) = cpc_lsp else {
         eprintln!("cpc: `cpc-lsp` binary not found. Looked next to `cpc` and on PATH.");
         eprintln!("    Install via `cargo install --path cpc-lsp` from the C+ repo, or");
-        eprintln!("    run `cargo run --bin cpc-lsp -- {}` directly.",
-            args.iter().filter_map(|a| a.to_str()).collect::<Vec<_>>().join(" "));
+        eprintln!(
+            "    run `cargo run --bin cpc-lsp -- {}` directly.",
+            args.iter()
+                .filter_map(|a| a.to_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
         return ExitCode::FAILURE;
     };
     // The LSP runs in foreground over stdio; spawn-and-wait is correct
@@ -1646,14 +1818,22 @@ fn find_cpc_lsp() -> Option<PathBuf> {
     //    and `cargo install --path` layouts).
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join(if cfg!(windows) { "cpc-lsp.exe" } else { "cpc-lsp" });
+            let candidate = dir.join(if cfg!(windows) {
+                "cpc-lsp.exe"
+            } else {
+                "cpc-lsp"
+            });
             if candidate.is_file() {
                 return Some(candidate);
             }
         }
     }
     // 2. PATH lookup. No fancy logic — let the shell find it.
-    let name = if cfg!(windows) { "cpc-lsp.exe" } else { "cpc-lsp" };
+    let name = if cfg!(windows) {
+        "cpc-lsp.exe"
+    } else {
+        "cpc-lsp"
+    };
     if let Ok(path) = env::var("PATH") {
         for d in env::split_paths(&path) {
             let candidate = d.join(name);
@@ -1679,7 +1859,14 @@ fn phase0_hello(out: PathBuf) -> ExitCode {
     status
 }
 
-fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> ExitCode {
+fn compile_file(
+    input: PathBuf,
+    out: PathBuf,
+    mode: DiagMode,
+    build_mode: BuildMode,
+    debug_info: bool,
+    sanitizers: &[&str],
+) -> ExitCode {
     let src = match fs::read_to_string(&input) {
         Ok(s) => s,
         Err(e) => {
@@ -1704,7 +1891,14 @@ fn compile_file(input: PathBuf, out: PathBuf, mode: DiagMode, build_mode: BuildM
     status
 }
 
-fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> Result<String, ExitCode> {
+fn build_ir(
+    file: &Path,
+    src: &str,
+    mode: DiagMode,
+    build_mode: BuildMode,
+    debug_info: bool,
+    sanitizers: &[&str],
+) -> Result<String, ExitCode> {
     // Slice 5DOC: extract doctest fences from `///` comments into appended
     // `#[test]` functions before lexing. Files without doctests are
     // unchanged — `doctest::extract` returns the input verbatim.
@@ -1730,7 +1924,9 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug
     };
     // Phase 5 slice 5ATTR.1: validate attributes before lower / sema.
     let attr_diags = attrs::check(&prog, file.to_path_buf(), src);
-    let attr_errors = attr_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let attr_errors = attr_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &attr_diags {
         emit_diag(d, mode, src);
     }
@@ -1739,7 +1935,9 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug
     }
     // Lower `if let` / `guard let` to match-using forms before sema.
     let lower_diags = lower::lower(&mut prog, &file.to_path_buf(), src);
-    let lower_errors = lower_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let lower_errors = lower_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &lower_diags {
         emit_diag(d, mode, src);
     }
@@ -1761,7 +1959,9 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug
     }
     // Phase 5 borrow checker (slice 5BC.2a).
     let bc_diags = borrowck::check(&prog, &file.to_path_buf(), src);
-    let bc_errors = bc_diags.iter().any(|d| matches!(d.severity, Severity::Error));
+    let bc_errors = bc_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error));
     for d in &bc_diags {
         emit_diag(d, mode, src);
     }
@@ -1769,15 +1969,20 @@ fn build_ir(file: &Path, src: &str, mode: DiagMode, build_mode: BuildMode, debug
         return Err(ExitCode::FAILURE);
     }
     let post_mono = run_monomorphize(prog, &mono, &std::collections::BTreeMap::new());
-    if debug_info || !sanitizers.is_empty() {
-        let dbg_path = if debug_info { Some(file) } else { None };
-        Ok(codegen::generate_with_options(&post_mono, build_mode, dbg_path, sanitizers))
-    } else {
-        Ok(codegen::generate(&post_mono, build_mode))
-    }
+    let dbg_path = if debug_info { Some(file) } else { None };
+    Ok(codegen::generate_with_mono(
+        &post_mono, build_mode, dbg_path, sanitizers, false, &mono,
+    ))
 }
 
-fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, sanitizers: &[&str], link_args: &[String]) -> ExitCode {
+fn run_clang(
+    input_ll: &Path,
+    out: &Path,
+    mode: BuildMode,
+    debug_info: bool,
+    sanitizers: &[&str],
+    link_args: &[String],
+) -> ExitCode {
     // Pass the LLVM optimization level alongside our own build-mode choice:
     //   Debug   -> `-O0`. Keeps the overflow-check intrinsics, leaves divs
     //              and branches in source order, debuggable IR.
@@ -1802,7 +2007,9 @@ fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, san
     // Phase 11 polish: `-g` keeps the DWARF metadata cpc emitted in the
     // IR through to the final binary. Without it clang silently strips
     // the .debug_info section.
-    if debug_info { cmd.arg("-g"); }
+    if debug_info {
+        cmd.arg("-g");
+    }
     // Phase 11 polish: sanitizer instrumentation. clang owns the
     // instrumentation pass + the matching runtime library; we just
     // forward the comma-joined `-fsanitize=` argument.
@@ -1818,11 +2025,7 @@ fn run_clang(input_ll: &Path, out: &Path, mode: BuildMode, debug_info: bool, san
     for arg in link_args {
         cmd.arg(arg);
     }
-    let status = cmd
-        .arg(input_ll)
-        .arg("-o")
-        .arg(out)
-        .status();
+    let status = cmd.arg(input_ll).arg("-o").arg(out).status();
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(s) => {
@@ -1860,7 +2063,13 @@ fn dump_tokens(path: PathBuf, mode: DiagMode) -> ExitCode {
     }
 }
 
-fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: bool, sanitizers: &[&str]) -> ExitCode {
+fn dump_ll(
+    path: PathBuf,
+    mode: DiagMode,
+    build_mode: BuildMode,
+    debug_info: bool,
+    sanitizers: &[&str],
+) -> ExitCode {
     let src = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => {
@@ -1869,7 +2078,10 @@ fn dump_ll(path: PathBuf, mode: DiagMode, build_mode: BuildMode, debug_info: boo
         }
     };
     match build_ir(&path, &src, mode, build_mode, debug_info, sanitizers) {
-        Ok(ir) => { print!("{ir}"); ExitCode::SUCCESS }
+        Ok(ir) => {
+            print!("{ir}");
+            ExitCode::SUCCESS
+        }
         Err(code) => code,
     }
 }
@@ -1952,7 +2164,9 @@ fn dump_header(input: PathBuf, lib_name: Option<&str>, diag_mode: DiagMode) -> E
 fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String {
     use cplus_core::ast::{ItemKind, TypeKind};
     let mut out = String::new();
-    out.push_str(&format!("// Generated by cpc — public C ABI for `{lib_name}`. Do not edit.\n"));
+    out.push_str(&format!(
+        "// Generated by cpc — public C ABI for `{lib_name}`. Do not edit.\n"
+    ));
     out.push_str("#pragma once\n\n");
     out.push_str("#include <stdbool.h>\n");
     out.push_str("#include <stddef.h>\n");
@@ -1968,7 +2182,9 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
         match &item.kind {
             ItemKind::Struct(s) if s.is_pub => {
                 let is_repr_c = s.attributes.iter().any(|a| a.path.name == "repr");
-                if !is_repr_c { continue; }
+                if !is_repr_c {
+                    continue;
+                }
                 // Drop check: a struct with a `drop` method isn't safe to
                 // expose by value. The user's `pub extern fn` would have
                 // failed sema (5.C) if they tried; here we just skip.
@@ -1983,13 +2199,18 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
             }
             ItemKind::Enum(e) if e.is_pub => {
                 let is_tagged = e.variants.iter().any(|v| !v.payload.is_empty());
-                if is_tagged { continue; }
+                if is_tagged {
+                    continue;
+                }
                 // `typedef enum Foo { ... } Foo;` lets consumers use the
                 // bare name as a type — matches what we do for structs.
                 out.push_str(&format!("typedef enum {} {{\n", e.name.name));
                 for (i, v) in e.variants.iter().enumerate() {
                     let sep = if i + 1 == e.variants.len() { "" } else { "," };
-                    out.push_str(&format!("    {}_{} = {}{}\n", e.name.name, v.name.name, i, sep));
+                    out.push_str(&format!(
+                        "    {}_{} = {}{}\n",
+                        e.name.name, v.name.name, i, sep
+                    ));
                 }
                 out.push_str(&format!("}} {};\n\n", e.name.name));
             }
@@ -2005,14 +2226,20 @@ fn render_c_header(program: &cplus_core::ast::Program, lib_name: &str) -> String
     // consumer couldn't write a matching signature anyway.
     for item in &program.items {
         if let ItemKind::Function(f) = &item.kind {
-            if !f.is_pub { continue; }
+            if !f.is_pub {
+                continue;
+            }
             // Skip the parser-collapsed body for extern declarations
             // (no body, decl form): those are imports, not exports.
             if f.is_extern && f.body.stmts.is_empty() && f.body.tail.is_none() {
                 continue;
             }
-            if !f.generic_params.is_empty() { continue; }
-            let Some(decl) = render_fn_decl(f) else { continue; };
+            if !f.generic_params.is_empty() {
+                continue;
+            }
+            let Some(decl) = render_fn_decl(f) else {
+                continue;
+            };
             out.push_str(&decl);
             out.push('\n');
         }
@@ -2046,11 +2273,15 @@ fn render_fn_decl(f: &cplus_core::ast::Function) -> Option<String> {
         out.push_str("void");
     } else {
         for (i, p) in f.params.iter().enumerate() {
-            if i > 0 { out.push_str(", "); }
+            if i > 0 {
+                out.push_str(", ");
+            }
             out.push_str(&render_param_decl(&p.ty, &p.name.name)?);
         }
         if f.is_variadic {
-            if !f.params.is_empty() { out.push_str(", "); }
+            if !f.params.is_empty() {
+                out.push_str(", ");
+            }
             out.push_str("...");
         }
     }
@@ -2063,7 +2294,11 @@ fn render_fn_decl(f: &cplus_core::ast::Function) -> Option<String> {
 /// declarator: `R (*name)(args)` instead of `R (*)(args) name`.
 fn render_param_decl(t: &cplus_core::ast::Type, name: &str) -> Option<String> {
     use cplus_core::ast::TypeKind;
-    if let TypeKind::FnPtr { params, return_type } = &t.kind {
+    if let TypeKind::FnPtr {
+        params,
+        return_type,
+    } = &t.kind
+    {
         let ret = match return_type {
             Some(t) => type_to_c(t)?,
             None => "void".to_string(),
@@ -2073,7 +2308,9 @@ fn render_param_decl(t: &cplus_core::ast::Type, name: &str) -> Option<String> {
             s.push_str("void");
         } else {
             for (i, p) in params.iter().enumerate() {
-                if i > 0 { s.push_str(", "); }
+                if i > 0 {
+                    s.push_str(", ");
+                }
                 s.push_str(&type_to_c(p)?);
             }
         }
@@ -2119,7 +2356,10 @@ fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
             let inner_c = type_to_c(inner)?;
             format!("{} *", inner_c)
         }
-        TypeKind::FnPtr { params, return_type } => {
+        TypeKind::FnPtr {
+            params,
+            return_type,
+        } => {
             let ret = match return_type {
                 Some(t) => type_to_c(t)?,
                 None => "void".to_string(),
@@ -2130,7 +2370,9 @@ fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
                 s.push_str("void");
             } else {
                 for (i, p) in params.iter().enumerate() {
-                    if i > 0 { s.push_str(", "); }
+                    if i > 0 {
+                        s.push_str(", ");
+                    }
                     s.push_str(&type_to_c(p)?);
                 }
             }

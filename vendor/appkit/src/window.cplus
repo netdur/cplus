@@ -1,0 +1,69 @@
+import "./runtime" as rt;
+
+pub struct Window {
+    pub obj: *u8,
+}
+
+impl Window {
+    pub fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Window {
+        let nswindow_cls: *u8 = rt::get_class(str_ptr("NSWindow\0"));
+        let window_alloc: *u8 = rt::msg_id(nswindow_cls, rt::sel(str_ptr("alloc\0")));
+        let window: *u8 = rt::msg_init_window(
+            window_alloc,
+            rt::sel(str_ptr("initWithContentRect:styleMask:backing:defer:\0")),
+            frame,
+            style_mask,
+            backing,
+            defer_flag,
+        );
+        return Window { obj: window };
+    }
+
+    pub fn set_title(self, title: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), rt::ns_string(title));
+    }
+
+    pub fn center(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("center\0")));
+    }
+
+    pub fn content_view(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(str_ptr("contentView\0")));
+    }
+
+    pub fn set_content_view(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setContentView:\0")), view);
+    }
+
+    pub fn make_key_and_order_front(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("makeKeyAndOrderFront:\0")), sender);
+    }
+
+    pub fn order_front(self, sender: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("orderFront:\0")), sender);
+    }
+
+    pub fn close(self) {
+        rt::msg_void(self.obj, rt::sel(str_ptr("close\0")));
+    }
+
+    pub fn set_background_color(self, color: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setBackgroundColor:\0")), color);
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn set_toolbar(self, toolbar: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(str_ptr("setToolbar:\0")), toolbar);
+    }
+
+    pub fn set_min_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(str_ptr("setMinSize:\0")), size);
+    }
+
+    pub fn set_max_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(str_ptr("setMaxSize:\0")), size);
+    }
+}
