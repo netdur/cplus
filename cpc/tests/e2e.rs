@@ -10699,6 +10699,53 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.8 bench-gap finding 3: `let X: STRUCT = if cond { call() } else
+/// { ...; struct_literal };` used to panic at codegen.rs:5902 because
+/// `expr_value_ty_with_bindings` didn't recognize `Call` or `StructLit`
+/// as value-producing — `gen_if` returned None and the `let` panicked
+/// on the missing value. Fixed in v0.0.8 by extending the helper to
+/// resolve Call return types via `self.sigs` and struct literals via
+/// `self.types.struct_by_name`.
+#[test]
+fn mixed_if_arm_with_call_and_struct_literal_does_not_panic() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("mixed.cplus");
+    std::fs::write(&src, "\
+struct V { x: f32, y: f32, z: f32 }
+fn v_make(x: f32, y: f32) -> V { return V { x: x, y: y, z: 0.0f32 }; }
+
+fn refract(dir: V, n: V, cond: bool) -> V {
+    let result: V = if cond {
+        v_make(3.0f32, 4.0f32)
+    } else {
+        let r_perp: V = V { x: dir.x + n.x, y: dir.y + n.y, z: 0.0f32 };
+        let mut k: f32 = 1.0f32 - r_perp.x;
+        if k < 0.0f32 { k = 0.0f32; }
+        V { x: r_perp.x + r_perp.x, y: r_perp.y + k, z: 0.0f32 }
+    };
+    return result;
+}
+
+fn main() -> i32 {
+    let d: V = V { x: 1.0f32, y: 2.0f32, z: 0.0f32 };
+    let n: V = V { x: 0.0f32, y: 1.0f32, z: 0.0f32 };
+    let r_true: V = refract(d, n, true);
+    if r_true.x != 3.0f32 { return 1; }
+    if r_true.y != 4.0f32 { return 2; }
+    let r_false: V = refract(d, n, false);
+    if r_false.x != 2.0f32 { return 3; }
+    return 0;
+}
+").unwrap();
+    let bin = dir.join("mixed");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for mixed-if-arm reproducer (regression)");
+    let run = Command::new(&bin).status().expect("run mixed");
+    assert_eq!(run.code(), Some(0),
+        "mixed-if-arm reproducer expected exit 0; got {:?}", run.code());
+}
+
 #[test]
 fn block_tail_ident_non_copy_does_not_double_free() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

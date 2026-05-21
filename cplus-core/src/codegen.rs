@@ -51,7 +51,12 @@ struct ModuleMetadata {
     /// treatment until v0.0.8 ships the per-field tree if raytracer
     /// perf justifies the complexity.
     tbaa_root: Cell<Option<u32>>,
-    tbaa_leaves: RefCell<HashMap<&'static str, u32>>,
+    /// Per-TBAA-leaf cache, keyed by the leaf's name (`"i32"`, `"f64"`,
+    /// `"ptr"`, or for aggregates the type's mangled name such as
+    /// `"struct.Entry"` / `"enum.Color"` / `"arr16_u8"` / `"f32x4"`).
+    /// The key is a `String` (not `&'static str`) so the v0.0.8
+    /// finding 4 aggregate-leaf path doesn't need to leak strings.
+    tbaa_leaves: RefCell<HashMap<String, u32>>,
 }
 
 impl ModuleMetadata {
@@ -116,31 +121,77 @@ impl ModuleMetadata {
     }
 
     /// v0.0.7 Slice 1.2: return the TBAA leaf ID for a primitive `ty`,
-    /// allocating the root + the relevant leaf on first use. Returns
-    /// `None` for aggregate types (struct, enum, str, slice, string,
-    /// simd, fn-pointer) — those skip TBAA tagging today; LLVM treats
-    /// untagged accesses as may-alias-anything, the conservative
-    /// default. Pointer types share a single `"ptr"` leaf.
-    fn tbaa_tag_for(&self, ty: &Ty) -> Option<u32> {
-        let name: &'static str = match ty {
-            Ty::I8 => "i8",
-            Ty::U8 => "u8",
-            Ty::Bool => "bool",
-            Ty::I16 => "i16",
-            Ty::U16 => "u16",
-            Ty::I32 => "i32",
-            Ty::U32 => "u32",
-            Ty::I64 => "i64",
-            Ty::U64 => "u64",
-            Ty::Isize => "isize",
-            Ty::Usize => "usize",
-            Ty::F32 => "f32",
-            Ty::F64 => "f64",
-            Ty::RawPtr(_) | Ty::FnPtr { .. } => "ptr",
-            // Aggregates skip TBAA today — see field docs.
+    /// allocating the root + the relevant leaf on first use. Pointer
+    /// types share a single `"ptr"` leaf.
+    ///
+    /// v0.0.8 bench-gap finding 4: aggregate types (struct, enum,
+    /// array, simd, slice, str, string) now get their own leaves too,
+    /// keyed by the type's structural name. Each unique aggregate
+    /// type produces one leaf — `*Entry` vs `*Bucket` no longer
+    /// alias under LLVM's analysis. The naming scheme is whole-type
+    /// (not struct-path), which is enough to disambiguate distinct
+    /// types but not enough to disambiguate two fields within one
+    /// struct. Per-field paths are a v0.0.9+ exercise.
+    fn tbaa_tag_for(&self, ty: &Ty, types: &TypeTable) -> Option<u32> {
+        let name: String = match ty {
+            Ty::I8 => "i8".into(),
+            Ty::U8 => "u8".into(),
+            Ty::Bool => "bool".into(),
+            Ty::I16 => "i16".into(),
+            Ty::U16 => "u16".into(),
+            Ty::I32 => "i32".into(),
+            Ty::U32 => "u32".into(),
+            Ty::I64 => "i64".into(),
+            Ty::U64 => "u64".into(),
+            Ty::Isize => "isize".into(),
+            Ty::Usize => "usize".into(),
+            Ty::F32 => "f32".into(),
+            Ty::F64 => "f64".into(),
+            Ty::RawPtr(_) | Ty::FnPtr { .. } => "ptr".into(),
+            // v0.0.8 bench-gap finding 4: aggregate leaves keyed by
+            // structural name.
+            Ty::Struct(id) => format!("struct.{}", types.struct_defs[id.0 as usize].name),
+            Ty::Enum(id) => {
+                let info = &types.enum_defs[id.0 as usize];
+                let n = types
+                    .enum_by_name
+                    .iter()
+                    .find_map(|(name, eid)| (*eid == *id).then(|| name.clone()))
+                    .unwrap_or_else(|| format!("enum_{}", id.0));
+                if info.is_tagged {
+                    format!("enum.{n}")
+                } else {
+                    // Plain enums lower to `i32` — share the i32 leaf
+                    // so user code that mixes them with raw i32 reads
+                    // through the same TBAA cell.
+                    "i32".into()
+                }
+            }
+            Ty::Array(elem, n) => {
+                // Recurse to get the element's leaf name; fall back to
+                // a synthetic if the element is itself an aggregate
+                // without a registered leaf (shouldn't happen post-
+                // monomorphization, but keep the helper total).
+                let elem_name = match self.tbaa_leaf_name_for(elem, types) {
+                    Some(s) => s,
+                    None => "any".into(),
+                };
+                format!("arr{n}_{elem_name}")
+            }
+            Ty::Simd { elem, lanes } => {
+                let elem_name = match self.tbaa_leaf_name_for(elem, types) {
+                    Some(s) => s,
+                    None => "any".into(),
+                };
+                format!("{elem_name}x{lanes}")
+            }
+            Ty::Slice(_) => "slice".into(),
+            Ty::Str => "str".into(),
+            Ty::String => "string".into(),
+            // No TBAA for type params (never reach codegen) / Unit / Error.
             _ => return None,
         };
-        if let Some(&id) = self.tbaa_leaves.borrow().get(name) {
+        if let Some(&id) = self.tbaa_leaves.borrow().get(&name) {
             return Some(id);
         }
         let root = match self.tbaa_root.get() {
@@ -162,6 +213,43 @@ impl ModuleMetadata {
             .push(format!("!{id} = !{{!\"{name}\", !{root}, i64 0}}"));
         self.tbaa_leaves.borrow_mut().insert(name, id);
         Some(id)
+    }
+
+    /// Helper: compute the TBAA leaf *name* for `ty` without allocating
+    /// a leaf node. Used by `tbaa_tag_for` when building composite
+    /// names (`arrN_<elem>`, `<elem>x<lanes>`).
+    fn tbaa_leaf_name_for(&self, ty: &Ty, types: &TypeTable) -> Option<String> {
+        match ty {
+            Ty::I8 => Some("i8".into()),
+            Ty::U8 => Some("u8".into()),
+            Ty::Bool => Some("bool".into()),
+            Ty::I16 => Some("i16".into()),
+            Ty::U16 => Some("u16".into()),
+            Ty::I32 => Some("i32".into()),
+            Ty::U32 => Some("u32".into()),
+            Ty::I64 => Some("i64".into()),
+            Ty::U64 => Some("u64".into()),
+            Ty::Isize => Some("isize".into()),
+            Ty::Usize => Some("usize".into()),
+            Ty::F32 => Some("f32".into()),
+            Ty::F64 => Some("f64".into()),
+            Ty::RawPtr(_) | Ty::FnPtr { .. } => Some("ptr".into()),
+            Ty::Struct(id) => Some(format!("struct.{}", types.struct_defs[id.0 as usize].name)),
+            Ty::Enum(id) => {
+                let info = &types.enum_defs[id.0 as usize];
+                if info.is_tagged {
+                    let n = types
+                        .enum_by_name
+                        .iter()
+                        .find_map(|(name, eid)| (*eid == *id).then(|| name.clone()))
+                        .unwrap_or_else(|| format!("enum_{}", id.0));
+                    Some(format!("enum.{n}"))
+                } else {
+                    Some("i32".into())
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Drain the accumulated metadata definitions into the output. Must be
@@ -3759,11 +3847,25 @@ fn gen_async_method(
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&struct_ty, mv, mu, true, types);
-        if attrs.is_empty() {
-            write!(out, "ptr %{llvm_idx}").unwrap();
+        // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
+        // the call-site lowering in `gen_method_call` (which doesn't
+        // distinguish async/gen/sync) matches this signature.
+        let self_by_ptr =
+            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let attrs = param_attrs(&struct_ty, mv, mu, self_by_ptr, types);
+        if self_by_ptr {
+            if attrs.is_empty() {
+                write!(out, "ptr %{llvm_idx}").unwrap();
+            } else {
+                write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+            }
         } else {
-            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+            let base_ty = llvm_ty(&struct_ty, types);
+            if attrs.is_empty() {
+                write!(out, "{} %{llvm_idx}", base_ty).unwrap();
+            } else {
+                write!(out, "{} {} %{llvm_idx}", base_ty, attrs).unwrap();
+            }
         }
         llvm_idx += 1;
         first = false;
@@ -3830,9 +3932,24 @@ fn gen_async_method(
     state.collect_moved_bindings(&m.body);
 
     let mut next_idx: u32 = 0;
-    if let Some(_rcv) = sig.receiver {
-        let recv_name = format!("%{}", next_idx);
-        state.bind("self", recv_name, Ty::Struct(struct_id));
+    if let Some(rcv) = sig.receiver {
+        let self_by_ptr =
+            !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
+        if self_by_ptr {
+            let recv_name = format!("%{}", next_idx);
+            state.bind("self", recv_name, Ty::Struct(struct_id));
+        } else {
+            // v0.0.8 fix A: Copy `self` (Read) arrives by value; spill to
+            // a slot so `self.x` field reads keep their place shape.
+            let slot = state.alloca_named("self", Ty::Struct(struct_id));
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(&Ty::Struct(struct_id), types),
+                next_idx,
+                slot
+            ));
+            state.bind("self", slot, Ty::Struct(struct_id));
+        }
         next_idx += 1;
     }
     for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
@@ -3960,11 +4077,25 @@ fn gen_gen_method(
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&struct_ty, mv, mu, true, types);
-        if attrs.is_empty() {
-            write!(out, "ptr %{llvm_idx}").unwrap();
+        // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
+        // the call-site lowering in `gen_method_call` (which doesn't
+        // distinguish gen/sync) matches this signature.
+        let self_by_ptr =
+            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let attrs = param_attrs(&struct_ty, mv, mu, self_by_ptr, types);
+        if self_by_ptr {
+            if attrs.is_empty() {
+                write!(out, "ptr %{llvm_idx}").unwrap();
+            } else {
+                write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+            }
         } else {
-            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+            let base_ty = llvm_ty(&struct_ty, types);
+            if attrs.is_empty() {
+                write!(out, "{} %{llvm_idx}", base_ty).unwrap();
+            } else {
+                write!(out, "{} {} %{llvm_idx}", base_ty, attrs).unwrap();
+            }
         }
         llvm_idx += 1;
         first = false;
@@ -4020,10 +4151,25 @@ fn gen_gen_method(
     state.collect_moved_bindings(&m.body);
 
     let mut next_idx: u32 = 0;
-    // Bind the receiver: `self` is the pointer parameter directly.
-    if let Some(_rcv) = sig.receiver {
-        let recv_name = format!("%{}", next_idx);
-        state.bind("self", recv_name, Ty::Struct(struct_id));
+    // Bind the receiver. Non-Copy receivers are pointer-passed; Copy
+    // `self` (Read) is value-passed (v0.0.8 fix A) — spill to a slot so
+    // `self.x` keeps its place shape.
+    if let Some(rcv) = sig.receiver {
+        let self_by_ptr =
+            !is_copy_ty(&Ty::Struct(struct_id), types) || !matches!(rcv, Receiver::Read);
+        if self_by_ptr {
+            let recv_name = format!("%{}", next_idx);
+            state.bind("self", recv_name, Ty::Struct(struct_id));
+        } else {
+            let slot = state.alloca_named("self", Ty::Struct(struct_id));
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(&Ty::Struct(struct_id), types),
+                next_idx,
+                slot
+            ));
+            state.bind("self", slot, Ty::Struct(struct_id));
+        }
         next_idx += 1;
     }
     // Bind params to allocas (value-passed) or pointer slots (pointer-passed).
@@ -4883,11 +5029,35 @@ fn gen_method(
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&struct_ty, mv, mu, true, types);
-        if attrs.is_empty() {
-            write!(out, "ptr %{llvm_idx}").unwrap();
+        // v0.0.8 bench-gap fix A: Copy `self` (Read) passes by value,
+        // mirroring the rule for non-receiver Copy params
+        // (`param_passes_by_ptr` returns false for Copy structs). Passing
+        // `self` by pointer for a 12-byte Copy struct like V3 forces
+        // alloca → store → pass-pointer at every call site, which
+        // materializes the value into memory and blocks SROA + the SLP-
+        // vectorizer from seeing field-parallel arithmetic.
+        //
+        // Restricted to `Read`: `mut self` / `move self` must stay
+        // pointer-passed even on Copy types, because the language treats
+        // mutations through `mut self` as write-through to the caller's
+        // place (see `phase7_generic_typed_impl_mut_self_runs` e2e test:
+        // `b.set(42); b.get()` must observe the write).
+        let self_by_ptr =
+            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let attrs = param_attrs(&struct_ty, mv, mu, self_by_ptr, types);
+        if self_by_ptr {
+            if attrs.is_empty() {
+                write!(out, "ptr %{llvm_idx}").unwrap();
+            } else {
+                write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+            }
         } else {
-            write!(out, "ptr {} %{llvm_idx}", attrs).unwrap();
+            let base_ty = llvm_ty(&struct_ty, types);
+            if attrs.is_empty() {
+                write!(out, "{} %{llvm_idx}", base_ty).unwrap();
+            } else {
+                write!(out, "{} {} %{llvm_idx}", base_ty, attrs).unwrap();
+            }
         }
         llvm_idx += 1;
         first = false;
@@ -4939,20 +5109,42 @@ fn gen_method(
         next_idx = 1;
     }
 
-    // Bind the receiver: `self` is the pointer parameter directly.
+    // Bind the receiver. Non-Copy receivers are pointer-passed: `self`
+    // resolves directly to the SSA pointer argument. Copy `self` (Read)
+    // is value-passed (v0.0.8 fix A) — spill `%{idx}` to a named slot so
+    // `self.x` keeps lowering as `gep slot, 0, fld`, the place shape the
+    // field-access codegen expects. Mirror of the value-passed
+    // non-receiver param path below. Must match the signature decision
+    // above.
     if let Some(rcv) = sig.receiver {
-        let recv_name = format!("%{}", next_idx);
-        state.bind("self", recv_name.clone(), struct_ty.clone());
-        // `move self` consumes the receiver: the method body owns it, so
-        // we register a scope-exit drop for `self` (unless we *are* the
-        // destructor — see `in_destructor` above). For `self` / `mut self`
-        // the receiver is non-owning (post-§2.8a pointer-pass), so no drop.
-        if matches!(rcv, Receiver::Move) && !state.in_destructor {
-            if let Ty::Struct(id) = struct_ty {
-                if types.struct_defs[id.0 as usize].is_drop {
-                    state.register_drop("self", &recv_name, id);
+        let self_by_ptr =
+            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        if self_by_ptr {
+            let recv_name = format!("%{}", next_idx);
+            state.bind("self", recv_name.clone(), struct_ty.clone());
+            // `move self` consumes the receiver: the method body owns it,
+            // so we register a scope-exit drop for `self` (unless we *are*
+            // the destructor — see `in_destructor` above). For `self` /
+            // `mut self` the receiver is non-owning (post-§2.8a
+            // pointer-pass), so no drop.
+            if matches!(rcv, Receiver::Move) && !state.in_destructor {
+                if let Ty::Struct(id) = struct_ty {
+                    if types.struct_defs[id.0 as usize].is_drop {
+                        state.register_drop("self", &recv_name, id);
+                    }
                 }
             }
+        } else {
+            // Copy by-value: spill into a slot so `self.x` reads still work.
+            // No drop registration: Copy and Drop are mutually exclusive.
+            let slot = state.alloca_named("self", struct_ty.clone());
+            state.body.push_str(&format!(
+                "  store {} %{}, ptr {}\n",
+                llvm_ty(&struct_ty, types),
+                next_idx,
+                slot
+            ));
+            state.bind("self", slot, struct_ty.clone());
         }
         next_idx += 1;
     }
@@ -5009,6 +5201,12 @@ fn gen_method(
     // refs may alias).
     let mut noalias_ssas: Vec<u32> = Vec::new();
     if let Some(rcv) = sig.receiver {
+        // Only `mut self` / `move self` participate in the alias-scope
+        // set. `self` (Read) gets `readonly` and may legitimately alias
+        // another shared borrow. (Read is also the only case where Copy
+        // receivers become by-value — a by-value receiver isn't a pointer
+        // anyway. So the Mut/Move match already excludes the by-value
+        // path.)
         if matches!(rcv, Receiver::Mut | Receiver::Move) {
             noalias_ssas.push(0);
         }
@@ -5229,6 +5427,21 @@ struct FnState<'a> {
     /// Drop semantics (currently `Ty::String`), emit a deep clone so the
     /// caller's result is an independent heap allocation.
     borrowed_params: std::collections::HashSet<String>,
+    /// v0.0.8 bench-gap finding 1: per-expression field-read memo.
+    /// Maps `(local_binding_name, field_name)` to the SSA name of the
+    /// already-loaded field value. Hit when the same field appears
+    /// twice in one expression (e.g. `v.x * v.x` in a Vec3 dot
+    /// product). Cleared at every statement boundary and on any
+    /// operation that could mutate a local (call, assignment) — the
+    /// goal is to keep the cache valid only within a pure expression.
+    ///
+    /// Bench impact: closes the May 17 → today raytracer NEON 2-lane
+    /// regression. Before the cache, `v.x * v.x` emitted two GEPs +
+    /// two loads + one fmul; that interleaved-duplicate-load pattern
+    /// defeated the SLP-vectorizer. With the cache it emits one GEP
+    /// + one load + `fmul %v.x, %v.x` — the standard adjacent-load
+    /// pattern the vectorizer recognizes.
+    field_load_cache: std::collections::HashMap<(String, String), (String, Ty)>,
 }
 
 impl<'a> FnState<'a> {
@@ -5270,7 +5483,18 @@ impl<'a> FnState<'a> {
             tramps,
             coro_promise: None,
             borrowed_params: std::collections::HashSet::new(),
+            field_load_cache: std::collections::HashMap::new(),
         }
+    }
+
+    /// v0.0.8 bench-gap finding 1: invalidate the per-expression
+    /// field-read memo. Called at statement boundaries and before
+    /// every potentially-mutating operation (function call,
+    /// assignment, method call). The cache only ever holds reads
+    /// since the last invalidation, so a stale value cannot leak
+    /// past one of these boundaries.
+    fn invalidate_field_load_cache(&mut self) {
+        self.field_load_cache.clear();
     }
 
     /// Slice 6BC.opt: scan the function body for `move`-position
@@ -5332,6 +5556,15 @@ impl<'a> FnState<'a> {
         self.body.push('\n');
         self.body.push_str(&format!("{label}:\n"));
         self.terminated = false;
+        // v0.0.8 bench-gap finding 1 follow-up: SSA values are
+        // basic-block-local in the dominance sense. An SSA name
+        // defined in one block does not dominate a use in a parallel
+        // arm of an if-expression or after a `br` merge — LLVM
+        // rejects the IR with "Instruction does not dominate all
+        // uses!". The field-read memo only ever stores names defined
+        // in the previously-open block, so clearing it at every
+        // block-open call keeps the cache strictly intra-block.
+        self.invalidate_field_load_cache();
     }
 
     fn alloca_named(&mut self, name_hint: &str, ty: Ty) -> String {
@@ -5383,7 +5616,7 @@ impl<'a> FnState<'a> {
     /// falls back to may-alias-anything, the conservative default.
     fn gen_load(&mut self, tmp: &str, ty: &Ty, ptr: &str) {
         let lty = self.lty(ty);
-        match self.md.tbaa_tag_for(ty) {
+        match self.md.tbaa_tag_for(ty, self.types) {
             Some(id) => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}, !tbaa !{id}")),
             None => self.emit(&format!("{tmp} = load {lty}, ptr {ptr}")),
         }
@@ -5393,7 +5626,7 @@ impl<'a> FnState<'a> {
     /// TBAA tag for `ty`. Mirror of `gen_load`.
     fn gen_store(&mut self, ty: &Ty, val: &str, ptr: &str) {
         let lty = self.lty(ty);
-        match self.md.tbaa_tag_for(ty) {
+        match self.md.tbaa_tag_for(ty, self.types) {
             Some(id) => self.emit(&format!("store {lty} {val}, ptr {ptr}, !tbaa !{id}")),
             None => self.emit(&format!("store {lty} {val}, ptr {ptr}")),
         }
@@ -5502,6 +5735,38 @@ impl<'a> FnState<'a> {
                 .tail
                 .as_deref()
                 .and_then(|t| self.expr_value_ty_with_bindings(t)),
+            // v0.0.8 bench-gap finding 3: call expressions return the
+            // callee's declared return type. Without this, an if-expr
+            // arm ending in a call (e.g. `v_make(3.0, 4.0)`) makes
+            // `gen_if` think the if has no value, and the surrounding
+            // `let x = if … { call() } else { … };` panics in gen_stmt
+            // because `gen_if` returns None.
+            ExprKind::Call { callee, .. } => {
+                if let ExprKind::Ident(name) = &callee.kind {
+                    self.sigs.get(name).map(|sig| sig.return_type.clone())
+                } else {
+                    None
+                }
+            }
+            // v0.0.8 bench-gap finding 3: struct-literal expressions
+            // produce a `Ty::Struct(id)`. The (generic) variant has
+            // been monomorphized by the time codegen sees it, so the
+            // `name` is the mangled concrete name — direct lookup.
+            ExprKind::StructLit { name, .. }
+            | ExprKind::GenericStructLit { name, .. } => self
+                .types
+                .struct_by_name
+                .get(&name.name)
+                .map(|&id| Ty::Struct(id)),
+            // v0.0.8 bench-gap finding 3: enum path expressions like
+            // `Color::Red` (no payload) — sema's `Path` lowering tags
+            // each enum's variants by parent enum, so we resolve the
+            // enum from the first segment.
+            ExprKind::Path { segments } if segments.len() >= 2 => self
+                .types
+                .enum_by_name
+                .get(&segments[0].name)
+                .map(|&id| Ty::Enum(id)),
             _ => expr_value_ty(e),
         }
     }
@@ -5848,6 +6113,11 @@ impl<'a> FnState<'a> {
     // ---- statements ----
 
     fn gen_stmt(&mut self, s: &Stmt) {
+        // v0.0.8 bench-gap finding 1: statement boundaries are
+        // cache-flush points. Any statement can mutate a local
+        // (`let`, `=`, function call as `Expr` stmt, etc.) so the
+        // safe model is to drop the field-read memo at every entry.
+        self.invalidate_field_load_cache();
         match &s.kind {
             StmtKind::Let { name, ty, init, .. } => {
                 // Resolve declared type up front (always present for the
@@ -6934,6 +7204,20 @@ impl<'a> FnState<'a> {
     /// alloca), or a value (`make().x`), in which case we stash the value
     /// in a temporary alloca first.
     fn gen_field(&mut self, receiver: &Expr, name: &Ident) -> (String, Ty) {
+        // v0.0.8 bench-gap finding 1: if the receiver is a bare
+        // local-binding ident, check the per-expression field-read
+        // cache. Repeated reads of `v.x` in one expression
+        // (e.g. `v.x * v.x` in a Vec3 dot product) reuse the same
+        // SSA value, which restores the adjacent-load pattern LLVM's
+        // SLP-vectorizer keys on. Nested receivers (`v.inner.x`) and
+        // place expressions through pointer arithmetic skip the
+        // cache to keep the invariants simple.
+        if let ExprKind::Ident(local) = &receiver.kind {
+            let key = (local.clone(), name.name.clone());
+            if let Some(cached) = self.field_load_cache.get(&key) {
+                return cached.clone();
+            }
+        }
         let (slot, struct_ty) = self.gen_place(receiver);
         let Ty::Struct(id) = struct_ty else {
             unreachable!("sema validated");
@@ -6949,8 +7233,16 @@ impl<'a> FnState<'a> {
         let v = self.next_tmp();
         // v0.0.7 Slice 1.2: TBAA-tagged struct field load. Primitive
         // fields get the per-type leaf; aggregate fields fall through
-        // untagged (gen_load handles both).
+        // to the v0.0.8 aggregate-leaf path.
         self.gen_load(&v, &field_ty, &ptr);
+        // v0.0.8 bench-gap finding 1: memoize for the rest of the
+        // current expression.
+        if let ExprKind::Ident(local) = &receiver.kind {
+            self.field_load_cache.insert(
+                (local.clone(), name.name.clone()),
+                (v.clone(), field_ty.clone()),
+            );
+        }
         (v, field_ty)
     }
 
@@ -7985,6 +8277,11 @@ impl<'a> FnState<'a> {
         args: &[Expr],
         type_args: &[Type],
     ) -> Option<(String, Ty)> {
+        // v0.0.8 bench-gap finding 1: a call may mutate any local
+        // bound by `mut x: T` / `move x: T` in the callee's
+        // signature. Drop the field-read memo before evaluating
+        // arguments so cached values can't outlive a mutation.
+        self.invalidate_field_load_cache();
         // Special case: println(i32) → call printf with our %d\n format.
         // Phase 8 slice 8.STR.2: also handle println(str) by extracting
         // (ptr, len) from the fat-pointer value and passing both to
@@ -9125,6 +9422,12 @@ impl<'a> FnState<'a> {
         name: &Ident,
         args: &[Expr],
     ) -> Option<(String, Ty)> {
+        // v0.0.8 bench-gap finding 1: method calls may mutate the
+        // receiver (`fn inc(mut self)`) or any `mut`-arg-bound local.
+        // Drop the field-read memo before lowering so a cached read
+        // can't outlive a mutation. (See `gen_named_call` for the
+        // same rationale.)
+        self.invalidate_field_load_cache();
         // Phase 8 slice 8.STR.6: blessed `to_string()` on primitives + `str`.
         // The receiver is a primitive value, not a place — handle before
         // gen_place (which expects a place-producing expression).
@@ -9226,11 +9529,20 @@ impl<'a> FnState<'a> {
         let rcv = info.receiver.expect("sema validated instance call");
         let mangled = mangle(&struct_name, &name.name);
 
-        // Build the LLVM call argument list. All three receiver kinds
-        // (`self`, `mut self`, `move self`) pass the struct's address as a
-        // `ptr`; the receiver kind only matters for sema-level mutability
-        // and move-tracking checks.
-        let mut arg_parts: Vec<String> = vec![format!("ptr {recv_ptr}")];
+        // Build the LLVM call argument list. v0.0.8 fix A: Copy `self`
+        // (Read) is passed by value to match `gen_method`'s by-value
+        // signature. `mut self` / `move self` stay pointer-passed even on
+        // Copy types so writes propagate to the caller's place.
+        let recv_by_value =
+            is_copy_ty(&recv_ty, self.types) && matches!(rcv, Receiver::Read);
+        let recv_arg = if recv_by_value {
+            let v = self.next_tmp();
+            self.gen_load(&v, &recv_ty, &recv_ptr);
+            format!("{} {v}", self.lty(&recv_ty))
+        } else {
+            format!("ptr {recv_ptr}")
+        };
+        let mut arg_parts: Vec<String> = vec![recv_arg];
         for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
@@ -9576,6 +9888,52 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr) {
+        // v0.0.8 bench-gap finding 1: a compound or plain assignment
+        // mutates the target. Drop the field-read memo so any reads
+        // after the assignment see the new value, not the cached one.
+        self.invalidate_field_load_cache();
+
+        // v0.0.8 bench-gap finding 2: `place = StructLit{...}` fast
+        // path. Bypass the intermediate-alloca-and-aggregate-copy
+        // dance by storing each RHS field directly into the
+        // destination's slot. Closes the hashmap-insert hot path
+        // (`table[idx] = Entry { key, val };`) and any similar shape.
+        //
+        // Limitations:
+        //   - Plain `=` only; compound assigns need the LHS read first.
+        //   - The destination must lower to a struct of the same type
+        //     as the literal (sema enforces this).
+        //   - Generic struct literals share the field-list shape, so
+        //     the same fast path applies after monomorphization.
+        if matches!(op, AssignOp::Assign) {
+            let lit_fields: Option<(&Ident, &[StructLitField])> = match &value.kind {
+                ExprKind::StructLit { name, fields } => Some((name, fields.as_slice())),
+                ExprKind::GenericStructLit { name, fields, .. } => Some((name, fields.as_slice())),
+                _ => None,
+            };
+            if let Some((name, fields)) = lit_fields {
+                if let Some(&id) = self.types.struct_by_name.get(&name.name) {
+                    let info = self.types.struct_defs[id.0 as usize].clone();
+                    let struct_ty = Ty::Struct(id);
+                    let llvm_struct = self.lty(&struct_ty);
+                    let (dest_slot, _dest_ty) = self.gen_place(target);
+                    for f in fields {
+                        let (val, _) = self
+                            .gen_expr(&f.value)
+                            .expect("struct-literal field init has value");
+                        let idx = info.field_index(&f.name.name);
+                        let field_ty = info.field_type(&f.name.name);
+                        let ptr = self.next_tmp();
+                        self.emit(&format!(
+                            "{ptr} = getelementptr inbounds {llvm_struct}, ptr {dest_slot}, i32 0, i32 {idx}"
+                        ));
+                        self.gen_store(&field_ty, &val, &ptr);
+                    }
+                    return;
+                }
+            }
+        }
+
         // Compute the place slot (Ident or Field chain). gen_place returns
         // a pointer that we can store to directly.
         let (slot, target_ty) = self.gen_place(target);
@@ -11315,34 +11673,174 @@ mod tests {
     }
 
     #[test]
-    fn tbaa_omitted_for_aggregate_struct_loads() {
-        // `gen_load` returns no TBAA tag for aggregate types (struct,
-        // enum, str, slice) — `tbaa_tag_for` returns None for those.
-        // The whole-struct load that follows a struct literal init
-        // exercises this: the value load on `let p: Pt = Pt { x: 1, y: 2 };`
-        // has no `!tbaa` attached.
+    fn tbaa_tags_aggregate_struct_loads_with_distinct_leaf() {
+        // v0.0.8 bench-gap finding 4: aggregate loads/stores now get
+        // a per-type TBAA leaf so a `*Entry` access doesn't alias a
+        // `*Sphere` access under LLVM's analysis. The whole-struct
+        // load on `let p: Pt = Pt { x: 1, y: 2 };` carries the
+        // `struct.Pt` leaf, distinct from the `i32` leaf used by the
+        // field load.
         let ir = gen_src(
             "struct Pt { x: i32, y: i32 }\n\
              fn main() -> i32 { let p: Pt = Pt { x: 1, y: 2 }; return p.x; }",
         );
-        // No `!tbaa` on whole-struct loads (gen_load returns None for Ty::Struct).
+
+        // Every whole-struct load carries `!tbaa !N`.
         let aggregate_load_lines: Vec<&str> = ir
             .lines()
             .filter(|l| l.contains(" = load %Pt,"))
             .collect();
+        assert!(
+            !aggregate_load_lines.is_empty(),
+            "expected at least one whole-struct load; IR:\n{ir}"
+        );
         for l in &aggregate_load_lines {
             assert!(
-                !l.contains("!tbaa "),
-                "whole-struct loads must not carry TBAA: {l}"
+                l.contains("!tbaa "),
+                "whole-struct loads must carry TBAA tag: {l}"
             );
         }
-        // But the i32-field load does.
+
+        // The struct leaf is distinct from the i32 leaf.
+        let struct_leaf_line = ir
+            .lines()
+            .find(|l| l.contains("!\"struct.Pt\""))
+            .unwrap_or_else(|| panic!("expected struct.Pt TBAA leaf; IR:\n{ir}"));
+        let i32_leaf_line = ir
+            .lines()
+            .find(|l| l.contains("!\"i32\""))
+            .unwrap_or_else(|| panic!("expected i32 TBAA leaf; IR:\n{ir}"));
+        let struct_id = struct_leaf_line.split(" = ").next().unwrap();
+        let i32_id = i32_leaf_line.split(" = ").next().unwrap();
+        assert_ne!(
+            struct_id, i32_id,
+            "struct.Pt and i32 must use distinct TBAA leaves"
+        );
+
+        // And the i32 field load still carries its primitive tag.
         let field_load_tagged = ir
             .lines()
             .any(|l| l.contains(" = load i32,") && l.contains("!tbaa "));
         assert!(
             field_load_tagged,
             "expected at least one TBAA-tagged i32 field load; IR:\n{ir}"
+        );
+    }
+
+    // ---- v0.0.8 bench-gap fixes ----
+
+    #[test]
+    fn field_read_caching_dedups_v_x_in_one_expression() {
+        // v0.0.8 bench-gap finding 1: `v.x * v.x` in one expression
+        // should emit ONE GEP + ONE load for v.x, then `fmul X, X`.
+        // Before the cache, two GEP+loads were emitted and the SLP-
+        // vectorizer's adjacent-load pattern recognition broke.
+        let ir = gen_src(
+            "struct Vec3 { x: f32, y: f32, z: f32 }\n\
+             fn dot(v: Vec3) -> f32 {\n\
+                 return v.x * v.x + v.y * v.y + v.z * v.z;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // Count GEPs into Vec3 inside @dot.
+        let dot_body: Vec<&str> = ir
+            .lines()
+            .skip_while(|l| !l.contains("define internal float @dot"))
+            .take_while(|l| !l.starts_with("}"))
+            .collect();
+        let gep_count = dot_body
+            .iter()
+            .filter(|l| l.contains("getelementptr inbounds %Vec3"))
+            .count();
+        // Expected: one GEP per field (x, y, z) = 3. Without the
+        // cache it was 6 (one per source-level field read, with
+        // `v.x` appearing twice etc.).
+        assert_eq!(
+            gep_count, 3,
+            "expected 3 field GEPs (one per field) in dot; got {gep_count}. IR:\n{}",
+            dot_body.join("\n")
+        );
+    }
+
+    #[test]
+    fn field_read_cache_invalidates_across_basic_blocks() {
+        // v0.0.8 bench-gap finding 1 follow-up: the field-read memo
+        // must be cleared at every basic-block boundary or the cached
+        // SSA name from a previous block fails LLVM's dominance check
+        // ("Instruction does not dominate all uses!"). Concretely:
+        // `let s = v.x * v.x; if cond { ... }; return s * v.x;` —
+        // the `v.x` after the if-return must not reuse the SSA name
+        // from before the if, because the if's terminator opened a
+        // fresh block.
+        let ir = gen_src(
+            "struct V { x: f32, y: f32, z: f32 }\n\
+             fn lookup(v: V, cond: bool) -> f32 {\n\
+                 let x_squared: f32 = v.x * v.x;\n\
+                 if cond { return v.x; }\n\
+                 return x_squared * v.x;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // The IR must parse — gen_src panics if cpc rejected the
+        // module or emitted invalid IR.
+        assert!(ir.contains("@lookup"), "lookup fn must be emitted: {ir}");
+        // And there must be at least 3 GEPs into V — one for the
+        // initial `v.x * v.x` (cached → one GEP), one in the
+        // then-branch's `v.x` (fresh block), one in the merge
+        // block's `v.x` (fresh block). Caching only fires within a
+        // block.
+        let geps = ir.lines().filter(|l| l.contains("getelementptr inbounds %V")).count();
+        assert!(
+            geps >= 3,
+            "expected at least 3 GEPs across the if's three basic blocks; got {geps}. IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn struct_literal_assignment_skips_intermediate_alloca() {
+        // v0.0.8 bench-gap finding 2: `place = StructLit{...}` should
+        // store each field directly to the destination's GEP slot.
+        // Before the fast path, codegen built the literal in a fresh
+        // alloca, loaded the whole struct, and stored the aggregate
+        // value through SSA — three extra IR ops per assignment.
+        let ir = gen_src(
+            "struct Entry { key: i32, val: i32 }\n\
+             extern fn malloc(n: usize) -> *u8;\n\
+             fn main() -> i32 {\n\
+                 let buf: *u8 = unsafe { malloc(8 as usize) };\n\
+                 let t: *Entry = unsafe { buf as *Entry };\n\
+                 unsafe { t[0 as usize] = Entry { key: 7, val: 42 }; }\n\
+                 return 0;\n\
+             }",
+        );
+        // No aggregate `load %Entry` should appear — the old path
+        // emitted one to lift the literal out of its temp alloca.
+        let aggregate_loads = ir
+            .lines()
+            .filter(|l| l.contains(" = load %Entry,"))
+            .count();
+        // And no aggregate `store %Entry` either — the old path
+        // stored the lifted value to the destination.
+        let aggregate_stores = ir
+            .lines()
+            .filter(|l| l.contains("store %Entry "))
+            .count();
+        assert_eq!(
+            aggregate_loads, 0,
+            "expected zero aggregate `load %Entry` in main; got {aggregate_loads}. IR:\n{ir}"
+        );
+        assert_eq!(
+            aggregate_stores, 0,
+            "expected zero aggregate `store %Entry` in main; got {aggregate_stores}. IR:\n{ir}"
+        );
+        // And the field stores are tagged with the i32 leaf as before.
+        let i32_field_stores_tagged = ir
+            .lines()
+            .filter(|l| l.contains("store i32 ") && l.contains("!tbaa "))
+            .count();
+        assert!(
+            i32_field_stores_tagged >= 2,
+            "expected at least 2 TBAA-tagged i32 field stores; got {i32_field_stores_tagged}. IR:\n{ir}"
         );
     }
 
@@ -11980,20 +12478,30 @@ mod tests {
     }
 
     #[test]
-    fn read_self_method_takes_ptr_param() {
+    fn read_self_on_copy_struct_takes_value_param() {
+        // v0.0.8 bench-gap fix A: Copy receivers pass by value, so the
+        // optimizer sees `self` as a register-resident aggregate and can
+        // SROA / inline / vectorize the body. `P` has no Drop, so it's
+        // Copy.
         let ir = gen_src(
             "struct P { x: i32 }\n\
              impl P { fn get(self) -> i32 { return self.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }",
         );
         assert!(
-            ir.contains("i32 @P.get(ptr "),
-            "expected ptr param for self: {ir}"
+            ir.contains("i32 @P.get(%P "),
+            "expected by-value %P param for Copy self: {ir}"
         );
     }
 
     #[test]
-    fn mut_self_method_takes_ptr_param() {
+    fn mut_self_on_copy_struct_stays_pointer_passed() {
+        // v0.0.8 fix A scope: only Copy `self` (Read) goes by-value.
+        // `mut self` on a Copy type stays pointer-passed so writes
+        // observed by `self.x = v` propagate to the caller's place — the
+        // language treats `mut self` as write-through, see
+        // `phase7_generic_typed_impl_mut_self_runs` (e2e): a follow-up
+        // `b.get()` call must observe the mutation.
         let ir = gen_src(
             "struct P { x: i32 }\n\
              impl P { fn set(mut self, v: i32) { self.x = v; } }\n\
@@ -12001,21 +12509,41 @@ mod tests {
         );
         assert!(
             ir.contains("void @P.set(ptr "),
-            "expected void+ptr for mut self: {ir}"
+            "mut self on Copy must stay pointer-passed: {ir}"
         );
         // Body should store through the ptr (GEP then store).
         assert!(ir.contains("getelementptr inbounds %P"));
     }
 
     #[test]
-    fn instance_call_passes_pointer_to_local() {
+    fn instance_call_on_copy_passes_value() {
         let ir = gen_src(
             "struct P { x: i32 }\n\
              impl P { fn get(self) -> i32 { return self.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; return p.get(); }",
         );
-        // call should use ptr to the local's alloca.
-        assert!(ir.contains("call i32 @P.get(ptr "));
+        // Call site loads the Copy receiver and passes by value.
+        assert!(ir.contains("call i32 @P.get(%P "));
+    }
+
+    #[test]
+    fn read_self_on_noncopy_struct_still_takes_ptr_param() {
+        // Negative pin: the by-value lowering is gated on Copy. A
+        // non-Copy struct (here, made non-Copy by an `impl Drop`) keeps
+        // the borrow-ABI pointer shape.
+        let ir = gen_src(
+            "struct Q { x: i32 }\n\
+             impl Q { fn drop(mut self) { return; } fn get(self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let q: Q = Q { x: 7 }; let r: i32 = q.get(); return r; }",
+        );
+        assert!(
+            ir.contains("i32 @Q.get(ptr "),
+            "non-Copy receiver must stay pointer-passed: {ir}"
+        );
+        assert!(
+            ir.contains("call i32 @Q.get(ptr "),
+            "non-Copy call site must stay pointer-passed: {ir}"
+        );
     }
 
     #[test]
@@ -12324,7 +12852,10 @@ mod tests {
 
     #[test]
     fn mut_param_noncopy_struct_via_method_call() {
-        // Same ABI rule applies to non-receiver method params.
+        // Same borrow-ABI rule applies to non-receiver method params:
+        // non-Copy `mut t: Tag` lowers as a `ptr noalias ...` parameter.
+        // v0.0.8 fix A: `Tool` is Copy (no Drop), so its receiver is
+        // value-passed; only the second param keeps the ptr shape.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(mut self) { return; } }\n\
@@ -12337,15 +12868,19 @@ mod tests {
                  return x.v;\n\
              }",
         );
-        // Tool.poke signature: receiver ptr, mut param ptr.
+        // Tool.poke signature: Copy receiver by value, non-Copy mut param ptr.
         assert!(
-            ir.contains("void @Tool.poke(ptr "),
-            "expected method to declare `mut t: Tag` as ptr param, got: {ir}"
+            ir.contains("void @Tool.poke(%Tool "),
+            "expected Copy receiver by value, got: {ir}"
         );
-        // Two `ptr ` arguments at the call site (receiver + mut param).
         assert!(
-            ir.contains("call void @Tool.poke(ptr "),
-            "expected call to method to pass ptr args, got: {ir}"
+            ir.contains(", ptr noalias "),
+            "expected `mut t: Tag` to lower to `ptr noalias`, got: {ir}"
+        );
+        // Call site: by-value receiver, ptr for the mut param.
+        assert!(
+            ir.contains("call void @Tool.poke(%Tool "),
+            "expected call to pass Copy receiver by value, got: {ir}"
         );
     }
 
