@@ -13244,9 +13244,10 @@ fn exec_target_linkage_unchanged_by_5b() {
         .output()
         .expect("emit-ll");
     let ir = String::from_utf8_lossy(&ll_out.stdout);
+    // v0.0.8 fix C: non-pub fn → `internal fastcc`.
     assert!(
-        ir.contains("define internal i32 @double("),
-        "non-pub `double` must get `internal` linkage in exe mode (3D); got:\n{ir}"
+        ir.contains("define internal fastcc i32 @double("),
+        "non-pub `double` must get `internal fastcc` linkage+cc in exe mode (3D + fix C); got:\n{ir}"
     );
 }
 

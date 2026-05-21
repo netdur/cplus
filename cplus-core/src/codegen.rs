@@ -11,7 +11,7 @@
 use crate::ast::*;
 use crate::sema::{EnumId, StructId, Ty};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 /// Slice 1B (v0.0.2): module-level metadata table. `!range` nodes need
@@ -57,6 +57,22 @@ struct ModuleMetadata {
     /// The key is a `String` (not `&'static str`) so the v0.0.8
     /// finding 4 aggregate-leaf path doesn't need to leak strings.
     tbaa_leaves: RefCell<HashMap<String, u32>>,
+    /// v0.0.8 bench-gap fix C: set of user-function mangled names that
+    /// are safe to mark `fastcc`. Populated once per module before the
+    /// per-item emission loop. A name is in this set iff:
+    ///   1. The function has `internal` linkage in the LLVM module
+    ///      (non-`pub` user fn, non-`pub` non-drop method).
+    ///   2. The function's address is never taken anywhere in the
+    ///      program (no bare-`Ident` reference resolving to it outside
+    ///      a `Call` callee position).
+    ///   3. The function isn't a drop method (those use
+    ///      `preserve_nonecc`, which can't compose with `fastcc`).
+    ///   4. The function isn't `main` (the C runtime requires C cc).
+    /// `fastcc` lets LLVM pick its own register-passing convention for
+    /// the callee, skipping the C-ABI's caller-saved register set on
+    /// purely-internal calls. obs.md flagged this as a "few percent on
+    /// call-heavy code" win, cumulative with fix A.
+    fastcc_funcs: RefCell<HashSet<String>>,
 }
 
 impl ModuleMetadata {
@@ -118,6 +134,27 @@ impl ModuleMetadata {
             .borrow_mut()
             .push(format!("!{id} = !{{{}}}", items.join(", ")));
         id
+    }
+
+    /// v0.0.8 fix C: is this user-function's mangled name safe to emit
+    /// with `fastcc`? Queried by both the function/method definition
+    /// emitters (to compose `internal fastcc` linkage+cc) and every
+    /// direct-call site emitter (to compose `call fastcc <ty> @name`).
+    /// Returns false when the set hasn't been populated yet, so the
+    /// default-cc path always works pre-pre-pass.
+    fn is_fastcc(&self, mangled: &str) -> bool {
+        self.fastcc_funcs.borrow().contains(mangled)
+    }
+
+    /// v0.0.8 fix C: shorthand for the `"fastcc "` prefix string when
+    /// the named callee is fastcc, `""` otherwise. Caller concatenates
+    /// directly into a `define` or `call` instruction.
+    fn fastcc_prefix(&self, mangled: &str) -> &'static str {
+        if self.is_fastcc(mangled) {
+            "fastcc "
+        } else {
+            ""
+        }
     }
 
     /// v0.0.7 Slice 1.2: return the TBAA leaf ID for a primitive `ty`,
@@ -842,6 +879,42 @@ fn generate_inner(
     // codegen each function; flushed to `out` after every function body is
     // written and before DWARF (which has its own ID range).
     let md = ModuleMetadata::new();
+    // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
+    // user-defined function or method gets `fastcc` iff it has internal
+    // linkage (non-`pub`, non-`main`, non-extern, non-drop) AND its
+    // address is not taken anywhere in the program. Drop methods stay
+    // on `preserve_nonecc` — fastcc can't compose with it. `main` keeps
+    // C cc so the OS runtime can invoke it.
+    {
+        let address_taken = collect_address_taken_fns(program, &sigs);
+        let mut fastcc = md.fastcc_funcs.borrow_mut();
+        for item in &program.items {
+            match &item.kind {
+                ItemKind::Function(f) => {
+                    if f.generic_params.is_empty()
+                        && !f.is_pub
+                        && !f.is_extern
+                        && f.name.name != "main"
+                        && !address_taken.contains(&f.name.name)
+                    {
+                        fastcc.insert(f.name.name.clone());
+                    }
+                }
+                ItemKind::Impl(b) => {
+                    let target_name = &b.target.name;
+                    for m in &b.methods {
+                        if m.generic_params.is_empty()
+                            && !m.is_pub
+                            && m.name.name != "drop"
+                        {
+                            fastcc.insert(mangle(target_name, &m.name.name));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let tramps = ThreadTrampolines::new();
     write_preamble(&mut out);
     if test_mode {
@@ -3210,6 +3283,185 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
     table
 }
 
+/// v0.0.8 bench-gap fix C: walk the program collecting names of free
+/// functions whose address is taken anywhere (any `Ident(name)` outside
+/// a `Call` callee position where `name` resolves to a fn). Used to
+/// gate the `fastcc` calling convention — a function with `fastcc` cc
+/// can't be safely called through a C-cc fn pointer, so any function
+/// whose `&f` form appears in source must keep the default C cc.
+///
+/// "Free fn" here means a `sigs`-registered top-level function. Methods
+/// (looked up via type + name) aren't take-the-address-able in C+ —
+/// there's no `&T::method` syntax — so they're never added to the set.
+fn collect_address_taken_fns(
+    program: &Program,
+    sigs: &HashMap<String, FnSig>,
+) -> HashSet<String> {
+    fn visit_expr(e: &Expr, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                if sigs.contains_key(name) {
+                    taken.insert(name.clone());
+                }
+            }
+            ExprKind::Call { callee, args, .. } => {
+                // Direct call: `f(...)` where callee is a bare Ident is
+                // NOT address-taking — that's the only case where an
+                // Ident referring to a fn name is safe to skip. Any
+                // other callee shape (parenthesized, indirect via a
+                // local fn-ptr, etc.) gets recursed normally.
+                if !matches!(callee.kind, ExprKind::Ident(_)) {
+                    visit_expr(callee, sigs, taken);
+                }
+                for a in args {
+                    visit_expr(a, sigs, taken);
+                }
+            }
+            ExprKind::Block(b) | ExprKind::Unsafe(b) => visit_block(b, sigs, taken),
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_expr(inner, sigs, taken),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                visit_expr(cond, sigs, taken);
+                visit_block(then, sigs, taken);
+                if let Some(eb) = else_branch {
+                    visit_expr(eb, sigs, taken);
+                }
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                visit_expr(lhs, sigs, taken);
+                visit_expr(rhs, sigs, taken);
+            }
+            ExprKind::Unary { operand, .. } => visit_expr(operand, sigs, taken),
+            ExprKind::Field { receiver, .. } => visit_expr(receiver, sigs, taken),
+            ExprKind::Index { receiver, index } => {
+                visit_expr(receiver, sigs, taken);
+                visit_expr(index, sigs, taken);
+            }
+            ExprKind::Assign { target, value, .. } => {
+                visit_expr(target, sigs, taken);
+                visit_expr(value, sigs, taken);
+            }
+            ExprKind::Cast { expr: inner, .. } => visit_expr(inner, sigs, taken),
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    visit_expr(s, sigs, taken);
+                }
+                if let Some(e) = end {
+                    visit_expr(e, sigs, taken);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                visit_expr(scrutinee, sigs, taken);
+                for a in arms {
+                    visit_expr(&a.body, sigs, taken);
+                }
+            }
+            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    visit_expr(&f.value, sigs, taken);
+                }
+            }
+            ExprKind::ArrayLit { elements }
+            | ExprKind::TupleLit { elements }
+            | ExprKind::GenericEnumCall { args: elements, .. } => {
+                for e in elements {
+                    visit_expr(e, sigs, taken);
+                }
+            }
+            ExprKind::InterpStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(e) = p {
+                        visit_expr(e, sigs, taken);
+                    }
+                }
+            }
+            // Leaves: literals, paths (Type::variant — not a free-fn
+            // address), include_bytes/str compiler builtins.
+            ExprKind::IntLit(_, _)
+            | ExprKind::FloatLit(_, _)
+            | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_)
+            | ExprKind::Path { .. }
+            | ExprKind::IncludeBytes { .. }
+            | ExprKind::IncludeStr { .. } => {}
+        }
+    }
+    fn visit_block(b: &Block, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+        for s in &b.stmts {
+            visit_stmt(s, sigs, taken);
+        }
+        if let Some(t) = &b.tail {
+            visit_expr(t, sigs, taken);
+        }
+    }
+    fn visit_stmt(s: &Stmt, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
+        match &s.kind {
+            StmtKind::Let { init, .. } => {
+                if let Some(e) = init {
+                    visit_expr(e, sigs, taken);
+                }
+            }
+            StmtKind::Expr(e) | StmtKind::Assert(e) | StmtKind::Defer(e) => {
+                visit_expr(e, sigs, taken);
+            }
+            StmtKind::Return(e) => {
+                if let Some(e) = e {
+                    visit_expr(e, sigs, taken);
+                }
+            }
+            StmtKind::While { cond, body, .. } => {
+                visit_expr(cond, sigs, taken);
+                visit_block(body, sigs, taken);
+            }
+            StmtKind::For(forloop, _) => match forloop {
+                crate::ast::ForLoop::Range { iter, body, .. } => {
+                    visit_expr(iter, sigs, taken);
+                    visit_block(body, sigs, taken);
+                }
+                crate::ast::ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    if let Some(s) = init {
+                        visit_stmt(s, sigs, taken);
+                    }
+                    if let Some(c) = cond {
+                        visit_expr(c, sigs, taken);
+                    }
+                    for u in update {
+                        visit_expr(u, sigs, taken);
+                    }
+                    visit_block(body, sigs, taken);
+                }
+            },
+            StmtKind::Loop(body, _) => visit_block(body, sigs, taken),
+            _ => {}
+        }
+    }
+    let mut taken: HashSet<String> = HashSet::new();
+    for item in &program.items {
+        match &item.kind {
+            ItemKind::Function(f) if f.generic_params.is_empty() => {
+                visit_block(&f.body, sigs, &mut taken);
+            }
+            ItemKind::Impl(b) => {
+                for m in &b.methods {
+                    if m.generic_params.is_empty() {
+                        visit_block(&m.body, sigs, &mut taken);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    taken
+}
+
 /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: emit one `@.bytes.N` global
 /// per unique resolved path in sema's compile-time-blobs map and
 /// populate `md.compile_time_blobs` with the per-call-site lookup.
@@ -3557,7 +3809,19 @@ fn gen_function(
     } else {
         "internal "
     };
-    write!(out, "define {}{} @{}(", linkage, sig_return_ty, f.name.name).unwrap();
+    // v0.0.8 bench-gap fix C: `internal`-linkage functions whose
+    // address isn't taken anywhere can use `fastcc` (LLVM picks its own
+    // register-passing convention for the callee, skipping the C ABI's
+    // caller-saved register set). The eligibility set was computed in
+    // `generate_inner` from the address-taken pre-pass; callers that
+    // reach this function via direct call also emit `call fastcc` so
+    // the cc matches.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&f.name.name)
+    } else {
+        ""
+    };
+    write!(out, "define {}{}{} @{}(", linkage, cc, sig_return_ty, f.name.name).unwrap();
     if uses_sret {
         // sret slot: caller-allocated, callee-writable, exact size + align.
         let (sz, al) =
@@ -3642,6 +3906,10 @@ fn gen_function(
     // predicate can check musttail signature equality against the callee.
     state.enclosing_params = sig.params.iter().map(|(t, _, _)| t.clone()).collect();
     state.tail_call_eligible = true;
+    // v0.0.8 fix C: musttail requires caller and callee to share a cc.
+    // Record the enclosing fn's cc decision so the Return-stmt predicate
+    // can match it against the callee's cc.
+    state.enclosing_is_fastcc = cc == "fastcc ";
     // Slice 1D: if this fn uses sret, remember the slot's SSA name (%0) so
     // StmtKind::Return can store-into it before `ret void`.
     if uses_sret {
@@ -3866,10 +4134,16 @@ fn gen_async_method(
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
     let linkage = if m.is_pub { "" } else { "internal " };
+    // v0.0.8 fix C: non-pub async method → eligible for fastcc.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&mangled)
+    } else {
+        ""
+    };
 
     // Function header: receiver + params, returns Future[T] (single-ptr
     // aggregate, fits in a register — no sret).
-    write!(out, "define {}{} @{}(", linkage, future_llvm, mangled).unwrap();
+    write!(out, "define {}{}{} @{}(", linkage, cc, future_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
@@ -4095,11 +4369,17 @@ fn gen_gen_method(
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
     let linkage = if m.is_pub { "" } else { "internal " };
+    // v0.0.8 fix C: non-pub gen method → eligible for fastcc.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&mangled)
+    } else {
+        ""
+    };
 
     // Function header: same receiver + param structure as a regular
     // method, but the return is `Iterator[T]` (one-ptr aggregate that
     // fits in a register, so no sret).
-    write!(out, "define {}{} @{}(", linkage, iter_llvm, mangled).unwrap();
+    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
@@ -4302,9 +4582,15 @@ fn gen_gen_function(
     } else {
         "internal "
     };
+    // v0.0.8 fix C: non-pub gen function → eligible for fastcc.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&f.name.name)
+    } else {
+        ""
+    };
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
-    write!(out, "define {}{} @{}(", linkage, iter_llvm, f.name.name).unwrap();
+    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, f.name.name).unwrap();
     for (i, (param, (pty, _move_flag, _mut_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
@@ -4434,13 +4720,19 @@ fn gen_async_function(
     } else {
         "internal "
     };
+    // v0.0.8 fix C: non-pub async function → eligible for fastcc.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&f.name.name)
+    } else {
+        ""
+    };
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
     // Function signature. Async fns can't be C-exports (no extern
     // pub), so we don't need the C-ABI coercion paths. They also
     // can't use the sret return path because the return value
     // (Future[T] = { *u8 }) is just one ptr — fits in a register.
-    write!(out, "define {}{} @{}(", linkage, future_llvm, f.name.name).unwrap();
+    write!(out, "define {}{}{} @{}(", linkage, cc, future_llvm, f.name.name).unwrap();
     for (i, (param, (pty, _move_flag, _mut_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
@@ -4659,13 +4951,19 @@ fn gen_enum_method(
     let enum_ty = Ty::Enum(enum_id);
 
     let linkage = if m.is_pub { "" } else { "internal " };
+    // v0.0.8 fix C: non-pub enum method → eligible for fastcc.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&mangled)
+    } else {
+        ""
+    };
     let uses_sret = return_passes_by_sret_widened(&return_ty, types);
     let return_ty_str = if uses_sret {
         "void".to_string()
     } else {
         llvm_ty(&return_ty, types)
     };
-    write!(out, "define {}{} @{}(", linkage, return_ty_str, mangled).unwrap();
+    write!(out, "define {}{}{} @{}(", linkage, cc, return_ty_str, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     if uses_sret {
@@ -4811,9 +5109,15 @@ fn gen_gen_enum_method(
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
     let linkage = if m.is_pub { "" } else { "internal " };
+    // v0.0.8 fix C: non-pub gen enum method → eligible for fastcc.
+    let cc = if linkage == "internal " {
+        md.fastcc_prefix(&mangled)
+    } else {
+        ""
+    };
     let enum_ty = Ty::Enum(enum_id);
 
-    write!(out, "define {}{} @{}(", linkage, iter_llvm, mangled).unwrap();
+    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     if let Some(rcv) = sig.receiver {
@@ -5001,8 +5305,14 @@ fn gen_method(
     // cold helper. `preserve_nonecc` requires clang/LLVM 17+; macOS
     // shipped that in Xcode 15.3 (Feb 2024).
     let is_drop_method = m.name.name == "drop";
+    // v0.0.8 bench-gap fix C: non-drop, non-pub methods can use
+    // `fastcc` (LLVM-internal register-passing cc). Drop methods stay
+    // `preserve_nonecc` — fastcc can't compose with it. `pub` methods
+    // have external linkage and must keep C cc for the public ABI.
     let cc_prefix = if is_drop_method {
         "preserve_nonecc "
+    } else if !m.is_pub && md.is_fastcc(&mangled) {
+        "fastcc "
     } else {
         ""
     };
@@ -5427,6 +5737,12 @@ struct FnState<'a> {
     /// position would mismatch. Disable musttail in method bodies to keep
     /// the predicate simple. Set by `gen_function`; defaults false.
     tail_call_eligible: bool,
+    /// v0.0.8 fix C: true iff the enclosing function itself is emitted
+    /// with the `fastcc` calling convention. LLVM's musttail verifier
+    /// requires caller and callee to share a cc — when this is set, the
+    /// musttail predicate only fires if the callee is also fastcc;
+    /// when unset, the callee must also be default-cc.
+    enclosing_is_fastcc: bool,
     /// Slice 1D (v0.0.2): SSA name of this fn's sret parameter (the
     /// caller-allocated result slot) when `return_passes_by_sret` fires.
     /// `StmtKind::Return` consults it: `Some(slot)` → store the value to
@@ -5513,6 +5829,7 @@ impl<'a> FnState<'a> {
             pending_musttail: false,
             enclosing_params: Vec::new(),
             tail_call_eligible: false,
+            enclosing_is_fastcc: false,
             sret_slot: None,
             coerce_ret: None,
             tramps,
@@ -6266,10 +6583,17 @@ impl<'a> FnState<'a> {
                                             sig.params.iter().map(|(t, _, _)| t).collect();
                                         let enclosing: Vec<&Ty> =
                                             self.enclosing_params.iter().collect();
+                                        // v0.0.8 fix C: musttail requires
+                                        // caller and callee to share a
+                                        // calling convention.
+                                        let callee_is_fastcc = self.md.is_fastcc(name);
+                                        let cc_matches = callee_is_fastcc
+                                            == self.enclosing_is_fastcc;
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
                                             && callee_params == enclosing
                                             && name != "println"
+                                            && cc_matches
                                         {
                                             self.pending_musttail = true;
                                         }
@@ -8660,8 +8984,12 @@ impl<'a> FnState<'a> {
                         head.push_str(", ");
                         head.push_str(&arg_str);
                     }
+                    // v0.0.8 fix C: musttail requires the call-site cc
+                    // to match the callee's exactly. If the callee is
+                    // fastcc, emit `musttail call fastcc ...`.
+                    let cc = self.md.fastcc_prefix(symbol);
                     self.emit(&format!(
-                        "musttail call void{type_prefix} @{symbol}({head})"
+                        "musttail call {cc}void{type_prefix} @{symbol}({head})"
                     ));
                     // Return type signaled to upstream — but musttail in
                     // tail position is always followed by `ret void`
@@ -8684,7 +9012,9 @@ impl<'a> FnState<'a> {
                 head.push_str(", ");
                 head.push_str(&arg_str);
             }
-            self.emit(&format!("call void{type_prefix} @{symbol}({head})"));
+            // v0.0.8 fix C: sret call site picks up the callee's cc too.
+            let cc = self.md.fastcc_prefix(symbol);
+            self.emit(&format!("call {cc}void{type_prefix} @{symbol}({head})"));
             let v = self.next_tmp();
             // v0.0.7 Slice 1.2: sret-call result reload. `ret` is
             // typically an aggregate (the whole reason for sret), so
@@ -8698,17 +9028,21 @@ impl<'a> FnState<'a> {
         } else {
             "call"
         };
+        // v0.0.8 fix C: mirror the callee's cc at the call site. The
+        // `fastcc_prefix` lookup keys on the cpc-internal symbol; extern
+        // / runtime names lookup-miss and stay default-cc.
+        let cc = self.md.fastcc_prefix(symbol);
         match sig.return_type {
             Ty::Unit => {
                 self.emit(&format!(
-                    "{call_kind} void{type_prefix} @{symbol}({arg_str})"
+                    "{call_kind} {cc}void{type_prefix} @{symbol}({arg_str})"
                 ));
                 None
             }
             ret => {
                 let v = self.next_tmp();
                 self.emit(&format!(
-                    "{v} = {call_kind} {}{type_prefix} @{symbol}({arg_str})",
+                    "{v} = {call_kind} {cc}{}{type_prefix} @{symbol}({arg_str})",
                     self.lty(&ret)
                 ));
                 Some((v, ret))
@@ -9635,6 +9969,8 @@ impl<'a> FnState<'a> {
         // v0.0.3 Slice 1P: method-call sret. Same logic as gen_named_call
         // — non-Copy struct returns flow through a caller-allocated slot
         // so cross-module returns don't double-drop the heap buffer.
+        // v0.0.8 fix C: mirror the callee's cc at the call site.
+        let cc = self.md.fastcc_prefix(&mangled);
         if return_passes_by_sret_widened(&info.return_type, self.types) {
             let ret = info.return_type.clone();
             let _ = self.lty(&ret);
@@ -9644,7 +9980,7 @@ impl<'a> FnState<'a> {
                 head.push_str(", ");
                 head.push_str(&arg_str);
             }
-            self.emit(&format!("call void @{mangled}({head})"));
+            self.emit(&format!("call {cc}void @{mangled}({head})"));
             let v = self.next_tmp();
             // v0.0.7 Slice 1.2: method-call sret reload — aggregate ret.
             self.gen_load(&v, &ret, &slot);
@@ -9652,13 +9988,13 @@ impl<'a> FnState<'a> {
         }
         match info.return_type {
             Ty::Unit => {
-                self.emit(&format!("call void @{mangled}({arg_str})"));
+                self.emit(&format!("call {cc}void @{mangled}({arg_str})"));
                 None
             }
             ret => {
                 let v = self.next_tmp();
                 self.emit(&format!(
-                    "{v} = call {} @{mangled}({arg_str})",
+                    "{v} = call {cc}{} @{mangled}({arg_str})",
                     self.lty(&ret)
                 ));
                 Some((v, ret))
@@ -9725,6 +10061,8 @@ impl<'a> FnState<'a> {
             }
         }
         let arg_str = arg_parts.join(", ");
+        // v0.0.8 fix C: mirror callee's cc.
+        let cc = self.md.fastcc_prefix(&mangled);
         if return_passes_by_sret_widened(&info.return_type, self.types) {
             let ret = info.return_type.clone();
             let _ = self.lty(&ret);
@@ -9734,7 +10072,7 @@ impl<'a> FnState<'a> {
                 head.push_str(", ");
                 head.push_str(&arg_str);
             }
-            self.emit(&format!("call void @{mangled}({head})"));
+            self.emit(&format!("call {cc}void @{mangled}({head})"));
             let v = self.next_tmp();
             // v0.0.7 Slice 1.2: sret reload — aggregate ret.
             self.gen_load(&v, &ret, &slot);
@@ -9742,7 +10080,7 @@ impl<'a> FnState<'a> {
         }
         match &info.return_type {
             Ty::Unit => {
-                self.emit(&format!("call void @{mangled}({arg_str})"));
+                self.emit(&format!("call {cc}void @{mangled}({arg_str})"));
                 // gen_method_call's signature is Option<(String, Ty)>;
                 // returning a placeholder isn't quite right but the
                 // caller treats Unit specially. Use a fresh undef tmp.
@@ -9751,7 +10089,7 @@ impl<'a> FnState<'a> {
             ret => {
                 let v = self.next_tmp();
                 self.emit(&format!(
-                    "{v} = call {} @{mangled}({arg_str})",
+                    "{v} = call {cc}{} @{mangled}({arg_str})",
                     self.lty(ret)
                 ));
                 (v, ret.clone())
@@ -9839,6 +10177,8 @@ impl<'a> FnState<'a> {
         // dispatch when the method's return type is non-Copy aggregate.
         // The method's `define` signature uses sret (per gen_method's
         // uses_sret branch); the call must match.
+        // v0.0.8 fix C: mirror callee's cc.
+        let cc = self.md.fastcc_prefix(&mangled);
         if return_passes_by_sret_widened(&info.return_type, self.types) {
             let ret = info.return_type.clone();
             let lty = self.lty(&ret);
@@ -9848,7 +10188,7 @@ impl<'a> FnState<'a> {
                 head.push_str(", ");
                 head.push_str(&arg_str);
             }
-            self.emit(&format!("call void @{mangled}({head})"));
+            self.emit(&format!("call {cc}void @{mangled}({head})"));
             let v = self.next_tmp();
             // v0.0.7 Slice 1.2: sret reload — aggregate ret.
             let _ = lty;
@@ -9857,13 +10197,13 @@ impl<'a> FnState<'a> {
         }
         match info.return_type {
             Ty::Unit => {
-                self.emit(&format!("call void @{mangled}({arg_str})"));
+                self.emit(&format!("call {cc}void @{mangled}({arg_str})"));
                 None
             }
             ret => {
                 let v = self.next_tmp();
                 self.emit(&format!(
-                    "{v} = call {} @{mangled}({arg_str})",
+                    "{v} = call {cc}{} @{mangled}({arg_str})",
                     self.lty(&ret)
                 ));
                 Some((v, ret))
@@ -11848,7 +12188,7 @@ mod tests {
         // Count GEPs into Vec3 inside @dot.
         let dot_body: Vec<&str> = ir
             .lines()
-            .skip_while(|l| !l.contains("define internal float @dot"))
+            .skip_while(|l| !l.contains("define internal fastcc float @dot"))
             .take_while(|l| !l.starts_with("}"))
             .collect();
         let gep_count = dot_body
@@ -12123,8 +12463,10 @@ mod tests {
         let ir = gen_src(
             "fn double(x: i32) -> i32 { return x + x; }\nfn main() -> i32 { return double(21); }",
         );
+        // v0.0.8 fix C: non-pub `double` gets internal linkage + fastcc.
+        // Both the define and the call site emit the cc.
         assert!(ir.contains("i32 @double"));
-        assert!(ir.contains("call i32 @double"));
+        assert!(ir.contains("call fastcc i32 @double"));
     }
 
     #[test]
@@ -12224,10 +12566,13 @@ mod tests {
             ir.contains("void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
             "bump definition missing param attrs, got:\n{ir}"
         );
-        // Call site now mirrors the same attrs.
+        // Call site now mirrors the same attrs. v0.0.8 fix C: `bump`
+        // is non-pub so the call site also picks up `fastcc`.
         assert!(
-            ir.contains("call void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 "),
-            "bump call site missing param attrs, got:\n{ir}"
+            ir.contains(
+                "call fastcc void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 "
+            ),
+            "bump call site missing param attrs (or fastcc), got:\n{ir}"
         );
     }
 
@@ -12246,13 +12591,92 @@ mod tests {
             "peek definition missing readonly attr set, got:\n{ir}"
         );
         assert!(
-            ir.contains("call i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 "),
-            "peek call site missing readonly attr set, got:\n{ir}"
+            ir.contains(
+                "call fastcc i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 "
+            ),
+            "peek call site missing readonly attr set (or fastcc), got:\n{ir}"
         );
         // And NOT `noalias` at the call site — shared borrow can alias.
         assert!(
-            !ir.contains("call i32 @peek(ptr noalias"),
+            !ir.contains("call fastcc i32 @peek(ptr noalias"),
             "shared call site must not get `noalias`, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn fix_c_pub_fn_keeps_default_cc() {
+        // v0.0.8 fix C: `pub fn` has external linkage and must keep C
+        // cc so its callers (other modules, the C ABI) can invoke it.
+        let ir = gen_src(
+            "pub fn pub_api(x: i32) -> i32 { return x +% x; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // No `fastcc` after `define ` on the pub fn.
+        assert!(
+            ir.contains("define i32 @pub_api(i32 noundef %0)"),
+            "pub fn must keep default cc, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("define fastcc i32 @pub_api"),
+            "pub fn must NOT be fastcc, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn fix_c_main_keeps_default_cc() {
+        // v0.0.8 fix C: `main` is the OS-runtime entry point and must
+        // keep C cc no matter what.
+        let ir = gen_src("fn main() -> i32 { return 0; }");
+        assert!(
+            ir.contains("define i32 @main()"),
+            "main must keep default cc, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("define fastcc i32 @main"),
+            "main must NOT be fastcc, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn fix_c_address_taken_fn_keeps_default_cc() {
+        // v0.0.8 fix C: if `&f` (i.e. the fn name as a value, not as a
+        // Call's callee) appears anywhere, the address-taken pre-pass
+        // adds `f` to the address-taken set and the eligibility check
+        // drops it from fastcc. Otherwise calls through a C-cc fn
+        // pointer would mismatch the fastcc callee.
+        let ir = gen_src(
+            "fn target() -> i32 { return 7; }\n\
+             fn main() -> i32 {\n\
+                 let fp: fn() -> i32 = target;\n\
+                 return fp();\n\
+             }",
+        );
+        assert!(
+            ir.contains("define internal i32 @target()"),
+            "address-taken target must keep default cc, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("define internal fastcc i32 @target"),
+            "address-taken target must NOT be fastcc, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn fix_c_internal_fn_gets_fastcc() {
+        // v0.0.8 fix C: a non-pub, non-extern, non-main, not-address-
+        // taken function gets `internal fastcc`.
+        let ir = gen_src(
+            "fn helper(x: i32) -> i32 { return x +% x; }\n\
+             fn main() -> i32 { return helper(7); }",
+        );
+        assert!(
+            ir.contains("define internal fastcc i32 @helper("),
+            "internal helper must get fastcc, got:\n{ir}"
+        );
+        // Direct call also picks up fastcc.
+        assert!(
+            ir.contains("call fastcc i32 @helper("),
+            "call site must mirror fastcc, got:\n{ir}"
         );
     }
 
@@ -12657,8 +13081,9 @@ mod tests {
              fn main() -> i32 { let _p: P = P::new(5); return 0; }",
         );
         assert!(ir.contains("%P @P.new(i32 "), "expected mangled name: {ir}");
+        // v0.0.8 fix C: `P.new` is non-pub → fastcc at the call site.
         assert!(
-            ir.contains("call %P @P.new("),
+            ir.contains("call fastcc %P @P.new("),
             "expected mangled call: {ir}"
         );
     }
@@ -12709,7 +13134,8 @@ mod tests {
              fn main() -> i32 { let p: P = P { x: 1 }; return p.get(); }",
         );
         // Call site loads the Copy receiver and passes by value.
-        assert!(ir.contains("call i32 @P.get(%P "));
+        // v0.0.8 fix C: non-pub method → fastcc at call site.
+        assert!(ir.contains("call fastcc i32 @P.get(%P "));
     }
 
     #[test]
@@ -12726,8 +13152,9 @@ mod tests {
             ir.contains("i32 @Q.get(ptr "),
             "non-Copy receiver must stay pointer-passed: {ir}"
         );
+        // v0.0.8 fix C: non-pub Q.get → fastcc at the call site.
         assert!(
-            ir.contains("call i32 @Q.get(ptr "),
+            ir.contains("call fastcc i32 @Q.get(ptr "),
             "non-Copy call site must stay pointer-passed: {ir}"
         );
     }
@@ -12902,8 +13329,9 @@ mod tests {
             "expected `mut t: Tag` to lower to `ptr noalias` param, got: {ir}"
         );
         // Call site still passes a pointer, not a struct value.
+        // v0.0.8 fix C: non-pub `bump` → fastcc at the call.
         assert!(
-            ir.contains("call void @bump(ptr "),
+            ir.contains("call fastcc void @bump(ptr "),
             "expected call site to pass ptr for non-Copy mut arg, got: {ir}"
         );
     }
@@ -12924,8 +13352,9 @@ mod tests {
             ir.contains("i32 @peek(ptr readonly "),
             "expected `t: Tag` to lower to `ptr readonly` param, got: {ir}"
         );
+        // v0.0.8 fix C: non-pub `peek` → fastcc at the call.
         assert!(
-            ir.contains("call i32 @peek(ptr "),
+            ir.contains("call fastcc i32 @peek(ptr "),
             "expected call site to pass ptr for non-Copy shared arg, got: {ir}"
         );
     }
@@ -13064,8 +13493,9 @@ mod tests {
             "expected `mut t: Tag` to lower to `ptr noalias`, got: {ir}"
         );
         // Call site: by-value receiver, ptr for the mut param.
+        // v0.0.8 fix C: non-pub Tool.poke → fastcc at the call.
         assert!(
-            ir.contains("call void @Tool.poke(%Tool "),
+            ir.contains("call fastcc void @Tool.poke(%Tool "),
             "expected call to pass Copy receiver by value, got: {ir}"
         );
     }
@@ -13787,7 +14217,15 @@ mod tests {
     }
 
     #[test]
-    fn non_drop_call_sites_have_no_cc_prefix() {
+    fn non_drop_call_sites_use_fastcc_not_preserve_nonecc() {
+        // Slice 1F: only `drop` methods get `preserve_nonecc` (the cold
+        // cc that skips callee-save register saves). Other methods stay
+        // out of that path.
+        //
+        // v0.0.8 fix C: non-pub, non-drop methods now get `fastcc` (a
+        // different cc, but distinct from `preserve_nonecc`). Verify
+        // both: `R.drop` uses preserve_nonecc; `R.bump` (non-pub
+        // non-drop) uses fastcc.
         let ir = gen_src(
             "struct R { v: i32 }\n\
              impl R {\n\
@@ -13796,10 +14234,21 @@ mod tests {
              }\n\
              fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }",
         );
-        // R.bump call must be plain `call i32 @R.bump(...)`, no CC.
+        // R.bump is fastcc; R.drop is preserve_nonecc — the two never
+        // share a cc, but both call sites carry SOME cc tag now.
         assert!(
-            ir.contains("call i32 @R.bump("),
-            "expected default-CC call to R.bump, got:\n{ir}"
+            ir.contains("call fastcc i32 @R.bump("),
+            "expected fastcc call to R.bump, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("call fastcc preserve_nonecc")
+                && !ir.contains("call preserve_nonecc fastcc"),
+            "drop's preserve_nonecc and bump's fastcc must not collide, got:\n{ir}"
+        );
+        // Drop call still emits preserve_nonecc.
+        assert!(
+            ir.contains("call preserve_nonecc void @R.drop("),
+            "expected preserve_nonecc call to R.drop, got:\n{ir}"
         );
     }
 
@@ -13821,12 +14270,16 @@ mod tests {
              }\n\
              fn main() -> i32 { return sum_to(10, 0); }",
         );
-        // The recursive call must be musttail.
+        // The recursive call must be musttail. v0.0.8 fix C: non-pub
+        // `sum_to` → fastcc; musttail call site must mirror the cc.
         let line = ir
             .lines()
-            .find(|l| l.contains("call i32 @sum_to") && l.contains("musttail"))
+            .find(|l| l.contains("call fastcc i32 @sum_to") && l.contains("musttail"))
             .expect("expected musttail recursive call");
-        assert!(line.contains("musttail call i32 @sum_to"), "got: {line}");
+        assert!(
+            line.contains("musttail call fastcc i32 @sum_to"),
+            "got: {line}"
+        );
     }
 
     #[test]
@@ -13846,7 +14299,7 @@ mod tests {
         let main_end = ir[main_start..].find("\n}\n").expect("@main close");
         let main_body = &ir[main_start..main_start + main_end];
         assert!(
-            main_body.contains("call i32 @sum_to"),
+            main_body.contains("call fastcc i32 @sum_to"),
             "expected call to sum_to in main: {main_body}"
         );
         assert!(
@@ -13865,13 +14318,14 @@ mod tests {
              fn main() -> i32 { return caller(0); }",
         );
         // caller → short_id: same signature, same return → musttail.
+        // v0.0.8 fix C: non-pub `short_id` → fastcc at the call.
         assert!(
-            ir.contains("musttail call i32 @short_id"),
+            ir.contains("musttail call fastcc i32 @short_id"),
             "expected matching-sig musttail, got:\n{ir}"
         );
         // long_id is never tail-called.
         assert!(
-            !ir.contains("musttail call i64 @long_id"),
+            !ir.contains("musttail call fastcc i64 @long_id"),
             "i64 fn must not appear as musttail from i32-returning caller, got:\n{ir}"
         );
     }
@@ -13980,8 +14434,9 @@ mod tests {
             "fn greet() -> string { return \"hi\".to_string(); }\n\
              fn main() -> i32 { let s: string = greet(); return 0; }",
         );
+        // v0.0.8 fix C: non-pub `greet` → fastcc at the call.
         assert!(
-            ir.contains("call void @greet(ptr "),
+            ir.contains("call fastcc void @greet(ptr "),
             "expected void-returning call to greet, got:\n{ir}"
         );
         // After the call, the caller loads the value back from the slot.
@@ -14060,8 +14515,10 @@ mod tests {
         let c_start = ir.find("void @caller(").expect("caller emitted");
         let c_end = ir[c_start..].find("\n}\n").expect("caller close");
         let c_body = &ir[c_start..c_start + c_end];
+        // v0.0.8 fix C: non-pub helper → fastcc; the musttail call site
+        // must mirror it.
         assert!(
-            c_body.contains("musttail call void @helper(ptr sret(")
+            c_body.contains("musttail call fastcc void @helper(ptr sret(")
                 && c_body
                     .contains(") noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
             "expected musttail call forwarding caller's sret slot with sret attrs, got:\n{c_body}"
