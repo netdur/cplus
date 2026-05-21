@@ -2737,13 +2737,29 @@ fn write_preamble(out: &mut String) {
     out.push_str("\n");
     out.push_str("declare i32 @printf(ptr noundef, ...)\n");
     // Phase 8 slice 8.STR.3: byte-level string comparison.
-    out.push_str("declare i32 @memcmp(ptr, ptr, i64)\n");
+    // v0.0.8 bench-gap fix B: memcmp's two pointers are read-only and
+    // the function returns a deterministic value of the bytes — clang
+    // declares this libc header with `readonly` so the optimizer can
+    // hoist memcmp calls past intervening loads.
+    out.push_str("declare i32 @memcmp(ptr noundef readonly, ptr noundef readonly, i64 noundef)\n");
     // Phase 8 slice 8.STR.3: owned `string` runtime. malloc + free for
     // construction + Drop; memcpy for clone. realloc reserved for future
     // mutation API (not used in v1).
-    out.push_str("declare ptr @malloc(i64)\n");
+    //
+    // v0.0.8 bench-gap fix B: clang declares malloc with `noalias` on
+    // the return (fresh allocations don't alias existing memory) plus
+    // `noundef` on the size param + return. The `noalias` here is the
+    // single biggest enabler for LLVM's alias analysis to disambiguate
+    // heap regions against pre-existing pointers, which lets SROA /
+    // mem2reg / GVN forward more loads.
+    out.push_str("declare noalias noundef ptr @malloc(i64 noundef)\n");
     out.push_str("declare void @free(ptr)\n");
-    out.push_str("declare ptr @memcpy(ptr, ptr, i64)\n");
+    // v0.0.8 bench-gap fix B: memcpy's contract requires non-overlapping
+    // src/dst (C99 7.21.2.1) — encode that as `noalias` on both pointer
+    // params. `writeonly` on dst + `readonly` on src lets LLVM model the
+    // call as not reading the destination and not writing through the
+    // source, which is necessary for SROA / DSE around the copy.
+    out.push_str("declare ptr @memcpy(ptr noalias noundef writeonly, ptr noalias noundef readonly, i64 noundef)\n");
     // Phase 8 slice 8.STR.6: snprintf for blessed `to_string()` on
     // numeric primitives. Returns the number of bytes that *would have*
     // been written (excluding NUL); we use that as the resulting
@@ -12094,10 +12110,42 @@ mod tests {
     #[test]
     fn str_equality_uses_memcmp() {
         // Slice 8.STR.3: `==` on `str` lowers to a length-prechecked
-        // memcmp call.
+        // memcmp call. v0.0.8 fix B: the declaration carries the
+        // `readonly noundef` parameter attributes — see
+        // `libc_declarations_carry_noalias_and_readonly_attrs`.
         let ir = gen_src("fn main() -> i32 { if \"a\" == \"a\" { return 0; } return 1; }");
-        assert!(ir.contains("declare i32 @memcmp(ptr, ptr, i64)"));
+        assert!(ir.contains("declare i32 @memcmp("));
         assert!(ir.contains("call i32 @memcmp(ptr"));
+    }
+
+    #[test]
+    fn libc_declarations_carry_noalias_and_readonly_attrs() {
+        // v0.0.8 bench-gap fix B: libc declarations match clang's
+        // emission so LLVM's alias analysis can disambiguate heap
+        // allocations and non-overlapping byte copies. Trigger an IR
+        // emission that includes the libc preamble.
+        let ir = gen_src("fn main() -> i32 { return 0; }");
+        // malloc: noalias on the return + noundef everywhere.
+        assert!(
+            ir.contains("declare noalias noundef ptr @malloc(i64 noundef)"),
+            "malloc declaration missing noalias/noundef attrs, got:\n{ir}"
+        );
+        // memcpy: noalias on both ptr params, writeonly on dst, readonly on src.
+        assert!(
+            ir.contains(
+                "declare ptr @memcpy(ptr noalias noundef writeonly, \
+                 ptr noalias noundef readonly, i64 noundef)"
+            ),
+            "memcpy declaration missing noalias/writeonly/readonly attrs, got:\n{ir}"
+        );
+        // memcmp: readonly on both ptr params, noundef everywhere.
+        assert!(
+            ir.contains(
+                "declare i32 @memcmp(ptr noundef readonly, \
+                 ptr noundef readonly, i64 noundef)"
+            ),
+            "memcmp declaration missing readonly/noundef attrs, got:\n{ir}"
+        );
     }
 
     #[test]
