@@ -1489,6 +1489,58 @@ struct MethodInfo {
     /// pointer-pass ABI for non-Copy struct params (slice 5BC.codegen).
     params: Vec<(Ty, bool, bool)>,
     return_type: Ty,
+    /// v0.0.8 bench-gap fix D: if this method's body matches a known
+    /// "trivial" pattern, the call-site emitter substitutes the
+    /// pattern's IR directly instead of emitting a `call` instruction.
+    /// LLVM's inliner would do this at `-O3` anyway — but inlining at
+    /// cpc-emission time shrinks the IR clang has to optimize and lets
+    /// the optimizer converge faster on the remaining work.
+    trivial_inline: Option<TrivialInline>,
+}
+
+/// v0.0.8 bench-gap fix D: classify a method's body for cpc-side
+/// inlining. Today: getter pattern only — `fn name(self) -> T { return
+/// self.<field>; }`. Setter / pass-through / primitive-return patterns
+/// can land in the same enum if they prove load-bearing on a future
+/// benchmark.
+#[derive(Debug, Clone)]
+enum TrivialInline {
+    /// `fn name(self) -> FieldTy { return self.<field>; }` — Read
+    /// receiver, zero params, single-`return self.field` body. Inlines
+    /// to `gep inbounds %S, ptr <recv>, i32 0, i32 <field_idx>` + load.
+    GetField(String),
+}
+
+/// v0.0.8 fix D: detect the trivial-getter pattern. Returns
+/// `Some(GetField(field_name))` iff the method's body is a single
+/// `return self.<field>;` statement, the receiver is `self` (Read), the
+/// param list is empty, and the method isn't gen / async / generic.
+/// Drop methods are excluded by their `mut self` receiver. Returns
+/// `None` for any other shape.
+fn detect_trivial_inline(m: &Method) -> Option<TrivialInline> {
+    if !matches!(m.receiver, Some(Receiver::Read)) {
+        return None;
+    }
+    if !m.params.is_empty() || m.is_gen || m.is_async || !m.generic_params.is_empty() {
+        return None;
+    }
+    // Body must be exactly one statement, with no tail expression.
+    if m.body.stmts.len() != 1 || m.body.tail.is_some() {
+        return None;
+    }
+    let StmtKind::Return(Some(ret_expr)) = &m.body.stmts[0].kind else {
+        return None;
+    };
+    let ExprKind::Field { receiver, name } = &ret_expr.kind else {
+        return None;
+    };
+    let ExprKind::Ident(recv_name) = &receiver.kind else {
+        return None;
+    };
+    if recv_name != "self" {
+        return None;
+    }
+    Some(TrivialInline::GetField(name.name.clone()))
 }
 
 impl StructInfo {
@@ -1731,12 +1783,14 @@ fn collect_types(p: &Program) -> TypeTable {
                 } else {
                     declared_ret
                 };
+                let trivial_inline = detect_trivial_inline(m);
                 t.enum_defs[enum_id.0 as usize].methods.insert(
                     m.name.name.clone(),
                     MethodInfo {
                         receiver: m.receiver,
                         params,
                         return_type,
+                        trivial_inline,
                     },
                 );
             }
@@ -1777,12 +1831,14 @@ fn collect_types(p: &Program) -> TypeTable {
             } else {
                 declared_ret
             };
+            let trivial_inline = detect_trivial_inline(m);
             t.struct_defs[id.0 as usize].methods.insert(
                 m.name.name.clone(),
                 MethodInfo {
                     receiver: m.receiver,
                     params,
                     return_type,
+                    trivial_inline,
                 },
             );
             // Mirror sema's Drop detection so codegen knows which bindings
@@ -7288,6 +7344,17 @@ impl<'a> FnState<'a> {
                 // representation. For f32 we narrow first (so the f64 hex
                 // we emit, when re-narrowed to float by LLVM, round-trips
                 // to the exact f32 the user wrote).
+                //
+                // v0.0.8 fix E (closed, no work): obs.md claimed cpc
+                // emits `0x3FD99999A0000000` while C produces
+                // `0x3ECCCCCC` for `0.4f32` (a "double-rounding bug").
+                // Both halves of that claim are false: cpc and clang
+                // emit the same hex (`0x3FD99999A0000000`), and the
+                // correctly-rounded f32 for 0.4 IS `0x3ECCCCCD` (one ULP
+                // higher than the bad alternative). The (*v as f32 as
+                // f64) chain below is the canonical round-trip and
+                // produces bit-identical IR to clang. See test
+                // `fix_e_f32_literal_matches_clang_bit_pattern`.
                 let bits: u64 = match suf {
                     NumSuffix::F32 => (*v as f32 as f64).to_bits(),
                     _ => v.to_bits(),
@@ -9909,6 +9976,29 @@ impl<'a> FnState<'a> {
             .clone();
         let rcv = info.receiver.expect("sema validated instance call");
         let mangled = mangle(&struct_name, &name.name);
+
+        // v0.0.8 fix D: cpc-side inlining for trivial method bodies.
+        // When the method matches a known shape (getter, today), emit
+        // the equivalent IR directly at the call site instead of going
+        // through a `call` instruction. Saves the inliner pass cost +
+        // shrinks the IR clang sees. `recv_ptr` is already a pointer to
+        // the receiver's place (`gen_place` materialized it above), so
+        // the inline reuses the same address regardless of whether the
+        // receiver is Copy (by-value at the call ABI) or non-Copy
+        // (pointer-passed) — the place pointer is uniform.
+        if let Some(TrivialInline::GetField(field_name)) = &info.trivial_inline {
+            let struct_info = &self.types.struct_defs[id.0 as usize];
+            let field_idx = struct_info.field_index(field_name);
+            let field_ty = struct_info.field_type(field_name);
+            let llvm_struct = self.lty(&recv_ty);
+            let gep = self.next_tmp();
+            self.emit(&format!(
+                "{gep} = getelementptr inbounds {llvm_struct}, ptr {recv_ptr}, i32 0, i32 {field_idx}"
+            ));
+            let v = self.next_tmp();
+            self.gen_load(&v, &field_ty, &gep);
+            return Some((v, field_ty));
+        }
 
         // Build the LLVM call argument list. v0.0.8 fix A: Copy `self`
         // (Read) is passed by value to match `gen_method`'s by-value
@@ -12604,6 +12694,102 @@ mod tests {
     }
 
     #[test]
+    fn fix_d_trivial_getter_is_inlined_at_call_site() {
+        // v0.0.8 bench-gap fix D: a method whose body is exactly
+        // `return self.<field>;` (no params, Read receiver, no
+        // gen/async/generic) is inlined at the call site to a
+        // `getelementptr inbounds` + `load`, skipping the call. The
+        // method definition is still emitted (clang's DCE strips
+        // unreferenced internals at -O3).
+        let ir = gen_src(
+            "struct P { x: i32 }\n\
+             impl P { fn get(self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }",
+        );
+        // No `call ...@P.get` in main's body — the getter was inlined.
+        let main_start = ir.find("@main()").expect("@main present");
+        let main_end = ir[main_start..].find("\n}").expect("@main close");
+        let main_body = &ir[main_start..main_start + main_end];
+        assert!(
+            !main_body.contains("call fastcc i32 @P.get"),
+            "trivial getter must be inlined at call site, got:\n{main_body}"
+        );
+        // The inlined IR is GEP + load of field 0.
+        assert!(
+            main_body.contains("getelementptr inbounds %P,"),
+            "expected inlined GEP into P, got:\n{main_body}"
+        );
+    }
+
+    #[test]
+    fn fix_d_getter_with_extra_param_is_not_inlined() {
+        // Negative pin: the detector requires zero params. Adding any
+        // param (here, an unused `_unused: i32`) busts the trivial
+        // pattern and the call site keeps the `call` instruction.
+        let ir = gen_src(
+            "struct P { x: i32 }\n\
+             impl P { fn get(self, _unused: i32) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let p: P = P { x: 7 }; return p.get(0); }",
+        );
+        assert!(
+            ir.contains("call fastcc i32 @P.get("),
+            "getter with extra params must NOT be inlined, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn fix_d_mut_self_getter_is_not_inlined() {
+        // Negative pin: only `self` (Read) receivers trigger the
+        // inliner. `mut self` / `move self` keep the call (writes /
+        // ownership transfers aren't a getter shape).
+        let ir = gen_src(
+            "struct P { x: i32 }\n\
+             impl P { fn get(mut self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { let mut p: P = P { x: 7 }; return p.get(); }",
+        );
+        assert!(
+            ir.contains("call fastcc i32 @P.get("),
+            "mut-self getter must NOT be inlined, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn fix_e_f32_literal_matches_clang_bit_pattern() {
+        // obs.md fix E claimed cpc emits `float 0x3FD99999A0000000` for
+        // `0.4f32` while C / clang produces `0x3ECCCCCC` — implying a
+        // double-rounding bug. **The premise is falsified**:
+        //
+        //   1. Both cpc AND clang emit `float 0x3FD99999A0000000` for
+        //      `0.4f` (verified against /tmp/bench-inspect/rt-c.ll vs
+        //      rt-cplus.ll on the raytracer benchmark).
+        //   2. The IEEE-754 round-to-nearest-even f32 closest to 0.4 IS
+        //      0x3ECCCCCD (distance 5.96e-9), not 0x3ECCCCCC (distance
+        //      2.38e-8). cpc + clang are both correct.
+        //   3. The proposed "fix" hex `0x3FD9999A00000000` is itself
+        //      malformed — that's a non-canonical f64 encoding of an f32
+        //      value. The canonical f64 form of f32 0x3ECCCCCD is exactly
+        //      `0x3FD99999A0000000` (mantissa shifted up by 29 bits, the
+        //      f32→f64 promotion).
+        //
+        // This pin guards against a well-intentioned but incorrect "fix"
+        // regressing the f32 emission to a non-canonical or
+        // bit-divergent form. Any change to f32 literal lowering must
+        // continue to emit `0x3FD99999A0000000` for `0.4f32`.
+        let ir = gen_src(
+            "fn main() -> i32 { let _x: f32 = 0.4f32; return 0; }",
+        );
+        assert!(
+            ir.contains("float 0x3FD99999A0000000"),
+            "expected canonical f32 0.4 hex (matches clang's emission), got:\n{ir}"
+        );
+        // And NOT the malformed "fix" hex.
+        assert!(
+            !ir.contains("float 0x3FD9999A00000000"),
+            "non-canonical f64 encoding must not be emitted, got:\n{ir}"
+        );
+    }
+
+    #[test]
     fn fix_c_pub_fn_keeps_default_cc() {
         // v0.0.8 fix C: `pub fn` has external linkage and must keep C
         // cc so its callers (other modules, the C ABI) can invoke it.
@@ -13128,9 +13314,13 @@ mod tests {
 
     #[test]
     fn instance_call_on_copy_passes_value() {
+        // Body is `self.x +% 0` (not a bare `self.x`) so the trivial-
+        // getter inliner from v0.0.8 fix D doesn't fire — this test
+        // still exercises the call-site path. (See
+        // `trivial_getter_is_inlined_at_call_site` for the inline path.)
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(self) -> i32 { return self.x; } }\n\
+             impl P { fn get(self) -> i32 { return self.x +% 0; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; return p.get(); }",
         );
         // Call site loads the Copy receiver and passes by value.
@@ -13142,10 +13332,12 @@ mod tests {
     fn read_self_on_noncopy_struct_still_takes_ptr_param() {
         // Negative pin: the by-value lowering is gated on Copy. A
         // non-Copy struct (here, made non-Copy by an `impl Drop`) keeps
-        // the borrow-ABI pointer shape.
+        // the borrow-ABI pointer shape. Body is `self.x +% 0` (not a
+        // bare `self.x`) so v0.0.8 fix D's trivial-getter inliner
+        // doesn't fire — this test still exercises the call-site path.
         let ir = gen_src(
             "struct Q { x: i32 }\n\
-             impl Q { fn drop(mut self) { return; } fn get(self) -> i32 { return self.x; } }\n\
+             impl Q { fn drop(mut self) { return; } fn get(self) -> i32 { return self.x +% 0; } }\n\
              fn main() -> i32 { let q: Q = Q { x: 7 }; let r: i32 = q.get(); return r; }",
         );
         assert!(
