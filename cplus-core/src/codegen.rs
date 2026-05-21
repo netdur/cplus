@@ -2753,7 +2753,11 @@ fn write_preamble(out: &mut String) {
     // heap regions against pre-existing pointers, which lets SROA /
     // mem2reg / GVN forward more loads.
     out.push_str("declare noalias noundef ptr @malloc(i64 noundef)\n");
-    out.push_str("declare void @free(ptr)\n");
+    // v0.0.8 bench-gap fix B (finish): free is a no-capture deallocator
+    // — `nocapture` says the function doesn't retain the pointer beyond
+    // the call, so LLVM can keep deriving facts about prior pointers to
+    // the same place across the free. `noundef` matches clang's emission.
+    out.push_str("declare void @free(ptr nocapture noundef)\n");
     // v0.0.8 bench-gap fix B: memcpy's contract requires non-overlapping
     // src/dst (C99 7.21.2.1) — encode that as `noalias` on both pointer
     // params. `writeonly` on dst + `readonly` on src lets LLVM model the
@@ -2765,7 +2769,14 @@ fn write_preamble(out: &mut String) {
     // been written (excluding NUL); we use that as the resulting
     // `string.len`. The 32-byte buffer comfortably covers every 64-bit
     // integer decimal plus a sign + the `%g` float format.
-    out.push_str("declare i32 @snprintf(ptr, i64, ptr, ...)\n");
+    //
+    // v0.0.8 bench-gap fix B (finish): dst is writeonly, fmt is
+    // readonly, and both carry noundef + the size param is noundef.
+    // The two ptr params don't alias each other in any valid use.
+    out.push_str(
+        "declare i32 @snprintf(ptr noalias noundef writeonly, i64 noundef, \
+         ptr noalias noundef readonly, ...)\n",
+    );
     // Format strings the to_string intrinsics use.
     out.push_str("@.fmt_i64    = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n");
     out.push_str("@.fmt_u64    = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n");
@@ -2789,7 +2800,15 @@ fn write_preamble(out: &mut String) {
     // return coercion slots. Used so tail bytes (beyond the original
     // struct's footprint) read as 0 instead of poison when packed into
     // the coerced integer-class return register.
-    out.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+    // v0.0.8 bench-gap fix B (finish): per LLVM's intrinsic contract,
+    // memset's dst is `writeonly` (the call doesn't observe pre-existing
+    // bytes through dst) and the isvolatile arg must be `immarg`. Add
+    // `noalias noundef` on dst + `noundef` on the byte/length args to
+    // give LLVM's alias analysis the same facts clang emits.
+    out.push_str(
+        "declare void @llvm.memset.p0.i64(ptr noalias noundef writeonly, \
+         i8 noundef, i64 noundef, i1 immarg)\n",
+    );
     // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
     // alloca helpers bracket each local's live range with these so
     // LLVM's SROA can reuse stack slots across non-overlapping
@@ -8524,10 +8543,22 @@ impl<'a> FnState<'a> {
         // flip the source's drop flag on a `move`.
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         // Fixed (declared) params first.
+        // v0.0.8 fix B (finish): mirror the callee's param attrs at the
+        // call site. clang emits the same `noalias`/`readonly nonnull
+        // noundef dereferenceable(N) align A` set on both sides; this
+        // helps LLVM's inter-procedural analysis before inlining and
+        // matches the IR shape clang produces.
         for (a, (pty, move_flag, mut_flag)) in args.iter().zip(sig.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
-                arg_vals.push((addr, "ptr".to_string()));
+                let attrs =
+                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                let ty_str = if attrs.is_empty() {
+                    "ptr".to_string()
+                } else {
+                    format!("ptr {attrs}")
+                };
+                arg_vals.push((addr, ty_str));
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg is a value");
                 arg_vals.push((v, self.lty(pty)));
@@ -9549,6 +9580,8 @@ impl<'a> FnState<'a> {
         // (Read) is passed by value to match `gen_method`'s by-value
         // signature. `mut self` / `move self` stay pointer-passed even on
         // Copy types so writes propagate to the caller's place.
+        // v0.0.8 fix B (finish): on the pointer-passed receiver, mirror
+        // the callee's receiver attrs at the call site.
         let recv_by_value =
             is_copy_ty(&recv_ty, self.types) && matches!(rcv, Receiver::Read);
         let recv_arg = if recv_by_value {
@@ -9556,13 +9589,29 @@ impl<'a> FnState<'a> {
             self.gen_load(&v, &recv_ty, &recv_ptr);
             format!("{} {v}", self.lty(&recv_ty))
         } else {
-            format!("ptr {recv_ptr}")
+            let (mv, mu) = match rcv {
+                Receiver::Read => (false, false),
+                Receiver::Mut => (false, true),
+                Receiver::Move => (true, true),
+            };
+            let attrs = param_attrs(&recv_ty, mv, mu, true, self.types);
+            if attrs.is_empty() {
+                format!("ptr {recv_ptr}")
+            } else {
+                format!("ptr {attrs} {recv_ptr}")
+            }
         };
         let mut arg_parts: Vec<String> = vec![recv_arg];
         for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
-                arg_parts.push(format!("ptr {addr}"));
+                let attrs =
+                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                if attrs.is_empty() {
+                    arg_parts.push(format!("ptr {addr}"));
+                } else {
+                    arg_parts.push(format!("ptr {attrs} {addr}"));
+                }
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg has value");
                 arg_parts.push(format!("{} {v}", self.lty(pty)));
@@ -9630,11 +9679,41 @@ impl<'a> FnState<'a> {
         args: &[Expr],
     ) -> (String, Ty) {
         let mangled = mangle(enum_name, method_name);
-        let mut arg_parts: Vec<String> = vec![format!("ptr {recv_ptr}")];
+        // v0.0.8 fix B (finish): mirror the callee's receiver + param
+        // attrs at the call site (clang emits the same set on both sides).
+        let enum_id = *self
+            .types
+            .enum_by_name
+            .get(enum_name)
+            .expect("enum name registered");
+        let enum_ty = Ty::Enum(enum_id);
+        let recv_arg = match info.receiver {
+            Some(rcv) => {
+                let (mv, mu) = match rcv {
+                    Receiver::Read => (false, false),
+                    Receiver::Mut => (false, true),
+                    Receiver::Move => (true, true),
+                };
+                let attrs = param_attrs(&enum_ty, mv, mu, true, self.types);
+                if attrs.is_empty() {
+                    format!("ptr {recv_ptr}")
+                } else {
+                    format!("ptr {attrs} {recv_ptr}")
+                }
+            }
+            None => format!("ptr {recv_ptr}"),
+        };
+        let mut arg_parts: Vec<String> = vec![recv_arg];
         for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
-                arg_parts.push(format!("ptr {addr}"));
+                let attrs =
+                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                if attrs.is_empty() {
+                    arg_parts.push(format!("ptr {addr}"));
+                } else {
+                    arg_parts.push(format!("ptr {attrs} {addr}"));
+                }
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg has value");
                 arg_parts.push(format!("{} {v}", self.lty(pty)));
@@ -9732,11 +9811,19 @@ impl<'a> FnState<'a> {
             .clone();
         let mangled = mangle(type_name, method_name);
 
+        // v0.0.8 fix B (finish): mirror the callee's param attrs at the
+        // call site (associated functions have no receiver — just args).
         let mut arg_parts: Vec<String> = Vec::new();
         for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
-                arg_parts.push(format!("ptr {addr}"));
+                let attrs =
+                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                if attrs.is_empty() {
+                    arg_parts.push(format!("ptr {addr}"));
+                } else {
+                    arg_parts.push(format!("ptr {attrs} {addr}"));
+                }
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg has value");
                 arg_parts.push(format!("{} {v}", self.lty(pty)));
@@ -12116,6 +12203,57 @@ mod tests {
         let ir = gen_src("fn main() -> i32 { if \"a\" == \"a\" { return 0; } return 1; }");
         assert!(ir.contains("declare i32 @memcmp("));
         assert!(ir.contains("call i32 @memcmp(ptr"));
+    }
+
+    #[test]
+    fn call_site_mirrors_callee_ptr_attrs() {
+        // v0.0.8 fix B (finish): when a callee declares `mut t: Tag`
+        // (non-Copy struct ptr-passed) the call site should mirror the
+        // full attribute set, not just bare `ptr <addr>`. clang emits
+        // these attrs at the call site too — it helps inter-procedural
+        // analysis before inlining and matches the IR shape clang
+        // produces.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
+        );
+        // Definition still has the attrs (pre-existing behavior).
+        assert!(
+            ir.contains("void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
+            "bump definition missing param attrs, got:\n{ir}"
+        );
+        // Call site now mirrors the same attrs.
+        assert!(
+            ir.contains("call void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 "),
+            "bump call site missing param attrs, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn shared_param_call_site_mirrors_readonly_attrs() {
+        // v0.0.8 fix B (finish): shared `t: Tag` ptr-passed param gets
+        // `readonly` (not `noalias`) at both def and call site.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn peek(t: Tag) -> i32 { return t.v; }\n\
+             fn main() -> i32 { let x: Tag = Tag { v: 1 }; return peek(x); }",
+        );
+        assert!(
+            ir.contains("i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 %0)"),
+            "peek definition missing readonly attr set, got:\n{ir}"
+        );
+        assert!(
+            ir.contains("call i32 @peek(ptr readonly nonnull noundef dereferenceable(4) align 4 "),
+            "peek call site missing readonly attr set, got:\n{ir}"
+        );
+        // And NOT `noalias` at the call site — shared borrow can alias.
+        assert!(
+            !ir.contains("call i32 @peek(ptr noalias"),
+            "shared call site must not get `noalias`, got:\n{ir}"
+        );
     }
 
     #[test]
