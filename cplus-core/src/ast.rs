@@ -705,6 +705,17 @@ pub enum ExprKind {
     IncludeStr {
         path: String,
     },
+    /// v0.0.8 Phase 4: `env!("NAME")` compile-time environment-variable
+    /// read. Resolves at sema time via `std::env::var(name)`. Errors:
+    ///   - **E0871** at parse time — non-string-literal argument.
+    ///   - **E0876** at sema time — environment variable not set in the
+    ///     compiler's environment at build time.
+    /// Result type is `str` (a `.rodata` global plus its UTF-8 byte
+    /// length). Same dedup behavior as `include_str!` — two `env!("X")`
+    /// calls on the same name share one underlying byte global.
+    EnvVar {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

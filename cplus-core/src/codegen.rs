@@ -39,6 +39,12 @@ struct ModuleMetadata {
     /// variant picks whether to emit a raw pointer or a `str`
     /// fat-pointer aggregate.
     compile_time_blobs: RefCell<HashMap<crate::lexer::Span, (String, u32)>>,
+    /// v0.0.8 Phase 4: per-call-site `env!("NAME")` lookup. Populated by
+    /// `emit_env_var_globals` from sema's `MonoInfo::env_vars`. Maps the
+    /// macro call's span to `(global_symbol, value_byte_len)`. gen_expr
+    /// for `ExprKind::EnvVar` reads this to build the `str` fat-pointer
+    /// aggregate.
+    env_var_globals: RefCell<HashMap<crate::lexer::Span, (String, u32)>>,
     /// v0.0.7 Slice 1.2: TBAA (Type-Based Alias Analysis) tree.
     /// Lazily populated on first `tbaa_tag_for` call. Layout:
     ///   - root: `!N = !{!"C+ TBAA Root"}`
@@ -742,7 +748,16 @@ pub enum BuildMode {
 /// Generate LLVM IR for a sema-validated program. Caller must run sema first;
 /// codegen will panic on unresolvable references that sema would have caught.
 pub fn generate(program: &Program, mode: BuildMode) -> String {
-    generate_inner(program, mode, None, None, &[], false, &Default::default())
+    generate_inner(
+        program,
+        mode,
+        None,
+        None,
+        &[],
+        false,
+        &Default::default(),
+        &Default::default(),
+    )
 }
 
 /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: codegen entry point for the
@@ -765,6 +780,7 @@ pub fn generate_with_mono(
         sanitizers,
         is_lib,
         &mono.compile_time_blobs,
+        &mono.env_vars,
     )
 }
 
@@ -778,7 +794,16 @@ pub fn generate_with_mono(
 /// linkage exactly. Eventually the bin path can share this rule too —
 /// internal linkage is correct everywhere — but ship + verify first.
 pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
-    generate_inner(program, mode, None, None, &[], true, &Default::default())
+    generate_inner(
+        program,
+        mode,
+        None,
+        None,
+        &[],
+        true,
+        &Default::default(),
+        &Default::default(),
+    )
 }
 
 /// Phase 11 polish (2026-05-13): emit LLVM IR with DWARF debug
@@ -798,6 +823,7 @@ pub fn generate_with_debug(
         Some(source_file),
         &[],
         false,
+        &Default::default(),
         &Default::default(),
     )
 }
@@ -820,6 +846,7 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
         &Default::default(),
     )
 }
@@ -854,6 +881,7 @@ pub fn generate_test_binary(
         &[],
         false,
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -870,6 +898,7 @@ fn generate_inner(
     sanitizers: &[&str],
     is_lib: bool,
     compile_time_blobs_map: &HashMap<crate::lexer::Span, crate::sema::CompileTimeBlobEntry>,
+    env_vars_map: &HashMap<crate::lexer::Span, crate::sema::EnvVarEntry>,
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
@@ -933,6 +962,7 @@ fn generate_inner(
     // `gen_expr(ExprKind::IncludeBytes | ExprKind::IncludeStr)` can
     // emit the right shape (raw pointer or `str` fat-pointer).
     emit_compile_time_blob_globals(&mut out, compile_time_blobs_map, &md);
+    emit_env_var_globals(&mut out, env_vars_map, &md);
     write_struct_decls(&mut out, &types, program);
     // Phase 11 / ObjC interop: multiple `extern fn` declarations may share
     // a single linker symbol via `#[link_name = "..."]`. Track emitted
@@ -3460,7 +3490,8 @@ fn collect_address_taken_fns(
             | ExprKind::StrLit(_)
             | ExprKind::Path { .. }
             | ExprKind::IncludeBytes { .. }
-            | ExprKind::IncludeStr { .. } => {}
+            | ExprKind::IncludeStr { .. }
+            | ExprKind::EnvVar { .. } => {}
         }
     }
     fn visit_block(b: &Block, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
@@ -3581,6 +3612,53 @@ fn emit_compile_time_blob_globals(
             }
         };
         md.compile_time_blobs.borrow_mut().insert(*span, (symbol, len));
+    }
+    if !map.is_empty() {
+        out.push_str("\n");
+    }
+}
+
+/// v0.0.8 Phase 4: emit one `@.envvar.N` private constant per UNIQUE
+/// env-var VALUE (two `env!("X")` calls always resolve to the same
+/// value at sema time, so dedup-by-value is equivalent to dedup-by-name
+/// — using value as the key is slightly cheaper and supports the
+/// hypothetical case of two different vars holding the same string).
+/// Populates `md.env_var_globals` so gen_expr for `ExprKind::EnvVar`
+/// can build the `str` fat-pointer aggregate at the use site.
+fn emit_env_var_globals(
+    out: &mut String,
+    map: &HashMap<crate::lexer::Span, crate::sema::EnvVarEntry>,
+    md: &ModuleMetadata,
+) {
+    let mut value_to_sym: HashMap<String, (String, u32)> = HashMap::new();
+    let mut next_id: u32 = 0;
+    let mut spans: Vec<&crate::lexer::Span> = map.keys().collect();
+    spans.sort_by_key(|s| (s.start, s.end));
+    for span in spans {
+        let entry = &map[span];
+        let (symbol, len) = match value_to_sym.get(&entry.value) {
+            Some(v) => v.clone(),
+            None => {
+                let symbol = format!("@.envvar.{}", next_id);
+                next_id += 1;
+                let len = entry.value.as_bytes().len() as u32;
+                let mut escaped = String::new();
+                for byte in entry.value.as_bytes() {
+                    if *byte == b'"' || *byte == b'\\' || !(0x20..0x7F).contains(byte) {
+                        escaped.push_str(&format!("\\{byte:02X}"));
+                    } else {
+                        escaped.push(*byte as char);
+                    }
+                }
+                out.push_str(&format!(
+                    "{symbol} = private unnamed_addr constant [{len} x i8] c\"{escaped}\", align 1\n"
+                ));
+                let v = (symbol, len);
+                value_to_sym.insert(entry.value.clone(), v.clone());
+                v
+            }
+        };
+        md.env_var_globals.borrow_mut().insert(*span, (symbol, len));
     }
     if !map.is_empty() {
         out.push_str("\n");
@@ -7326,6 +7404,34 @@ impl<'a> FnState<'a> {
                 ));
                 Some((t2, Ty::Str))
             }
+            ExprKind::EnvVar { .. } => {
+                // v0.0.8 Phase 4: lower to a `str` fat-pointer aggregate
+                // pointing at the shared `[N x i8]` global emitted by
+                // `emit_env_var_globals`. Value was read at sema time;
+                // E0876 already fired if the var was missing, so by the
+                // time we reach codegen the value is guaranteed present.
+                let span = e.span;
+                let (symbol, len) = {
+                    let table = self.md.env_var_globals.borrow();
+                    table
+                        .get(&span)
+                        .expect(
+                            "env!: span not in module table — sema must \
+                             have produced a MonoInfo::env_vars entry for \
+                             every ExprKind::EnvVar node",
+                        )
+                        .clone()
+                };
+                let t1 = self.next_tmp();
+                let t2 = self.next_tmp();
+                self.body.push_str(&format!(
+                    "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+                ));
+                self.body.push_str(&format!(
+                    "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+                ));
+                Some((t2, Ty::Str))
+            }
             ExprKind::StrLit(s) => {
                 // Phase 8 slice 8.STR.1: lower a string literal to a fat-pointer
                 // value `{ ptr, i64 }`. The bytes live in a `@.str.N` global
@@ -8946,6 +9052,18 @@ impl<'a> FnState<'a> {
             .get(name)
             .unwrap_or_else(|| panic!("sema validated function exists: missing `{name}`"))
             .clone();
+        // v0.0.8 (post-bench-gap): capture-and-clear `pending_musttail`
+        // *before* evaluating args. Otherwise any nested Call within an
+        // arg expression consumes the flag and emits a spurious
+        // `musttail call` for a call that isn't truly in tail position
+        // — clang rejects with "musttail call must precede a ret with
+        // an optional bitcast" or "cannot guarantee tail call due to
+        // mismatched return types". The flag is set by `StmtKind::Return`
+        // for the OUTER call shape `return f(args);`; only this OUTER
+        // call should pick it up. Sub-call args run with the flag
+        // cleared.
+        let want_musttail = self.pending_musttail;
+        self.pending_musttail = false;
         // Per-arg lowering. `arg_vals[i]` is (ssa-value, llvm-type-string).
         // For pointer-passed `mut x: T` params we take the address of the
         // source place; for value-passed params we evaluate the value and
@@ -9025,13 +9143,15 @@ impl<'a> FnState<'a> {
         // call resolves to the same C symbol as the user wrote in the
         // attribute, not the C+ source-level name.
         let symbol: &str = sig.link_name.as_deref().unwrap_or(name);
-        // Slice 1E: tail-call optimization. `pending_musttail` is set by
-        // `StmtKind::Return` when this call is the last expression before
-        // a return and the signatures match. LLVM's verifier rejects
-        // `musttail` IR that doesn't truly qualify (e.g. variadic
-        // mismatch), so the predicate in StmtKind::Return is conservative.
-        let want_musttail = self.pending_musttail;
-        self.pending_musttail = false;
+        // Slice 1E: tail-call optimization. `pending_musttail` was set by
+        // `StmtKind::Return` when this call is the last expression
+        // before a return and the signatures match. LLVM's verifier
+        // rejects `musttail` IR that doesn't truly qualify (e.g.
+        // variadic mismatch), so the predicate in StmtKind::Return is
+        // conservative. The capture-and-clear now happens at the top of
+        // this function (see `want_musttail` above) so nested
+        // arg-evaluation Calls can't steal the flag.
+        //
         // Slice 1D: detect sret callee. Only applies when the callee is
         // user-defined (sig has no link_name pointing at a C symbol and
         // the callee is non-variadic) and the return type triggers the
@@ -12800,6 +12920,48 @@ mod tests {
         assert!(
             ir.contains("call fastcc i32 @P.get("),
             "mut-self getter must NOT be inlined, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn nested_call_arg_does_not_steal_musttail_flag() {
+        // v0.0.8 post-bench-gap: `return outer(... nested(...) ...)` —
+        // `pending_musttail` was being consumed by the FIRST nested
+        // Call encountered during arg evaluation, even though only the
+        // OUTER call is in tail position. Resulted in clang rejecting
+        // the IR ("musttail call must precede a ret" or "cannot
+        // guarantee tail call due to mismatched return types").
+        //
+        // The fix moved the capture-and-clear of `pending_musttail` to
+        // the top of `gen_named_call`, so nested arg-evaluation calls
+        // see `false`.
+        let ir = gen_src(
+            "struct V3 { x: f32, y: f32, z: f32 }\n\
+             fn sub(a: V3, b: V3) -> V3 { return V3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }\n\
+             fn scale(a: V3, s: f32) -> V3 { return V3 { x: a.x * s, y: a.y * s, z: a.z * s }; }\n\
+             fn dot(a: V3, b: V3) -> f32 { return a.x*b.x + a.y*b.y + a.z*b.z; }\n\
+             fn reflect(v: V3, n: V3) -> V3 {\n\
+                 return sub(v, scale(n, 2.0f32 * dot(v, n)));\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // Only the outer `sub` call gets musttail (it's in tail
+        // position, returns V3 like reflect).
+        assert!(
+            ir.contains("musttail call fastcc %V3 @sub("),
+            "expected outer `sub` to get musttail, got:\n{ir}"
+        );
+        // The nested `dot` (returns float, NOT V3) must NOT be
+        // musttail'd — that's the bug.
+        assert!(
+            !ir.contains("musttail call fastcc float @dot"),
+            "nested `dot` arg must NOT be musttail (wrong return type), got:\n{ir}"
+        );
+        // Same for nested `scale` (its result is consumed by `sub`,
+        // not immediately returned).
+        assert!(
+            !ir.contains("musttail call fastcc %V3 @scale"),
+            "nested `scale` arg must NOT be musttail (not in tail position), got:\n{ir}"
         );
     }
 

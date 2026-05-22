@@ -14586,6 +14586,76 @@ fn main() -> i32 {
     );
 }
 
+#[test]
+fn env_macro_round_trip_runs() {
+    // v0.0.8 Phase 4: `env!("NAME")` reads the env var at compile time
+    // and substitutes a `str` value (fat pointer to a `.rodata` global).
+    // Verify the end-to-end pipeline: parser → sema → codegen → linked
+    // binary correctly carries the value the compiler saw at build.
+    std::env::set_var("CPC_E2E_GREETING", "hello-from-env");
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("env_test.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let g: str = env!(\"CPC_E2E_GREETING\");\n\
+             // Exit code = length of the env-var value (14 chars for\n\
+             // `hello-from-env`). Confirms the str's len field was wired up.\n\
+             return str_len(g) as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("env_test");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .env("CPC_E2E_GREETING", "hello-from-env")
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for env! round-trip");
+    let run = Command::new(&bin).status().expect("run env_test");
+    assert_eq!(
+        run.code(),
+        Some(14),
+        "expected exit 14 (length of `hello-from-env`), got: {run}"
+    );
+}
+
+#[test]
+fn env_macro_missing_var_errors_e0876() {
+    // Negative path: var not set when cpc runs → E0876, build fails.
+    std::env::remove_var("CPC_E2E_DEFINITELY_MISSING_VAR_PHASE4");
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("env_missing.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let _x: str = env!(\"CPC_E2E_DEFINITELY_MISSING_VAR_PHASE4\");\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(dir.join("env_missing"))
+        .env_remove("CPC_E2E_DEFINITELY_MISSING_VAR_PHASE4")
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected cpc build to fail on missing env var, got success"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0876"),
+        "expected E0876 in stderr, got:\n{stderr}"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

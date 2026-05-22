@@ -1839,7 +1839,8 @@ fn rewrite_expr(
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
         | ExprKind::IncludeBytes { .. }
-        | ExprKind::IncludeStr { .. } => {}
+        | ExprKind::IncludeStr { .. }
+        | ExprKind::EnvVar { .. } => {}
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let crate::ast::InterpStrPart::Expr(inner) = p {

@@ -463,6 +463,15 @@ pub struct MonoInfo {
     /// `IncludeStr`) determines whether the lowered expression is a raw
     /// pointer or a `str` fat-pointer aggregate.
     pub compile_time_blobs: HashMap<ByteSpan, CompileTimeBlobEntry>,
+    /// v0.0.8 Phase 4: per-call-site `env!("NAME")` lookup. Resolved at
+    /// sema time (read from the compiler's process environment via
+    /// `std::env::var`). Value is the env var's value as a UTF-8 string.
+    /// Codegen consumes this to emit one private `[N x i8]` global per
+    /// unique env value + the matching `{ ptr, i64 }` fat-pointer
+    /// construction at the use site. Same dedup behavior as
+    /// `compile_time_blobs` but keyed by the env var name (sema dedup
+    /// happens in the codegen-side emission pass).
+    pub env_vars: HashMap<ByteSpan, EnvVarEntry>,
 }
 
 /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: one resolved `include_bytes!` or
@@ -471,6 +480,13 @@ pub struct MonoInfo {
 pub struct CompileTimeBlobEntry {
     pub abs_path: std::path::PathBuf,
     pub bytes: Vec<u8>,
+}
+
+/// v0.0.8 Phase 4: one resolved `env!("NAME")` call.
+#[derive(Debug, Clone)]
+pub struct EnvVarEntry {
+    pub name: String,
+    pub value: String,
 }
 
 /// Slice 7GEN.5c: per-instantiation info handed to monomorphize.
@@ -594,6 +610,7 @@ fn check_with_files_inner<'a>(
         method_instantiations: std::collections::BTreeSet::new(),
         generic_impl_methods: HashMap::new(),
         compile_time_blobs_table: HashMap::new(),
+        env_vars_table: HashMap::new(),
     };
     cx.register_builtins();
     // Type collection order:
@@ -729,6 +746,7 @@ fn check_with_files_inner<'a>(
         method_instantiations,
         type_aliases,
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
+        env_vars: std::mem::take(&mut cx.env_vars_table),
     };
     (sink.into_vec(), mono)
 }
@@ -896,6 +914,10 @@ struct SemaCx<'a> {
     /// materialize. See [`CompileTimeBlobEntry`] /
     /// [`MonoInfo::compile_time_blobs`].
     compile_time_blobs_table: HashMap<ByteSpan, CompileTimeBlobEntry>,
+    /// v0.0.8 Phase 4: resolved `env!("NAME")` lookups, keyed by the
+    /// macro call's source span. Sema populates; codegen reads from
+    /// `MonoInfo::env_vars` (built by `mem::take` at hand-off).
+    env_vars_table: HashMap<ByteSpan, EnvVarEntry>,
 }
 
 /// Slice 7GEN.5e step 3: method template stored on a generic-typed
@@ -3615,6 +3637,39 @@ impl SemaCx<'_> {
             }
             ExprKind::IncludeBytes { path } => self.check_include_bytes(path, e.span),
             ExprKind::IncludeStr { path } => self.check_include_str(path, e.span),
+            ExprKind::EnvVar { name } => self.check_env_var(name, e.span),
+        }
+    }
+
+    /// v0.0.8 Phase 4: `env!("NAME")` resolution. Reads the env var via
+    /// `std::env::var` at sema time (cpc's own process environment).
+    /// Errors:
+    ///   - **E0876**: environment variable not set when cpc was invoked.
+    /// On success, stashes the resolved value in `env_vars_table` keyed
+    /// by call span; codegen reads from there to emit the global. Result
+    /// type is `str` (the fat-pointer view over the value's bytes).
+    fn check_env_var(&mut self, name: &str, span: ByteSpan) -> Ty {
+        match std::env::var(name) {
+            Ok(value) => {
+                self.env_vars_table.insert(
+                    span,
+                    EnvVarEntry {
+                        name: name.to_string(),
+                        value,
+                    },
+                );
+                Ty::Str
+            }
+            Err(_) => {
+                self.err(
+                    "E0876",
+                    format!(
+                        "environment variable `{name}` is not set at compile time"
+                    ),
+                    span,
+                );
+                Ty::Error
+            }
         }
     }
 
@@ -9587,6 +9642,34 @@ mod tests {
             diags
         );
         assert_eq!(diags[0].code.0, code);
+    }
+
+    // ---- v0.0.8 Phase 4: `env!("NAME")` compile-time env-var read ----
+
+    #[test]
+    fn env_macro_resolves_set_var_to_str() {
+        // Positive case: var is set in the compiler's environment, so
+        // `env!("NAME")` resolves to a `str` value at sema time.
+        std::env::set_var("CPC_TEST_ENV_VAR", "from-test");
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let v: str = env!(\"CPC_TEST_ENV_VAR\");\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn env_macro_missing_var_e0876() {
+        // Negative case: env var not set → E0876 at sema time.
+        std::env::remove_var("CPC_TEST_DEFINITELY_MISSING_99");
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let _v: str = env!(\"CPC_TEST_DEFINITELY_MISSING_99\");\n\
+                 return 0;\n\
+             }",
+            "E0876",
+        );
     }
 
     // ---- v0.0.8 post-bench-gap: `restrict` param marker (E0411) ----

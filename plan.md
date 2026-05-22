@@ -103,33 +103,6 @@ Slice sizes use the same S/M/L assistant-paced framing as v0.0.6 / v0.0.7.
 
 ---
 
-### Phase 3 — Second bindings package: `vendor/sqlite` · size M
-
-**Goal:** typed C+ bindings to `libsqlite3`. Same shape as `vendor/appkit` but against a pure C ABI library (no ObjC, no Apple frameworks), to validate that the bindings model generalizes.
-
-**Why this slice:** v0.0.7's open question was "pick a bindings package based on a workload that surfaces." SQLite is the obvious choice: ubiquitous, pure C ABI, one external dependency (`-lsqlite3` ships with macOS), no transitive headers. If `vendor/appkit`'s pattern works for ObjC-heavy AppKit, the same pattern against SQLite confirms the binding model isn't Apple-specific.
-
-**Scope:**
-
-- `vendor/sqlite/Cplus.toml` — `[link] libs = ["sqlite3"]`.
-- `vendor/sqlite/src/lib.cplus` (or split per-concern: `open.cplus`, `prepare.cplus`, `bind.cplus`, `step.cplus`).
-- API surface: `Database::open(path) / close / exec(sql) / prepare(sql) -> Statement`; `Statement::bind_i64(n, v) / bind_str(n, s) / step() -> StepResult / column_i64(n) / column_str(n) / finalize`.
-- A `proves/benchmark/programs/06-sqlite-roundtrip/` recipe that uses the package to insert 10k rows, read them back, and verify (in Rust + Swift + C alongside, as is the harness convention).
-
-**Locked design decisions:**
-
-1. **No Drop on Database / Statement.** Same call shape as `vendor/appkit`: explicit `close()` / `finalize()`. Drop is a v0.1+ design question.
-
-2. **Strings cross the FFI boundary as `*u8` C-strings.** No automatic bridging. Caller passes `"SELECT * FROM users\0".as_ptr()` (or `bridge::cplus_string_to_cstr`-style helper).
-
-3. **Errors as `Result[T, i32]` where the i32 is the SQLite error code.** Sema's Phase 4 result types work today; this exercises them in a real consumer.
-
-**Tests:** unit + the 06-sqlite-roundtrip e2e recipe.
-
-**Expected payoff:** the bindings model is validated against a second, non-Apple library. After this, "could we bind X to C+?" is answered yes by precedent rather than by argument.
-
----
-
 ### Phase 4 — `env!("NAME")` builtin · size S
 
 **Goal:** compile-time read of an environment variable into a `str`. Companion to the v0.0.7 `include_bytes!` / `include_str!` family.
@@ -153,10 +126,9 @@ Slice sizes use the same S/M/L assistant-paced framing as v0.0.6 / v0.0.7.
 
 - **Phase 1A first.** The raytracer is the prize; everything else can validate against it. Ship 1A standalone — even without the SIMD variant — and immediately measure the v0.0.7 TBAA + lifetime perf claims.
 - **Phase 1B and Phase 2 are coupled.** The SIMD raytracer is the first consumer of `vendor/simd`. Land Phase 2 first (so the package exists), then Phase 1B (which imports it).
-- **Phase 3 is independent.** Can land any time; pick when a real SQLite consumer surfaces or as filler.
 - **Phase 4 lands alongside Phase 1A.** The env var read is a build-script convenience for the raytracer's tunables.
 
-Estimated effort across all phases: ~5-6 sessions aggregate. Realistic v0.0.8 ship target: 3-4 of those sessions; if Phase 1B + Phase 2 take longer than expected, Phase 3 slips to v0.0.9.
+A second bindings package (sqlite was an early candidate) is deferred — `vendor/appkit` is the validated ObjC case; the pure-C-ABI generalization can wait for a real consumer to surface.
 
 ---
 
@@ -164,6 +136,18 @@ Estimated effort across all phases: ~5-6 sessions aggregate. Realistic v0.0.8 sh
 
 - **Per-field TBAA tree** — v0.0.7 Slice 1.2 punted this with the rationale "ship when raytracer perf measures the win." Phase 1A + 1B make this measurable; if the raytracer's hot loops show a meaningful aliasing gap, the per-field tree lands as a follow-on slice in v0.0.8 or v0.0.9.
 - **Mask types as a distinct `Ty` variant** — v0.0.7 Slice 2.1 aliased `mask32x4` to `i32x4` for simplicity. If the SIMD raytracer (Phase 1B) hits a real bug from the aliased shape (e.g. accidentally passing a non-mask `i32x4` to `select`), the cleanup lands; otherwise it sits.
-- **Submodule re-export through `appkit/appkit` facade for functions** — re-litigated in v0.0.7 Slice 5.2 (still tentative). Phase 3's `vendor/sqlite` is the second binding package, which is the trigger for the rubric decision the v0.0.7 plan locked.
+- **Submodule re-export through `appkit/appkit` facade for functions** — re-litigated in v0.0.7 Slice 5.2 (still tentative). The next bindings package (whenever it lands) is the trigger for the rubric decision.
 - **`#[align(N)]` for struct fields** — cut from v0.0.6 with the rationale "no concrete consumer yet." The SIMD raytracer's Vec3-as-f32x4 packing may surface alignment needs; if Phase 1B hits a misalignment trap or measurable perf loss, the attribute lands.
 - **Threading the raytracer** — v0.0.5 shipped `thread::spawn` / `JoinHandle::join`. A trivial parallel-tiles raytracer (each thread renders an image row) is a one-session add-on once Phase 1A scalar ships, and would exercise the v0.0.5 thread surface against a real workload.
+
+
+----
+
+1
+Character Literals
+
+2 this should not be in language with safety as default, need to talk with you about it
+// ❌ Footgun — caller's s and callee's x both run Drop. Double-free.
+fn echo(x: string) -> string { return x; }
+
+3

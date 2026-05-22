@@ -216,6 +216,7 @@ impl Lower {
             | ExprKind::StrLit(_)
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
+            | ExprKind::EnvVar { .. }
             | ExprKind::Ident(_) => {}
             ExprKind::InterpStr { parts } => {
                 for p in parts {

@@ -2341,18 +2341,42 @@ impl Parser {
                 // + ! + ( + StringLit + )`. Any deviation is a parse error.
                 let is_include_bytes = n == "include_bytes";
                 let is_include_str = n == "include_str";
-                if (is_include_bytes || is_include_str)
+                let is_env_var = n == "env";
+                if (is_include_bytes || is_include_str || is_env_var)
                     && matches!(self.peek_kind(), TokenKind::Bang)
                 {
-                    let macro_name = if is_include_bytes { "include_bytes" } else { "include_str" };
-                    self.bump(); // `!`
-                    self.expect(&TokenKind::LParen, if is_include_bytes {
-                        "`(` after `include_bytes!`"
+                    let macro_name = if is_include_bytes {
+                        "include_bytes"
+                    } else if is_include_str {
+                        "include_str"
                     } else {
+                        "env"
+                    };
+                    let open_paren_msg = if is_include_bytes {
+                        "`(` after `include_bytes!`"
+                    } else if is_include_str {
                         "`(` after `include_str!`"
-                    })?;
+                    } else {
+                        "`(` after `env!`"
+                    };
+                    let arg_msg = if is_include_bytes {
+                        "string literal path in `include_bytes!`"
+                    } else if is_include_str {
+                        "string literal path in `include_str!`"
+                    } else {
+                        "string literal environment variable name in `env!`"
+                    };
+                    let close_paren_msg = if is_include_bytes {
+                        "`)` after `include_bytes!` path"
+                    } else if is_include_str {
+                        "`)` after `include_str!` path"
+                    } else {
+                        "`)` after `env!` name"
+                    };
+                    self.bump(); // `!`
+                    self.expect(&TokenKind::LParen, open_paren_msg)?;
                     let path_tok = self.peek().clone();
-                    let path = match &path_tok.kind {
+                    let arg_str = match &path_tok.kind {
                         TokenKind::Str(s) => {
                             let s = s.clone();
                             self.bump();
@@ -2362,28 +2386,20 @@ impl Parser {
                             return Err(ParseError {
                                 kind: ParseErrorKind::Unexpected {
                                     found: tok_name(&path_tok.kind).into(),
-                                    expected: if is_include_bytes {
-                                        "string literal path in `include_bytes!`"
-                                    } else {
-                                        "string literal path in `include_str!`"
-                                    },
+                                    expected: arg_msg,
                                 },
                                 span: path_tok.span,
                             })
                         }
                     };
-                    let end = self
-                        .expect(&TokenKind::RParen, if is_include_bytes {
-                            "`)` after `include_bytes!` path"
-                        } else {
-                            "`)` after `include_str!` path"
-                        })?
-                        .span;
+                    let end = self.expect(&TokenKind::RParen, close_paren_msg)?.span;
                     let _ = macro_name;
                     let kind = if is_include_bytes {
-                        ExprKind::IncludeBytes { path }
+                        ExprKind::IncludeBytes { path: arg_str }
+                    } else if is_include_str {
+                        ExprKind::IncludeStr { path: arg_str }
                     } else {
-                        ExprKind::IncludeStr { path }
+                        ExprKind::EnvVar { name: arg_str }
                     };
                     return Ok(Expr {
                         kind,

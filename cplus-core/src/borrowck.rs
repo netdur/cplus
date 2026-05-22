@@ -2353,6 +2353,7 @@ impl Analyzer<'_> {
             | ExprKind::StrLit(_)
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
+            | ExprKind::EnvVar { .. }
             | ExprKind::Path { .. } => {}
 
             ExprKind::InterpStr { parts } => {
@@ -3180,7 +3181,8 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
         | ExprKind::IncludeBytes { .. }
-        | ExprKind::IncludeStr { .. } => false,
+        | ExprKind::IncludeStr { .. }
+        | ExprKind::EnvVar { .. } => false,
         ExprKind::InterpStr { parts } => parts.iter().any(|p| match p {
             crate::ast::InterpStrPart::Expr(e) => expr_reads_ident(e, name),
             _ => false,
