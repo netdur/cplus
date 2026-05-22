@@ -1,0 +1,167 @@
+// vendor/metal/src/runtime.cplus — Objective-C runtime bindings and helpers for Metal.
+
+extern fn objc_getClass(name: *u8) -> *u8;
+extern fn sel_registerName(name: *u8) -> *u8;
+extern fn dispatch_data_create(buffer: *u8, size: usize, queue: *u8, destructor: *u8) -> *u8;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_ptr(recv: *u8, sel: *u8, arg: *u8, err_out: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void(recv: *u8, sel: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_opt(recv: *u8, sel: *u8, ptr: *u8, len: usize, opts: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_enc(recv: *u8, sel: *u8, ptr: *u8, len: usize, enc: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_free(recv: *u8, sel: *u8, ptr: *u8, len: usize, free_when_done: i8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_buf_idx(recv: *u8, sel: *u8, buf: *u8, offset: usize, idx: usize);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_ptr(recv: *u8, sel: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64_u64(recv: *u8, sel: *u8, arg: u64) -> u64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_usize_u64(recv: *u8, sel: *u8, len: usize, opts: u64) -> *u8;
+
+extern fn MTLCreateSystemDefaultDevice() -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_pipeline(recv: *u8, sel: *u8, fn_obj: *u8, err_out: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_pipeline(recv: *u8, sel: *u8, pipeline: *u8);
+
+#[repr(C)]
+pub struct MTLSize {
+    pub width: usize,
+    pub height: usize,
+    pub depth: usize,
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_dispatch(
+    recv: *u8,
+    sel: *u8,
+    groups: *MTLSize,
+    per_group: *MTLSize,
+);
+
+// Helpers
+pub fn cls(name: *u8) -> *u8 {
+    return unsafe { objc_getClass(name) };
+}
+
+pub fn sel(name: *u8) -> *u8 {
+    return unsafe { sel_registerName(name) };
+}
+
+pub fn msg_id(recv: *u8, selector: *u8) -> *u8 {
+    return unsafe { objc_msg_id(recv, selector) };
+}
+
+pub fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
+    return unsafe { objc_msg_id_id(recv, selector, arg) };
+}
+
+pub fn msg_id_id_ptr(recv: *u8, selector: *u8, arg: *u8, err_out: *u8) -> *u8 {
+    return unsafe { objc_msg_id_id_ptr(recv, selector, arg, err_out) };
+}
+
+pub fn msg_void(recv: *u8, selector: *u8) {
+    unsafe { objc_msg_void(recv, selector); };
+}
+
+pub fn msg_id_ptr_len_opt(recv: *u8, selector: *u8, ptr: *u8, len: usize, opts: u64) -> *u8 {
+    return unsafe { objc_msg_id_ptr_len_opt(recv, selector, ptr, len, opts) };
+}
+
+pub fn msg_void_buf_idx(recv: *u8, selector: *u8, buf: *u8, offset: usize, idx: usize) {
+    unsafe { objc_msg_void_buf_idx(recv, selector, buf, offset, idx); };
+}
+
+pub fn msg_ptr(recv: *u8, selector: *u8) -> *u8 {
+    return unsafe { objc_msg_ptr(recv, selector) };
+}
+
+pub fn msg_u64(recv: *u8, selector: *u8) -> u64 {
+    return unsafe { objc_msg_u64(recv, selector) };
+}
+
+pub fn msg_id_usize_u64(recv: *u8, selector: *u8, len: usize, opts: u64) -> *u8 {
+    return unsafe { objc_msg_id_usize_u64(recv, selector, len, opts) };
+}
+
+pub fn mtl_create_system_default_device() -> *u8 {
+    return unsafe { MTLCreateSystemDefaultDevice() };
+}
+
+pub fn msg_id_pipeline(recv: *u8, selector: *u8, fn_obj: *u8, err_out: *u8) -> *u8 {
+    return unsafe { objc_msg_id_pipeline(recv, selector, fn_obj, err_out) };
+}
+
+pub fn msg_void_pipeline(recv: *u8, selector: *u8, pipeline: *u8) {
+    unsafe { objc_msg_void_pipeline(recv, selector, pipeline); };
+}
+
+pub fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSize) {
+    let size: usize = size_of::[MTLSize]();
+    let p: *u8 = unsafe { malloc(size *% (2 as usize)) };
+    if p == unsafe { 0 as *u8 } {
+        return;
+    }
+    let groups_ptr: *MTLSize = unsafe { p as *MTLSize };
+    let per_group_ptr: *MTLSize = unsafe { (p + size) as *MTLSize };
+    unsafe {
+        groups_ptr[0].width = groups.width;
+        groups_ptr[0].height = groups.height;
+        groups_ptr[0].depth = groups.depth;
+
+        per_group_ptr[0].width = per_group.width;
+        per_group_ptr[0].height = per_group.height;
+        per_group_ptr[0].depth = per_group.depth;
+
+        objc_msg_dispatch(recv, selector, groups_ptr, per_group_ptr);
+        free(p);
+    };
+}
+
+// Converts a C+ str to an Objective-C NSString.
+// Retains or copies the string bytes.
+pub fn ns_string(s: str) -> *u8 {
+    let clazz: *u8 = cls(str_ptr("NSString\0"));
+    let selector: *u8 = sel(str_ptr("stringWithBytes:length:encoding:\0"));
+    let utf8_encoding: u64 = 4 as u64; // NSUTF8StringEncoding
+    return unsafe { objc_msg_id_ptr_len_enc(clazz, selector, str_ptr(s), str_len(s), utf8_encoding) };
+}
+
+// Wraps pre-allocated bytes as an NSData without copying them.
+pub fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
+    let clazz: *u8 = cls(str_ptr("NSData\0"));
+    let selector: *u8 = sel(str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
+    return unsafe { objc_msg_id_ptr_len_free(clazz, selector, ptr, len, 0 as i8) };
+}
+
+// Creates a dispatch_data_t from raw bytes.
+pub fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
+    return unsafe { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
+}

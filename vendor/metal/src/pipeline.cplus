@@ -1,0 +1,46 @@
+// vendor/metal/src/pipeline.cplus — shader libraries and pipelines.
+
+import "./runtime" as runtime;
+import "stdlib/option" as option;
+
+pub struct Library {
+    pub raw: *u8,
+}
+
+pub struct Function {
+    pub raw: *u8,
+}
+
+pub struct ComputePipelineState {
+    pub raw: *u8,
+}
+
+impl Library {
+    pub fn new_function(self, name: str) -> option::Option[Function] {
+        if self.raw == unsafe { 0 as *u8 } {
+            return option::Option[Function]::None;
+        }
+        let ns_name: *u8 = runtime::ns_string(name);
+        let selector: *u8 = runtime::sel(str_ptr("newFunctionWithName:\0"));
+        let func_raw: *u8 = runtime::msg_id_id(self.raw, selector, ns_name);
+        if func_raw == unsafe { 0 as *u8 } {
+            return option::Option[Function]::None;
+        }
+        return option::Option[Function]::Some(Function { raw: func_raw });
+    }
+}
+
+impl ComputePipelineState {
+    pub fn new(device_raw: *u8, function: Function) -> option::Option[ComputePipelineState] {
+        if device_raw == unsafe { 0 as *u8 } || function.raw == unsafe { 0 as *u8 } {
+            return option::Option[ComputePipelineState]::None;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("newComputePipelineStateWithFunction:error:\0"));
+        let null_err: *u8 = unsafe { 0 as *u8 };
+        let pipeline_raw: *u8 = runtime::msg_id_pipeline(device_raw, selector, function.raw, null_err);
+        if pipeline_raw == unsafe { 0 as *u8 } {
+            return option::Option[ComputePipelineState]::None;
+        }
+        return option::Option[ComputePipelineState]::Some(ComputePipelineState { raw: pipeline_raw });
+    }
+}

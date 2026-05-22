@@ -472,6 +472,11 @@ pub struct MonoInfo {
     /// `compile_time_blobs` but keyed by the env var name (sema dedup
     /// happens in the codegen-side emission pass).
     pub env_vars: HashMap<ByteSpan, EnvVarEntry>,
+    /// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;` items.
+    /// Keyed by qualified name. Codegen iterates this to emit one
+    /// LLVM global per static, then routes use-site Ident references
+    /// through load/store ops against the emitted symbol.
+    pub statics: std::collections::BTreeMap<String, StaticInfo>,
 }
 
 /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: one resolved `include_bytes!` or
@@ -611,6 +616,7 @@ fn check_with_files_inner<'a>(
         generic_impl_methods: HashMap::new(),
         compile_time_blobs_table: HashMap::new(),
         env_vars_table: HashMap::new(),
+        statics_table: HashMap::new(),
     };
     cx.register_builtins();
     // Type collection order:
@@ -633,6 +639,12 @@ fn check_with_files_inner<'a>(
     cx.compute_struct_copy_flags();
     cx.compute_enum_copy_flags(program);
     cx.collect_functions(program);
+    // v0.0.9 Phase 4: register module-scope const/static items. Runs
+    // after function collection so cross-item name collisions are
+    // detected; runs before body-checking so use-site lookups see the
+    // table populated. The collection pass also type-checks each
+    // initializer against the declared type.
+    cx.collect_consts_and_statics(program);
     cx.check_main_signature(program);
     cx.validate_interface_impls(program);
     cx.lint_generic_fn_bodies(program);
@@ -747,6 +759,7 @@ fn check_with_files_inner<'a>(
         type_aliases,
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
         env_vars: std::mem::take(&mut cx.env_vars_table),
+        statics: cx.statics_table.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
     };
     (sink.into_vec(), mono)
 }
@@ -918,6 +931,31 @@ struct SemaCx<'a> {
     /// macro call's source span. Sema populates; codegen reads from
     /// `MonoInfo::env_vars` (built by `mem::take` at hand-off).
     env_vars_table: HashMap<ByteSpan, EnvVarEntry>,
+    /// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;` items.
+    /// Keyed by qualified name (the resolver-rewritten form). Used by
+    /// `resolve_value_ident` to surface the static's type at use sites
+    /// and by `check_assign` to gate `static mut` writes behind
+    /// `unsafe { ... }`. Codegen reads the snapshot from `MonoInfo`.
+    statics_table: HashMap<String, StaticInfo>,
+}
+
+/// v0.0.9 Phase 4: sema-resolved info for a module-scope `static`.
+/// Initializer kept as the original AST expression so codegen can
+/// render it as an LLVM constant operand without re-parsing.
+#[derive(Debug, Clone)]
+pub struct StaticInfo {
+    /// Resolved type of the static (what the user wrote after `:`).
+    pub ty: Ty,
+    /// `true` for `static mut NAME: ...`. Reads and writes require
+    /// `unsafe { ... }` only when this flag is set; immutable statics
+    /// read safely from any context.
+    pub is_mut: bool,
+    /// Initializer expression, post-lower-validation. Always one of
+    /// the literal shapes accepted by `lower::is_const_initializer`.
+    pub init: Expr,
+    /// Decl span for diagnostics that need to point at the original
+    /// declaration (e.g. "first declared here").
+    pub decl_span: ByteSpan,
 }
 
 /// Slice 7GEN.5e step 3: method template stored on a generic-typed
@@ -1108,6 +1146,11 @@ impl SemaCx<'_> {
                         .insert(a.name.name.clone(), a.target.clone());
                 }
                 ItemKind::Function(_) | ItemKind::Impl(_) | ItemKind::Interface(_) => {}
+                // v0.0.9 Phase 4: const/static items don't register a
+                // *type* — they register a *value name* in a separate
+                // pass (`collect_consts_and_statics`) after type names
+                // are known. Nothing to do here.
+                ItemKind::Const(_) | ItemKind::Static(_) => {}
             }
         }
         self.current_file = None;
@@ -2641,6 +2684,80 @@ impl SemaCx<'_> {
             }
             _ => None,
         }
+    }
+
+    /// v0.0.9 Phase 4: collect module-scope `const` and `static` items
+    /// into sema's tables and type-check each initializer against the
+    /// declared type.
+    ///
+    /// `const` items are kept here only to gate name collisions against
+    /// functions (E0301) and to type-check their initializers — lower
+    /// already substituted their use sites away, and sema never looks
+    /// them up via `resolve_value_ident`.
+    ///
+    /// `static` items land in `statics_table` so `resolve_value_ident`
+    /// can surface them as values at use sites. Codegen reads the
+    /// snapshot from `MonoInfo::statics` (built at `check_multi_with_mono`
+    /// exit) and emits one LLVM global per entry.
+    fn collect_consts_and_statics(&mut self, p: &Program) {
+        // Track every value-level name in this pass so a `const FOO`
+        // followed by a `static FOO` (or vice versa) trips E0301.
+        // Consts go here too even though we don't keep their bodies
+        // in sema's tables — duplicate detection is the only thing
+        // we need them for at this stage (their use sites were
+        // already substituted in `lower::substitute_consts`).
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            match &item.kind {
+                ItemKind::Const(c) => {
+                    if self.fns.contains_key(&c.name.name) || seen.contains(&c.name.name) {
+                        self.err(
+                            "E0301",
+                            format!("duplicate item definition `{}`", c.name.name),
+                            c.name.span,
+                        );
+                        continue;
+                    }
+                    seen.insert(c.name.name.clone());
+                    let declared = self.resolve_type(&c.ty);
+                    // Type-check the initializer against the declared type.
+                    // `check_expr` requires a current scope frame — push
+                    // an empty one for the duration of the check, then
+                    // pop. The initializer is a literal post-lower, so
+                    // no local lookups occur in practice.
+                    self.scopes.push(HashMap::new());
+                    let _ = self.check_expr(&c.value, Some(declared));
+                    self.scopes.pop();
+                }
+                ItemKind::Static(s) => {
+                    if self.fns.contains_key(&s.name.name) || seen.contains(&s.name.name) {
+                        self.err(
+                            "E0301",
+                            format!("duplicate item definition `{}`", s.name.name),
+                            s.name.span,
+                        );
+                        continue;
+                    }
+                    seen.insert(s.name.name.clone());
+                    let declared = self.resolve_type(&s.ty);
+                    self.scopes.push(HashMap::new());
+                    let _ = self.check_expr(&s.value, Some(declared.clone()));
+                    self.scopes.pop();
+                    self.statics_table.insert(
+                        s.name.name.clone(),
+                        StaticInfo {
+                            ty: declared,
+                            is_mut: s.is_mut,
+                            init: s.value.clone(),
+                            decl_span: s.name.span,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+        self.current_file = None;
     }
 
     fn check_main_signature(&mut self, p: &Program) {
@@ -4598,6 +4715,22 @@ impl SemaCx<'_> {
             self.err(
                 "E0801",
                 "integer-to-pointer cast requires `unsafe { ... }`".to_string(),
+                span,
+            );
+        }
+        // v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → integer cast.
+        // The `cast_allowed` check above only admits 64-bit targets
+        // (usize / u64 / isize / i64); a narrower target already fell
+        // through to E0315. The remaining check is the unsafe gate:
+        // pointer-as-integer crosses the type system and the borrow
+        // checker has no visibility into what the integer is used for.
+        if matches!(from, Ty::RawPtr(_))
+            && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64)
+            && self.unsafe_depth == 0
+        {
+            self.err(
+                "E0801",
+                "pointer-to-integer cast requires `unsafe { ... }`".to_string(),
                 span,
             );
         }
@@ -7835,6 +7968,35 @@ impl SemaCx<'_> {
     }
 
     fn check_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr, span: ByteSpan) -> Ty {
+        // v0.0.9 Phase 4: assignment to a module-scope `static`.
+        // Routed before the local-binding path because static names
+        // don't appear in `self.scopes`. Immutable `static` writes
+        // fail with the same diagnostic shape as an immutable local
+        // (E0305); `static mut` writes require `unsafe { ... }` (E0X34).
+        if let ExprKind::Ident(name) = &target.kind {
+            if self.lookup_local(name).is_none() {
+                if let Some(info) = self.statics_table.get(name).cloned() {
+                    if !info.is_mut {
+                        self.err(
+                            "E0305",
+                            format!("cannot assign to immutable `static {name}`; declare it as `static mut` to permit writes"),
+                            target.span,
+                        );
+                        let _ = self.check_expr(value, Some(info.ty));
+                        return Ty::Error;
+                    }
+                    if self.unsafe_depth == 0 {
+                        self.err(
+                            "E0X34",
+                            format!("write to `static mut {name}` requires an enclosing `unsafe {{ ... }}` block"),
+                            span,
+                        );
+                    }
+                    let _ = self.check_expr(value, Some(info.ty));
+                    return Ty::Unit;
+                }
+            }
+        }
         // Special case: first write to an unassigned binding via a direct
         // Ident target. This is the initialization site of a `let x: T;`
         // — allowed regardless of `mut` (it's the binding's first value,
@@ -8911,6 +9073,21 @@ impl SemaCx<'_> {
             }
             return ty;
         }
+        // v0.0.9 Phase 4: module-scope `static` lookup. Immutable
+        // `static` is readable from any context. `static mut` reads
+        // require an enclosing `unsafe { ... }` block — the borrow
+        // checker can't prove absence of data races on module-scope
+        // mutable state.
+        if let Some(info) = self.statics_table.get(name).cloned() {
+            if info.is_mut && self.unsafe_depth == 0 {
+                self.err(
+                    "E0X33",
+                    format!("read of `static mut {name}` requires an enclosing `unsafe {{ ... }}` block"),
+                    span,
+                );
+            }
+            return info.ty;
+        }
         // Slice 11.FN_PTR: when expected is `Ty::FnPtr { .. }` and `name` is
         // a non-generic fn, coerce the named fn to a fn-pointer value. The
         // surrounding `check_expr` validates signature equality via the
@@ -9570,10 +9747,25 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::RawPtr(_)) {
         return true;
     }
+    // v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → 64-bit integer.
+    // Only `usize`, `u64`, `isize`, and `i64` are accepted — narrower
+    // targets would silently truncate a 64-bit address and are almost
+    // always a bug. Codegen lowers to LLVM `ptrtoint`. The unsafe gate
+    // in `check_cast` covers the safety side — pointer-as-integer
+    // crosses the type system; the borrow checker has no way to reason
+    // about whether the resulting integer round-trips back to a
+    // pointer that gets dereferenced.
+    if matches!(from, Ty::RawPtr(_))
+        && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64)
+    {
+        return true;
+    }
     // Forbidden:
     //   - integer/float → bool (use `!= 0`)
     //   - bool → float
     //   - integer → enum (needs runtime range check)
+    //   - raw-pointer → narrow integer (`*T as u32`, `*T as i16`, ...)
+    //     — cast to `usize` first, then narrow if you really mean to.
     //   - any other combination
     false
 }
@@ -12086,6 +12278,148 @@ mod tests {
         assert_clean("fn main() -> i32 { let p: **i32 = unsafe { 0 as **i32 }; return 0; }");
     }
 
+    // ---- v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → integer cast ----
+
+    #[test]
+    fn pointer_to_usize_cast_in_unsafe_clean() {
+        // The canonical alignment-check shape from C ports:
+        //   `(p as usize) % alignment`
+        assert_clean(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: usize = unsafe { p as usize }; \
+                return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn pointer_to_u64_cast_in_unsafe_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: u64 = unsafe { p as u64 }; \
+                return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn pointer_to_isize_cast_in_unsafe_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: isize = unsafe { p as isize }; \
+                return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn pointer_to_i64_cast_in_unsafe_clean() {
+        assert_clean(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: i64 = unsafe { p as i64 }; \
+                return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn pointer_to_typed_pointer_then_usize_clean() {
+        // Realistic chain: opaque byte buffer → typed pointer → address.
+        // Exercises both raw-ptr-to-raw-ptr (Phase 11) and the new
+        // raw-ptr-to-integer cast in a single unsafe block.
+        assert_clean(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let fp: *f32 = unsafe { p as *f32 }; \
+                let addr: usize = unsafe { fp as usize }; \
+                return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn pointer_to_usize_outside_unsafe_e0801() {
+        // Cast itself is admitted by `cast_allowed`, but the unsafe gate
+        // in `check_cast` fires when not inside an unsafe block.
+        let codes = errors(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: usize = p as usize; \
+                return 0; \
+             }",
+        );
+        assert!(
+            codes.contains(&"E0801"),
+            "expected E0801 outside unsafe, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn pointer_to_u32_rejected_e0315() {
+        // u32 isn't 64 bits — narrowing a pointer is almost always a bug,
+        // so `cast_allowed` doesn't admit it even inside unsafe.
+        let codes = errors(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: u32 = unsafe { p as u32 }; \
+                return 0; \
+             }",
+        );
+        assert!(
+            codes.contains(&"E0315"),
+            "expected E0315 for narrowing cast, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn pointer_to_i32_rejected_e0315() {
+        let codes = errors(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: i32 = unsafe { p as i32 }; \
+                return 0; \
+             }",
+        );
+        assert!(
+            codes.contains(&"E0315"),
+            "expected E0315 for narrowing cast, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn pointer_to_bool_rejected_e0315() {
+        let codes = errors(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let alive: bool = unsafe { p as bool }; \
+                return 0; \
+             }",
+        );
+        assert!(
+            codes.contains(&"E0315"),
+            "expected E0315 for ptr→bool, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn pointer_to_usize_roundtrip_back_to_pointer_clean() {
+        // Roundtrip pattern from the llama port's aligned_offset helper:
+        //   addr = p as usize; if addr % align == 0 { return addr as *T; }
+        assert_clean(
+            "fn main() -> i32 { \
+                let p: *u8 = unsafe { 0 as *u8 }; \
+                let addr: usize = unsafe { p as usize }; \
+                let aligned: usize = addr; \
+                let back: *u8 = unsafe { aligned as *u8 }; \
+                return 0; \
+             }",
+        );
+    }
+
     // Phase 11 / ObjC interop: `#[link_name = "..."]` attribute.
     // Aliases an extern fn's linker symbol so multiple typed signatures
     // can resolve to the same C symbol. The load-bearing trick for ObjC
@@ -13315,5 +13649,181 @@ mod tests {
              }",
         );
         assert!(codes.contains(&"E0801"), "expected E0801, got {:?}", codes);
+    }
+
+    // ---- v0.0.9 Phase 4: module-scope `const` and `static` ----
+
+    /// Run the lower pass before sema. Required for const-substitution
+    /// tests (the literal-only check + const-ref → literal rewrite both
+    /// live in `crate::lower`).
+    fn check_src_lowered(src: &str) -> Vec<Diagnostic> {
+        let toks = tokenize(src).expect("lex");
+        let mut prog = parse(toks).expect("parse");
+        let path = PathBuf::from("test.cplus");
+        let mut diags = crate::lower::lower(&mut prog, &path, src);
+        diags.extend(check(&prog, path, src));
+        diags
+    }
+
+    fn lowered_errors(src: &str) -> Vec<String> {
+        check_src_lowered(src)
+            .into_iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| d.code.0.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn const_int_initializer_typecheck_clean() {
+        let diags = check_src_lowered(
+            "const HEADER_BYTES: usize = 176; \
+             fn main() -> i32 { let n: usize = HEADER_BYTES; return 0; }",
+        );
+        assert!(
+            diags.is_empty(),
+            "expected clean type-check, got {:#?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn const_substituted_into_arithmetic() {
+        // After lowering, HEADER_BYTES becomes the literal 176 at the
+        // use site, which is u64-compatible and adds fine with another
+        // usize value.
+        let diags = check_src_lowered(
+            "const HEADER_BYTES: usize = 176; \
+             fn main() -> i32 { let n: usize = HEADER_BYTES + (8 as usize); return 0; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn const_initializer_type_mismatch_e0302() {
+        // Initializer is an int literal but declared type is bool —
+        // sema's check_expr surfaces E0302 (or the literal/type
+        // mismatch code) from the standard literal-check pipeline.
+        let codes = lowered_errors("const FOO: bool = 5;");
+        assert!(
+            codes.iter().any(|c| c == "E0302" || c == "E0303"),
+            "expected E0302/E0303 type mismatch, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn const_with_non_literal_initializer_e0x30() {
+        // Arithmetic in the initializer is rejected by lower with E0X30.
+        let codes = lowered_errors("const FOO: i32 = 1 + 2;");
+        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn const_with_ident_initializer_e0x30() {
+        // Referring to another binding/const from an initializer is
+        // out of scope for v0.0.9.
+        let codes = lowered_errors(
+            "const A: i32 = 5; \
+             const B: i32 = A;",
+        );
+        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn const_negative_int_initializer_clean() {
+        let diags = check_src_lowered(
+            "const NEG_ONE: i32 = -1; \
+             fn main() -> i32 { return NEG_ONE; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn static_int_decl_clean() {
+        let diags = check_src_lowered(
+            "static RNG_SEED: u32 = 305419896; \
+             fn main() -> i32 { let s: u32 = RNG_SEED; return 0; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn static_mut_read_outside_unsafe_e0x33() {
+        let codes = lowered_errors(
+            "static mut COUNTER: i32 = 0; \
+             fn main() -> i32 { return COUNTER; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0X33"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn static_mut_read_inside_unsafe_clean() {
+        let diags = check_src_lowered(
+            "static mut COUNTER: i32 = 0; \
+             fn main() -> i32 { let n: i32 = unsafe { COUNTER }; return n; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn static_mut_write_outside_unsafe_e0x34() {
+        let codes = lowered_errors(
+            "static mut COUNTER: i32 = 0; \
+             fn main() -> i32 { COUNTER = 5; return 0; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0X34"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn static_mut_write_inside_unsafe_clean() {
+        let diags = check_src_lowered(
+            "static mut COUNTER: i32 = 0; \
+             fn main() -> i32 { unsafe { COUNTER = 5; } return 0; }",
+        );
+        assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    #[test]
+    fn write_to_immutable_static_e0305() {
+        let codes = lowered_errors(
+            "static FROZEN: i32 = 0; \
+             fn main() -> i32 { FROZEN = 5; return 0; }",
+        );
+        assert!(codes.iter().any(|c| c == "E0305"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn const_name_collides_with_fn_e0301() {
+        let codes = lowered_errors(
+            "fn FOO() -> i32 { return 1; } \
+             const FOO: i32 = 1;",
+        );
+        assert!(codes.iter().any(|c| c == "E0301"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn static_name_collides_with_const_e0301() {
+        let codes = lowered_errors(
+            "const FOO: i32 = 1; \
+             static FOO: i32 = 1;",
+        );
+        // Note: const FOO collides with static FOO because both go
+        // through the same name-uniqueness check at sema's collect
+        // pass — but const items aren't in the statics_table, so the
+        // collision is detected when the second item is processed.
+        // Lower also picks up duplicate-const in `consts` HashMap
+        // silently overwriting, which is fine — the sema check fires
+        // first.
+        assert!(codes.iter().any(|c| c == "E0301"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn static_initializer_type_mismatch() {
+        let codes = lowered_errors("static FOO: bool = 5;");
+        assert!(
+            codes.iter().any(|c| c == "E0302" || c == "E0303"),
+            "expected type mismatch, got {:?}",
+            codes
+        );
     }
 }

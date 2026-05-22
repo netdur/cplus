@@ -1,0 +1,119 @@
+// vendor/arena/src/arena.cplus
+// Bump/Arena memory allocator.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+struct Chunk {
+    cap: usize,
+    used: usize,
+    next: *u8,
+}
+
+pub struct Arena {
+    head: *u8,
+    chunk_size: usize,
+}
+
+pub fn new(chunk_size: usize) -> Arena {
+    let mut default_chunk_size: usize = chunk_size;
+    let header_size: usize = size_of::[Chunk]();
+    if default_chunk_size < header_size +% 8 {
+        default_chunk_size = header_size +% 1024;
+    }
+    return Arena {
+        head: unsafe { 0 as *u8 },
+        chunk_size: default_chunk_size,
+    };
+}
+
+impl Arena {
+    pub fn alloc_bytes(mut self, bytes: usize) -> *u8 {
+        return self.alloc_bytes_aligned(bytes, 8 as usize);
+    }
+
+    pub fn alloc_bytes_aligned(mut self, bytes: usize, align: usize) -> *u8 {
+        let header_size: usize = size_of::[Chunk]();
+        
+        if unsafe { self.head as usize } != (0 as usize) {
+            let chunk: *Chunk = unsafe { self.head as *Chunk };
+            let cap: usize = unsafe { (*chunk).cap };
+            let used: usize = unsafe { (*chunk).used };
+            
+            let p_start: usize = unsafe { (self.head as usize) +% header_size };
+            let avail: usize = p_start +% used;
+            
+            let remainder: usize = avail % align;
+            let aligned_avail: usize = if remainder == (0 as usize) { avail } else { avail +% (align -% remainder) };
+            
+            let end_addr: usize = aligned_avail +% bytes;
+            let p_end: usize = p_start +% cap;
+            
+            if end_addr <= p_end {
+                unsafe {
+                    (*chunk).used = end_addr -% p_start;
+                }
+                return unsafe { aligned_avail as *u8 };
+            }
+        }
+        
+        // Allocate a new chunk
+        let mut needed_payload: usize = bytes;
+        let mut padding: usize = 0;
+        if align > 1 {
+            padding = align -% 1;
+        }
+        let max_needed: usize = bytes +% padding;
+        
+        let mut next_chunk_payload: usize = self.chunk_size -% header_size;
+        if next_chunk_payload < max_needed {
+            next_chunk_payload = max_needed;
+        }
+        
+        let alloc_size: usize = header_size +% next_chunk_payload;
+        let raw: *u8 = unsafe { malloc(alloc_size) };
+        if unsafe { raw as usize } == (0 as usize) {
+            return unsafe { 0 as *u8 };
+        }
+        
+        let new_chunk: *Chunk = unsafe { raw as *Chunk };
+        unsafe {
+            (*new_chunk).cap = next_chunk_payload;
+            (*new_chunk).used = 0;
+            (*new_chunk).next = self.head;
+        }
+        self.head = raw;
+        
+        let p_start: usize = unsafe { (raw as usize) +% header_size };
+        let remainder: usize = p_start % align;
+        let aligned_avail: usize = if remainder == (0 as usize) { p_start } else { p_start +% (align -% remainder) };
+        
+        unsafe {
+            (*new_chunk).used = (aligned_avail +% bytes) -% p_start;
+        }
+        return unsafe { aligned_avail as *u8 };
+    }
+
+    pub fn alloc[T](mut self, move val: T) -> *T {
+        let bytes: usize = size_of::[T]();
+        let align: usize = align_of::[T]();
+        let ptr: *u8 = self.alloc_bytes_aligned(bytes, align);
+        if unsafe { ptr as usize } == (0 as usize) {
+            return unsafe { 0 as *T };
+        }
+        let typed_ptr: *T = unsafe { ptr as *T };
+        unsafe { *typed_ptr = val; }
+        return typed_ptr;
+    }
+
+    fn drop(mut self) {
+        let mut curr: *u8 = self.head;
+        while unsafe { curr as usize } != (0 as usize) {
+            let chunk: *Chunk = unsafe { curr as *Chunk };
+            let next: *u8 = unsafe { (*chunk).next };
+            unsafe { free(curr); }
+            curr = next;
+        }
+        return;
+    }
+}

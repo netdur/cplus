@@ -1,0 +1,20 @@
+// v0.0.9 Phase 6 (cpc-gaps G-016) — raw-pointer → integer cast inside unsafe.
+//
+// The canonical alignment-check shape from C ports. Allocate a 64-byte
+// buffer; its address modulo 16 is reported as the program's exit status
+// (or 0 if the alignment is at least 16, which malloc guarantees).
+//
+// Expected output: 0 (every libc malloc returns at least 16-byte-aligned
+// pointers on 64-bit platforms; `(addr % 16) == 0`).
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn main() -> i32 {
+    let p: *u8 = unsafe { malloc(64 as usize) };
+    let addr: usize = unsafe { p as usize };
+    let misalignment: usize = addr % (16 as usize);
+    unsafe { free(p); }
+    println(misalignment as i32);
+    return 0;
+}

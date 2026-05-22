@@ -2481,6 +2481,16 @@ fn rewrite_aliases_in_program(
                 }
             }
             ItemKind::TypeAlias(_) => unreachable!("filtered above"),
+            // v0.0.9 Phase 4: rewrite the declared type so type aliases
+            // referenced from a const/static signature resolve. The
+            // initializer is a literal — no nested types to rewrite —
+            // but a future struct-literal extension would walk it here.
+            ItemKind::Const(c) => {
+                rewrite_alias_type(&mut c.ty, aliases);
+            }
+            ItemKind::Static(s) => {
+                rewrite_alias_type(&mut s.ty, aliases);
+            }
         }
     }
     program

@@ -135,6 +135,11 @@ pub enum PrivateKind {
     Method,
     Interface,
     TypeAlias,
+    /// v0.0.9 Phase 4: module-scope `const NAME`. Same cross-file pub
+    /// gate as a function; missing `pub` triggers E0403.
+    Const,
+    /// v0.0.9 Phase 4: module-scope `static NAME`. Same pub gate.
+    Static,
 }
 
 impl std::fmt::Display for ResolveError {
@@ -186,6 +191,8 @@ impl std::fmt::Display for ResolveError {
                     PrivateKind::Method => "method",
                     PrivateKind::Interface => "interface",
                     PrivateKind::TypeAlias => "type alias",
+                    PrivateKind::Const => "const",
+                    PrivateKind::Static => "static",
                 };
                 match kind {
                     PrivateKind::Method => write!(
@@ -541,6 +548,8 @@ impl LoadFailure {
                     PrivateKind::Method => "method",
                     PrivateKind::Interface => "interface",
                     PrivateKind::TypeAlias => "type alias",
+                    PrivateKind::Const => "const",
+                    PrivateKind::Static => "static",
                 };
                 let msg = match kind {
                     PrivateKind::Method => format!(
@@ -1192,6 +1201,25 @@ fn merge(
                         pubs.insert(a.name.name.clone());
                     }
                 }
+                // v0.0.9 Phase 4: const/static register as value-level
+                // names. Cross-file `prefix::FOO` path expressions go
+                // through the same pub gate as functions; the rewriter
+                // collapses a `prefix::FOO` path to the qualified ident
+                // and the path-expression sema treats it as a value.
+                ItemKind::Const(c) => {
+                    all.insert(c.name.name.clone());
+                    kinds.insert(c.name.name.clone(), ItemKindTag::Const);
+                    if c.is_pub {
+                        pubs.insert(c.name.name.clone());
+                    }
+                }
+                ItemKind::Static(s) => {
+                    all.insert(s.name.name.clone());
+                    kinds.insert(s.name.name.clone(), ItemKindTag::Static);
+                    if s.is_pub {
+                        pubs.insert(s.name.name.clone());
+                    }
+                }
             }
         }
         local_items.insert(fid.clone(), all);
@@ -1300,6 +1328,14 @@ enum ItemKindTag {
     Enum,
     Interface,
     TypeAlias,
+    /// v0.0.9 Phase 4: module-scope `const NAME: Ty = LIT;`. Lowered to
+    /// the inlined literal at every use site; same cross-file pub gate
+    /// as `Function`.
+    Const,
+    /// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`.
+    /// Survives to codegen as an LLVM global; same cross-file pub gate
+    /// as `Function`.
+    Static,
 }
 
 #[derive(Debug, Clone)]
@@ -1396,6 +1432,8 @@ impl RewriteCtx {
                 ItemKindTag::Enum => PrivateKind::Enum,
                 ItemKindTag::Interface => PrivateKind::Interface,
                 ItemKindTag::TypeAlias => PrivateKind::TypeAlias,
+                ItemKindTag::Const => PrivateKind::Const,
+                ItemKindTag::Static => PrivateKind::Static,
             })
             .unwrap_or(PrivateKind::Function);
         let is_pub = self
@@ -1572,6 +1610,29 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
             a.name.name = ctx.qualify_local(&a.name.name);
             rewrite_type(&mut a.target, ctx)?;
             ItemKind::TypeAlias(a)
+        }
+        // v0.0.9 Phase 4: const items. Qualify the name and rewrite
+        // the declared type. Initializer is a literal (no cross-file
+        // path references possible inside it) — but for forward-
+        // compatibility we still walk it in case a later slice admits
+        // const-of-const initializers.
+        ItemKind::Const(c) => {
+            let mut c = c.clone();
+            c.name.name = ctx.qualify_local(&c.name.name);
+            rewrite_type(&mut c.ty, ctx)?;
+            let mut scope: HashSet<String> = HashSet::new();
+            rewrite_expr(&mut c.value, ctx, &mut scope)?;
+            ItemKind::Const(c)
+        }
+        // v0.0.9 Phase 4: static items. Same shape as const — qualify
+        // the name and rewrite the declared type.
+        ItemKind::Static(s) => {
+            let mut s = s.clone();
+            s.name.name = ctx.qualify_local(&s.name.name);
+            rewrite_type(&mut s.ty, ctx)?;
+            let mut scope: HashSet<String> = HashSet::new();
+            rewrite_expr(&mut s.value, ctx, &mut scope)?;
+            ItemKind::Static(s)
         }
     };
     Ok(Item {

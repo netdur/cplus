@@ -168,6 +168,10 @@ pub fn check_multi(
             // Phase 11 polish: type aliases admit no attributes (the
             // parser rejects them at the source level too).
             ItemKind::TypeAlias(_) => {}
+            // v0.0.9 Phase 4: const/static admit no attributes in the
+            // first cut. The parser rejects them at the surface; this
+            // arm is a defense-in-depth no-op.
+            ItemKind::Const(_) | ItemKind::Static(_) => {}
         }
     }
     ctx.diags

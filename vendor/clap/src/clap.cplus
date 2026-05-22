@@ -1,0 +1,448 @@
+// vendor/clap/src/clap.cplus
+// Zero-copy command line argument parser.
+
+import "stdlib/vec" as vec;
+import "stdlib/hash_map" as map;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn exit(code: i32);
+extern fn _NSGetArgc() -> *i32;
+extern fn _NSGetArgv() -> ***u8;
+extern fn strlen(s: *u8) -> usize;
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+pub struct Arg {
+    pub name: str,
+    pub short_name: str,
+    pub long_name: str,
+    pub help: str,
+    pub is_flag: bool,
+    pub required: bool,
+}
+
+pub fn new_arg(name: str) -> Arg {
+    return Arg {
+        name: name,
+        short_name: "",
+        long_name: "",
+        help: "",
+        is_flag: false,
+        required: false,
+    };
+}
+
+impl Arg {
+    pub fn short(mut self, s: str) -> Arg {
+        self.short_name = s;
+        return self;
+    }
+    pub fn long(mut self, l: str) -> Arg {
+        self.long_name = l;
+        return self;
+    }
+    pub fn flag(mut self) -> Arg {
+        self.is_flag = true;
+        return self;
+    }
+    pub fn required(mut self) -> Arg {
+        self.required = true;
+        return self;
+    }
+    pub fn help(mut self, h: str) -> Arg {
+        self.help = h;
+        return self;
+    }
+}
+
+pub struct ArgVec {
+    ptr: *Arg,
+    len: usize,
+    cap: usize,
+}
+
+pub fn new_arg_vec() -> ArgVec {
+    return ArgVec {
+        ptr: unsafe { 0 as *Arg },
+        len: 0 as usize,
+        cap: 0 as usize,
+    };
+}
+
+impl ArgVec {
+    pub fn len(self) -> usize {
+        return self.len;
+    }
+
+    pub fn get(self, i: usize) -> Arg {
+        let p: *Arg = unsafe { self.ptr + i };
+        return unsafe { *p };
+    }
+
+    pub fn push(mut self, move x: Arg) {
+        if self.len == self.cap {
+            let mut new_cap: usize = self.cap *% (2 as usize);
+            if new_cap == (0 as usize) {
+                new_cap = 1 as usize;
+            }
+            let new_bytes: usize = new_cap *% size_of::[Arg]();
+            let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
+            self.ptr = unsafe { raw as *Arg };
+            self.cap = new_cap;
+        }
+        let slot: *Arg = unsafe { self.ptr + self.len };
+        unsafe { *slot = x; }
+        self.len = self.len +% (1 as usize);
+        return;
+    }
+
+    fn drop(mut self) {
+        if self.cap == (0 as usize) { return; }
+        unsafe { free(self.ptr as *u8); }
+        return;
+    }
+}
+
+pub struct App {
+    pub name: str,
+    pub version: str,
+    pub author: str,
+    pub about: str,
+    pub args: ArgVec,
+}
+
+fn alloc_map_str(move m: map::HashMap[str, str]) -> *u8 {
+    let bytes: usize = size_of::[map::HashMap[str, str]]();
+    let raw: *u8 = unsafe { malloc(bytes) };
+    let p: *map::HashMap[str, str] = unsafe { raw as *map::HashMap[str, str] };
+    unsafe { *p = m; }
+    return raw;
+}
+
+fn map_str_free(p: *u8) {
+    let map_ptr: *map::HashMap[str, str] = unsafe { p as *map::HashMap[str, str] };
+    unsafe { __cplus_drop_in_place::[map::HashMap[str, str]](map_ptr); }
+    unsafe { free(p); }
+    return;
+}
+
+fn alloc_vec_str(move v: vec::Vec[str]) -> *u8 {
+    let bytes: usize = size_of::[vec::Vec[str]]();
+    let raw: *u8 = unsafe { malloc(bytes) };
+    let p: *vec::Vec[str] = unsafe { raw as *vec::Vec[str] };
+    unsafe { *p = v; }
+    return raw;
+}
+
+fn vec_str_free(p: *u8) {
+    let vec_ptr: *vec::Vec[str] = unsafe { p as *vec::Vec[str] };
+    unsafe { __cplus_drop_in_place::[vec::Vec[str]](vec_ptr); }
+    unsafe { free(p); }
+    return;
+}
+
+pub fn new_app(name: str) -> App {
+    return App {
+        name: name,
+        version: "",
+        author: "",
+        about: "",
+        args: new_arg_vec(),
+    };
+}
+
+fn write_out(fd: i32, s: str) {
+    let p: *u8 = str_ptr(s);
+    let n: usize = str_len(s);
+    let mut written: usize = 0;
+    while written < n {
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, n -% written) };
+        if w <= (0 as isize) { return; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+impl App {
+    pub fn version(mut self, v: str) -> App {
+        self.version = v;
+        return self;
+    }
+    pub fn author(mut self, a: str) -> App {
+        self.author = a;
+        return self;
+    }
+    pub fn about(mut self, ab: str) -> App {
+        self.about = ab;
+        return self;
+    }
+    pub fn arg(mut self, move argument: Arg) -> App {
+        self.args.push(argument);
+        return self;
+    }
+
+    fn find_arg_by_long(self, name: str) -> option::Option[Arg] {
+        let mut i: usize = 0 as usize;
+        let len: usize = self.args.len();
+        while i < len {
+            let item: Arg = self.args.get(i);
+            if item.long_name == name {
+                return option::some::[Arg](item);
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[Arg]::None;
+    }
+
+    fn find_arg_by_short(self, name: str) -> option::Option[Arg] {
+        let mut i: usize = 0 as usize;
+        let len: usize = self.args.len();
+        while i < len {
+            let item: Arg = self.args.get(i);
+            if item.short_name == name {
+                return option::some::[Arg](item);
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[Arg]::None;
+    }
+
+    pub fn print_help_and_exit(self) {
+        let fd: i32 = 1; // stdout
+        write_out(fd, self.name);
+        write_out(fd, "\n");
+        if str_len(self.version) > 0 {
+            write_out(fd, "Version: ");
+            write_out(fd, self.version);
+            write_out(fd, "\n");
+        }
+        if str_len(self.author) > 0 {
+            write_out(fd, "Author: ");
+            write_out(fd, self.author);
+            write_out(fd, "\n");
+        }
+        if str_len(self.about) > 0 {
+            write_out(fd, self.about);
+            write_out(fd, "\n");
+        }
+        write_out(fd, "\nUSAGE:\n    ");
+        write_out(fd, self.name);
+        write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n\nFLAGS & OPTIONS:\n");
+        
+        let mut i: usize = 0 as usize;
+        let len: usize = self.args.len();
+        while i < len {
+            let item: Arg = self.args.get(i);
+            write_out(fd, "    ");
+            if str_len(item.short_name) > 0 {
+                write_out(fd, "-");
+                write_out(fd, item.short_name);
+                write_out(fd, ", ");
+            } else {
+                write_out(fd, "    ");
+            }
+            if str_len(item.long_name) > 0 {
+                write_out(fd, "--");
+                write_out(fd, item.long_name);
+            }
+            if !item.is_flag {
+                write_out(fd, " <value>");
+            }
+            if str_len(item.help) > 0 {
+                write_out(fd, "        ");
+                write_out(fd, item.help);
+            }
+            if item.required {
+                write_out(fd, " (required)");
+            }
+            write_out(fd, "\n");
+            i = i +% (1 as usize);
+        }
+        
+        unsafe { exit(0 as i32); }
+        return;
+    }
+
+    fn print_unknown_arg_and_exit(self, arg: str) {
+        let fd: i32 = 2; // stderr
+        write_out(fd, "error: Found argument '");
+        write_out(fd, arg);
+        write_out(fd, "' which wasn't expected, or isn't valid in this context\n\n");
+        write_out(fd, "USAGE:\n    ");
+        write_out(fd, self.name);
+        write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n");
+        unsafe { exit(1 as i32); }
+        return;
+    }
+    
+    fn print_missing_value_and_exit(self, name: str) {
+        let fd: i32 = 2; // stderr
+        write_out(fd, "error: The argument '--");
+        write_out(fd, name);
+        write_out(fd, "' requires a value but none was supplied\n");
+        unsafe { exit(1 as i32); }
+        return;
+    }
+
+    fn print_missing_required_and_exit(self, name: str) {
+        let fd: i32 = 2; // stderr
+        write_out(fd, "error: The following required arguments were not provided:\n    ");
+        write_out(fd, name);
+        write_out(fd, "\n");
+        unsafe { exit(1 as i32); }
+        return;
+    }
+
+    pub fn get_matches(self) -> ArgMatches {
+        let argc: i32 = unsafe { *_NSGetArgc() };
+        let argv: **u8 = unsafe { *_NSGetArgv() };
+        let mut args: vec::Vec[str] = vec::new::[str]();
+        
+        let mut i: usize = 0 as usize;
+        while i < (argc as usize) {
+            let pp: **u8 = unsafe { argv + i };
+            let arg: *u8 = unsafe { *pp };
+            let len: usize = unsafe { strlen(arg) };
+            let s: str = unsafe { str_from_raw_parts(arg, len) };
+            args.push(s);
+            i = i +% (1 as usize);
+        }
+        return self.get_matches_from(args);
+    }
+
+    pub fn get_matches_from(self, args: vec::Vec[str]) -> ArgMatches {
+        let mut matches: map::HashMap[str, str] = map::new::[str, str]();
+        let mut positionals: vec::Vec[str] = vec::new::[str]();
+        
+        let n: usize = args.len();
+        let mut i: usize = 1 as usize;
+        
+        let args_len: usize = self.args.len();
+
+        while i < n {
+            let arg_str: str = args.get(i);
+            
+            if str_len(arg_str) > (1 as usize) && unsafe { *str_ptr(arg_str) } == (45 as u8) {
+                if arg_str == "--help" || arg_str == "-h" {
+                    self.print_help_and_exit();
+                }
+                
+                if str_len(arg_str) > (2 as usize) && unsafe { *(str_ptr(arg_str) + 1) } == (45 as u8) {
+                    // Long option: --name
+                    let opt_name: str = unsafe { str_from_raw_parts(str_ptr(arg_str) + 2, str_len(arg_str) -% 2) };
+                    let opt_arg: option::Option[Arg] = self.find_arg_by_long(opt_name);
+                    guard let option::Option[Arg]::Some(found) = opt_arg else {
+                        self.print_unknown_arg_and_exit(arg_str);
+                        return ArgMatches {
+                            matches_raw: unsafe { 0 as *u8 },
+                            positionals_raw: unsafe { 0 as *u8 },
+                        };
+                    };
+                    
+                    if found.is_flag {
+                        matches.insert(found.name, "true");
+                    } else {
+                        if i +% (1 as usize) < n {
+                            i = i +% (1 as usize);
+                            let val: str = args.get(i);
+                            matches.insert(found.name, val);
+                        } else {
+                            self.print_missing_value_and_exit(found.name);
+                        }
+                    }
+                } else {
+                    // Short option: -n
+                    let opt_name: str = unsafe { str_from_raw_parts(str_ptr(arg_str) + 1, str_len(arg_str) -% 1) };
+                    let opt_arg: option::Option[Arg] = self.find_arg_by_short(opt_name);
+                    guard let option::Option[Arg]::Some(found) = opt_arg else {
+                        self.print_unknown_arg_and_exit(arg_str);
+                        return ArgMatches {
+                            matches_raw: unsafe { 0 as *u8 },
+                            positionals_raw: unsafe { 0 as *u8 },
+                        };
+                    };
+                    
+                    if found.is_flag {
+                        matches.insert(found.name, "true");
+                    } else {
+                        if i +% (1 as usize) < n {
+                            i = i +% (1 as usize);
+                            let val: str = args.get(i);
+                            matches.insert(found.name, val);
+                        } else {
+                            self.print_missing_value_and_exit(found.name);
+                        }
+                    }
+                }
+            } else {
+                positionals.push(arg_str);
+            }
+            i = i +% (1 as usize);
+        }
+        
+        let mut j: usize = 0 as usize;
+        while j < args_len {
+            let item: Arg = self.args.get(j);
+            if item.required {
+                if !matches.contains_key(item.name) {
+                    self.print_missing_required_and_exit(item.name);
+                }
+            }
+            j = j +% (1 as usize);
+        }
+        
+        return ArgMatches {
+            matches_raw: alloc_map_str(matches),
+            positionals_raw: alloc_vec_str(positionals),
+        };
+    }
+}
+
+pub struct ArgMatches {
+    pub matches_raw: *u8,
+    pub positionals_raw: *u8,
+}
+
+impl ArgMatches {
+    fn drop(mut self) {
+        if self.matches_raw != unsafe { 0 as *u8 } {
+            map_str_free(self.matches_raw);
+        }
+        if self.positionals_raw != unsafe { 0 as *u8 } {
+            vec_str_free(self.positionals_raw);
+        }
+        return;
+    }
+
+    pub fn is_present(self, name: str) -> bool {
+        let map_ptr: *map::HashMap[str, str] = unsafe { self.matches_raw as *map::HashMap[str, str] };
+        return unsafe { (*map_ptr).contains_key(name) };
+    }
+
+    pub fn value_of(self, name: str) -> option::Option[str] {
+        let map_ptr: *map::HashMap[str, str] = unsafe { self.matches_raw as *map::HashMap[str, str] };
+        let res = unsafe { (*map_ptr).get(name) };
+        guard let result::Result[str, result::IoError]::Ok(val) = res else {
+            return option::Option[str]::None;
+        };
+        return option::some::[str](val);
+    }
+
+    pub fn positionals(self) -> *vec::Vec[str] {
+        return unsafe { self.positionals_raw as *vec::Vec[str] };
+    }
+
+    pub fn positional_count(self) -> usize {
+        let vec_ptr: *vec::Vec[str] = unsafe { self.positionals_raw as *vec::Vec[str] };
+        return unsafe { (*vec_ptr).len() };
+    }
+
+    pub fn positional_at(self, i: usize) -> str {
+        let vec_ptr: *vec::Vec[str] = unsafe { self.positionals_raw as *vec::Vec[str] };
+        return unsafe { (*vec_ptr).get(i) };
+    }
+}

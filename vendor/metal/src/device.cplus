@@ -1,0 +1,68 @@
+// vendor/metal/src/device.cplus — MTLDevice wrapper and resource creation.
+
+import "./runtime" as runtime;
+import "./buffer" as buffer;
+import "./queue" as queue;
+import "./pipeline" as pipeline;
+import "stdlib/option" as option;
+
+pub struct Device {
+    pub raw: *u8,
+}
+
+pub fn default() -> option::Option[Device] {
+    let dev_raw: *u8 = runtime::mtl_create_system_default_device();
+    if dev_raw == unsafe { 0 as *u8 } {
+        return option::Option[Device]::None;
+    }
+    return option::Option[Device]::Some(Device { raw: dev_raw });
+}
+
+impl Device {
+    pub fn new_command_queue(self) -> queue::CommandQueue {
+        if self.raw == unsafe { 0 as *u8 } {
+            return queue::CommandQueue { raw: unsafe { 0 as *u8 } };
+        }
+        let selector: *u8 = runtime::sel(str_ptr("newCommandQueue\0"));
+        let queue_raw: *u8 = runtime::msg_id(self.raw, selector);
+        return queue::CommandQueue { raw: queue_raw };
+    }
+
+    pub fn new_library_with_data(self, data: u8[]) -> option::Option[pipeline::Library] {
+        if self.raw == unsafe { 0 as *u8 } {
+            return option::Option[pipeline::Library]::None;
+        }
+        let data_ptr: *u8 = unsafe { slice_ptr(data) };
+        let data_len: usize = slice_len(data);
+        let dispatch_data: *u8 = runtime::ns_dispatch_data(data_ptr, data_len);
+        
+        let selector: *u8 = runtime::sel(str_ptr("newLibraryWithData:error:\0"));
+        let null_err: *u8 = unsafe { 0 as *u8 };
+        let lib_raw: *u8 = runtime::msg_id_id_ptr(self.raw, selector, dispatch_data, null_err);
+        
+        if lib_raw == unsafe { 0 as *u8 } {
+            return option::Option[pipeline::Library]::None;
+        }
+        return option::Option[pipeline::Library]::Some(pipeline::Library { raw: lib_raw });
+    }
+
+    pub fn new_buffer(self, len: usize) -> buffer::Buffer {
+        if self.raw == unsafe { 0 as *u8 } {
+            return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
+        }
+        let selector: *u8 = runtime::sel(str_ptr("newBufferWithLength:options:\0"));
+        let buf_raw: *u8 = runtime::msg_id_usize_u64(self.raw, selector, len, 0 as u64);
+        return buffer::Buffer { raw: buf_raw, size: len };
+    }
+
+    pub fn new_buffer_from_slice(self, slice: u8[]) -> buffer::Buffer {
+        if self.raw == unsafe { 0 as *u8 } {
+            return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
+        }
+        let ptr: *u8 = unsafe { slice_ptr(slice) };
+        let len: usize = slice_len(slice);
+        let selector: *u8 = runtime::sel(str_ptr("newBufferWithBytes:length:options:\0"));
+        let buf_raw: *u8 = runtime::msg_id_ptr_len_opt(self.raw, selector, ptr, len, 0 as u64);
+        return buffer::Buffer { raw: buf_raw, size: len };
+    }
+}

@@ -79,6 +79,15 @@ struct ModuleMetadata {
     /// purely-internal calls. obs.md flagged this as a "few percent on
     /// call-heavy code" win, cumulative with fix A.
     fastcc_funcs: RefCell<HashSet<String>>,
+    /// v0.0.9 Phase 4: module-scope `static` items. Populated by the
+    /// `emit_statics` pre-pass from sema's `MonoInfo::statics`. Maps
+    /// the static's qualified name (the same name that survives in
+    /// `ExprKind::Ident` after lowering/resolver) to its resolved
+    /// `Ty`. Reads and writes consult this map first; on hit, gen_expr
+    /// emits a load/store against `@<name>` rather than the local-slot
+    /// path. Pre-pass emission ensures the global exists before any
+    /// function body references it.
+    statics: RefCell<HashMap<String, Ty>>,
 }
 
 impl ModuleMetadata {
@@ -663,37 +672,88 @@ fn lookup_iterator_ty(inner: &Ty, types: &TypeTable) -> Ty {
 /// scalar set the async return-type restriction allows.
 fn ty_from_future_name(name: &str, types: &TypeTable) -> Ty {
     let suffix = name.rsplit_once("Future__").map(|(_, s)| s).unwrap_or(name);
-    match suffix {
-        "i8" => Ty::I8,
-        "i16" => Ty::I16,
-        "i32" => Ty::I32,
-        "i64" => Ty::I64,
-        "u8" => Ty::U8,
-        "u16" => Ty::U16,
-        "u32" => Ty::U32,
-        "u64" => Ty::U64,
-        "isize" => Ty::Isize,
-        "usize" => Ty::Usize,
-        "f32" => Ty::F32,
-        "f64" => Ty::F64,
-        "bool" => Ty::Bool,
-        "unit" => Ty::Unit,
-        // v0.0.4 Phase 1E: non-Copy futures.
-        "string" => Ty::String,
-        _ => {
-            // Struct-typed inner (e.g. `Future__Vec__u8` for `Future[Vec[u8]]`).
-            // Look up the suffix in the struct table. Both the bare name
-            // and the file-qualified `.<suffix>` form are checked because
-            // the resolver may prefix file paths.
-            let dotted = format!(".{suffix}");
-            for (idx, d) in types.struct_defs.iter().enumerate() {
-                if d.name == suffix || d.name.ends_with(&dotted) {
-                    return Ty::Struct(StructId(idx as u32));
+    ty_from_suffix(suffix, types)
+}
+
+fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
+    if suffix == "i8" { return Ty::I8; }
+    if suffix == "i16" { return Ty::I16; }
+    if suffix == "i32" { return Ty::I32; }
+    if suffix == "i64" { return Ty::I64; }
+    if suffix == "u8" { return Ty::U8; }
+    if suffix == "u16" { return Ty::U16; }
+    if suffix == "u32" { return Ty::U32; }
+    if suffix == "u64" { return Ty::U64; }
+    if suffix == "isize" { return Ty::Isize; }
+    if suffix == "usize" { return Ty::Usize; }
+    if suffix == "f32" { return Ty::F32; }
+    if suffix == "f64" { return Ty::F64; }
+    if suffix == "bool" { return Ty::Bool; }
+    if suffix == "unit" { return Ty::Unit; }
+    if suffix == "str" { return Ty::Str; }
+    if suffix == "string" { return Ty::String; }
+    if suffix == "ERR" { return Ty::Error; }
+
+    if let Some(inner_suffix) = suffix.strip_prefix("ptr_") {
+        let inner_ty = ty_from_suffix(inner_suffix, types);
+        if inner_ty == Ty::Error {
+            return Ty::Error;
+        }
+        return Ty::RawPtr(Box::new(inner_ty));
+    }
+
+    if let Some(inner_suffix) = suffix.strip_prefix("slice_") {
+        let inner_ty = ty_from_suffix(inner_suffix, types);
+        if inner_ty == Ty::Error {
+            return Ty::Error;
+        }
+        return Ty::Slice(Box::new(inner_ty));
+    }
+
+    if suffix.starts_with("arr") {
+        if let Some(idx) = suffix.find('_') {
+            if let Ok(n) = suffix[3..idx].parse::<usize>() {
+                let elem_suffix = &suffix[idx + 1..];
+                let elem_ty = ty_from_suffix(elem_suffix, types);
+                if elem_ty == Ty::Error {
+                    return Ty::Error;
                 }
+                return Ty::Array(Box::new(elem_ty), n.try_into().unwrap());
             }
-            Ty::Error
         }
     }
+
+    if let Some(idx) = suffix.rfind('x') {
+        if let Ok(lanes) = suffix[idx + 1..].parse::<usize>() {
+            let elem_suffix = &suffix[..idx];
+            let elem_ty = ty_from_suffix(elem_suffix, types);
+            if elem_ty != Ty::Error {
+                return Ty::Simd {
+                    elem: Box::new(elem_ty),
+                    lanes: lanes.try_into().unwrap(),
+                };
+            }
+        }
+    }
+
+    if let Some(inner_suffix) = suffix.strip_prefix("Param_") {
+        return Ty::Param(inner_suffix.to_string());
+    }
+
+    let dotted = format!(".{suffix}");
+    for (idx, d) in types.struct_defs.iter().enumerate() {
+        if d.name == suffix || d.name.ends_with(&dotted) {
+            return Ty::Struct(StructId(idx as u32));
+        }
+    }
+
+    for (name, id) in &types.enum_by_name {
+        if name == suffix || name.ends_with(&dotted) {
+            return Ty::Enum(*id);
+        }
+    }
+
+    Ty::Error
 }
 
 /// v0.0.3 Phase 5 Slice 5C input eligibility. Like
@@ -757,6 +817,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
         false,
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -781,6 +842,7 @@ pub fn generate_with_mono(
         is_lib,
         &mono.compile_time_blobs,
         &mono.env_vars,
+        &mono.statics,
     )
 }
 
@@ -801,6 +863,7 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
         None,
         &[],
         true,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
     )
@@ -825,6 +888,7 @@ pub fn generate_with_debug(
         false,
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -846,6 +910,7 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
     )
@@ -882,6 +947,7 @@ pub fn generate_test_binary(
         false,
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -899,6 +965,7 @@ fn generate_inner(
     is_lib: bool,
     compile_time_blobs_map: &HashMap<crate::lexer::Span, crate::sema::CompileTimeBlobEntry>,
     env_vars_map: &HashMap<crate::lexer::Span, crate::sema::EnvVarEntry>,
+    statics_map: &std::collections::BTreeMap<String, crate::sema::StaticInfo>,
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
@@ -963,6 +1030,12 @@ fn generate_inner(
     // emit the right shape (raw pointer or `str` fat-pointer).
     emit_compile_time_blob_globals(&mut out, compile_time_blobs_map, &md);
     emit_env_var_globals(&mut out, env_vars_map, &md);
+    // v0.0.9 Phase 4: emit one LLVM global per module-scope `static`.
+    // Immutable statics → `@NAME = constant <ty> <lit>` (lives in
+    // `.rodata`). Mutable statics → `@NAME = global <ty> <lit>` (lives
+    // in `.data`). Populates `md.statics` so gen_expr / gen_assign
+    // route Ident references through load/store against the symbol.
+    emit_statics(&mut out, statics_map, &types, &md);
     write_struct_decls(&mut out, &types, program);
     // Phase 11 / ObjC interop: multiple `extern fn` declarations may share
     // a single linker symbol via `#[link_name = "..."]`. Track emitted
@@ -1060,6 +1133,15 @@ fn generate_inner(
                 // Enum types are erased to i32; struct types are declared
                 // upfront in `write_struct_decls`. Nothing to emit per-item.
             }
+            // v0.0.9 Phase 4: const items are lowered away by
+            // `crate::lower::substitute_consts` before codegen runs.
+            // Reaching this arm means lowering missed one — invariant
+            // violation, but no IR to emit either way.
+            ItemKind::Const(_) => {}
+            // v0.0.9 Phase 4: static items are emitted as LLVM globals
+            // in a dedicated pre-pass (`emit_statics`) just below.
+            // Skip here so we don't double-emit.
+            ItemKind::Static(_) => {}
         }
     }
     if let Some(cfg) = test_cfg {
@@ -1721,7 +1803,9 @@ fn collect_types(p: &Program) -> TypeTable {
             ItemKind::Function(_)
             | ItemKind::Impl(_)
             | ItemKind::Interface(_)
-            | ItemKind::TypeAlias(_) => {}
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_) => {}
         }
     }
     // Second pass: resolve struct field types.
@@ -3662,6 +3746,94 @@ fn emit_env_var_globals(
     }
     if !map.is_empty() {
         out.push_str("\n");
+    }
+}
+
+/// v0.0.9 Phase 4: emit one LLVM global per module-scope `static`.
+/// Iterates `statics_map` in sorted-name order for deterministic output.
+/// For each entry, renders the literal initializer (already validated
+/// by `lower::is_const_initializer` and type-checked by sema) into an
+/// LLVM constant operand and writes:
+///
+///   - `@NAME = constant <ty> <lit>` when `info.is_mut == false`
+///   - `@NAME = global   <ty> <lit>` when `info.is_mut == true`
+///
+/// `str`-typed statics are rejected with E0X35 (panic here since sema
+/// should have caught) — string-fat-pointer initialization requires
+/// two globals and v0.0.9 punts that; use `const FOO: str = "..."`
+/// instead (which the lower pass substitutes literally).
+///
+/// Populates `md.statics` with the qualified-name → `Ty` map so
+/// `gen_expr` / `gen_assign` can detect references to statics and
+/// route them through load/store ops against the emitted symbol.
+fn emit_statics(
+    out: &mut String,
+    statics_map: &std::collections::BTreeMap<String, crate::sema::StaticInfo>,
+    types: &TypeTable,
+    md: &ModuleMetadata,
+) {
+    if statics_map.is_empty() {
+        return;
+    }
+    for (qname, info) in statics_map {
+        let lltype = llvm_ty(&info.ty, types);
+        let llvalue = match render_static_literal(&info.init, &info.ty) {
+            Some(s) => s,
+            None => {
+                // Defense-in-depth: lower + sema should have rejected
+                // any non-literal initializer before reaching codegen.
+                // Reaching this means a pass regression — emit a
+                // poisoned global so the IR fails to assemble loudly
+                // rather than silently miscompiling.
+                "poison".to_string()
+            }
+        };
+        let storage = if info.is_mut { "global" } else { "constant" };
+        out.push_str(&format!("@{qname} = {storage} {lltype} {llvalue}\n"));
+        md.statics.borrow_mut().insert(qname.clone(), info.ty.clone());
+    }
+    out.push('\n');
+}
+
+/// Render an AST literal as an LLVM constant operand suitable for a
+/// global initializer. Mirrors the literal-shape acceptance rule from
+/// `lower::is_const_initializer` plus the float-bit-pattern emission
+/// from `gen_expr(ExprKind::FloatLit)`. Returns `None` on any unsupported
+/// shape — the caller emits a `poison` operand in that case so the
+/// failure surfaces at LLVM-assembly time rather than silently.
+fn render_static_literal(e: &Expr, _ty: &Ty) -> Option<String> {
+    use crate::lexer::NumSuffix;
+    match &e.kind {
+        ExprKind::IntLit(v, _) => Some(v.to_string()),
+        ExprKind::BoolLit(b) => Some(if *b { "true".to_string() } else { "false".to_string() }),
+        ExprKind::FloatLit(v, suf) => {
+            // Same hex-bit-pattern emission as gen_expr — see the
+            // 2026-05-17 raytracer-port fix for why decimal-form
+            // float literals don't round-trip through LLVM.
+            let bits: u64 = match suf {
+                NumSuffix::F32 => (*v as f32 as f64).to_bits(),
+                _ => v.to_bits(),
+            };
+            Some(format!("0x{bits:016X}"))
+        }
+        ExprKind::Unary { op: UnaryOp::Neg, operand } => match &operand.kind {
+            ExprKind::IntLit(v, _) => Some(format!("-{v}")),
+            ExprKind::FloatLit(v, suf) => {
+                let neg = -*v;
+                let bits: u64 = match suf {
+                    NumSuffix::F32 => (neg as f32 as f64).to_bits(),
+                    _ => neg.to_bits(),
+                };
+                Some(format!("0x{bits:016X}"))
+            }
+            _ => None,
+        },
+        // str-typed statics need a paired data global; v0.0.9 punts.
+        // Users should declare these as `const FOO: str = "..."` which
+        // lower-substitutes the literal at every use site (no global
+        // needed).
+        ExprKind::StrLit(_) => None,
+        _ => None,
     }
 }
 
@@ -7501,6 +7673,19 @@ impl<'a> FnState<'a> {
                     };
                     return Some((format!("@{symbol}"), ty));
                 }
+                // v0.0.9 Phase 4: module-scope `static` read. Sema
+                // already gated `static mut` reads behind `unsafe`;
+                // codegen unconditionally emits a load against the
+                // global symbol. Routes before the local-lookup path
+                // so a local binding that shadows a static (which
+                // sema would have prevented via E0301) doesn't shadow
+                // here either.
+                let static_ty: Option<Ty> = self.md.statics.borrow().get(name).cloned();
+                if let Some(ty) = static_ty {
+                    let v = self.next_tmp();
+                    self.gen_load(&v, &ty, &format!("@{name}"));
+                    return Some((v, ty));
+                }
                 let (slot, ty) = self.lookup(name).expect("sema validated").clone();
                 let v = self.next_tmp();
                 // v0.0.7 Slice 1.2: ident-lookup load — the densest
@@ -7803,6 +7988,15 @@ impl<'a> FnState<'a> {
     fn gen_place(&mut self, e: &Expr) -> (String, Ty) {
         match &e.kind {
             ExprKind::Ident(name) => {
+                // v0.0.9 Phase 4: module-scope `static mut` write. The
+                // global symbol IS the place — no alloca, no load.
+                // Sema rejected writes to immutable statics (E0305)
+                // and gated `static mut` writes behind `unsafe`
+                // (E0X34), so reaching here means a permitted write.
+                let static_ty: Option<Ty> = self.md.statics.borrow().get(name).cloned();
+                if let Some(ty) = static_ty {
+                    return (format!("@{name}"), ty);
+                }
                 let (slot, ty) = self.lookup(name).expect("sema validated").clone();
                 (slot, ty)
             }
@@ -8697,6 +8891,15 @@ impl<'a> FnState<'a> {
                     v.clone()
                 };
                 self.emit(&format!("{r} = inttoptr i64 {widened} to {to_t}"));
+                return (r, to);
+            }
+            // v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → 64-bit integer.
+            // Sema's `cast_allowed` only admits `usize` / `u64` / `isize` /
+            // `i64` as targets and `check_cast` gates on `unsafe`. Lowers
+            // to LLVM `ptrtoint`. All four target widths produce `i64` at
+            // the IR level (every C+ 64-bit-int type lowers to LLVM `i64`).
+            (Ty::RawPtr(_), b) if matches!(b, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) => {
+                self.emit(&format!("{r} = ptrtoint {from_t} {v} to {to_t}"));
                 return (r, to);
             }
             _ => unreachable!("sema rejects unsupported casts: {:?} → {:?}", from, to),

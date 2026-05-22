@@ -253,6 +253,21 @@ let z: i32;                    // uninitialized; sema enforces assignment before
 z = 7;                          // first write counts as init even without mut
 ```
 
+**Module-scope `const` and `static`** (v0.0.9 Phase 4) — for named values that live above any single function:
+
+```cplus
+const HEADER_BYTES: usize = 176;      // compile-time alias; no storage
+static IMMUTABLE_OFFSET: i32 = 50;    // read-only global with an address
+static mut COUNTER: i32 = 0;          // mutable global; reads + writes need `unsafe`
+
+fn bump() {
+    unsafe { COUNTER = COUNTER + 1; }
+    return;
+}
+```
+
+Rules: (1) initialiser must be a literal — int / float / bool / str / unary-negated numeric literal (E0X30 if you pass `1 + 2` or another binding); (2) type annotation required, no inference (E0X31); (3) `static mut` reads need `unsafe` (E0X33), writes need `unsafe` (E0X34); (4) writes to immutable `static` are E0305. Cross-file: same `pub` rules as functions. Choice: `const` for named literals (no storage), `static` for read-only globals (e.g. struct offsets), `static mut` for mutable globals (RNG state, counters).
+
 ### 3.4 Arithmetic
 
 ```cplus
@@ -989,6 +1004,22 @@ let n: i32 = unsafe { p as i32 };
 let n: usize = unsafe { p as usize };
 let i: i32 = n as i32;
 ```
+
+### `const` initialisers don't accept wrapping arithmetic
+
+The const/static literal-only rule (E0X30) admits exactly four shapes: integer / float / bool / string literals, plus a `Unary { Neg, <numeric literal> }` for negative numeric constants. **Wrapping-subtraction expressions don't count** — even when both operands are literals:
+
+```cplus
+// ❌ E0X30: const initializer must be a literal (...).
+//    `0 -% 2` is a Binary expression, not a literal — even though the
+//    operands are literals and the result is constant-foldable.
+pub const NEG_TWO: i32 = 0 -% 2;
+
+// ✅ Use the bare negative-literal form, which IS a recognised literal shape.
+pub const NEG_TWO: i32 = -2;
+```
+
+This bites if you're coming from the "make signed-negative explicit with wrapping arithmetic" idiom (`0 -% N` instead of `-N`). The compiler doesn't const-fold the wrapping op before checking literal-ness; it sees `Binary { SubWrap, IntLit(0), IntLit(2) }` and rejects. The fix is mechanical — use `-N` directly. Same rule applies to `0 - 2`, `1 + 2`, etc.
 
 ---
 

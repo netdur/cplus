@@ -1,0 +1,181 @@
+// vendor/log/src/log.cplus
+// Structured logging utility.
+
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn time(tloc: *i64) -> i64;
+extern fn localtime(timep: *i64) -> *Tm;
+extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+struct Tm {
+    tm_sec: i32,
+    tm_min: i32,
+    tm_hour: i32,
+    tm_mday: i32,
+    tm_mon: i32,
+    tm_year: i32,
+    tm_wday: i32,
+    tm_yday: i32,
+    tm_isdst: i32,
+    tm_gmtoff: i64,
+    tm_zone: *u8,
+}
+
+pub enum Level {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+static mut MAX_LEVEL: i32 = 2; // Info level by default
+static mut USE_COLORS: bool = true;
+
+pub fn set_max_level(l: Level) {
+    let val: i32 = match l {
+        Level::Trace => 0,
+        Level::Debug => 1,
+        Level::Info => 2,
+        Level::Warn => 3,
+        Level::Error => 4,
+    };
+    unsafe { MAX_LEVEL = val; }
+    return;
+}
+
+pub fn get_max_level() -> Level {
+    let val: i32 = unsafe { MAX_LEVEL };
+    if val == 0 { return Level::Trace; }
+    if val == 1 { return Level::Debug; }
+    if val == 2 { return Level::Info; }
+    if val == 3 { return Level::Warn; }
+    return Level::Error;
+}
+
+pub fn set_use_colors(b: bool) {
+    unsafe { USE_COLORS = b; }
+    return;
+}
+
+fn write_str(fd: i32, s: str) {
+    let p: *u8 = str_ptr(s);
+    let n: usize = str_len(s);
+    let mut written: usize = 0;
+    while written < n {
+        let q: *u8 = unsafe { p + written };
+        let w: isize = unsafe { write(fd, q, n -% written) };
+        if w <= (0 as isize) { return; }
+        written = written +% (w as usize);
+    }
+    return;
+}
+
+fn print_timestamp(fd: i32) {
+    let t_ptr: *i64 = unsafe { malloc(8 as usize) as *i64 };
+    if unsafe { t_ptr as usize } == (0 as usize) { return; }
+    unsafe { *t_ptr = time(0 as *i64); }
+    let tm_ptr: *Tm = unsafe { localtime(t_ptr) };
+    if unsafe { tm_ptr as usize } != (0 as usize) {
+        let tm: Tm = unsafe { *tm_ptr };
+        let year: i32 = tm.tm_year +% 1900;
+        let mon: i32 = tm.tm_mon +% 1;
+        
+        let buf: *u8 = unsafe { malloc(32 as usize) };
+        if unsafe { buf as usize } != (0 as usize) {
+            let n: i32 = unsafe {
+                snprintf(buf, 32 as usize, str_ptr("[%04d-%02d-%02d %02d:%02d:%02d] \0"),
+                         year, mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
+            };
+            if n > 0 {
+                let view: str = unsafe { str_from_raw_parts(buf, n as usize) };
+                write_str(fd, view);
+            }
+            unsafe { free(buf); }
+        }
+    }
+    unsafe { free(t_ptr as *u8); }
+    return;
+}
+
+fn log_impl(l: Level, msg: str) {
+    let level_val: i32 = match l {
+        Level::Trace => 0,
+        Level::Debug => 1,
+        Level::Info => 2,
+        Level::Warn => 3,
+        Level::Error => 4,
+    };
+    let max_val: i32 = unsafe { MAX_LEVEL };
+    if level_val < max_val { return; }
+
+    let fd: i32 = 2; // stderr
+    
+    let use_colors: bool = unsafe { USE_COLORS };
+    if use_colors {
+        let esc: *u8 = unsafe { malloc(5 as usize) };
+        if unsafe { esc as usize } != (0 as usize) {
+            unsafe {
+                let p0: *u8 = esc;
+                let p1: *u8 = esc + 1;
+                let p2: *u8 = esc + 2;
+                let p3: *u8 = esc + 3;
+                let p4: *u8 = esc + 4;
+                *p0 = 27u8;
+                *p1 = 91u8;
+                *p4 = 109u8;
+                match l {
+                    Level::Trace => { *p2 = 57u8; *p3 = 48u8; }
+                    Level::Debug => { *p2 = 51u8; *p3 = 55u8; }
+                    Level::Info =>  { *p2 = 51u8; *p3 = 54u8; }
+                    Level::Warn =>  { *p2 = 51u8; *p3 = 51u8; }
+                    Level::Error => { *p2 = 51u8; *p3 = 49u8; }
+                };
+            }
+            let color_code: str = unsafe { str_from_raw_parts(esc, 5 as usize) };
+            write_str(fd, color_code);
+            unsafe { free(esc); }
+        }
+    }
+
+    print_timestamp(fd);
+
+    let level_str: str = match l {
+        Level::Trace => "[TRACE] \0",
+        Level::Debug => "[DEBUG] \0",
+        Level::Info => "[INFO]  \0",
+        Level::Warn => "[WARN]  \0",
+        Level::Error => "[ERROR] \0",
+    };
+    write_str(fd, level_str);
+    
+    write_str(fd, msg);
+    write_str(fd, "\n");
+
+    if use_colors {
+        let reset: *u8 = unsafe { malloc(4 as usize) };
+        if unsafe { reset as usize } != (0 as usize) {
+            unsafe {
+                let p0: *u8 = reset;
+                let p1: *u8 = reset + 1;
+                let p2: *u8 = reset + 2;
+                let p3: *u8 = reset + 3;
+                *p0 = 27u8;
+                *p1 = 91u8;
+                *p2 = 48u8;
+                *p3 = 109u8;
+            }
+            let reset_code: str = unsafe { str_from_raw_parts(reset, 4 as usize) };
+            write_str(fd, reset_code);
+            unsafe { free(reset); }
+        }
+    }
+    return;
+}
+
+pub fn trace(msg: str) { log_impl(Level::Trace, msg); return; }
+pub fn debug(msg: str) { log_impl(Level::Debug, msg); return; }
+pub fn info(msg: str) { log_impl(Level::Info, msg); return; }
+pub fn warn(msg: str) { log_impl(Level::Warn, msg); return; }
+pub fn error(msg: str) { log_impl(Level::Error, msg); return; }

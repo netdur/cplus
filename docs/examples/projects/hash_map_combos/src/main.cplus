@@ -1,0 +1,94 @@
+// v0.0.9 Phase 9 (cpc-gaps G-002 lock-down): exercise `HashMap[K, V]`
+// across every (K, V) primitive combination the llama port needs.
+//
+// The map shape was implemented in v0.0.4 Slice 3B.5; this consumer
+// pins the supported surface so a future refactor of the blessed
+// `Hash` / `Eq` paths can't silently regress.
+//
+// All V are `Copy`. Non-Copy V is documented as deferred in
+// vendor/stdlib/src/hash_map.cplus.
+
+import "stdlib/io" as io;
+import "stdlib/hash_map" as map;
+import "stdlib/result" as result;
+
+fn main() -> i32 {
+    let mut fails: i32 = 0 as i32;
+
+    // 1. HashMap[str, i32] — vocab pattern (token text → token id).
+    {
+        let mut m: map::HashMap[str, i32] = map::new::[str, i32]();
+        m.insert("apple", 1 as i32);
+        m.insert("banana", 2 as i32);
+        m.insert("cherry", 3 as i32);
+        m.insert("apple", 10 as i32);  // overwrite
+        guard let result::Result[i32, result::IoError]::Ok(v) = m.get("apple")
+            else { return 90; };
+        if v != (10 as i32) { fails = fails +% (1 as i32); }
+        if m.len() != (3 as usize) { fails = fails +% (1 as i32); }
+        if m.contains_key("grape") { fails = fails +% (1 as i32); }
+    }
+
+    // 2. HashMap[str, u64] — BPE merge ranks (merge string → rank).
+    {
+        let mut m: map::HashMap[str, u64] = map::new::[str, u64]();
+        m.insert("alpha", 100 as u64);
+        m.insert("beta", 200 as u64);
+        guard let result::Result[u64, result::IoError]::Ok(v) = m.get("alpha")
+            else { return 91; };
+        if v != (100 as u64) { fails = fails +% (1 as i32); }
+    }
+
+    // 3. HashMap[i32, i32] — integer-keyed lookup.
+    {
+        let mut m: map::HashMap[i32, i32] = map::new::[i32, i32]();
+        m.insert(7 as i32, 700 as i32);
+        m.insert(42 as i32, 4200 as i32);
+        guard let result::Result[i32, result::IoError]::Ok(v) = m.get(7 as i32)
+            else { return 92; };
+        if v != (700 as i32) { fails = fails +% (1 as i32); }
+    }
+
+    // 4. HashMap[u64, u32] — tensor-name-hash → row index.
+    {
+        let mut m: map::HashMap[u64, u32] = map::new::[u64, u32]();
+        m.insert(0xDEADBEEF as u64, 11 as u32);
+        m.insert(0xCAFEBABE as u64, 22 as u32);
+        guard let result::Result[u32, result::IoError]::Ok(v) = m.get(0xDEADBEEF as u64)
+            else { return 93; };
+        if v != (11 as u32) { fails = fails +% (1 as i32); }
+    }
+
+    // 5. HashMap[i64, bool] — set-like presence check.
+    {
+        let mut m: map::HashMap[i64, bool] = map::new::[i64, bool]();
+        m.insert(1000 as i64, true);
+        m.insert(2000 as i64, false);
+        guard let result::Result[bool, result::IoError]::Ok(v) = m.get(1000 as i64)
+            else { return 94; };
+        if v != true { fails = fails +% (1 as i32); }
+    }
+
+    // 6. Grow path: 100 inserts force at least two doublings from the
+    // initial 16-slot capacity. Verifies linear-probing chains survive
+    // resize-rehash.
+    {
+        let mut m: map::HashMap[i32, i32] = map::new::[i32, i32]();
+        let mut i: i32 = 0 as i32;
+        while i < (100 as i32) {
+            m.insert(i, i *% (3 as i32));
+            i = i +% (1 as i32);
+        }
+        if m.len() != (100 as usize) { fails = fails +% (1 as i32); }
+        guard let result::Result[i32, result::IoError]::Ok(v) = m.get(50 as i32)
+            else { return 95; };
+        if v != (150 as i32) { fails = fails +% (1 as i32); }
+    }
+
+    if fails == (0 as i32) {
+        io::println("hash_map combos: 6/6 ok");
+    } else {
+        io::eprintln("hash_map combos: FAIL");
+    }
+    return fails;
+}

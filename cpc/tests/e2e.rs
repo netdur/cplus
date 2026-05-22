@@ -14656,6 +14656,425 @@ fn env_macro_missing_var_errors_e0876() {
     );
 }
 
+// ---- v0.0.9 Phase 9 (cpc-gaps G-002 lock-down): generic HashMap[K, V] ----
+
+#[test]
+fn hash_map_combos_project_runs() {
+    // The `hash_map_combos` project exercises every (K, V) combination
+    // the llama port needs: str→i32, str→u64, i32→i32, u64→u32,
+    // i64→bool, plus a 100-entry grow workload. Built end-to-end via
+    // `cpc build` against the in-tree stdlib.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let proj_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("docs/examples/projects/hash_map_combos");
+    let manifest = std::fs::read_to_string(proj_root.join("Cplus.toml")).unwrap();
+    std::fs::write(dir.join("Cplus.toml"), manifest).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let main_src = std::fs::read_to_string(proj_root.join("src/main.cplus")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+    // The in-tree project uses a symlinked vendor/stdlib; for the
+    // tempdir copy we point to the same target through the project's
+    // absolute path. cpc's resolver canonicalizes, so an absolute
+    // symlink works the same as a relative one.
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    let stdlib_target = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor/stdlib");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&stdlib_target, dir.join("vendor/stdlib")).unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+
+    let bin = dir.join("target/debug/hash_map_combos");
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+    let out = Command::new(&bin).output().expect("run binary");
+    assert!(out.status.success(), "binary exited non-zero: {}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hash_map combos: 6/6 ok\n");
+}
+
+// ---- v0.0.9 Phase 8 (cpc-gaps G-001): [link] extra-objects in Cplus.toml ----
+
+#[test]
+fn link_extra_objects_e2e_runs() {
+    // End-to-end: hand-write a `helper.c`, compile it to `helper.o`
+    // with clang, declare it in `[link] extra-objects`, and have the
+    // C+ binary call into it via `extern fn`. Pre-G-001 the workflow
+    // required a wrapper script that ran `clang` after `cpc build`;
+    // now `cpc build` does the link in one step.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    // 1. Write the C helper.
+    let c_src = dir.join("helper.c");
+    std::fs::write(
+        &c_src,
+        "#include <stddef.h>\n\
+         size_t cplus_ptr_addr(const void *p) { return (size_t)p; }\n\
+         int the_answer(void) { return 42; }\n",
+    )
+    .unwrap();
+    // 2. Compile it to a .o.
+    let obj = dir.join("helper.o");
+    let cc_status = Command::new("clang")
+        .arg("-c")
+        .arg(&c_src)
+        .arg("-o")
+        .arg(&obj)
+        .status()
+        .expect("invoke clang");
+    assert!(cc_status.success(), "clang -c failed");
+    // 3. Lay out a minimal C+ project that links against helper.o.
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        src_dir.join("main.cplus"),
+        "extern fn the_answer() -> i32;\n\
+         fn main() -> i32 {\n\
+             println(unsafe { the_answer() });\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\n\
+         name = \"extra-objects-test\"\n\
+         \n\
+         [[bin]]\n\
+         name = \"extra-objects-test\"\n\
+         path = \"src/main.cplus\"\n\
+         \n\
+         [link]\n\
+         extra-objects = [\"helper.o\"]\n",
+    )
+    .unwrap();
+    // 4. cpc build.
+    let build = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("build")
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        build.status.success(),
+        "cpc build failed; stderr:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    // 5. Run the produced binary.
+    let bin = dir.join("target/debug/extra-objects-test");
+    let run = Command::new(&bin).output().expect("run binary");
+    assert!(run.status.success(), "exited {:?}", run.status);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+}
+
+#[test]
+fn link_extra_objects_missing_file_rejected_e0864() {
+    // Negative: the manifest declares an extra-object that doesn't
+    // exist on disk. cpc build must fail with E0864 before invoking
+    // clang (so the user gets a clean "file not found" diagnostic
+    // instead of a linker error).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        src_dir.join("main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\n\
+         name = \"missing-obj\"\n\
+         \n\
+         [[bin]]\n\
+         name = \"missing-obj\"\n\
+         path = \"src/main.cplus\"\n\
+         \n\
+         [link]\n\
+         extra-objects = [\"does-not-exist.o\"]\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("build")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected cpc build to fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0864"),
+        "expected E0864 in stderr, got:\n{stderr}"
+    );
+}
+
+// ---- v0.0.9 Phase 7 (cpc-gaps G-011): single-file mode follows local imports ----
+
+#[test]
+fn single_file_local_import_compiles_and_runs() {
+    // Two-file "project" driven through the single-file path (`cpc FILE
+    // -o BIN`, no Cplus.toml). The entry imports a sibling file via
+    // `./` and calls a function declared there. Pre-G-011 this failed
+    // because the single-file pipeline ignored `import` statements.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("helper.cplus"),
+        "pub fn answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    let entry = dir.join("main.cplus");
+    std::fs::write(
+        &entry,
+        "import \"./helper\" as h;\n\
+         fn main() -> i32 {\n\
+             println(h::answer());\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let compile = Command::new(cpc)
+        .arg(&entry)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "cpc failed; stderr:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "binary exited {:?}", run.status);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+}
+
+#[test]
+fn single_file_emit_obj_local_import_compiles() {
+    // The same two-file project, but via `cpc --emit-obj` (the original
+    // motivating shape from cpc-gaps G-011). Produces a `.o` that
+    // contains both files' merged IR. We don't link it back here —
+    // verifying that the object file is produced is the test.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("util.cplus"),
+        "pub fn double(x: i32) -> i32 { return x +% x; }\n",
+    )
+    .unwrap();
+    let entry = dir.join("entry.cplus");
+    std::fs::write(
+        &entry,
+        "import \"./util\" as u;\n\
+         pub fn main_shim() -> i32 { return u::double(21); }\n",
+    )
+    .unwrap();
+    let obj = dir.join("entry.o");
+    let out = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(&entry)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "cpc --emit-obj failed; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(obj.exists(), "expected .o to exist at {}", obj.display());
+    let metadata = std::fs::metadata(&obj).expect("stat obj");
+    assert!(metadata.len() > 0, "expected non-empty .o");
+}
+
+#[test]
+fn single_file_bare_import_rejected() {
+    // `import "stdlib/io"` in single-file mode (no Cplus.toml, no
+    // declared dependencies) must fail with E0853 — the user needs
+    // either a project setup or a `./`-prefixed path.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let entry = dir.join("bad.cplus");
+    std::fs::write(
+        &entry,
+        "import \"stdlib/io\" as io;\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("bad");
+    let out = Command::new(cpc)
+        .arg(&entry)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected cpc to reject bare import in single-file mode"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // E0852 fires for a 2+-segment bare import (`stdlib/io`) — the
+    // resolver classifies it as a vendor import and reports that
+    // `stdlib` isn't a declared dependency. E0853 would fire for a
+    // 1-segment bare import (`foo`); both are acceptable rejects
+    // from the user's perspective.
+    assert!(
+        stderr.contains("E0852") || stderr.contains("E0853"),
+        "expected E0852 or E0853 in stderr, got:\n{stderr}"
+    );
+}
+
+// ---- v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → integer cast ----
+
+#[test]
+fn pointer_to_int_cast_runs() {
+    // End-to-end alignment check: malloc(64) returns a 16+-byte-aligned
+    // pointer on every libc we care about; `(addr % 16)` is 0.
+    let out = compile_and_run("pointer_to_int_cast.cplus");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "0\n");
+}
+
+#[test]
+fn pointer_to_int_cast_emits_ptrtoint() {
+    // Pin the codegen choice — sema admits the cast in unsafe, codegen
+    // lowers to LLVM `ptrtoint`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let src = format!(
+        "{}/../docs/examples/pointer_to_int_cast.cplus",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("ptrtoint ptr") && ir.contains(" to i64"),
+        "expected `ptrtoint ptr ... to i64` in IR; got:\n{ir}"
+    );
+}
+
+#[test]
+fn pointer_to_int_cast_outside_unsafe_rejected() {
+    // Negative: ptr-to-int cast outside unsafe must fail with E0801.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn main() -> i32 {\n\
+             let p: *u8 = unsafe { malloc(8 as usize) };\n\
+             let addr: usize = p as usize;\n\
+             return addr as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("bad");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected cpc to reject ptr→int cast outside unsafe"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0801"),
+        "expected E0801 in stderr, got:\n{stderr}"
+    );
+}
+
+// ---- v0.0.9 Phase 4: module-scope `const` and `static` ----
+
+#[test]
+fn const_static_basic_runs() {
+    // End-to-end: const substitution (200) + immutable static load (100) +
+    // static mut load/store under unsafe (255) → 555.
+    let out = compile_and_run("const_static_basic.cplus");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "555\n");
+}
+
+#[test]
+fn const_static_emits_expected_globals() {
+    // Inspect the emitted IR to pin the load/store routing decision —
+    // immutable statics use `constant`, mutable use `global`, const
+    // items emit no global at all (substituted in `lower`).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let src = format!(
+        "{}/../docs/examples/const_static_basic.cplus",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("@IMMUTABLE_OFFSET = constant i32 50"),
+        "expected immutable-static global; ir was:\n{ir}"
+    );
+    assert!(
+        ir.contains("@COUNTER = global i32 5"),
+        "expected mutable-static global; ir was:\n{ir}"
+    );
+    // Const items never become globals — verify ADD_CONST is absent.
+    assert!(
+        !ir.contains("@ADD_CONST"),
+        "const item should be lower-substituted, not emitted as a global; ir was:\n{ir}"
+    );
+}
+
+#[test]
+fn const_static_mut_write_outside_unsafe_rejected() {
+    // Negative case: writing to `static mut` without an enclosing
+    // `unsafe { ... }` block must fail with E0X34. Pin the diagnostic
+    // shape so a future refactor of the unsafe gate doesn't silently
+    // relax it.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(
+        &src,
+        "static mut COUNTER: i32 = 0;\n\
+         fn main() -> i32 { COUNTER = 5; return 0; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("bad");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected cpc to reject the program, got success"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0X34"),
+        "expected E0X34 in stderr, got:\n{stderr}"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

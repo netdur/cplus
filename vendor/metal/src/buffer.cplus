@@ -1,0 +1,48 @@
+// vendor/metal/src/buffer.cplus — GPU device buffer operations.
+
+import "./runtime" as runtime;
+
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+
+pub struct Buffer {
+    pub raw: *u8,
+    pub size: usize,
+}
+
+impl Buffer {
+    pub fn contents(self) -> *u8 {
+        if self.raw == unsafe { 0 as *u8 } {
+            return unsafe { 0 as *u8 };
+        }
+        let selector: *u8 = runtime::sel(str_ptr("contents\0"));
+        return runtime::msg_ptr(self.raw, selector);
+    }
+
+    pub fn copy_to_slice(self, slice: u8[]) {
+        let n: usize = slice_len(slice);
+        let src: *u8 = self.contents();
+        if src == unsafe { 0 as *u8 } {
+            return;
+        }
+        let dest: *u8 = unsafe { slice_ptr(slice) };
+        let bytes_to_copy: usize = if n < self.size { n } else { self.size };
+        if bytes_to_copy > (0 as usize) {
+            unsafe { memcpy(dest, src, bytes_to_copy); }
+        }
+        return;
+    }
+
+    pub fn copy_from_slice(self, slice: u8[]) {
+        let n: usize = slice_len(slice);
+        let dest: *u8 = self.contents();
+        if dest == unsafe { 0 as *u8 } {
+            return;
+        }
+        let src: *u8 = unsafe { slice_ptr(slice) };
+        let bytes_to_copy: usize = if n < self.size { n } else { self.size };
+        if bytes_to_copy > (0 as usize) {
+            unsafe { memcpy(dest, src, bytes_to_copy); }
+        }
+        return;
+    }
+}

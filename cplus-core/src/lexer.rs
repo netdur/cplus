@@ -68,7 +68,7 @@ pub enum TokenKind {
     BlockComment(String),
 
     // keywords (active in Phase 1)
-    Fn, Let, Mut, Const, If, Else, While, For, In, Return,
+    Fn, Let, Mut, Const, Static, If, Else, While, For, In, Return,
     True, False, As, Unsafe, Extern,
     // keywords (reserved for future phases)
     Struct, Enum, Union, Match, Trait, Impl, Pub, Use, Mod, Import,
@@ -301,8 +301,128 @@ impl<'a> Lexer<'a> {
             return self.lex_string(start);
         }
 
+        // v0.0.9 Phase 2: character literals — `'a'`, `'\n'`, `'\xFF'`.
+        // Lower to `TokenKind::Int(byte as u64, NumSuffix::U8)` so the
+        // existing u8-literal codegen path takes over; no new AST or
+        // sema surface needed. See plan.md Phase 2 for the locked design.
+        if c == b'\'' {
+            return self.lex_char(start);
+        }
+
         // operators / punctuation
         self.lex_op_or_punct(start)
+    }
+
+    /// v0.0.9 Phase 2: lex a single-byte character literal. Accepted
+    /// shapes:
+    ///
+    ///   `'a'`     — any printable ASCII byte (0x20..=0x7E except `'` and `\`)
+    ///   `'\n'` `'\t'` `'\r'` `'\\'` `'\''` `'\0'` `'\"'`  — backslash escapes
+    ///   `'\xHH'`  — hex byte escape (00..FF)
+    ///
+    /// Returns `TokenKind::Int(byte_value as u64, NumSuffix::U8)` — the
+    /// parser routes that to `ExprKind::IntLit(_, U8)` and everything
+    /// downstream (sema, codegen, pattern matching) treats it as a
+    /// regular u8 literal.
+    ///
+    /// Errors:
+    ///   - `''` (empty) → E0X20 reported via UnexpectedChar('\'')
+    ///   - `'ab'` (two bytes between the quotes) → UnexpectedChar
+    ///   - `'á'` (non-ASCII byte) → UnexpectedChar (the byte > 0x7F)
+    ///   - Missing closing quote → UnterminatedString
+    fn lex_char(&mut self, start: usize) -> Result<Token, LexError> {
+        self.pos += 1; // opening '
+        let byte: u8 = match self.peek(0) {
+            // Empty literal `''` — the closing quote can't be the same
+            // token as the opening one; treat as a parse error.
+            Some(b'\'') => {
+                return Err(LexError {
+                    kind: LexErrorKind::UnexpectedChar('\''),
+                    span: self.span_from(start),
+                });
+            }
+            Some(b'\\') => {
+                self.pos += 1;
+                match self.peek(0) {
+                    Some(b'n')  => { self.pos += 1; b'\n' }
+                    Some(b't')  => { self.pos += 1; b'\t' }
+                    Some(b'r')  => { self.pos += 1; b'\r' }
+                    Some(b'\\') => { self.pos += 1; b'\\' }
+                    Some(b'\'') => { self.pos += 1; b'\'' }
+                    Some(b'"')  => { self.pos += 1; b'"'  }
+                    Some(b'0')  => { self.pos += 1; b'\0' }
+                    Some(b'x')  => {
+                        self.pos += 1;
+                        let hi = self.peek(0).and_then(hex_digit);
+                        let lo = self.peek(1).and_then(hex_digit);
+                        match (hi, lo) {
+                            (Some(h), Some(l)) => {
+                                self.pos += 2;
+                                (h << 4) | l
+                            }
+                            _ => {
+                                return Err(LexError {
+                                    kind: LexErrorKind::UnexpectedChar(
+                                        self.peek(0).unwrap_or(b'\'') as char,
+                                    ),
+                                    span: self.span_from(start),
+                                });
+                            }
+                        }
+                    }
+                    Some(other) => {
+                        return Err(LexError {
+                            kind: LexErrorKind::UnexpectedChar(other as char),
+                            span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                        });
+                    }
+                    None => {
+                        return Err(LexError {
+                            kind: LexErrorKind::UnterminatedString,
+                            span: self.span_from(start),
+                        });
+                    }
+                }
+            }
+            Some(b) if b >= 0x80 => {
+                // Non-ASCII byte (start of a UTF-8 multi-byte sequence).
+                // Rejected at lex time — the char-literal type is `u8`,
+                // not a full Unicode code point; for UTF-8 use a `str`.
+                return Err(LexError {
+                    kind: LexErrorKind::UnexpectedChar(b as char),
+                    span: self.span_from(start),
+                });
+            }
+            Some(b) => {
+                self.pos += 1;
+                b
+            }
+            None => {
+                return Err(LexError {
+                    kind: LexErrorKind::UnterminatedString,
+                    span: self.span_from(start),
+                });
+            }
+        };
+        // Require the closing quote. A `'ab'`-style multi-byte literal
+        // surfaces here as "expected `'`, found `b`".
+        match self.peek(0) {
+            Some(b'\'') => {
+                self.pos += 1;
+                Ok(Token {
+                    kind: TokenKind::Int(byte as u64, NumSuffix::U8),
+                    span: self.span_from(start),
+                })
+            }
+            Some(other) => Err(LexError {
+                kind: LexErrorKind::UnexpectedChar(other as char),
+                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+            }),
+            None => Err(LexError {
+                kind: LexErrorKind::UnterminatedString,
+                span: self.span_from(start),
+            }),
+        }
     }
 
     fn lex_string(&mut self, start: usize) -> Result<Token, LexError> {
@@ -442,6 +562,7 @@ impl<'a> Lexer<'a> {
             "let" => TokenKind::Let,
             "mut" => TokenKind::Mut,
             "const" => TokenKind::Const,
+            "static" => TokenKind::Static,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "while" => TokenKind::While,
@@ -767,6 +888,17 @@ mod tests {
             TokenKind::Return, TokenKind::If, TokenKind::Else,
             TokenKind::While, TokenKind::For, TokenKind::In,
             TokenKind::True, TokenKind::False, TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn const_and_static_keywords() {
+        let src = "const FOO static BAR static mut BAZ";
+        assert_eq!(kinds(src), vec![
+            TokenKind::Const, TokenKind::Ident("FOO".into()),
+            TokenKind::Static, TokenKind::Ident("BAR".into()),
+            TokenKind::Static, TokenKind::Mut, TokenKind::Ident("BAZ".into()),
+            TokenKind::Eof,
         ]);
     }
 

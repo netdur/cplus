@@ -485,6 +485,10 @@ fn item_name_and_span(item: &cplus_core::ast::Item) -> Option<(&str, cplus_core:
         // are accessed via the type. Skip; 4E.3 doesn't index methods.
         ItemKind::Impl(_) => None,
         ItemKind::TypeAlias(a) => Some((a.name.name.as_str(), a.name.span)),
+        // v0.0.9 Phase 4: const/static items expose a name + span so
+        // goto-definition jumps to the declaration.
+        ItemKind::Const(c) => Some((c.name.name.as_str(), c.name.span)),
+        ItemKind::Static(s) => Some((s.name.name.as_str(), s.name.span)),
     }
 }
 

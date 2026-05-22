@@ -1,0 +1,11 @@
+[package]
+name    = "hash_map_combos"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "hash_map_combos"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"

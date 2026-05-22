@@ -1,0 +1,22 @@
+// vendor/metal/src/metal.cplus — Main facade for the Metal package.
+
+import "stdlib/option" as option;
+import "./device" as device;
+import "./queue" as queue;
+import "./pipeline" as pipeline;
+import "./buffer" as buffer;
+import "./runtime" as runtime;
+
+pub type Device = device::Device;
+pub type CommandQueue = queue::CommandQueue;
+pub type CommandBuffer = queue::CommandBuffer;
+pub type ComputeCommandEncoder = queue::ComputeCommandEncoder;
+pub type Library = pipeline::Library;
+pub type Function = pipeline::Function;
+pub type ComputePipelineState = pipeline::ComputePipelineState;
+pub type Buffer = buffer::Buffer;
+pub type MTLSize = runtime::MTLSize;
+
+pub fn default_device() -> option::Option[device::Device] {
+    return device::default();
+}

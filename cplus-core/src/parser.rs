@@ -239,6 +239,10 @@ impl Parser {
             TokenKind::Interface => self.parse_interface_decl(is_pub, attributes),
             // Phase 11 polish (2026-05-13): type aliases.
             TokenKind::TypeKw => self.parse_type_alias(is_pub, attributes),
+            // v0.0.9 Phase 4: module-scope `const NAME: Ty = LIT;`.
+            TokenKind::Const => self.parse_const_decl(is_pub, attributes),
+            // v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`.
+            TokenKind::Static => self.parse_static_decl(is_pub, attributes),
             TokenKind::Impl => {
                 if is_pub {
                     return Err(self.err_at_peek(
@@ -724,6 +728,76 @@ impl Parser {
                 name,
                 target,
                 is_pub,
+            }),
+            span: start.merge(end),
+            origin_file: None,
+        })
+    }
+
+    /// v0.0.9 Phase 4: parse `pub? const NAME: Ty = LIT;`.
+    /// Type annotation is mandatory (E0X31); initializer must be a
+    /// literal expression — the literal-shape check happens in sema
+    /// (`check_const_static_inits`, E0X30) so the parser stays
+    /// uniform and accepts any expression here.
+    fn parse_const_decl(
+        &mut self,
+        is_pub: bool,
+        attributes: Vec<Attribute>,
+    ) -> Result<Item, ParseError> {
+        if !attributes.is_empty() {
+            return Err(self.err_at_peek("item — `const` items don't take attributes in v0.0.9"));
+        }
+        let start = self.expect(&TokenKind::Const, "`const`")?.span;
+        let name = self.expect_ident()?;
+        // Type annotation is required — sema can't infer the binding's
+        // type without an initializer, and we want the const's type to
+        // be unambiguous at the declaration site for cross-file readers.
+        self.expect(&TokenKind::Colon, "`:` (const requires explicit type annotation)")?;
+        let ty = self.parse_type()?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        let value = self.parse_expr()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Item {
+            kind: ItemKind::Const(ConstDecl {
+                name,
+                ty,
+                value,
+                is_pub,
+                attributes,
+            }),
+            span: start.merge(end),
+            origin_file: None,
+        })
+    }
+
+    /// v0.0.9 Phase 4: parse `pub? static mut? NAME: Ty = LIT;`.
+    /// Same shape as `const` with an optional `mut` modifier between
+    /// `static` and the name. Type annotation mandatory; literal-only
+    /// initializer enforced by sema.
+    fn parse_static_decl(
+        &mut self,
+        is_pub: bool,
+        attributes: Vec<Attribute>,
+    ) -> Result<Item, ParseError> {
+        if !attributes.is_empty() {
+            return Err(self.err_at_peek("item — `static` items don't take attributes in v0.0.9"));
+        }
+        let start = self.expect(&TokenKind::Static, "`static`")?.span;
+        let is_mut = self.eat(&TokenKind::Mut);
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Colon, "`:` (static requires explicit type annotation)")?;
+        let ty = self.parse_type()?;
+        self.expect(&TokenKind::Eq, "`=`")?;
+        let value = self.parse_expr()?;
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Item {
+            kind: ItemKind::Static(StaticDecl {
+                name,
+                ty,
+                value,
+                is_mut,
+                is_pub,
+                attributes,
             }),
             span: start.merge(end),
             origin_file: None,
@@ -4464,5 +4538,98 @@ mod tests {
             ExprKind::Call { .. } => {}
             other => panic!("expected Call, got {other:?}"),
         }
+    }
+
+    // ---- v0.0.9 Phase 4: module-scope const + static ----
+
+    #[test]
+    fn const_int_decl_parses() {
+        let p = parse_src("const HEADER_BYTES: usize = 176;").unwrap();
+        let ItemKind::Const(c) = &p.items[0].kind else {
+            panic!("expected ItemKind::Const, got {:?}", p.items[0].kind);
+        };
+        assert_eq!(c.name.name, "HEADER_BYTES");
+        assert!(!c.is_pub);
+        let TypeKind::Path(name) = &c.ty.kind else {
+            panic!("expected Path type");
+        };
+        assert_eq!(name, "usize");
+        match &c.value.kind {
+            ExprKind::IntLit(v, _) => assert_eq!(*v, 176),
+            other => panic!("expected IntLit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pub_const_string_decl_parses() {
+        let p = parse_src("pub const VERSION: str = \"0.0.9\";").unwrap();
+        let ItemKind::Const(c) = &p.items[0].kind else {
+            panic!("expected ItemKind::Const");
+        };
+        assert_eq!(c.name.name, "VERSION");
+        assert!(c.is_pub);
+        match &c.value.kind {
+            ExprKind::StrLit(s) => assert_eq!(s, "0.0.9"),
+            other => panic!("expected StrLit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn const_without_type_annotation_rejected() {
+        let err = parse_src("const FOO = 5;").unwrap_err();
+        assert!(
+            matches!(err.kind, ParseErrorKind::Unexpected { .. }),
+            "expected Unexpected, got {:?}",
+            err.kind
+        );
+    }
+
+    #[test]
+    fn const_without_initializer_rejected() {
+        let err = parse_src("const FOO: i32;").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn static_int_decl_parses() {
+        let p = parse_src("static RNG_STATE: u32 = 305419896;").unwrap();
+        let ItemKind::Static(s) = &p.items[0].kind else {
+            panic!("expected ItemKind::Static, got {:?}", p.items[0].kind);
+        };
+        assert_eq!(s.name.name, "RNG_STATE");
+        assert!(!s.is_mut);
+        assert!(!s.is_pub);
+        let TypeKind::Path(name) = &s.ty.kind else {
+            panic!("expected Path type");
+        };
+        assert_eq!(name, "u32");
+    }
+
+    #[test]
+    fn static_mut_decl_parses() {
+        let p = parse_src("static mut COUNTER: i32 = 0;").unwrap();
+        let ItemKind::Static(s) = &p.items[0].kind else {
+            panic!("expected ItemKind::Static");
+        };
+        assert_eq!(s.name.name, "COUNTER");
+        assert!(s.is_mut);
+        assert!(!s.is_pub);
+    }
+
+    #[test]
+    fn pub_static_mut_decl_parses() {
+        let p = parse_src("pub static mut GLOBAL_TICK: u64 = 0;").unwrap();
+        let ItemKind::Static(s) = &p.items[0].kind else {
+            panic!("expected ItemKind::Static");
+        };
+        assert_eq!(s.name.name, "GLOBAL_TICK");
+        assert!(s.is_mut);
+        assert!(s.is_pub);
+    }
+
+    #[test]
+    fn static_without_type_annotation_rejected() {
+        let err = parse_src("static FOO = 5;").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 }

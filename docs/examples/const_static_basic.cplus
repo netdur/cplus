@@ -1,0 +1,40 @@
+// v0.0.9 Phase 4 — module-scope `const` + `static` end-to-end.
+//
+// Exercises every shape that lands in the first cut:
+//   - `pub const NAME: T = LIT;` — substituted as a literal at every
+//     use site (no LLVM global emitted).
+//   - `static NAME: T = LIT;`   — immutable global; read-only, lives in `.rodata`.
+//   - `static mut NAME: T = LIT;` — mutable global; reads + writes
+//     require `unsafe { ... }`.
+//
+// Expected output: 555
+
+const ADD_CONST: i32 = 100;
+
+static IMMUTABLE_OFFSET: i32 = 50;
+
+static mut COUNTER: i32 = 5;
+
+fn bump_counter(by: i32) {
+    unsafe {
+        COUNTER = COUNTER + by;
+    }
+    return;
+}
+
+fn main() -> i32 {
+    // Const substitution: ADD_CONST is replaced with `(100 as i32)` at
+    // each use site. No load instruction emitted.
+    let from_const: i32 = ADD_CONST + ADD_CONST;       // 200
+
+    // Immutable static: emits a `load i32, ptr @IMMUTABLE_OFFSET`.
+    let from_static: i32 = IMMUTABLE_OFFSET + IMMUTABLE_OFFSET;  // 100
+
+    // Mutable static: counter starts at 5, +50 +200 = 255.
+    bump_counter(50);
+    bump_counter(200);
+    let from_static_mut: i32 = unsafe { COUNTER };
+
+    println(from_const + from_static + from_static_mut);  // 200 + 100 + 255 = 555
+    return 0;
+}

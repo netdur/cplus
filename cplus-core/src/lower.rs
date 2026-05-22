@@ -33,15 +33,30 @@ use std::path::PathBuf;
 /// Run the lowering pass over a merged Program. Mutates `prog` so all
 /// `StmtKind::IfLet` / `StmtKind::GuardLet` nodes are replaced with
 /// equivalent match-using forms.
+///
+/// v0.0.9 Phase 4: also validates module-scope `const` / `static`
+/// initializers are literals (E0X30) and substitutes every use-site
+/// reference to a const with the initializer expression. After this
+/// pass returns, sema sees literal expressions where the user wrote a
+/// const name — codegen never observes a const-name reference.
 pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
     let mut cx = Lower {
         file: file.clone(),
         src: src.to_string(),
         diags: vec![],
     };
+    // v0.0.9 Phase 4: collect consts and validate initializers (both
+    // const and static initializers must be literals). Done before the
+    // per-item walk so the substitution pass sees a populated table.
+    let const_values = cx.collect_consts_and_validate_inits(prog);
     for it in &mut prog.items {
         cx.lower_item(it);
     }
+    // v0.0.9 Phase 4: substitute every `Ident(qualified_const_name)`
+    // use site with the const's initializer. Done after per-item
+    // lowering so any pattern-let desugar already turned `if let` /
+    // `guard let` bodies into walkable expression trees.
+    cx.substitute_consts(prog, &const_values);
     cx.diags
 }
 
@@ -79,6 +94,12 @@ impl Lower {
             | ItemKind::Enum(_)
             | ItemKind::Interface(_)
             | ItemKind::TypeAlias(_) => {}
+            // v0.0.9 Phase 4: const/static initializers are sema-checked
+            // for the literal-only rule. The per-item lowering pass
+            // doesn't transform them. Cross-program const substitution
+            // runs in `substitute_consts` (see end of `lower`), after
+            // every item's body has been lowered.
+            ItemKind::Const(_) | ItemKind::Static(_) => {}
         }
     }
 
@@ -572,6 +593,291 @@ impl Lower {
         // exhaustiveness check which will catch missing variants there
         // (sema's E0343 instead of E0349). Accept E0343 as the surface
         // error until the dedicated check moves in.
+    }
+
+    // ---- v0.0.9 Phase 4: const + static literal-only check + const substitution ----
+
+    /// Walk the program's items, validating that every `const` and
+    /// `static` initializer is a literal (E0X30). Returns a map from
+    /// qualified const name → (initializer expression, declared type)
+    /// for the substitution pass to consume.
+    ///
+    /// The declared type is paired in so the substitution can wrap the
+    /// literal in a `Cast { expr, ty }`. Without the cast, an
+    /// unsuffixed literal `176` substituted into a binary-op operand
+    /// position defaults to `i32` per sema's literal-inference rule —
+    /// which then mismatches if the other operand is `usize` /
+    /// anything else. The cast pins the type at the substitution site
+    /// so the const's declared type flows through every use unchanged.
+    fn collect_consts_and_validate_inits(
+        &mut self,
+        prog: &Program,
+    ) -> std::collections::HashMap<String, (Expr, Type)> {
+        let mut consts: std::collections::HashMap<String, (Expr, Type)> =
+            std::collections::HashMap::new();
+        for item in &prog.items {
+            match &item.kind {
+                ItemKind::Const(c) => {
+                    if !is_const_initializer(&c.value) {
+                        self.err(
+                            "E0X30",
+                            "const initializer must be a literal (integer, float, bool, string, or unary-negated numeric literal)".to_string(),
+                            c.value.span,
+                        );
+                        continue;
+                    }
+                    consts.insert(c.name.name.clone(), (c.value.clone(), c.ty.clone()));
+                }
+                ItemKind::Static(s) => {
+                    if !is_const_initializer(&s.value) {
+                        self.err(
+                            "E0X30",
+                            "static initializer must be a literal (integer, float, bool, string, or unary-negated numeric literal)".to_string(),
+                            s.value.span,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        consts
+    }
+
+    /// Walk every fn / method body in the program and replace each
+    /// `ExprKind::Ident(name)` whose name matches a const in `consts`
+    /// with a clone of the const's initializer expression. By the time
+    /// this pass returns, no const-name reference survives in any
+    /// expression position — sema sees only literals.
+    fn substitute_consts(
+        &self,
+        prog: &mut Program,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        if consts.is_empty() {
+            return;
+        }
+        for item in &mut prog.items {
+            match &mut item.kind {
+                ItemKind::Function(f) => subst_block(&mut f.body, consts),
+                ItemKind::Impl(b) => {
+                    for m in &mut b.methods {
+                        subst_block(&mut m.body, consts);
+                    }
+                }
+                ItemKind::Struct(_)
+                | ItemKind::Enum(_)
+                | ItemKind::Interface(_)
+                | ItemKind::TypeAlias(_)
+                | ItemKind::Const(_)
+                | ItemKind::Static(_) => {}
+            }
+        }
+    }
+}
+
+/// v0.0.9 Phase 4: returns true iff `e` is a shape accepted as a
+/// const/static initializer for v0.0.9. The literal forms are:
+///
+/// - integer / float / bool / string literal
+/// - `Unary { op: Neg, operand: <numeric literal> }` for negative
+///   numeric constants (`-1`, `-3.14`)
+///
+/// Arithmetic, identifier references, struct literals, array literals,
+/// and any other shape are rejected with E0X30. Future slices may
+/// widen this (struct-of-literals for the raytracer scene, const
+/// arithmetic for derived values); v0.0.9 ships the smallest viable
+/// surface.
+fn is_const_initializer(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_, _)
+        | ExprKind::FloatLit(_, _)
+        | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_) => true,
+        ExprKind::Unary { op: UnaryOp::Neg, operand } => matches!(
+            operand.kind,
+            ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
+        ),
+        _ => false,
+    }
+}
+
+/// v0.0.9 Phase 4: walk a Block and substitute every const-name Ident
+/// in it.
+fn subst_block(b: &mut Block, consts: &std::collections::HashMap<String, (Expr, Type)>) {
+    for s in &mut b.stmts {
+        subst_stmt(s, consts);
+    }
+    if let Some(t) = &mut b.tail {
+        subst_expr(t, consts);
+    }
+}
+
+fn subst_stmt(s: &mut Stmt, consts: &std::collections::HashMap<String, (Expr, Type)>) {
+    match &mut s.kind {
+        StmtKind::Let { init, .. } => {
+            if let Some(e) = init {
+                subst_expr(e, consts);
+            }
+        }
+        StmtKind::Return(opt) => {
+            if let Some(e) = opt {
+                subst_expr(e, consts);
+            }
+        }
+        StmtKind::While { cond, body, .. } => {
+            subst_expr(cond, consts);
+            subst_block(body, consts);
+        }
+        StmtKind::For(fl, _) => match fl {
+            ForLoop::CStyle { init, cond, update, body } => {
+                if let Some(i) = init {
+                    subst_stmt(i, consts);
+                }
+                if let Some(c) = cond {
+                    subst_expr(c, consts);
+                }
+                for u in update {
+                    subst_expr(u, consts);
+                }
+                subst_block(body, consts);
+            }
+            ForLoop::Range { iter, body, .. } => {
+                subst_expr(iter, consts);
+                subst_block(body, consts);
+            }
+        },
+        StmtKind::Expr(e) => subst_expr(e, consts),
+        StmtKind::Defer(e) => subst_expr(e, consts),
+        StmtKind::Loop(b, _) => subst_block(b, consts),
+        StmtKind::Assert(e) => subst_expr(e, consts),
+        // After the slice-4A.5 lowering, IfLet / WhileLet / GuardLet
+        // are rewritten into match-using forms; no original nodes
+        // survive here. The arms are defense-in-depth no-ops in case
+        // a future change orders the passes differently.
+        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            subst_expr(scrutinee, consts);
+            subst_block(body, consts);
+            if let Some(eb) = else_body {
+                subst_block(eb, consts);
+            }
+        }
+        StmtKind::WhileLet { scrutinee, body, .. } => {
+            subst_expr(scrutinee, consts);
+            subst_block(body, consts);
+        }
+        StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            subst_expr(scrutinee, consts);
+            subst_block(else_body, consts);
+        }
+        StmtKind::Break | StmtKind::Continue => {}
+    }
+}
+
+fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Type)>) {
+    // Replace this node entirely if it's an Ident naming a const. Span
+    // is taken from the original use site so diagnostics still point
+    // there if a later pass complains about the substituted literal.
+    //
+    // The substituted expression is wrapped in `Cast { expr: literal,
+    // ty: declared_ty }` so the const's declared type pins the value
+    // at every use site — independent of surrounding inference. Without
+    // the cast, an unsuffixed `176` substituted into a `usize`-typed
+    // binary op falls back to `i32` per sema's literal default and
+    // fires a type-mismatch.
+    if let ExprKind::Ident(name) = &e.kind {
+        if let Some((value, decl_ty)) = consts.get(name) {
+            let use_span = e.span;
+            *e = Expr {
+                kind: ExprKind::Cast {
+                    expr: Box::new(value.clone()),
+                    ty: decl_ty.clone(),
+                },
+                span: use_span,
+            };
+            return;
+        }
+    }
+    match &mut e.kind {
+        ExprKind::IntLit(_, _)
+        | ExprKind::FloatLit(_, _)
+        | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Path { .. }
+        | ExprKind::IncludeBytes { .. }
+        | ExprKind::IncludeStr { .. }
+        | ExprKind::EnvVar { .. } => {}
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(inner) = p {
+                    subst_expr(inner, consts);
+                }
+            }
+        }
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => subst_block(b, consts),
+        ExprKind::Await(inner) | ExprKind::Yield(inner) => subst_expr(inner, consts),
+        ExprKind::If { cond, then, else_branch } => {
+            subst_expr(cond, consts);
+            subst_block(then, consts);
+            if let Some(eb) = else_branch {
+                subst_expr(eb, consts);
+            }
+        }
+        ExprKind::Call { callee, args, .. } => {
+            subst_expr(callee, consts);
+            for a in args {
+                subst_expr(a, consts);
+            }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            subst_expr(lhs, consts);
+            subst_expr(rhs, consts);
+        }
+        ExprKind::Unary { operand, .. } => subst_expr(operand, consts),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                subst_expr(s, consts);
+            }
+            if let Some(en) = end {
+                subst_expr(en, consts);
+            }
+        }
+        ExprKind::Assign { target, value, .. } => {
+            subst_expr(target, consts);
+            subst_expr(value, consts);
+        }
+        ExprKind::Cast { expr, .. } => subst_expr(expr, consts),
+        ExprKind::StructLit { fields, .. } => {
+            for f in fields {
+                subst_expr(&mut f.value, consts);
+            }
+        }
+        ExprKind::GenericStructLit { fields, .. } => {
+            for f in fields {
+                subst_expr(&mut f.value, consts);
+            }
+        }
+        ExprKind::GenericEnumCall { args, .. } => {
+            for a in args {
+                subst_expr(a, consts);
+            }
+        }
+        ExprKind::Field { receiver, .. } => subst_expr(receiver, consts),
+        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+            for el in elements {
+                subst_expr(el, consts);
+            }
+        }
+        ExprKind::Index { receiver, index } => {
+            subst_expr(receiver, consts);
+            subst_expr(index, consts);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            subst_expr(scrutinee, consts);
+            for a in arms {
+                subst_expr(&mut a.body, consts);
+            }
+        }
     }
 }
 

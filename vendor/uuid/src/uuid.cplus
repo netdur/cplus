@@ -1,0 +1,132 @@
+// vendor/uuid/src/uuid.cplus
+// RFC 4122 v4 UUID generator, parser, and formatter.
+
+import "../../stdlib/src/option" as option;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
+extern fn arc4random_buf(buf: *u8, n: usize);
+
+pub struct Uuid {
+    pub bytes: [u8; 16],
+}
+
+pub fn new_v4() -> Uuid {
+    let buf: *u8 = unsafe { malloc(16 as usize) };
+    if unsafe { buf as usize } != (0 as usize) {
+        unsafe { arc4random_buf(buf, 16 as usize); }
+        
+        let b6: *u8 = unsafe { buf + 6 };
+        let b8: *u8 = unsafe { buf + 8 };
+        
+        unsafe {
+            *b6 = ((*b6 & 15u8) | 64u8);
+            *b8 = ((*b8 & 63u8) | 128u8);
+        }
+        
+        let mut uuid = Uuid {
+            bytes: [
+                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+            ]
+        };
+        
+        let mut i: usize = 0 as usize;
+        while i < (16 as usize) {
+            let p: *u8 = unsafe { buf + i };
+            uuid.bytes[i] = unsafe { *p };
+            i = i +% (1 as usize);
+        }
+        
+        unsafe { free(buf); }
+        return uuid;
+    }
+    
+    return Uuid {
+        bytes: [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+    };
+}
+
+fn parse_hex_digit(c: u8) -> i32 {
+    if c >= (48 as u8) && c <= (57 as u8) { return (c -% 48 as u8) as i32; }
+    if c >= (97 as u8) && c <= (102 as u8) { return (c -% 87 as u8) as i32; }
+    if c >= (65 as u8) && c <= (70 as u8) { return (c -% 55 as u8) as i32; }
+    return 0 -% 1;
+}
+
+fn hex_offset_for_byte(idx: usize) -> usize {
+    if idx < (4 as usize) { return idx *% (2 as usize); }
+    if idx < (6 as usize) { return (idx *% (2 as usize)) +% (1 as usize); }
+    if idx < (8 as usize) { return (idx *% (2 as usize)) +% (2 as usize); }
+    if idx < (10 as usize) { return (idx *% (2 as usize)) +% (3 as usize); }
+    return (idx *% (2 as usize)) +% (4 as usize);
+}
+
+pub fn parse(s: str) -> option::Option[Uuid] {
+    if str_len(s) != (36 as usize) {
+        return option::Option[Uuid]::None;
+    }
+    
+    let p: *u8 = str_ptr(s);
+    if unsafe { *(p + 8) } != (45 as u8) || unsafe { *(p + 13) } != (45 as u8) ||
+       unsafe { *(p + 18) } != (45 as u8) || unsafe { *(p + 23) } != (45 as u8) {
+        return option::Option[Uuid]::None;
+    }
+    
+    let mut uuid = Uuid {
+        bytes: [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
+        ]
+    };
+    
+    let mut idx: usize = 0 as usize;
+    while idx < (16 as usize) {
+        let start_offset: usize = hex_offset_for_byte(idx);
+        let c1: u8 = unsafe { *(p + start_offset) };
+        let c2: u8 = unsafe { *(p + (start_offset +% 1 as usize)) };
+        
+        let h1: i32 = parse_hex_digit(c1);
+        let h2: i32 = parse_hex_digit(c2);
+        if h1 < 0 || h2 < 0 {
+            return option::Option[Uuid]::None;
+        }
+        
+        uuid.bytes[idx] = (((h1 << 4) | h2) as u8);
+        idx = idx +% (1 as usize);
+    }
+    
+    return option::some::[Uuid](uuid);
+}
+
+impl Uuid {
+    pub fn to_string(self) -> string {
+        let buf: *u8 = unsafe { malloc(37 as usize) };
+        if unsafe { buf as usize } == (0 as usize) {
+            return "".to_string();
+        }
+        
+        let n: i32 = unsafe {
+            snprintf(buf, 37 as usize, str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
+                     self.bytes[0] as i32, self.bytes[1] as i32, self.bytes[2] as i32, self.bytes[3] as i32,
+                     self.bytes[4] as i32, self.bytes[5] as i32,
+                     self.bytes[6] as i32, self.bytes[7] as i32,
+                     self.bytes[8] as i32, self.bytes[9] as i32,
+                     self.bytes[10] as i32, self.bytes[11] as i32, self.bytes[12] as i32, self.bytes[13] as i32, self.bytes[14] as i32, self.bytes[15] as i32)
+        };
+        
+        if n > 0 {
+            let view: str = unsafe { str_from_raw_parts(buf, n as usize) };
+            let res: string = view.to_string();
+            unsafe { free(buf); }
+            return res;
+        }
+        
+        unsafe { free(buf); }
+        return "".to_string();
+    }
+}

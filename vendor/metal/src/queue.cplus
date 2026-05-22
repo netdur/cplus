@@ -1,0 +1,95 @@
+// vendor/metal/src/queue.cplus — execution queues and command encoding.
+
+import "./runtime" as runtime;
+import "./buffer" as buffer;
+import "./pipeline" as pipeline;
+
+pub struct CommandQueue {
+    pub raw: *u8,
+}
+
+pub struct CommandBuffer {
+    pub raw: *u8,
+}
+
+pub struct ComputeCommandEncoder {
+    pub raw: *u8,
+}
+
+impl CommandQueue {
+    pub fn new_command_buffer(self) -> CommandBuffer {
+        if self.raw == unsafe { 0 as *u8 } {
+            return CommandBuffer { raw: unsafe { 0 as *u8 } };
+        }
+        let selector: *u8 = runtime::sel(str_ptr("commandBuffer\0"));
+        let buf_raw: *u8 = runtime::msg_id(self.raw, selector);
+        return CommandBuffer { raw: buf_raw };
+    }
+}
+
+impl CommandBuffer {
+    pub fn new_compute_encoder(self) -> ComputeCommandEncoder {
+        if self.raw == unsafe { 0 as *u8 } {
+            return ComputeCommandEncoder { raw: unsafe { 0 as *u8 } };
+        }
+        let selector: *u8 = runtime::sel(str_ptr("computeCommandEncoder\0"));
+        let enc_raw: *u8 = runtime::msg_id(self.raw, selector);
+        return ComputeCommandEncoder { raw: enc_raw };
+    }
+
+    pub fn commit(self) {
+        if self.raw == unsafe { 0 as *u8 } {
+            return;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("commit\0"));
+        runtime::msg_void(self.raw, selector);
+        return;
+    }
+
+    pub fn wait_until_completed(self) {
+        if self.raw == unsafe { 0 as *u8 } {
+            return;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("waitUntilCompleted\0"));
+        runtime::msg_void(self.raw, selector);
+        return;
+    }
+}
+
+impl ComputeCommandEncoder {
+    pub fn set_pipeline(self, state: pipeline::ComputePipelineState) {
+        if self.raw == unsafe { 0 as *u8 } || state.raw == unsafe { 0 as *u8 } {
+            return;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("setComputePipelineState:\0"));
+        runtime::msg_void_pipeline(self.raw, selector, state.raw);
+        return;
+    }
+
+    pub fn set_buffer(self, index: usize, buf: buffer::Buffer) {
+        if self.raw == unsafe { 0 as *u8 } || buf.raw == unsafe { 0 as *u8 } {
+            return;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("setBuffer:offset:atIndex:\0"));
+        runtime::msg_void_buf_idx(self.raw, selector, buf.raw, 0 as usize, index);
+        return;
+    }
+
+    pub fn dispatch(self, groups: runtime::MTLSize, per_group: runtime::MTLSize) {
+        if self.raw == unsafe { 0 as *u8 } {
+            return;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0"));
+        runtime::msg_dispatch(self.raw, selector, groups, per_group);
+        return;
+    }
+
+    pub fn end_encoding(self) {
+        if self.raw == unsafe { 0 as *u8 } {
+            return;
+        }
+        let selector: *u8 = runtime::sel(str_ptr("endEncoding\0"));
+        runtime::msg_void(self.raw, selector);
+        return;
+    }
+}

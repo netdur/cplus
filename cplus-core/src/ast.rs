@@ -97,6 +97,59 @@ pub enum ItemKind {
     /// target everywhere it's used. No new type, no nominal distinction.
     /// Cross-file `pub` visible per the usual rules.
     TypeAlias(TypeAlias),
+    /// v0.0.9 Phase 4: `pub? const NAME: Ty = LIT;` module-scope named
+    /// literal. Lowered by `crate::lower` — every use-site path
+    /// expression that resolves to a const is rewritten to a clone of
+    /// the initializer expression before sema runs its expression-level
+    /// checks. No LLVM global emitted. Initializer must be a literal
+    /// (sema enforces, E0X30); type annotation required (parser
+    /// enforces, E0X31).
+    Const(ConstDecl),
+    /// v0.0.9 Phase 4: `pub? static mut? NAME: Ty = LIT;` module-scope
+    /// global with a real address. Immutable form lowers to LLVM
+    /// `@NAME = constant <ty> <lit>` in `.rodata`; the `mut` form
+    /// lowers to `@NAME = global <ty> <lit>` in `.data`. Reads and
+    /// writes of `static mut` must occur inside `unsafe { ... }`
+    /// (E0X33 / E0X34) — the borrow checker can't prove absence of
+    /// data races for module-scope mutable state.
+    Static(StaticDecl),
+}
+
+/// v0.0.9 Phase 4: module-scope `const NAME: Ty = LIT;` declaration.
+/// Lowered away by `crate::lower` before sema's body-check pass —
+/// every reference to a const name is replaced with a clone of the
+/// initializer expression. By the time codegen runs there are no
+/// `ItemKind::Const` items left in the program.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDecl {
+    pub name: Ident,
+    pub ty: Type,
+    /// Initializer expression. Sema (`check_const_static_inits`) enforces
+    /// the literal-only rule with E0X30. The accepted shapes are
+    /// `IntLit` / `FloatLit` / `BoolLit` / `StrLit` plus optional
+    /// `Unary { op: Neg, operand: <numeric lit> }` for negative
+    /// numeric constants. Anything else is a hard error before the
+    /// substitution pass runs.
+    pub value: Expr,
+    pub is_pub: bool,
+    pub attributes: Vec<Attribute>,
+}
+
+/// v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`
+/// declaration. Survives through lowering and reaches codegen, which
+/// emits one LLVM global per declaration (read via load, written via
+/// store for the `mut` variant).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaticDecl {
+    pub name: Ident,
+    pub ty: Type,
+    /// Initializer expression. Same literal-only rule as `ConstDecl`
+    /// for v0.0.9 (struct-literal / array-literal extensions wait for
+    /// a real consumer beyond the immediate raytracer use case).
+    pub value: Expr,
+    pub is_mut: bool,
+    pub is_pub: bool,
+    pub attributes: Vec<Attribute>,
 }
 
 /// Phase 11 type alias: `type Name = TargetType;`. The resolver

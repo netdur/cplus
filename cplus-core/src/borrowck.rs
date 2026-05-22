@@ -1907,7 +1907,9 @@ fn collect_e0384_diagnostics(
             ItemKind::Struct(_)
             | ItemKind::Enum(_)
             | ItemKind::Interface(_)
-            | ItemKind::TypeAlias(_) => {}
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_) => {}
         }
     }
 }
@@ -2126,7 +2128,9 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
             ItemKind::Struct(_)
             | ItemKind::Enum(_)
             | ItemKind::Interface(_)
-            | ItemKind::TypeAlias(_) => {}
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_) => {}
         }
     }
     (analysis, all_diags)

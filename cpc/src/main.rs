@@ -786,9 +786,51 @@ fn collect_dep_link_args(
                 let p = lib_root.join(&host_triple).join(basename);
                 link_args.push(p.to_string_lossy().to_string());
             }
+            // v0.0.9 Phase 8 (cpc-gaps G-001): vendor packages may also
+            // declare `extra-objects` (rare — usually consumer-side).
+            // Validate existence here so the diag carries the dep name.
+            for obj in &ls.extra_objects {
+                if !obj.is_file() {
+                    return Err(emit_extra_object_missing(
+                        diag_mode,
+                        obj,
+                        &vendor_manifest,
+                    ));
+                }
+                link_args.push(obj.to_string_lossy().to_string());
+            }
         }
     }
     Ok(link_args)
+}
+
+/// v0.0.9 Phase 8 (cpc-gaps G-001): produce E0864 ("[link]
+/// extra-objects entry not found") as a structured diagnostic.
+/// Used both by the dep-walker and by the consumer's own link path.
+/// `declared_in` is the manifest that listed the missing file —
+/// helps the user find the offending entry quickly.
+fn emit_extra_object_missing(diag_mode: DiagMode, obj: &Path, declared_in: &Path) -> ExitCode {
+    let d = diag::Diagnostic {
+        severity: Severity::Error,
+        code: diag::DiagCode("E0864"),
+        message: format!(
+            "[link] extra-objects entry `{}` not found",
+            obj.display()
+        ),
+        primary: diag::SourceSpan {
+            file: declared_in.to_path_buf(),
+            start: diag::Position { line: 1, col: 1, byte: 0 },
+            end: diag::Position { line: 1, col: 1, byte: 0 },
+        },
+        labels: Vec::new(),
+        notes: vec![
+            "produce the object out-of-band (e.g. `clang -c foo.s -o foo.o`) before `cpc build`"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    };
+    emit_diag(&d, diag_mode, "");
+    ExitCode::FAILURE
 }
 
 /// Multi-file project build (Phase 4 slice 4A). Looks for `Cplus.toml`
@@ -909,6 +951,20 @@ fn build_project(
     match collect_dep_link_args(&m, diag_mode) {
         Ok(mut extra) => link_args.append(&mut extra),
         Err(code) => return code,
+    }
+    // v0.0.9 Phase 8 (cpc-gaps G-001): the consumer's own
+    // `[link] extra-objects = [...]` — prebuilt `.o` files appended
+    // to the link line. Validated against the filesystem at link time
+    // so a missing file surfaces as E0864 rather than a clang error.
+    // Appended after dep `[link]` contributions so a consumer's `.o`
+    // that depends on a vendor lib's symbol resolves correctly.
+    if let Some(ls) = m.link.as_ref() {
+        for obj in &ls.extra_objects {
+            if !obj.is_file() {
+                return emit_extra_object_missing(diag_mode, obj, &manifest_path);
+            }
+            link_args.push(obj.to_string_lossy().to_string());
+        }
     }
     let status = run_clang(&tmp, &out_path, build_mode, false, sanitizers, &link_args);
     drop(tmp_handle); // explicit cleanup on the secure temp path
@@ -1120,6 +1176,20 @@ fn build_lib_project(
         // re-walk the graph.)
         for arg in &dep_link_args {
             cmd.arg(arg);
+        }
+        // v0.0.9 Phase 8 (cpc-gaps G-001): the consumer's own
+        // `[link] extra-objects = [...]` bakes into the .dylib so the
+        // downstream consumer doesn't have to re-state them. Static
+        // archives don't carry link metadata at all, so extra-objects
+        // for `[lib] crate-type = "staticlib"` are silently dropped —
+        // the consumer's `[[bin]]` is where they'd be respected anyway.
+        if let Some(ls) = m.link.as_ref() {
+            for obj in &ls.extra_objects {
+                if !obj.is_file() {
+                    return emit_extra_object_missing(diag_mode, obj, &m.root.join("Cplus.toml"));
+                }
+                cmd.arg(obj);
+            }
         }
         let dylib_status = cmd.arg(&obj_path).arg("-o").arg(&dylib_path).status();
         match dylib_status {
@@ -1904,26 +1974,62 @@ fn build_ir(
     // unchanged — `doctest::extract` returns the input verbatim.
     let extracted = doctest::extract(src);
     let src = extracted.as_str();
-    let toks = match lexer::tokenize(src) {
-        Ok(t) => t,
-        Err(e) => {
-            let lm = LineMap::new(src);
-            let d = diag::from_lex(&e, &file.to_path_buf(), &lm, src);
-            emit_diag(&d, mode, src);
-            return Err(ExitCode::FAILURE);
-        }
-    };
-    let mut prog = match parser::parse(toks) {
-        Ok(p) => p,
-        Err(e) => {
-            let lm = LineMap::new(src);
-            let d = diag::from_parse(&e, &file.to_path_buf(), &lm, src);
-            emit_diag(&d, mode, src);
-            return Err(ExitCode::FAILURE);
-        }
+    // v0.0.9 Phase 7 (cpc-gaps G-011): the single-file path used to call
+    // `parser::parse` directly, which meant `import "./foo" as foo;`
+    // statements were parsed but never followed. The fix routes through
+    // the resolver in project mode with an empty `deps` set — `./` and
+    // `../` paths resolve relative to the entry file's directory; bare
+    // paths like `"stdlib/io"` fail with E0853 (no Cplus.toml, no
+    // declared dependency).
+    //
+    // The detection logic: if the source has no `import` statements at
+    // all, skip the loader entirely and use the legacy direct-parse
+    // path. That keeps the single-file fast path (which dominates the
+    // sample-program e2e suite) unchanged.
+    let has_imports = src.contains("\nimport ") || src.starts_with("import ");
+    let (mut prog, files_map) = if has_imports {
+        // Manifest root for `./` resolution is the entry file's parent
+        // directory. The loader uses this for vendor lookups too —
+        // since we pass `Some(&[])` (no deps), no vendor lookup ever
+        // succeeds and bare paths fall through to E0853.
+        let manifest_root = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let loaded = match resolver::load_project_full(file, &manifest_root, false, Some(&[])) {
+            Ok(l) => l,
+            Err(failure) => {
+                let d = failure.to_diagnostic();
+                let src_for_diag = failure.primary_source().unwrap_or(src);
+                emit_diag(&d, mode, src_for_diag);
+                return Err(ExitCode::FAILURE);
+            }
+        };
+        (loaded.program, loaded.files)
+    } else {
+        let toks = match lexer::tokenize(src) {
+            Ok(t) => t,
+            Err(e) => {
+                let lm = LineMap::new(src);
+                let d = diag::from_lex(&e, &file.to_path_buf(), &lm, src);
+                emit_diag(&d, mode, src);
+                return Err(ExitCode::FAILURE);
+            }
+        };
+        let prog = match parser::parse(toks) {
+            Ok(p) => p,
+            Err(e) => {
+                let lm = LineMap::new(src);
+                let d = diag::from_parse(&e, &file.to_path_buf(), &lm, src);
+                emit_diag(&d, mode, src);
+                return Err(ExitCode::FAILURE);
+            }
+        };
+        (prog, std::collections::BTreeMap::new())
     };
     // Phase 5 slice 5ATTR.1: validate attributes before lower / sema.
-    let attr_diags = attrs::check(&prog, file.to_path_buf(), src);
+    let attr_diags = if files_map.is_empty() {
+        attrs::check(&prog, file.to_path_buf(), src)
+    } else {
+        attrs::check_multi(&prog, file.to_path_buf(), src, files_map.clone())
+    };
     let attr_errors = attr_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
@@ -1948,7 +2054,7 @@ fn build_ir(
         &prog,
         file.to_path_buf(),
         src,
-        std::collections::BTreeMap::new(),
+        files_map.clone(),
     );
     let had_errors = diags.iter().any(|d| matches!(d.severity, Severity::Error));
     for d in &diags {
@@ -1968,7 +2074,7 @@ fn build_ir(
     if bc_errors {
         return Err(ExitCode::FAILURE);
     }
-    let post_mono = run_monomorphize(prog, &mono, &std::collections::BTreeMap::new());
+    let post_mono = run_monomorphize(prog, &mono, &files_map);
     let dbg_path = if debug_info { Some(file) } else { None };
     Ok(codegen::generate_with_mono(
         &post_mono, build_mode, dbg_path, sanitizers, false, &mono,

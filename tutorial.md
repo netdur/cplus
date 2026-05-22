@@ -195,6 +195,53 @@ If you forget to initialise on a path, the compiler tells you (**E0345**). If yo
 
 Scope is curly-brace lexical. A binding lives until its enclosing block exits, at which point its `Drop` runs (see §13).
 
+### Module-scope `const` and `static`
+
+`let` lives inside a function. For named values shared across functions — or for the C-style "static storage" pattern where the value lives for the whole program's lifetime — use `const` or `static` at module scope.
+
+```cplus
+// `const` — a typed alias for a literal. No storage, no address.
+// Every use site is rewritten to the literal at compile time, like a
+// C `#define` but type-checked.
+const HEADER_BYTES: usize = 176;
+const PI: f32 = 3.14159f32;
+const VERSION: str = "0.0.9";
+
+// `static` — a global with a real address. Lives for the whole program;
+// initialised once before `main` runs. Immutable form lives in `.rodata`.
+static IMMUTABLE_OFFSET: i32 = 50;
+
+// `static mut` — mutable global. Reads and writes require an enclosing
+// `unsafe { ... }` block, since the borrow checker can't prove absence
+// of data races on module-scope mutable state.
+static mut COUNTER: i32 = 0;
+
+fn bump(by: i32) {
+    unsafe { COUNTER = COUNTER + by; }
+    return;
+}
+
+fn current() -> i32 {
+    return unsafe { COUNTER };
+}
+```
+
+Three rules:
+
+1. **Initialiser must be a literal** — integer, float, bool, string, or a unary-negated numeric literal. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error.
+2. **Type annotation is required** — no inference. `const FOO = 5;` and `static FOO = 5;` are rejected with **E0X31**.
+3. **`static mut` reads need `unsafe`** (E0X33). Writes need `unsafe` (E0X34). Writing to an immutable `static` is **E0305** ("cannot assign to immutable static").
+
+The choice between `const` and `static`:
+
+| You want | Use |
+|---|---|
+| A named literal you'll reference at multiple sites | `const` |
+| A module-private *fixed offset table* the program reads at runtime | `static` |
+| A *mutable* counter / RNG state / lazy cache | `static mut` |
+
+The C `static const sphere_t scene[10] = {...}` pattern is `static SCENE: ...` in C+ (once struct/array initialisers are admitted in a follow-up slice — v0.0.9 ships literal-only). The C `static uint32_t rng_state` pattern is `static mut RNG_STATE: u32 = ...;` today.
+
 ---
 
 ## 5. Operators and arithmetic

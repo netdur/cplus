@@ -76,6 +76,19 @@ pub struct LinkSpec {
     /// Required when `bundled` is non-empty (E0863); the consumer's
     /// host must appear here (E0862) or the package can't link.
     pub triples: Vec<String>,
+    /// v0.0.9 Phase 8 (cpc-gaps G-001): prebuilt `.o` files to append
+    /// to the link line for any target produced from this manifest.
+    /// Paths are resolved relative to the manifest directory. Useful
+    /// for embedding hand-written C, assembly-generated `incbin`
+    /// blobs (Metal shader libraries, etc.), or any other prebuilt
+    /// object the C+ binary needs to link against.
+    ///
+    /// cpc doesn't run a build script — the user is responsible for
+    /// producing each `.o` out-of-band (typical pattern: a Makefile
+    /// invokes `clang -c foo.s -o foo.o` before `cpc build`). cpc
+    /// validates each entry exists at link time and fails with
+    /// E0864 if any is missing.
+    pub extra_objects: Vec<PathBuf>,
 }
 
 /// Phase 2 (v0.0.2) — one entry in `[dependencies]`. Today carries
@@ -295,6 +308,10 @@ struct RawLinkSpec {
     bundled: Vec<String>,
     #[serde(default)]
     triples: Vec<String>,
+    /// v0.0.9 Phase 8 (cpc-gaps G-001): kebab-case key `extra-objects`
+    /// matching the rest of the manifest's multi-word field naming.
+    #[serde(default, rename = "extra-objects")]
+    extra_objects: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -440,11 +457,21 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                     path: manifest_path.to_path_buf(),
                 });
             }
+            // v0.0.9 Phase 8 (cpc-gaps G-001): resolve each extra-object
+            // path relative to the manifest directory. We don't check
+            // file existence at parse time — that happens at link time
+            // (E0864) so the diagnostic carries the full link context.
+            let extra_objects: Vec<PathBuf> = rl
+                .extra_objects
+                .into_iter()
+                .map(|p| root.join(p))
+                .collect();
             Some(LinkSpec {
                 frameworks: rl.frameworks,
                 libs: rl.libs,
                 bundled: rl.bundled,
                 triples: rl.triples,
+                extra_objects,
             })
         }
     };
@@ -886,6 +913,68 @@ mod tests {
         assert!(link.libs.is_empty());
         assert!(link.bundled.is_empty());
         assert!(link.triples.is_empty());
+        assert!(link.extra_objects.is_empty());
+    }
+
+    // ---- v0.0.9 Phase 8 (cpc-gaps G-001): [link] extra-objects ----
+
+    #[test]
+    fn link_extra_objects_parses_kebab_case() {
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+            extra-objects = ["build/metallib.o", "build/shader_blob.o"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let link = m.link.unwrap();
+        assert_eq!(link.extra_objects.len(), 2);
+        // Paths resolve relative to the manifest directory.
+        assert!(link.extra_objects[0].ends_with("build/metallib.o"));
+        assert!(link.extra_objects[1].ends_with("build/shader_blob.o"));
+    }
+
+    #[test]
+    fn link_extra_objects_absent_defaults_empty() {
+        // A [link] table with only frameworks/libs entries must still
+        // produce an empty extra_objects vec (the backward-compat path).
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+            frameworks = ["Cocoa"]
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let link = m.link.unwrap();
+        assert!(link.extra_objects.is_empty());
+        assert_eq!(link.frameworks, vec!["Cocoa".to_string()]);
+    }
+
+    #[test]
+    fn link_extra_objects_paths_anchor_to_manifest_root() {
+        // Verify that the resolved path is the manifest dir joined with
+        // the relative entry — not, e.g., the process CWD.
+        let dir = std::env::temp_dir().join("cpc-test-extra-objects");
+        let _ = std::fs::create_dir_all(&dir);
+        let text = r#"
+            [package]
+            name = "x"
+
+            [link]
+            extra-objects = ["foo.o"]
+        "#;
+        let m = parse_in(&dir, text).unwrap();
+        let link = m.link.unwrap();
+        // The resolved path should start with the manifest's `root`
+        // (which is the canonicalized form of `dir`).
+        assert!(
+            link.extra_objects[0].starts_with(&m.root),
+            "expected {} to start with {}",
+            link.extra_objects[0].display(),
+            m.root.display()
+        );
     }
 
     #[test]

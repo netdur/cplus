@@ -1,0 +1,8 @@
+[package]
+name    = "metal"
+version = "0.0.1"
+edition = "2026"
+
+[link]
+frameworks = ["Metal", "Foundation"]
+libs       = ["objc"]
