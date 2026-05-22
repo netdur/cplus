@@ -1,153 +1,135 @@
 # C+ — Plan
 
-Version 0.0.7 shipped 2026-05-20. See [plan-0.0.7.md](plan-0.0.7.md) for the archived 0.0.7 roadmap and resolved log; [plan-0.0.6.md](plan-0.0.6.md) covers v0.0.6, [plan-0.0.5.md](plan-0.0.5.md) v0.0.5, [plan-0.0.4.md](plan-0.0.4.md) v0.0.4, [plan-0.0.3.md](plan-0.0.3.md) v0.0.3, [plan-0.0.2.md](plan-0.0.2.md) v0.0.2, and [plan-0.0.1.md](plan-0.0.1.md) v0.0.1.
+Version 0.0.8 shipped 2026-05-22. See [plan-0.0.8.md](plan-0.0.8.md) for the archived 0.0.8 roadmap and resolved log; [plan-0.0.7.md](plan-0.0.7.md) covers v0.0.7, [plan-0.0.6.md](plan-0.0.6.md) v0.0.6, [plan-0.0.5.md](plan-0.0.5.md) v0.0.5, [plan-0.0.4.md](plan-0.0.4.md) v0.0.4, [plan-0.0.3.md](plan-0.0.3.md) v0.0.3, [plan-0.0.2.md](plan-0.0.2.md) v0.0.2, and [plan-0.0.1.md](plan-0.0.1.md) v0.0.1.
 
 ---
 
-## v0.0.8 — Validate the v0.0.7 surface with real workloads
+## v0.0.9 — Tighten the safety story, close the long-tail bugs
 
-**Strategy:** v0.0.7 shipped a lot of compiler work — TBAA, lifetime intrinsics, loop attributes, the full SIMD method matrix across nineteen widths + eight mask types, ergonomic appkit polish, `include_str!`. None of it has been pressure-tested by a real workload. v0.0.8 is the validation cycle: write a raytracer that exercises the perf-critical path, bless a `vendor/simd` library that shows what packaging the new SIMD surface looks like, add one more bindings package off the Apple stack to confirm the model generalizes, and close the small-but-deferred items.
+**Strategy:** v0.0.8 validated the v0.0.7 surface against three real benchmarks and closed the bench-gap punch list. C+ now wins the raytracer outright (0.94 s vs C's 1.16 s) on Apple Silicon, the SIMD surface has a packaged consumer (`vendor/simd`), and the macro-builtin trilogy is settled (`include_bytes!` / `include_str!` / `env!`).
 
-No new language features. No new principles. Three packaging-shaped slices and one micro-feature.
+What's left is the long tail: small bugs that surfaced under real workloads (mixed-if-arm panic, lingering musttail edge cases), one safety footgun that contradicts the "safety as default" pitch (`fn echo(x: string) -> string` is a silent double-free without an explicit `move`), and one ergonomic gap that touches every byte-level program (no character literals).
 
-Slice sizes use the same S/M/L assistant-paced framing as v0.0.6 / v0.0.7.
+No new principles. The locked twelve from §1.Locked-Principles stand. v0.0.9 is polish + correctness, not language reshape.
+
+Slice sizes follow the same S/M/L assistant-paced framing.
 
 ---
 
-### Phase 1 — Raytracer benchmark · size L
+### Phase 1 — Safety: default-move for non-Copy value params · size M
 
-**Goal:** port a recognizable ray-sphere intersection workload to cpc and run it head-to-head against the same algorithm in C, Rust, and Swift under `proves/`'s C-stdlib-only fair-mode harness. The output is a single PNG + a wall-clock + a per-second-ray throughput number for each language.
+**The footgun**, lifted from the v0.0.8 raytracer port and from a user-flagged note in the closed plan:
 
-**Why this matters:** the v0.0.7 perf work (TBAA on every primitive load/store; lifetime intrinsics; loop attributes) was infrastructure with no measured perf delta. The plan repeatedly cites "raytracer" as the regression target. Until a raytracer actually runs, the perf claim is hypothesis. With one, TBAA-vs-no-TBAA and lifetime-vs-no-lifetime are A/B switches we can measure, and any v0.0.8+ codegen change has a concrete regression guard.
+```cplus
+// ❌ Caller's `s` and callee's `x` both run Drop. Double-free under ASan.
+fn echo(x: string) -> string { return x; }
 
-#### Slice 1A — Reference port: scalar raytracer · size M
+// ✅ Today's workaround — manually mark the param `move`.
+fn echo(move x: string) -> string { return x; }
+```
 
-**Source workload:** Peter Shirley's "Ray Tracing in One Weekend" — chapters 1-9 (Vec3 ops, sphere intersection, recursive bounce, Lambert + metal + dielectric materials, defocus blur). Single-threaded, single-channel float math.
+A safety-first language should not silently emit a double-free when the user writes the "obvious" signature. The current model — value-passed non-Copy = "shared borrow that aliases the caller's heap" — was a v0.0.5 expedient and never stress-tested against a real workload until the raytracer port.
 
-**Why this workload:** it's the standard portable raytracer benchmark. Every comparison language already has a known-good port. The hot path is Vec3 dot product + sphere-quadratic root + recursive `ray_color` — three primitive-typed structs in tight loops, exactly the shape TBAA was designed for.
-
-**Implementation surface:**
-
-- New `proves/benchmark/programs/05-raytracer/` directory mirroring the existing benchmark layout (`cplus/`, `rust/`, `swift/`, `c/`, `tests/`, `_scaffolds/`).
-- C+ port lives in `proves/benchmark/programs/05-raytracer/cplus/src/main.cplus`. PPM output to stdout (so the harness's stdout-capture works); 320×180 image, 32 samples/pixel, max bounce depth 8 (small enough that a CI run finishes in <30s on Release).
-- Reference C port (Shirley's own one-file code, lightly de-C++'d to plain C for the fair-mode harness's libc-only contract).
-- Rust + Swift ports for cross-language baselines.
-- `tests/` driver: SHA256 of the PNG output (the PPM is deterministic — fixed RNG seed). The harness reports wall-clock + cycles + max-RSS for each.
+**Goal:** for a non-`Copy` value-typed parameter without `move`, default to **move** semantics (single owner: the callee). The current "borrow" interpretation requires the caller's writer to opt in via `borrow` or stays as the explicit `mut x: T` non-Copy pointer ABI.
 
 **Locked design decisions:**
 
-1. **Scalar first.** This slice ships a scalar raytracer in every language. SIMD-accelerated variants are a separate slice (1B) — keeping the comparison clean (cpc scalar vs C scalar vs Rust scalar vs Swift scalar) avoids confounders.
-
-2. **Deterministic RNG seed.** A single `u64` LCG (the trivial `state = state.wrapping_mul(6364136223846793005) +% 1442695040888963407` step) shared across all ports. Same seed → same image bytes → harness can SHA-256 verify. No platform `rand()`, no `<random>`.
-
-3. **No I/O beyond stdout PPM write.** Matches the fair-mode harness contract.
-
-4. **Build via `cpc build`.** No `--emit-ll` shortcut. The recipe ships a `Cplus.toml` with `[package]` only — no link table — and uses the libc-only contract for `printf` / `fprintf` / `clock` from `extern fn` declarations.
-
-**Tests:**
-- Unit: per-module checks on Vec3 + Ray + Sphere via the existing `#[test]` runner.
-- E2E: the harness round-trips a known image hash for each language; a 1% throughput delta between cpc and Rust is the regression guard.
-
-**Expected payoff:** the raytracer becomes the standing perf target. Any future codegen change ships with a Δ-throughput number against it.
-
-#### Slice 1B — SIMD raytracer variant · size M (gated on 1A)
-
-**Goal:** rewrite the hot path (Vec3 add/sub/mul/dot, ray-sphere intersection) to use `f32x4` for component vectors. Compare scalar-vs-SIMD throughput.
-
-**Why this slice exists:** v0.0.7's nineteen SIMD widths and reductions/shuffles/select have no real consumer. A SIMD raytracer is the smallest workload that exercises:
-- `f32x4::new(x, y, z, 0)` for Vec3-as-vec4 packing
-- `a.mul(b).sum()` for dot product (the v0.0.7 horizontal-reduce path)
-- `a.add(b)` / `a.sub(b)` per ray bounce
-- `a.lt(b).select(t1, t2)` for branchless front-face / inside-sphere selection
-
-**Locked design decisions:**
-
-1. **Same image hash as 1A.** The SIMD variant produces the same bytes — float rounding is identical because we use `fadd contract` semantics for both scalar and vector ops. Verifies the SIMD codegen produces the same arithmetic.
-
-2. **No autovec disable.** Both scalar and SIMD variants build at `--release`. LLVM may autovectorize the scalar version; that's fine — the explicit-SIMD variant should still win because hand-packing into f32x4 saves the autovec analysis cost and the dot-product reduction is one `llvm.vector.reduce.fadd` call instead of three sequential floats.
-
-3. **Cross-language SIMD ports.** Rust uses `std::simd` (nightly) or `wide`; Swift uses `simd_float4`; C uses `__attribute__((vector_size))`. The harness reports per-language SIMD-vs-scalar deltas.
-
-**Tests:** same image hash as 1A. New regression guard: SIMD throughput stays within ±5% across cpc / Rust / C; if cpc drifts, the gap is the perf bug.
-
-**Expected payoff:** the v0.0.7 SIMD method matrix gets its first real consumer. If a Vec3-shaped dot product doesn't beat scalar, that's a codegen bug we need to fix in v0.0.8; if it does, the SIMD foundation is vindicated.
-
----
-
-### Phase 2 — Blessed `vendor/simd` package · size M
-
-**Goal:** ship a stdlib-shaped library that wraps the v0.0.7 SIMD method matrix into a clean API. Same precedent as `vendor/stdlib` — one blessed external package per cycle, lives in-tree at `vendor/simd/`, every cpc consumer imports it the same way.
+1. **Backwards compatibility break** — every `fn f(x: NonCopyT)` in the wild gets the new semantics. We accept this; the codebase is small enough to migrate, and the alternative (keep the footgun forever) violates the principle that motivated the borrow checker in the first place.
+2. **`mut x: T` pointer-pass ABI is unchanged.** Exclusive borrow keeps the §2.9 shape.
+3. **`borrow x: T`** becomes the explicit shared-borrow form (new keyword). Today's `x: T` shape lowers to it for source migration: parser warning E0X12 ("`x: T` for non-Copy T defaulted to `move` in v0.0.9; previously `borrow`. Add `borrow` explicitly to keep the old semantics."), at least for one release cycle.
+4. **`echo` worked example from §12 of the tutorial flips** — the move marker becomes default, the comment moves to "explicit borrow if you want sharing."
 
 **Scope:**
 
-- `Vec3 / Vec4 / Mat4x4` — minimal 3D math built on `f32x4` (so `Vec3` is `f32x4` with the 4th lane zeroed, `Mat4x4` is `[f32x4; 4]`).
-- `simd::dot(a, b) / cross(a, b) / length(v) / normalize(v) / reflect(v, n) / refract(v, n, ratio)`.
-- `simd::lerp(a, b, t)` with vector + scalar `t`.
-- `simd::min(a, b) / max(a, b) / clamp(v, lo, hi)` — thin re-exports of the lane-wise primitives so consumers don't have to chain `f32x4::splat`.
+- Sema: change the default ownership interpretation. The `move`/`borrow` markers stay; the silent case flips.
+- Codegen: existing `move_flag` plumbing is reused; the call-site Drop flag flip + the param-binding Drop registration already work — they just fire by default now.
+- Migration warning E0X12 for the breaking-change interpretation.
+- Tutorial §12 rewrite (the "Use `move v: T` for non-Copy value parameters" gotcha at §30 disappears).
+- E2E sweep: every `fn ... (x: T) ... { return x; }` in stdlib / vendor / docs / proves needs review. Estimate ~30-50 sites; mechanical rewrite (add `move` where the old behavior was relied on, or accept the new default).
 
-**Why this exists:** the v0.0.7 method matrix is correct but raw. `f32x4::new(x, y, z, 0.0)` + `.mul(b).sum()` is wordy. A `Vec3 { x, y, z }` newtype wrapping the SIMD value, with `dot / cross / etc.` as inherent methods, is what consumer code actually wants. This is the same packaging step that stdlib's `Vec[T]` did for `malloc` + `realloc` raw allocation.
+**Tests:** unit (the parser warning + sema-pass for both forms) + e2e (ASan run of the `echo` shape — must be clean under default semantics).
 
-**Locked design decisions:**
-
-1. **Library, not language.** No new compiler features. The package is pure C+ source code in `vendor/simd/src/*.cplus`. Validates that the v0.0.7 surface is sufficient for a real consumer.
-
-2. **`f32x4` lane 4 is always zero for Vec3.** Documented invariant; `Vec3::new(x, y, z)` constructs `f32x4::new(x, y, z, 0.0)`. Dot product is correct because `a.lane[3] * b.lane[3] = 0`. Cross product uses `swizzle`.
-
-3. **No Mat3x3.** 3D math libraries that use 3×3 matrices have to either pad to 3×4 (wastes the 4th lane) or hand-unroll (defeats the point). Mat4x4 is the universal shape; 3D linear ops live in the upper-left 3×3 submatrix.
-
-4. **Consumed by Phase 1B raytracer.** The SIMD variant of the raytracer imports `vendor/simd` instead of using `f32x4::...` directly. This validates the package's API ergonomics.
-
-**Tests:** unit (per-op) + e2e via Phase 1B's raytracer.
-
-**Expected payoff:** the second blessed package after `stdlib`. Same role: prove the language surface is enough for users to write libraries, then ship one.
+**Expected payoff:** the §1 principle "safety as default" stops having a load-bearing exception. The "you must remember `move`" sentence leaves the tutorial.
 
 ---
 
-### Phase 4 — `env!("NAME")` builtin · size S
+### Phase 2 — Character literals · size S
 
-**Goal:** compile-time read of an environment variable into a `str`. Companion to the v0.0.7 `include_bytes!` / `include_str!` family.
-
-**Why now:** v0.0.7's plan tagged this as "defer if no demand surfaces." The Phase 1A raytracer build surfaces the demand: a `RAYTRACE_SAMPLES_PER_PIXEL` env var is more convenient than recompiling for every tweak. Same shape as `include_str!`: macro-form `env!("NAME")`, sema-time read, returns `str`, error E0876 if unset.
+**The gap:** `'a'` doesn't parse today. ASCII bytes are written as `65u8`, which is fine for codegen but reads like assembly. Every C+ program that touches the byte alphabet (JSON / CSV / network protocol parsers) has `b'{' as u8 = 123` style comments or magic-number bytes scattered through it.
 
 **Locked design decisions:**
 
-1. **Syntax:** `env!("NAME")` — same shape as `include_bytes!` / `include_str!`.
-2. **Return type:** `str` (fat pointer to a `.rodata` global containing the var's value).
-3. **Error E0876:** environment variable not set at compile time.
-4. **No `option_env!`.** A nullable variant complicates the type signature; the strict form covers the common case (build-time config).
+1. **Syntax:** `'a'` for a single ASCII byte, type `u8`. Direct lower to the byte value as an `i8` immediate.
+2. **No multi-char.** `'ab'` is a parse error (E0X20 "character literal must be exactly one byte").
+3. **Escapes:** the same backslash escapes the string literal accepts — `'\n'` `'\t'` `'\\'` `'\''` `'\0'` and `'\xHH'`. UTF-8 multi-byte code points are rejected at parse time (E0X21 "character literal must be a single byte; for UTF-8 use a `str`").
+4. **Type:** `u8`. Pattern-matching against `'a'` in a `match arm` matches a `u8`. Not a separate `char` type — C+ doesn't have one and won't grow one.
+5. **Why now:** the JSON tokenizer + raytracer + future bytes-level workloads all have this scattered through them. One token cuts the magic-number noise in half.
 
-**Tests:** unit (parser + sema) + e2e (round-trip).
+**Scope:**
 
-**Expected payoff:** completes the macro-shaped-builtins trilogy. The pattern is settled: any future "compile-time read X into Y" feature follows this template.
+- Lexer: tokenize `'...'` into `TokenKind::CharLit(u8)`.
+- Parser: route to `ExprKind::IntLit(byte as u64, NumSuffix::U8)`. AST stays minimal — no new variant.
+- Sema: untouched (the existing `u8` literal path handles it).
+- Tutorial §3 mentions the new literal; §30 "no character literals in v0.0.4" gotcha is removed.
+
+**Tests:** unit (positive: every escape; negative: empty literal, multi-byte, UTF-8 codepoint).
+
+**Expected payoff:** small but symbolic — closes one of the original gotchas in `Tutorial > Gotchas worth memorising`.
+
+---
+
+### Phase 3 — Long-tail codegen bug fixes · size S
+
+bench.md and the v0.0.8 close surfaced two cpc bugs that didn't make it into a slice-shaped fix:
+
+1. **Mixed-if-arm panic** — when one `if` arm is a simple call and the other is a block with internal `let` + tail expr, codegen still panics on some shapes. v0.0.8 finding 3 fixed one shape; another remains. Workaround: `let mut` + conditional assign. The bench.md raytracer has at least one of these in source — a perf tax (lost branch-elimination on the `if`-as-expression form).
+
+2. **musttail predicate edge cases** — v0.0.8 closed the nested-arg-steals-flag bug. Other shapes may still slip through (e.g. recursive tail-call where the recursive call carries a `move`-marked arg, which currently has its own drop-flag-flip code path running between the call and the `ret`). Audit with a fuzzer / property test.
+
+**Scope:**
+
+- Minimum repro for each, added to `cplus-core/src/codegen.rs` test module.
+- Tighten the predicates; remove the source-level workarounds in `bench-cplus/raytracer/cplus/main.cplus` once each fix lands.
+
+**Tests:** pin per bug + a regression suite e2e.
+
+**Expected payoff:** removes "workaround tax" lines from real code. Bench-cplus has a few labeled `// workaround for cpc bug` comments — each closure is one line of source that gets to drop.
+
+---
+
+### Phase 4 — Threaded raytracer · size M (deferred from v0.0.8)
+
+**Goal:** parallel-tiles raytracer. Each thread renders one horizontal band of the image, joins, then `main` writes the assembled buffer. v0.0.5 shipped `thread::spawn` / `JoinHandle::join`; v0.0.8's raytracer ran it single-threaded. This slice exercises the v0.0.5 thread surface against a real workload and gives the bench.md raytracer benchmark a 4-8× headroom on multi-core machines.
+
+**Locked design decisions:**
+
+1. **No work stealing.** Static tile partition (rows 0..N/T per thread for N rows, T threads). v0.1+ design.
+2. **Output buffer is pre-allocated; each thread writes its tile.** No shared writes to a `Mutex` — disjoint rows per thread is the invariant the borrow-checker doesn't yet verify, but `restrict` on the pointer + thread-local row ranges keeps it sound by construction.
+3. **Thread count:** detect via libc `sysconf(_SC_NPROCESSORS_ONLN)` or hardcode to 4 for the bench. Caller-overridable via `env!("RAYTRACE_THREADS")` (v0.0.8 Phase 4's env! makes this clean).
+4. **Same image hash as single-threaded.** The bench-cplus `cplus/main.cplus` uses a deterministic per-pixel RNG seed, so re-tiling work across threads produces identical bytes if and only if each pixel's RNG state is deterministic from the pixel coordinates (not from a serial RNG advance). The single-threaded path already has this property; the multi-threaded path keeps it.
+
+**Tests:** unit (thread join correctness, already in stdlib tests) + e2e (raytracer wall-time + identical image hash to single-threaded).
+
+**Expected payoff:** the raytracer bench gets a multi-core column. The v0.0.5 thread surface validated against a real shared workload.
 
 ---
 
 ## Phase ordering rationale
 
-- **Phase 1A first.** The raytracer is the prize; everything else can validate against it. Ship 1A standalone — even without the SIMD variant — and immediately measure the v0.0.7 TBAA + lifetime perf claims.
-- **Phase 1B and Phase 2 are coupled.** The SIMD raytracer is the first consumer of `vendor/simd`. Land Phase 2 first (so the package exists), then Phase 1B (which imports it).
-- **Phase 4 lands alongside Phase 1A.** The env var read is a build-script convenience for the raytracer's tunables.
+- **Phase 1 first.** It's a backwards-compat break + a tutorial rewrite; doing it early lets every other v0.0.9 source change land under the new default. Doing it late means rewriting Phase 2/3 sources twice.
+- **Phase 2 alongside Phase 1.** Independent code path (lexer + parser); doesn't conflict with Phase 1 sema work. Can ship together.
+- **Phase 3 after Phase 1/2.** The bug repros may overlap with the new sema rules; want the new defaults in place first so the repros are clean.
+- **Phase 4 last.** Needs the bench harness updated (multi-thread column in bench.sh / bench.md). Lower priority than the bug closures.
 
-A second bindings package (sqlite was an early candidate) is deferred — `vendor/appkit` is the validated ObjC case; the pure-C-ABI generalization can wait for a real consumer to surface.
+Estimated effort across all phases: ~4-5 sessions aggregate. v0.0.9 ship target: 3 of those sessions if Phase 4 slips; full 4 if everything goes clean.
 
 ---
 
 ## Open questions (do not block phase work)
 
-- **Per-field TBAA tree** — v0.0.7 Slice 1.2 punted this with the rationale "ship when raytracer perf measures the win." Phase 1A + 1B make this measurable; if the raytracer's hot loops show a meaningful aliasing gap, the per-field tree lands as a follow-on slice in v0.0.8 or v0.0.9.
-- **Mask types as a distinct `Ty` variant** — v0.0.7 Slice 2.1 aliased `mask32x4` to `i32x4` for simplicity. If the SIMD raytracer (Phase 1B) hits a real bug from the aliased shape (e.g. accidentally passing a non-mask `i32x4` to `select`), the cleanup lands; otherwise it sits.
-- **Submodule re-export through `appkit/appkit` facade for functions** — re-litigated in v0.0.7 Slice 5.2 (still tentative). The next bindings package (whenever it lands) is the trigger for the rubric decision.
-- **`#[align(N)]` for struct fields** — cut from v0.0.6 with the rationale "no concrete consumer yet." The SIMD raytracer's Vec3-as-f32x4 packing may surface alignment needs; if Phase 1B hits a misalignment trap or measurable perf loss, the attribute lands.
-- **Threading the raytracer** — v0.0.5 shipped `thread::spawn` / `JoinHandle::join`. A trivial parallel-tiles raytracer (each thread renders an image row) is a one-session add-on once Phase 1A scalar ships, and would exercise the v0.0.5 thread surface against a real workload.
-
-
-----
-
-1
-Character Literals
-
-2 this should not be in language with safety as default, need to talk with you about it
-// ❌ Footgun — caller's s and callee's x both run Drop. Double-free.
-fn echo(x: string) -> string { return x; }
-
-3
+- **Per-field TBAA tree** — v0.0.7 Slice 1.2 punted with "ship when raytracer perf measures the win." The v0.0.8 raytracer is at 0.94 s, ahead of C; not a clear win available here. The work sits unless a workload (gemm / image processing) makes it measurable.
+- **Mask types as a distinct `Ty` variant** — v0.0.7 Slice 2.1 aliased `mask32x4` to `i32x4`. No bug has surfaced from the aliasing in v0.0.8's `vendor/simd` consumer. Stays as-is until one does.
+- **Submodule re-export through `appkit/appkit` facade for functions** — re-litigated three cycles in a row. No second bindings package in v0.0.9 (sqlite was dropped); rubric decision waits for one to land.
+- **`#[align(N)]` for struct fields** — v0.0.6 cut, v0.0.7 deferred, v0.0.8 Phase 1B didn't surface a need (the SIMD raytracer worked on `f32x4` directly with no alignment trap). Stays cut until a real consumer hits a misalignment.
+- **`option_env!()`** — explicitly rejected in Phase 4. If a workload genuinely needs "optional build-time config" and the empty-string sentinel pattern isn't enough, revisit.
+- **`borrow` keyword reservation** — Phase 1 introduces it. Lexer already reserves the token (v0.0.5 borrow regions); v0.0.9 widens the use to value-typed params. No new lexer work.

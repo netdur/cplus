@@ -28,7 +28,7 @@ If you want history and rationale, read [plan.md](plan.md). If you want a tight 
 18. [String interpolation](#18-string-interpolation)
 19. [FFI — calling C](#19-ffi--calling-c)
 20. [Function pointers](#20-function-pointers)
-21. [Layout intrinsics](#21-layout-intrinsics)
+21. [Compile-time intrinsics](#21-compile-time-intrinsics)
 22. [Modules, imports, packages](#22-modules-imports-packages)
 23. [Attributes](#23-attributes)
 24. [Threads and atomics](#24-threads-and-atomics)
@@ -38,7 +38,8 @@ If you want history and rationale, read [plan.md](plan.md). If you want a tight 
 28. [Tooling — `cpc`](#28-tooling--cpc)
 29. [Common error codes](#29-common-error-codes)
 30. [Gotchas worth memorising](#30-gotchas-worth-memorising)
-31. [Where to go next](#31-where-to-go-next)
+31. [SIMD types](#31-simd-types)
+32. [Where to go next](#32-where-to-go-next)
 
 ---
 
@@ -581,6 +582,31 @@ impl Buf {
 fn make_buf() -> Buf { ... }    // no marker; returning is always a move
 ```
 
+### `restrict` — opt-in `noalias` for raw pointer params
+
+v0.0.8 addition. The borrow checker doesn't reason about `*T` raw pointers, so cpc emits just `noundef` on a raw-pointer param — LLVM has to assume any two pointer args may alias. For numeric hot paths (gemm, axpy, image / audio loops) that's a real perf tax: the autovectorizer inserts a runtime alias check + scalar fallback.
+
+`restrict` is a parameter prefix marker, alongside `mut` / `move`. It asserts that the pointer does not alias any other pointer reachable in the function body during this call. Lowers to LLVM `noalias` at both the function definition and at every call site.
+
+```cplus
+fn axpy(n: usize, a: f32, restrict x: *f32, restrict y: *f32) {
+    let mut i: usize = 0 as usize;
+    while i < n {
+        unsafe { y[i] = a * x[i] + y[i]; }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+```
+
+Hot-loop size (instructions) on an axpy kernel: **21 with `restrict` vs 36 without** — the savings are LLVM dropping the runtime alias check + scalar fallback.
+
+Rules:
+- Only valid on `*T` (raw pointer) params. Other shapes (`x: T` borrows, value-typed params) fire **E0411**.
+- No `unsafe` required at the declaration site — `restrict` is a contract about the body, not a use-site assertion. Violations manifest as UB through the existing `unsafe` requirement on pointer ops.
+- Composes with `mut` (e.g. `restrict mut p: *f32` — caller may write through `p`, and `p` doesn't alias anything else). Each marker is orthogonal.
+- C ABI compatible: LLVM `noalias` is an optimization hint, not part of the calling convention. A `pub extern fn` with `restrict` params exports the same C signature as without — C callers see plain pointers.
+
 ### Call sites carry **no** markers
 
 ```cplus
@@ -1013,9 +1039,13 @@ extern fn libfoo_subscribe(cb: fn(*u8, i32), user_data: *u8);
 
 ---
 
-## 21. Layout intrinsics
+## 21. Compile-time intrinsics
 
-`size_of::[T]()` and `align_of::[T]()` are compiler intrinsics returning `usize`. They are **safe**.
+Five built-ins evaluate at compile time: `size_of::[T]()`, `align_of::[T]()`, `include_bytes!(...)`, `include_str!(...)`, and `env!(...)`. The first two are typed query primitives; the next two embed file contents into the binary as constants; the last reads an environment variable at build time.
+
+### `size_of::[T]()` and `align_of::[T]()`
+
+Return `usize`. **Safe** — no memory access; LLVM folds the call to a constant at `-O1+`.
 
 ```cplus
 let s_i32: usize  = size_of::[i32]();          // 4
@@ -1029,6 +1059,78 @@ Used by user-level allocator libraries to compute byte counts for typed allocati
 let bytes: usize = size_of::[T]() *% (n as usize);
 let p: *u8       = unsafe { malloc(bytes) };
 let typed: *T    = p as *T;
+```
+
+### `include_bytes!("relative/path")`
+
+Embeds the raw bytes of a file as a `*[u8; N]` where `N` is the file's byte length, known at compile time. Path resolution is relative to the *source file containing the call*, not the project root.
+
+```cplus
+fn main() -> i32 {
+    let shader: *[u8; 2048] = include_bytes!("../shaders/double.metallib");
+    let bytes: *u8 = unsafe { shader as *u8 };
+    // pass to FFI, etc.
+    return 0;
+}
+```
+
+The bytes live in `.rodata`; writing through the returned pointer is UB. Two calls with the same resolved path share one global. The argument must be a string literal — variables fire **E0871** at parse time. Errors:
+
+- **E0870** — path not found at compile time. Diagnostic carries the resolved absolute path.
+- **E0871** — non-string-literal argument.
+- **E0872** — file exceeds 64 MiB sanity limit.
+
+Used by GPU recipes to embed `.metallib` / `.cubin` / `.spv` shader blobs, by ML packages to embed pretrained weights, and by anyone shipping baked-in fixtures.
+
+### `include_str!("relative/path")`
+
+Same shape, but returns a `str` (fat pointer view; see §17). The byte length is part of the type, so the file's UTF-8 size is implicit:
+
+```cplus
+fn main() -> i32 {
+    let manifest: str = include_str!("config.txt");
+    println(manifest);   // str_len(manifest) == file size
+    return 0;
+}
+```
+
+The bytes must be valid UTF-8 — invalid byte sequences fire **E0875** at sema time with the byte offset of the first bad byte. Same `E0870` / `E0871` / `E0872` error path as `include_bytes!`.
+
+Use case the `metal_compute` recipe surfaced: `include_str!("../shaders/double.metallib.size")` to read the byte count produced by `xcrun metallib` at build time — no shell-side source patching needed.
+
+### `env!("NAME")`
+
+v0.0.8 addition: read an environment variable at compile time. Returns a `str` pointing at a `.rodata` global that contains the variable's value as the compiler saw it.
+
+```cplus
+fn main() -> i32 {
+    let greeting: str = env!("GREETING");   // resolved at sema time
+    println(greeting);
+    return 0;
+}
+```
+
+```bash
+GREETING="hi from build" cpc env_demo.cplus -o env_demo
+./env_demo
+# → hi from build
+```
+
+Useful for baking build-time config into a binary — sample count for a benchmark, version string, build hostname, etc. — without recompiling for every value change.
+
+Errors:
+- **E0871** — non-string-literal argument (same as `include_*!`).
+- **E0876** — environment variable not set when cpc was invoked.
+
+There is no `option_env!` for "missing → None" semantics; the strict form covers the build-time-config case cleanly, and the nullable variant complicates the type signature. If you need an optional, wrap the call:
+
+```cplus
+// Not a real macro — illustrative pattern.
+// If you genuinely need optional build config, set a sentinel:
+//
+//   FOO_VAR="" cpc app.cplus
+//
+// and check `str_len(env!("FOO_VAR")) > 0` at runtime.
 ```
 
 ---
@@ -1107,6 +1209,25 @@ Run with `cpc test`. The `assert` intrinsic, in a test build, sets a failure fla
 ### `#[repr(C)]` — stable struct layout (see §19)
 
 ### `#[link_name = "..."]` — symbol aliasing (see §19)
+
+### `#[unroll(N)]` and `#[vectorize_width(N)]` — loop hints
+
+Statement-level attributes that flow through to LLVM's loop optimizer as `!llvm.loop` metadata. Apply to `while`, `loop`, or `for` statements. `N` must be a literal in `[1, 256]`.
+
+```cplus
+#[unroll(4)]
+while i < n {
+    sum = sum + buf[i as usize];
+    i = i +% 1;
+}
+
+#[vectorize_width(8)]
+for i in 0..count {
+    out[i] = a[i] * b[i];
+}
+```
+
+`#[unroll(N)]` asks LLVM to unroll the loop N times; `#[vectorize_width(N)]` hints the autovectorizer toward an N-wide SIMD shape. Marginal for general code; **load-bearing for tight inner loops** that the compiler doesn't choose well by default.
 
 ### Doc comments
 
@@ -1199,7 +1320,7 @@ let m2 = m.clone();              // share across threads (Mutex is internally re
 }                                 // guard's Drop releases
 ```
 
-**Two guards in the same scope deadlock** — the v0.0.4 borrow checker doesn't yet prevent this. Use block scopes to bound each guard's lifetime.
+**Two guards in the same scope deadlock** — the borrow checker doesn't yet prevent this. Use block scopes to bound each guard's lifetime.
 
 ---
 
@@ -1367,23 +1488,27 @@ unsafe { v.extend_from_raw(some_ptr, count); }
 
 Other methods: `as_slice()`, `reserve(extra: usize)`, `clear()`.
 
-### `stdlib/hash_map` — string→int map (v0.0.4 shape)
+### `stdlib/hash_map` — `HashMap[K, V]` + the `StrIntMap` legacy alias
 
 ```cplus
 import "stdlib/hash_map" as hash_map;
 
-let mut m: hash_map::StrIntMap = hash_map::new_str_int_map();
+// Generic — shipped in v0.0.4. K must be Hash + Eq; primitives + str work today.
+let mut m: hash_map::HashMap[str, i32] = hash_map::new::[str, i32]();
 m.insert("hello", 42);
 m.insert("world", 7);
 
 let r: result::Result[i32, result::IoError] = m.get("hello");
-
 let present: bool = m.contains_key("hello");
-let removed: result::Result[i32, result::IoError] = m.remove("hello");
 let count: usize = m.len();
+
+// `new_str_int_map()` is retained as a thin v0.0.3-era constructor;
+// the return type is the same `HashMap[str, i32]`.
+let mut legacy: hash_map::HashMap[str, i32] = hash_map::new_str_int_map();
+legacy.insert("k", 1);
 ```
 
-Open addressing + linear probing + 0.75 load-factor grow. Generic `HashMap[K, V]` is on the v0.0.5 roadmap.
+Open addressing + linear probing + 0.75 load-factor grow.
 
 ### `stdlib/fs` — file I/O
 
@@ -1454,7 +1579,7 @@ let c2 = root.clone();
 
 ### `stdlib/rc` — single-threaded refcount
 
-Same as `Arc` but non-atomic. Cheaper, single-thread only. v0.0.4 doesn't yet enforce `!Send`, so don't ship `Rc` across threads by hand.
+Same as `Arc` but non-atomic. Cheaper, single-thread only. The compiler doesn't yet enforce `!Send` for `Rc`, so don't ship it across threads by hand.
 
 ### `stdlib/mutex` — pthread-backed mutual exclusion
 
@@ -1480,12 +1605,12 @@ let v: option::Option[i32] = rx.recv();
 ```cplus
 import "stdlib/cow" as cow;
 
-let c1: cow::CowStr = cow::view("hello");          // borrows the literal
-let c2: cow::CowStr = cow::owned("world".to_string());
-let s: str = cow::as_str(c1);                       // uniform read access
+let c1: cow::CowStr = cow::from_view("hello");                 // borrows the literal
+let c2: cow::CowStr = cow::from_owned("world".to_string());    // takes ownership
+let n: usize = cow::len(c1);                                   // uniform read access
 ```
 
-API is free-functions because v0.0.4 sema rejects `impl` on enum types. When that lifts, they re-export as methods.
+API is free-functions — a pre-v0.0.5 shape from when sema rejected `impl` on enum types. That restriction lifted in v0.0.5 Slice 2C, but the library hasn't been re-shaped yet. Method-style migration is on the v0.0.7+ stdlib polish list.
 
 ### `stdlib/range` — numeric ranges (used by `for in`)
 
@@ -1494,6 +1619,60 @@ The `0..n` syntax lowers to a value of type `Range[i32]` (or similar) defined he
 ### `stdlib/marker` — marker traits
 
 Type-level markers used by the compiler (`Copy`, `Send`, `Sync` framework). You rarely interact with these directly.
+
+### Beyond stdlib: blessed vendored packages
+
+The same `vendor/<name>` model that hosts `stdlib` hosts other blessed binding packages. Consumers add `<name> = "*"` to `[dependencies]` and import as `import "<name>/..." as alias;`. Today's in-tree set:
+
+- **`vendor/appkit`** — typed Cocoa/AppKit bindings. 15 sub-modules (`runtime`, `application`, `window`, `view`, `controls`, `text`, `containers`, `data`, `graphics`, `menu`, `dialogs`, `panels`, `toolbar`, `controllers`, `convert`). Closure-free callbacks via `Button::set_on_click(fn(*u8))` (the runtime stashes the callback on the sender via `objc_setAssociatedObject`).
+
+  ```cplus
+  import "appkit/application" as application;
+  import "appkit/window" as window;
+  import "appkit/convert" as bridge;
+
+  fn on_click(sender: *u8) { /* ... */ }
+
+  fn main() -> i32 {
+      let pool = application::AutoreleasePool::new();
+      let app = application::Application::shared();
+      app.set_activation_policy(0 as i64);
+      let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
+      // ... build UI ...
+      app.run();
+      pool.drain();
+      return 0;
+  }
+  ```
+
+  `appkit/convert` is the C+ ↔ ObjC data bridge: `cplus_str_to_nsstring(s) -> *u8`, `nsstring_to_cplus_string(ns) -> string`, `nsarray_to_vec_{i32,i64,f32,f64}`, `nsdata_to_vec_u8` / `vec_u8_to_nsdata`. Use it whenever you need to round-trip C+'s richer types (`string`, `Vec[T]`) through Cocoa APIs. Primitives + `#[repr(C)]` structs (NSPoint/NSSize/NSRect) cross the boundary verbatim — no bridge needed for those.
+
+  Cross-reference: [`docs/examples/recipes/appkit_hello/`](docs/examples/recipes/appkit_hello/) is the runnable reference (Window + label + button + bridge round-trip).
+
+- **`vendor/simd`** — 3D math built on `f32x4`. Three modules:
+  - `simd/vec3` — `Vec3` (f32x4 newtype with lane-3-zero invariant). Methods: `new / splat / zero / x / y / z / add / sub / mul / scale / neg / dot / cross / len2 / length / normalize / reflect / refract / min / max / clamp / lerp`.
+  - `simd/vec4` — `Vec4` (full 4 lanes). Same surface minus the cross/reflect/refract triad (no canonical 4D meaning); plus `raw()` / `from_raw()` escape hatches for matrix code.
+  - `simd/mat4x4` — `Mat4x4` as `[Vec4; 4]` columns (column-major). `mul_vec` is four `fma <4 x float>` ops; `mul` composes via four `mul_vec` calls. `identity / zero / add / scale` round out the basics.
+
+  ```cplus
+  import "simd/vec3" as vec3;
+  import "simd/vec4" as vec4;
+  import "simd/mat4x4" as mat;
+
+  let a: vec3::Vec3 = vec3::Vec3::new(1.0f32, 2.0f32, 3.0f32);
+  let b: vec3::Vec3 = vec3::Vec3::new(4.0f32, 5.0f32, 6.0f32);
+  let d: f32        = a.dot(b);                  // 32.0
+  let c: vec3::Vec3 = a.cross(b);                // (-3, 6, -3)
+
+  let id: mat::Mat4x4 = mat::Mat4x4::identity();
+  let p:  vec4::Vec4  = id.mul_vec(vec4::Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32));
+  ```
+
+  **Where this wins**: vector-math workloads that genuinely use all four lanes (Vec4, Mat4x4 chains, FMA-heavy gemm-style code). For Vec3-only code on Apple Silicon, the scalar FMA-chain codegen the compiler emits from straightforward source can be faster than the explicit-SIMD path because the shuffle overhead for the unused 4th lane dominates — measure before assuming SIMD types are a perf win for 3-wide data.
+
+  **Where this wins for sure**: code where readability of "this is a SIMD operation" matters more than the last few percent of perf, or hardware with narrower scalar FP issue width.
+
+  Cross-reference: [`docs/examples/recipes/simd_dot/`](docs/examples/recipes/simd_dot/) uses `f32x4` directly; `vendor/simd` is the wrapper for when you want named types + methods instead of raw vectors.
 
 ---
 
@@ -1563,11 +1742,13 @@ The error codes you'll see most often. The full list lives in `cplus-core/src/se
 | E0354 | Unknown attribute | Typo (compiler suggests fix) |
 | E0356 | Wrong attribute target | Some attrs are fn-only, others struct-only |
 | E0370–0386 | Borrow checker conflicts | Each variant has a specific message; read it |
+| E0411 | `restrict` on a non-pointer param | Only `*T` accepts `restrict`; remove or change the type |
 | E0500 | Cannot infer type parameter | Use `name::[T1, T2](...)` turbofish |
 | E0501 | Wrong type-arg count | Match the generic param list |
 | E0502 | Bound not satisfied | `T: Ord` requires `impl Ord for T` |
 | E0801 | Operation requires `unsafe` | Wrap in `unsafe { ... }` |
 | E0821 | Cannot take address of generic fn | Specify type parameters at the take-address site |
+| E0876 | `env!("X")` — env var not set at compile time | Set the var when invoking cpc, or pick a different default |
 | E0900 | Borrow-shaped param in `async fn` | Use `string` / `Vec[T]` instead of `str` / `T[]` |
 
 Every diagnostic carries a span and often a machine-applicable suggestion. Use `--diagnostics=json` for tool consumption.
@@ -1667,7 +1848,149 @@ let n: i32 = unsafe { p as i32 };
 
 ---
 
-## 31. Where to go next
+## 31. SIMD types
+
+cpc ships fixed-width SIMD as primitive types. Nineteen widths cover the 128-bit and 256-bit families that map directly to NEON / SSE / AVX2 / AVX:
+
+- **128-bit floats**: `f32x4`, `f64x2`
+- **128-bit signed ints**: `i8x16`, `i16x8`, `i32x4`, `i64x2`
+- **128-bit unsigned ints**: `u8x16`, `u16x8`, `u32x4`, `u64x2`
+- **256-bit floats**: `f32x8`, `f64x4`
+- **256-bit signed ints**: `i8x32`, `i16x16`, `i32x8`, `i64x4`
+- **256-bit unsigned ints**: `u8x32`, `u16x16`, `u32x8`, `u64x4`
+
+Plus mask types: `mask8x16`, `mask16x8`, `mask32x4`, `mask64x2`, `mask8x32`, `mask16x16`, `mask32x8`, `mask64x4`. Lower to `<N x i1>` conceptually; codegen stores them as `<N x iN>` for NEON/SSE compatibility.
+
+512-bit widths (AVX-512 / SVE2) are deferred until those targets become tier-1.
+
+### Constructors
+
+```cplus
+let v: f32x4 = f32x4::splat(1.0f32);                       // broadcast
+let w: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32); // per-lane
+
+// load/store through raw pointers (unsafe; lane-aligned)
+let v2: f32x4 = unsafe { f32x4::load(p as *f32) };
+unsafe { v.store(p as *f32); }
+
+// FFI escape — bitcast to/from a plain array
+let arr: [f32; 4] = v.to_array();
+let v3: f32x4    = f32x4::from_array(arr);
+```
+
+### Methods — by element type
+
+Arithmetic (all numeric widths): `.add(b)`, `.sub(b)`, `.mul(b)`, `.div(b)`.
+
+Float-only: `.fma(b, c)` (fused multiply-add), `.sqrt()`, `.abs()`.
+
+Signed-int-only: `.abs()` (no-op on unsigned would be misleading — rejected with **E0324**).
+
+All numeric: `.min(b)`, `.max(b)` (NaN-as-missing for floats; signed/unsigned per lane type).
+
+Integer-only: `.and(b)`, `.or(b)`, `.xor(b)`, `.not()`, `.shl(count)`, `.shr(count)` (logical for unsigned, arithmetic for signed; count is a literal `u32` in `0..lane_bits`).
+
+### Lane access
+
+```cplus
+let v: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+let x: f32 = v.lane(0 as u32);                       // 1.0
+let v2: f32x4 = v.with_lane(3 as u32, 9.0f32);       // (1, 2, 3, 9)
+```
+
+The lane index must be a **literal** `u32` in `0..N`. Non-literals fire **E0873**; out-of-range fires **E0874**. (Constraint matches LLVM's `extractelement` / `insertelement` constant-operand requirement.)
+
+### Shuffles + reductions
+
+```cplus
+let v: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+
+let r: f32x4 = v.reverse();                          // (4, 3, 2, 1)
+let s: f32   = v.sum();                              // 10.0 — llvm.vector.reduce.fadd
+let p: f32   = v.product();                          // 24.0
+
+// Per-element permutation. `lanes` is a literal const array.
+let p: f32x4 = v.swizzle([3 as u32, 2 as u32, 1 as u32, 0 as u32]);
+
+let lo: f32x4 = v.interleave_lo(other);
+let hi: f32x4 = v.interleave_hi(other);
+```
+
+`sum()` / `product()` lower to `llvm.vector.reduce.{fadd,fmul}.<vN>`; `min_across()` / `max_across()` to `llvm.vector.reduce.{fmin,fmax,smin,smax,umin,umax}.<vN>`.
+
+### Masks + select
+
+Compare-and-blend is the canonical branchless pattern:
+
+```cplus
+let a: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+let b: f32x4 = f32x4::splat(2.5f32);
+
+let mask: mask32x4 = a.lt(b);                        // <true, true, false, false>
+let result: f32x4  = mask.select(a, b);              // pick from a where mask, else b
+
+if mask.any() { /* at least one lane true */ }
+if mask.all() { /* every lane true */ }
+```
+
+Comparison methods (`lt` / `le` / `gt` / `ge` / `eq` / `ne`) produce a mask of the matching width; `select(true_v, false_v)` is the mask-receiver blend.
+
+### `#[repr(C)]` boundaries — SIMD does NOT cross by default
+
+SIMD types have no portable C-ABI representation. Passing `f32x4` across an `extern fn` boundary fires **E0410** with a "cast to `[f32; 4]` via `.to_array()`" hint. Use the array round-trip at the boundary:
+
+```cplus
+// ❌ E0410
+pub extern fn process(v: f32x4) -> f32x4 { return v; }
+
+// ✅ FFI-safe shape
+pub extern fn process(v: [f32; 4]) -> [f32; 4] {
+    let s: f32x4 = f32x4::from_array(v);
+    return s.mul(f32x4::splat(2.0f32)).to_array();
+}
+```
+
+### Worked example — dot product
+
+```cplus
+fn dot(a: [f32; 16], b: [f32; 16]) -> f32 {
+    let mut acc: f32x4 = f32x4::splat(0.0f32);
+    let mut i: i32 = 0;
+    while i < 16 {
+        let av: f32x4 = f32x4::new(
+            a[(i +% 0) as usize], a[(i +% 1) as usize],
+            a[(i +% 2) as usize], a[(i +% 3) as usize],
+        );
+        let bv: f32x4 = f32x4::new(
+            b[(i +% 0) as usize], b[(i +% 1) as usize],
+            b[(i +% 2) as usize], b[(i +% 3) as usize],
+        );
+        acc = av.fma(bv, acc);
+        i = i +% 4;
+    }
+    return acc.sum();
+}
+```
+
+`av.fma(bv, acc)` lowers to one `@llvm.fma.v4f32` call; `acc.sum()` to one `@llvm.vector.reduce.fadd.v4f32`. On AArch64-darwin, the inner loop emits `fmla.4s v0, v1, v2` — the native NEON fused multiply-add on four floats. See [`docs/examples/recipes/simd_dot/`](docs/examples/recipes/simd_dot/) for the full reference port.
+
+### When (and when not) to reach for SIMD
+
+Reach for SIMD when:
+
+- You have a tight loop over a homogeneous primitive array (`[f32; N]`, `[i32; N]`, `[u8; N]`).
+- The operation is lane-independent (vector arithmetic, lane permutation, mask-driven blends).
+- You want the SIMD shape to be **visible** at the source level — explicit `f32x4::new` + `.mul` reads better than hoping the autovectorizer fires on a scalar loop.
+
+Don't reach for SIMD when:
+
+- The data has irregular structure (struct-of-struct, pointer-chasing graphs).
+- The hot loop is already vectorized well by LLVM at `--release` (check `--emit-asm`).
+- You'd need to fight the type system to express it. Keep SIMD where it's natural.
+
+---
+
+## 32. Where to go next
 
 In rough priority order:
 
@@ -1680,8 +2003,11 @@ In rough priority order:
    - `parallel_sum` — safe concurrency (partition + join)
    - `concurrent_counter` — unsafe concurrency (shared `*u64` + atomic fetch_add)
    - `async_compute`, `async_fetch`, `async_yield_demo` — async patterns
+   - `simd_dot` — `f32x4` dot product, NEON `fmla.4s` end-to-end
+   - `metal_compute` — GPU compute dispatch via ObjC interop + `include_bytes!`-embedded `.metallib` (macOS, needs the Metal toolchain)
+   - `appkit_hello` — Cocoa GUI app in pure C+ via `vendor/appkit` + the convert bridge
 2. **Read an example.** Every file in [docs/examples/](docs/examples/) compiles and runs.
-3. **Read a design note.** [docs/design/](docs/design/) has per-phase deep dives — pattern matching, generics, borrow rules, FFI, async.
+3. **Read a design note.** [docs/design/](docs/design/) has per-phase deep dives — pattern matching, generics, borrow rules, FFI, async, and the v0.0.6 "external-package enable" doc that explains the stdlib-model bet for SIMD and GPU.
 4. **Run `cpc fmt`.** If your source doesn't round-trip, something is syntactically off.
 5. **Read the diagnostic.** Every error code has a precise meaning. The compiler is the source of truth; this tutorial is a summary.
 
