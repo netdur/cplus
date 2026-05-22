@@ -14483,6 +14483,109 @@ fn main() -> i32 {
     );
 }
 
+#[test]
+fn simd_vendor_package_smoke() {
+    // v0.0.8 Phase 2: end-to-end check that `vendor/simd` builds, links,
+    // and produces correct results across Vec3 / Vec4 / Mat4x4.
+    //
+    // Math checks (all asserted via integer-cast comparison so we
+    // avoid flaky float equality):
+    //   - Vec3.dot((1,2,3), (4,5,6))     == 32
+    //   - Vec3.cross((1,2,3), (4,5,6))   == (-3, 6, -3)
+    //   - Vec3.lerp(0, (10,20,30), 0.5)  == (5, 10, 15)
+    //   - Vec4.dot((1,2,3,4), (5,6,7,8)) == 70
+    //   - identity * Vec4(1,2,3,4)       == Vec4(1,2,3,4)
+    //   - (2 * identity) * Vec4(1,2,3,4) == Vec4(2,4,6,8)
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"simd_smoke\"\n\n[[bin]]\nname = \"simd_smoke\"\npath = \"src/main.cplus\"\n\n[dependencies]\nsimd = \"*\"\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/simd/src")).unwrap();
+
+    // Copy the in-tree simd package into the tempdir project.
+    let simd_toml = std::fs::read_to_string("../vendor/simd/Cplus.toml").unwrap();
+    std::fs::write(dir.join("vendor/simd/Cplus.toml"), simd_toml).unwrap();
+    for entry in std::fs::read_dir("../vendor/simd/src").unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("cplus") {
+            continue;
+        }
+        let dst = dir
+            .join("vendor/simd/src")
+            .join(path.file_name().unwrap());
+        std::fs::copy(path, dst).unwrap();
+    }
+
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"import "simd/vec3" as vec3;
+import "simd/vec4" as vec4;
+import "simd/mat4x4" as mat;
+
+fn main() -> i32 {
+    let a3: vec3::Vec3 = vec3::Vec3::new(1.0f32, 2.0f32, 3.0f32);
+    let b3: vec3::Vec3 = vec3::Vec3::new(4.0f32, 5.0f32, 6.0f32);
+    if (a3.dot(b3) as i32) != 32 { return 1; }
+    let cr: vec3::Vec3 = a3.cross(b3);
+    if (cr.x() as i32) != (0 - 3) { return 2; }
+    if (cr.y() as i32) != 6 { return 3; }
+    if (cr.z() as i32) != (0 - 3) { return 4; }
+    let lerped: vec3::Vec3 = vec3::Vec3::zero().lerp(
+        vec3::Vec3::new(10.0f32, 20.0f32, 30.0f32), 0.5f32);
+    if (lerped.x() as i32) != 5 { return 10; }
+    if (lerped.y() as i32) != 10 { return 11; }
+    if (lerped.z() as i32) != 15 { return 12; }
+
+    let a4: vec4::Vec4 = vec4::Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);
+    let b4: vec4::Vec4 = vec4::Vec4::new(5.0f32, 6.0f32, 7.0f32, 8.0f32);
+    if (a4.dot(b4) as i32) != 70 { return 20; }
+
+    let id: mat::Mat4x4 = mat::Mat4x4::identity();
+    let mv: vec4::Vec4 = id.mul_vec(a4);
+    if (mv.x() as i32) != 1 { return 30; }
+    if (mv.y() as i32) != 2 { return 31; }
+    if (mv.z() as i32) != 3 { return 32; }
+    if (mv.w() as i32) != 4 { return 33; }
+    let m2: mat::Mat4x4 = id.scale(2.0f32);
+    let mv2: vec4::Vec4 = m2.mul_vec(a4);
+    if (mv2.x() as i32) != 2 { return 40; }
+    if (mv2.w() as i32) != 8 { return 41; }
+
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .arg("--release")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        status.success(),
+        "cpc build for simd smoke failed: {status}"
+    );
+
+    let bin = dir.join("target/release/simd_smoke");
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+
+    let run = Command::new(bin).status().expect("run simd_smoke");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "simd_smoke expected exit 0 (all asserts passed), got: {run}"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

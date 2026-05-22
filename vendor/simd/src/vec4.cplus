@@ -1,0 +1,109 @@
+// simd/vec4.cplus — 4D float vector backed by `f32x4`.
+//
+// Unlike `Vec3`, `Vec4` uses every lane — no invariant. Convenient
+// for homogeneous coordinates (x, y, z, w) and as the row/column type
+// of `Mat4x4`. Dot product is straight `mul.sum()` over all 4 lanes;
+// no swizzle gymnastics needed.
+
+pub struct Vec4 {
+    v: f32x4,
+}
+
+impl Vec4 {
+    // Construction --------------------------------------------------
+
+    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
+        return Vec4 { v: f32x4::new(x, y, z, w) };
+    }
+
+    pub fn splat(s: f32) -> Vec4 {
+        return Vec4 { v: f32x4::splat(s) };
+    }
+
+    pub fn zero() -> Vec4 {
+        return Vec4 { v: f32x4::splat(0.0f32) };
+    }
+
+    // Lane accessors ------------------------------------------------
+
+    pub fn x(self) -> f32 { return self.v.lane(0 as u32); }
+    pub fn y(self) -> f32 { return self.v.lane(1 as u32); }
+    pub fn z(self) -> f32 { return self.v.lane(2 as u32); }
+    pub fn w(self) -> f32 { return self.v.lane(3 as u32); }
+
+    // Arithmetic ----------------------------------------------------
+
+    pub fn add(self, o: Vec4) -> Vec4 {
+        return Vec4 { v: self.v.add(o.v) };
+    }
+
+    pub fn sub(self, o: Vec4) -> Vec4 {
+        return Vec4 { v: self.v.sub(o.v) };
+    }
+
+    pub fn mul(self, o: Vec4) -> Vec4 {
+        return Vec4 { v: self.v.mul(o.v) };
+    }
+
+    pub fn scale(self, s: f32) -> Vec4 {
+        return Vec4 { v: self.v.mul(f32x4::splat(s)) };
+    }
+
+    pub fn neg(self) -> Vec4 {
+        return Vec4 { v: self.v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
+    }
+
+    // Geometric ops -------------------------------------------------
+
+    pub fn dot(self, o: Vec4) -> f32 {
+        return self.v.mul(o.v).sum();
+    }
+
+    pub fn len2(self) -> f32 {
+        return self.dot(self);
+    }
+
+    pub fn length(self) -> f32 {
+        return f_sqrt(self.dot(self));
+    }
+
+    pub fn normalize(self) -> Vec4 {
+        let inv: f32 = 1.0f32 / self.length();
+        return self.scale(inv);
+    }
+
+    // Lane-wise helpers ---------------------------------------------
+
+    pub fn min(self, o: Vec4) -> Vec4 {
+        return Vec4 { v: self.v.min(o.v) };
+    }
+
+    pub fn max(self, o: Vec4) -> Vec4 {
+        return Vec4 { v: self.v.max(o.v) };
+    }
+
+    pub fn clamp(self, lo: Vec4, hi: Vec4) -> Vec4 {
+        return self.max(lo).min(hi);
+    }
+
+    pub fn lerp(self, o: Vec4, t: f32) -> Vec4 {
+        let diff: f32x4 = o.v.sub(self.v);
+        let tv: f32x4 = f32x4::splat(t);
+        return Vec4 { v: diff.fma(tv, self.v) };
+    }
+
+    // Inner accessor for `mat4x4` cross-module use ------------------
+
+    pub fn raw(self) -> f32x4 {
+        return self.v;
+    }
+
+    pub fn from_raw(v: f32x4) -> Vec4 {
+        return Vec4 { v: v };
+    }
+}
+
+extern fn sqrtf(x: f32) -> f32;
+fn f_sqrt(x: f32) -> f32 {
+    return unsafe { sqrtf(x) };
+}
