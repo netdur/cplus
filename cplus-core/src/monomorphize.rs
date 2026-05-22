@@ -1254,6 +1254,7 @@ fn synthesize_fn(
                 ty: subst_type_ast(&p.ty, subst, type_name_of, struct_lookup),
                 mutable: p.mutable,
                 move_: p.move_,
+                restrict: p.restrict,
                 span: p.span,
             })
             .collect(),

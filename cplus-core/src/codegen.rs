@@ -1348,7 +1348,12 @@ struct FnSig {
     ///   - `mutable` paired with non-Copy struct type triggers the §2.9
     ///     exclusive-borrow ABI: callee receives a `ptr`, not a value copy,
     ///     so field writes propagate back to the caller (slice 5BC.codegen).
-    params: Vec<(Ty, bool, bool)>,
+    ///   - `restrict` (4th flag) — v0.0.8 post-bench-gap: opt-in `noalias`
+    ///     for raw-pointer (`*T`) params. Sema enforces `restrict` only
+    ///     appears on `*T` types (E0411). codegen-side, the flag flips
+    ///     the scalar-pointer attr from `noundef` to `noalias noundef`
+    ///     at both def and call sites.
+    params: Vec<(Ty, bool, bool, bool)>,
     return_type: Ty,
     /// Slice 10.FFI.4: variadic extern fn. Call sites for these emit
     /// `call ret_ty (fixed_types, ...) @name(args)` — the full
@@ -1367,7 +1372,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
     sigs.insert(
         "println".to_string(),
         FnSig {
-            params: vec![(Ty::I32, false, false)],
+            params: vec![(Ty::I32, false, false, false)],
             return_type: Ty::Unit,
             is_variadic: false,
             link_name: None,
@@ -1382,10 +1387,10 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
         if !f.generic_params.is_empty() {
             continue;
         }
-        let params: Vec<(Ty, bool, bool)> = f
+        let params: Vec<(Ty, bool, bool, bool)> = f
             .params
             .iter()
-            .map(|p| (ty_from(&p.ty, types), p.move_, p.mutable))
+            .map(|p| (ty_from(&p.ty, types), p.move_, p.mutable, p.restrict))
             .collect();
         let declared_ret = match &f.return_type {
             Some(t) => ty_from(t, types),
@@ -1484,10 +1489,12 @@ struct StructInfo {
 #[derive(Debug, Clone)]
 struct MethodInfo {
     receiver: Option<Receiver>,
-    /// Parameter info, excluding the receiver: `(ty, move_, mutable)`.
-    /// `move_` drives call-site drop-flag flips; `mutable` drives the §2.9
-    /// pointer-pass ABI for non-Copy struct params (slice 5BC.codegen).
-    params: Vec<(Ty, bool, bool)>,
+    /// Parameter info, excluding the receiver:
+    /// `(ty, move_, mutable, restrict)`. `move_` drives call-site
+    /// drop-flag flips; `mutable` drives the §2.9 pointer-pass ABI for
+    /// non-Copy struct params (slice 5BC.codegen); `restrict` (v0.0.8
+    /// post-bench-gap) opt-in `noalias` for raw-pointer params.
+    params: Vec<(Ty, bool, bool, bool)>,
     return_type: Ty,
     /// v0.0.8 bench-gap fix D: if this method's body matches a known
     /// "trivial" pattern, the call-site emitter substitutes the
@@ -1767,10 +1774,10 @@ fn collect_types(p: &Program) -> TypeTable {
                 if !m.generic_params.is_empty() {
                     continue;
                 }
-                let params: Vec<(Ty, bool, bool)> = m
+                let params: Vec<(Ty, bool, bool, bool)> = m
                     .params
                     .iter()
-                    .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable))
+                    .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable, p.restrict))
                     .collect();
                 let declared_ret = match &m.return_type {
                     Some(ty) => ty_from(ty, &t),
@@ -1812,10 +1819,10 @@ fn collect_types(p: &Program) -> TypeTable {
             if !m.generic_params.is_empty() {
                 continue;
             }
-            let params: Vec<(Ty, bool, bool)> = m
+            let params: Vec<(Ty, bool, bool, bool)> = m
                 .params
                 .iter()
-                .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable))
+                .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable, p.restrict))
                 .collect();
             let declared_ret = match &m.return_type {
                 Some(ty) => ty_from(ty, &t),
@@ -1991,6 +1998,7 @@ fn param_attrs(
     ty: &Ty,
     move_: bool,
     mutable: bool,
+    restrict: bool,
     pointer_passed: bool,
     types: &TypeTable,
 ) -> String {
@@ -2010,7 +2018,17 @@ fn param_attrs(
         }
         s
     } else if is_scalar_ty(ty, types) {
-        "noundef".to_string()
+        // v0.0.8 post-bench-gap: `restrict x: *T` on a raw-pointer
+        // (scalar-passed) param promotes the attr set from bare
+        // `noundef` to `noalias noundef`. Borrow-checked struct ptr
+        // params already pick up `noalias` via the pointer_passed
+        // branch above. Sema (E0411) gates `restrict` to `*T` shapes,
+        // so the attribute is only emitted when it's sound.
+        if restrict && matches!(ty, Ty::RawPtr(_)) {
+            "noalias noundef".to_string()
+        } else {
+            "noundef".to_string()
+        }
     } else {
         String::new()
     }
@@ -2467,7 +2485,7 @@ fn scan_moves_in_expr(
             // adds that binding to the moved set.
             if let ExprKind::Ident(fn_name) = &callee.kind {
                 if let Some(sig) = sigs.get(fn_name) {
-                    for (arg, (_pty, move_flag, _mut_flag)) in args.iter().zip(sig.params.iter()) {
+                    for (arg, (_pty, move_flag, _mut_flag, _restrict_flag)) in args.iter().zip(sig.params.iter()) {
                         if *move_flag {
                             if let ExprKind::Ident(n) = &arg.kind {
                                 set.insert(n.clone());
@@ -3777,7 +3795,7 @@ fn gen_function(
             resolved_symbol
         )
         .unwrap();
-        for (i, (_param, (pty, _move_flag, _mut_flag))) in
+        for (i, (_param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
             f.params.iter().zip(sig.params.iter()).enumerate()
         {
             if i > 0 {
@@ -3821,7 +3839,7 @@ fn gen_function(
     let param_abis: Vec<CAbiClass> = if is_c_export {
         sig.params
             .iter()
-            .map(|(pty, _, _)| classify_c_abi(pty, types))
+            .map(|(pty, _, _, _)| classify_c_abi(pty, types))
             .collect()
     } else {
         vec![CAbiClass::Direct; sig.params.len()]
@@ -3892,7 +3910,7 @@ fn gen_function(
             out.push_str(", ");
         }
     }
-    for (i, (_param, (pty, move_flag, mut_flag))) in
+    for (i, (_param, (pty, move_flag, mut_flag, restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
         if i > 0 {
@@ -3929,7 +3947,7 @@ fn gen_function(
             }
             CAbiClass::Direct => {
                 let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-                let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+                let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
                 let base_ty = if by_ptr {
                     "ptr".to_string()
                 } else {
@@ -3960,7 +3978,7 @@ fn gen_function(
     state.collect_moved_bindings(&f.body);
     // Slice 1E: record this fn's parameter types so the Return-statement
     // predicate can check musttail signature equality against the callee.
-    state.enclosing_params = sig.params.iter().map(|(t, _, _)| t.clone()).collect();
+    state.enclosing_params = sig.params.iter().map(|(t, _, _, _)| t.clone()).collect();
     state.tail_call_eligible = true;
     // v0.0.8 fix C: musttail requires caller and callee to share a cc.
     // Record the enclosing fn's cc decision so the Return-stmt predicate
@@ -3991,7 +4009,7 @@ fn gen_function(
     //     field GEPs use the original-type's offsets and read valid bytes.
     //   - Indirect: the SSA arg IS a pointer to the C caller's slot.
     //     Bind directly; gen_field GEPs off it like any other place.
-    for (i, (param, (pty, move_flag, mut_flag))) in
+    for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
         let llvm_idx = i as u32 + sret_param_offset;
@@ -4083,7 +4101,7 @@ fn gen_function(
         .iter()
         .zip(sig.params.iter())
         .enumerate()
-        .filter_map(|(i, (_, (pty, mv, mu)))| {
+        .filter_map(|(i, (_, (pty, mv, mu, _restrict_flag)))| {
             (param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu)).then_some(i as u32)
         })
         .collect();
@@ -4217,7 +4235,7 @@ fn gen_async_method(
         // distinguish async/gen/sync) matches this signature.
         let self_by_ptr =
             !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
-        let attrs = param_attrs(&struct_ty, mv, mu, self_by_ptr, types);
+        let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
                 write!(out, "ptr %{llvm_idx}").unwrap();
@@ -4235,12 +4253,12 @@ fn gen_async_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         if !first {
             out.push_str(", ");
         }
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -4317,7 +4335,7 @@ fn gen_async_method(
         }
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -4453,7 +4471,7 @@ fn gen_gen_method(
         // distinguish gen/sync) matches this signature.
         let self_by_ptr =
             !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
-        let attrs = param_attrs(&struct_ty, mv, mu, self_by_ptr, types);
+        let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
                 write!(out, "ptr %{llvm_idx}").unwrap();
@@ -4471,12 +4489,12 @@ fn gen_gen_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         if !first {
             out.push_str(", ");
         }
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -4544,7 +4562,7 @@ fn gen_gen_method(
         next_idx += 1;
     }
     // Bind params to allocas (value-passed) or pointer slots (pointer-passed).
-    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -4647,7 +4665,7 @@ fn gen_gen_function(
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
     write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, f.name.name).unwrap();
-    for (i, (param, (pty, _move_flag, _mut_flag))) in
+    for (i, (param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
         if i > 0 {
@@ -4690,7 +4708,7 @@ fn gen_gen_function(
     ));
     state.collect_moved_bindings(&f.body);
 
-    for (i, (param, (pty, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+    for (i, (param, (pty, _, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
         let slot = state.alloca_named(&param.name.name, pty.clone());
         state.body.push_str(&format!(
             "  store {} %{}, ptr {}\n",
@@ -4789,7 +4807,7 @@ fn gen_async_function(
     // can't use the sret return path because the return value
     // (Future[T] = { *u8 }) is just one ptr — fits in a register.
     write!(out, "define {}{}{} @{}(", linkage, cc, future_llvm, f.name.name).unwrap();
-    for (i, (param, (pty, _move_flag, _mut_flag))) in
+    for (i, (param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
         if i > 0 {
@@ -4861,7 +4879,7 @@ fn gen_async_function(
     // Bind params to allocas (mirrors the non-async path's simple
     // value-passed handling).
     let body_start_offset = state.body.len();
-    for (i, (param, (pty, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
+    for (i, (param, (pty, _, _, _))) in f.params.iter().zip(sig.params.iter()).enumerate() {
         let slot = state.alloca_named(&param.name.name, pty.clone());
         state.body.push_str(&format!(
             "  store {} %{}, ptr {}\n",
@@ -5043,7 +5061,7 @@ fn gen_enum_method(
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&enum_ty, mv, mu, true, types);
+        let attrs = param_attrs(&enum_ty, mv, mu, false, true, types);
         if attrs.is_empty() {
             write!(out, "ptr %{llvm_idx}").unwrap();
         } else {
@@ -5052,12 +5070,12 @@ fn gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         if !first {
             out.push_str(", ");
         }
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -5095,7 +5113,7 @@ fn gen_enum_method(
         state.bind("self", recv_name, Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -5185,7 +5203,7 @@ fn gen_gen_enum_method(
         if !first {
             out.push_str(", ");
         }
-        let attrs = param_attrs(&enum_ty, mv, mu, true, types);
+        let attrs = param_attrs(&enum_ty, mv, mu, false, true, types);
         if attrs.is_empty() {
             write!(out, "ptr %{llvm_idx}").unwrap();
         } else {
@@ -5194,12 +5212,12 @@ fn gen_gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         if !first {
             out.push_str(", ");
         }
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -5249,7 +5267,7 @@ fn gen_gen_enum_method(
         state.bind("self", format!("%{}", next_idx), Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -5445,7 +5463,7 @@ fn gen_method(
         // `b.set(42); b.get()` must observe the write).
         let self_by_ptr =
             !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
-        let attrs = param_attrs(&struct_ty, mv, mu, self_by_ptr, types);
+        let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
                 write!(out, "ptr %{llvm_idx}").unwrap();
@@ -5463,12 +5481,12 @@ fn gen_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
         if !first {
             out.push_str(", ");
         }
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
-        let attrs = param_attrs(pty, *move_flag, *mut_flag, by_ptr, types);
+        let attrs = param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, by_ptr, types);
         let base_ty = if by_ptr {
             "ptr".to_string()
         } else {
@@ -5556,7 +5574,7 @@ fn gen_method(
     // params register a scope-exit drop. Non-`move` value-passed params are
     // bit-duplicates of the caller's value, so codegen does NOT register a
     // drop for them (the caller still owns the original).
-    for (i, (param, (pty, move_flag, mut_flag))) in
+    for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in
         m.params.iter().zip(sig.params.iter()).enumerate()
     {
         let idx = next_idx + i as u32;
@@ -5612,7 +5630,7 @@ fn gen_method(
             noalias_ssas.push(0);
         }
     }
-    for (i, (_, (pty, mv, mu))) in m.params.iter().zip(sig.params.iter()).enumerate() {
+    for (i, (_, (pty, mv, mu, _restrict_flag))) in m.params.iter().zip(sig.params.iter()).enumerate() {
         let idx = next_idx + i as u32;
         if param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu) {
             noalias_ssas.push(idx);
@@ -6636,7 +6654,7 @@ impl<'a> FnState<'a> {
                                 if !pending_drops {
                                     if let Some(sig) = self.sigs.get(name) {
                                         let callee_params: Vec<&Ty> =
-                                            sig.params.iter().map(|(t, _, _)| t).collect();
+                                            sig.params.iter().map(|(t, _, _, _)| t).collect();
                                         let enclosing: Vec<&Ty> =
                                             self.enclosing_params.iter().collect();
                                         // v0.0.8 fix C: musttail requires
@@ -7370,7 +7388,7 @@ impl<'a> FnState<'a> {
                 // the source-level name.
                 if let Some(sig) = self.sigs.get(name).cloned() {
                     let symbol: String = sig.link_name.clone().unwrap_or_else(|| name.to_string());
-                    let params: Vec<Ty> = sig.params.iter().map(|(t, _, _)| t.clone()).collect();
+                    let params: Vec<Ty> = sig.params.iter().map(|(t, _, _, _)| t.clone()).collect();
                     let ty = Ty::FnPtr {
                         params,
                         return_type: Box::new(sig.return_type.clone()),
@@ -8939,11 +8957,11 @@ impl<'a> FnState<'a> {
         // noundef dereferenceable(N) align A` set on both sides; this
         // helps LLVM's inter-procedural analysis before inlining and
         // matches the IR shape clang produces.
-        for (a, (pty, move_flag, mut_flag)) in args.iter().zip(sig.params.iter()) {
+        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(sig.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
                 let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 let ty_str = if attrs.is_empty() {
                     "ptr".to_string()
                 } else {
@@ -8952,7 +8970,15 @@ impl<'a> FnState<'a> {
                 arg_vals.push((addr, ty_str));
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg is a value");
-                arg_vals.push((v, self.lty(pty)));
+                // v0.0.8 post-bench-gap: mirror `restrict *T` at the
+                // scalar-arg call site so it matches the callee's
+                // `ptr noalias noundef` signature.
+                let ty_str = if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                    format!("{} noalias noundef", self.lty(pty))
+                } else {
+                    self.lty(pty)
+                };
+                arg_vals.push((v, ty_str));
                 if *move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
@@ -8980,7 +9006,7 @@ impl<'a> FnState<'a> {
         // variadic call sites. `call retty (fixed_types, ...) @name(args)`.
         let type_prefix = if sig.is_variadic {
             let mut s = String::from(" (");
-            for (i, (pty, _, _)) in sig.params.iter().enumerate() {
+            for (i, (pty, _, _, _)) in sig.params.iter().enumerate() {
                 if i > 0 {
                     s.push_str(", ");
                 }
@@ -10018,7 +10044,7 @@ impl<'a> FnState<'a> {
                 Receiver::Mut => (false, true),
                 Receiver::Move => (true, true),
             };
-            let attrs = param_attrs(&recv_ty, mv, mu, true, self.types);
+            let attrs = param_attrs(&recv_ty, mv, mu, false, true, self.types);
             if attrs.is_empty() {
                 format!("ptr {recv_ptr}")
             } else {
@@ -10026,11 +10052,11 @@ impl<'a> FnState<'a> {
             }
         };
         let mut arg_parts: Vec<String> = vec![recv_arg];
-        for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
+        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
                 let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 if attrs.is_empty() {
                     arg_parts.push(format!("ptr {addr}"));
                 } else {
@@ -10038,7 +10064,15 @@ impl<'a> FnState<'a> {
                 }
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg has value");
-                arg_parts.push(format!("{} {v}", self.lty(pty)));
+                // v0.0.8 post-bench-gap: mirror `restrict *T` noalias
+                // at the scalar-arg call site to match the callee's
+                // `ptr noalias noundef` signature.
+                let lty = self.lty(pty);
+                if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                    arg_parts.push(format!("{lty} noalias noundef {v}"));
+                } else {
+                    arg_parts.push(format!("{lty} {v}"));
+                }
                 if *move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
@@ -10120,7 +10154,7 @@ impl<'a> FnState<'a> {
                     Receiver::Mut => (false, true),
                     Receiver::Move => (true, true),
                 };
-                let attrs = param_attrs(&enum_ty, mv, mu, true, self.types);
+                let attrs = param_attrs(&enum_ty, mv, mu, false, true, self.types);
                 if attrs.is_empty() {
                     format!("ptr {recv_ptr}")
                 } else {
@@ -10130,11 +10164,11 @@ impl<'a> FnState<'a> {
             None => format!("ptr {recv_ptr}"),
         };
         let mut arg_parts: Vec<String> = vec![recv_arg];
-        for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
+        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
                 let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 if attrs.is_empty() {
                     arg_parts.push(format!("ptr {addr}"));
                 } else {
@@ -10142,7 +10176,15 @@ impl<'a> FnState<'a> {
                 }
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg has value");
-                arg_parts.push(format!("{} {v}", self.lty(pty)));
+                // v0.0.8 post-bench-gap: mirror `restrict *T` noalias
+                // at the scalar-arg call site to match the callee's
+                // `ptr noalias noundef` signature.
+                let lty = self.lty(pty);
+                if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                    arg_parts.push(format!("{lty} noalias noundef {v}"));
+                } else {
+                    arg_parts.push(format!("{lty} {v}"));
+                }
                 if *move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
@@ -10242,11 +10284,11 @@ impl<'a> FnState<'a> {
         // v0.0.8 fix B (finish): mirror the callee's param attrs at the
         // call site (associated functions have no receiver — just args).
         let mut arg_parts: Vec<String> = Vec::new();
-        for (a, (pty, move_flag, mut_flag)) in args.iter().zip(info.params.iter()) {
+        for (a, (pty, move_flag, mut_flag, restrict_flag)) in args.iter().zip(info.params.iter()) {
             if param_passes_by_ptr(pty, *move_flag, *mut_flag, self.types) {
                 let (addr, _) = self.gen_place(a);
                 let attrs =
-                    param_attrs(pty, *move_flag, *mut_flag, true, self.types);
+                    param_attrs(pty, *move_flag, *mut_flag, *restrict_flag, true, self.types);
                 if attrs.is_empty() {
                     arg_parts.push(format!("ptr {addr}"));
                 } else {
@@ -10254,7 +10296,15 @@ impl<'a> FnState<'a> {
                 }
             } else {
                 let (v, _) = self.gen_expr(a).expect("call arg has value");
-                arg_parts.push(format!("{} {v}", self.lty(pty)));
+                // v0.0.8 post-bench-gap: mirror `restrict *T` noalias
+                // at the scalar-arg call site to match the callee's
+                // `ptr noalias noundef` signature.
+                let lty = self.lty(pty);
+                if *restrict_flag && matches!(pty, Ty::RawPtr(_)) {
+                    arg_parts.push(format!("{lty} noalias noundef {v}"));
+                } else {
+                    arg_parts.push(format!("{lty} {v}"));
+                }
                 if *move_flag {
                     if let ExprKind::Ident(name) = &a.kind {
                         self.mark_moved(name);
@@ -12750,6 +12800,60 @@ mod tests {
         assert!(
             ir.contains("call fastcc i32 @P.get("),
             "mut-self getter must NOT be inlined, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn restrict_raw_pointer_param_emits_noalias_at_def() {
+        // v0.0.8 post-bench-gap: `restrict p: *T` opt-in noalias for
+        // raw-pointer params. Lowers to `ptr noalias noundef` at the
+        // function definition.
+        let ir = gen_src(
+            "fn axpy(n: usize, restrict x: *f32, restrict y: *f32) { return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("@axpy(i64 noundef %0, ptr noalias noundef %1, ptr noalias noundef %2)"),
+            "expected restrict params to lower to `ptr noalias noundef`, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn restrict_raw_pointer_arg_emits_noalias_at_call_site() {
+        // The call site must mirror the callee's `noalias noundef` on
+        // a `restrict *T` param so LLVM's verifier sees a consistent
+        // attribute set on both sides.
+        let ir = gen_src(
+            "fn axpy(n: usize, restrict x: *f32, restrict y: *f32) { return; }\n\
+             fn main() -> i32 {\n\
+                 let p: *f32 = unsafe { 0 as *f32 };\n\
+                 let q: *f32 = unsafe { 0 as *f32 };\n\
+                 axpy(0 as usize, p, q);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(
+            ir.contains("call fastcc void @axpy(i64 ")
+                && ir.contains("ptr noalias noundef "),
+            "expected call site to mirror restrict noalias on both ptr args, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn restrict_without_marker_emits_only_noundef() {
+        // Negative pin: a `*T` param without `restrict` keeps the bare
+        // `noundef` attr set — restrict isn't a default.
+        let ir = gen_src(
+            "fn touch(p: *f32) { return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("@touch(ptr noundef %0)"),
+            "expected bare `noundef` on non-restrict ptr param, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("@touch(ptr noalias"),
+            "non-restrict ptr param must NOT get noalias, got:\n{ir}"
         );
     }
 

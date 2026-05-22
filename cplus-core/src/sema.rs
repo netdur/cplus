@@ -2223,6 +2223,20 @@ impl SemaCx<'_> {
                     "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
                     param.span);
             }
+            // v0.0.8 post-bench-gap: `restrict` is only valid on raw
+            // pointer (`*T`) parameters. The borrow checker doesn't
+            // reason about raw pointers; `restrict` is an opt-in
+            // `noalias` assertion the programmer makes about the
+            // pointer's relationship to other reachable pointers.
+            // Putting it on a struct / primitive / aggregate param is a
+            // category error.
+            if param.restrict && !matches!(psig.ty, Ty::RawPtr(_)) {
+                self.err(
+                    "E0411",
+                    "`restrict` is only valid on raw pointer (`*T`) parameters".to_string(),
+                    param.span,
+                );
+            }
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -2309,6 +2323,14 @@ impl SemaCx<'_> {
                 self.err(
                     "E0334",
                     "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
+                    param.span,
+                );
+            }
+            // E0411: `restrict` only applies to raw pointer params.
+            if param.restrict && !matches!(psig.ty, Ty::RawPtr(_)) {
+                self.err(
+                    "E0411",
+                    "`restrict` is only valid on raw pointer (`*T`) parameters".to_string(),
                     param.span,
                 );
             }
@@ -2926,6 +2948,16 @@ impl SemaCx<'_> {
                 self.err(
                     "E0334",
                     "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
+                    param.span,
+                );
+            }
+            // v0.0.8 post-bench-gap: E0411 — `restrict` requires a raw
+            // pointer (`*T`) param. It's an opt-in `noalias` assertion
+            // and has no meaning on other shapes.
+            if param.restrict && !matches!(psig.ty, Ty::RawPtr(_)) {
+                self.err(
+                    "E0411",
+                    "`restrict` is only valid on raw pointer (`*T`) parameters".to_string(),
                     param.span,
                 );
             }
@@ -9555,6 +9587,48 @@ mod tests {
             diags
         );
         assert_eq!(diags[0].code.0, code);
+    }
+
+    // ---- v0.0.8 post-bench-gap: `restrict` param marker (E0411) ----
+
+    #[test]
+    fn restrict_on_raw_pointer_param_clean() {
+        // `restrict p: *T` is well-formed.
+        assert_clean(
+            "fn axpy(n: usize, restrict x: *f32, restrict y: *f32) { return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn restrict_on_integer_param_e0411() {
+        // E0411: `restrict x: i32` — restrict requires `*T`.
+        assert_only_code(
+            "fn bad(restrict x: i32) -> i32 { return x; }\n\
+             fn main() -> i32 { return bad(0); }",
+            "E0411",
+        );
+    }
+
+    #[test]
+    fn restrict_on_struct_param_e0411() {
+        // E0411: `restrict s: Point` — restrict requires `*T`.
+        assert_only_code(
+            "struct Point { x: i32, y: i32 }\n\
+             fn bad(restrict s: Point) -> i32 { return s.x; }\n\
+             fn main() -> i32 { let p: Point = Point { x: 1, y: 2 }; return bad(p); }",
+            "E0411",
+        );
+    }
+
+    #[test]
+    fn restrict_on_method_param_clean() {
+        // Method params accept `restrict *T` the same as free fns.
+        assert_clean(
+            "struct State { v: i32 }\n\
+             impl State { fn fill(self, restrict p: *u8, n: usize) { return; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
     }
 
     // ---- happy paths: every Phase-1 sample type-checks ----

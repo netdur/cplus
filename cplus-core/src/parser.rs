@@ -1056,11 +1056,14 @@ impl Parser {
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
-        // Optional ownership prefixes: `mut x: T`, `move x: T`, or both
-        // (rejected by sema as E0334). Order doesn't matter at the syntax
-        // layer; sema checks the combination.
+        // Optional ownership prefixes: `mut x: T`, `move x: T`,
+        // `restrict x: *T`, or combinations (`restrict mut x: *T`).
+        // Order doesn't matter at the syntax layer; sema checks the
+        // combination (E0334 for `mut` + `move`; E0411 for `restrict`
+        // on a non-pointer type).
         let mut mutable = false;
         let mut move_ = false;
+        let mut restrict = false;
         let start = self.peek().span;
         loop {
             match self.peek_kind() {
@@ -1071,6 +1074,10 @@ impl Parser {
                 TokenKind::Move if !move_ => {
                     self.bump();
                     move_ = true;
+                }
+                TokenKind::Restrict if !restrict => {
+                    self.bump();
+                    restrict = true;
                 }
                 _ => break,
             }
@@ -1099,6 +1106,7 @@ impl Parser {
             ty,
             mutable,
             move_,
+            restrict,
             span,
         })
     }

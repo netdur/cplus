@@ -325,6 +325,15 @@ pub struct Param {
     pub mutable: bool,
     /// `move x: T` — ownership transfer. Mutually exclusive with `mutable`.
     pub move_: bool,
+    /// v0.0.8 (post-bench-gap): `restrict x: *T` — opt-in `noalias` for
+    /// raw-pointer params. The borrow checker doesn't reason about
+    /// `*T`, so cpc would otherwise emit just `noundef` on these. With
+    /// `restrict`, the programmer asserts the pointer doesn't alias any
+    /// other pointer reachable in the function body — violations are
+    /// UB. C ABI compatible (LLVM `noalias` is an attribute hint, not
+    /// part of the calling convention). Sema (E0411) restricts this to
+    /// `*T` param types; on other shapes it's a hard error.
+    pub restrict: bool,
     pub span: Span,
 }
 
