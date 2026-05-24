@@ -502,6 +502,14 @@ pub struct MonoInfo {
     /// LLVM global per static, then routes use-site Ident references
     /// through load/store ops against the emitted symbol.
     pub statics: std::collections::BTreeMap<String, StaticInfo>,
+    /// v0.0.10 Phase 4A: unique ObjC selector names used by `#selector`
+    /// and `#msg_send` intrinsics. Codegen emits one cached-pointer
+    /// global pair per name: `@__cplus.sel.<n>.{data, cached}`.
+    pub selectors: std::collections::BTreeSet<String>,
+    /// v0.0.10 Phase 4C: `#compile_shader`-produced byte blobs.
+    /// Keyed by the call expression's span. Codegen emits one private
+    /// constant `[N x i8]` global per entry.
+    pub shader_blobs: HashMap<ByteSpan, Vec<u8>>,
 }
 
 /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: one resolved `include_bytes!` or
@@ -797,6 +805,8 @@ fn check_with_files_inner<'a>(
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
         env_vars: std::mem::take(&mut cx.env_vars_table),
         statics: cx.statics_table.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        selectors: std::mem::take(&mut cx.selectors_table),
+        shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
     };
     (sink.into_vec(), mono)
 }

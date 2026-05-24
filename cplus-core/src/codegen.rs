@@ -88,6 +88,24 @@ struct ModuleMetadata {
     /// path. Pre-pass emission ensures the global exists before any
     /// function body references it.
     statics: RefCell<HashMap<String, Ty>>,
+    /// v0.0.10 Phase 4A: per-selector cached-pointer globals. Populated
+    /// by `emit_selector_globals` from sema's `MonoInfo::selectors`. Maps
+    /// selector name → `(data_global, cached_global, byte_len)`. gen_intrinsic
+    /// for `#selector(name)` looks up the pair and emits the
+    /// load-cached / branch-if-null / sel_registerName-if-null pattern.
+    selector_globals: RefCell<HashMap<String, (String, String, u32)>>,
+    /// v0.0.10 Phase 4C: per-call shader-blob globals. Populated by
+    /// `emit_shader_blob_globals` from sema's `MonoInfo::shader_blobs`.
+    /// Maps the `#compile_shader(...)` call span → `(global_symbol, byte_len)`.
+    /// gen_intrinsic for `#compile_shader` consults this map to produce
+    /// the global's symbol; the result is a `*[u8; N]` pointing at it.
+    shader_blob_globals: RefCell<HashMap<crate::lexer::Span, (String, u32)>>,
+    /// v0.0.10 Phase 4A/B: whether the module has already declared
+    /// `@sel_registerName` and `@objc_msgSend`. Set on first emission to
+    /// avoid duplicate `declare` lines (LLVM rejects two declares of the
+    /// same symbol with different shapes; we emit each exactly once).
+    selector_runtime_declared: Cell<bool>,
+    msg_send_declared: Cell<bool>,
 }
 
 impl ModuleMetadata {
@@ -825,6 +843,8 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -850,6 +870,8 @@ pub fn generate_with_mono(
         &mono.compile_time_blobs,
         &mono.env_vars,
         &mono.statics,
+        &mono.selectors,
+        &mono.shader_blobs,
     )
 }
 
@@ -870,6 +892,8 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
         None,
         &[],
         true,
+        &Default::default(),
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -896,6 +920,8 @@ pub fn generate_with_debug(
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -917,6 +943,8 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -956,6 +984,8 @@ pub fn generate_test_binary(
         &mono.compile_time_blobs,
         &mono.env_vars,
         &mono.statics,
+        &mono.selectors,
+        &mono.shader_blobs,
     )
 }
 
@@ -974,6 +1004,8 @@ fn generate_inner(
     compile_time_blobs_map: &HashMap<crate::lexer::Span, crate::sema::CompileTimeBlobEntry>,
     env_vars_map: &HashMap<crate::lexer::Span, crate::sema::EnvVarEntry>,
     statics_map: &std::collections::BTreeMap<String, crate::sema::StaticInfo>,
+    selectors_set: &std::collections::BTreeSet<String>,
+    shader_blobs_map: &HashMap<crate::lexer::Span, Vec<u8>>,
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
@@ -1044,6 +1076,10 @@ fn generate_inner(
     // in `.data`). Populates `md.statics` so gen_expr / gen_assign
     // route Ident references through load/store against the symbol.
     emit_statics(&mut out, statics_map, &types, &md);
+    // v0.0.10 Phase 4A: emit per-selector cached-pointer globals.
+    emit_selector_globals(&mut out, selectors_set, &md);
+    // v0.0.10 Phase 4C: emit per-call shader-blob globals.
+    emit_shader_blob_globals(&mut out, shader_blobs_map, &md);
     write_struct_decls(&mut out, &types, program);
     // Phase 11 / ObjC interop: multiple `extern fn` declarations may share
     // a single linker symbol via `#[link_name = "..."]`. Track emitted
@@ -1074,6 +1110,29 @@ fn generate_inner(
         "__cplus_coro_done",
     ] {
         emitted_extern_symbols.insert(sym.to_string());
+    }
+    // v0.0.10 Phase 4A/B: declare the ObjC runtime symbols we synthesize
+    // calls to from `#selector` / `#msg_send` intrinsics. Pre-seed so
+    // user-level `extern fn objc_msgSend(...)` / `extern fn sel_registerName(...)`
+    // declarations don't double-emit. Always emitted when ANY selector is
+    // present (the `#msg_send` declare costs nothing if unused — LLVM
+    // strips unused declares).
+    if !selectors_set.is_empty() {
+        out.push_str("declare ptr @sel_registerName(ptr)\n");
+        // CRITICAL: NOT variadic. On aarch64-apple-darwin, the ObjC
+        // ABI requires `objc_msgSend` to be called with the exact
+        // non-variadic signature — variadic-declared calls pass args
+        // via the stack (per the AAPCS variadic rule) while libobjc
+        // expects them in registers. Mismatching produces immediate
+        // crashes in the trampoline. We emit a 2-arg non-variadic
+        // declare; per-call sites emit `call <ret_ty> @objc_msgSend(...)`
+        // with whatever typed arg list they need. Modern LLVM with
+        // opaque pointers accepts the shape divergence between declare
+        // and call (this is what the user-side `extern fn ... #[link_name = "objc_msgSend"]`
+        // pattern relies on too).
+        out.push_str("declare ptr @objc_msgSend(ptr, ptr)\n\n");
+        emitted_extern_symbols.insert("sel_registerName".to_string());
+        emitted_extern_symbols.insert("objc_msgSend".to_string());
     }
     for item in &program.items {
         match &item.kind {
@@ -3460,6 +3519,16 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                     walk_expr(e, table, next_id, out);
                 }
             }
+            // v0.0.10 Phase 4: `#name(args...)` intrinsics may carry
+            // arbitrary expressions in their arg list (e.g. `#msg_send`
+            // forwards user args; `#compile_shader` takes path/target
+            // string literals). Walk the args so any string literal in
+            // there gets emitted to the @.str.N table.
+            ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    walk_expr(a, table, next_id, out);
+                }
+            }
             _ => {}
         }
     }
@@ -3820,6 +3889,86 @@ fn emit_env_var_globals(
     if !map.is_empty() {
         out.push_str("\n");
     }
+}
+
+/// v0.0.10 Phase 4A: emit one cached-pointer global pair per unique
+/// ObjC selector used by `#selector(...)` / `#msg_send(...)`. Layout per
+/// selector "name":
+///   - `@__cplus.sel.<n>.data   = private constant [L x i8] c"name\00"`
+///     (NUL-terminated — `sel_registerName` is a C-string API).
+///   - `@__cplus.sel.<n>.cached = private global ptr null` (the SEL
+///     pointer, lazily filled by the first `#selector` call to that name).
+///
+/// Populates `md.selector_globals` so `gen_intrinsic` for `#selector`
+/// and `#msg_send` can emit the load+branch+register pattern with the
+/// right symbol names. Walks `selectors_set` in sorted order for
+/// deterministic IR output.
+fn emit_selector_globals(
+    out: &mut String,
+    selectors_set: &std::collections::BTreeSet<String>,
+    md: &ModuleMetadata,
+) {
+    if selectors_set.is_empty() {
+        return;
+    }
+    let mut globals = md.selector_globals.borrow_mut();
+    for (idx, name) in selectors_set.iter().enumerate() {
+        let data_sym = format!("@__cplus.sel.{idx}.data");
+        let cached_sym = format!("@__cplus.sel.{idx}.cached");
+        let payload_len = (name.as_bytes().len() + 1) as u32; // +1 for NUL
+        let mut escaped = String::new();
+        for byte in name.as_bytes() {
+            if *byte == b'"' || *byte == b'\\' || !(0x20..0x7F).contains(byte) {
+                escaped.push_str(&format!("\\{byte:02X}"));
+            } else {
+                escaped.push(*byte as char);
+            }
+        }
+        escaped.push_str("\\00");
+        out.push_str(&format!(
+            "{data_sym} = private unnamed_addr constant [{payload_len} x i8] c\"{escaped}\", align 1\n"
+        ));
+        out.push_str(&format!(
+            "{cached_sym} = private global ptr null, align 8\n"
+        ));
+        globals.insert(name.clone(), (data_sym, cached_sym, payload_len));
+    }
+    out.push_str("\n");
+}
+
+/// v0.0.10 Phase 4C: emit one private constant `[N x i8]` global per
+/// `#compile_shader(...)` call site. Bytes already produced at sema time
+/// (sema invoked `xcrun ... metallib` and stored the result in
+/// `MonoInfo::shader_blobs`). Symbol naming: `@.shader.N`.
+fn emit_shader_blob_globals(
+    out: &mut String,
+    map: &HashMap<crate::lexer::Span, Vec<u8>>,
+    md: &ModuleMetadata,
+) {
+    if map.is_empty() {
+        return;
+    }
+    let mut spans: Vec<&crate::lexer::Span> = map.keys().collect();
+    spans.sort_by_key(|s| (s.start, s.end));
+    let mut globals = md.shader_blob_globals.borrow_mut();
+    for (idx, span) in spans.iter().enumerate() {
+        let bytes = &map[span];
+        let len = bytes.len() as u32;
+        let symbol = format!("@.shader.{idx}");
+        let mut escaped = String::new();
+        for byte in bytes {
+            if *byte == b'"' || *byte == b'\\' || !(0x20..0x7F).contains(byte) {
+                escaped.push_str(&format!("\\{byte:02X}"));
+            } else {
+                escaped.push(*byte as char);
+            }
+        }
+        out.push_str(&format!(
+            "{symbol} = private unnamed_addr constant [{len} x i8] c\"{escaped}\", align 1\n"
+        ));
+        globals.insert(**span, (symbol, len));
+    }
+    out.push_str("\n");
 }
 
 /// v0.0.9 Phase 4: emit one LLVM global per module-scope `static`.
@@ -7937,18 +8086,8 @@ impl<'a> FnState<'a> {
                 unreachable!("sema rejects ranges outside `for ... in`")
             }
             ExprKind::Match { scrutinee, arms } => self.gen_match(scrutinee, arms),
-            ExprKind::Intrinsic { name, .. } => {
-                // v0.0.10 Phase 4 wedge: sema validates and accepts new
-                // `#selector` / `#msg_send` / `#compile_shader` intrinsics,
-                // but the codegen lowering lands in a follow-up slice.
-                // Programs that *use* these intrinsics will panic here at
-                // codegen time with a clear message; programs that only
-                // exercise the parser/sema scaffolding compile cleanly.
-                unimplemented!(
-                    "codegen for `#{name}` intrinsic is not implemented in this slice — \
-                     v0.0.10 ships parser + sema scaffolding only; LLVM IR lowering \
-                     lands in the v0.0.10 GPU-binding fast follow-up"
-                );
+            ExprKind::Intrinsic { name, args, ret_ty, .. } => {
+                self.gen_intrinsic(name, args, ret_ty.as_ref(), e.span)
             }
         }
     }
@@ -8118,6 +8257,149 @@ impl<'a> FnState<'a> {
         let _ = llvm_struct;
         self.gen_load(&v, &struct_ty, &slot);
         (v, struct_ty)
+    }
+
+    /// v0.0.10 Phase 4 (GPU binding-layer wedge): lower `#selector(...)`,
+    /// `#msg_send(...)`, and `#compile_shader(...)` intrinsics. Sema has
+    /// already validated each call (string-literal args, unsafe context,
+    /// etc.) and populated the per-module tables (`selectors`,
+    /// `shader_blobs`) consumed by the pre-passes. Codegen's job is the
+    /// per-call lowering.
+    fn gen_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        ret_ty: Option<&crate::ast::Type>,
+        span: crate::lexer::Span,
+    ) -> Option<(String, Ty)> {
+        match name {
+            "selector" => Some(self.gen_intrinsic_selector(args)),
+            "msg_send" => self.gen_intrinsic_msg_send(args, ret_ty),
+            "compile_shader" => Some(self.gen_intrinsic_compile_shader(span)),
+            _ => panic!(
+                "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
+            ),
+        }
+    }
+
+    /// `#selector("name") -> *u8`. Look up the cached-pointer pair
+    /// emitted by `emit_selector_globals`, then emit the lazy-init
+    /// load+branch+register pattern. Per-call cost: one load + one
+    /// branch (predicted-taken after the first call to that selector).
+    fn gen_intrinsic_selector(&mut self, args: &[Expr]) -> (String, Ty) {
+        let name = match &args[0].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => panic!("codegen: #selector arg should be a string literal (sema invariant)"),
+        };
+        let (data_sym, cached_sym, _len) = {
+            let table = self.md.selector_globals.borrow();
+            table
+                .get(&name)
+                .expect("#selector: name not in module table — sema must populate selectors_set")
+                .clone()
+        };
+        let cached_val = self.next_tmp();
+        let is_null = self.next_tmp();
+        let registered = self.next_tmp();
+        let result = self.next_tmp();
+        let register_lbl = self.next_block_label();
+        let done_lbl = self.next_block_label();
+        // Avoid `phi` (no current-block tracking in codegen state) by
+        // re-loading the cached pointer at the merge. The second load is
+        // free for LLVM to fold given the global's `nonnull` after the
+        // register path, and it dodges the need to thread the entry-block
+        // label through the helper.
+        self.emit(&format!("{cached_val} = load ptr, ptr {cached_sym}, align 8"));
+        self.emit(&format!("{is_null} = icmp eq ptr {cached_val}, null"));
+        self.emit_terminator(&format!(
+            "br i1 {is_null}, label %{register_lbl}, label %{done_lbl}"
+        ));
+        self.open_block(&register_lbl);
+        self.emit(&format!(
+            "{registered} = call ptr @sel_registerName(ptr {data_sym})"
+        ));
+        self.emit(&format!("store ptr {registered}, ptr {cached_sym}, align 8"));
+        self.emit_terminator(&format!("br label %{done_lbl}"));
+        self.open_block(&done_lbl);
+        self.emit(&format!("{result} = load ptr, ptr {cached_sym}, align 8"));
+        (result, Ty::RawPtr(Box::new(Ty::U8)))
+    }
+
+    /// `#msg_send(recv, "selector", args...) -> T`. Synthesizes a typed
+    /// call to the variadic `@objc_msgSend` declaration emitted in
+    /// `generate_inner`'s pre-pass. The selector is looked up via the
+    /// same machinery as `#selector(...)`.
+    fn gen_intrinsic_msg_send(
+        &mut self,
+        args: &[Expr],
+        ret_ty_ast: Option<&crate::ast::Type>,
+    ) -> Option<(String, Ty)> {
+        // args[0] = receiver expression; args[1] = selector string literal;
+        // args[2..] = forwarded arguments.
+        let (recv_val, _recv_ty) = self.gen_expr(&args[0]).expect("#msg_send receiver");
+        // Selector: reuse the #selector(...) lowering by faking a one-arg
+        // intrinsic call against args[1].
+        let sel_args = std::slice::from_ref(&args[1]);
+        let (sel_val, _) = self.gen_intrinsic_selector(sel_args);
+        // Type-check the forwarded args (sema already did this; gen_expr
+        // is what produces the LLVM values).
+        let mut typed_args: Vec<(String, Ty)> = Vec::with_capacity(args.len().saturating_sub(2));
+        for a in &args[2..] {
+            let (v, t) = self.gen_expr(a).expect("#msg_send forwarded arg");
+            typed_args.push((v, t));
+        }
+        // Resolve the return type. Sema accepts the `-> T` ascription as
+        // an AST `Type`; resolve it against the type tables here.
+        let ret_ty = match ret_ty_ast {
+            Some(rt) => ty_from(rt, self.types),
+            None => Ty::Unit,
+        };
+        let ret_llvm = if matches!(ret_ty, Ty::Unit) {
+            "void".to_string()
+        } else {
+            self.lty(&ret_ty)
+        };
+        // Build the call. Format:
+        //   %r = call <ret_llvm> (ptr, ptr, ...) @objc_msgSend(ptr %recv, ptr %sel, <typed args...>)
+        let mut argstr = format!("ptr {recv_val}, ptr {sel_val}");
+        for (v, t) in &typed_args {
+            argstr.push_str(", ");
+            argstr.push_str(&format!("{} {}", self.lty(t), v));
+        }
+        // CRITICAL: NOT variadic on aarch64-darwin (see emit_intrinsic_runtime_decls
+        // comment in generate_inner). Per-call non-variadic signature; LLVM
+        // accepts shape divergence between this and the 2-arg declare with
+        // opaque pointers.
+        if matches!(ret_ty, Ty::Unit) {
+            self.emit(&format!("call void @objc_msgSend({argstr})"));
+            None
+        } else {
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = call {ret_llvm} @objc_msgSend({argstr})"));
+            Some((r, ret_ty))
+        }
+    }
+
+    /// `#compile_shader("path", "target") -> *[u8; N]`. Bytes are already
+    /// produced at sema time (sema invoked `xcrun ... metallib` and
+    /// stored the result in `MonoInfo::shader_blobs`). Codegen looks up
+    /// the global emitted by `emit_shader_blob_globals` and returns its
+    /// address. Mirrors `ExprKind::IncludeBytes`.
+    fn gen_intrinsic_compile_shader(&mut self, span: crate::lexer::Span) -> (String, Ty) {
+        let (symbol, len) = {
+            let table = self.md.shader_blob_globals.borrow();
+            table
+                .get(&span)
+                .expect(
+                    "#compile_shader: span not in module table — \
+                     sema must produce a MonoInfo::shader_blobs entry for every call",
+                )
+                .clone()
+        };
+        (
+            symbol,
+            Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len))),
+        )
     }
 
     /// Read a field. The receiver may be a place (`p.x`), in which case we
@@ -12675,7 +12957,12 @@ mod tests {
             }
         };
         let post = crate::monomorphize::monomorphize(prog, &mono, &name_of);
-        generate(&post, BuildMode::Debug)
+        // v0.0.11 Phase 0: route through `generate_with_mono` so the
+        // MonoInfo (compile_time_blobs / env_vars / statics / selectors /
+        // shader_blobs) reaches codegen. Plain `generate()` would default
+        // every table to empty and tests of `#selector` / `#msg_send` /
+        // `#compile_shader` would panic in their pre-pass lookups.
+        generate_with_mono(&post, BuildMode::Debug, None, &[], false, &mono)
     }
 
     #[test]
@@ -16623,6 +16910,144 @@ mod tests {
         assert!(
             !ir.is_empty(),
             "expected non-empty IR (no panic); got:\n{ir}"
+        );
+    }
+
+    // ---- v0.0.11 Phase 0: codegen for `#selector` / `#msg_send` / `#compile_shader` ----
+
+    #[test]
+    fn intrinsic_selector_emits_cached_globals_and_lazy_init() {
+        let src = "fn main() -> i32 {\n\
+                     let s: *u8 = #selector(\"length\");\n\
+                     return 0;\n\
+                 }";
+        let ir = gen_src_mono(src);
+        // The pre-pass should have emitted both the NUL-terminated data
+        // global and the lazy-cached pointer slot.
+        assert!(
+            ir.contains("@__cplus.sel.0.data = private unnamed_addr constant [7 x i8] c\"length\\00\""),
+            "missing selector data global; IR:\n{ir}"
+        );
+        assert!(
+            ir.contains("@__cplus.sel.0.cached = private global ptr null"),
+            "missing selector cached slot; IR:\n{ir}"
+        );
+        // Runtime declares emitted once, non-variadic objc_msgSend (the
+        // aarch64-darwin ABI requirement — variadic and non-variadic
+        // pass args via different storage).
+        assert!(
+            ir.contains("declare ptr @sel_registerName(ptr)"),
+            "missing sel_registerName declare; IR:\n{ir}"
+        );
+        assert!(
+            ir.contains("declare ptr @objc_msgSend(ptr, ptr)"),
+            "missing objc_msgSend declare (must be non-variadic); IR:\n{ir}"
+        );
+        // The call site lazy-init pattern: load cached, branch on null,
+        // sel_registerName + store on the slow path, re-load on the
+        // merge to get the (now-populated) value.
+        assert!(
+            ir.contains("load ptr, ptr @__cplus.sel.0.cached"),
+            "missing cached load; IR:\n{ir}"
+        );
+        assert!(
+            ir.contains("call ptr @sel_registerName(ptr @__cplus.sel.0.data)"),
+            "missing sel_registerName call site; IR:\n{ir}"
+        );
+        assert!(
+            ir.contains("store ptr") && ir.contains("@__cplus.sel.0.cached"),
+            "missing store-back into cached slot; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn intrinsic_selector_dedupes_repeated_names() {
+        // Two `#selector("length")` calls in the same module share one
+        // global pair (BTreeSet collapses the entry; codegen emits once).
+        let src = "fn main() -> i32 {\n\
+                     let s1: *u8 = #selector(\"length\");\n\
+                     let s2: *u8 = #selector(\"length\");\n\
+                     let s3: *u8 = #selector(\"alloc\");\n\
+                     return 0;\n\
+                 }";
+        let ir = gen_src_mono(src);
+        // Exactly two distinct data globals (one per unique name).
+        assert!(
+            ir.contains("@__cplus.sel.0.data"),
+            "missing first selector global; IR:\n{ir}"
+        );
+        assert!(
+            ir.contains("@__cplus.sel.1.data"),
+            "missing second selector global; IR:\n{ir}"
+        );
+        assert!(
+            !ir.contains("@__cplus.sel.2.data"),
+            "should not have emitted a third global for the duplicate `length`; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn intrinsic_msg_send_typed_return() {
+        let src = "fn main() -> i32 {\n\
+                     unsafe {\n\
+                         let obj: *u8 = 0 as *u8;\n\
+                         let n: u64 = #msg_send(obj, \"length\") -> u64;\n\
+                     }\n\
+                     return 0;\n\
+                 }";
+        let ir = gen_src_mono(src);
+        // Call uses the typed return (i64 — `u64` in C+ lowers to LLVM i64)
+        // and a non-variadic call site. The `(ptr, ptr, ...)` shape would
+        // be wrong on aarch64-darwin.
+        assert!(
+            ir.contains("call i64 @objc_msgSend("),
+            "missing typed i64 msg_send call; IR:\n{ir}"
+        );
+        assert!(
+            !ir.contains("call i64 (ptr, ptr, ...) @objc_msgSend"),
+            "msg_send call must NOT be variadic-shaped (aarch64-darwin ABI); IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn intrinsic_msg_send_void_return() {
+        let src = "fn main() -> i32 {\n\
+                     unsafe {\n\
+                         let obj: *u8 = 0 as *u8;\n\
+                         #msg_send(obj, \"release\");\n\
+                     }\n\
+                     return 0;\n\
+                 }";
+        let ir = gen_src_mono(src);
+        // No `-> T` ascription → void return → no assignment, just a bare call.
+        assert!(
+            ir.contains("call void @objc_msgSend("),
+            "missing void msg_send call; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn intrinsic_msg_send_forwards_extra_args() {
+        let src = "fn main() -> i32 {\n\
+                     unsafe {\n\
+                         let obj: *u8 = 0 as *u8;\n\
+                         let s: *u8 = str_ptr(\"x\");\n\
+                         let r: *u8 = #msg_send(obj, \"stringWithUTF8String:\", s) -> *u8;\n\
+                     }\n\
+                     return 0;\n\
+                 }";
+        let ir = gen_src_mono(src);
+        // The call site must include all three args: recv, sel, and the
+        // forwarded `s`. We check for the pattern `call ptr @objc_msgSend(ptr ..., ptr ..., ptr ...)`.
+        let call_idx = ir
+            .find("call ptr @objc_msgSend(")
+            .expect(&format!("missing msg_send call; IR:\n{ir}"));
+        let call_line_end = ir[call_idx..].find('\n').unwrap();
+        let call_line = &ir[call_idx..call_idx + call_line_end];
+        let ptr_count = call_line.matches("ptr").count();
+        assert!(
+            ptr_count >= 3,
+            "expected at least 3 ptr args (recv + sel + forwarded); got line:\n{call_line}"
         );
     }
 }
