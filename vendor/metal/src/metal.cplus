@@ -6,6 +6,7 @@ import "./queue" as queue;
 import "./pipeline" as pipeline;
 import "./buffer" as buffer;
 import "./runtime" as runtime;
+import "./mps" as mps;
 
 pub type Device = device::Device;
 pub type CommandQueue = queue::CommandQueue;

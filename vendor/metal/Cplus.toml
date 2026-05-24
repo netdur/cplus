@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2026"
 
 [link]
-frameworks = ["Metal", "Foundation"]
+frameworks = ["Metal", "MetalPerformanceShaders", "Foundation"]
 libs       = ["objc"]
 
 [dependencies]
