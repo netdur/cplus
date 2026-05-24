@@ -8,9 +8,7 @@ Anchors:
 1. **MPS bindings** for `vendor/metal` — Apple's pre-tuned matmul/conv/FFT/softmax. The fast follow-up that the GPU wedge enables.
 2. **`vendor/cuda`** — Driver API + Runtime API + cuBLAS. The NVIDIA story. Plain C FFI, no ObjC complexity.
 3. **`vendor/accelerate`** — Apple's CPU-SIMD numerics (BLAS, LAPACK, vDSP, BNNS). The fallback when no GPU exists.
-4. **`proves/vector_search_server/`** — a real consumer benchmarked against FAISS. The proof that the position works in practice.
-
-The cycle is **all package work** with one optional compiler diversion (the intrinsic-spelling migration, §Phase 5). No GPU language additions of any kind.
+The cycle is **all package work** with one optional compiler diversion (the intrinsic-spelling migration, §Phase 5). No GPU language additions of any kind. Validation is left to consumers — vendor packages ship with in-package `#[test]` fns (the MPS `test_2x2_matmul_identity_correctness` is the proof shape) and that's enough; no benchmark harness in-tree.
 
 ---
 
@@ -58,7 +56,7 @@ This is the fast follow-up the v0.0.10 wedge unlocks. With `#selector` and `#msg
 
 NVIDIA's CUDA stack is plain C — no ObjC, no `objc_msgSend`, no selector machinery. Bindings are straightforward `extern fn` declarations. The challenge is **scope**: CUDA's surface area is huge (cuBLAS alone has hundreds of functions), and shipping bindings for every API at once is impractical.
 
-Scope decision: ship the **minimum viable subset** that lets `proves/vector_search_server/` work on NVIDIA hardware. Add more as workloads demand.
+Scope decision: ship the **minimum viable subset** — Device discovery, memory allocation + copy, streams, and cuBLAS sgemv/sgemm. Add more as workloads demand.
 
 ### Minimum viable subset
 
@@ -178,66 +176,18 @@ Land in v0.0.11 if we want the surface consistent before any more intrinsics get
 
 ---
 
-## Phase 6 — `proves/vector_search_server/` · size M
-
-The canonical "C+ as a consumer of GPU SDKs" demo. A working HTTP server that loads an embedding database, accepts query vectors, and returns top-K matches using MPS (Apple) or cuBLAS (NVIDIA) for the inner loop.
-
-### Shape
-
-```
-proves/vector_search_server/
-├── Cplus.toml          # depends on metal, cuda (optional), accelerate, stdlib
-├── README.md           # how to run, benchmark methodology
-├── src/
-│   ├── main.cplus      # HTTP server entry point
-│   ├── backend.cplus   # backend trait, MPS/CUDA/Accelerate impls behind cfg
-│   ├── search.cplus    # core matmul + top-K logic
-│   └── server.cplus    # request parsing, response formatting
-├── data/
-│   └── embeddings_1m_768.bin   # 1M × 768 float32 — pre-generated
-└── bench/
-    ├── run_faiss.py    # FAISS comparison harness (Python — they don't have to port)
-    └── results.md      # numbers
-```
-
-### Backend selection
-
-Startup-time, not runtime. The server's main reads `--backend=metal|cuda|accelerate` (defaulted by host platform) and instantiates the corresponding pipeline. No unified abstraction — each backend has its own `BackendMps` / `BackendCuda` / `BackendAccelerate` struct with the same method names, dispatched via match in main.
-
-This is the pattern llama.cpp uses (each `ggml-<backend>.c` is independent; the host selects at startup). Avoids the `vendor/tensor` failure mode discussed in [docs/GPU.md](docs/GPU.md).
-
-### Benchmarks
-
-Baseline: FAISS (Python bindings, both CPU and GPU modes) on the same data. Measure:
-- Cold-start latency (load + first query)
-- Steady-state query throughput (queries/sec at p50, p99)
-- Memory residency
-
-If C+ + MPS is within 20% of FAISS-GPU on Apple Silicon, the position is validated. If C+ + Accelerate beats FAISS-CPU by any margin on small N, that's a real differentiator (no Python overhead, no GC, single binary).
-
-### Size estimate
-
-~800–1200 LOC across the project. The HTTP server is the wildcard — either a thin libuv binding or hand-rolled epoll/kqueue. Probably 2–3 sessions. Worth doing — this is the artifact that explains the language to a new user.
-
----
-
 ## Suggested ordering
 
 The dependencies:
-- Phase 1 (MPS) and Phase 3 (Accelerate) are independent of everything else. Land first.
-- Phase 2 (CUDA) is independent of MPS / Accelerate but requires NVIDIA hardware to validate. Land in parallel with Phase 1 if testing access exists.
-- Phase 4 (static-arena full) is independent. Land any time.
-- Phase 5 (intrinsic migration) is independent. Land any time.
-- Phase 6 (vector_search_server) depends on at least one backend being ready. Don't start until Phase 1 ships.
+All five phases are independent. Phase 2 (CUDA) requires NVIDIA hardware to validate; Phases 1, 3, 4, 5 don't.
 
 Recommended order:
 
-1. **Phase 1 (MPS)** — fastest path to validating the v0.0.10 wedge in a real binding. Land first.
-2. **Phase 3 (Accelerate)** — easy, useful, low risk. Pair with Phase 1.
-3. **Phase 6 (vector_search_server)** — start as soon as Phase 1 lands. Even with only MPS backend initially, having the harness exists drives the rest.
-4. **Phase 2 (CUDA)** — start once you have NVIDIA testing access. Slot it into vector_search_server's backend matrix once the wrappers are ready.
-5. **Phase 4 (static-arena full)** — back-half of the cycle. The const-generic compiler work is worth doing carefully.
-6. **Phase 5 (intrinsic migration)** — last, only if you want it. Skipping is fine.
+1. **Phase 1 (MPS)** — ✅ shipped in `361920d`. Fastest path to validating the v0.0.10 wedge in a real binding.
+2. **Phase 3 (Accelerate)** — easy, useful, low risk. Next.
+3. **Phase 2 (CUDA)** — when NVIDIA testing access is available.
+4. **Phase 4 (static-arena full)** — back-half. The const-generic compiler work is worth doing carefully.
+5. **Phase 5 (intrinsic migration)** — last, only if you want it. Skipping is fine.
 
 ---
 
@@ -262,6 +212,5 @@ Recommended order:
 - **GGUF / SafeTensors readers.** If the inference engine angle gets pursued, model format readers are useful. Probably a separate `vendor/gguf` / `vendor/safetensors` package. Wait for demand.
 - **Quantization helpers.** Int8 / FP16 / GPTQ / AWQ — probably belongs in `vendor/quant` on top of the BLAS / MPS / cuBLAS primitives. Open whether C+ has any structural advantage vs llama.cpp's existing impls.
 - **Real-time + GPU interaction.** `#[no_alloc]` checks host heap. GPU memory allocation (`cuMemAlloc`, `[device newBufferWithLength:]`) is a different path — does the attribute need a GPU-aware extension (`#[no_gpu_alloc]`?)? Probably wait until both real-time and GPU bindings have real consumers, then design from the workload.
-- **HTTP server library choice for Phase 6.** Hand-rolled epoll/kqueue, or thin libuv binding, or some other vendor package? Decide when Phase 6 starts.
-- **Per-field TBAA** — stays open from v0.0.9. Tensor / GEMM workloads under Phase 6 may surface the measurement that justifies it.
-- **`#compile_shader` incremental builds.** ~100ms per shader compile is fine for small projects, adds up for large ones. Revisit if Phase 6 measures it.
+- **Per-field TBAA** — stays open from v0.0.9. Tensor / GEMM workloads may eventually surface the measurement that justifies it.
+- **`#compile_shader` incremental builds.** ~100ms per shader compile is fine for small projects, adds up for large ones. Revisit if a real workload measures it.
