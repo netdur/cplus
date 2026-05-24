@@ -4478,15 +4478,26 @@ impl SemaCx<'_> {
                 span);
         }
         let arg = &args[0];
-        let ExprKind::Ident(binding) = &arg.kind else {
-            self.err("E0302",
-                "`#addr_of` argument must be a bare identifier (e.g. `#addr_of(x)`); \
-                 field/index/call expressions are not yet supported".to_string(),
-                arg.span);
+        // v0.0.12 G-025: accept any place expression — `Ident`, `Field`,
+        // `Index`, `Deref`, and chains thereof — so `#addr_of((*o).field)`
+        // and `#addr_of(arr[i])` work without a bind-to-temporary dance.
+        // Codegen reuses `gen_place`, which already lowers each of these
+        // to the right GEP. Rejects call results, arithmetic, etc. —
+        // those aren't places so taking their address is meaningless.
+        if !is_addr_of_place(arg) {
+            self.err(
+                "E0302",
+                "`#addr_of` argument must be a place expression — a bare \
+                 identifier, a field access (`s.f`, `(*p).f`), an index \
+                 (`a[i]`), or a deref (`*p`). Call results, arithmetic, \
+                 and other temporaries are not addressable."
+                    .to_string(),
+                arg.span,
+            );
             let _ = self.check_expr(arg, None);
             return Ty::Error;
-        };
-        let ty = self.resolve_value_ident(binding, arg.span, None);
+        }
+        let ty = self.check_expr(arg, None);
         if matches!(ty, Ty::Error) {
             return Ty::Error;
         }
@@ -7033,6 +7044,25 @@ impl SemaCx<'_> {
                 );
             }
             let _ = self.check_expr(&args[0], Some(recv_ty.clone()));
+            return Ty::Bool;
+        }
+        // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw-pointer
+        // receivers. Lowers to a single `icmp eq ptr %p, null` (and its
+        // inverse). No memory access — just inspecting the bit pattern —
+        // so neither method requires `unsafe`. Closes the C `if (p == NULL)`
+        // ergonomic gap without needing a `#null` intrinsic or special-case
+        // sugar.
+        if matches!(recv_ty, Ty::RawPtr(_))
+            && args.is_empty()
+            && (name.name == "is_null" || name.name == "is_not_null")
+        {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    format!("`{}` takes no type arguments", name.name),
+                    call_span,
+                );
+            }
             return Ty::Bool;
         }
         // v0.0.5 Phase 2C: dispatch on enum receivers via the new
@@ -11154,6 +11184,20 @@ fn body_ends_with_return(b: &Block) -> bool {
         .is_some_and(|s| matches!(s.kind, StmtKind::Return(_)))
 }
 
+/// v0.0.12 G-025: a "place" for `#addr_of` is anything codegen's
+/// `gen_place` can produce a pointer for — bare bindings, field
+/// accesses, indexed loads, and dereferences (and chains thereof).
+/// Call results / arithmetic / etc. are rvalues with no stable address.
+fn is_addr_of_place(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(_) => true,
+        ExprKind::Unary { op: UnaryOp::Deref, .. } => true,
+        ExprKind::Field { receiver, .. } => is_addr_of_place(receiver),
+        ExprKind::Index { receiver, .. } => is_addr_of_place(receiver),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -11334,19 +11378,129 @@ mod tests {
         );
     }
 
+    // v0.0.12 G-025: `#addr_of` accepts any place expression — fields,
+    // indices, derefs, and chains. Call results / arithmetic / etc.
+    // remain rejected because they have no stable address.
+
     #[test]
-    fn addr_of_non_ident_arg_e0302() {
-        // Field/Index/Call args are explicitly out of scope (separate
-        // addressing stories — see the addr_of sema comment).
-        assert_only_code(
+    fn addr_of_field_access_clean_g025() {
+        assert_clean(
+            "struct P { x: i32, y: i32 }\n\
+             fn main() -> i32 {\n\
+                 let p: P = P { x: 5, y: 6 };\n\
+                 let q: *i32 = unsafe { #addr_of(p.x) };\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn addr_of_deref_field_clean_g025() {
+        assert_clean(
             "struct P { x: i32 }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 5 };\n\
-                 let q: *i32 = unsafe { #addr_of(p.x) };\n\
+                 let pp: *P = unsafe { #addr_of(p) };\n\
+                 let q: *i32 = unsafe { #addr_of((*pp).x) };\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn addr_of_array_index_clean_g025() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let a: [i32; 4] = [10, 20, 30, 40];\n\
+                 let q: *i32 = unsafe { #addr_of(a[2]) };\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn addr_of_deref_clean_g025() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let n: i64 = 5;\n\
+                 let p: *i64 = unsafe { #addr_of(n) };\n\
+                 let q: *i64 = unsafe { #addr_of(*p) };\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn addr_of_call_result_rejected_e0302_g025() {
+        // Call result is an rvalue — no stable address.
+        assert_only_code(
+            "fn foo() -> i32 { return 42; }\n\
+             fn main() -> i32 {\n\
+                 let q: *i32 = unsafe { #addr_of(foo()) };\n\
                  return 0;\n\
              }",
             "E0302",
         );
+    }
+
+    #[test]
+    fn addr_of_arithmetic_rejected_e0302_g025() {
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let x: i32 = 1;\n\
+                 let q: *i32 = unsafe { #addr_of(x +% 1) };\n\
+                 return 0;\n\
+             }",
+            "E0302",
+        );
+    }
+
+    // v0.0.12 G-024: `is_null()` / `is_not_null()` on raw pointers.
+    // Safe to call (just compares the bit pattern); returns `bool`.
+
+    #[test]
+    fn is_null_on_raw_ptr_clean_g024() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let p: *u8 = unsafe { 0 as *u8 };\n\
+                 if p.is_null() { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn is_not_null_on_raw_ptr_clean_g024() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let p: *u8 = unsafe { 0 as *u8 };\n\
+                 if p.is_not_null() { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn is_null_does_not_require_unsafe_g024() {
+        // is_null inspects the bit pattern; no memory access, no unsafe.
+        assert_clean(
+            "fn need_ptr() -> *u8 { return unsafe { 0 as *u8 }; }\n\
+             fn main() -> i32 {\n\
+                 let p: *u8 = need_ptr();\n\
+                 if p.is_null() { return 0; }\n\
+                 return 1;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn is_null_on_non_pointer_rejected_g024() {
+        // Receiver isn't a raw pointer → falls through to normal method
+        // lookup → no `is_null` on i32 → E0324.
+        let codes = errors(
+            "fn main() -> i32 { let x: i32 = 5; if x.is_null() { return 1; } return 0; }",
+        );
+        assert!(codes.iter().any(|c| c.starts_with("E0")));
     }
 
     #[test]

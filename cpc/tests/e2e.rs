@@ -269,6 +269,78 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn is_null_methods_runtime_g024() {
+    // v0.0.12 G-024: `is_null()` / `is_not_null()` are builtin methods
+    // on raw pointers; lower to a single `icmp eq/ne ptr %p, null`.
+    // No unsafe required (no memory access).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("is_null_g024.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         fn main() -> i32 {\n\
+             let p: *u8 = unsafe { malloc(64 as usize) };\n\
+             if p.is_null() { return 1; }\n\
+             let nilp: *u8 = unsafe { 0 as *u8 };\n\
+             if nilp.is_not_null() { return 2; }\n\
+             if !nilp.is_null() { return 3; }\n\
+             unsafe { free(p); }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("is_null_g024");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "is_null methods must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "is_null program returned non-zero: {:?}", run.status);
+}
+
+#[test]
+fn addr_of_field_through_pointer_runtime_g025() {
+    // v0.0.12 G-025: `#addr_of((*p).field)` is the pattern that blocked
+    // the llama.cplus gallocr port — `ggml_hash_set_free(&galloc->hash_set)`
+    // shaped calls. Codegen reuses `gen_place`, which walks Deref →
+    // field-GEP on the pointed-to struct.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("addr_of_g025.cplus");
+    std::fs::write(
+        &src,
+        "struct HashSet { count: i32, capacity: i32 }\n\
+         struct Galloc  { id: i32, hash_set: HashSet, extra: i64 }\n\
+         fn use_hs(hs: *HashSet) -> i32 { return unsafe { (*hs).count }; }\n\
+         fn main() -> i32 {\n\
+             let g: Galloc = Galloc { id: 7, hash_set: HashSet { count: 99, capacity: 256 }, extra: 1000 as i64 };\n\
+             let gp: *Galloc = unsafe { #addr_of(g) };\n\
+             let hsp: *HashSet = unsafe { #addr_of((*gp).hash_set) };\n\
+             let a: [i32; 4] = [10, 20, 30, 40];\n\
+             let aip: *i32 = unsafe { #addr_of(a[2]) };\n\
+             let third: i32 = unsafe { *aip };\n\
+             return (use_hs(hsp) - 99) + (third - 30);\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("addr_of_g025");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#addr_of place-expression must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "expected exit 0, got {:?}", run.status);
+}
+
+#[test]
 fn neg_lit_with_lhs_type_runtime_g023() {
     // v0.0.12 G-023: `let x: i64 = -100;` must work end-to-end. Pre-fix,
     // sema rejected this with E0302 because the i64 expected-type wasn't

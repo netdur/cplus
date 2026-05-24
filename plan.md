@@ -2,5 +2,7 @@
 
 ## Bugs
 
-- **G-022** — E0333 diagnostic suggests `return ...;` even when the function returns `()` and the tail block is unit-typed; should suggest `};`. Surfaced by [llama.cplus](../llama.cplus/cpc-gaps.md).
-- **G-023** — negative integer literals (`let x: i64 = -100;`) fail with E0302; LHS type annotation isn't propagated through unary-minus. Fix: magnitude-based promotion on negated literals, mirroring the positive-literal path. Surfaced by [llama.cplus](../llama.cplus/cpc-gaps.md).
+- **G-022** — ✅ `4067546` — E0333 diagnostic suggests `};` when the function returns `()` and the tail is unit-typed; `return ...;` only when an actual value is being abandoned.
+- **G-023** — ✅ `4067546` — `let x: i64 = -100;` works the same as `let x: i64 = 100;`. Expected type propagates through unary-minus; codegen const-folds `-LIT` so it flows as a textual constant at any width.
+- **G-024** — ✅ `*T.is_null()` / `*T.is_not_null()` builtin methods on raw pointers. Single `icmp eq/ne ptr p, null` lowering; safe (no memory access).
+- **G-025** — ✅ `#addr_of` accepts any place expression — `Ident`, `Field`, `Index`, `Deref`, and chains. Unblocks the llama.cplus gallocr port. Codegen rides existing `gen_place`.

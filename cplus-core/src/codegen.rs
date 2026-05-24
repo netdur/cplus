@@ -8352,7 +8352,13 @@ impl<'a> FnState<'a> {
         }
     }
 
-    /// v0.0.11 Phase 4: `#addr_of(x)` — bare alloca pointer of a local.
+    /// v0.0.11 Phase 4: `#addr_of(expr)` — pointer to a place.
+    ///
+    /// v0.0.12 G-025: extended to any place expression — `Ident`, `Field`,
+    /// `Index`, `Deref` and chains. `gen_place` already produces the right
+    /// GEP for each shape (e.g. `(*o).b` walks Deref → field-GEP on the
+    /// pointed-to struct), so the codegen here is unchanged from the
+    /// bare-ident slice; only sema's gate was loosened.
     fn gen_intrinsic_addr_of(&mut self, args: &[Expr]) -> (String, Ty) {
         let (slot, ty) = self.gen_place(&args[0]);
         (slot, Ty::RawPtr(Box::new(ty)))
@@ -10874,6 +10880,19 @@ impl<'a> FnState<'a> {
             if Self::is_blessed_eq_receiver_codegen(&lt) {
                 let (rv, _) = self.gen_expr(&args[0]).expect("eq arg");
                 return Some(self.gen_eq_intrinsic(&lv, &rv, &lt));
+            }
+        }
+        // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw
+        // pointers. Single `icmp eq/ne ptr %p, null` — no memory access,
+        // safe in any context. Sema rejected the call on any non-pointer
+        // receiver, so reaching here with a non-pointer is impossible.
+        if (name.name == "is_null" || name.name == "is_not_null") && args.is_empty() {
+            let (pv, pt) = self.gen_expr(receiver).expect("is_null receiver");
+            if matches!(pt, Ty::RawPtr(_)) {
+                let r = self.next_tmp();
+                let cmp = if name.name == "is_null" { "eq" } else { "ne" };
+                self.emit(&format!("{r} = icmp {cmp} ptr {pv}, null"));
+                return Some((r, Ty::Bool));
             }
         }
         // Materialize the receiver as a place (pointer) — works for Ident,
