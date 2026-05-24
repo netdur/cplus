@@ -611,15 +611,18 @@ This is the section that makes C+ feel unfamiliar at first, then second nature. 
 
 There is **no `&T` and no `&mut T`**. Borrowing is expressed by *parameter markers*, not by reference types.
 
-### The three parameter forms
+### The parameter forms
+
+v0.0.10 flipped the default: **non-Copy values move by default**. `borrow` is the opt-out for "caller keeps ownership". The previous `borrow`-by-default model proved too easy to footgun (the no-marker shape silently aliased; you needed `move` to consume — and forgetting `move` ran Drop on both sides). Now the no-marker shape consumes, which mirrors what most calls actually want, and `borrow` makes the rare "don't take ownership" case explicit.
 
 | Form | On non-Copy types | On Copy types |
 |---|---|---|
-| `x: T` | Shared borrow — caller keeps ownership, function reads only | Pass-by-value copy |
+| `x: T` | **Move** — caller can't use the value after the call | Pass-by-value copy |
 | `mut x: T` | Exclusive borrow — function may mutate; mutations propagate back | Pass-by-value, locally mutable |
-| `move x: T` | Ownership transfer — caller can't use the value after the call | Silent bit-copy (`move` is a no-op marker) |
+| `move x: T` | Move (explicit; same as `x: T`) | Pass-by-value |
+| `borrow x: T` | Shared borrow — caller keeps ownership, function reads only | (redundant on Copy) |
 
-Method receivers follow the same model: `self`, `mut self`, `move self`.
+Method receivers follow the same model: `self`, `mut self`, `move self`, `borrow self`.
 
 ### `Copy` is structural
 
@@ -695,19 +698,27 @@ fn main() -> i32 {
 }
 ```
 
-### When to use `move`
+### When to use `borrow`
 
-For **non-Copy value parameters**, you almost always need `move`:
+Since non-Copy params move by default, the question flips: when does the callee *not* need to consume the value? Use `borrow`:
 
 ```cplus
-// ❌ Footgun — caller's `s` and callee's `x` both run Drop. Double-free.
+// Default: x moves in. Caller can't use `s` after the call.
 fn echo(x: string) -> string { return x; }
 
-// ✅ Marks `s` as moved at the call site; only the result drops.
-fn echo(move x: string) -> string { return x; }
+// Caller keeps `s`; callee only reads. Function must produce its own
+// `string` if it wants to return one — typically via `.clone()`.
+fn label(borrow x: string) -> string { return x.clone(); }
+
+let s: string = "hello".to_string();
+let r: string = label(s);     // s still usable after this call
+println(s.as_str());
+println(r.as_str());
 ```
 
-For `Copy` types, `move` is harmless; for non-`Copy`, it's load-bearing.
+`move x: T` is now redundant on non-Copy params (same as the default) — kept as an explicit marker for readers who want the consumption visible at the signature. Old code with `move x: string` still works; new code can drop it.
+
+The compiler suggests `borrow` when it spots a `borrow`-shaped use (read-only, no consume) inside a default-move body (**E0902** points to a precise fix-it).
 
 ### Lifetime annotations (rare)
 
@@ -939,7 +950,7 @@ let v: str     = unsafe { str_from_raw_parts(p, n) };   // unsafe (caller assert
 ### Rules of thumb
 
 - String literals are `str`. Treat them as program-lifetime constants.
-- For owned string parameters, use `move x: string` to avoid double-free.
+- Owned string parameters move by default (`x: string` consumes the caller's value). Use `borrow x: string` if the callee should only read.
 - `str` parameters are **not allowed** in `async fn` signatures — pass `string` instead (E0900).
 - For interop with libc, `str_ptr(s)` gives you a `*u8` you can hand to `printf`, `write`, etc.
 
@@ -1980,15 +1991,19 @@ Every diagnostic carries a span and often a machine-applicable suggestion. Use `
 
 These bite once and are remembered forever. Read them now.
 
-### Use `move v: T` for non-Copy value parameters
+### `borrow` is the opt-out for non-Copy params — `move` is the default
+
+Since v0.0.10, `x: T` on a non-Copy type **moves** the caller's value into the callee. If the callee should only read, mark it `borrow`:
 
 ```cplus
-// ❌ Caller's `s` and callee's `x` both run Drop. Double-free under ASan.
+// Default: x moves in; caller can't use `s` after the call.
 fn echo(x: string) -> string { return x; }
 
-// ✅ Marks `s` moved at the call site.
-fn echo(move x: string) -> string { return x; }
+// Caller keeps ownership; callee reads only.
+fn label(borrow x: string) -> string { return x.clone(); }
 ```
+
+Pre-v0.0.10 code that wrote `move x: string` to prevent a double-free is now redundant but harmless; new code can drop the marker.
 
 ### `move self` doesn't auto-disarm the callee's exit-Drop
 
