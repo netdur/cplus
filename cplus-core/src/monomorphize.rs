@@ -361,6 +361,18 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::Simd { elem, lanes } => {
             TypeKind::Path(format!("{}x{}", ty_to_source_name_for_simd(elem), lanes))
         }
+        // Masks render back to the `mask<width>x<lanes>` source form
+        // (e.g. `mask32x4`). The resolver canonicalises both ways.
+        Ty::Mask { elem, lanes } => {
+            let width: u32 = match elem.as_ref() {
+                Ty::I8 => 8,
+                Ty::I16 => 16,
+                Ty::I32 => 32,
+                Ty::I64 => 64,
+                _ => 0,
+            };
+            TypeKind::Path(format!("mask{width}x{lanes}"))
+        }
         Ty::Param(name) => TypeKind::Path(name.clone()),
         Ty::Error => TypeKind::Path("<error>".into()),
     };
@@ -1255,6 +1267,7 @@ fn synthesize_fn(
                 mutable: p.mutable,
                 move_: p.move_,
                 restrict: p.restrict,
+                borrow_: p.borrow_,
                 span: p.span,
             })
             .collect(),
@@ -1499,6 +1512,21 @@ fn rewrite_item_calls(
                 f.ty = subst_type_ast(&f.ty, &empty_subst, type_name_of, struct_lookup);
             }
             ItemKind::Struct(s)
+        }
+        // G-026 fix: non-generic enum with a Generic-typed variant
+        // payload (e.g. `enum Value { Array(vec::Vec[Value]) }`).
+        // Without this pass, the `TypeKind::Generic { name: "Vec",
+        // args: [Value] }` AST node leaks past monomorphize and
+        // codegen panics on "monomorphize did not rewrite this site".
+        // Mirror the struct path — walk each variant's payload list
+        // and rewrite generics to their mangled names.
+        ItemKind::Enum(mut e) => {
+            for v in &mut e.variants {
+                for t in &mut v.payload {
+                    *t = subst_type_ast(t, &empty_subst, type_name_of, struct_lookup);
+                }
+            }
+            ItemKind::Enum(e)
         }
         other => other,
     };
@@ -2821,6 +2849,7 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
         Ty::Struct(_) | Ty::Enum(_) => type_name_of(ty),
         Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty(elem, type_name_of)),
         Ty::Simd { elem, lanes } => format!("{}x{}", mangle_ty(elem, type_name_of), lanes),
+        Ty::Mask { elem, lanes } => format!("mask{}x{}", mangle_ty(elem, type_name_of), lanes),
         Ty::Param(name) => format!("Param_{name}"),
         Ty::Error => "ERR".into(),
     }

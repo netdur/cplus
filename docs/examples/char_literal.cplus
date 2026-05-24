@@ -1,0 +1,35 @@
+// v0.0.9 Phase 2 — character literals as `u8` byte values.
+//
+// Every `'x'` form is a single-byte literal of type `u8`. Lowered by
+// the lexer to `Int(byte, U8)` so no new AST or sema surface is added
+// — comparisons, array literals, function args all work as for any
+// other u8 expression. (Match-arm patterns over integer literals are a
+// separate feature; not part of this phase.)
+//
+// Expected output:
+//   485 (= 97 + 123 + 10 + 255)
+//   1   (`'{'` matches '{')
+
+fn is_open_brace(b: u8) -> bool {
+    return b == '{';
+}
+
+fn main() -> i32 {
+    let a: u8 = 'a';        // 97
+    let lb: u8 = '{';        // 123
+    let nl: u8 = '\n';       // 10
+    let high: u8 = '\xff';     // 255
+
+    let total: i32 = (a as i32) + (lb as i32) + (nl as i32) + (high as i32);
+    println(total);
+
+    // Comparison against a char literal — the most common use site
+    // (any byte-level parser).
+    if is_open_brace('{') {
+        println(1);
+    } else {
+        println(0);
+    }
+
+    return 0;
+}

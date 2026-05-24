@@ -1,0 +1,931 @@
+// vendor/json/src/json.cplus — typed JSON parser + serializer.
+//
+// `Value` is a recursive tagged enum; `Object` payload uses
+// `Vec[Member]` instead of `HashMap[str, Value]` because HashMap
+// requires `V: Copy` and `Value` is non-Copy (the `Str` / `Array` /
+// `Object` variants own heap storage). Linear lookup for
+// `object_get(...)` — fine for typical JSON payloads, would need
+// a different shape only for objects with hundreds of keys.
+//
+// **API.**
+//   - `Value::parse(s) -> Result[Value, ParseError]`
+//   - `v.to_string() -> string` (compact JSON; `%.17g` for numbers
+//      round-trips correctly, accepting some ugliness)
+//   - constructors: `Value::null()`, `Value::bool(b)`, `Value::number(n)`,
+//      `Value::str(s)`, builder helpers `array_new()`, `object_new()`,
+//      `array_push(arr, v)`, `object_push(obj, key, v)`
+//   - accessors: `is_null`, `is_bool`, `is_number`, `is_string`,
+//      `is_array`, `is_object`, `as_bool`, `as_number`, `as_str`,
+//      `array_len`, `array_at`, `object_get`
+//
+// Cleanup is automatic via the enum's recursive Drop — no manual
+// `value_free` required (that was the pointer-API workaround).
+
+import "stdlib/vec" as vec;
+import "stdlib/result" as result;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn strtod(s: *u8, endp: **u8) -> f64;
+extern fn snprintf(s: *u8, n: usize, fmt: *u8, ...) -> i32;
+
+pub enum Value {
+    Null,
+    Bool(bool),
+    Number(f64),
+    Str(string),
+    Array(vec::Vec[Value]),
+    Object(vec::Vec[Member]),
+}
+
+pub struct Member {
+    pub key: string,
+    pub value: Value,
+}
+
+pub struct ParseError {
+    pub pos: usize,
+}
+
+// ---------------- Constructors / builders ---------------------------------
+
+impl Value {
+    pub fn null() -> Value { return Value::Null; }
+    pub fn bool_(b: bool) -> Value { return Value::Bool(b); }
+    pub fn number(n: f64) -> Value { return Value::Number(n); }
+    pub fn str_(s: str) -> Value { return Value::Str(s.to_string()); }
+
+    // Predicates.
+    pub fn is_null(self) -> bool {
+        let yes: bool = match self {
+            Value::Null => true,
+            _ => false,
+        };
+        return yes;
+    }
+    pub fn is_bool(self) -> bool {
+        let yes: bool = match self {
+            Value::Bool(_) => true,
+            _ => false,
+        };
+        return yes;
+    }
+    pub fn is_number(self) -> bool {
+        let yes: bool = match self {
+            Value::Number(_) => true,
+            _ => false,
+        };
+        return yes;
+    }
+    pub fn is_string(self) -> bool {
+        let yes: bool = match self {
+            Value::Str(_) => true,
+            _ => false,
+        };
+        return yes;
+    }
+    pub fn is_array(self) -> bool {
+        let yes: bool = match self {
+            Value::Array(_) => true,
+            _ => false,
+        };
+        return yes;
+    }
+    pub fn is_object(self) -> bool {
+        let yes: bool = match self {
+            Value::Object(_) => true,
+            _ => false,
+        };
+        return yes;
+    }
+}
+
+pub fn array_new() -> Value {
+    return Value::Array(vec::new::[Value]());
+}
+
+pub fn object_new() -> Value {
+    return Value::Object(vec::new::[Member]());
+}
+
+// ---------------- Internal byte buffer ------------------------------------
+
+struct Buf { ptr: *u8, len: usize, cap: usize }
+
+fn buf_new() -> Buf {
+    return Buf { ptr: unsafe { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
+}
+
+fn buf_push(mut b: Buf, byte: u8) -> Buf {
+    if b.len == b.cap {
+        let nc: usize = if b.cap == (0 as usize) { 16 as usize } else { b.cap *% (2 as usize) };
+        let raw: *u8 = unsafe { realloc(b.ptr, nc) };
+        b.ptr = raw;
+        b.cap = nc;
+    }
+    let slot: *u8 = unsafe { b.ptr + b.len };
+    unsafe { *slot = byte; }
+    b.len = b.len +% (1 as usize);
+    return b;
+}
+
+fn buf_free(b: Buf) {
+    if unsafe { b.ptr as usize } != (0 as usize) { unsafe { free(b.ptr); } }
+    return;
+}
+
+fn buf_to_string(b: Buf) -> string {
+    let view: str = unsafe { str_from_raw_parts(b.ptr, b.len) };
+    let out: string = view.to_string();
+    buf_free(b);
+    return out;
+}
+
+fn hex_digit(c: u8) -> i32 {
+    if c >= ('0' as u8) && c <= ('9' as u8) { return (c -% ('0' as u8)) as i32; }
+    if c >= ('a' as u8) && c <= ('f' as u8) { return ((c -% ('a' as u8)) +% (10 as u8)) as i32; }
+    if c >= ('A' as u8) && c <= ('F' as u8) { return ((c -% ('A' as u8)) +% (10 as u8)) as i32; }
+    return - 1 as i32;
+}
+
+fn buf_push_utf8(mut b: Buf, cp: i32) -> Buf {
+    if cp < 0x80 {
+        return buf_push(b, cp as u8);
+    }
+    if cp < 0x800 {
+        b = buf_push(b, (0xC0 +% ((cp >> 6) & 0x1F)) as u8);
+        b = buf_push(b, (0x80 +% (cp & 0x3F)) as u8);
+        return b;
+    }
+    if cp < 0x10000 {
+        b = buf_push(b, (0xE0 +% ((cp >> 12) & 0x0F)) as u8);
+        b = buf_push(b, (0x80 +% ((cp >> 6) & 0x3F)) as u8);
+        b = buf_push(b, (0x80 +% (cp & 0x3F)) as u8);
+        return b;
+    }
+    // 4-byte form covers U+10000..U+10FFFF (surrogate-pair codepoints).
+    b = buf_push(b, (0xF0 +% ((cp >> 18) & 0x07)) as u8);
+    b = buf_push(b, (0x80 +% ((cp >> 12) & 0x3F)) as u8);
+    b = buf_push(b, (0x80 +% ((cp >> 6) & 0x3F)) as u8);
+    b = buf_push(b, (0x80 +% (cp & 0x3F)) as u8);
+    return b;
+}
+
+// ---------------- Parser --------------------------------------------------
+
+struct Parser {
+    src: *u8,
+    len: usize,
+    pos: usize,
+}
+
+fn parser_new(s: str) -> Parser {
+    return Parser {
+        src: str_ptr(s),
+        len: str_len(s),
+        pos: 0 as usize,
+    };
+}
+
+fn peek(p: Parser) -> i32 {
+    if p.pos >= p.len { return - 1 as i32; }
+    let q: *u8 = unsafe { p.src + p.pos };
+    return unsafe { *q } as i32;
+}
+
+fn skip_ws(mut p: Parser) -> Parser {
+    while p.pos < p.len {
+        let q: *u8 = unsafe { p.src + p.pos };
+        let c: u8 = unsafe { *q };
+        if c == (32 as u8) || c == (9 as u8) || c == (10 as u8) || c == (13 as u8) {
+            p.pos = p.pos +% (1 as usize);
+        } else {
+            return p;
+        }
+    }
+    return p;
+}
+
+fn match_keyword(p: Parser, kw: str) -> bool {
+    let n: usize = str_len(kw);
+    if p.pos +% n > p.len { return false; }
+    let mut i: usize = 0 as usize;
+    while i < n {
+        let kq: *u8 = unsafe { str_ptr(kw) + i };
+        let sq: *u8 = unsafe { p.src + (p.pos +% i) };
+        if unsafe { *kq } != unsafe { *sq } { return false; }
+        i = i +% (1 as usize);
+    }
+    return true;
+}
+
+struct StrParse { p: Parser, ok: bool, buf: Buf }
+
+fn parse_string_bytes(mut p: Parser) -> StrParse {
+    // Caller has verified the opening `"`. Consume it.
+    p.pos = p.pos +% (1 as usize);
+    let mut b: Buf = buf_new();
+    while p.pos < p.len {
+        let q: *u8 = unsafe { p.src + p.pos };
+        let c: u8 = unsafe { *q };
+        if c == ('"' as u8) {
+            p.pos = p.pos +% (1 as usize);
+            return StrParse { p: p, ok: true, buf: b };
+        }
+        if c == ('\\' as u8) {
+            p.pos = p.pos +% (1 as usize);
+            if p.pos >= p.len {
+                buf_free(b);
+                return StrParse { p: p, ok: false, buf: buf_new() };
+            }
+            let eq: *u8 = unsafe { p.src + p.pos };
+            let esc: u8 = unsafe { *eq };
+            p.pos = p.pos +% (1 as usize);
+            if esc == ('"' as u8) { b = buf_push(b, '"' as u8); }
+            else if esc == ('\\' as u8) { b = buf_push(b, '\\' as u8); }
+            else if esc == ('/' as u8) { b = buf_push(b, '/' as u8); }
+            else if esc == ('b' as u8) { b = buf_push(b, 8 as u8); }
+            else if esc == ('f' as u8) { b = buf_push(b, 12 as u8); }
+            else if esc == ('n' as u8) { b = buf_push(b, 10 as u8); }
+            else if esc == ('r' as u8) { b = buf_push(b, 13 as u8); }
+            else if esc == ('t' as u8) { b = buf_push(b, 9 as u8); }
+            else if esc == ('u' as u8) {
+                if p.pos +% (4 as usize) > p.len {
+                    buf_free(b);
+                    return StrParse { p: p, ok: false, buf: buf_new() };
+                }
+                let h1q: *u8 = unsafe { p.src + p.pos };
+                let h2q: *u8 = unsafe { p.src + (p.pos +% (1 as usize)) };
+                let h3q: *u8 = unsafe { p.src + (p.pos +% (2 as usize)) };
+                let h4q: *u8 = unsafe { p.src + (p.pos +% (3 as usize)) };
+                let h1: i32 = hex_digit(unsafe { *h1q });
+                let h2: i32 = hex_digit(unsafe { *h2q });
+                let h3: i32 = hex_digit(unsafe { *h3q });
+                let h4: i32 = hex_digit(unsafe { *h4q });
+                if h1 < 0 || h2 < 0 || h3 < 0 || h4 < 0 {
+                    buf_free(b);
+                    return StrParse { p: p, ok: false, buf: buf_new() };
+                }
+                let mut cp: i32 = (h1 << 12)| (h2 << 8)| (h3 << 4)|h4;
+                p.pos = p.pos +% (4 as usize);
+                // RFC 8259 §7: a high-surrogate (D800-DBFF) MUST be
+                // followed by `\uYYYY` where Y is a low-surrogate
+                // (DC00-DFFF). Combine the pair into a single codepoint
+                // outside the BMP. Lone surrogates are tolerated by
+                // pushing them as 3-byte UTF-8 to match the JSON spec's
+                // "replace with U+FFFD" recommendation loosely; we keep
+                // the bits intact so callers can round-trip them.
+                if cp >= 0xD800 && cp <= 0xDBFF {
+                    if p.pos +% (6 as usize) <= p.len {
+                        let s0: *u8 = unsafe { p.src + p.pos };
+                        let s1: *u8 = unsafe { p.src + (p.pos +% (1 as usize)) };
+                        if unsafe { *s0 } == ('\\' as u8) && unsafe { *s1 } == ('u' as u8) {
+                            let l1q: *u8 = unsafe { p.src + (p.pos +% (2 as usize)) };
+                            let l2q: *u8 = unsafe { p.src + (p.pos +% (3 as usize)) };
+                            let l3q: *u8 = unsafe { p.src + (p.pos +% (4 as usize)) };
+                            let l4q: *u8 = unsafe { p.src + (p.pos +% (5 as usize)) };
+                            let l1: i32 = hex_digit(unsafe { *l1q });
+                            let l2: i32 = hex_digit(unsafe { *l2q });
+                            let l3: i32 = hex_digit(unsafe { *l3q });
+                            let l4: i32 = hex_digit(unsafe { *l4q });
+                            if l1 >= 0 && l2 >= 0 && l3 >= 0 && l4 >= 0 {
+                                let low: i32 = (l1 << 12)| (l2 << 8)| (l3 << 4)|l4;
+                                if low >= 0xDC00 && low <= 0xDFFF {
+                                    cp = 0x10000
+                                        +% ((cp -% 0xD800) << 10)
+                                        +% (low -% 0xDC00);
+                                    p.pos = p.pos +% (6 as usize);
+                                }
+                            }
+                        }
+                    }
+                }
+                b = buf_push_utf8(b, cp);
+            }
+            else {
+                buf_free(b);
+                return StrParse { p: p, ok: false, buf: buf_new() };
+            }
+        } else {
+            b = buf_push(b, c);
+            p.pos = p.pos +% (1 as usize);
+        }
+    }
+    buf_free(b);
+    return StrParse { p: p, ok: false, buf: buf_new() };
+}
+
+struct ValParse { p: Parser, ok: bool, v: Value }
+
+fn fail(p: Parser) -> ValParse {
+    return ValParse { p: p, ok: false, v: Value::Null };
+}
+
+fn is_number_byte(c: u8) -> bool {
+    if c >= ('0' as u8) && c <= ('9' as u8) { return true; }
+    if c == ('-' as u8) || c == ('+' as u8) { return true; }
+    if c == ('.' as u8) { return true; }
+    if c == ('e' as u8) || c == ('E' as u8) { return true; }
+    return false;
+}
+
+fn parse_number(mut p: Parser) -> ValParse {
+    let start: usize = p.pos;
+    while p.pos < p.len {
+        let q: *u8 = unsafe { p.src + p.pos };
+        if !is_number_byte(unsafe { *q }) { break; }
+        p.pos = p.pos +% (1 as usize);
+    }
+    let n: usize = p.pos -% start;
+    if n == (0 as usize) { return fail(p); }
+    let buf: *u8 = unsafe { malloc(n +% (1 as usize)) };
+    if unsafe { buf as usize } == (0 as usize) { return fail(p); }
+    let src_q: *u8 = unsafe { p.src + start };
+    unsafe { memcpy(buf, src_q, n); }
+    let nulslot: *u8 = unsafe { buf + n };
+    unsafe { *nulslot = 0 as u8; }
+    let endp_slot: *u8 = unsafe { malloc(size_of::[*u8]()) };
+    let endp: **u8 = unsafe { endp_slot as **u8 };
+    let val: f64 = unsafe { strtod(buf, endp) };
+    let consumed_end: *u8 = unsafe { *endp };
+    let consumed: usize = unsafe { (consumed_end as usize) -% (buf as usize) };
+    unsafe { free(endp_slot); }
+    unsafe { free(buf); }
+    if consumed == (0 as usize) || consumed != n { return fail(p); }
+    return ValParse { p: p, ok: true, v: Value::Number(val) };
+}
+
+fn parse_value(mut p: Parser) -> ValParse {
+    p = skip_ws(p);
+    let c: i32 = peek(p);
+    if c < 0 { return fail(p); }
+    let cb: u8 = c as u8;
+    if cb == ('n' as u8) {
+        if match_keyword(p, "null") { p.pos = p.pos +% (4 as usize); return ValParse { p: p, ok: true, v: Value::Null }; }
+        return fail(p);
+    }
+    if cb == ('t' as u8) {
+        if match_keyword(p, "true") { p.pos = p.pos +% (4 as usize); return ValParse { p: p, ok: true, v: Value::Bool(true) }; }
+        return fail(p);
+    }
+    if cb == ('f' as u8) {
+        if match_keyword(p, "false") { p.pos = p.pos +% (5 as usize); return ValParse { p: p, ok: true, v: Value::Bool(false) }; }
+        return fail(p);
+    }
+    if cb == ('"' as u8) {
+        let sp: StrParse = parse_string_bytes(p);
+        if !sp.ok { return fail(sp.p); }
+        let s: string = buf_to_string(sp.buf);
+        return ValParse { p: sp.p, ok: true, v: Value::Str(s) };
+    }
+    if cb == ('[' as u8) { return parse_array(p); }
+    if cb == ('{' as u8) { return parse_object(p); }
+    if cb == ('-' as u8) || (cb >= ('0' as u8) && cb <= ('9' as u8)) { return parse_number(p); }
+    return fail(p);
+}
+
+fn parse_array(mut p: Parser) -> ValParse {
+    p.pos = p.pos +% (1 as usize);     // consume '['
+    let mut elems: vec::Vec[Value] = vec::new::[Value]();
+    p = skip_ws(p);
+    if peek(p) == (']' as i32) {
+        p.pos = p.pos +% (1 as usize);
+        return ValParse { p: p, ok: true, v: Value::Array(elems) };
+    }
+    loop {
+        let r: ValParse = parse_value(p);
+        p = r.p;
+        if !r.ok { return fail(p); }
+        elems.push(r.v);
+        p = skip_ws(p);
+        let nc: i32 = peek(p);
+        if nc == (',' as i32) {
+            p.pos = p.pos +% (1 as usize);
+            p = skip_ws(p);
+            continue;
+        }
+        if nc == (']' as i32) {
+            p.pos = p.pos +% (1 as usize);
+            return ValParse { p: p, ok: true, v: Value::Array(elems) };
+        }
+        return fail(p);
+    }
+    return fail(p);
+}
+
+fn parse_object(mut p: Parser) -> ValParse {
+    p.pos = p.pos +% (1 as usize);     // consume '{'
+    let mut members: vec::Vec[Member] = vec::new::[Member]();
+    p = skip_ws(p);
+    if peek(p) == ('}' as i32) {
+        p.pos = p.pos +% (1 as usize);
+        return ValParse { p: p, ok: true, v: Value::Object(members) };
+    }
+    loop {
+        p = skip_ws(p);
+        if peek(p) != ('"' as i32) { return fail(p); }
+        let ks: StrParse = parse_string_bytes(p);
+        p = ks.p;
+        if !ks.ok { return fail(p); }
+        let key: string = buf_to_string(ks.buf);
+
+        p = skip_ws(p);
+        if peek(p) != (':' as i32) { return fail(p); }
+        p.pos = p.pos +% (1 as usize);
+
+        let r: ValParse = parse_value(p);
+        p = r.p;
+        if !r.ok { return fail(p); }
+        members.push(Member { key: key, value: r.v });
+
+        p = skip_ws(p);
+        let nc: i32 = peek(p);
+        if nc == (',' as i32) {
+            p.pos = p.pos +% (1 as usize);
+            continue;
+        }
+        if nc == ('}' as i32) {
+            p.pos = p.pos +% (1 as usize);
+            return ValParse { p: p, ok: true, v: Value::Object(members) };
+        }
+        return fail(p);
+    }
+    return fail(p);
+}
+
+pub fn parse(s: str) -> result::Result[Value, ParseError] {
+    let p0: Parser = parser_new(s);
+    let r: ValParse = parse_value(p0);
+    if !r.ok {
+        return result::Result[Value, ParseError]::Err(ParseError { pos: r.p.pos });
+    }
+    let p_end: Parser = skip_ws(r.p);
+    if p_end.pos != p_end.len {
+        return result::Result[Value, ParseError]::Err(ParseError { pos: p_end.pos });
+    }
+    return result::Result[Value, ParseError]::Ok(r.v);
+}
+
+// ---------------- Accessors -----------------------------------------------
+
+pub fn as_bool(v: Value) -> bool {
+    let b: bool = match v {
+        Value::Bool(x) => x,
+        _ => false,
+    };
+    return b;
+}
+
+pub fn as_number(v: Value) -> f64 {
+    let n: f64 = match v {
+        Value::Number(x) => x,
+        _ => 0.0f64,
+    };
+    return n;
+}
+
+pub fn as_str(v: Value) -> string {
+    let s: string = match v {
+        Value::Str(x) => x,
+        _ => "".to_string(),
+    };
+    return s;
+}
+
+pub fn array_len(v: Value) -> usize {
+    let n: usize = match v {
+        Value::Array(arr) => arr.len(),
+        _ => 0 as usize,
+    };
+    return n;
+}
+
+pub fn array_at(v: Value, i: usize) -> Value {
+    let r: Value = match v {
+        Value::Array(arr) => arr.get(i),
+        _ => Value::Null,
+    };
+    return r;
+}
+
+pub fn object_len(v: Value) -> usize {
+    let n: usize = match v {
+        Value::Object(arr) => arr.len(),
+        _ => 0 as usize,
+    };
+    return n;
+}
+
+pub fn object_key_at(v: Value, i: usize) -> string {
+    let s: string = match v {
+        Value::Object(arr) => {
+            let m: Member = arr.get(i);
+            m.key
+        }
+        _ => "".to_string(),
+    };
+    return s;
+}
+
+pub fn object_value_at(v: Value, i: usize) -> Value {
+    let r: Value = match v {
+        Value::Object(arr) => {
+            let m: Member = arr.get(i);
+            m.value
+        }
+        _ => Value::Null,
+    };
+    return r;
+}
+
+pub fn object_get(v: Value, key: str) -> Value {
+    let r: Value = match v {
+        Value::Object(arr) => {
+            let n: usize = arr.len();
+            let mut i: usize = 0 as usize;
+            let mut found: Value = Value::Null;
+            let mut hit: bool = false;
+            while i < n {
+                let m: Member = arr.get(i);
+                if m.key.as_str() == key {
+                    found = m.value;
+                    hit = true;
+                    i = n;   // break
+                } else {
+                    i = i +% (1 as usize);
+                }
+            }
+            if hit { found } else { Value::Null }
+        }
+        _ => Value::Null,
+    };
+    return r;
+}
+
+// ---------------- Serializer ----------------------------------------------
+
+fn buf_push_str(mut b: Buf, s: str) -> Buf {
+    let n: usize = str_len(s);
+    let p: *u8 = str_ptr(s);
+    let mut i: usize = 0 as usize;
+    while i < n {
+        let q: *u8 = unsafe { p + i };
+        b = buf_push(b, unsafe { *q });
+        i = i +% (1 as usize);
+    }
+    return b;
+}
+
+fn buf_push_bytes(mut b: Buf, p: *u8, n: usize) -> Buf {
+    let mut i: usize = 0 as usize;
+    while i < n {
+        let q: *u8 = unsafe { p + i };
+        b = buf_push(b, unsafe { *q });
+        i = i +% (1 as usize);
+    }
+    return b;
+}
+
+fn encode_string(mut b: Buf, s: str) -> Buf {
+    b = buf_push(b, '"' as u8);
+    let p: *u8 = str_ptr(s);
+    let n: usize = str_len(s);
+    let mut i: usize = 0 as usize;
+    while i < n {
+        let q: *u8 = unsafe { p + i };
+        let c: u8 = unsafe { *q };
+        if c == ('"' as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, '"' as u8); }
+        else if c == ('\\' as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, '\\' as u8); }
+        else if c == (8 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 'b' as u8); }
+        else if c == (12 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 'f' as u8); }
+        else if c == (10 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 'n' as u8); }
+        else if c == (13 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 'r' as u8); }
+        else if c == (9 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 't' as u8); }
+        else if c < (32 as u8) {
+            let hex: *u8 = unsafe { malloc(7 as usize) };
+            unsafe { snprintf(hex, 7 as usize, str_ptr("\\u%04x\0"), c as i32); }
+            b = buf_push_bytes(b, hex, 6 as usize);
+            unsafe { free(hex); }
+        }
+        else { b = buf_push(b, c); }
+        i = i +% (1 as usize);
+    }
+    b = buf_push(b, '"' as u8);
+    return b;
+}
+
+fn encode_number(mut b: Buf, n: f64) -> Buf {
+    // Shortest round-trip: prefer fixed-point form (`%.*f` with the
+    // smallest decimal-place count that round-trips), falling back to
+    // `%.*g` for very large / very small magnitudes where fixed-point
+    // would be longer than scientific. Integer-valued doubles in safe
+    // int range print as plain integers ("30", not "3e+01"). This
+    // replaces the v0.0.9 unconditional %.17g which always emitted 17
+    // sig figs ("0.1" → "0.10000000000000001").
+    let buf: *u8 = unsafe { malloc(64 as usize) };
+    let fmt_buf: *u8 = unsafe { malloc(8 as usize) };
+    let endp_slot: *u8 = unsafe { malloc(size_of::[*u8]()) };
+    let endp: **u8 = unsafe { endp_slot as **u8 };
+
+    let mut chosen_len: i32 = 0;
+
+    // Phase 1: try %.0f .. %.17f (fixed point). Picks the smallest
+    // decimal-place count that round-trips. Catches integers ("30"),
+    // simple decimals ("0.1", "3.14"), etc.
+    let mut p: i32 = 0;
+    while p <= 17 {
+        let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, str_ptr("%%.%df\0"), p) };
+        if fmt_n <= 0 { p = p +% 1; continue; }
+        let w: i32 = unsafe { snprintf(buf, 64 as usize, fmt_buf, n) };
+        if w > 0 && w < 64 {
+            let round_trip: f64 = unsafe { strtod(buf, endp) };
+            if round_trip == n {
+                chosen_len = w;
+                p = 100;
+            }
+        }
+        p = p +% 1;
+    }
+
+    // Phase 2: if fixed point didn't work (very large or very small
+    // magnitude), fall back to %.*g which can use scientific notation.
+    if chosen_len == 0 {
+        let mut q: i32 = 1;
+        while q <= 17 {
+            let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, str_ptr("%%.%dg\0"), q) };
+            if fmt_n <= 0 { q = q +% 1; continue; }
+            let w: i32 = unsafe { snprintf(buf, 64 as usize, fmt_buf, n) };
+            if w > 0 && w < 64 {
+                let round_trip: f64 = unsafe { strtod(buf, endp) };
+                if round_trip == n {
+                    chosen_len = w;
+                    q = 100;
+                }
+            }
+            q = q +% 1;
+        }
+    }
+
+    if chosen_len == 0 {
+        chosen_len = unsafe { snprintf(buf, 64 as usize, str_ptr("%.17g\0"), n) };
+    }
+    if chosen_len > 0 {
+        b = buf_push_bytes(b, buf, chosen_len as usize);
+    }
+    unsafe { free(endp_slot); }
+    unsafe { free(fmt_buf); }
+    unsafe { free(buf); }
+    return b;
+}
+
+fn encode_value(mut b: Buf, v: Value) -> Buf {
+    let out: Buf = match v {
+        Value::Null => buf_push_str(b, "null"),
+        Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },
+        Value::Number(n) => encode_number(b, n),
+        Value::Str(s) => encode_string(b, s.as_str()),
+        Value::Array(arr) => {
+            let mut bb: Buf = buf_push(b, '[' as u8);
+            let n: usize = arr.len();
+            let mut i: usize = 0 as usize;
+            while i < n {
+                if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
+                bb = encode_value(bb, arr.get(i));
+                i = i +% (1 as usize);
+            }
+            bb = buf_push(bb, ']' as u8);
+            bb
+        }
+        Value::Object(arr) => {
+            let mut bb: Buf = buf_push(b, '{' as u8);
+            let n: usize = arr.len();
+            let mut i: usize = 0 as usize;
+            while i < n {
+                if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
+                let m: Member = arr.get(i);
+                bb = encode_string(bb, m.key.as_str());
+                bb = buf_push(bb, ':' as u8);
+                bb = encode_value(bb, m.value);
+                i = i +% (1 as usize);
+            }
+            bb = buf_push(bb, '}' as u8);
+            bb
+        }
+    };
+    return out;
+}
+
+impl Value {
+    pub fn to_string(self) -> string {
+        let b: Buf = buf_new();
+        let final_buf: Buf = encode_value(b, self);
+        return buf_to_string(final_buf);
+    }
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+
+fn parse_ok(src: str) -> Value {
+    let r: result::Result[Value, ParseError] = parse(src);
+    guard let result::Result[Value, ParseError]::Ok(v) = r else {
+        assert false;
+        return Value::Null;
+    };
+    return v;
+}
+
+fn parse_fails(src: str) -> bool {
+    let r: result::Result[Value, ParseError] = parse(src);
+    let failed: bool = match r {
+        result::Result[Value, ParseError]::Ok(_) => false,
+        result::Result[Value, ParseError]::Err(_) => true,
+    };
+    return failed;
+}
+
+#[test]
+fn test_parse_null() {
+    let v: Value = parse_ok("null");
+    assert v.is_null();
+}
+
+#[test]
+fn test_parse_true() {
+    let v: Value = parse_ok("true");
+    assert v.is_bool();
+    assert as_bool(v);
+}
+
+#[test]
+fn test_parse_false() {
+    let v: Value = parse_ok("false");
+    assert as_bool(v) == false;
+}
+
+#[test]
+fn test_parse_number_integer() {
+    let v: Value = parse_ok("42");
+    assert v.is_number();
+    let n: f64 = as_number(v);
+    assert n >= 41.5f64;
+    assert n <= 42.5f64;
+}
+
+#[test]
+fn test_parse_number_with_exponent() {
+    let v: Value = parse_ok("-1.5e2");
+    let n: f64 = as_number(v);
+    assert n >= - 150.5f64;
+    assert n <= - 149.5f64;
+}
+
+#[test]
+fn test_parse_number_rejects_double_dot() {
+    assert parse_fails("1.2.3");
+}
+
+#[test]
+fn test_parse_string_simple() {
+    let v: Value = parse_ok("\"hello\"");
+    assert v.is_string();
+    let s: string = as_str(v);
+    assert str_len(s.as_str()) == (5 as usize);
+}
+
+#[test]
+fn test_parse_string_with_escapes() {
+    let v: Value = parse_ok("\"a\\nb\\t\\\\\"");
+    let s: string = as_str(v);
+    // decoded: 'a', '\n', 'b', '\t', '\\' = 5 bytes
+    assert str_len(s.as_str()) == (5 as usize);
+}
+
+#[test]
+fn test_parse_empty_array() {
+    let v: Value = parse_ok("[]");
+    assert v.is_array();
+    assert array_len(v) == (0 as usize);
+}
+
+#[test]
+fn test_parse_array_of_numbers() {
+    let v: Value = parse_ok("[1, 2, 3]");
+    assert array_len(v) == (3 as usize);
+}
+
+#[test]
+fn test_parse_empty_object() {
+    let v: Value = parse_ok("{}");
+    assert v.is_object();
+    assert object_len(v) == (0 as usize);
+}
+
+#[test]
+fn test_parse_object_get_by_key() {
+    let v: Value = parse_ok("{\"a\":1,\"b\":2}");
+    let va: Value = object_get(v, "a");
+    assert va.is_number();
+    let vmiss: Value = object_get(parse_ok("{\"a\":1}"), "missing");
+    assert vmiss.is_null();
+}
+
+#[test]
+fn test_parse_nested() {
+    let v: Value = parse_ok("{\"arr\":[true,false,null]}");
+    let arr: Value = object_get(v, "arr");
+    assert arr.is_array();
+    assert array_len(arr) == (3 as usize);
+}
+
+#[test]
+fn test_parse_rejects_trailing_comma() {
+    assert parse_fails("[1, 2,]");
+}
+
+#[test]
+fn test_parse_rejects_unterminated_string() {
+    assert parse_fails("\"hi");
+}
+
+#[test]
+fn test_parse_rejects_empty() {
+    assert parse_fails("");
+}
+
+#[test]
+fn test_round_trip_array() {
+    let src: str = "[true,false,null]";
+    let v: Value = parse_ok(src);
+    assert v.to_string().as_str() == src;
+}
+
+#[test]
+fn test_round_trip_object() {
+    let src: str = "{\"k\":\"v\"}";
+    let v: Value = parse_ok(src);
+    assert v.to_string().as_str() == src;
+}
+
+#[test]
+fn test_builder_array_new_push() {
+    let mut arr: Value = array_new();
+    let mut arr_inner: vec::Vec[Value] = match arr {
+        Value::Array(a) => a,
+        _ => vec::new::[Value](),
+    };
+    arr_inner.push(Value::Number(7.0f64));
+    let final_v: Value = Value::Array(arr_inner);
+    assert array_len(final_v) == (1 as usize);
+}
+
+#[test]
+fn test_value_drop_does_not_double_free() {
+    // The typed-enum Value carries Vec[Value] / Vec[Member] payloads;
+    // dropping the outer Value recursively drops each Inner. This
+    // test just exercises construction + scope-exit drop and relies
+    // on ASan (if enabled) to catch double-free or leak.
+    let v: Value = parse_ok("[\"a\",[\"b\",[\"c\"]]]");
+    assert v.is_array();
+    // no explicit free needed
+}
+
+#[test]
+fn test_emit_number_short_form() {
+    // Shortest round-trip: integers print without trailing decimal,
+    // simple decimals print at their natural precision (not the old
+    // %.17g "0.10000000000000001" noise).
+    let v_int: Value = Value::Number(42.0f64);
+    let s_int: string = v_int.to_string();
+    assert s_int.as_str() == "42";
+
+    let v_dec: Value = Value::Number(0.1f64);
+    let s_dec: string = v_dec.to_string();
+    assert s_dec.as_str() == "0.1";
+}
+
+#[test]
+fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
+    // 😀 = 😀 (U+1F600). Combined into a single codepoint,
+    // emitted as 4 UTF-8 bytes: F0 9F 98 80.
+    let v: Value = parse_ok("\"\\uD83D\\uDE00\"");
+    let s: string = as_str(v);
+    assert str_len(s.as_str()) == (4 as usize);
+    let p: *u8 = str_ptr(s.as_str());
+    assert unsafe { *p } == (0xF0 as u8);
+    assert unsafe { *(p + 1) } == (0x9F as u8);
+    assert unsafe { *(p + 2) } == (0x98 as u8);
+    assert unsafe { *(p + 3) } == (0x80 as u8);
+}
+
+#[test]
+fn test_parse_bmp_unicode_escape_still_works() {
+    // U+00E9 = é. Two-byte UTF-8 sequence: C3 A9.
+    let v: Value = parse_ok("\"\\u00e9\"");
+    let s: string = as_str(v);
+    assert str_len(s.as_str()) == (2 as usize);
+    let p: *u8 = str_ptr(s.as_str());
+    assert unsafe { *p } == (0xC3 as u8);
+    assert unsafe { *(p + 1) } == (0xA9 as u8);
+}

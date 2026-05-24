@@ -8,12 +8,21 @@ import "stdlib/result" as result;
 
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn exit(code: i32);
-extern fn _NSGetArgc() -> *i32;
-extern fn _NSGetArgv() -> ***u8;
-extern fn strlen(s: *u8) -> usize;
-extern fn malloc(n: usize) -> *u8;
-extern fn realloc(p: *u8, n: usize) -> *u8;
-extern fn free(p: *u8);
+
+// Scan `len` bytes from `ptr` for the first occurrence of `b`. Returns
+// the offset (relative to `ptr`) as `Some(usize)`, or `None` if not
+// found. Used by `--name=value` parsing to find the `=` separator.
+fn find_byte(ptr: *u8, len: usize, b: u8) -> option::Option[usize] {
+    let mut i: usize = 0 as usize;
+    while i < len {
+        let p: *u8 = unsafe { ptr + i };
+        if unsafe { *p } == b {
+            return option::Option[usize]::Some(i);
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[usize]::None;
+}
 
 pub struct Arg {
     pub name: str,
@@ -36,6 +45,12 @@ pub fn new_arg(name: str) -> Arg {
 }
 
 impl Arg {
+    // Convention shim — matches stdlib's `Type::new`. Equivalent to
+    // package-level `clap::new_arg(name)`.
+    pub fn new(name: str) -> Arg {
+        return new_arg(name);
+    }
+
     pub fn short(mut self, s: str) -> Arg {
         self.short_name = s;
         return self;
@@ -58,90 +73,12 @@ impl Arg {
     }
 }
 
-pub struct ArgVec {
-    ptr: *Arg,
-    len: usize,
-    cap: usize,
-}
-
-pub fn new_arg_vec() -> ArgVec {
-    return ArgVec {
-        ptr: unsafe { 0 as *Arg },
-        len: 0 as usize,
-        cap: 0 as usize,
-    };
-}
-
-impl ArgVec {
-    pub fn len(self) -> usize {
-        return self.len;
-    }
-
-    pub fn get(self, i: usize) -> Arg {
-        let p: *Arg = unsafe { self.ptr + i };
-        return unsafe { *p };
-    }
-
-    pub fn push(mut self, move x: Arg) {
-        if self.len == self.cap {
-            let mut new_cap: usize = self.cap *% (2 as usize);
-            if new_cap == (0 as usize) {
-                new_cap = 1 as usize;
-            }
-            let new_bytes: usize = new_cap *% size_of::[Arg]();
-            let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
-            self.ptr = unsafe { raw as *Arg };
-            self.cap = new_cap;
-        }
-        let slot: *Arg = unsafe { self.ptr + self.len };
-        unsafe { *slot = x; }
-        self.len = self.len +% (1 as usize);
-        return;
-    }
-
-    fn drop(mut self) {
-        if self.cap == (0 as usize) { return; }
-        unsafe { free(self.ptr as *u8); }
-        return;
-    }
-}
-
 pub struct App {
     pub name: str,
     pub version: str,
     pub author: str,
     pub about: str,
-    pub args: ArgVec,
-}
-
-fn alloc_map_str(move m: map::HashMap[str, str]) -> *u8 {
-    let bytes: usize = size_of::[map::HashMap[str, str]]();
-    let raw: *u8 = unsafe { malloc(bytes) };
-    let p: *map::HashMap[str, str] = unsafe { raw as *map::HashMap[str, str] };
-    unsafe { *p = m; }
-    return raw;
-}
-
-fn map_str_free(p: *u8) {
-    let map_ptr: *map::HashMap[str, str] = unsafe { p as *map::HashMap[str, str] };
-    unsafe { __cplus_drop_in_place::[map::HashMap[str, str]](map_ptr); }
-    unsafe { free(p); }
-    return;
-}
-
-fn alloc_vec_str(move v: vec::Vec[str]) -> *u8 {
-    let bytes: usize = size_of::[vec::Vec[str]]();
-    let raw: *u8 = unsafe { malloc(bytes) };
-    let p: *vec::Vec[str] = unsafe { raw as *vec::Vec[str] };
-    unsafe { *p = v; }
-    return raw;
-}
-
-fn vec_str_free(p: *u8) {
-    let vec_ptr: *vec::Vec[str] = unsafe { p as *vec::Vec[str] };
-    unsafe { __cplus_drop_in_place::[vec::Vec[str]](vec_ptr); }
-    unsafe { free(p); }
-    return;
+    pub args: vec::Vec[Arg],
 }
 
 pub fn new_app(name: str) -> App {
@@ -150,7 +87,7 @@ pub fn new_app(name: str) -> App {
         version: "",
         author: "",
         about: "",
-        args: new_arg_vec(),
+        args: vec::new::[Arg](),
     };
 }
 
@@ -168,6 +105,12 @@ fn write_out(fd: i32, s: str) {
 }
 
 impl App {
+    // Convention shim — matches stdlib's `Type::new`. Equivalent to
+    // package-level `clap::new_app(name)`.
+    pub fn new(name: str) -> App {
+        return new_app(name);
+    }
+
     pub fn version(mut self, v: str) -> App {
         self.version = v;
         return self;
@@ -232,7 +175,7 @@ impl App {
         write_out(fd, "\nUSAGE:\n    ");
         write_out(fd, self.name);
         write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n\nFLAGS & OPTIONS:\n");
-        
+
         let mut i: usize = 0 as usize;
         let len: usize = self.args.len();
         while i < len {
@@ -262,7 +205,7 @@ impl App {
             write_out(fd, "\n");
             i = i +% (1 as usize);
         }
-        
+
         unsafe { exit(0 as i32); }
         return;
     }
@@ -278,7 +221,7 @@ impl App {
         unsafe { exit(1 as i32); }
         return;
     }
-    
+
     fn print_missing_value_and_exit(self, name: str) {
         let fd: i32 = 2; // stderr
         write_out(fd, "error: The argument '--");
@@ -297,84 +240,139 @@ impl App {
         return;
     }
 
-    pub fn get_matches(self) -> ArgMatches {
-        let argc: i32 = unsafe { *_NSGetArgc() };
-        let argv: **u8 = unsafe { *_NSGetArgv() };
-        let mut args: vec::Vec[str] = vec::new::[str]();
-        
-        let mut i: usize = 0 as usize;
-        while i < (argc as usize) {
-            let pp: **u8 = unsafe { argv + i };
-            let arg: *u8 = unsafe { *pp };
-            let len: usize = unsafe { strlen(arg) };
-            let s: str = unsafe { str_from_raw_parts(arg, len) };
-            args.push(s);
-            i = i +% (1 as usize);
-        }
-        return self.get_matches_from(args);
-    }
-
-    pub fn get_matches_from(self, args: vec::Vec[str]) -> ArgMatches {
+    // Cross-platform entrypoint. Consumers construct the args vector
+    // however suits their platform — on macOS via stdlib::env, on Linux
+    // via a custom `main(argc, argv)` once C+ exposes that, etc. The
+    // pre-v0.0.9 `get_matches()` shortcut that called `_NSGetArgc/Argv`
+    // directly was Darwin-only and has been dropped to keep this
+    // package portable.
+    pub fn get_matches_from(self, move args: vec::Vec[str]) -> ArgMatches {
         let mut matches: map::HashMap[str, str] = map::new::[str, str]();
         let mut positionals: vec::Vec[str] = vec::new::[str]();
-        
+
         let n: usize = args.len();
         let mut i: usize = 1 as usize;
-        
+
         let args_len: usize = self.args.len();
 
         while i < n {
             let arg_str: str = args.get(i);
-            
-            if str_len(arg_str) > (1 as usize) && unsafe { *str_ptr(arg_str) } == (45 as u8) {
+
+            if str_len(arg_str) > (1 as usize) && unsafe { *str_ptr(arg_str) } == ('-' as u8) {
                 if arg_str == "--help" || arg_str == "-h" {
                     self.print_help_and_exit();
                 }
-                
-                if str_len(arg_str) > (2 as usize) && unsafe { *(str_ptr(arg_str) + 1) } == (45 as u8) {
-                    // Long option: --name
-                    let opt_name: str = unsafe { str_from_raw_parts(str_ptr(arg_str) + 2, str_len(arg_str) -% 2) };
+
+                if str_len(arg_str) > (2 as usize) && unsafe { *(str_ptr(arg_str) + 1) } == ('-' as u8) {
+                    // Long option: --name OR --name=value.
+                    let body_ptr: *u8 = unsafe { str_ptr(arg_str) + 2 };
+                    let body_len: usize = str_len(arg_str) -% (2 as usize);
+                    let eq_pos: option::Option[usize] = find_byte(body_ptr, body_len, '=' as u8);
+
+                    let opt_name: str = match eq_pos {
+                        option::Option[usize]::Some(p) => unsafe { str_from_raw_parts(body_ptr, p) },
+                        option::Option[usize]::None => unsafe { str_from_raw_parts(body_ptr, body_len) },
+                    };
+                    let inline_value: option::Option[str] = match eq_pos {
+                        option::Option[usize]::Some(p) => {
+                            let val_ptr: *u8 = unsafe { body_ptr + (p +% (1 as usize)) };
+                            let val_len: usize = body_len -% p -% (1 as usize);
+                            option::Option[str]::Some(unsafe { str_from_raw_parts(val_ptr, val_len) })
+                        }
+                        option::Option[usize]::None => option::Option[str]::None,
+                    };
+
                     let opt_arg: option::Option[Arg] = self.find_arg_by_long(opt_name);
                     guard let option::Option[Arg]::Some(found) = opt_arg else {
                         self.print_unknown_arg_and_exit(arg_str);
                         return ArgMatches {
-                            matches_raw: unsafe { 0 as *u8 },
-                            positionals_raw: unsafe { 0 as *u8 },
+                            matches: map::new::[str, str](),
+                            positionals: vec::new::[str](),
                         };
                     };
-                    
+
                     if found.is_flag {
+                        // Flags don't accept `=value`. If the user wrote
+                        // `--flag=...` silently treat it as the flag.
                         matches.insert(found.name, "true");
                     } else {
-                        if i +% (1 as usize) < n {
-                            i = i +% (1 as usize);
-                            let val: str = args.get(i);
-                            matches.insert(found.name, val);
-                        } else {
-                            self.print_missing_value_and_exit(found.name);
-                        }
+                        match inline_value {
+                            option::Option[str]::Some(v) => {
+                                matches.insert(found.name, v);
+                            }
+                            option::Option[str]::None => {
+                                if i +% (1 as usize) < n {
+                                    i = i +% (1 as usize);
+                                    let val: str = args.get(i);
+                                    matches.insert(found.name, val);
+                                } else {
+                                    self.print_missing_value_and_exit(found.name);
+                                }
+                            }
+                        };
                     }
                 } else {
-                    // Short option: -n
-                    let opt_name: str = unsafe { str_from_raw_parts(str_ptr(arg_str) + 1, str_len(arg_str) -% 1) };
-                    let opt_arg: option::Option[Arg] = self.find_arg_by_short(opt_name);
-                    guard let option::Option[Arg]::Some(found) = opt_arg else {
-                        self.print_unknown_arg_and_exit(arg_str);
-                        return ArgMatches {
-                            matches_raw: unsafe { 0 as *u8 },
-                            positionals_raw: unsafe { 0 as *u8 },
+                    // Short option: `-n` or combined flags `-abc`.
+                    // Try combined-flag form first: every byte must be a
+                    // known flag-typed short option. If any byte fails
+                    // the lookup OR points at a non-flag, fall back to
+                    // the single-option path with the whole `-...` body
+                    // as the option name.
+                    let body_ptr: *u8 = unsafe { str_ptr(arg_str) + 1 };
+                    let body_len: usize = str_len(arg_str) -% (1 as usize);
+
+                    let mut all_flags: bool = body_len > (1 as usize);
+                    let mut k: usize = 0 as usize;
+                    while all_flags && k < body_len {
+                        let bptr: *u8 = unsafe { body_ptr + k };
+                        let one: str = unsafe { str_from_raw_parts(bptr, 1 as usize) };
+                        let oa: option::Option[Arg] = self.find_arg_by_short(one);
+                        match oa {
+                            option::Option[Arg]::Some(a) => {
+                                if !a.is_flag { all_flags = false; }
+                            }
+                            option::Option[Arg]::None => { all_flags = false; }
                         };
-                    };
-                    
-                    if found.is_flag {
-                        matches.insert(found.name, "true");
+                        k = k +% (1 as usize);
+                    }
+
+                    if all_flags {
+                        // Combined form `-abc` — insert each flag.
+                        let mut j2: usize = 0 as usize;
+                        while j2 < body_len {
+                            let bptr: *u8 = unsafe { body_ptr + j2 };
+                            let one: str = unsafe { str_from_raw_parts(bptr, 1 as usize) };
+                            guard let option::Option[Arg]::Some(a) = self.find_arg_by_short(one) else {
+                                // can't happen — checked in loop above
+                                return ArgMatches {
+                                    matches: map::new::[str, str](),
+                                    positionals: vec::new::[str](),
+                                };
+                            };
+                            matches.insert(a.name, "true");
+                            j2 = j2 +% (1 as usize);
+                        }
                     } else {
-                        if i +% (1 as usize) < n {
-                            i = i +% (1 as usize);
-                            let val: str = args.get(i);
-                            matches.insert(found.name, val);
+                        let opt_name: str = unsafe { str_from_raw_parts(body_ptr, body_len) };
+                        let opt_arg: option::Option[Arg] = self.find_arg_by_short(opt_name);
+                        guard let option::Option[Arg]::Some(found) = opt_arg else {
+                            self.print_unknown_arg_and_exit(arg_str);
+                            return ArgMatches {
+                                matches: map::new::[str, str](),
+                                positionals: vec::new::[str](),
+                            };
+                        };
+
+                        if found.is_flag {
+                            matches.insert(found.name, "true");
                         } else {
-                            self.print_missing_value_and_exit(found.name);
+                            if i +% (1 as usize) < n {
+                                i = i +% (1 as usize);
+                                let val: str = args.get(i);
+                                matches.insert(found.name, val);
+                            } else {
+                                self.print_missing_value_and_exit(found.name);
+                            }
                         }
                     }
                 }
@@ -383,7 +381,7 @@ impl App {
             }
             i = i +% (1 as usize);
         }
-        
+
         let mut j: usize = 0 as usize;
         while j < args_len {
             let item: Arg = self.args.get(j);
@@ -394,55 +392,194 @@ impl App {
             }
             j = j +% (1 as usize);
         }
-        
+
         return ArgMatches {
-            matches_raw: alloc_map_str(matches),
-            positionals_raw: alloc_vec_str(positionals),
+            matches: matches,
+            positionals: positionals,
         };
     }
 }
 
 pub struct ArgMatches {
-    pub matches_raw: *u8,
-    pub positionals_raw: *u8,
+    pub matches: map::HashMap[str, str],
+    pub positionals: vec::Vec[str],
 }
 
 impl ArgMatches {
-    fn drop(mut self) {
-        if self.matches_raw != unsafe { 0 as *u8 } {
-            map_str_free(self.matches_raw);
-        }
-        if self.positionals_raw != unsafe { 0 as *u8 } {
-            vec_str_free(self.positionals_raw);
-        }
-        return;
-    }
-
     pub fn is_present(self, name: str) -> bool {
-        let map_ptr: *map::HashMap[str, str] = unsafe { self.matches_raw as *map::HashMap[str, str] };
-        return unsafe { (*map_ptr).contains_key(name) };
+        return self.matches.contains_key(name);
     }
 
     pub fn value_of(self, name: str) -> option::Option[str] {
-        let map_ptr: *map::HashMap[str, str] = unsafe { self.matches_raw as *map::HashMap[str, str] };
-        let res = unsafe { (*map_ptr).get(name) };
+        let res = self.matches.get(name);
         guard let result::Result[str, result::IoError]::Ok(val) = res else {
             return option::Option[str]::None;
         };
         return option::some::[str](val);
     }
 
-    pub fn positionals(self) -> *vec::Vec[str] {
-        return unsafe { self.positionals_raw as *vec::Vec[str] };
-    }
-
     pub fn positional_count(self) -> usize {
-        let vec_ptr: *vec::Vec[str] = unsafe { self.positionals_raw as *vec::Vec[str] };
-        return unsafe { (*vec_ptr).len() };
+        return self.positionals.len();
     }
 
     pub fn positional_at(self, i: usize) -> str {
-        let vec_ptr: *vec::Vec[str] = unsafe { self.positionals_raw as *vec::Vec[str] };
-        return unsafe { (*vec_ptr).get(i) };
+        return self.positionals.get(i);
     }
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+//
+// These tests build argv vectors in code and feed them to
+// `get_matches_from(...)` directly — no _NSGetArgc/Argv involved.
+// Each test exercises one parsing rule (long, short, =value,
+// combined-flag, positional, missing-required).
+
+fn make_argv(items: vec::Vec[str]) -> vec::Vec[str] {
+    return items;
+}
+
+#[test]
+fn test_arg_builder_chains() {
+    let mut a: Arg = Arg::new("v");
+    a = a.short("v");
+    a = a.long("verbose");
+    a = a.flag();
+    assert a.name == "v";
+    assert a.short_name == "v";
+    assert a.long_name == "verbose";
+    assert a.is_flag;
+}
+
+#[test]
+fn test_app_builder_chains() {
+    let mut app: App = App::new("mytool");
+    app = app.version("1.0");
+    app = app.author("me");
+    app = app.about("does things");
+    assert app.name == "mytool";
+    assert app.version == "1.0";
+    assert app.author == "me";
+    assert app.about == "does things";
+}
+
+#[test]
+fn test_long_option_with_separate_value() {
+    let mut a1: Arg = Arg::new("name");
+    a1 = a1.long("name");
+    let mut app: App = App::new("t");
+    app = app.arg(a1);
+
+    let mut argv: vec::Vec[str] = vec::new::[str]();
+    argv.push("t");
+    argv.push("--name");
+    argv.push("alice");
+
+    let m: ArgMatches = app.get_matches_from(argv);
+    guard let option::Option[str]::Some(v) = m.value_of("name") else {
+        assert false;
+        return;
+    };
+    assert v == "alice";
+}
+
+#[test]
+fn test_long_option_with_equals_value() {
+    let mut a1: Arg = Arg::new("name");
+    a1 = a1.long("name");
+    let mut app: App = App::new("t");
+    app = app.arg(a1);
+
+    let mut argv: vec::Vec[str] = vec::new::[str]();
+    argv.push("t");
+    argv.push("--name=bob");
+
+    let m: ArgMatches = app.get_matches_from(argv);
+    guard let option::Option[str]::Some(v) = m.value_of("name") else {
+        assert false;
+        return;
+    };
+    assert v == "bob";
+}
+
+#[test]
+fn test_short_flag() {
+    let mut a: Arg = Arg::new("v");
+    a = a.short("v");
+    a = a.flag();
+    let mut app: App = App::new("t");
+    app = app.arg(a);
+
+    let mut argv: vec::Vec[str] = vec::new::[str]();
+    argv.push("t");
+    argv.push("-v");
+
+    let m: ArgMatches = app.get_matches_from(argv);
+    assert m.is_present("v");
+}
+
+#[test]
+fn test_combined_short_flags() {
+    let mut a1: Arg = Arg::new("a");
+    a1 = a1.short("a");
+    a1 = a1.flag();
+    let mut a2: Arg = Arg::new("b");
+    a2 = a2.short("b");
+    a2 = a2.flag();
+    let mut a3: Arg = Arg::new("c");
+    a3 = a3.short("c");
+    a3 = a3.flag();
+
+    let mut app: App = App::new("t");
+    app = app.arg(a1);
+    app = app.arg(a2);
+    app = app.arg(a3);
+
+    let mut argv: vec::Vec[str] = vec::new::[str]();
+    argv.push("t");
+    argv.push("-abc");
+
+    let m: ArgMatches = app.get_matches_from(argv);
+    assert m.is_present("a");
+    assert m.is_present("b");
+    assert m.is_present("c");
+}
+
+#[test]
+fn test_positionals_collected() {
+    let mut app: App = App::new("t");
+
+    let mut argv: vec::Vec[str] = vec::new::[str]();
+    argv.push("t");
+    argv.push("pos1");
+    argv.push("pos2");
+    argv.push("pos3");
+
+    let m: ArgMatches = app.get_matches_from(argv);
+    assert m.positional_count() == (3 as usize);
+    assert m.positional_at(0 as usize) == "pos1";
+    assert m.positional_at(2 as usize) == "pos3";
+}
+
+#[test]
+fn test_value_of_missing_returns_none() {
+    let mut app: App = App::new("t");
+    let mut argv: vec::Vec[str] = vec::new::[str]();
+    argv.push("t");
+    let m: ArgMatches = app.get_matches_from(argv);
+    match m.value_of("missing") {
+        option::Option[str]::Some(_) => { assert false; }
+        option::Option[str]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_app_args_collects_via_vec() {
+    let mut app: App = App::new("t");
+    app = app.arg(Arg::new("x"));
+    app = app.arg(Arg::new("y"));
+    assert app.args.len() == (2 as usize);
+    let a0: Arg = app.args.get(0 as usize);
+    let a1: Arg = app.args.get(1 as usize);
+    assert a0.name == "x";
+    assert a1.name == "y";
 }

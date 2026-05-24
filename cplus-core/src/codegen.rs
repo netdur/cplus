@@ -465,6 +465,12 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
         Ty::Simd { elem, lanes } => {
             format!("{}x{}", mangle_o_for_tramp_with_types(elem, types), lanes)
         }
+        // Masks share LLVM lowering with the matching Simd; use a
+        // distinct mangled prefix so the trampoline tables don't clash
+        // if both forms ever fly across a thread boundary.
+        Ty::Mask { elem, lanes } => {
+            format!("mask{}x{}", mangle_o_for_tramp_with_types(elem, types), lanes)
+        }
         Ty::Param(n) => format!("Param_{n}"),
         Ty::Error => "ERR".into(),
     }
@@ -628,8 +634,9 @@ fn is_thread_spawn_eligible(ty: &Ty) -> bool {
         // str: same hazard as Slice.
         Ty::Str => false,
         // v0.0.6 Slice 1B: SIMD vectors are Copy + register-sized; safe
-        // to return from a worker just like an integer.
-        Ty::Simd { .. } => true,
+        // to return from a worker just like an integer. Masks share
+        // the same LLVM lowering, so the same trampoline path works.
+        Ty::Simd { .. } | Ty::Mask { .. } => true,
         Ty::Param(_) | Ty::Error => false,
     }
 }
@@ -937,6 +944,7 @@ pub fn generate_test_binary(
     mode: BuildMode,
     tests: &[crate::attrs::TestFn],
     json: bool,
+    mono: &crate::sema::MonoInfo,
 ) -> String {
     generate_inner(
         program,
@@ -945,9 +953,9 @@ pub fn generate_test_binary(
         None,
         &[],
         false,
-        &Default::default(),
-        &Default::default(),
-        &Default::default(),
+        &mono.compile_time_blobs,
+        &mono.env_vars,
+        &mono.statics,
     )
 }
 
@@ -1736,6 +1744,7 @@ fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
             .unwrap_or_else(|| "<enum>".to_string()),
         Ty::Array(elem, n) => format!("arr{}_{}", n, tuple_elem_mangle(elem, types)),
         Ty::Simd { elem, lanes } => format!("{}x{}", tuple_elem_mangle(elem, types), lanes),
+        Ty::Mask { elem, lanes } => format!("mask{}x{}", tuple_elem_mangle(elem, types), lanes),
         Ty::Param(name) => format!("Param_{name}"),
         Ty::Error => "ERR".into(),
     }
@@ -2048,7 +2057,8 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
         Ty::Enum(id) => t.enum_defs[id.0 as usize].is_copy,
         // v0.0.6 Slice 1B: SIMD types are Copy (lane-scalars are all
         // Copy primitives; the whole vector is a register-sized value).
-        Ty::Simd { .. } => true,
+        // Masks share the SIMD lowering and Copy semantics.
+        Ty::Simd { .. } | Ty::Mask { .. } => true,
         // Phase 8 slice 8.STR.3: owned `string` is non-Copy + Drop.
         Ty::String => false,
         Ty::Error => false,
@@ -2348,6 +2358,14 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
             // Natural alignment for power-of-two-sized vectors equals the
             // size itself (4/8/16/32-byte alignment); otherwise the lane
             // alignment.
+            let align = if size.is_power_of_two() { size } else { ea };
+            Some((size, align))
+        }
+        // Masks lower to the same `<N x iN>` LLVM type as the matching
+        // Simd — share the layout calculation verbatim.
+        Ty::Mask { elem, lanes } => {
+            let (esz, ea) = static_layout(elem, types)?;
+            let size = esz.saturating_mul(*lanes as u64);
             let align = if size.is_power_of_two() { size } else { ea };
             Some((size, align))
         }
@@ -2668,6 +2686,26 @@ fn scan_moves_in_expr(
                         }
                     }
                 }
+                // G-027 fix: method calls also need to register
+                // bare-Ident args at positions where the method's
+                // param is `move`-marked. Pre-fix, codegen's
+                // call-site mark_moved fired on the local but
+                // find_drop_flag returned the `.unused` sentinel
+                // (since the binding wasn't pre-registered as a
+                // move source), producing an undefined-SSA store
+                // that clang rejected. Same conservative walk as
+                // the receiver path — multiple matches are safe.
+                for sdef in &types.struct_defs {
+                    if let Some(mi) = sdef.methods.get(&m.name) {
+                        for (a, (_ty, move_flag, _mut_flag, _restr)) in args.iter().zip(mi.params.iter()) {
+                            if *move_flag {
+                                if let ExprKind::Ident(n) = &a.kind {
+                                    set.insert(n.clone());
+                                }
+                            }
+                        }
+                    }
+                }
             }
             scan_moves_in_expr(callee, sigs, types, set);
             for a in args {
@@ -2686,7 +2724,17 @@ fn scan_moves_in_expr(
             scan_moves_in_expr(index, sigs, types, set);
         }
         ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            // G-023 fix: a field initialized from a bare-Ident source
+            // (`Wrap { m: m }`) consumes that binding into the struct
+            // slot. Pre-register so the runtime drop_flag gets allocated
+            // and codegen's gen_struct_lit / gen_assign mark_moved flips
+            // it before pop_scope drops fire. Without this the local
+            // would be bitwise-copied into the field AND have its Drop
+            // run, freeing inner heap storage the field aliases.
             for f in fields {
+                if let ExprKind::Ident(n) = &f.value.kind {
+                    set.insert(n.clone());
+                }
                 scan_moves_in_expr(&f.value, sigs, types, set);
             }
         }
@@ -2718,7 +2766,20 @@ fn scan_moves_in_expr(
                 scan_moves_in_expr(e, sigs, types, set);
             }
         }
-        ExprKind::Assign { target, value, .. } => {
+        ExprKind::Assign { target, value, op } => {
+            // G-023 fix: a plain `=` assignment whose RHS is a bare Ident
+            // consumes that binding into the destination slot. Same
+            // shape as Let-init-from-Ident or Return-Ident. Compound
+            // assigns (`+=`, etc.) read+modify and don't transfer
+            // ownership, so they don't qualify. The most-cited surface
+            // is the raw-pointer store inside `unsafe { *p = val; }`
+            // (used by `Box::new[T]`, `arena::alloc[T]`, and any
+            // hand-rolled "copy into heap slot" helper).
+            if matches!(op, AssignOp::Assign) {
+                if let ExprKind::Ident(n) = &value.kind {
+                    set.insert(n.clone());
+                }
+            }
             scan_moves_in_expr(target, sigs, types, set);
             scan_moves_in_expr(value, sigs, types, set);
         }
@@ -2883,15 +2944,18 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         "u32x8"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  },
         "i64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
         "u64x4"  => Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  },
-        // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
-        "mask8x16"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 },
-        "mask16x8"  => Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  },
-        "mask32x4"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  },
-        "mask64x2"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  },
-        "mask8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
-        "mask16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
-        "mask32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
-        "mask64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
+        // v0.0.9 follow-up: mask types resolve to `Ty::Mask`, a
+        // distinct sema-level type whose LLVM lowering matches the
+        // width-equivalent signed-int SIMD. Codegen's `lty` treats
+        // Ty::Mask and Ty::Simd identically.
+        "mask8x16"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 16 },
+        "mask16x8"  => Ty::Mask { elem: Box::new(Ty::I16), lanes: 8  },
+        "mask32x4"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 4  },
+        "mask64x2"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 2  },
+        "mask8x32"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 32 },
+        "mask16x16" => Ty::Mask { elem: Box::new(Ty::I16), lanes: 16 },
+        "mask32x8"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 8  },
+        "mask64x4"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 4  },
         _ => {
             if let Some(&id) = types.enum_by_name.get(name) {
                 return Ty::Enum(id);
@@ -2930,8 +2994,12 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         // v0.0.6 Slice 1B: SIMD vectors lower to LLVM `<N x T>` where T is
         // the lane scalar's IR type. LLVM understands these natively;
         // arithmetic, intrinsics (`llvm.fma.v4f32`), and shuffles all
-        // operate directly on vector types.
-        Ty::Simd { elem, lanes } => format!("<{lanes} x {}>", llvm_ty(elem, types)),
+        // operate directly on vector types. Masks share the same
+        // lowering — the sema-level Mask/Simd distinction is erased
+        // at the IR level for ABI compatibility.
+        Ty::Simd { elem, lanes } | Ty::Mask { elem, lanes } => {
+            format!("<{lanes} x {}>", llvm_ty(elem, types))
+        }
         // Slice 10.FFI.1: raw pointers lower to LLVM `ptr` (opaque,
         // 8 bytes on 64-bit). Pointee info is sema-only.
         Ty::RawPtr(_) => "ptr".to_string(),
@@ -3776,6 +3844,24 @@ fn emit_statics(
         return;
     }
     for (qname, info) in statics_map {
+        // v0.0.9 follow-up: `str`-typed statics need a paired data
+        // global. Emit `@<name>.bytes = constant [N x i8] c"..."` for
+        // the payload and `@<name> = {constant|global} { ptr, i64 } { ptr @<name>.bytes, i64 N }`
+        // for the fat-pointer header. Reads through gen_expr's Ident
+        // path then load `{ptr, i64}` from `@<name>` as any str does.
+        if matches!(info.ty, Ty::Str) {
+            if let ExprKind::StrLit(s) = &info.init.kind {
+                let bytes_sym = format!("{qname}.bytes");
+                let bytes_len = emit_cstr(out, &bytes_sym, s);
+                let str_len = bytes_len.saturating_sub(1); // emit_cstr adds NUL terminator
+                let storage = if info.is_mut { "global" } else { "constant" };
+                out.push_str(&format!(
+                    "@{qname} = {storage} {{ ptr, i64 }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
+                ));
+                md.statics.borrow_mut().insert(qname.clone(), info.ty.clone());
+                continue;
+            }
+        }
         let lltype = llvm_ty(&info.ty, types);
         let llvalue = match render_static_literal(&info.init, &info.ty) {
             Some(s) => s,
@@ -6443,6 +6529,65 @@ impl<'a> FnState<'a> {
                 .enum_by_name
                 .get(&segments[0].name)
                 .map(|&id| Ty::Enum(id)),
+            // v0.0.9 Phase 3 — extend the helper to cover the remaining
+            // shapes that `gen_if` was leaking through. Each one panics
+            // `let init produces a value` if the if-expr's tail
+            // expression takes one of these shapes and the helper
+            // returns None.
+            //
+            // `Field { receiver, name }`: recursively type the receiver,
+            // then look up the named field on its struct definition.
+            // The (place, .field) chain is the most common shape (the
+            // raytracer's `hit.point` was the original repro).
+            ExprKind::Field { receiver, name } => {
+                let recv_ty = self.expr_value_ty_with_bindings(receiver)?;
+                let Ty::Struct(id) = recv_ty else {
+                    return None;
+                };
+                let info = self.types.struct_defs.get(id.0 as usize)?;
+                let idx = info
+                    .fields
+                    .iter()
+                    .position(|(fname, _)| fname == &name.name)?;
+                Some(info.fields[idx].1.clone())
+            }
+            // `Index { receiver, .. }`: indexing produces the element
+            // type. Covers fixed-size arrays (`[T; N]`), slices (`T[]`),
+            // and raw pointers (`*T`); each carries its element type
+            // directly.
+            ExprKind::Index { receiver, .. } => {
+                let recv_ty = self.expr_value_ty_with_bindings(receiver)?;
+                match recv_ty {
+                    Ty::Array(elem, _) => Some(*elem),
+                    Ty::Slice(elem) => Some(*elem),
+                    Ty::RawPtr(elem) => Some(*elem),
+                    _ => None,
+                }
+            }
+            // `Unsafe(block)`: the `unsafe { ... }` marker is sema-only;
+            // codegen sees it as a regular block. Its value type is the
+            // tail-expression's type. Without this arm, `let p: *u8 =
+            // if cond { unsafe { malloc(8) } } else { ... }` panics.
+            ExprKind::Unsafe(b) => self.block_value_ty_with_bindings(b),
+            // `Match { arms, .. }`: every arm has been sema-checked to
+            // produce the same type; pick the first arm's body type.
+            ExprKind::Match { arms, .. } => arms
+                .first()
+                .and_then(|a| self.expr_value_ty_with_bindings(&a.body)),
+            // `Cast { ty, .. }`: the cast's target type IS the result
+            // type — no need to inspect the operand.
+            ExprKind::Cast { ty, .. } => Some(ty_from(ty, self.types)),
+            // `GenericEnumCall { enum_name, .. }`: monomorphize has
+            // already rewritten generic enum constructors to a regular
+            // `Call` or `Path` shape in most positions; this branch
+            // catches any residual instance the rewrite missed (or
+            // generic-enum constructors in template bodies that reach
+            // codegen unmonomorphized — rare but possible).
+            ExprKind::GenericEnumCall { enum_name, .. } => self
+                .types
+                .enum_by_name
+                .get(&enum_name.name)
+                .map(|&id| Ty::Enum(id)),
             _ => expr_value_ty(e),
         }
     }
@@ -6899,6 +7044,21 @@ impl<'a> FnState<'a> {
                         } = &e.kind
                         {
                             if let ExprKind::Ident(name) = &callee.kind {
+                                // v0.0.9 Phase 3 audit: `pending_drops` is
+                                // a conservative "any Drop entries registered"
+                                // check. It blocks musttail in cases where
+                                // every registered drop is provably going to
+                                // be skipped at runtime (the binding got
+                                // moved into the call's args, flipping its
+                                // flag to false). Producing tighter analysis
+                                // here — peeking at the call's arg list and
+                                // declaring "all drops in scope will be
+                                // flipped before the call" — is a measured
+                                // optimization (recursive-fn tail-call
+                                // performance) that wants property-test
+                                // coverage, not a directed fix. Deferred to
+                                // v0.0.10. Today's behavior: correct (just
+                                // a regular `call`, not `musttail call`).
                                 let pending_drops =
                                     self.scope_exits.iter().any(|frame| !frame.is_empty());
                                 if !pending_drops {
@@ -7926,6 +8086,14 @@ impl<'a> FnState<'a> {
             // carry their per-type leaf; aggregate fields stay
             // untagged (gen_store handles both via tbaa_tag_for).
             self.gen_store(&field_ty, &val, &ptr);
+            // G-023 fix: if the field value was a bare-Ident source,
+            // ownership transferred into the field — flip the source's
+            // drop_flag so the scope-exit drop doesn't free inner heap
+            // storage the field now aliases. mark_moved is a no-op for
+            // non-Drop bindings (no flag allocated).
+            if let ExprKind::Ident(n) = &f.value.kind {
+                self.mark_moved(n);
+            }
         }
         let v = self.next_tmp();
         // v0.0.7 Slice 1.2: struct-lit value load — aggregate, no TBAA.
@@ -9240,6 +9408,15 @@ impl<'a> FnState<'a> {
             self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
             return Some((int_tmp, Ty::Usize));
         }
+        // v0.0.9 follow-up: `addr_of(x)` returns the local's alloca
+        // pointer directly, typed as `*T`. Zero runtime cost — no load,
+        // no GEP — the alloca itself IS the address. Sema validated
+        // that `x` is a bare Ident, the call is unsafe-gated, and the
+        // binding resolves to a value type T.
+        if name == "addr_of" {
+            let (slot, ty) = self.gen_place(&args[0]);
+            return Some((slot, Ty::RawPtr(Box::new(ty))));
+        }
         // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` lowers to
         // a call to the monomorphized `T::drop(p)` when T has Drop,
         // or to nothing (no-op) when T has no Drop. Used by stdlib
@@ -10272,8 +10449,11 @@ impl<'a> FnState<'a> {
             return Some(self.gen_string_method_call(&recv_ptr, &name.name, args));
         }
         // v0.0.6 Slice 1B: SIMD instance methods. Load the vector value
-        // from the receiver's slot and dispatch.
-        if let Ty::Simd { .. } = &recv_ty {
+        // from the receiver's slot and dispatch. v0.0.9 follow-up: also
+        // catch `Ty::Mask` — masks share the SIMD LLVM lowering and go
+        // through the same method-codegen path (with sema having
+        // already restricted which methods make sense).
+        if matches!(&recv_ty, Ty::Simd { .. } | Ty::Mask { .. }) {
             let lty = self.lty(&recv_ty);
             let load_align = simd_align_for(&recv_ty);
             let v = self.next_tmp();
@@ -10834,6 +11014,10 @@ impl<'a> FnState<'a> {
                             "{ptr} = getelementptr inbounds {llvm_struct}, ptr {dest_slot}, i32 0, i32 {idx}"
                         ));
                         self.gen_store(&field_ty, &val, &ptr);
+                        // G-023 fix: same mark_moved as gen_struct_lit.
+                        if let ExprKind::Ident(n) = &f.value.kind {
+                            self.mark_moved(n);
+                        }
                     }
                     return;
                 }
@@ -10857,6 +11041,18 @@ impl<'a> FnState<'a> {
             self.gen_compound_op(op, &target_ty, &cur, &rhs_v)
         };
         self.gen_store(&target_ty, &to_store, &slot);
+        // G-023 fix: a plain `=` whose RHS was a bare-Ident source
+        // consumes that binding into the destination slot. The most-
+        // cited surface is the raw-pointer store inside
+        // `unsafe { *p = val; }` (Box::new[T], arena::alloc[T]); also
+        // covers plain `x = y` between local bindings. Compound
+        // assigns read+modify and don't transfer ownership — they
+        // skip this. mark_moved is a no-op for non-Drop bindings.
+        if matches!(op, AssignOp::Assign) {
+            if let ExprKind::Ident(n) = &value.kind {
+                self.mark_moved(n);
+            }
+        }
     }
 
     /// Lower one compound-assign binary op given pre-evaluated SSA values.
@@ -11049,11 +11245,20 @@ impl<'a> FnState<'a> {
             return None;
         };
         let name = self.types.struct_defs[id.0 as usize].name.clone();
-        let bare = name
-            .rsplit_once('.')
-            .map(|(_, t)| t)
-            .unwrap_or(name.as_str());
-        let suffix = bare.strip_prefix("Iterator__")?;
+        // G-026 fix: the inner T's mangled name can contain `.` (e.g.
+        // `Iterator__src.main.Value` when Value lives in src/main).
+        // Don't naively split on the rightmost `.` — find the
+        // `Iterator__` marker anywhere in the qualified name and take
+        // everything after it. Prefer the LAST occurrence so a type
+        // literally named `Iterator__Iterator__T` would resolve to its
+        // outermost Iterator wrap.
+        let suffix = if let Some(idx) = name.rfind("Iterator__") {
+            &name[idx + "Iterator__".len()..]
+        } else if let Some(rest) = name.strip_prefix("Iterator__") {
+            rest
+        } else {
+            return None;
+        };
         // Reuse the future-name-decoder; the suffix grammar is identical.
         let synthetic = format!("Future__{suffix}");
         Some(ty_from_future_name(&synthetic, self.types))
@@ -11684,7 +11889,10 @@ impl<'a> FnState<'a> {
     }
 
     /// SIMD instance methods. Receiver value `recv` is the already-loaded
-    /// `<N x T>` SSA value.
+    /// `<N x T>` SSA value. Accepts both `Ty::Simd` and `Ty::Mask` (they
+    /// share the LLVM lowering; sema has restricted which methods make
+    /// sense per kind). `to_bits` / `to_mask` are recognised here as
+    /// no-op type relabels.
     fn gen_simd_method_call(
         &mut self,
         recv: &str,
@@ -11692,8 +11900,28 @@ impl<'a> FnState<'a> {
         method: &str,
         args: &[Expr],
     ) -> (String, Ty) {
-        let Ty::Simd { elem, lanes } = recv_ty else {
-            unreachable!("sema validated");
+        // v0.0.9 follow-up: `to_bits` / `to_mask` are zero-cost
+        // sema-only conversions — return the loaded vector unchanged
+        // but relabel its `Ty`. Sema enforced direction validity.
+        if method == "to_bits" {
+            if let Ty::Mask { elem, lanes } = recv_ty {
+                return (
+                    recv.to_string(),
+                    Ty::Simd { elem: elem.clone(), lanes: *lanes },
+                );
+            }
+        }
+        if method == "to_mask" {
+            if let Ty::Simd { elem, lanes } = recv_ty {
+                return (
+                    recv.to_string(),
+                    Ty::Mask { elem: elem.clone(), lanes: *lanes },
+                );
+            }
+        }
+        let (elem, lanes) = match recv_ty {
+            Ty::Simd { elem, lanes } | Ty::Mask { elem, lanes } => (elem, lanes),
+            _ => unreachable!("sema validated"),
         };
         let lty = self.lty(recv_ty);
         let elem_lty = self.lty(elem);
@@ -16273,5 +16501,110 @@ mod tests {
         );
         // No address operand → None.
         assert_eq!(extract_ptr_operand("add i32 1, 2"), None);
+    }
+
+    // ---- v0.0.9 Phase 3: mixed-if-arm panic regressions ----
+
+    #[test]
+    fn mixed_if_arm_with_field_tail_no_panic() {
+        // Repro from Phase 3 — `let v = if cond { a.x } else { b.x }`
+        // panicked in `expr_value_ty_with_bindings` because Field
+        // wasn't covered (returned None → "let init produces a value").
+        let ir = gen_src(
+            "struct V3 { x: f32, y: f32, z: f32 } \
+             fn main() -> i32 { \
+                let cond: bool = true; \
+                let a: V3 = V3 { x: 1.0f32, y: 2.0f32, z: 3.0f32 }; \
+                let b: V3 = V3 { x: 9.0f32, y: 8.0f32, z: 7.0f32 }; \
+                let x: f32 = if cond { a.x } else { b.x }; \
+                return x as i32; \
+             }",
+        );
+        // Smoke check that we got an if-merge phi (or equivalent
+        // result-slot store path) without panicking the helper.
+        assert!(
+            ir.contains("phi float") || ir.contains("store float"),
+            "expected if-merge result handling in IR; got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn mixed_if_arm_with_index_tail_no_panic() {
+        let ir = gen_src(
+            "fn main() -> i32 { \
+                let cond: bool = true; \
+                let arr: [i32; 4] = [10, 20, 30, 40]; \
+                let v: i32 = if cond { arr[1] } else { arr[2] }; \
+                return v; \
+             }",
+        );
+        assert!(
+            ir.contains("getelementptr"),
+            "expected element-pointer GEP in IR; got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn mixed_if_arm_with_unsafe_block_tail_no_panic() {
+        let ir = gen_src(
+            "extern fn malloc(n: usize) -> *u8; \
+             fn main() -> i32 { \
+                let cond: bool = true; \
+                let p: *u8 = if cond { \
+                    unsafe { malloc(8 as usize) } \
+                } else { \
+                    unsafe { 0 as *u8 } \
+                }; \
+                let _addr: usize = unsafe { p as usize }; \
+                return 0; \
+             }",
+        );
+        assert!(
+            ir.contains("call ptr @malloc"),
+            "expected the unsafe-block tail's malloc call in IR; got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn mixed_if_arm_with_cast_tail_no_panic() {
+        // Cast as tail expression — sema computes the result type from
+        // the cast target, but the helper needed to know that too so
+        // gen_if could pre-allocate the result slot.
+        let ir = gen_src(
+            "fn main() -> i32 { \
+                let cond: bool = true; \
+                let v: i64 = if cond { 5 as i64 } else { 10 as i64 }; \
+                return v as i32; \
+             }",
+        );
+        assert!(
+            ir.contains("phi i64") || ir.contains("store i64"),
+            "expected i64-result handling in IR; got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn mixed_if_arm_with_match_tail_no_panic() {
+        // `match` as tail — used in chained-fallible-result code.
+        let ir = gen_src(
+            "enum Opt { Some(i32), None } \
+             fn pick() -> Opt { return Opt::Some(7); } \
+             fn main() -> i32 { \
+                let cond: bool = true; \
+                let v: i32 = if cond { \
+                    match pick() { \
+                        Opt::Some(n) => n, \
+                        Opt::None    => 0, \
+                    } \
+                } else { \
+                    42 \
+                }; \
+                return v; \
+             }",
+        );
+        assert!(
+            !ir.is_empty(),
+            "expected non-empty IR (no panic); got:\n{ir}"
+        );
     }
 }

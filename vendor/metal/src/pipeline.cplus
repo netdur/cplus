@@ -1,7 +1,7 @@
 // vendor/metal/src/pipeline.cplus — shader libraries and pipelines.
 
 import "./runtime" as runtime;
-import "stdlib/option" as option;
+import "stdlib/result" as result;
 
 pub struct Library {
     pub raw: *u8,
@@ -16,31 +16,57 @@ pub struct ComputePipelineState {
 }
 
 impl Library {
-    pub fn new_function(self, name: str) -> option::Option[Function] {
+    pub fn new_function(self, name: str) -> result::Result[Function, runtime::MetalError] {
         if self.raw == unsafe { 0 as *u8 } {
-            return option::Option[Function]::None;
+            return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
         let ns_name: *u8 = runtime::ns_string(name);
         let selector: *u8 = runtime::sel(str_ptr("newFunctionWithName:\0"));
         let func_raw: *u8 = runtime::msg_id_id(self.raw, selector, ns_name);
+        // `stringWithBytes:length:encoding:` returns an autoreleased
+        // NSString. Without an autorelease pool active (the typical case
+        // outside an AppKit run loop), it would leak. Release explicitly:
+        // `newFunctionWithName:` retains the name internally if it needs
+        // it past the call, so it's safe to drop our reference here.
+        runtime::release(ns_name);
         if func_raw == unsafe { 0 as *u8 } {
-            return option::Option[Function]::None;
+            return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
-        return option::Option[Function]::Some(Function { raw: func_raw });
+        return result::Result[Function, runtime::MetalError]::Ok(Function { raw: func_raw });
+    }
+
+    fn drop(mut self) {
+        runtime::release(self.raw);
+        self.raw = unsafe { 0 as *u8 };
+        return;
+    }
+}
+
+impl Function {
+    fn drop(mut self) {
+        runtime::release(self.raw);
+        self.raw = unsafe { 0 as *u8 };
+        return;
     }
 }
 
 impl ComputePipelineState {
-    pub fn new(device_raw: *u8, function: Function) -> option::Option[ComputePipelineState] {
+    pub fn new(device_raw: *u8, function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
         if device_raw == unsafe { 0 as *u8 } || function.raw == unsafe { 0 as *u8 } {
-            return option::Option[ComputePipelineState]::None;
+            return result::Result[ComputePipelineState, runtime::MetalError]::Err(runtime::MetalError::PipelineCreationFailed);
         }
         let selector: *u8 = runtime::sel(str_ptr("newComputePipelineStateWithFunction:error:\0"));
         let null_err: *u8 = unsafe { 0 as *u8 };
         let pipeline_raw: *u8 = runtime::msg_id_pipeline(device_raw, selector, function.raw, null_err);
         if pipeline_raw == unsafe { 0 as *u8 } {
-            return option::Option[ComputePipelineState]::None;
+            return result::Result[ComputePipelineState, runtime::MetalError]::Err(runtime::MetalError::PipelineCreationFailed);
         }
-        return option::Option[ComputePipelineState]::Some(ComputePipelineState { raw: pipeline_raw });
+        return result::Result[ComputePipelineState, runtime::MetalError]::Ok(ComputePipelineState { raw: pipeline_raw });
+    }
+
+    fn drop(mut self) {
+        runtime::release(self.raw);
+        self.raw = unsafe { 0 as *u8 };
+        return;
     }
 }

@@ -626,8 +626,22 @@ fn collect_dep_link_args(
     let host_triple = detect_host_triple()?;
     let mut link_args: Vec<String> = Vec::new();
     for dep in &m.dependencies {
-        let vendor_dir = m.root.join("vendor").join(&dep.name);
-        let vendor_manifest = vendor_dir.join("Cplus.toml");
+        let mut vendor_dir = m.root.join("vendor").join(&dep.name);
+        let mut vendor_manifest = vendor_dir.join("Cplus.toml");
+        // Vendor-package self-test fallback: when run from inside a
+        // vendor package, sibling vendor packages live at
+        // `<m.root>/../<dep>/` rather than under `<m.root>/vendor/`.
+        // See resolver.rs's matching fallback in `resolve_vendor_path`.
+        if !vendor_manifest.is_file() {
+            if let Some(parent) = m.root.parent() {
+                let alt_dir = parent.join(&dep.name);
+                let alt_manifest = alt_dir.join("Cplus.toml");
+                if alt_manifest.is_file() {
+                    vendor_dir = alt_dir;
+                    vendor_manifest = alt_manifest;
+                }
+            }
+        }
         if !vendor_manifest.is_file() {
             let d = manifest_diag(
                 "E0854",
@@ -1601,7 +1615,7 @@ fn run_test(
     diag_mode: DiagMode,
     build_mode: BuildMode,
 ) -> ExitCode {
-    let (program, _src_for_diags) = match file {
+    let (program, _src_for_diags, mono, link_args) = match file {
         Some(path) => {
             let src = match fs::read_to_string(&path) {
                 Ok(s) => s,
@@ -1610,11 +1624,11 @@ fn run_test(
                     return ExitCode::FAILURE;
                 }
             };
-            let prog = match build_program(&path, &src, diag_mode) {
+            let (prog, mono) = match build_program(&path, &src, diag_mode) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
-            (prog, src)
+            (prog, src, mono, Vec::new())
         }
         None => {
             let manifest_path = PathBuf::from("Cplus.toml");
@@ -1625,14 +1639,36 @@ fn run_test(
                     return ExitCode::FAILURE;
                 }
             };
-            if m.bins.len() != 1 {
+            // Resolve the entry: prefer [lib] (explicit library target),
+            // then [[bin]]. If neither exists on disk, fall back to
+            // `src/<package-name>.cplus` — library-only vendor packages
+            // commonly declare no target at all, and the manifest auto-
+            // injects a phantom `[[bin]]` pointing at `src/main.cplus`
+            // that doesn't exist. The fallback lets such packages still
+            // discover and run their `#[test]` fns.
+            let (entry_path, is_lib_pkg, fw_list, lib_list) = if let Some(lt) = m.lib.as_ref() {
+                (lt.path.clone(), true, lt.frameworks.clone(), lt.libs.clone())
+            } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
+                let b = &m.bins[0];
+                (b.path.clone(), false, b.frameworks.clone(), b.libs.clone())
+            } else if m.bins.len() == 1 {
+                let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
+                if !guess.is_file() {
+                    eprintln!(
+                        "cpc test: bin entry `{}` not found, and no `{}` fallback either",
+                        m.bins[0].path.display(),
+                        guess.display()
+                    );
+                    return ExitCode::FAILURE;
+                }
+                (guess, true, Vec::new(), Vec::new())
+            } else {
                 eprintln!(
-                    "cpc test: project must declare exactly one [[bin]]; found {}",
+                    "cpc test: project must declare at most one [[bin]]; found {}",
                     m.bins.len()
                 );
                 return ExitCode::FAILURE;
-            }
-            let bin = &m.bins[0];
+            };
             // Phase 2 Slice 2C: validate the dep graph before sema. Tests
             // share the consumer's `[dependencies]`, so a misdeclared
             // vendor package must fail here too — silent success would let
@@ -1641,18 +1677,58 @@ fn run_test(
                 return code;
             }
             let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-            let (program, _, _mono) = match load_and_check_project_full(
-                &bin.path,
+            let (program, _, mono) = match load_and_check_project_full(
+                &entry_path,
                 &m.root,
                 diag_mode,
-                false,
+                is_lib_pkg,
                 Some(&dep_names),
             ) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
-            let entry_src = fs::read_to_string(&bin.path).unwrap_or_default();
-            (program, entry_src)
+            // G-029: tests must link the same frameworks/libs as a real
+            // `cpc build` would — consumer's manifest first, then each
+            // dependency's `[link]` contribution. Without this, vendor
+            // packages that depend on system frameworks (e.g. metal →
+            // Metal/Foundation) can't run their unit tests because
+            // selectors resolve to symbols clang never linked.
+            let mut la: Vec<String> = Vec::with_capacity(fw_list.len() * 2 + lib_list.len());
+            for fw in &fw_list {
+                la.push("-framework".to_string());
+                la.push(fw.clone());
+            }
+            for lib in &lib_list {
+                la.push(format!("-l{lib}"));
+            }
+            match collect_dep_link_args(&m, diag_mode) {
+                Ok(mut extra) => la.append(&mut extra),
+                Err(code) => return code,
+            }
+            // Vendor-package self-test: when the package under test
+            // declares its own `[link]` table (e.g. metal → Metal,
+            // Foundation, objc), the consumer-style fw_list/lib_list
+            // pass above doesn't see it (those come from [[bin]]/[lib]
+            // targets only). Splice in the package's own [link]
+            // contributions so tests resolve against the same symbols
+            // a real consumer would.
+            if let Some(ls) = m.link.as_ref() {
+                for fw in &ls.frameworks {
+                    la.push("-framework".to_string());
+                    la.push(fw.clone());
+                }
+                for lib in &ls.libs {
+                    la.push(format!("-l{lib}"));
+                }
+                for obj in &ls.extra_objects {
+                    if !obj.is_file() {
+                        return emit_extra_object_missing(diag_mode, obj, &manifest_path);
+                    }
+                    la.push(obj.to_string_lossy().to_string());
+                }
+            }
+            let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
+            (program, entry_src, mono, la)
         }
     };
     let tests = attrs::discover_tests(&program);
@@ -1664,7 +1740,7 @@ fn run_test(
         }
         return ExitCode::SUCCESS;
     }
-    let ir = codegen::generate_test_binary(&program, build_mode, &tests, opts.json);
+    let ir = codegen::generate_test_binary(&program, build_mode, &tests, opts.json, &mono);
     let tmp_handle = match make_temp_file("cpc-test-", ".ll", ir.as_bytes()) {
         Ok(h) => h,
         Err(e) => {
@@ -1685,7 +1761,7 @@ fn run_test(
         }
     };
     let bin_out = bin_out_handle.path().to_path_buf();
-    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[], &[]);
+    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[], &link_args);
     drop(tmp_handle);
     if !matches!(clang_status, ExitCode::SUCCESS) {
         drop(bin_out_handle);
@@ -1723,7 +1799,7 @@ fn build_program(
     file: &Path,
     src: &str,
     mode: DiagMode,
-) -> Result<cplus_core::ast::Program, ExitCode> {
+) -> Result<(cplus_core::ast::Program, sema::MonoInfo), ExitCode> {
     let extracted = doctest::extract(src);
     let src = extracted.as_str();
     let toks = match lexer::tokenize(src) {
@@ -1790,7 +1866,7 @@ fn build_program(
     // Slice 7GEN.5a: monomorphize generic-fn templates into concrete
     // per-instantiation fns before codegen sees the program.
     let post_mono = run_monomorphize(prog, &mono, &std::collections::BTreeMap::new());
-    Ok(post_mono)
+    Ok((post_mono, mono))
 }
 
 /// `cpc lsp` — find and exec the `cpc-lsp` binary, forwarding the rest

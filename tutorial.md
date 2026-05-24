@@ -175,7 +175,7 @@ let g: i32 = 0b1010;           // binary
 let h: i32 = 1_000_000;        // underscore separators
 ```
 
-There is no `'a'` character literal in v0.0.4. Use `65u8` for ASCII bytes.
+Character literals (v0.0.9 Phase 2): `'a'` is a `u8` byte literal — `97u8` written shorter. Backslash escapes `'\n'` `'\t'` `'\r'` `'\\'` `'\''` `'\"'` `'\0'` and the hex form `'\xFF'` all work. UTF-8 multi-byte codepoints (`'á'`) are rejected at parse time — the type is `u8`, not a full Unicode codepoint; for UTF-8 use a `str`.
 
 ---
 
@@ -1088,7 +1088,33 @@ extern fn libfoo_subscribe(cb: fn(*u8, i32), user_data: *u8);
 
 ## 21. Compile-time intrinsics
 
-Five built-ins evaluate at compile time: `size_of::[T]()`, `align_of::[T]()`, `include_bytes!(...)`, `include_str!(...)`, and `env!(...)`. The first two are typed query primitives; the next two embed file contents into the binary as constants; the last reads an environment variable at build time.
+Six built-ins evaluate at compile time: `size_of::[T]()`, `align_of::[T]()`, `addr_of(x)`, `include_bytes!(...)`, `include_str!(...)`, and `env!(...)`. The first three are typed query primitives; the next two embed file contents into the binary as constants; the last reads an environment variable at build time.
+
+### `addr_of(x)` — address of a stack local as `*T`
+
+Returns `*T` where `T` is the type of the binding `x`. **Unsafe** — wrap in `unsafe { ... }` because the returned pointer aliases the binding's storage and the borrow checker does not track its lifetime.
+
+Use it when a C function needs to write through a pointer (`time`, `arc4random_buf`, `snprintf`, `localtime`, `objc_msgSend` with by-pointer args, etc.). Pre-`addr_of` the only option was a malloc-write-free dance:
+
+```cplus
+extern fn time(t: *i64) -> i64;
+
+fn now() -> i64 {
+    let mut t: i64 = 0;
+    unsafe { time(addr_of(t)); }
+    return t;
+}
+```
+
+Zero runtime cost — the alloca pointer is reused directly; codegen emits no GEP, no load, no extra store.
+
+**Rules** (kept tight on purpose; widen as use cases land):
+
+- Exactly one argument; no turbofish (`addr_of::[T](x)` is **E0501**).
+- Argument must be a bare identifier — `addr_of(p.x)` and `addr_of(v[0])` fire **E0302**. Take `addr_of(struct_local)` then cast or GEP through the field index if you need an interior pointer.
+- Must appear inside `unsafe { ... }` — **E0801** outside.
+
+For a struct or array binding where you want a `*u8` (byte pointer), cast the result: `addr_of(my_struct) as *u8`.
 
 ### `size_of::[T]()` and `align_of::[T]()`
 
@@ -1721,6 +1747,20 @@ The same `vendor/<name>` model that hosts `stdlib` hosts other blessed binding p
 
   Cross-reference: [`docs/examples/recipes/simd_dot/`](docs/examples/recipes/simd_dot/) uses `f32x4` directly; `vendor/simd` is the wrapper for when you want named types + methods instead of raw vectors.
 
+- **`vendor/arena`** — bump-pointer arena allocator. `Arena::new(chunk_size)` rounds up to a chosen minimum; `alloc_bytes(n)` / `alloc_bytes_aligned(n, align)` / `alloc_zeroed_bytes(n)` / `alloc_str(s)` / `alloc[T](val)`. `reset()` frees every chunk and leaves the arena reusable; auto-Drop calls `reset()` at scope exit. OOM convention: raw APIs return `0 as *u8`; parallel `_opt` variants return `Option[*u8]` for callers that prefer explicit failure handling. `alloc[T]` requires `T: Copy` today (move-aware variant pending Phase 1).
+
+- **`vendor/clap`** — argparse with a fluent builder. `App::new("name").version(...).author(...).about(...).arg(Arg::new("v").short("v").long("verbose").flag())`. Long options accept both `--name value` and `--name=value`; short flags accept the combined `-abc` form. `get_matches_from(args: Vec[str])` is the cross-platform entry point — consumers construct argv themselves (via `stdlib/env` on macOS or `main(argc, argv)` once that lands on Linux). `ArgMatches` exposes typed `.is_present(name)`, `.value_of(name) -> Option[str]`, `.positional_count()`, `.positional_at(i)`.
+
+- **`vendor/json`** — typed-enum JSON parser + serializer. `Value` is a recursive enum: `Null / Bool(bool) / Number(f64) / Str(string) / Array(Vec[Value]) / Object(Vec[Member])`. Entry points: `json::parse(s: str) -> Result[Value, ParseError]`, `v.to_string() -> string` (shortest-round-trip number formatting; surrogate pairs handled). Accessors: `is_null / is_bool / is_number / is_string / is_array / is_object`, `as_bool / as_number / as_str`, `array_len / array_at(i)`, `object_len / object_get(key)`. Cleanup is automatic — dropping the outer `Value` recursively drops the payloads.
+
+- **`vendor/log`** — leveled structured logger writing to stderr. `set_max_level(Level::Info)` and `set_use_colors(true)` configure once before spawning workers (no atomic sync — single-threaded contract). Per-call API: `log::trace(s) / debug(s) / info(s) / warn(s) / error(s)`. Zero mallocs per log call (ANSI escapes are `static str`; timestamp buffer + `time_t` slot are stack-allocated via `addr_of`).
+
+- **`vendor/metal`** — typed Metal/Foundation bindings. `metal::default_device() -> Result[Device, MetalError]`, `device.new_command_queue()`, `device.new_buffer(len) / new_buffer_from_slice(slice)`, `device.new_library_with_data(bytes) -> Result[Library, MetalError]`, `library.new_function(name) -> Result[Function, MetalError]`, `device.new_compute_pipeline_state(fn) -> Result[ComputePipelineState, MetalError]`. All wrappers have `Drop` impls that `objc_release` the underlying object. `MetalError` discriminates `NoDefaultDevice / LibraryLoadFailed / FunctionNotFound / PipelineCreationFailed`.
+
+- **`vendor/uuid`** — RFC 4122 v4 UUIDs. `Uuid::new_v4() -> Option[Uuid]` (reads `/dev/urandom`; portable across macOS / Linux / BSD), `Uuid::parse(s) -> Option[Uuid]`, `uuid.to_string() -> string` (infallible — formats into a stack `[u8; 37]` buffer).
+
+These six packages all ship in-package `#[test]` fns runnable via `cpc test` from inside the package directory (e.g. `cd vendor/json && cpc test`). The driver auto-discovers `src/<package-name>.cplus` as the entry when no `[[bin]]` / `[lib]` is declared, threads in the package's `[link]` frameworks/libs, and falls back to `<manifest_root>/..` to resolve sibling vendor deps — so no per-package symlinks are needed.
+
 ---
 
 ## 28. Tooling — `cpc`
@@ -1763,6 +1803,8 @@ Every new feature should ship with at least three test shapes:
 3. **End-to-end** — drives `cpc build` from start to finish.
 
 See [cpc/tests/e2e.rs](cpc/tests/e2e.rs) for the canonical pattern.
+
+Vendor packages run their own in-package `#[test]` fns the same way: `cd vendor/<pkg> && cpc test`. The driver auto-discovers `src/<pkg-name>.cplus` as the entry, propagates the package's `[link]` frameworks/libs to the test binary's link line, threads `static` initializers through the same path a real build does, and walks one directory up to find sibling vendor deps — so a package like `vendor/uuid` that depends on `stdlib` resolves it from `vendor/stdlib` without per-package symlinks.
 
 ---
 
@@ -1981,6 +2023,26 @@ if mask.all() { /* every lane true */ }
 ```
 
 Comparison methods (`lt` / `le` / `gt` / `ge` / `eq` / `ne`) produce a mask of the matching width; `select(true_v, false_v)` is the mask-receiver blend.
+
+**Mask types are distinct from integer SIMD.** `mask32x4` is its own `Ty::Mask`, not an alias for `i32x4`. Sema enforces:
+
+- Comparison ops (`.lt` / `.gt` / ...) on a numeric SIMD return `mask{N}x{M}`, NOT `i{N}x{M}`.
+- `.select` / `.any` / `.all` require a mask receiver — calling them on a plain integer SIMD fires **E0324**.
+- Arithmetic on masks (`.add` / `.sub` / `.mul` / ...) is rejected (the 0/all-ones bitmask invariant has no useful arithmetic).
+- Mask ↔ Simd assignment is rejected (**E0302**) — no implicit coercion.
+- `mask{N}x{M}::splat` / `::new` / `::from_array` are rejected — masks are produced by comparisons, never lane-by-lane.
+
+Cross between the two with explicit, zero-cost methods:
+
+```cplus
+let m: mask32x4 = a.lt(b);
+let bits: i32x4 = m.to_bits();      // mask → signed-int SIMD (no-op at LLVM level)
+let m2: mask32x4 = bits.to_mask();  // signed-int SIMD → mask (same)
+```
+
+Bitwise ops (`.and` / `.or` / `.xor` / `.not`) work on masks for mask combining; they preserve the receiver kind.
+
+At the LLVM level masks lower to `<N x iN>` exactly like the matching signed-int SIMD — the distinction is type-system-only, kept for safety. Codegen is identical, so adding the type check costs nothing at runtime.
 
 ### `#[repr(C)]` boundaries — SIMD does NOT cross by default
 

@@ -1009,6 +1009,26 @@ fn classify_import_path(
         p.push(seg);
     }
     p.set_extension("cplus");
+    // Vendor-package self-test fallback: when run from inside a vendor
+    // package (e.g. `cpc test` in vendor/uuid/), the package's own
+    // manifest_root has no vendor/ subdir, but sibling vendor packages
+    // live at `<manifest_root>/../<dep>/`. Try that layout if the
+    // primary path doesn't resolve. This keeps `cpc test` working in
+    // package directories without requiring per-package vendor symlinks.
+    if !p.is_file() {
+        if let Some(parent) = manifest_root.parent() {
+            let mut alt = parent.to_path_buf();
+            alt.push(first);
+            alt.push("src");
+            for seg in &rest {
+                alt.push(seg);
+            }
+            alt.set_extension("cplus");
+            if alt.is_file() {
+                return Ok(alt);
+            }
+        }
+    }
     Ok(p)
 }
 

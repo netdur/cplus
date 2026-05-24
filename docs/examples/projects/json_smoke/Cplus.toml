@@ -1,0 +1,12 @@
+[package]
+name    = "json_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "json_smoke"
+path = "src/main.cplus"
+
+[dependencies]
+json   = "*"
+stdlib = "*"

@@ -458,6 +458,45 @@ impl<'a> Lexer<'a> {
                         Some(b'\\') => { decoded.push(b'\\'); self.pos += 1; }
                         Some(b'"')  => { decoded.push(b'"');  self.pos += 1; }
                         Some(b'0')  => { decoded.push(b'\0'); self.pos += 1; }
+                        // v0.0.9 follow-up: `\xHH` hex byte escape. Two
+                        // hex nibbles → one byte. Used for ANSI control
+                        // sequences (`\x1b[36m`), protocol literals,
+                        // etc. — anywhere a string literal needs a
+                        // non-printable byte without per-call mallocs.
+                        //
+                        // **ASCII range only (0x00..0x7F).** String
+                        // tokens carry their payload as Rust `String`
+                        // (UTF-8 required); a stray byte ≥ 0x80 would
+                        // produce invalid UTF-8. For non-ASCII bytes,
+                        // either embed the UTF-8 sequence directly in
+                        // the literal or build the byte array manually
+                        // and call `str_from_raw_parts` under `unsafe`.
+                        Some(b'x')  => {
+                            self.pos += 1;
+                            let hi = self.peek(0).and_then(hex_digit);
+                            let lo = self.peek(1).and_then(hex_digit);
+                            match (hi, lo) {
+                                (Some(h), Some(l)) => {
+                                    self.pos += 2;
+                                    let byte = (h << 4) | l;
+                                    if byte >= 0x80 {
+                                        return Err(LexError {
+                                            kind: LexErrorKind::UnexpectedChar(byte as char),
+                                            span: self.span_from(start),
+                                        });
+                                    }
+                                    decoded.push(byte);
+                                }
+                                _ => {
+                                    return Err(LexError {
+                                        kind: LexErrorKind::UnexpectedChar(
+                                            self.peek(0).unwrap_or(b'"') as char,
+                                        ),
+                                        span: self.span_from(start),
+                                    });
+                                }
+                            }
+                        }
                         Some(other) => {
                             return Err(LexError {
                                 kind: LexErrorKind::UnexpectedChar(other as char),
@@ -830,6 +869,19 @@ fn is_ident_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'_'
 }
 
+/// v0.0.9 Phase 2: ASCII-hex-digit → nibble value. Used by `lex_char`
+/// for the `'\xHH'` escape and (future-friendly) anywhere else a
+/// hex-byte parse needs it. Returns `None` on a non-hex byte so the
+/// caller can surface a precise diagnostic.
+fn hex_digit(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn is_ident_continue(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
@@ -898,6 +950,86 @@ mod tests {
             TokenKind::Const, TokenKind::Ident("FOO".into()),
             TokenKind::Static, TokenKind::Ident("BAR".into()),
             TokenKind::Static, TokenKind::Mut, TokenKind::Ident("BAZ".into()),
+            TokenKind::Eof,
+        ]);
+    }
+
+    // ---- v0.0.9 Phase 2: character literals ----
+
+    #[test]
+    fn char_literal_plain_ascii() {
+        // Every char literal lowers to `Int(byte, U8)` — the u8-literal
+        // codegen path takes over from there.
+        assert_eq!(kinds("'a'"),  vec![TokenKind::Int(97,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'Z'"),  vec![TokenKind::Int(90,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'0'"),  vec![TokenKind::Int(48,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'{'"),  vec![TokenKind::Int(123, NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("' '"),  vec![TokenKind::Int(32,  NumSuffix::U8), TokenKind::Eof]);
+    }
+
+    #[test]
+    fn char_literal_escapes() {
+        assert_eq!(kinds("'\\n'"),  vec![TokenKind::Int(10,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\t'"),  vec![TokenKind::Int(9,   NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\r'"),  vec![TokenKind::Int(13,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\\\'"), vec![TokenKind::Int(92,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\''"),  vec![TokenKind::Int(39,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\\"'"), vec![TokenKind::Int(34,  NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\0'"),  vec![TokenKind::Int(0,   NumSuffix::U8), TokenKind::Eof]);
+    }
+
+    #[test]
+    fn char_literal_hex_escape() {
+        assert_eq!(kinds("'\\x00'"), vec![TokenKind::Int(0,   NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\x7F'"), vec![TokenKind::Int(127, NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\xff'"), vec![TokenKind::Int(255, NumSuffix::U8), TokenKind::Eof]);
+        assert_eq!(kinds("'\\xab'"), vec![TokenKind::Int(171, NumSuffix::U8), TokenKind::Eof]);
+    }
+
+    #[test]
+    fn char_literal_empty_rejected() {
+        // `''` — opening immediately followed by closing.
+        let err = tokenize("''").unwrap_err();
+        assert!(matches!(err.kind, LexErrorKind::UnexpectedChar('\'')));
+    }
+
+    #[test]
+    fn char_literal_multi_byte_rejected() {
+        // `'ab'` — two bytes between the quotes. The first `a` is
+        // consumed; the second `b` fails the closing-quote check.
+        let err = tokenize("'ab'").unwrap_err();
+        assert!(matches!(err.kind, LexErrorKind::UnexpectedChar('b')));
+    }
+
+    #[test]
+    fn char_literal_utf8_rejected() {
+        // `'á'` — the first byte of the UTF-8 encoding is 0xC3 (> 0x7F);
+        // the char-literal type is `u8`, not a full Unicode code point.
+        // For UTF-8 use a `str`.
+        let err = tokenize("'á'").unwrap_err();
+        assert!(matches!(err.kind, LexErrorKind::UnexpectedChar(_)));
+    }
+
+    #[test]
+    fn char_literal_unterminated_rejected() {
+        // `'a` with no closing quote.
+        let err = tokenize("'a").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            LexErrorKind::UnterminatedString | LexErrorKind::UnexpectedChar(_)
+        ));
+    }
+
+    #[test]
+    fn char_literal_in_array_lit() {
+        // `[b'{' as u8 = 123]`-style magic numbers can now be written
+        // as `[123u8]` or with the new char literal `['{']`.
+        // The token stream for `['{']` is `[ Int(123,U8) ]`.
+        let toks = kinds("['{']");
+        assert_eq!(toks, vec![
+            TokenKind::LBracket,
+            TokenKind::Int(123, NumSuffix::U8),
+            TokenKind::RBracket,
             TokenKind::Eof,
         ]);
     }
@@ -1051,6 +1183,37 @@ mod tests {
             tokenize(r#""\q""#).unwrap_err().kind,
             LexErrorKind::UnexpectedChar('q')
         ));
+    }
+
+    #[test]
+    fn string_hex_escape_decoded() {
+        // v0.0.9 follow-up: `\xHH` in a string literal decodes to a
+        // single byte. Used for ANSI control sequences (`\x1b[36m`)
+        // and other non-printable ASCII bytes.
+        let toks = tokenize(r#""\x1b[36m""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("\x1b[36m".to_string()));
+        // Two hex bytes in a row (NUL + ESC).
+        let toks = tokenize(r#""\x00\x1b""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("\u{00}\u{1b}".to_string()));
+        // Uppercase hex digits.
+        let toks = tokenize(r#""\x7F""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("\u{7f}".to_string()));
+    }
+
+    #[test]
+    fn string_hex_escape_missing_digits_rejected() {
+        // `\x` followed by fewer than two hex digits is a lex error.
+        assert!(tokenize(r#""\x""#).is_err());
+        assert!(tokenize(r#""\x1""#).is_err());
+        assert!(tokenize(r#""\xgg""#).is_err());
+    }
+
+    #[test]
+    fn string_hex_escape_non_ascii_rejected() {
+        // Bytes ≥ 0x80 would produce invalid UTF-8 in the lexer's
+        // String payload. Lex-time reject with a clear pointer.
+        assert!(tokenize(r#""\x80""#).is_err());
+        assert!(tokenize(r#""\xff""#).is_err());
     }
 
     #[test]

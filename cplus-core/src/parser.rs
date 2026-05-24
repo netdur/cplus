@@ -1131,13 +1131,22 @@ impl Parser {
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         // Optional ownership prefixes: `mut x: T`, `move x: T`,
-        // `restrict x: *T`, or combinations (`restrict mut x: *T`).
-        // Order doesn't matter at the syntax layer; sema checks the
-        // combination (E0334 for `mut` + `move`; E0411 for `restrict`
-        // on a non-pointer type).
+        // `borrow x: T`, `restrict x: *T`, or combinations. Order
+        // doesn't matter at the syntax layer; sema checks the
+        // combination (E0334 for `mut` + `move` and analogous
+        // `borrow` conflicts; E0411 for `restrict` on a
+        // non-pointer type).
+        //
+        // The `borrow` marker is the v0.0.9 follow-up addition. It
+        // distinguishes the type-position `borrow REGION T` (used
+        // for region-annotated borrow types) from a parameter
+        // marker — in this loop we only consume `borrow` when it
+        // sits BEFORE the parameter name (look-ahead at the next
+        // token to confirm it's an Ident or another marker).
         let mut mutable = false;
         let mut move_ = false;
         let mut restrict = false;
+        let mut borrow_ = false;
         let start = self.peek().span;
         loop {
             match self.peek_kind() {
@@ -1152,6 +1161,15 @@ impl Parser {
                 TokenKind::Restrict if !restrict => {
                     self.bump();
                     restrict = true;
+                }
+                TokenKind::Borrow if !borrow_ => {
+                    // In parameter-prefix position `borrow` is
+                    // unambiguously the param marker — the
+                    // region-annotated `borrow REGION T` form only
+                    // appears in TYPE position (after the colon),
+                    // which parse_type handles. No look-ahead needed.
+                    self.bump();
+                    borrow_ = true;
                 }
                 _ => break,
             }
@@ -1181,6 +1199,7 @@ impl Parser {
             mutable,
             move_,
             restrict,
+            borrow_,
             span,
         })
     }

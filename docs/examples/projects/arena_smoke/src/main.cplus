@@ -1,0 +1,25 @@
+// arena_smoke — bump allocator end-to-end smoke (Copy types only).
+//
+// The arena's `alloc[T]` is verified ASan-clean for Copy T (i32 here).
+// For non-Copy T (Vec[U], Box[U], String, etc.), `alloc[T]` is
+// currently *broken*: the `move val: T` parameter is bitwise-copied
+// into the arena slot, but `val`'s function-exit Drop still fires and
+// frees any inner-heap-owned resource, leaving the slot dangling.
+// Tracked as G-023; same root cause hits `Box::new[T]`. Restrict
+// `alloc[T]` to Copy T until then.
+
+import "arena/arena" as arena;
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+fn main() -> i32 {
+    let mut a: arena::Arena = arena::new(4096 as usize);
+
+    let p1: *i32 = a.alloc::[i32](42 as i32);
+    let p2: *i32 = a.alloc::[i32](7 as i32);
+    let p3: *i32 = a.alloc::[i32](99 as i32);
+
+    let sum: i32 = unsafe { *p1 +% * p2 +% * p3 };
+    unsafe { printf(str_ptr("sum=%d\n\0"), sum); }
+    return 0;
+}

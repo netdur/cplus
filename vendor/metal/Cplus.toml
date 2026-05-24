@@ -6,3 +6,6 @@ edition = "2026"
 [link]
 frameworks = ["Metal", "Foundation"]
 libs       = ["objc"]
+
+[dependencies]
+stdlib = "*"

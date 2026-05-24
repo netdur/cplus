@@ -14656,6 +14656,81 @@ fn env_macro_missing_var_errors_e0876() {
     );
 }
 
+// ---- v0.0.9 Phase 3: mixed-if-arm panic regression ----
+
+#[test]
+fn mixed_if_arm_field_tail_compiles_and_runs() {
+    // Field tail expression in one arm — pre-Phase-3 this panicked
+    // "let init produces a value" because `expr_value_ty_with_bindings`
+    // didn't handle Field. Now it computes the field's type from the
+    // receiver's struct definition.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("p.cplus");
+    std::fs::write(
+        &src,
+        "struct V3 { x: f32, y: f32, z: f32 }\n\
+         fn main() -> i32 {\n\
+             let cond: bool = true;\n\
+             let a: V3 = V3 { x: 3.0f32, y: 4.0f32, z: 5.0f32 };\n\
+             let b: V3 = V3 { x: 9.0f32, y: 8.0f32, z: 7.0f32 };\n\
+             let x: f32 = if cond { a.x } else { b.x };\n\
+             println(x as i32);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("p");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "cpc failed; stderr:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "exited {:?}", run.status);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n");
+}
+
+// ---- v0.0.9 Phase 2: character literals 'a' ----
+
+#[test]
+fn char_literal_basic_runs() {
+    let out = compile_and_run("char_literal.cplus");
+    assert!(out.status.success(), "exited {:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "485\n1\n");
+}
+
+#[test]
+fn char_literal_rejects_multi_byte_source() {
+    // Negative: `'ab'` is a parse-time reject (the lexer surfaces it
+    // as UnexpectedChar('b') at the closing-quote check).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { let x: u8 = 'ab'; return x as i32; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("bad");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected cpc to reject 'ab' as a char literal"
+    );
+}
+
 // ---- v0.0.9 Phase 9 (cpc-gaps G-002 lock-down): generic HashMap[K, V] ----
 
 #[test]
@@ -15072,6 +15147,385 @@ fn const_static_mut_write_outside_unsafe_rejected() {
     assert!(
         stderr.contains("E0X34"),
         "expected E0X34 in stderr, got:\n{stderr}"
+    );
+}
+
+// ---- v0.0.9 follow-up: `static FOO: str = "..."`. Lowers to a
+// paired data global (the bytes) + a fat-pointer global (the
+// `{ ptr, i64 }` str header). Reads through the regular static-
+// load path; closes the cross-cutting "no static str" gap that
+// had `vendor/log` allocating ANSI escape sequences per call. ----
+
+#[test]
+fn static_str_immutable_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "static GREETING: str = \"hello, world\\n\";\n\
+         extern fn write(fd: i32, p: *u8, n: usize) -> isize;\n\
+         \n\
+         fn main() -> i32 {\n\
+             let n: usize = str_len(GREETING);\n\
+             let p: *u8 = str_ptr(GREETING);\n\
+             let _w: isize = unsafe { write(1 as i32, p, n) };\n\
+             if n != (13 as usize) { return 1; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "cpc failed to compile static-str program");
+    let out = Command::new(&bin).output().expect("run produced binary");
+    assert!(out.status.success(), "static str round-trip failed; exited {:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello, world\n");
+}
+
+#[test]
+fn static_str_with_hex_escape_runs() {
+    // Pin the joint case: `\xHH` escape inside a `static str` literal.
+    // ANSI escapes are the canonical use case.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "static RESET: str = \"\\x1b[0m\";\n\
+         fn main() -> i32 {\n\
+             // 4 bytes: ESC, '[', '0', 'm'\n\
+             if str_len(RESET) != (4 as usize) { return 1; }\n\
+             let p: *u8 = str_ptr(RESET);\n\
+             if unsafe { *p } != (27 as u8) { return 2; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "cpc failed to compile \\xHH-in-static-str");
+    let out = Command::new(&bin).output().expect("run produced binary");
+    assert!(
+        out.status.success(),
+        "\\x1b[0m static-str should be 4 bytes starting with ESC; exited {:?}",
+        out.status,
+    );
+}
+
+// ---- v0.0.9 follow-up: Ty::Mask distinct from Ty::Simd. Compare
+// ops on a numeric SIMD now produce a `mask{N}x{M}` value (distinct
+// type, identical LLVM `<N x iN>` lowering); `select` / `any` / `all`
+// require a mask receiver. End-to-end test: build a mask via `.lt`,
+// blend via `.select`, reduce via `.any`. ----
+
+#[test]
+fn simd_mask_compare_select_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         \n\
+         fn main() -> i32 {\n\
+             let a: f32x4 = f32x4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32);\n\
+             let b: f32x4 = f32x4::new(4.0f32, 3.0f32, 2.0f32, 1.0f32);\n\
+             // Mask is true where a < b (lanes 0,1) and false where not.\n\
+             let m: mask32x4 = a.lt(b);\n\
+             // Blend: where mask is set, take a; else take b. Expected lanes\n\
+             // are min(a,b) per lane: [1.0, 2.0, 2.0, 1.0].\n\
+             let r: f32x4 = m.select(a, b);\n\
+             let l0: f32 = r.lane(0 as u32);\n\
+             let l1: f32 = r.lane(1 as u32);\n\
+             let l2: f32 = r.lane(2 as u32);\n\
+             let l3: f32 = r.lane(3 as u32);\n\
+             unsafe { printf(str_ptr(\"%g %g %g %g\\n\\0\"), l0 as f64, l1 as f64, l2 as f64, l3 as f64); }\n\
+             // Round-trip: any() should be true (at least lanes 0,1 set);\n\
+             // all() should be false (lanes 2,3 not set).\n\
+             if !m.any() { return 1; }\n\
+             if m.all()  { return 2; }\n\
+             // to_bits round-trip: bits.to_mask() should match m.\n\
+             let bits: i32x4 = m.to_bits();\n\
+             let m2: mask32x4 = bits.to_mask();\n\
+             if !m2.any() { return 3; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "cpc failed to compile mask program");
+    let out = Command::new(&bin).output().expect("run produced binary");
+    assert!(
+        out.status.success(),
+        "compare → select → any/all round-trip failed; exited {:?}\nstdout: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1 2 2 1\n",
+        "blended lanes should be [min(a,b) per lane]"
+    );
+}
+
+// ---- addr_of(x) intrinsic: takes the address of a stack local as
+// `*T` with zero runtime cost — the alloca pointer is returned
+// directly. Closes the "no address-of-local" gap that forced
+// vendor/uuid, vendor/log, and vendor/metal to malloc per call. ----
+
+#[test]
+fn addr_of_round_trips_through_libc_time() {
+    // The canonical addr_of use case: pass a stack local's address to
+    // a libc fn that writes through the pointer. `time(addr_of(t))`
+    // both writes `t` and returns the same value — assert they match
+    // to prove the addr_of pointer actually aliased the stack slot.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         extern fn time(t: *i64) -> i64;\n\
+         \n\
+         fn main() -> i32 {\n\
+             let mut t: i64 = 0;\n\
+             let returned: i64 = unsafe { time(addr_of(t)) };\n\
+             if t == returned { return 0; }\n\
+             return 1;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("prog");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "cpc failed to compile addr_of program");
+    let out = Command::new(&bin).output().expect("run produced binary");
+    assert!(
+        out.status.success(),
+        "time(addr_of(t)) should write t and return the same value; \
+         exited {:?}",
+        out.status
+    );
+}
+
+#[test]
+fn addr_of_emits_no_alloca_or_load_extras() {
+    // Pin codegen: `addr_of(x)` reuses the existing local alloca with
+    // no GEP, no load, no extra store. The IR for `time(addr_of(t))`
+    // should reference `%t` directly as the argument to `@time`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("prog.cplus");
+    std::fs::write(
+        &src,
+        "extern fn time(t: *i64) -> i64;\n\
+         fn main() -> i32 {\n\
+             let mut t: i64 = 0;\n\
+             let _r: i64 = unsafe { time(addr_of(t)) };\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc --emit-ll");
+    assert!(out.status.success(), "--emit-ll failed");
+    let ir = String::from_utf8_lossy(&out.stdout);
+    // Local `t` lowers to an alloca named with a `t` prefix (e.g.
+    // `%t.addr1`). The addr_of result reuses that pointer literally —
+    // no GEP, no `inttoptr`, no extra alloca for the pointer itself.
+    // Match `@time(ptr %t...)` to allow the suffix the lowering picks.
+    let calls_time_with_t_addr = ir
+        .lines()
+        .any(|l| l.contains("call i64 @time(ptr %t"));
+    assert!(
+        calls_time_with_t_addr,
+        "expected `call i64 @time(ptr %t<suffix>)` — the alloca pointer fed \
+         directly with no intermediate; got ir:\n{ir}"
+    );
+}
+
+// ---- G-023 regression: bare-Ident move into struct-literal field +
+// into raw-pointer-store. Pre-fix, the local's scope-exit Drop fired
+// even though the value was bitwise-copied into the destination,
+// freeing inner heap storage the destination aliased. ----
+
+#[test]
+fn g023_struct_literal_field_init_does_not_double_drop() {
+    // Repro that motivated the fix: a function builds a non-Copy local
+    // (HashMap[str, str]), wraps it in a returned struct (`Wrap { m: m }`),
+    // and the caller queries the wrapped map. Pre-fix the local's Drop
+    // freed the map's internal table while the field aliased it — the
+    // caller saw a zero-length / not-present map even though len()
+    // reported 1 (the bitwise-copied count). Post-fix the local's
+    // drop_flag flips to false at the struct-literal site so only the
+    // wrapper owns the storage.
+    //
+    // Same root cause hits `Box::new[T]` for non-Copy T, `arena::alloc[T]`
+    // for non-Copy T, and any "build a non-Copy local, wrap, return"
+    // helper. clap's `ArgMatches` rewrite couldn't ship without this.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\n\
+         name    = \"g023_struct_lit\"\n\
+         version = \"0.0.1\"\n\
+         edition = \"2026\"\n\
+         \n\
+         [[bin]]\n\
+         name = \"g023_struct_lit\"\n\
+         path = \"src/main.cplus\"\n\
+         \n\
+         [dependencies]\n\
+         stdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/hash_map\" as map;\n\
+         \n\
+         pub struct Wrap { pub m: map::HashMap[str, str] }\n\
+         \n\
+         fn make() -> Wrap {\n\
+             let mut m: map::HashMap[str, str] = map::new::[str, str]();\n\
+             m.insert(\"name\", \"alice\");\n\
+             return Wrap { m: m };\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let w: Wrap = make();\n\
+             if w.m.contains_key(\"name\") { return 0; }\n\
+             return 1;\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    let stdlib_target = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor/stdlib");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&stdlib_target, dir.join("vendor/stdlib")).unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed");
+    let bin = dir.join("target/debug/g023_struct_lit");
+    let out = Command::new(&bin).output().expect("run binary");
+    assert!(
+        out.status.success(),
+        "Wrap{{m: m}} field-init should not drop the local; pre-G-023-fix the \
+         field aliased freed HashMap storage and contains_key returned false. \
+         exited {:?}",
+        out.status
+    );
+}
+
+#[test]
+fn g023_raw_pointer_store_does_not_double_drop() {
+    // Repro for the `unsafe { *p = v; }` shape used by `Box::new[T]`
+    // and `arena::alloc[T]`. A non-Copy `move v: T` parameter is
+    // bitwise-stored into a malloc'd slot; pre-fix, v's scope-exit
+    // Drop ran anyway and freed inner heap storage (the Vec's `ptr`
+    // buffer) while the slot aliased it. Post-fix, the assign's bare-
+    // Ident RHS flips v's drop_flag.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\n\
+         name    = \"g023_raw_store\"\n\
+         version = \"0.0.1\"\n\
+         edition = \"2026\"\n\
+         \n\
+         [[bin]]\n\
+         name = \"g023_raw_store\"\n\
+         path = \"src/main.cplus\"\n\
+         \n\
+         [dependencies]\n\
+         stdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         \n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         \n\
+         fn place[T](move val: T) -> *T {\n\
+             let raw: *u8 = unsafe { malloc(size_of::[T]()) };\n\
+             let p: *T = unsafe { raw as *T };\n\
+             unsafe { *p = val; }\n\
+             return p;\n\
+         }\n\
+         \n\
+         fn make_vec() -> vec::Vec[i32] {\n\
+             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             v.push(100 as i32);\n\
+             v.push(200 as i32);\n\
+             return v;\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let p: *vec::Vec[i32] = place::[vec::Vec[i32]](make_vec());\n\
+             let len: usize = unsafe { (*p).len() };\n\
+             let v0: i32 = unsafe { (*p).get(0 as usize) };\n\
+             if len == (2 as usize) && v0 == (100 as i32) { return 0; }\n\
+             return 1;\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    let stdlib_target = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor/stdlib");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&stdlib_target, dir.join("vendor/stdlib")).unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed");
+    let bin = dir.join("target/debug/g023_raw_store");
+    let out = Command::new(&bin).output().expect("run binary");
+    assert!(
+        out.status.success(),
+        "place[T](move val) should not Drop val after raw-pointer-store; \
+         pre-G-023-fix the slot's Vec.ptr was freed and read-back failed. \
+         exited {:?}",
+        out.status
     );
 }
 

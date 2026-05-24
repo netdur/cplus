@@ -1,8 +1,41 @@
 // vendor/arena/src/arena.cplus
-// Bump/Arena memory allocator.
+// Bump allocator: append-only `alloc_bytes` / `alloc_bytes_aligned` /
+// `alloc[T]` / `alloc_str` / `alloc_zeroed_bytes`; whole-arena free
+// on Drop. Chunks grow on demand; per-allocation cost is a few
+// pointer ops + an align rounding.
+//
+// **API contract.**
+//   - `Arena::new(chunk_size)` chooses a per-chunk byte budget. Values
+//     smaller than `size_of::[Chunk]() + 8` are silently rounded up to
+//     a 1 KiB payload so the first alloc has room.
+//   - `alloc_bytes(n)` returns 8-byte-aligned bytes; `alloc_bytes_aligned(n, a)`
+//     honors the requested alignment. `a == 0` is normalized to 1
+//     (otherwise the `% a` math would trap on SIGFPE).
+//   - **Size arithmetic uses checked `+` / `*`** — in debug builds an
+//     overflow traps (a wrapped size would be a buffer overflow).
+//     Pointer-as-usize math stays on `+%` since real addresses don't
+//     wrap.
+//   - `alloc[T](val)` is restricted to **Copy `T`**: the arena does NOT
+//     run per-slot Drop on reset/free, so a non-Copy `T` (e.g. `Vec[U]`)
+//     would leak its inner heap storage. Use `Box[T]` for those.
+//   - **OOM** is reported as a null `*u8` / null `*T` return; check
+//     before deref. The `*_opt` family (`alloc_bytes_opt`,
+//     `alloc_bytes_aligned_opt`) returns `Option[*u8]` for callers
+//     that prefer explicit failure-handling.
+//   - `reset(mut self)` frees every chunk and leaves the arena empty
+//     and reusable. `total_allocated()` returns the sum of all chunk
+//     capacities (the upper bound on bytes that could fit, NOT the
+//     current high-water mark).
+//   - `alloc_str(s)` copies `s.bytes()` into the arena and returns a
+//     `str` view; `None` on OOM. The returned view borrows the arena's
+//     storage — same lifetime convention as every other allocator.
+
+import "stdlib/option" as option;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
+extern fn memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+extern fn memset(dst: *u8, c: i32, n: usize) -> *u8;
 
 struct Chunk {
     cap: usize,
@@ -16,39 +49,51 @@ pub struct Arena {
 }
 
 pub fn new(chunk_size: usize) -> Arena {
-    let mut default_chunk_size: usize = chunk_size;
     let header_size: usize = size_of::[Chunk]();
-    if default_chunk_size < header_size +% 8 {
-        default_chunk_size = header_size +% 1024;
+    let mut chosen_size: usize = chunk_size;
+    if chosen_size < header_size + 8 {
+        chosen_size = header_size + 1024;
     }
     return Arena {
         head: unsafe { 0 as *u8 },
-        chunk_size: default_chunk_size,
+        chunk_size: chosen_size,
     };
 }
 
 impl Arena {
+    // Shim for the stdlib `Type::new` convention. Equivalent to the
+    // package-level `arena::new(chunk_size)`.
+    pub fn new(chunk_size: usize) -> Arena {
+        return new(chunk_size);
+    }
+
     pub fn alloc_bytes(mut self, bytes: usize) -> *u8 {
         return self.alloc_bytes_aligned(bytes, 8 as usize);
     }
 
     pub fn alloc_bytes_aligned(mut self, bytes: usize, align: usize) -> *u8 {
+        // Normalize `align == 0` to 1-byte alignment — the `% align`
+        // math below would trap on SIGFPE otherwise.
+        let mut align: usize = align;
+        if align == (0 as usize) { align = 1 as usize; }
         let header_size: usize = size_of::[Chunk]();
-        
+
         if unsafe { self.head as usize } != (0 as usize) {
             let chunk: *Chunk = unsafe { self.head as *Chunk };
             let cap: usize = unsafe { (*chunk).cap };
             let used: usize = unsafe { (*chunk).used };
-            
+
+            // Pointer-as-usize math: real addresses don't wrap.
             let p_start: usize = unsafe { (self.head as usize) +% header_size };
             let avail: usize = p_start +% used;
-            
+
             let remainder: usize = avail % align;
             let aligned_avail: usize = if remainder == (0 as usize) { avail } else { avail +% (align -% remainder) };
-            
-            let end_addr: usize = aligned_avail +% bytes;
+
+            // Size paths: trap on overflow.
+            let end_addr: usize = aligned_avail + bytes;
             let p_end: usize = p_start +% cap;
-            
+
             if end_addr <= p_end {
                 unsafe {
                     (*chunk).used = end_addr -% p_start;
@@ -56,26 +101,25 @@ impl Arena {
                 return unsafe { aligned_avail as *u8 };
             }
         }
-        
-        // Allocate a new chunk
-        let mut needed_payload: usize = bytes;
+
+        // Allocate a new chunk.
         let mut padding: usize = 0;
         if align > 1 {
             padding = align -% 1;
         }
-        let max_needed: usize = bytes +% padding;
-        
+        let max_needed: usize = bytes + padding;
+
         let mut next_chunk_payload: usize = self.chunk_size -% header_size;
         if next_chunk_payload < max_needed {
             next_chunk_payload = max_needed;
         }
-        
-        let alloc_size: usize = header_size +% next_chunk_payload;
+
+        let alloc_size: usize = header_size + next_chunk_payload;
         let raw: *u8 = unsafe { malloc(alloc_size) };
         if unsafe { raw as usize } == (0 as usize) {
             return unsafe { 0 as *u8 };
         }
-        
+
         let new_chunk: *Chunk = unsafe { raw as *Chunk };
         unsafe {
             (*new_chunk).cap = next_chunk_payload;
@@ -83,11 +127,11 @@ impl Arena {
             (*new_chunk).next = self.head;
         }
         self.head = raw;
-        
+
         let p_start: usize = unsafe { (raw as usize) +% header_size };
         let remainder: usize = p_start % align;
         let aligned_avail: usize = if remainder == (0 as usize) { p_start } else { p_start +% (align -% remainder) };
-        
+
         unsafe {
             (*new_chunk).used = (aligned_avail +% bytes) -% p_start;
         }
@@ -106,7 +150,67 @@ impl Arena {
         return typed_ptr;
     }
 
-    fn drop(mut self) {
+    // ---------------- v0.0.9 follow-up additions -----------------
+
+    // OOM-explicit variants. Mirror the null-returning forms but
+    // wrap in `Option` so the caller can `guard let Some(p) = ...`.
+    pub fn alloc_bytes_opt(mut self, bytes: usize) -> option::Option[*u8] {
+        return self.alloc_bytes_aligned_opt(bytes, 8 as usize);
+    }
+
+    pub fn alloc_bytes_aligned_opt(mut self, bytes: usize, align: usize) -> option::Option[*u8] {
+        let p: *u8 = self.alloc_bytes_aligned(bytes, align);
+        if unsafe { p as usize } == (0 as usize) {
+            return option::Option[*u8]::None;
+        }
+        return option::Option[*u8]::Some(p);
+    }
+
+    // Allocate `n` bytes initialized to zero. Useful for arenas holding
+    // POD structs the caller wants memset'd. Returns null on OOM.
+    pub fn alloc_zeroed_bytes(mut self, bytes: usize) -> *u8 {
+        let p: *u8 = self.alloc_bytes(bytes);
+        if unsafe { p as usize } != (0 as usize) {
+            unsafe { memset(p, 0 as i32, bytes); }
+        }
+        return p;
+    }
+
+    // Copy a `str`'s bytes into the arena and return a `str` view of
+    // the copied bytes. Returns `None` on OOM. The returned view
+    // shares the arena's lifetime (same as every other arena alloc).
+    pub fn alloc_str(mut self, s: str) -> option::Option[str] {
+        let n: usize = str_len(s);
+        if n == (0 as usize) {
+            return option::Option[str]::Some("");
+        }
+        let p: *u8 = self.alloc_bytes_aligned(n, 1 as usize);
+        if unsafe { p as usize } == (0 as usize) {
+            return option::Option[str]::None;
+        }
+        unsafe { memcpy(p, str_ptr(s), n); }
+        return option::Option[str]::Some(unsafe { str_from_raw_parts(p, n) });
+    }
+
+    // Sum of every chunk's capacity. Useful for "how much memory am I
+    // holding" diagnostics. NOT the high-water mark — it's the upper
+    // bound on what could still fit if perfectly packed.
+    pub fn total_allocated(self) -> usize {
+        let mut total: usize = 0 as usize;
+        let mut curr: *u8 = self.head;
+        while unsafe { curr as usize } != (0 as usize) {
+            let chunk: *Chunk = unsafe { curr as *Chunk };
+            total = total + unsafe { (*chunk).cap };
+            curr = unsafe { (*chunk).next };
+        }
+        return total;
+    }
+
+    // Free every chunk and leave the arena empty. The arena stays
+    // reusable — future `alloc_bytes` calls will allocate a fresh
+    // chunk. Equivalent to dropping and re-creating with the same
+    // chunk_size, but without changing the binding.
+    pub fn reset(mut self) {
         let mut curr: *u8 = self.head;
         while unsafe { curr as usize } != (0 as usize) {
             let chunk: *Chunk = unsafe { curr as *Chunk };
@@ -114,6 +218,135 @@ impl Arena {
             unsafe { free(curr); }
             curr = next;
         }
+        self.head = unsafe { 0 as *u8 };
         return;
     }
+
+    fn drop(mut self) {
+        self.reset();
+        return;
+    }
+}
+
+// ---------------- Unit tests (run via `cpc test`) ----------------
+
+#[test]
+fn test_new_rounds_up_small_chunk_size() {
+    // A chunk_size smaller than header + 8 bytes is silently bumped to
+    // header + 1024 so the first alloc has room. Verify by checking
+    // that `total_allocated` after a single small alloc is at least
+    // 1024 bytes — proves the rounding fired.
+    let mut a: Arena = Arena::new(1 as usize);
+    let _p: *u8 = a.alloc_bytes(4 as usize);
+    assert a.total_allocated() >= (1024 as usize);
+}
+
+#[test]
+fn test_alloc_bytes_8_aligned() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let p: *u8 = a.alloc_bytes(7 as usize);
+    let addr: usize = unsafe { p as usize };
+    assert (addr % (8 as usize)) == (0 as usize);
+}
+
+#[test]
+fn test_alloc_bytes_aligned_64() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let _p1: *u8 = a.alloc_bytes(1 as usize);   // bump past 0
+    let p: *u8 = a.alloc_bytes_aligned(8 as usize, 64 as usize);
+    let addr: usize = unsafe { p as usize };
+    assert (addr % (64 as usize)) == (0 as usize);
+}
+
+#[test]
+fn test_alloc_bytes_aligned_zero_normalized() {
+    // align==0 must NOT trap (sigfpe on the % math); the API normalizes
+    // it to 1-byte alignment. Any returned pointer is acceptable as
+    // long as the call doesn't crash.
+    let mut a: Arena = Arena::new(4096 as usize);
+    let p: *u8 = a.alloc_bytes_aligned(8 as usize, 0 as usize);
+    assert (unsafe { p as usize }) != (0 as usize);
+}
+
+#[test]
+fn test_alloc_zeroed_bytes_is_zero() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let p: *u8 = a.alloc_zeroed_bytes(16 as usize);
+    let mut i: usize = 0 as usize;
+    while i < (16 as usize) {
+        let q: *u8 = unsafe { p + i };
+        assert unsafe { *q } == (0 as u8);
+        i = i +% (1 as usize);
+    }
+}
+
+#[test]
+fn test_alloc_bytes_opt_some() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let opt: option::Option[*u8] = a.alloc_bytes_opt(8 as usize);
+    match opt {
+        option::Option[*u8]::Some(_) => { assert true; }
+        option::Option[*u8]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_alloc_str_round_trip() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let opt: option::Option[str] = a.alloc_str("hello");
+    guard let option::Option[str]::Some(s) = opt else {
+        assert false;
+        return;
+    };
+    assert str_len(s) == (5 as usize);
+    // Bytes match the original.
+    let p: *u8 = str_ptr(s);
+    assert unsafe { *p } == ('h' as u8);
+    let p4: *u8 = unsafe { p + 4 };
+    assert unsafe { *p4 } == ('o' as u8);
+}
+
+#[test]
+fn test_alloc_str_empty_returns_some() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let opt: option::Option[str] = a.alloc_str("");
+    match opt {
+        option::Option[str]::Some(s) => { assert str_len(s) == (0 as usize); }
+        option::Option[str]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_reset_frees_and_restarts() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let _p1: *u8 = a.alloc_bytes(64 as usize);
+    let before: usize = a.total_allocated();
+    assert before > (0 as usize);
+    a.reset();
+    assert a.total_allocated() == (0 as usize);
+    // Allocation after reset works and grows total again.
+    let _p2: *u8 = a.alloc_bytes(64 as usize);
+    assert a.total_allocated() > (0 as usize);
+}
+
+#[test]
+fn test_alloc_i32_round_trip() {
+    let mut a: Arena = Arena::new(4096 as usize);
+    let p: *i32 = a.alloc::[i32](12345 as i32);
+    assert unsafe { *p } == (12345 as i32);
+}
+
+#[test]
+fn test_alloc_many_grows_chunks() {
+    // Push enough small allocs that the arena allocates multiple
+    // chunks. `total_allocated` then must exceed the initial chunk
+    // size.
+    let mut a: Arena = Arena::new(256 as usize);
+    let mut i: usize = 0 as usize;
+    while i < (200 as usize) {
+        let _p: *u8 = a.alloc_bytes(8 as usize);
+        i = i +% (1 as usize);
+    }
+    // Multiple chunks → total > one chunk's payload.
+    assert a.total_allocated() > (256 as usize);
 }

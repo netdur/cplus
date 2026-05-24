@@ -824,6 +824,7 @@ Single-file-mode fallbacks + low-level building blocks the stdlib itself uses:
 - `str_from_raw_parts(p: *u8, n: usize) -> str` — unsafe
 - `size_of::[T]() -> usize`
 - `align_of::[T]() -> usize`
+- `addr_of(x) -> *T` — address of a stack local; **unsafe**, bare-Ident-only. Use for libc fns that write through a pointer (`time(addr_of(t))`, `snprintf(addr_of(buf) as *u8, ...)`, `arc4random_buf(addr_of(arr) as *u8, n)`).
 - `assert EXPR;` (in `#[test]` builds — sets failure flag; in regular builds — traps)
 
 **Decision rule:** if you're writing a single-file demo (`cpc file.cplus -o bin`), use the intrinsic `println`. If you're writing a project (`cpc build`), import `stdlib/io`. Don't mix both in one project.
@@ -1020,6 +1021,32 @@ pub const NEG_TWO: i32 = -2;
 ```
 
 This bites if you're coming from the "make signed-negative explicit with wrapping arithmetic" idiom (`0 -% N` instead of `-N`). The compiler doesn't const-fold the wrapping op before checking literal-ness; it sees `Binary { SubWrap, IntLit(0), IntLit(2) }` and rejects. The fix is mechanical — use `-N` directly. Same rule applies to `0 - 2`, `1 + 2`, etc.
+
+### `mask{N}x{M}` is NOT an alias for `i{N}x{M}`
+
+Pre-v0.0.9 mask types were a documentation hint that aliased the matching signed-int SIMD. They're now a distinct `Ty::Mask` — sema enforces the boundary while codegen lowers both to the same `<N x iN>` LLVM type (zero runtime cost).
+
+```cplus
+// ❌ E0302: type mismatch — `i32x4` is not `mask32x4`
+let v: i32x4 = i32x4::splat(0);
+let m: mask32x4 = v;
+
+// ❌ E0324: `add` is not available on mask types
+let m: mask32x4 = a.lt(b);
+let _bad = m.add(m);
+
+// ❌ E0324: `mask32x4::splat` is not a constructor
+let _bad: mask32x4 = mask32x4::splat(0);
+
+// ✅ Comparison returns a mask
+let m: mask32x4 = a.lt(b);
+
+// ✅ Cross via explicit, zero-cost methods when needed
+let bits: i32x4   = m.to_bits();      // mask → signed-int SIMD
+let m2:   mask32x4 = bits.to_mask();  // signed-int SIMD → mask
+```
+
+`select` / `any` / `all` require a mask receiver; bitwise `and` / `or` / `xor` / `not` work on both Simd and Mask (preserving the receiver kind) so masks can be combined.
 
 ---
 

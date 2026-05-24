@@ -25,6 +25,12 @@ impl CommandQueue {
         let buf_raw: *u8 = runtime::msg_id(self.raw, selector);
         return CommandBuffer { raw: buf_raw };
     }
+
+    fn drop(mut self) {
+        runtime::release(self.raw);
+        self.raw = unsafe { 0 as *u8 };
+        return;
+    }
 }
 
 impl CommandBuffer {
@@ -52,6 +58,12 @@ impl CommandBuffer {
         }
         let selector: *u8 = runtime::sel(str_ptr("waitUntilCompleted\0"));
         runtime::msg_void(self.raw, selector);
+        return;
+    }
+
+    fn drop(mut self) {
+        runtime::release(self.raw);
+        self.raw = unsafe { 0 as *u8 };
         return;
     }
 }
@@ -90,6 +102,12 @@ impl ComputeCommandEncoder {
         }
         let selector: *u8 = runtime::sel(str_ptr("endEncoding\0"));
         runtime::msg_void(self.raw, selector);
+        return;
+    }
+
+    fn drop(mut self) {
+        runtime::release(self.raw);
+        self.raw = unsafe { 0 as *u8 };
         return;
     }
 }

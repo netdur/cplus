@@ -1,11 +1,19 @@
 // vendor/metal/src/runtime.cplus — Objective-C runtime bindings and helpers for Metal.
+//
+// **String literal convention.** Every Objective-C selector and class
+// name passed to `sel()` / `cls()` is a `\0`-terminated C string. We
+// write them as plain `str` literals with a trailing `\0`, then call
+// `str_ptr(...)` to get the `*u8` start address. The trailing NUL is
+// what `sel_registerName` / `objc_getClass` actually scan for; cpc's
+// `str` is just a (ptr, len) view that happens to include the NUL.
+// Note that `str_len("Foo\0")` returns 4, NOT 3 — the NUL counts as a
+// byte. If you ever pass these strings to a `(ptr, len)` API, slice
+// off the trailing byte first.
 
 extern fn objc_getClass(name: *u8) -> *u8;
 extern fn sel_registerName(name: *u8) -> *u8;
+extern fn objc_release(obj: *u8);
 extern fn dispatch_data_create(buffer: *u8, size: usize, queue: *u8, destructor: *u8) -> *u8;
-extern fn malloc(n: usize) -> *u8;
-extern fn free(p: *u8);
-
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
@@ -56,6 +64,18 @@ pub struct MTLSize {
     pub width: usize,
     pub height: usize,
     pub depth: usize,
+}
+
+// Structured error type for Metal operations. Replaces the v0.0.9
+// `Option[T]` factory returns — callers get a discriminant instead
+// of an unspecific `None`, so they can distinguish "no Metal device
+// on this host" from "shader compile failed" without parsing
+// NSError strings.
+pub enum MetalError {
+    NoDefaultDevice,
+    LibraryLoadFailed,
+    FunctionNotFound,
+    PipelineCreationFailed,
 }
 
 #[link_name = "objc_msgSend"]
@@ -115,6 +135,14 @@ pub fn mtl_create_system_default_device() -> *u8 {
     return unsafe { MTLCreateSystemDefaultDevice() };
 }
 
+// Release a +1-retained Objective-C object. Safe to call with a null
+// pointer (objc_release tolerates nil).
+pub fn release(obj: *u8) {
+    if obj == unsafe { 0 as *u8 } { return; }
+    unsafe { objc_release(obj); }
+    return;
+}
+
 pub fn msg_id_pipeline(recv: *u8, selector: *u8, fn_obj: *u8, err_out: *u8) -> *u8 {
     return unsafe { objc_msg_id_pipeline(recv, selector, fn_obj, err_out) };
 }
@@ -124,25 +152,12 @@ pub fn msg_void_pipeline(recv: *u8, selector: *u8, pipeline: *u8) {
 }
 
 pub fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSize) {
-    let size: usize = size_of::[MTLSize]();
-    let p: *u8 = unsafe { malloc(size *% (2 as usize)) };
-    if p == unsafe { 0 as *u8 } {
-        return;
-    }
-    let groups_ptr: *MTLSize = unsafe { p as *MTLSize };
-    let per_group_ptr: *MTLSize = unsafe { (p + size) as *MTLSize };
-    unsafe {
-        groups_ptr[0].width = groups.width;
-        groups_ptr[0].height = groups.height;
-        groups_ptr[0].depth = groups.depth;
-
-        per_group_ptr[0].width = per_group.width;
-        per_group_ptr[0].height = per_group.height;
-        per_group_ptr[0].depth = per_group.depth;
-
-        objc_msg_dispatch(recv, selector, groups_ptr, per_group_ptr);
-        free(p);
-    };
+    // v0.0.9 follow-up (addr_of): pre-`addr_of` this had to malloc
+    // a 48-byte slot, memcpy both MTLSize args in, dispatch, and free.
+    // Now the by-value parameters live on the stack and we pass their
+    // addresses directly. Net: 0 mallocs per dispatch call.
+    unsafe { objc_msg_dispatch(recv, selector, addr_of(groups), addr_of(per_group)); }
+    return;
 }
 
 // Converts a C+ str to an Objective-C NSString.
@@ -164,4 +179,43 @@ pub fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
 // Creates a dispatch_data_t from raw bytes.
 pub fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
     return unsafe { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
+}
+
+// ---------------- Unit tests ----------------
+// Selector and class registration are pure runtime queries — safe to
+// run in unit-test context. ns_string/ns_data_view return objects we
+// can interrogate via length selectors without any GPU side effects.
+
+#[test]
+fn test_sel_registers_known_selector() {
+    let s: *u8 = sel(str_ptr("alloc\0"));
+    assert unsafe { s as usize } != (0 as usize);
+}
+
+#[test]
+fn test_cls_resolves_nsstring() {
+    let c: *u8 = cls(str_ptr("NSString\0"));
+    assert unsafe { c as usize } != (0 as usize);
+}
+
+#[test]
+fn test_cls_unknown_class_is_null() {
+    let c: *u8 = cls(str_ptr("NoSuchClassName_zzz\0"));
+    assert unsafe { c as usize } == (0 as usize);
+}
+
+#[test]
+fn test_ns_string_round_trips_length() {
+    let s: *u8 = ns_string("hello");
+    assert unsafe { s as usize } != (0 as usize);
+    let len_sel: *u8 = sel(str_ptr("length\0"));
+    let n: u64 = msg_u64(s, len_sel);
+    assert n == (5 as u64);
+    release(s);
+}
+
+#[test]
+fn test_release_tolerates_null() {
+    release(unsafe { 0 as *u8 });
+    assert true;
 }

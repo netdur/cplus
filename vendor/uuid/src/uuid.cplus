@@ -1,60 +1,30 @@
 // vendor/uuid/src/uuid.cplus
 // RFC 4122 v4 UUID generator, parser, and formatter.
 
-import "../../stdlib/src/option" as option;
+import "stdlib/option" as option;
 
-extern fn malloc(n: usize) -> *u8;
-extern fn free(p: *u8);
 extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
-extern fn arc4random_buf(buf: *u8, n: usize);
+extern fn open(path: *u8, flags: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
 
 pub struct Uuid {
     pub bytes: [u8; 16],
 }
 
-pub fn new_v4() -> Uuid {
-    let buf: *u8 = unsafe { malloc(16 as usize) };
-    if unsafe { buf as usize } != (0 as usize) {
-        unsafe { arc4random_buf(buf, 16 as usize); }
-        
-        let b6: *u8 = unsafe { buf + 6 };
-        let b8: *u8 = unsafe { buf + 8 };
-        
-        unsafe {
-            *b6 = ((*b6 & 15u8) | 64u8);
-            *b8 = ((*b8 & 63u8) | 128u8);
-        }
-        
-        let mut uuid = Uuid {
-            bytes: [
-                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-                0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
-            ]
-        };
-        
-        let mut i: usize = 0 as usize;
-        while i < (16 as usize) {
-            let p: *u8 = unsafe { buf + i };
-            uuid.bytes[i] = unsafe { *p };
-            i = i +% (1 as usize);
-        }
-        
-        unsafe { free(buf); }
-        return uuid;
-    }
-    
+fn zero_uuid() -> Uuid {
     return Uuid {
         bytes: [
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
-        ]
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        ],
     };
 }
 
 fn parse_hex_digit(c: u8) -> i32 {
-    if c >= (48 as u8) && c <= (57 as u8) { return (c -% 48 as u8) as i32; }
-    if c >= (97 as u8) && c <= (102 as u8) { return (c -% 87 as u8) as i32; }
-    if c >= (65 as u8) && c <= (70 as u8) { return (c -% 55 as u8) as i32; }
+    if c >= ('0' as u8) && c <= ('9' as u8) { return (c -% ('0' as u8)) as i32; }
+    if c >= ('a' as u8) && c <= ('f' as u8) { return (c -% (('a' as u8) -% (10 as u8))) as i32; }
+    if c >= ('A' as u8) && c <= ('F' as u8) { return (c -% (('A' as u8) -% (10 as u8))) as i32; }
     return 0 -% 1;
 }
 
@@ -66,67 +36,224 @@ fn hex_offset_for_byte(idx: usize) -> usize {
     return (idx *% (2 as usize)) +% (4 as usize);
 }
 
-pub fn parse(s: str) -> option::Option[Uuid] {
-    if str_len(s) != (36 as usize) {
-        return option::Option[Uuid]::None;
-    }
-    
-    let p: *u8 = str_ptr(s);
-    if unsafe { *(p + 8) } != (45 as u8) || unsafe { *(p + 13) } != (45 as u8) ||
-       unsafe { *(p + 18) } != (45 as u8) || unsafe { *(p + 23) } != (45 as u8) {
-        return option::Option[Uuid]::None;
-    }
-    
-    let mut uuid = Uuid {
-        bytes: [
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8
-        ]
-    };
-    
-    let mut idx: usize = 0 as usize;
-    while idx < (16 as usize) {
-        let start_offset: usize = hex_offset_for_byte(idx);
-        let c1: u8 = unsafe { *(p + start_offset) };
-        let c2: u8 = unsafe { *(p + (start_offset +% 1 as usize)) };
-        
-        let h1: i32 = parse_hex_digit(c1);
-        let h2: i32 = parse_hex_digit(c2);
-        if h1 < 0 || h2 < 0 {
+impl Uuid {
+    pub fn new_v4() -> option::Option[Uuid] {
+        // Read 16 random bytes from /dev/urandom — portable across
+        // macOS and Linux (replaces the v0.0.9 arc4random_buf path,
+        // which was BSD/Darwin-only). `addr_of` writes directly into
+        // the stack-allocated `bytes` field; no heap allocation.
+        let mut uuid: Uuid = zero_uuid();
+        let fd: i32 = unsafe { open(str_ptr("/dev/urandom\0"), 0 as i32) };
+        if fd < 0 {
             return option::Option[Uuid]::None;
         }
-        
-        uuid.bytes[idx] = (((h1 << 4) | h2) as u8);
-        idx = idx +% (1 as usize);
+        let mut filled: usize = 0 as usize;
+        while filled < (16 as usize) {
+            let dst: *u8 = unsafe { (addr_of(uuid) as *u8) + filled };
+            let n: isize = unsafe { read(fd, dst, (16 as usize) -% filled) };
+            if n <= (0 as isize) {
+                unsafe { close(fd); }
+                return option::Option[Uuid]::None;
+            }
+            filled = filled +% (n as usize);
+        }
+        unsafe { close(fd); }
+
+        // RFC 4122 §4.4: set version (4) in byte 6's high nibble, and
+        // the variant (10xx) in byte 8's high two bits.
+        uuid.bytes[6] = ((uuid.bytes[6] & 15u8)| 64u8);
+        uuid.bytes[8] = ((uuid.bytes[8] & 63u8)| 128u8);
+
+        return option::some::[Uuid](uuid);
     }
-    
-    return option::some::[Uuid](uuid);
+
+    pub fn parse(s: str) -> option::Option[Uuid] {
+        if str_len(s) != (36 as usize) {
+            return option::Option[Uuid]::None;
+        }
+
+        let p: *u8 = str_ptr(s);
+        let dash: u8 = '-' as u8;
+        if unsafe { *(p + 8) } != dash || unsafe { *(p + 13) } != dash ||
+           unsafe { *(p + 18) } != dash || unsafe { *(p + 23) } != dash {
+            return option::Option[Uuid]::None;
+        }
+
+        let mut uuid: Uuid = zero_uuid();
+        let mut idx: usize = 0 as usize;
+        while idx < (16 as usize) {
+            let start_offset: usize = hex_offset_for_byte(idx);
+            let c1: u8 = unsafe { *(p + start_offset) };
+            let c2: u8 = unsafe { *(p + (start_offset +% 1 as usize)) };
+
+            let h1: i32 = parse_hex_digit(c1);
+            let h2: i32 = parse_hex_digit(c2);
+            if h1 < 0 || h2 < 0 {
+                return option::Option[Uuid]::None;
+            }
+
+            uuid.bytes[idx] = (((h1 << 4)|h2) as u8);
+            idx = idx +% (1 as usize);
+        }
+
+        return option::some::[Uuid](uuid);
+    }
+
+    // Infallible: the canonical UUID format is a fixed 36 bytes, and
+    // snprintf into a 37-byte stack buffer can't run out of space. The
+    // result is heap-allocated by `str::to_string()` so the caller owns
+    // the storage.
+    pub fn to_string(self) -> string {
+        let mut buf: [u8; 37] = [
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+            0u8, 0u8, 0u8, 0u8, 0u8,
+        ];
+        let n: i32 = unsafe {
+            snprintf(addr_of(buf) as *u8, 37 as usize,
+            str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
+            self.bytes[0] as i32, self.bytes[1] as i32, self.bytes[2] as i32, self.bytes[3] as i32,
+            self.bytes[4] as i32, self.bytes[5] as i32,
+            self.bytes[6] as i32, self.bytes[7] as i32,
+            self.bytes[8] as i32, self.bytes[9] as i32,
+            self.bytes[10] as i32, self.bytes[11] as i32, self.bytes[12] as i32, self.bytes[13] as i32, self.bytes[14] as i32, self.bytes[15] as i32)
+        };
+        let view: str = unsafe { str_from_raw_parts(addr_of(buf) as *u8, n as usize) };
+        return view.to_string();
+    }
 }
 
-impl Uuid {
-    pub fn to_string(self) -> string {
-        let buf: *u8 = unsafe { malloc(37 as usize) };
-        if unsafe { buf as usize } == (0 as usize) {
-            return "".to_string();
-        }
-        
-        let n: i32 = unsafe {
-            snprintf(buf, 37 as usize, str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
-                     self.bytes[0] as i32, self.bytes[1] as i32, self.bytes[2] as i32, self.bytes[3] as i32,
-                     self.bytes[4] as i32, self.bytes[5] as i32,
-                     self.bytes[6] as i32, self.bytes[7] as i32,
-                     self.bytes[8] as i32, self.bytes[9] as i32,
-                     self.bytes[10] as i32, self.bytes[11] as i32, self.bytes[12] as i32, self.bytes[13] as i32, self.bytes[14] as i32, self.bytes[15] as i32)
-        };
-        
-        if n > 0 {
-            let view: str = unsafe { str_from_raw_parts(buf, n as usize) };
-            let res: string = view.to_string();
-            unsafe { free(buf); }
-            return res;
-        }
-        
-        unsafe { free(buf); }
-        return "".to_string();
+// ---------------- Unit tests (run via `cpc test`) ----------------
+
+#[test]
+fn test_new_v4_returns_some() {
+    let opt: option::Option[Uuid] = Uuid::new_v4();
+    match opt {
+        option::Option[Uuid]::Some(_) => { assert true; }
+        option::Option[Uuid]::None => { assert false; }
+    };
+}
+
+#[test]
+fn test_new_v4_sets_version_and_variant() {
+    // RFC 4122 §4.4: byte 6 high nibble = 4 (version), byte 8 high two
+    // bits = 10 (variant). The arc4random-based generator MUST mask
+    // these in.
+    guard let option::Option[Uuid]::Some(u) = Uuid::new_v4() else {
+        assert false;
+        return;
+    };
+    let v: u8 = (u.bytes[6] & 240u8) >> 4u32;
+    assert v == (4 as u8);
+    let var: u8 = (u.bytes[8] & 192u8) >> 6u32;
+    assert var == (2 as u8);   // 10 binary = 2 decimal
+}
+
+#[test]
+fn test_parse_canonical_form() {
+    let s: str = "12345678-9abc-def0-1234-56789abcdef0";
+    guard let option::Option[Uuid]::Some(u) = Uuid::parse(s) else {
+        assert false;
+        return;
+    };
+    assert u.bytes[0] == (18 as u8);    // 0x12
+    assert u.bytes[1] == (52 as u8);    // 0x34
+    assert u.bytes[6] == (0xde as u8);
+    assert u.bytes[15] == (0xf0 as u8);
+}
+
+#[test]
+fn test_parse_uppercase_hex() {
+    let s: str = "ABCDEF01-2345-6789-ABCD-EF0123456789";
+    guard let option::Option[Uuid]::Some(u) = Uuid::parse(s) else {
+        assert false;
+        return;
+    };
+    assert u.bytes[0] == (0xab as u8);
+    assert u.bytes[15] == (0x89 as u8);
+}
+
+#[test]
+fn test_parse_wrong_length_rejected() {
+    // Too short.
+    match Uuid::parse("abcd") {
+        option::Option[Uuid]::Some(_) => { assert false; }
+        option::Option[Uuid]::None => { assert true; }
+    };
+    // Too long.
+    match Uuid::parse("12345678-9abc-def0-1234-56789abcdef000") {
+        option::Option[Uuid]::Some(_) => { assert false; }
+        option::Option[Uuid]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_parse_bad_separator_rejected() {
+    // Dashes at the wrong positions.
+    let s: str = "12345678X9abc-def0-1234-56789abcdef0";
+    match Uuid::parse(s) {
+        option::Option[Uuid]::Some(_) => { assert false; }
+        option::Option[Uuid]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_parse_non_hex_rejected() {
+    let s: str = "1234567Z-9abc-def0-1234-56789abcdef0";
+    match Uuid::parse(s) {
+        option::Option[Uuid]::Some(_) => { assert false; }
+        option::Option[Uuid]::None => { assert true; }
+    };
+}
+
+#[test]
+fn test_to_string_format() {
+    // Construct a known Uuid bit-pattern, format it, verify length + dashes.
+    let u: Uuid = Uuid {
+        bytes: [
+            0x12u8, 0x34u8, 0x56u8, 0x78u8,
+            0x9au8, 0xbcu8, 0xdeu8, 0xf0u8,
+            0x12u8, 0x34u8, 0x56u8, 0x78u8,
+            0x9au8, 0xbcu8, 0xdeu8, 0xf0u8,
+        ],
+    };
+    let s: string = u.to_string();
+    assert str_len(s.as_str()) == (36 as usize);
+    // Dashes at positions 8, 13, 18, 23.
+    let p: *u8 = str_ptr(s.as_str());
+    assert unsafe { *(p + 8) } == ('-' as u8);
+    assert unsafe { *(p + 13) } == ('-' as u8);
+    assert unsafe { *(p + 18) } == ('-' as u8);
+    assert unsafe { *(p + 23) } == ('-' as u8);
+}
+
+#[test]
+fn test_round_trip_parse_format() {
+    let s: str = "12345678-9abc-def0-1234-56789abcdef0";
+    guard let option::Option[Uuid]::Some(u) = Uuid::parse(s) else {
+        assert false;
+        return;
+    };
+    let out: string = u.to_string();
+    assert out.as_str() == s;
+}
+
+#[test]
+fn test_random_uuid_round_trips() {
+    guard let option::Option[Uuid]::Some(u) = Uuid::new_v4() else {
+        assert false;
+        return;
+    };
+    let s: string = u.to_string();
+    guard let option::Option[Uuid]::Some(u2) = Uuid::parse(s.as_str()) else {
+        assert false;
+        return;
+    };
+    let mut i: usize = 0 as usize;
+    while i < (16 as usize) {
+        assert u.bytes[i] == u2.bytes[i];
+        i = i +% (1 as usize);
     }
 }

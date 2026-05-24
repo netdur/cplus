@@ -1,0 +1,12 @@
+[package]
+name    = "arena_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "arena_smoke"
+path = "src/main.cplus"
+
+[dependencies]
+arena  = "*"
+stdlib = "*"

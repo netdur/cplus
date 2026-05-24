@@ -1,13 +1,37 @@
 // vendor/log/src/log.cplus
 // Structured logging utility.
+//
+// **Concurrency.** `MAX_LEVEL` and `USE_COLORS` are `static mut` scalars
+// read on every log call and written by `set_max_level` / `set_use_colors`.
+// Concurrent reads + writes are a data race — there is no synchronization
+// in this module. Single-threaded use is fine; if you call `info()` from
+// worker threads, set the config once before spawning and never touch it
+// again. Long-term plan: route the config through `vendor/stdlib::atomic`
+// once it exists.
 
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn time(tloc: *i64) -> i64;
 extern fn localtime(timep: *i64) -> *Tm;
 extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
-extern fn malloc(n: usize) -> *u8;
-extern fn free(p: *u8);
 
+// v0.0.9 follow-up: ANSI escape sequences as `static str`. Pre-fix
+// these were malloc'd byte-by-byte per log call. The `\x1b` hex
+// escape produces ESC = 27 in the string payload (ASCII-only, since
+// the lexer keeps str payloads UTF-8).
+static ANSI_RESET: str = "\x1b[0m";
+static ANSI_TRACE: str = "\x1b[90m";  // bright black
+static ANSI_DEBUG: str = "\x1b[37m";  // white
+static ANSI_INFO: str = "\x1b[36m";  // cyan
+static ANSI_WARN: str = "\x1b[33m";  // yellow
+static ANSI_ERROR: str = "\x1b[31m";  // red
+
+// The first 9 i32 fields are POSIX-portable (macOS, Linux, BSD all
+// agree on layout up through tm_isdst). The trailing tm_gmtoff /
+// tm_zone fields exist on macOS+BSD+glibc but are absent on musl and
+// other libcs — we don't read them, so omit them. Copying `*tm_ptr`
+// then reads only the 36 bytes we declared, which is safe under every
+// supported libc.
+#[repr(C)]
 struct Tm {
     tm_sec: i32,
     tm_min: i32,
@@ -18,8 +42,6 @@ struct Tm {
     tm_wday: i32,
     tm_yday: i32,
     tm_isdst: i32,
-    tm_gmtoff: i64,
-    tm_zone: *u8,
 }
 
 pub enum Level {
@@ -73,29 +95,31 @@ fn write_str(fd: i32, s: str) {
 }
 
 fn print_timestamp(fd: i32) {
-    let t_ptr: *i64 = unsafe { malloc(8 as usize) as *i64 };
-    if unsafe { t_ptr as usize } == (0 as usize) { return; }
-    unsafe { *t_ptr = time(0 as *i64); }
-    let tm_ptr: *Tm = unsafe { localtime(t_ptr) };
-    if unsafe { tm_ptr as usize } != (0 as usize) {
-        let tm: Tm = unsafe { *tm_ptr };
-        let year: i32 = tm.tm_year +% 1900;
-        let mon: i32 = tm.tm_mon +% 1;
-        
-        let buf: *u8 = unsafe { malloc(32 as usize) };
-        if unsafe { buf as usize } != (0 as usize) {
-            let n: i32 = unsafe {
-                snprintf(buf, 32 as usize, str_ptr("[%04d-%02d-%02d %02d:%02d:%02d] \0"),
-                         year, mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
-            };
-            if n > 0 {
-                let view: str = unsafe { str_from_raw_parts(buf, n as usize) };
-                write_str(fd, view);
-            }
-            unsafe { free(buf); }
-        }
+    // v0.0.9 follow-up (addr_of): both the `time_t` slot and the
+    // snprintf scratch buffer now live on the stack — pre-`addr_of`
+    // this function did two mallocs per log call.
+    let mut t: i64 = unsafe { time(0 as *i64) };
+    let tm_ptr: *Tm = unsafe { localtime(addr_of(t)) };
+    if unsafe { tm_ptr as usize } == (0 as usize) { return; }
+    let tm: Tm = unsafe { *tm_ptr };
+    let year: i32 = tm.tm_year +% 1900;
+    let mon: i32 = tm.tm_mon +% 1;
+
+    let mut buf: [u8; 32] = [
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+        0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+    ];
+    let n: i32 = unsafe {
+        snprintf(addr_of(buf) as *u8, 32 as usize,
+        str_ptr("[%04d-%02d-%02d %02d:%02d:%02d] \0"),
+        year, mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
+    };
+    if n > 0 {
+        let view: str = unsafe { str_from_raw_parts(addr_of(buf) as *u8, n as usize) };
+        write_str(fd, view);
     }
-    unsafe { free(t_ptr as *u8); }
     return;
 }
 
@@ -111,65 +135,35 @@ fn log_impl(l: Level, msg: str) {
     if level_val < max_val { return; }
 
     let fd: i32 = 2; // stderr
-    
+
     let use_colors: bool = unsafe { USE_COLORS };
     if use_colors {
-        let esc: *u8 = unsafe { malloc(5 as usize) };
-        if unsafe { esc as usize } != (0 as usize) {
-            unsafe {
-                let p0: *u8 = esc;
-                let p1: *u8 = esc + 1;
-                let p2: *u8 = esc + 2;
-                let p3: *u8 = esc + 3;
-                let p4: *u8 = esc + 4;
-                *p0 = 27u8;
-                *p1 = 91u8;
-                *p4 = 109u8;
-                match l {
-                    Level::Trace => { *p2 = 57u8; *p3 = 48u8; }
-                    Level::Debug => { *p2 = 51u8; *p3 = 55u8; }
-                    Level::Info =>  { *p2 = 51u8; *p3 = 54u8; }
-                    Level::Warn =>  { *p2 = 51u8; *p3 = 51u8; }
-                    Level::Error => { *p2 = 51u8; *p3 = 49u8; }
-                };
-            }
-            let color_code: str = unsafe { str_from_raw_parts(esc, 5 as usize) };
-            write_str(fd, color_code);
-            unsafe { free(esc); }
-        }
+        let color: str = match l {
+            Level::Trace => ANSI_TRACE,
+            Level::Debug => ANSI_DEBUG,
+            Level::Info => ANSI_INFO,
+            Level::Warn => ANSI_WARN,
+            Level::Error => ANSI_ERROR,
+        };
+        write_str(fd, color);
     }
 
     print_timestamp(fd);
 
     let level_str: str = match l {
-        Level::Trace => "[TRACE] \0",
-        Level::Debug => "[DEBUG] \0",
-        Level::Info => "[INFO]  \0",
-        Level::Warn => "[WARN]  \0",
-        Level::Error => "[ERROR] \0",
+        Level::Trace => "[TRACE] ",
+        Level::Debug => "[DEBUG] ",
+        Level::Info => "[INFO]  ",
+        Level::Warn => "[WARN]  ",
+        Level::Error => "[ERROR] ",
     };
     write_str(fd, level_str);
-    
+
     write_str(fd, msg);
     write_str(fd, "\n");
 
     if use_colors {
-        let reset: *u8 = unsafe { malloc(4 as usize) };
-        if unsafe { reset as usize } != (0 as usize) {
-            unsafe {
-                let p0: *u8 = reset;
-                let p1: *u8 = reset + 1;
-                let p2: *u8 = reset + 2;
-                let p3: *u8 = reset + 3;
-                *p0 = 27u8;
-                *p1 = 91u8;
-                *p2 = 48u8;
-                *p3 = 109u8;
-            }
-            let reset_code: str = unsafe { str_from_raw_parts(reset, 4 as usize) };
-            write_str(fd, reset_code);
-            unsafe { free(reset); }
-        }
+        write_str(fd, ANSI_RESET);
     }
     return;
 }
@@ -179,3 +173,62 @@ pub fn debug(msg: str) { log_impl(Level::Debug, msg); return; }
 pub fn info(msg: str) { log_impl(Level::Info, msg); return; }
 pub fn warn(msg: str) { log_impl(Level::Warn, msg); return; }
 pub fn error(msg: str) { log_impl(Level::Error, msg); return; }
+
+// ---------------- Unit tests ----------------
+// Statics are now wired in `cpc test` via G-028 fix; these tests
+// exercise the level-numeric round-trip and the public setter/getter
+// surface without writing to stderr (the side-effecting `info`/`warn`
+// paths aren't unit-testable without capture infrastructure).
+
+fn level_to_int(l: Level) -> i32 {
+    let v: i32 = match l {
+        Level::Trace => 0,
+        Level::Debug => 1,
+        Level::Info => 2,
+        Level::Warn => 3,
+        Level::Error => 4,
+    };
+    return v;
+}
+
+#[test]
+fn test_set_and_get_max_level_trace() {
+    set_max_level(Level::Trace);
+    assert level_to_int(get_max_level()) == 0;
+}
+
+#[test]
+fn test_set_and_get_max_level_error() {
+    set_max_level(Level::Error);
+    assert level_to_int(get_max_level()) == 4;
+}
+
+#[test]
+fn test_set_and_get_max_level_round_trip() {
+    set_max_level(Level::Debug);
+    assert level_to_int(get_max_level()) == 1;
+    set_max_level(Level::Info);
+    assert level_to_int(get_max_level()) == 2;
+    set_max_level(Level::Warn);
+    assert level_to_int(get_max_level()) == 3;
+}
+
+#[test]
+fn test_set_use_colors_toggles_static() {
+    set_use_colors(false);
+    let off: bool = unsafe { USE_COLORS };
+    assert !off;
+    set_use_colors(true);
+    let on: bool = unsafe { USE_COLORS };
+    assert on;
+}
+
+#[test]
+fn test_ansi_statics_are_escape_sequences() {
+    // The static str slices must contain ESC (0x1b) as the first byte.
+    // This catches accidental drift to literal "\\x1b" (six bytes).
+    let p: *u8 = str_ptr(ANSI_RESET);
+    assert unsafe { *p } == (27 as u8);
+    let p2: *u8 = str_ptr(ANSI_INFO);
+    assert unsafe { *p2 } == (27 as u8);
+}

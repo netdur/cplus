@@ -112,6 +112,20 @@ pub enum Ty {
         elem: Box<Ty>,
         lanes: u32,
     },
+    /// v0.0.9 follow-up: SIMD comparison-result mask, distinct from
+    /// `Ty::Simd`. The element type matches the width-equivalent signed
+    /// integer (mask32x4's `elem` is `Ty::I32`, etc.); lanes counts the
+    /// vector width. LLVM lowering is identical to the matching `Ty::Simd`
+    /// (`<lanes x iN>`) — the distinction is type-system-only, kept so
+    /// `select` / `any` / `all` can reject non-mask arguments, comparison
+    /// results carry forward as mask values, and arithmetic on masks fires
+    /// a real diagnostic instead of silently working. Crossing to a real
+    /// integer SIMD requires `mask.to_bits()`; crossing back requires
+    /// `simd.to_mask()`. Both are zero-cost relabels at the IR level.
+    Mask {
+        elem: Box<Ty>,
+        lanes: u32,
+    },
     /// Slice 7GEN.4: a generic type parameter, identified by name. Appears
     /// inside the body of a generic fn / method / struct / enum or inside an
     /// `interface` / `impl Interface for ...` block (where `Self` is
@@ -152,6 +166,7 @@ impl Ty {
             Ty::Struct(_) => "struct",
             Ty::Array(_, _) => "array",
             Ty::Simd { .. } => "simd",
+            Ty::Mask { .. } => "mask",
             Ty::Param(_) => "type-param",
             Ty::Error => "<error>",
         }
@@ -210,6 +225,7 @@ impl Ty {
             | Ty::RawPtr(_)
             | Ty::FnPtr { .. }
             | Ty::Simd { .. }
+            | Ty::Mask { .. }
             | Ty::Error => true,
             // Phase 8 slice 8.STR.3: owned `string` is non-Copy and Drop.
             Ty::Struct(_) | Ty::Array(_, _) | Ty::Enum(_) | Ty::String => false,
@@ -1663,6 +1679,89 @@ impl SemaCx<'_> {
             self.self_type_stack.pop();
         }
         self.current_file = None;
+        self.backfill_generic_struct_methods();
+    }
+
+    /// G-022 fix: backfill methods on generic struct instantiations that
+    /// were synthesized by `instantiate_struct_from_arg_tys` *before*
+    /// their `impl Vec[T] { ... }` block templates were registered in
+    /// `generic_impl_methods`. This window opens any time a struct field
+    /// type names a cross-package generic instantiation — `collect_struct_fields`
+    /// runs before `collect_methods`, so the early instantiation's
+    /// `methods` table is left empty and later method calls on that
+    /// concrete type fire E0324 even though sema has the impl block.
+    ///
+    /// Repro that this closes:
+    /// ```cplus
+    /// // vendor/inner/src/inner.cplus
+    /// import "stdlib/hash_map" as map;
+    /// struct Holder { m: map::HashMap[i32, i32] }   // early instantiation
+    /// pub fn touch() -> bool {
+    ///     let mut h: map::HashMap[i32, i32] = map::new::[i32, i32]();
+    ///     h.insert(1 as i32, 2 as i32);              // <- E0324 before fix
+    ///     return h.contains_key(1 as i32);
+    /// }
+    /// ```
+    fn backfill_generic_struct_methods(&mut self) {
+        let to_backfill: Vec<(StructId, String, Vec<Ty>)> = self
+            .structs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, s)| {
+                if !s.methods.is_empty() {
+                    return None;
+                }
+                let (name, args) = s.generic_origin.as_ref()?;
+                if !self.generic_impl_methods.contains_key(name) {
+                    return None;
+                }
+                Some((StructId(idx as u32), name.clone(), args.clone()))
+            })
+            .collect();
+        for (id, name, arg_tys) in to_backfill {
+            let templates = match self.generic_impl_methods.get(&name).cloned() {
+                Some(t) => t,
+                None => continue,
+            };
+            let self_ty = Ty::Struct(id);
+            for t in &templates {
+                let mut method_subst: HashMap<String, Ty> = HashMap::new();
+                for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
+                    method_subst.insert(gp.clone(), arg.clone());
+                }
+                let resolved_params: Vec<ParamSig> = {
+                    let raw: Vec<(Ty, bool, bool)> = t
+                        .params
+                        .iter()
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_))
+                        .collect();
+                    raw.into_iter()
+                        .map(|(ty, mutable, move_)| {
+                            let s = self.subst_ty_deep(&ty, &method_subst);
+                            ParamSig {
+                                ty: subst_self(&s, &self_ty),
+                                mutable,
+                                move_,
+                            }
+                        })
+                        .collect()
+                };
+                let resolved_return = {
+                    let s = self.subst_ty_deep(&t.return_type, &method_subst);
+                    subst_self(&s, &self_ty)
+                };
+                self.structs[id.0 as usize].methods.insert(
+                    t.name.clone(),
+                    MethodSig {
+                        receiver: t.receiver,
+                        params: resolved_params,
+                        return_type: resolved_return,
+                        generic_params: t.method_generic_params.clone(),
+                        generic_bounds: Vec::new(),
+                    },
+                );
+            }
+        }
     }
 
     /// v0.0.5 Phase 2C: collect methods from `impl EnumName { fn ... }`.
@@ -2286,6 +2385,20 @@ impl SemaCx<'_> {
             if param.mutable && param.move_ {
                 self.err("E0334",
                     "parameter cannot have both `mut` and `move`; these markers are mutually exclusive".to_string(),
+                    param.span);
+            }
+            // v0.0.9 follow-up: `borrow` is mutually exclusive with
+            // both `move` (ownership-transfer vs shared) and `mut`
+            // (exclusive borrow vs shared). Reuses E0334 — same shape
+            // of category error.
+            if param.borrow_ && param.move_ {
+                self.err("E0334",
+                    "parameter cannot have both `borrow` and `move`; `borrow` is shared by-value, `move` transfers ownership".to_string(),
+                    param.span);
+            }
+            if param.borrow_ && param.mutable {
+                self.err("E0334",
+                    "parameter cannot have both `borrow` and `mut`; `borrow` is shared by-value, `mut` is an exclusive borrow".to_string(),
                     param.span);
             }
             // v0.0.8 post-bench-gap: `restrict` is only valid on raw
@@ -3090,6 +3203,19 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
+            // v0.0.9 follow-up: `borrow` is mutually exclusive with
+            // both `move` and `mut`. See the matching check in
+            // `check_methods` for the rationale.
+            if param.borrow_ && param.move_ {
+                self.err("E0334",
+                    "parameter cannot have both `borrow` and `move`; `borrow` is shared by-value, `move` transfers ownership".to_string(),
+                    param.span);
+            }
+            if param.borrow_ && param.mutable {
+                self.err("E0334",
+                    "parameter cannot have both `borrow` and `mut`; `borrow` is shared by-value, `mut` is an exclusive borrow".to_string(),
+                    param.span);
+            }
             // v0.0.8 post-bench-gap: E0411 — `restrict` requires a raw
             // pointer (`*T`) param. It's an opt-in `noalias` assertion
             // and has no meaning on other shapes.
@@ -3299,10 +3425,14 @@ impl SemaCx<'_> {
             // v0.0.6 Slice 1B: SIMD types are not C-ABI compatible by
             // default (no portable C representation; cf. NEON's `float32x4_t`
             // vs SSE's `__m128`). Bitcast to `[T; N]` via `to_array` at the
-            // boundary.
+            // boundary. Mask types share the SIMD lowering; same reject.
             Ty::Simd { lanes, elem } => Some(format!(
                 "SIMD type `{}` has no portable C-ABI representation; cast to `[{}; {}]` via `.to_array()` at the boundary",
                 ty_display(ty), ty_display(elem), lanes,
+            )),
+            Ty::Mask { lanes, elem } => Some(format!(
+                "SIMD mask type `{}` has no portable C-ABI representation; convert to a `Simd` via `.to_bits()` then `.to_array()` at the boundary (lanes={lanes}, elem={})",
+                ty_display(ty), ty_display(elem),
             )),
             Ty::Error => None,  // Type already errored; don't double-report.
         }
@@ -5033,6 +5163,72 @@ impl SemaCx<'_> {
             let _ = self.resolve_type(&type_args[0]);
             return Ty::Usize;
         }
+        // v0.0.9 follow-up: `addr_of(x)` — take the address of a stack
+        // local (or function parameter) as `*T` without an intervening
+        // malloc + memcpy. Unsafe-gated because the returned pointer
+        // aliases the binding's storage and outlives nothing tracked by
+        // the borrow checker. The C-ABI parallel is `&x` in C; the Rust
+        // parallel is `&raw const x` / `&raw mut x`.
+        //
+        // Closes the "no address-of-local" gap surfaced by `vendor/uuid`,
+        // `vendor/log`, `vendor/metal`, and the raytracer. Each had to
+        // malloc a temporary slot, write into it, pass the pointer to a
+        // C fn, then free the temporary — `addr_of(x)` skips all of that.
+        //
+        // Constraints (kept tight on purpose; widen as use cases land):
+        //   - exactly 1 value argument, no type arguments
+        //   - argument must be a bare identifier (Field/Index/Call/etc.
+        //     rejected — those have separate addressing stories)
+        //   - inside `unsafe { ... }` (raw-pointer producer)
+        //
+        // The result type is `*T` where `T` is the binding's type. There
+        // is no compile-time const/mut distinction on `*T` in C+, so the
+        // unsafe contract is "caller can do anything with this pointer";
+        // sema doesn't try to forbid writes through `addr_of(let x)`.
+        if name == "addr_of" {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    format!("`addr_of` takes no type arguments, got {}", type_args.len()),
+                    callee.span,
+                );
+            }
+            if args.len() != 1 {
+                self.err(
+                    "E0308",
+                    format!("`addr_of` takes exactly 1 argument, got {}", args.len()),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Ty::Error;
+            }
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    "`addr_of` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                    call_span,
+                );
+            }
+            let arg = &args[0];
+            let ExprKind::Ident(binding) = &arg.kind else {
+                self.err(
+                    "E0302",
+                    "`addr_of` argument must be a bare identifier (e.g. `addr_of(x)`); \
+                     field/index/call expressions are not yet supported"
+                        .to_string(),
+                    arg.span,
+                );
+                let _ = self.check_expr(arg, None);
+                return Ty::Error;
+            };
+            let ty = self.resolve_value_ident(binding, arg.span, None);
+            if matches!(ty, Ty::Error) {
+                return Ty::Error;
+            }
+            return Ty::RawPtr(Box::new(ty));
+        }
         // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Placed
         // before the "non-generic fn with turbofish" reject because both
         // intrinsics take one type-argument by design (mirroring size_of's
@@ -6085,7 +6281,11 @@ impl SemaCx<'_> {
             return self.check_string_method_call(name, args, call_span);
         }
         // v0.0.6 Slice 1B: blessed methods on SIMD vector receivers.
-        if let Ty::Simd { .. } = &recv_ty {
+        // v0.0.9 follow-up: also catch `Ty::Mask` receivers — the
+        // method body checks `is_mask` to route Simd-only ops
+        // (arithmetic, splat) and Mask-only ops (select, any, all)
+        // appropriately.
+        if matches!(&recv_ty, Ty::Simd { .. } | Ty::Mask { .. }) {
             if !type_args.is_empty() {
                 self.err(
                     "E0501",
@@ -6623,11 +6823,16 @@ impl SemaCx<'_> {
         args: &[Expr],
         call_span: ByteSpan,
     ) -> Ty {
-        let Ty::Simd { elem, lanes } = recv else {
-            return Ty::Error;
+        // v0.0.9 follow-up: routes both `Ty::Simd` and `Ty::Mask`. The
+        // `is_mask` flag selects per-method behavior — e.g. comparisons
+        // require a Simd receiver and produce a Mask, while `select` /
+        // `any` / `all` require a Mask receiver; arithmetic on a Mask
+        // is rejected; bitwise ops work on either.
+        let (elem_ty, lanes_u, is_mask) = match recv {
+            Ty::Simd { elem, lanes } => ((**elem).clone(), *lanes, false),
+            Ty::Mask { elem, lanes } => ((**elem).clone(), *lanes, true),
+            _ => return Ty::Error,
         };
-        let elem_ty = (**elem).clone();
-        let lanes_u = *lanes;
         let arity_err = |this: &mut Self, expected: usize| -> bool {
             if args.len() != expected {
                 this.err(
@@ -6649,8 +6854,32 @@ impl SemaCx<'_> {
                 true
             }
         };
+        // v0.0.9 follow-up: helper that rejects mask receivers for
+        // ops that only make sense on numeric SIMD (arithmetic, sqrt,
+        // abs, etc.). Callers that hit this path should be using
+        // `mask.to_bits()` to get an integer SIMD they can do
+        // arithmetic on.
+        let reject_on_mask = |this: &mut Self, op: &str, args: &[Expr]| -> bool {
+            if is_mask {
+                this.err(
+                    "E0324",
+                    format!(
+                        "`{op}` is not available on mask types (`{}`); convert via `.to_bits()` first",
+                        ty_display(recv)
+                    ),
+                    name.span,
+                );
+                for a in args { let _ = this.check_expr(a, None); }
+                true
+            } else {
+                false
+            }
+        };
         match name.name.as_str() {
             "add" | "sub" | "mul" | "div" => {
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
                 if !arity_err(self, 1) {
                     return Ty::Error;
                 }
@@ -6658,6 +6887,7 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "fma" => {
+                if reject_on_mask(self, "fma", args) { return Ty::Error; }
                 if !elem_ty.is_float() {
                     self.err(
                         "E0324",
@@ -6680,6 +6910,7 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "sqrt" => {
+                if reject_on_mask(self, "sqrt", args) { return Ty::Error; }
                 if !elem_ty.is_float() {
                     self.err(
                         "E0324",
@@ -6697,6 +6928,7 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "abs" => {
+                if reject_on_mask(self, "abs", args) { return Ty::Error; }
                 // `abs` available on signed-integer + float SIMD widths.
                 // Unsigned-integer `abs` would be a no-op; reject to keep
                 // the matrix clear.
@@ -6715,6 +6947,7 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "min" | "max" => {
+                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
                 // Available on all numeric SIMD widths. Float widths use
                 // `llvm.minnum`/`maxnum` (treats NaN as missing); integer
                 // widths use the signed (`smin`/`smax`) or unsigned
@@ -6784,6 +7017,7 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "shl" | "shr" => {
+                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
                 // Element-wise shift by a scalar count (every lane shifted
                 // by the same amount). The amount must be `u32` and a
                 // literal in `0..lane_bits` — sema enforces both. `shr`
@@ -6974,11 +7208,12 @@ impl SemaCx<'_> {
                 Ty::Unit
             }
             // v0.0.7 Slice 2.1: lane-wise comparisons. Result is the
-            // bit-width-matched signed-int SIMD (i.e. the "mask" view).
-            // Float widths use `fcmp`, int widths `icmp` (signed for
-            // signed-int lanes, unsigned for unsigned-int lanes); the
-            // result is sext'd to the mask shape.
+            // width-matched `Ty::Mask` (distinct from `Ty::Simd` since
+            // v0.0.9). Float widths use `fcmp`, int widths `icmp`
+            // (signed for signed-int lanes, unsigned for unsigned-int
+            // lanes); the result is sext'd to the mask shape.
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" => {
+                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
                 if !elem_ty.is_numeric() {
                     self.err(
                         "E0324",
@@ -6995,19 +7230,19 @@ impl SemaCx<'_> {
                     return Ty::Error;
                 }
                 let _ = self.check_expr(&args[0], Some(recv.clone()));
-                // Result type: signed-int SIMD of matching lane size.
-                Ty::Simd { elem: Box::new(matching_signed_int_lane(&elem_ty)), lanes: lanes_u }
+                // Result type: mask of matching lane width.
+                Ty::Mask { elem: Box::new(matching_signed_int_lane(&elem_ty)), lanes: lanes_u }
             }
-            // v0.0.7 Slice 2.1: blend per lane. Receiver is a mask
-            // (int SIMD); the two value args must match each other
-            // and must be the same lane count as the mask. Returns
-            // the value-arg type.
+            // v0.0.7 Slice 2.1: blend per lane. v0.0.9 follow-up:
+            // receiver must be a `Ty::Mask`; the two value args must
+            // match each other and must be the same lane count as
+            // the mask. Returns the value-arg type.
             "select" => {
-                if !elem_ty.is_int() {
+                if !is_mask {
                     self.err(
                         "E0324",
                         format!(
-                            "`select` requires a mask (signed-integer SIMD) receiver, not `{}`",
+                            "`select` requires a mask receiver, got `{}` — use a comparison (`.lt`/`.gt`/etc.) or `.to_mask()` to produce one",
                             ty_display(recv)
                         ),
                         name.span,
@@ -7020,7 +7255,7 @@ impl SemaCx<'_> {
                 }
                 let t_ty = self.check_expr(&args[0], None);
                 let _ = self.check_expr(&args[1], Some(t_ty.clone()));
-                // Constrain: t_ty must be a SIMD with `lanes_u` lanes.
+                // Constrain: t_ty must be a Simd (not Mask) with matching lane count.
                 match &t_ty {
                     Ty::Simd { lanes: tl, .. } if *tl == lanes_u => t_ty,
                     _ => {
@@ -7036,14 +7271,15 @@ impl SemaCx<'_> {
                     }
                 }
             }
-            // v0.0.7 Slice 2.1: mask reductions. `any` is true iff any
-            // lane is non-zero; `all` is true iff every lane is.
+            // v0.0.7 Slice 2.1: mask reductions. v0.0.9 follow-up:
+            // receiver must be a `Ty::Mask`. `any` is true iff any
+            // lane is set; `all` is true iff every lane is.
             "any" | "all" => {
-                if !elem_ty.is_int() {
+                if !is_mask {
                     self.err(
                         "E0324",
                         format!(
-                            "`{}` requires a mask (signed-integer SIMD) receiver, not `{}`",
+                            "`{}` requires a mask receiver, got `{}` — use a comparison or `.to_mask()` to produce one",
                             name.name, ty_display(recv)
                         ),
                         name.span,
@@ -7059,6 +7295,7 @@ impl SemaCx<'_> {
             // `product` available on every numeric width. Result type
             // is the lane scalar.
             "sum" | "product" => {
+                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
                 if !elem_ty.is_numeric() {
                     self.err(
                         "E0324",
@@ -7079,6 +7316,7 @@ impl SemaCx<'_> {
             // `llvm.vector.reduce.fmin/fmax`; int widths use the
             // signed (`smin`/`smax`) or unsigned (`umin`/`umax`) variant.
             "min_across" | "max_across" => {
+                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
                 if !elem_ty.is_numeric() {
                     self.err(
                         "E0324",
@@ -7121,6 +7359,48 @@ impl SemaCx<'_> {
                 }
                 let _ = self.check_expr(&args[0], Some(recv.clone()));
                 recv.clone()
+            }
+            // v0.0.9 follow-up: explicit Mask <-> Simd conversions.
+            // Both are zero-cost at the IR level (same `<N x iN>`
+            // lowering); they exist to make the type-system crossing
+            // intentional in source.
+            "to_bits" => {
+                if !is_mask {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`to_bits` is only available on mask types; got `{}` (already an integer SIMD)",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) { return Ty::Error; }
+                Ty::Simd { elem: Box::new(elem_ty.clone()), lanes: lanes_u }
+            }
+            "to_mask" => {
+                if is_mask {
+                    self.err(
+                        "E0324",
+                        format!("`to_mask` is only available on integer SIMD types; receiver `{}` is already a mask", ty_display(recv)),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !elem_ty.is_signed_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`to_mask` requires a signed-integer SIMD receiver, not `{}` — masks are width-tagged by their lane sign convention",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) { return Ty::Error; }
+                Ty::Mask { elem: Box::new(elem_ty.clone()), lanes: lanes_u }
             }
             _ => {
                 self.err(
@@ -7420,7 +7700,22 @@ impl SemaCx<'_> {
         }
         // v0.0.6 Slice 1B: SIMD type associated functions —
         // `f32x4::splat(s)`, `f32x4::new(a, b, c, d)`, `f32x4::from_array(a)`.
+        // v0.0.9 follow-up: `mask{N}x{M}::splat / new / from_array` are
+        // rejected — masks are produced by comparisons (`.lt`, etc.) or
+        // by `simd.to_mask()`, never constructed lane-by-lane.
         if let Some(recv) = simd_ty_from_name(&type_seg.name) {
+            if matches!(recv, Ty::Mask { .. }) {
+                self.err(
+                    "E0324",
+                    format!(
+                        "`{}` is a mask type; construct via a SIMD comparison (`.lt`/`.gt`/etc.) or `.to_mask()`, not `{}::{}`",
+                        type_seg.name, type_seg.name, method_seg.name
+                    ),
+                    call_span,
+                );
+                for a in args { let _ = self.check_expr(a, None); }
+                return Ty::Error;
+            }
             if !type_args.is_empty() {
                 self.err(
                     "E0501",
@@ -8288,20 +8583,20 @@ impl SemaCx<'_> {
             "u32x8"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  },
             "i64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
             "u64x4"  => Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  },
-            // v0.0.7 Slice 2.1: mask types — aliases for the
-            // bit-width-matched signed-int SIMD. Codegen treats them
-            // identically; the source-level name is a documentation
-            // hint that this value came from a comparison and is
-            // intended for `select` / `any` / `all`. Tighter
-            // distinction-tracking is future work.
-            "mask8x16"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 },
-            "mask16x8"  => Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  },
-            "mask32x4"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  },
-            "mask64x2"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  },
-            "mask8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
-            "mask16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
-            "mask32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
-            "mask64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
+            // v0.0.9 follow-up: mask types are a distinct `Ty::Mask`
+            // variant. Codegen lowers them identically to the matching
+            // signed-int SIMD, but sema rejects Mask <-> Simd implicit
+            // assignment, requires `Ty::Mask` for `select` / `any` /
+            // `all`, and rejects arithmetic. Use `.to_bits()` /
+            // `.to_mask()` for explicit conversions.
+            "mask8x16"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 16 },
+            "mask16x8"  => Ty::Mask { elem: Box::new(Ty::I16), lanes: 8  },
+            "mask32x4"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 4  },
+            "mask64x2"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 2  },
+            "mask8x32"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 32 },
+            "mask16x16" => Ty::Mask { elem: Box::new(Ty::I16), lanes: 16 },
+            "mask32x8"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 8  },
+            "mask64x4"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 4  },
             _ => {
                 // Slice 7GEN.4: `Self` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
@@ -8792,7 +9087,7 @@ impl SemaCx<'_> {
         let resolved_args: Vec<Ty> = type_args
             .iter()
             .map(|t| {
-                let substituted = substitute_param_in_type_ast(t, subst);
+                let substituted = substitute_param_in_type_ast_with_tables(t, subst, &self.structs, &self.enums);
                 self.resolve_field_type_with_subst(&substituted, subst)
             })
             .collect();
@@ -8919,7 +9214,7 @@ impl SemaCx<'_> {
                 // inside the args, then recurse via the on-demand path.
                 let substituted_args: Vec<Type> = args
                     .iter()
-                    .map(|a| substitute_param_in_type_ast(a, subst))
+                    .map(|a| substitute_param_in_type_ast_with_tables(a, subst, &self.structs, &self.enums))
                     .collect();
                 let synthetic = Type {
                     kind: TypeKind::Generic {
@@ -9473,15 +9768,17 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
         "u32x8"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  }),
         "i64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
         "u64x4"  => Some(Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  }),
-        // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
-        "mask8x16"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 }),
-        "mask16x8"  => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  }),
-        "mask32x4"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  }),
-        "mask64x2"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  }),
-        "mask8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
-        "mask16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
-        "mask32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
-        "mask64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
+        // v0.0.9 follow-up: mask types resolve to `Ty::Mask`, a sema-
+        // level type distinct from Ty::Simd. Codegen lowers both to the
+        // same `<N x iN>` LLVM type, so layout/ABI is unchanged.
+        "mask8x16"  => Some(Ty::Mask { elem: Box::new(Ty::I8),  lanes: 16 }),
+        "mask16x8"  => Some(Ty::Mask { elem: Box::new(Ty::I16), lanes: 8  }),
+        "mask32x4"  => Some(Ty::Mask { elem: Box::new(Ty::I32), lanes: 4  }),
+        "mask64x2"  => Some(Ty::Mask { elem: Box::new(Ty::I64), lanes: 2  }),
+        "mask8x32"  => Some(Ty::Mask { elem: Box::new(Ty::I8),  lanes: 32 }),
+        "mask16x16" => Some(Ty::Mask { elem: Box::new(Ty::I16), lanes: 16 }),
+        "mask32x8"  => Some(Ty::Mask { elem: Box::new(Ty::I32), lanes: 8  }),
+        "mask64x4"  => Some(Ty::Mask { elem: Box::new(Ty::I64), lanes: 4  }),
         _ => None,
     }
 }
@@ -9517,35 +9814,46 @@ fn ty_display(ty: &Ty) -> String {
 /// arrays/borrows in the substitution are not yet supported by this
 /// path (no in-tree use case exercises them — extend when needed).
 fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type {
+    substitute_param_in_type_ast_with_tables(ty, subst, &[], &[])
+}
+
+/// G-026 fix: name-aware variant of `substitute_param_in_type_ast`. When
+/// substituting a `Param("T")` with a concrete `Ty::Struct(id)` or
+/// `Ty::Enum(id)`, render the real source name from the struct/enum
+/// tables instead of the `<concrete>` placeholder. Without this, a
+/// recursive enum payload like `Value::Array(Vec[Value])` round-trips
+/// `Value` through `<concrete>` and fires E0303 at re-resolution.
+fn substitute_param_in_type_ast_with_tables(
+    ty: &Type,
+    subst: &HashMap<String, Ty>,
+    structs: &[StructDef],
+    enums: &[EnumDef],
+) -> Type {
     let kind = match &ty.kind {
         TypeKind::Path(name) => {
             if let Some(concrete) = subst.get(name) {
-                // Render concrete back to a Path. For now we only emit a
-                // path name for primitives; structured types would need
-                // a richer rendering. Generic types nesting another
-                // generic-param-typed struct lands when motivated.
-                TypeKind::Path(ty_to_source_name(concrete))
+                TypeKind::Path(ty_to_source_name_with_tables(concrete, structs, enums))
             } else {
                 TypeKind::Path(name.clone())
             }
         }
         TypeKind::Array { elem, len } => TypeKind::Array {
-            elem: Box::new(substitute_param_in_type_ast(elem, subst)),
+            elem: Box::new(substitute_param_in_type_ast_with_tables(elem, subst, structs, enums)),
             len: *len,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),
-            inner: Box::new(substitute_param_in_type_ast(inner, subst)),
+            inner: Box::new(substitute_param_in_type_ast_with_tables(inner, subst, structs, enums)),
         },
         TypeKind::Generic { name, args } => TypeKind::Generic {
             name: name.clone(),
             args: args
                 .iter()
-                .map(|a| substitute_param_in_type_ast(a, subst))
+                .map(|a| substitute_param_in_type_ast_with_tables(a, subst, structs, enums))
                 .collect(),
         },
         TypeKind::RawPtr(inner) => {
-            TypeKind::RawPtr(Box::new(substitute_param_in_type_ast(inner, subst)))
+            TypeKind::RawPtr(Box::new(substitute_param_in_type_ast_with_tables(inner, subst, structs, enums)))
         }
         TypeKind::FnPtr {
             params,
@@ -9553,25 +9861,33 @@ fn substitute_param_in_type_ast(ty: &Type, subst: &HashMap<String, Ty>) -> Type 
         } => TypeKind::FnPtr {
             params: params
                 .iter()
-                .map(|p| substitute_param_in_type_ast(p, subst))
+                .map(|p| substitute_param_in_type_ast_with_tables(p, subst, structs, enums))
                 .collect(),
             return_type: return_type
                 .as_ref()
-                .map(|rt| Box::new(substitute_param_in_type_ast(rt, subst))),
+                .map(|rt| Box::new(substitute_param_in_type_ast_with_tables(rt, subst, structs, enums))),
         },
         TypeKind::Slice(inner) => {
-            TypeKind::Slice(Box::new(substitute_param_in_type_ast(inner, subst)))
+            TypeKind::Slice(Box::new(substitute_param_in_type_ast_with_tables(inner, subst, structs, enums)))
         }
         TypeKind::Tuple(elems) => TypeKind::Tuple(
             elems
                 .iter()
-                .map(|e| substitute_param_in_type_ast(e, subst))
+                .map(|e| substitute_param_in_type_ast_with_tables(e, subst, structs, enums))
                 .collect(),
         ),
     };
     Type {
         kind,
         span: ty.span,
+    }
+}
+
+fn ty_to_source_name_with_tables(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> String {
+    match ty {
+        Ty::Struct(id) => structs[id.0 as usize].name.clone(),
+        Ty::Enum(id) => enums[id.0 as usize].name.clone(),
+        _ => ty_to_source_name(ty),
     }
 }
 
@@ -9605,6 +9921,13 @@ fn ty_to_source_name(ty: &Ty) -> String {
         Ty::Struct(_) | Ty::Enum(_) => "<concrete>".into(),
         Ty::Array(_, _) => "<array>".into(),
         Ty::Simd { elem, lanes } => format!("{}x{}", ty_to_source_name(elem), lanes),
+        Ty::Mask { elem, lanes } => {
+            let width: u32 = match elem.as_ref() {
+                Ty::I8 => 8, Ty::I16 => 16, Ty::I32 => 32, Ty::I64 => 64,
+                _ => 0,
+            };
+            format!("mask{width}x{lanes}")
+        }
         Ty::Param(name) => name.clone(),
         Ty::Error => "<error>".into(),
     }
@@ -9667,6 +9990,9 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_ty_for_name(elem, structs, enums)),
         Ty::Simd { elem, lanes } => {
             format!("{}x{}", mangle_ty_for_name(elem, structs, enums), lanes)
+        }
+        Ty::Mask { elem, lanes } => {
+            format!("mask{}x{}", mangle_ty_for_name(elem, structs, enums), lanes)
         }
         Ty::Param(n) => format!("Param_{n}"),
         Ty::Error => "ERR".into(),
@@ -9893,6 +10219,153 @@ mod tests {
              fn bad(restrict s: Point) -> i32 { return s.x; }\n\
              fn main() -> i32 { let p: Point = Point { x: 1, y: 2 }; return bad(p); }",
             "E0411",
+        );
+    }
+
+    // ---- addr_of(x) intrinsic ----
+
+    // ---- v0.0.9 follow-up: `borrow x: T` parameter marker ----
+
+    #[test]
+    fn borrow_param_marker_clean() {
+        // `borrow x: T` is an explicit form of the current shared
+        // by-value default. Semantically a no-op for v0.0.9; reserved
+        // so a future Phase 1 default-move flip has a clean opt-out.
+        assert_clean(
+            "fn add(borrow a: i32, borrow b: i32) -> i32 { return a + b; }\n\
+             fn main() -> i32 { return add(2, 3); }",
+        );
+    }
+
+    #[test]
+    fn borrow_plus_move_e0334() {
+        assert_only_code(
+            "fn bad(borrow move x: i32) -> i32 { return x; }\n\
+             fn main() -> i32 { return bad(0); }",
+            "E0334",
+        );
+    }
+
+    #[test]
+    fn borrow_plus_mut_e0334() {
+        assert_only_code(
+            "fn bad(borrow mut x: i32) -> i32 { return x; }\n\
+             fn main() -> i32 { return bad(0); }",
+            "E0334",
+        );
+    }
+
+    #[test]
+    fn borrow_does_not_collide_with_borrow_region_type() {
+        // `borrow x: T` (param marker) and `borrow REGION T` (type
+        // position) coexist. The region-annotated type only appears
+        // after the colon — parse_type's `borrow REGION T` branch
+        // handles it. The param-marker loop only fires before the
+        // colon. This test pins both: a marker + a region-annotated
+        // type in the same parameter is valid syntax.
+        // (The semantic check for `move x: borrow A T` lives in the
+        // parser as a hard error — exercised in parser tests.)
+        assert_clean(
+            "fn f(borrow x: borrow A i32) -> i32 { return x; }\n\
+             fn main() -> i32 { return f(0); }",
+        );
+    }
+
+    #[test]
+    fn addr_of_local_in_unsafe_clean() {
+        // The happy path: `unsafe { addr_of(x) }` returns `*T` for a
+        // local binding. No-unsafe / non-Ident / wrong-arity cases are
+        // checked separately below.
+        assert_clean(
+            "extern fn use_ptr(p: *i64);\n\
+             fn main() -> i32 {\n\
+                 let t: i64 = 0;\n\
+                 unsafe { use_ptr(addr_of(t)); }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn addr_of_outside_unsafe_e0801() {
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let t: i64 = 0;\n\
+                 let p: *i64 = addr_of(t);\n\
+                 return 0;\n\
+             }",
+            "E0801",
+        );
+    }
+
+    #[test]
+    fn addr_of_non_ident_arg_e0302() {
+        // Field/Index/Call args are explicitly out of scope (separate
+        // addressing stories — see the addr_of sema comment).
+        assert_only_code(
+            "struct P { x: i32 }\n\
+             fn main() -> i32 {\n\
+                 let p: P = P { x: 5 };\n\
+                 let q: *i32 = unsafe { addr_of(p.x) };\n\
+                 return 0;\n\
+             }",
+            "E0302",
+        );
+    }
+
+    #[test]
+    fn addr_of_wrong_arity_e0308() {
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let x: i64 = 0;\n\
+                 let y: i64 = 0;\n\
+                 let p: *i64 = unsafe { addr_of(x, y) };\n\
+                 return 0;\n\
+             }",
+            "E0308",
+        );
+    }
+
+    #[test]
+    fn addr_of_rejects_turbofish_e0501() {
+        // `addr_of` infers the type from the binding — explicit type
+        // args are meaningless and rejected.
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let t: i64 = 0;\n\
+                 let p: *i64 = unsafe { addr_of::[i64](t) };\n\
+                 return 0;\n\
+             }",
+            "E0501",
+        );
+    }
+
+    #[test]
+    fn g022_generic_field_does_not_starve_methods() {
+        // G-022 (fixed 2026-05-23): when a struct field type names a
+        // cross-package generic instantiation, the early instantiation
+        // performed by `collect_struct_fields` ran *before*
+        // `collect_methods` had populated `generic_impl_methods`. The
+        // synthesized `StructDef` was cached with an empty methods table.
+        // Later consumer calls hit dedup and got E0324 "no method".
+        //
+        // Repro in one file: `Pair[T]` with an `impl Pair[T] { fn put(...) }`;
+        // a `Holder` struct whose field is `Pair[i32]`; and a function that
+        // calls `.put` on a local `Pair[i32]`. Pre-fix this would error.
+        // Post-fix the backfill pass populates methods on `Pair[i32]` even
+        // though the field-resolution instantiated it first.
+        assert_clean(
+            "struct Pair[T] { a: T, b: T }\n\
+             impl Pair[T] {\n\
+                 fn put(mut self, v: T) { self.a = v; return; }\n\
+             }\n\
+             struct Holder { p: Pair[i32] }\n\
+             fn touch() -> i32 {\n\
+                 let mut x: Pair[i32] = Pair[i32] { a: 0 as i32, b: 0 as i32 };\n\
+                 x.put(7 as i32);\n\
+                 return x.a;\n\
+             }\n\
+             fn main() -> i32 { return touch(); }",
         );
     }
 
@@ -13042,6 +13515,131 @@ mod tests {
                 let _h: i32 = hi.lane(0 as u32); \
                 return 0; \
             }",
+        );
+    }
+
+    // ---- v0.0.9 follow-up: Ty::Mask distinct from Ty::Simd ----
+
+    #[test]
+    fn simd_mask_no_implicit_coerce_from_simd_e0302() {
+        // Pre-v0.0.9, mask32x4 was a type alias for i32x4 — assigning a
+        // splat'd i32x4 to a mask binding worked silently. With Ty::Mask
+        // distinct, the assignment is a real type mismatch.
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(0); \
+                let m: mask32x4 = v; \
+                return 0; \
+            }",
+            "E0302",
+        );
+    }
+
+    #[test]
+    fn simd_mask_no_implicit_coerce_to_simd_e0302() {
+        // The reverse direction: a mask value can't silently become an
+        // integer SIMD. Caller must use `.to_bits()` explicitly.
+        assert_only_code(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::splat(1.0f32); \
+                let m: mask32x4 = a.lt(a); \
+                let v: i32x4 = m; \
+                return 0; \
+            }",
+            "E0302",
+        );
+    }
+
+    #[test]
+    fn simd_mask_arithmetic_rejected_e0324() {
+        // Masks have no arithmetic — they're 0/all-ones bitmasks; `+`
+        // would break the invariant. Caller must convert via `.to_bits()`
+        // if they really want lane-wise arithmetic on the underlying ints.
+        assert_only_code(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::splat(1.0f32); \
+                let m1: mask32x4 = a.lt(a); \
+                let m2: mask32x4 = a.gt(a); \
+                let _r: mask32x4 = m1.add(m2); \
+                return 0; \
+            }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn simd_mask_to_bits_clean() {
+        // `.to_bits()` is the explicit Mask → Simd conversion (zero-cost
+        // at the IR level; just relabels the type). Returns the signed-
+        // int SIMD of matching lane width.
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::splat(1.0f32); \
+                let m: mask32x4 = a.lt(a); \
+                let bits: i32x4 = m.to_bits(); \
+                let _r: i32 = bits.lane(0 as u32); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_simd_to_mask_clean() {
+        // `.to_mask()` is the reverse — Simd → Mask. Only valid on
+        // signed-int SIMD (the lane sign convention disambiguates).
+        assert_clean(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(0); \
+                let m: mask32x4 = v.to_mask(); \
+                let _b: bool = m.any(); \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_unsigned_to_mask_rejected_e0324() {
+        // `to_mask` rejects unsigned-int SIMD — there's no `umaskNxM`
+        // type and the lane-sign convention picks the signed form.
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: u32x4 = u32x4::splat(0); \
+                let m: mask32x4 = v.to_mask(); \
+                return 0; \
+            }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn simd_mask_bitwise_combine_clean() {
+        // `.and` / `.or` / `.xor` / `.not` work on Mask receivers
+        // (mask combining is a primary use case) and return Mask.
+        assert_clean(
+            "fn main() -> i32 { \
+                let a: f32x4 = f32x4::splat(1.0f32); \
+                let m1: mask32x4 = a.lt(a); \
+                let m2: mask32x4 = a.gt(a); \
+                let both: mask32x4 = m1.and(m2); \
+                let either: mask32x4 = m1.or(m2); \
+                let neither: mask32x4 = both.not(); \
+                if neither.any() { return 0; } \
+                return 0; \
+            }",
+        );
+    }
+
+    #[test]
+    fn simd_to_bits_on_simd_rejected_e0324() {
+        // `to_bits` is mask-only; calling on a Simd is a misuse (the
+        // value IS already an integer SIMD).
+        assert_only_code(
+            "fn main() -> i32 { \
+                let v: i32x4 = i32x4::splat(0); \
+                let _r: i32x4 = v.to_bits(); \
+                return 0; \
+            }",
+            "E0324",
         );
     }
 

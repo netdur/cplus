@@ -387,6 +387,16 @@ pub struct Param {
     /// part of the calling convention). Sema (E0411) restricts this to
     /// `*T` param types; on other shapes it's a hard error.
     pub restrict: bool,
+    /// v0.0.9 follow-up: `borrow x: T` — explicit shared by-value
+    /// parameter. For v0.0.9 this is semantically identical to the
+    /// unmarked form (`x: T`) on non-Copy types — both mean "callee
+    /// takes a shared copy of the binding, no ownership transfer".
+    /// The flag is reserved for a future Phase 1 slice that flips
+    /// the default for non-Copy `T` to `move` semantics; `borrow`
+    /// will then be the opt-out escape hatch. Sema rejects
+    /// `borrow` + `move` and `borrow` + `mut` (mutually exclusive
+    /// ownership semantics, like `mut` + `move`).
+    pub borrow_: bool,
     pub span: Span,
 }
 
