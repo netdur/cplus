@@ -80,6 +80,8 @@ This serves two purposes:
 
 ## Phase 3 — `vendor/static-arena` full implementation · size S
 
+**Status: ✅ shipped as Option B + bonus compiler feature.**
+
 Carryover from v0.0.10's static-arena stub. The package ships as a stub today ([vendor/static-arena/src/README.md](vendor/static-arena/src/README.md)) because the natural API needs const-generic struct parameters that sema doesn't yet support.
 
 ### Two options
@@ -107,15 +109,24 @@ Effort: ~150 LOC of `.cplus` (mostly repeated by macro-like pattern) + tests.
 
 ### Decision
 
-**Pick A.** Const-generic struct params are likely to be useful beyond this one package (any RAII type with a fixed-size buffer wants it — `RingBuffer[N]`, `FixedString[N]`, `BoundedQueue[T, N]`). Lands once, pays off forever. If A's compiler scope balloons mid-implementation, fall back to B and re-file A as a future open question.
+**Picked A; fell back to B** mid-implementation — const-generic struct params turned out to need invasive surgery across `Ty::Array` (48 sites) plus parser/sema/mono machinery for parsing const expressions as bracket arguments at use sites. The plan's documented fallback rule (~"if scope balloons, fall back to B") kicked in.
 
-### Deliverables
+What actually shipped instead:
 
-- Const-generic struct param support in sema + parser + mono.
-- `vendor/static-arena/src/static_arena.cplus` — the real implementation, replacing the stub.
-- `vendor/static-arena/Cplus.toml` — drop the "stub" disclaimer.
-- ≥5 `#[test]` fns: alignment math, overflow detection, OOM behavior, reset, alloc_str.
-- Marked `#[no_alloc]` end-to-end so it composes with v0.0.10 Phase 1.
+- **`[EXPR; N]` fill-array literal** (small compiler feature ~120 LOC): a previously-missing prereq for both options. Enumerating 16384 zeros is impractical, so before this landed neither A nor B could initialize a `[u8; 16384]` field. Lowered to `llvm.memset.p0.i64` for byte-zero fills (the common case), or a per-element store loop otherwise. AST: `ExprKind::ArrayFill { fill, count }`. Disambiguated from `ArrayLit` by `;` after the first element.
+
+- **`vendor/static-arena`** as Option B with two sizes (16K + 64K). Each is a hand-rolled fixed-size shape with `new`, `capacity`, `used_bytes`, `remaining`, `reset`, `alloc_bytes`, `alloc_bytes_aligned`, `alloc_zeroed_bytes`, `alloc_str`. 7 in-package tests covering the common code paths. Marked-up-able with `#[no_alloc]` from v0.0.10 Phase 1 — composing the contract is now possible.
+
+- **256K + larger sizes dropped** from this cycle. By-value returns of large structs from `new()` trigger 3-4× stack copies (~1MB for a 256K arena) which overflows the default 8MB stack in practice. The proper fix is `sret` for large struct returns — a separate compiler improvement. Documented in the package header.
+
+Option A (full const-generics) remains a future flagship feature. The fill-array literal landed during this work removes one of the blockers; the rest is the per-site mono substitution machinery.
+
+### Deliverables (as actually shipped)
+
+- ✅ `[EXPR; N]` fill-array literal in the compiler (`ast.rs` + `parser.rs` + `sema.rs` + `codegen.rs` + walker arms in `borrowck.rs`, `lower.rs`, `resolver.rs`, `monomorphize.rs`).
+- ✅ `vendor/static-arena/src/static-arena.cplus` — `StaticArena16K` + `StaticArena64K`.
+- ✅ `vendor/static-arena/Cplus.toml` — stub disclaimer dropped.
+- ✅ 7 in-package `#[test]` fns covering construct / alloc / overflow / reset / zeroed / str / 64K shape.
 
 ---
 
@@ -147,7 +158,7 @@ All four phases are independent.
 
 1. **Phase 1 (MPS)** — ✅ shipped in `361920d`. Fastest path to validating the v0.0.10 wedge in a real binding.
 2. **Phase 2 (Accelerate)** — ✅ shipped in `59634e8`. 17 in-package tests (CBLAS Level 1/2/3 + vDSP element-wise + reductions).
-3. **Phase 3 (static-arena full)** — real compiler work (const-generic struct params). Broad payoff beyond static-arena (any RAII type with a fixed-size buffer wants it).
+3. **Phase 3 (static-arena full)** — ✅ shipped via Option B + `[EXPR; N]` fill-array literal as a bonus compiler feature. Const-generic struct params (Option A) deferred to a future flagship cycle.
 4. **Phase 4 (intrinsic migration)** — cosmetic cleanup. Skipping is fine.
 
 ---

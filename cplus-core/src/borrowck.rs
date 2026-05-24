@@ -2472,6 +2472,9 @@ impl Analyzer<'_> {
                 }
             }
             ExprKind::Field { receiver, .. } => self.apply_expr(receiver, state),
+            ExprKind::ArrayFill { fill, .. } => {
+                self.apply_expr(fill, state);
+            }
             ExprKind::ArrayLit { elements }
             | ExprKind::GenericEnumCall { args: elements, .. }
             | ExprKind::TupleLit { elements } => {
@@ -3244,6 +3247,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
             fields.iter().any(|f| expr_reads_ident(&f.value, name))
         }
         ExprKind::Field { receiver, .. } => expr_reads_ident(receiver, name),
+        ExprKind::ArrayFill { fill, .. } => expr_reads_ident(fill, name),
         ExprKind::ArrayLit { elements }
         | ExprKind::GenericEnumCall { args: elements, .. }
         | ExprKind::TupleLit { elements } => elements.iter().any(|e| expr_reads_ident(e, name)),

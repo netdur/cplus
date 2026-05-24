@@ -2126,6 +2126,7 @@ fn rewrite_expr(
             }
         }
         ExprKind::Field { receiver, .. } => rewrite_expr(receiver, ctx, scope)?,
+        ExprKind::ArrayFill { fill, .. } => rewrite_expr(fill, ctx, scope)?,
         ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
             for el in elements {
                 rewrite_expr(el, ctx, scope)?;

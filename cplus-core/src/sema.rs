@@ -4125,6 +4125,7 @@ impl SemaCx<'_> {
             } => self.check_generic_enum_call(enum_name, type_args, variant, args, e.span),
             ExprKind::Field { receiver, name } => self.check_field(receiver, name),
             ExprKind::ArrayLit { elements } => self.check_array_lit(elements, expected, e.span),
+            ExprKind::ArrayFill { fill, count } => self.check_array_fill(fill, *count, expected, e.span),
             ExprKind::TupleLit { elements } => self.check_tuple_lit(elements, expected, e.span),
             ExprKind::Index { receiver, index } => self.check_index(receiver, index, e.span),
             ExprKind::Match { scrutinee, arms } => {
@@ -4626,6 +4627,38 @@ impl SemaCx<'_> {
             }
         }
         Ty::Array(Box::new(first_ty), len)
+    }
+
+    /// v0.0.11 Phase 3: type-check a fill-array literal `[EXPR; N]`.
+    /// Element type comes from `EXPR` (or the expected array's element
+    /// type if available). Length is N; if the expected array declared
+    /// a different length, E0330. Returns `Ty::Array(elem, N)`.
+    fn check_array_fill(
+        &mut self,
+        fill: &Expr,
+        count: u32,
+        expected: Option<Ty>,
+        span: ByteSpan,
+    ) -> Ty {
+        let expected_elem: Option<Ty> = match &expected {
+            Some(Ty::Array(elem, _)) => Some((**elem).clone()),
+            _ => None,
+        };
+        let fill_ty = self.check_expr(fill, expected_elem);
+        if let Some(Ty::Array(_, declared_len)) = &expected {
+            if *declared_len != count {
+                self.err(
+                    "E0330",
+                    format!(
+                        "array literal has {} element(s); expected {}",
+                        count, declared_len
+                    ),
+                    span,
+                );
+                return Ty::Error;
+            }
+        }
+        Ty::Array(Box::new(fill_ty), count)
     }
 
     /// v0.0.5 Phase 3 Slice 3B: type-check a tuple literal `(a, b, ...)`.
@@ -10931,6 +10964,7 @@ fn collect_callees_expr(e: &Expr, out: &mut Vec<(String, ByteSpan)>) {
                 collect_callees_expr(el, out);
             }
         }
+        ExprKind::ArrayFill { fill, .. } => collect_callees_expr(fill, out),
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr(e) = p {

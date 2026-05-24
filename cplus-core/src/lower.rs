@@ -297,6 +297,7 @@ impl Lower {
                 }
             }
             ExprKind::Field { receiver, .. } => self.lower_expr(receiver),
+            ExprKind::ArrayFill { fill, .. } => self.lower_expr(fill),
             ExprKind::ArrayLit { elements }
             | ExprKind::GenericEnumCall { args: elements, .. }
             | ExprKind::TupleLit { elements } => {
@@ -873,6 +874,7 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
             }
         }
         ExprKind::Field { receiver, .. } => subst_expr(receiver, consts),
+        ExprKind::ArrayFill { fill, .. } => subst_expr(fill, consts),
         ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
             for el in elements {
                 subst_expr(el, consts);

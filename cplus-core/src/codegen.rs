@@ -3696,6 +3696,7 @@ fn collect_address_taken_fns(
                     visit_expr(e, sigs, taken);
                 }
             }
+            ExprKind::ArrayFill { fill, .. } => visit_expr(fill, sigs, taken),
             ExprKind::InterpStr { parts } => {
                 for p in parts {
                     if let crate::ast::InterpStrPart::Expr(e) = p {
@@ -8081,6 +8082,7 @@ impl<'a> FnState<'a> {
             ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
                 Some(self.gen_array_lit(elements))
             }
+            ExprKind::ArrayFill { fill, count } => Some(self.gen_array_fill(fill, *count)),
             ExprKind::Index { receiver, index } => Some(self.gen_index(receiver, index)),
             ExprKind::Range { .. } => {
                 unreachable!("sema rejects ranges outside `for ... in`")
@@ -8119,6 +8121,66 @@ impl<'a> FnState<'a> {
         }
         let v = self.next_tmp();
         // Whole-array load is aggregate-shaped; gen_load skips TBAA.
+        self.gen_load(&v, &array_ty, &slot);
+        (v, array_ty)
+    }
+
+    /// v0.0.11 Phase 3: lower `[EXPR; N]` fill-array literal. For the
+    /// common case `[0u8; N]` (zero-byte fill) we use `llvm.memset.p0.i64`
+    /// which is a single instruction LLVM lowers to a libc memset call
+    /// or a tight SIMD store loop. For other shapes we emit an N-iteration
+    /// LLVM loop — small N could be unrolled by an inliner pass but isn't
+    /// here. The result mirrors `gen_array_lit`'s aggregate-load tail.
+    fn gen_array_fill(&mut self, fill: &Expr, count: u32) -> (String, Ty) {
+        let (fill_val, elem_ty) = self.gen_expr(fill).expect("array fill element");
+        let array_ty = Ty::Array(Box::new(elem_ty.clone()), count);
+        let llvm_arr = self.lty(&array_ty);
+        let _ = self.lty(&elem_ty);
+        let slot = self.alloca_anon(array_ty.clone());
+
+        // Fast path: zero-byte fill (`[0u8; N]`) lowers to llvm.memset.
+        // This is the hot case for static-arena's buffer init — N can be
+        // 16K, 64K, etc., and emitting that many enumerated stores would
+        // be absurd both at codegen time and in the resulting IR size.
+        let zero_byte_fill =
+            matches!(elem_ty, Ty::U8 | Ty::I8) && fill_val == "0";
+        if zero_byte_fill {
+            // `@llvm.memset.p0.i64` is already declared in the module
+            // preamble (see `write_preamble`), so no extra decl needed.
+            self.emit(&format!(
+                "call void @llvm.memset.p0.i64(ptr {slot}, i8 0, i64 {count}, i1 false)"
+            ));
+        } else {
+            // General path: N-iteration store loop. Counter lives in an
+            // alloca so we can phi-free; LLVM's mem2reg promotes it.
+            let i_slot = self.alloca_anon(Ty::I64);
+            let head_lbl = self.next_block_label();
+            let body_lbl = self.next_block_label();
+            let exit_lbl = self.next_block_label();
+            self.emit(&format!("store i64 0, ptr {i_slot}, align 8"));
+            self.emit_terminator(&format!("br label %{head_lbl}"));
+            self.open_block(&head_lbl);
+            let i_val = self.next_tmp();
+            self.emit(&format!("{i_val} = load i64, ptr {i_slot}, align 8"));
+            let cmp = self.next_tmp();
+            self.emit(&format!("{cmp} = icmp ult i64 {i_val}, {count}"));
+            self.emit_terminator(&format!(
+                "br i1 {cmp}, label %{body_lbl}, label %{exit_lbl}"
+            ));
+            self.open_block(&body_lbl);
+            let p = self.next_tmp();
+            self.emit(&format!(
+                "{p} = getelementptr inbounds {llvm_arr}, ptr {slot}, i32 0, i64 {i_val}"
+            ));
+            self.gen_store(&elem_ty, &fill_val, &p);
+            let next = self.next_tmp();
+            self.emit(&format!("{next} = add i64 {i_val}, 1"));
+            self.emit(&format!("store i64 {next}, ptr {i_slot}, align 8"));
+            self.emit_terminator(&format!("br label %{head_lbl}"));
+            self.open_block(&exit_lbl);
+        }
+
+        let v = self.next_tmp();
         self.gen_load(&v, &array_ty, &slot);
         (v, array_ty)
     }

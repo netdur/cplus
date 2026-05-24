@@ -2837,11 +2837,50 @@ impl Parser {
             }
             TokenKind::LBracket => {
                 let start = self.bump().span;
-                let mut elements = Vec::new();
-                while !self.at(&TokenKind::RBracket) {
-                    elements.push(self.parse_expr()?);
-                    if !self.eat(&TokenKind::Comma) {
-                        break;
+                // Two shapes:
+                //   `[a, b, c]` — enumerated array literal (the v0.0.10
+                //     form). `,` separates elements.
+                //   `[EXPR; N]` — v0.0.11 Phase 3 fill-array literal.
+                //     `;` followed by an integer literal `N` repeats the
+                //     fill expression N times. Disambiguated by the
+                //     token after the first expression.
+                if self.at(&TokenKind::RBracket) {
+                    // Empty `[]` — degenerate enumerated form, kept for
+                    // backward compat (sema may still reject).
+                    let end = self.bump().span;
+                    return Ok(Expr {
+                        kind: ExprKind::ArrayLit { elements: Vec::new() },
+                        span: start.merge(end),
+                    });
+                }
+                let first = self.parse_expr()?;
+                if self.eat(&TokenKind::Semi) {
+                    // Fill-array form: `[EXPR; N]`.
+                    let count_tok = self.peek().clone();
+                    let count = match &count_tok.kind {
+                        TokenKind::Int(v, _) => {
+                            if *v > u32::MAX as u64 {
+                                return Err(self.err_at_peek("fill-array count fitting in u32"));
+                            }
+                            self.bump();
+                            *v as u32
+                        }
+                        _ => return Err(self.err_at_peek("integer fill-array count after `;`")),
+                    };
+                    let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+                    return Ok(Expr {
+                        kind: ExprKind::ArrayFill { fill: Box::new(first), count },
+                        span: start.merge(end),
+                    });
+                }
+                // Enumerated array form continues.
+                let mut elements = vec![first];
+                if self.eat(&TokenKind::Comma) {
+                    while !self.at(&TokenKind::RBracket) {
+                        elements.push(self.parse_expr()?);
+                        if !self.eat(&TokenKind::Comma) {
+                            break;
+                        }
                     }
                 }
                 let end = self.expect(&TokenKind::RBracket, "`]`")?.span;

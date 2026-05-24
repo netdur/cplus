@@ -726,6 +726,18 @@ pub enum ExprKind {
     ArrayLit {
         elements: Vec<Expr>,
     },
+    /// v0.0.11 Phase 3: fill-array literal `[EXPR; N]`. Shorthand for
+    /// an N-element array where every slot is initialized to a clone of
+    /// `EXPR`. Lowering: codegen emits one `memset` for byte-valued
+    /// fills, otherwise an enumerated store loop. Sema requires `N` to
+    /// be a literal `u32` (no const-expression evaluation today). The
+    /// motivating consumer is `vendor/static-arena`'s 16KB / 64KB / etc.
+    /// stack-allocated buffer fields, which can't be written as 16384
+    /// enumerated literals.
+    ArrayFill {
+        fill: Box<Expr>,
+        count: u32,
+    },
     /// Indexing: `expr[index]`. Phase 2D.
     Index {
         receiver: Box<Expr>,
