@@ -70,6 +70,7 @@ EOF
 | 10 | Generics use `[T]`, not `<T>` | Avoids `a<b>(c)` ambiguity. |
 | 11 | Explicit `return` | No implicit tail returns at function level (E0333). |
 | 12 | `::` for types, `.` for instances | Strict separation. |
+| 13 | Module-private by default | `pub` is the export marker. Public symbols are intentional, not accidental. |
 
 Compact examples of the non-obvious ones:
 

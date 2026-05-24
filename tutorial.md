@@ -68,6 +68,7 @@ Memorise these. They are the spine of every C+ design decision.
 | 10 | Generics use `[T]`, not `<T>` | Avoids `a<b>(c)` ambiguity. |
 | 11 | Explicit `return` | No implicit tail returns at the function level. |
 | 12 | `::` for types, `.` for instances | Strict separation. |
+| 13 | Module-private by default | `pub` is the export marker. Public symbols are intentional, not accidental. Vendor-package model makes accidental exposure load-bearing. |
 
 Reopening any of these is a non-starter. Build around them; they hold.
 
