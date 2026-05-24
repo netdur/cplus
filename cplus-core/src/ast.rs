@@ -779,6 +779,22 @@ pub enum ExprKind {
     EnvVar {
         name: String,
     },
+    /// v0.0.10 Phase 4: `#name(args)` compiler-intrinsic call. The `#`
+    /// sigil routes the name through a hardcoded intrinsic-dispatch table
+    /// in sema (E0905 on unknown name). Replaces the inconsistent mix of
+    /// `!`-suffix (`include_bytes!`) and bare-name (`addr_of`) intrinsics
+    /// from earlier cycles. Supports:
+    ///   - turbofish type args: `#size_of::[T]()`
+    ///   - optional return-type ascription: `#msg_send(recv, "sel") -> T`
+    /// The optional `ret_ty` is mainly load-bearing for Phase 4B
+    /// (`#msg_send`) where the C-ABI return-type can't be inferred from
+    /// the receiver. Other intrinsics ignore it.
+    Intrinsic {
+        name: String,
+        type_args: Vec<Type>,
+        args: Vec<Expr>,
+        ret_ty: Option<Type>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

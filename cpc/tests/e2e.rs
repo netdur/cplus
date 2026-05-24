@@ -483,11 +483,13 @@ fn continue_outside_loop_rejected() {
     assert!(stderr.contains("E0353"), "expected E0353, got: {stderr}");
 }
 
-/// Phase 5 slice 5BC.4 — Rule E3 multi-parameter elision. This is the
-/// design note's Phase-5 exit criterion: `fn longest(xs, ys) -> ...`
-/// accepts under elided lifetimes, and moving either input while the
-/// return-binding is alive fires E0372. The test moves the first input
-/// (`a`); the symmetric "move `b`" case is covered by a unit test.
+/// Phase 5 slice 5BC.4 — Rule E3 multi-parameter elision. Originally
+/// asserted E0372 (move-while-borrowed) under the v0.0.9 default that
+/// `x: T` (non-Copy) means borrow. Under v0.0.10 Phase 5 default-move,
+/// `longest(a, b)` consumes both inputs at the call site, so the
+/// subsequent `drain(a)` is detected as a plain use-after-move (E0335)
+/// before the borrow-region machinery is reached. Same bug detected,
+/// different error code.
 #[test]
 fn longest_move_either_input_while_borrowed_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -527,15 +529,20 @@ fn main() -> i32 {
         "expected compile failure for move-while-multi-source-borrowed"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
+    // Under v0.0.10 Phase 5 the same bug surfaces as E0335 (use-after-move)
+    // rather than E0372 (move-while-borrowed) — `longest(a, b)` already
+    // consumed `a` by the time `drain(a)` runs.
+    assert!(
+        stderr.contains("E0335") || stderr.contains("E0372"),
+        "expected E0335 or E0372, got: {stderr}"
+    );
 }
 
-/// Phase 5 slice 5BC.3b: E0372 — moving a binding while a Rule-E1 /
-/// Rule-E2 return-borrow of it is still live. The classic pattern is
-/// `let r = passthrough(x); drain(move x);`. Rule E1 classifies
-/// `passthrough` as returning a borrow of its only parameter; the
-/// borrow checker records `r` as borrowing from `x`. When `drain(move x)`
-/// runs, the borrow is still live → E0372.
+/// Phase 5 slice 5BC.3b: originally asserted E0372 (move while a
+/// Rule-E1 return-borrow is still live). Under v0.0.10 Phase 5
+/// default-move, `passthrough(x)` consumes `x`, so the subsequent
+/// `drain(x)` is a plain E0335 (use-after-move) — same bug detected,
+/// different code.
 #[test]
 fn move_while_return_borrow_live_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -569,17 +576,16 @@ fn main() -> i32 {
         "expected compile failure for move-while-borrowed"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
+    assert!(
+        stderr.contains("E0335") || stderr.contains("E0372"),
+        "expected E0335 or E0372, got: {stderr}"
+    );
 }
 
-/// Phase 5 slice 5BC.2a: moving a non-Copy binding while shared-borrowing
-/// it in another argument of the same call is E0370. The case below puts
-/// the read-arg first and the `move`-arg second — sema's Phase-3 linear
-/// move tracker accepts this (the read happens on an owned value before
-/// the move consumes it), but the borrow checker rejects it at the
-/// call-expression level: the shared borrow and the move are both alive
-/// during the same call evaluation, which is the conflict pattern §3.1
-/// of the design note catches.
+/// Phase 5 slice 5BC.2a: originally asserted E0370 (move + shared-borrow
+/// in same call). Under v0.0.10 Phase 5 default-move, the first arg
+/// `peek(y)` already consumed `y`, so the second arg `y` is a plain
+/// use-after-move (E0335).
 #[test]
 fn move_and_borrow_in_same_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -612,7 +618,10 @@ fn main() -> i32 {
         "expected compile failure for move-and-borrow conflict"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0370"), "expected E0370, got: {stderr}");
+    assert!(
+        stderr.contains("E0335") || stderr.contains("E0370"),
+        "expected E0335 or E0370, got: {stderr}"
+    );
 }
 
 #[test]
@@ -5938,6 +5947,10 @@ fn phase11_asan_catches_heap_overflow() {
 
 #[test]
 fn phase11_borrow_diagnostic_includes_secondary_label() {
+    // v0.0.10 Phase 5: rewritten to use explicit `borrow A B` region
+    // annotations. Under default-move semantics, plain `a: B` would
+    // consume at the call site and the secondary-label E0372 path
+    // wouldn't fire — explicit borrow annotations preserve the path.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bdiag.cplus");
@@ -5946,7 +5959,7 @@ fn phase11_borrow_diagnostic_includes_secondary_label() {
         "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
-fn longest(a: B, b: B) -> B {
+fn longest(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > b.x { return a; }
     return b;
 }
@@ -5977,6 +5990,7 @@ fn main() -> i32 {
 
 #[test]
 fn phase11_borrow_diagnostic_json_carries_labels_field() {
+    // v0.0.10 Phase 5: see sibling test for the rewrite rationale.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("bjson.cplus");
@@ -5985,7 +5999,7 @@ fn phase11_borrow_diagnostic_json_carries_labels_field() {
         "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
-fn longest(a: B, b: B) -> B {
+fn longest(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > b.x { return a; }
     return b;
 }

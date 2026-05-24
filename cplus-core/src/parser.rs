@@ -1409,7 +1409,14 @@ impl Parser {
             // loop keyword. Accept `#[NAME(ARGS)] while|loop|for ...`;
             // route the attribute list into the corresponding stmt-kind
             // variant so codegen can attach `!llvm.loop` metadata.
-            if matches!(self.peek_kind(), TokenKind::Pound) {
+            //
+            // v0.0.10 Phase 4: only enter the attribute branch when the
+            // `#` is followed by `[` (the attribute opener). `# ident(...)`
+            // is the compiler-intrinsic call form — fall through to the
+            // expression-statement path.
+            if matches!(self.peek_kind(), TokenKind::Pound)
+                && matches!(self.peek_kind_n(1), TokenKind::LBracket)
+            {
                 let attrs = self.parse_attributes()?;
                 match self.peek_kind() {
                     TokenKind::While
@@ -2420,6 +2427,76 @@ impl Parser {
                 Ok(Expr {
                     kind: ExprKind::Ident("self".to_string()),
                     span: tok.span,
+                })
+            }
+            TokenKind::Pound => {
+                // v0.0.10 Phase 4: `#name(args)` / `#name::[T](args) -> RetTy`
+                // compiler-intrinsic call form. Items-level `#[attr]`
+                // attributes go through a different code path (parsed at the
+                // item boundary, not here), so seeing `#` inside an
+                // expression position always starts an intrinsic.
+                let pound_span = tok.span;
+                self.bump(); // `#`
+                let ident_tok = self.peek().clone();
+                let name = match &ident_tok.kind {
+                    TokenKind::Ident(s) => {
+                        let s = s.clone();
+                        self.bump();
+                        s
+                    }
+                    _ => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                found: tok_name(&ident_tok.kind).into(),
+                                expected: "compiler-intrinsic name after `#`",
+                            },
+                            span: ident_tok.span,
+                        });
+                    }
+                };
+                // Optional turbofish `::[T1, T2]` after the name.
+                let mut type_args: Vec<Type> = Vec::new();
+                if matches!(self.peek_kind(), TokenKind::ColonColon)
+                    && self.peek_kind_n(1) == &TokenKind::LBracket
+                {
+                    self.bump(); // `::`
+                    self.bump(); // `[`
+                    while !self.at(&TokenKind::RBracket) {
+                        type_args.push(self.parse_type()?);
+                        if !self.eat(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RBracket, "`]` after `#name::[...]`")?;
+                }
+                // Required `(args)`.
+                self.expect(&TokenKind::LParen, "`(` after `#name`")?;
+                let mut args: Vec<Expr> = Vec::new();
+                while !self.at(&TokenKind::RParen) {
+                    args.push(self.parse_expr()?);
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                let close = self.expect(&TokenKind::RParen, "`)`")?.span;
+                // Optional `-> RetTy` ascription (load-bearing for
+                // `#msg_send(...) -> T`).
+                let mut ret_ty: Option<Type> = None;
+                let mut end_span = close;
+                if matches!(self.peek_kind(), TokenKind::Arrow) {
+                    self.bump();
+                    let ty = self.parse_type()?;
+                    end_span = ty.span;
+                    ret_ty = Some(ty);
+                }
+                Ok(Expr {
+                    kind: ExprKind::Intrinsic {
+                        name,
+                        type_args,
+                        args,
+                        ret_ty,
+                    },
+                    span: pound_span.merge(end_span),
                 })
             }
             TokenKind::Ident(s) => {

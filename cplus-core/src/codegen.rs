@@ -3644,6 +3644,11 @@ fn collect_address_taken_fns(
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
             | ExprKind::EnvVar { .. } => {}
+            ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    visit_expr(a, sigs, taken);
+                }
+            }
         }
     }
     fn visit_block(b: &Block, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
@@ -7932,6 +7937,19 @@ impl<'a> FnState<'a> {
                 unreachable!("sema rejects ranges outside `for ... in`")
             }
             ExprKind::Match { scrutinee, arms } => self.gen_match(scrutinee, arms),
+            ExprKind::Intrinsic { name, .. } => {
+                // v0.0.10 Phase 4 wedge: sema validates and accepts new
+                // `#selector` / `#msg_send` / `#compile_shader` intrinsics,
+                // but the codegen lowering lands in a follow-up slice.
+                // Programs that *use* these intrinsics will panic here at
+                // codegen time with a clear message; programs that only
+                // exercise the parser/sema scaffolding compile cleanly.
+                unimplemented!(
+                    "codegen for `#{name}` intrinsic is not implemented in this slice — \
+                     v0.0.10 ships parser + sema scaffolding only; LLVM IR lowering \
+                     lands in the v0.0.10 GPU-binding fast follow-up"
+                );
+            }
         }
     }
 

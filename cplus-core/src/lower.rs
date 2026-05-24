@@ -239,6 +239,11 @@ impl Lower {
             | ExprKind::IncludeStr { .. }
             | ExprKind::EnvVar { .. }
             | ExprKind::Ident(_) => {}
+            ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    self.lower_expr(a);
+                }
+            }
             ExprKind::InterpStr { parts } => {
                 for p in parts {
                     if let crate::ast::InterpStrPart::Expr(e) = p {
@@ -807,6 +812,11 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
         | ExprKind::IncludeBytes { .. }
         | ExprKind::IncludeStr { .. }
         | ExprKind::EnvVar { .. } => {}
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                subst_expr(a, consts);
+            }
+        }
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr(inner) = p {

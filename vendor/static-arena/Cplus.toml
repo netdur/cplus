@@ -1,0 +1,9 @@
+[package]
+name    = "static-arena"
+version = "0.0.0"
+edition = "2026"
+
+[dependencies]
+stdlib = "*"
+
+# Stub package — implementation deferred. See src/README for the gap.

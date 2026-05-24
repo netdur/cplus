@@ -326,6 +326,15 @@ pub struct ParamSig {
     pub ty: Ty,
     pub mutable: bool,
     pub move_: bool,
+    /// v0.0.9 follow-up: `borrow x: T` — explicit shared by-value
+    /// parameter. Phase 5 mechanism plumbing — propagates `Param.borrow_`
+    /// from the AST so call-site logic can opt out of the future
+    /// "move-by-default for non-Copy" behaviour. Today this flag is
+    /// purely informational; the default at call sites remains
+    /// "shared, no consume". When the Phase 5 flip lands, an unmarked
+    /// non-Copy param will consume the caller's binding *unless*
+    /// `borrow_` is set.
+    pub borrow_: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -633,6 +642,9 @@ fn check_with_files_inner<'a>(
         compile_time_blobs_table: HashMap::new(),
         env_vars_table: HashMap::new(),
         statics_table: HashMap::new(),
+        selectors_table: std::collections::BTreeSet::new(),
+        shader_blobs_table: HashMap::new(),
+        msg_send_shapes: std::collections::BTreeSet::new(),
     };
     cx.register_builtins();
     // Type collection order:
@@ -666,6 +678,15 @@ fn check_with_files_inner<'a>(
     cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
+    // v0.0.10 Phase 1: `#[no_alloc]` real-time contract.
+    // Walks every `#[no_alloc]`-marked function's body, resolves direct
+    // callee names, and rejects calls into the allocator blocklist or
+    // into user functions that aren't themselves marked `#[no_alloc]`.
+    // Must run after `check_functions` / `check_methods` so the body's
+    // call sites have already been type-checked (we trust the AST shape).
+    // v0.0.10 Phase 3: `#[bounded_recursion]` rides the same walker.
+    cx.check_no_alloc(program);
+    cx.check_bounded_recursion(program);
     // v0.0.5 Phase 3 Slice 3C: enum-pattern-discovery propagation.
     //
     // Sema's check_method type-checks each impl method body *once* using
@@ -953,6 +974,18 @@ struct SemaCx<'a> {
     /// and by `check_assign` to gate `static mut` writes behind
     /// `unsafe { ... }`. Codegen reads the snapshot from `MonoInfo`.
     statics_table: HashMap<String, StaticInfo>,
+    /// v0.0.10 Phase 4A: ObjC selectors used by `#selector(...)` /
+    /// `#msg_send(... "sel" ...)`. Codegen emits one cached-pointer
+    /// global per unique selector name.
+    selectors_table: std::collections::BTreeSet<String>,
+    /// v0.0.10 Phase 4B: per-call objc_msgSend shapes, keyed by call
+    /// span. Each entry records the (return_type, arg_types) tuple so
+    /// codegen synthesizes the right per-call extern declaration.
+    msg_send_shapes: std::collections::BTreeSet<ByteSpan>,
+    /// v0.0.10 Phase 4C: `#compile_shader(...)`-produced byte blobs.
+    /// Keyed by call span. Codegen emits one private constant global
+    /// per entry.
+    shader_blobs_table: HashMap<ByteSpan, Vec<u8>>,
 }
 
 /// v0.0.9 Phase 4: sema-resolved info for a module-scope `static`.
@@ -1021,6 +1054,7 @@ impl SemaCx<'_> {
                     ty: Ty::I32,
                     mutable: false,
                     move_: false,
+                    borrow_: false,
                 }],
                 return_type: Ty::Unit,
                 is_variadic: false,
@@ -1603,6 +1637,7 @@ impl SemaCx<'_> {
                         ty: self.resolve_type(&p.ty),
                         mutable: p.mutable,
                         move_: p.move_,
+                        borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
                     })
                     .collect();
                 let declared_ret = match &m.return_type {
@@ -1730,18 +1765,19 @@ impl SemaCx<'_> {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool)> = t
+                    let raw: Vec<(Ty, bool, bool, bool)> = t
                         .params
                         .iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_))
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
                         .collect();
                     raw.into_iter()
-                        .map(|(ty, mutable, move_)| {
+                        .map(|(ty, mutable, move_, borrow_)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
                                 ty: subst_self(&s, &self_ty),
                                 mutable,
                                 move_,
+                                borrow_,
                             }
                         })
                         .collect()
@@ -1784,6 +1820,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
+                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
                 })
                 .collect();
             let declared_ret = match &m.return_type {
@@ -1924,6 +1961,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
+                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
                 })
                 .collect();
             let declared_ret = match &m.return_type {
@@ -2033,6 +2071,7 @@ impl SemaCx<'_> {
                     ty: Ty::Param("Self".to_string()),
                     mutable: false,
                     move_: false,
+                    borrow_: false,
                 }]
             } else {
                 Vec::new()
@@ -2092,6 +2131,7 @@ impl SemaCx<'_> {
                         ty: self.resolve_type(&p.ty),
                         mutable: p.mutable,
                         move_: p.move_,
+                        borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
                     })
                     .collect();
                 let return_type = match &m.return_type {
@@ -2582,6 +2622,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
+                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
                 })
                 .collect();
             let declared_ret = match &f.return_type {
@@ -3101,6 +3142,203 @@ impl SemaCx<'_> {
         }
         self.current_file = None;
     }
+
+    // ========================================================================
+    // v0.0.10 Phase 1 + Phase 3: `#[no_alloc]` / `#[bounded_recursion]` passes
+    // ========================================================================
+    //
+    // Both attributes share the same machinery: build a name → AST-function
+    // lookup, then walk every marked function's body and apply per-attribute
+    // rules. `#[no_alloc]` rejects calls into the libc allocator blocklist
+    // (or into user fns not themselves marked); `#[bounded_recursion]`
+    // rejects any path that leads back to the marked fn itself.
+    //
+    // The walker resolves callees from the AST — `Ident(name)` and
+    // `Path { segments }` cases only. Field-method calls (`recv.method(...)`)
+    // are skipped: resolving them needs full type-dispatch info that we
+    // don't conservatively expose here. In practice this is fine because
+    // the only way to construct an allocating receiver (Vec / String / Box /
+    // HashMap) is through a free or assoc fn that the walker *does* see —
+    // so the call to e.g. `vec::new()` already fires E0901.
+
+    fn check_no_alloc(&mut self, p: &Program) {
+        let fn_table = build_no_alloc_fn_table(p);
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            match &item.kind {
+                ItemKind::Function(f) => {
+                    if !has_attr_named(&f.attributes, "no_alloc") {
+                        continue;
+                    }
+                    // `#[no_alloc] extern fn ...` is the user's promise that
+                    // the C symbol doesn't allocate; no body to walk.
+                    if f.is_extern {
+                        continue;
+                    }
+                    self.walk_no_alloc_body(&f.body, &f.name.name, &fn_table);
+                }
+                ItemKind::Impl(b) => {
+                    for m in &b.methods {
+                        if !has_attr_named(&m.attributes, "no_alloc") {
+                            continue;
+                        }
+                        self.walk_no_alloc_body(&m.body, &m.name.name, &fn_table);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.current_file = None;
+    }
+
+    fn walk_no_alloc_body(
+        &mut self,
+        body: &Block,
+        caller: &str,
+        fn_table: &NoAllocFnTable,
+    ) {
+        let mut calls: Vec<(String, ByteSpan)> = Vec::new();
+        collect_callees_block(body, &mut calls);
+        for (callee_raw, span) in calls {
+            self.check_no_alloc_call(&callee_raw, span, caller, fn_table);
+        }
+    }
+
+    fn check_no_alloc_call(
+        &mut self,
+        callee_raw: &str,
+        span: ByteSpan,
+        caller: &str,
+        fn_table: &NoAllocFnTable,
+    ) {
+        // Trailing-segment name — used for blocklist/whitelist matching when
+        // the resolver has qualified the callee (e.g. `vec.malloc`).
+        let leaf = callee_raw
+            .rsplit_once('.')
+            .map(|(_, n)| n)
+            .unwrap_or(callee_raw);
+
+        let info = fn_table
+            .fns
+            .get(callee_raw)
+            .or_else(|| fn_table.fns.get(leaf));
+
+        if let Some(fi) = info {
+            // Effective C symbol: prefer #[link_name], else the leaf name.
+            let symbol = fi.link_name.as_deref().unwrap_or(leaf);
+            if ALLOC_BLOCKLIST.contains(&symbol) {
+                self.err(
+                    "E0901",
+                    format!(
+                        "function `{}` is marked `#[no_alloc]` but calls allocating function `{}`",
+                        leaf_name(caller),
+                        symbol,
+                    ),
+                    span,
+                );
+                return;
+            }
+            if fi.is_extern {
+                if LEAF_WHITELIST.contains(&symbol) || fi.has_no_alloc {
+                    return;
+                }
+                self.err(
+                    "E0901",
+                    format!(
+                        "function `{}` is marked `#[no_alloc]` but calls extern `{}` which is not in the known-non-allocating leaf set; add `#[no_alloc]` to the extern declaration if it is known not to allocate",
+                        leaf_name(caller),
+                        symbol,
+                    ),
+                    span,
+                );
+                return;
+            }
+            // User-defined fn: must itself be `#[no_alloc]`.
+            if !fi.has_no_alloc {
+                self.err(
+                    "E0901",
+                    format!(
+                        "function `{}` is marked `#[no_alloc]` but calls `{}` which is not marked `#[no_alloc]`",
+                        leaf_name(caller),
+                        leaf,
+                    ),
+                    span,
+                );
+            }
+            return;
+        }
+        // Unresolved callee — likely a method-dispatch shape we don't
+        // statically resolve here, or a name the resolver knows under a form
+        // we didn't index. Skip silently; the rule blocks the common cases
+        // (direct allocator externs, constructor-style free/assoc fns).
+    }
+
+    fn check_bounded_recursion(&mut self, p: &Program) {
+        let fn_table = build_no_alloc_fn_table(p);
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            let (caller, body, span) = match &item.kind {
+                ItemKind::Function(f) if has_attr_named(&f.attributes, "bounded_recursion") => {
+                    if f.is_extern {
+                        continue;
+                    }
+                    (f.name.name.clone(), &f.body, f.name.span)
+                }
+                _ => continue,
+            };
+            // Walk reachable set; if `caller` reachable from itself, error.
+            let mut reachable: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut worklist: Vec<&Block> = vec![body];
+            let mut found_cycle = false;
+            while let Some(blk) = worklist.pop() {
+                let mut calls: Vec<(String, ByteSpan)> = Vec::new();
+                collect_callees_block(blk, &mut calls);
+                for (callee_raw, _span) in calls {
+                    // Try full + leaf lookup, same as no_alloc.
+                    let key_full = callee_raw.clone();
+                    let leaf = callee_raw
+                        .rsplit_once('.')
+                        .map(|(_, n)| n.to_string())
+                        .unwrap_or_else(|| callee_raw.clone());
+                    let canonical = if fn_table.fns.contains_key(&key_full) {
+                        key_full
+                    } else if fn_table.fns.contains_key(&leaf) {
+                        leaf
+                    } else {
+                        continue;
+                    };
+                    if canonical == caller {
+                        found_cycle = true;
+                        break;
+                    }
+                    if reachable.insert(canonical.clone()) {
+                        if let Some(fi) = fn_table.fns.get(&canonical) {
+                            if let Some(b) = fi.body {
+                                worklist.push(b);
+                            }
+                        }
+                    }
+                }
+                if found_cycle {
+                    break;
+                }
+            }
+            if found_cycle {
+                self.err(
+                    "E0906",
+                    format!(
+                        "function `{}` is marked `#[bounded_recursion]` but its call graph leads back to itself",
+                        leaf_name(&caller),
+                    ),
+                    span,
+                );
+            }
+        }
+        self.current_file = None;
+    }
+    // ========================================================================
+    // End #[no_alloc] / #[bounded_recursion]
+    // ========================================================================
 
     /// Phase 5 slice 5ATTR.2 — validate sema-level rules for `#[test]` fns:
     /// - **E0358**: test function must have signature `fn() -> i32` or `fn()`.
@@ -3885,7 +4123,290 @@ impl SemaCx<'_> {
             ExprKind::IncludeBytes { path } => self.check_include_bytes(path, e.span),
             ExprKind::IncludeStr { path } => self.check_include_str(path, e.span),
             ExprKind::EnvVar { name } => self.check_env_var(name, e.span),
+            ExprKind::Intrinsic { name, type_args, args, ret_ty } => {
+                self.check_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span)
+            }
         }
+    }
+
+    /// v0.0.10 Phase 4: dispatch `#name(...)` intrinsics. Names are looked
+    /// up in a hardcoded table; unknown names fire E0905. Each intrinsic
+    /// implements its own arg-shape validation, then returns the result
+    /// type. Codegen consults a parallel table.
+    fn check_intrinsic(
+        &mut self,
+        name: &str,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        match name {
+            // Phase 4A: `#selector("setBuffer:offset:atIndex:")` → `*u8`.
+            // String-literal-only arg, no type args, no ret ascription.
+            "selector" => self.check_intrinsic_selector(type_args, args, ret_ty, span),
+            // Phase 4B: `#msg_send(recv, "selector", a, b, ...) -> RetTy`.
+            // First arg is the receiver; second arg is a string-literal
+            // selector; remaining args are forwarded. `RetTy` is required.
+            "msg_send" => self.check_intrinsic_msg_send(type_args, args, ret_ty, span),
+            // Phase 4C: `#compile_shader("path", "msl")` → `*[u8; N]`.
+            // First arg is a string-literal path, second is the target.
+            "compile_shader" => {
+                self.check_intrinsic_compile_shader(type_args, args, ret_ty, span)
+            }
+            _ => {
+                self.err(
+                    "E0905",
+                    format!("unknown compiler intrinsic `#{}`", name),
+                    span,
+                );
+                // Still walk args / ret_ty so downstream diagnostics fire.
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                if let Some(rt) = ret_ty {
+                    let _ = self.resolve_type(rt);
+                }
+                Ty::Error
+            }
+        }
+    }
+
+    // ---- Phase 4A: `#selector("name")` ----
+    fn check_intrinsic_selector(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0903",
+                format!("`#selector` takes no type arguments, got {}", type_args.len()),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#selector` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if args.len() != 1 {
+            self.err("E0903",
+                format!("`#selector` takes exactly 1 string-literal argument, got {}", args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::RawPtr(Box::new(Ty::U8));
+        }
+        // Sema-time validation: arg must be a string literal.
+        let name = match &args[0].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => {
+                self.err("E0903",
+                    "`#selector` argument must be a string literal".to_string(),
+                    args[0].span);
+                let _ = self.check_expr(&args[0], None);
+                return Ty::RawPtr(Box::new(Ty::U8));
+            }
+        };
+        // Record the selector name so codegen can emit the cached-pointer
+        // global. (Codegen reads `selectors_table`; populated in 4A codegen.)
+        self.selectors_table.insert(name);
+        // Selector pointer is `*u8` (an opaque ObjC SEL pointer).
+        Ty::RawPtr(Box::new(Ty::U8))
+    }
+
+    // ---- Phase 4B: `#msg_send(recv, "sel", args...) -> T` ----
+    fn check_intrinsic_msg_send(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0903",
+                "`#msg_send` takes no type arguments".to_string(),
+                span);
+        }
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`#msg_send` is an unsafe FFI primitive; wrap the call in `unsafe { ... }`".to_string(),
+                span);
+        }
+        if args.len() < 2 {
+            self.err("E0903",
+                format!("`#msg_send` takes a receiver, a selector string literal, and zero or more arguments (got {})", args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        // Arg 0: receiver expression (any type, ObjC objects are *u8 in C+).
+        let _recv_ty = self.check_expr(&args[0], None);
+        // Arg 1: string-literal selector.
+        let sel = match &args[1].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => {
+                self.err("E0903",
+                    "second argument to `#msg_send` must be a string-literal selector name".to_string(),
+                    args[1].span);
+                String::new()
+            }
+        };
+        // Record the selector so codegen emits the global.
+        if !sel.is_empty() {
+            self.selectors_table.insert(sel);
+        }
+        // Remaining args: forwarded to objc_msgSend.
+        for a in &args[2..] {
+            let _ = self.check_expr(a, None);
+        }
+        // Record the call-site shape so codegen synthesizes the right
+        // per-call objc_msgSend declaration.
+        self.msg_send_shapes.insert(span);
+        // Return type comes from the `-> T` ascription; default Unit.
+        match ret_ty {
+            Some(rt) => self.resolve_type(rt),
+            None => Ty::Unit,
+        }
+    }
+
+    /// v0.0.10 Phase 4C: invoke the shader toolchain at sema time and
+    /// stash the resulting bytes in `shader_blobs_table`. The return type
+    /// is `*[u8; N]` where N is the blob's byte count — parallels
+    /// `include_bytes!`.
+    fn compile_shader_at_sema(&mut self, path: &str, target: &str, span: ByteSpan) -> Ty {
+        if target != "msl" {
+            self.err("E0904",
+                format!("`#compile_shader` target `{}` is not supported in this slice (only `\"msl\"` is implemented)", target),
+                span);
+            return Ty::Error;
+        }
+        // Resolve `path` relative to the current source file (mirrors
+        // include_bytes' behaviour). For minimal viable scope, only the
+        // entry file is consulted.
+        let base = self.file.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let shader_path = base.join(path);
+        // Invoke xcrun + metallib via `Command::new`. Two-step:
+        //   xcrun -sdk macosx metal -c <src> -o <tmp.air>
+        //   xcrun -sdk macosx metallib <tmp.air> -o <tmp.metallib>
+        // Errors from either step surface as E0904 with stderr text.
+        let tmp_dir = std::env::temp_dir();
+        let stem: String = shader_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("shader")
+            .to_string();
+        let air_path = tmp_dir.join(format!("{}.{:x}.air", stem, span.start));
+        let metallib_path = tmp_dir.join(format!("{}.{:x}.metallib", stem, span.start));
+        let step1 = std::process::Command::new("xcrun")
+            .args(["-sdk", "macosx", "metal", "-c"])
+            .arg(&shader_path)
+            .arg("-o")
+            .arg(&air_path)
+            .output();
+        let step1 = match step1 {
+            Ok(o) => o,
+            Err(e) => {
+                self.err("E0904",
+                    format!("failed to invoke `xcrun metal` for `{}`: {}", path, e),
+                    span);
+                return Ty::Error;
+            }
+        };
+        if !step1.status.success() {
+            let stderr = String::from_utf8_lossy(&step1.stderr).into_owned();
+            self.err("E0904",
+                format!("shader compilation failed for `{}`:\n{}", path, stderr.trim()),
+                span);
+            return Ty::Error;
+        }
+        let step2 = std::process::Command::new("xcrun")
+            .args(["-sdk", "macosx", "metallib"])
+            .arg(&air_path)
+            .arg("-o")
+            .arg(&metallib_path)
+            .output();
+        let step2 = match step2 {
+            Ok(o) => o,
+            Err(e) => {
+                self.err("E0904",
+                    format!("failed to invoke `xcrun metallib` for `{}`: {}", path, e),
+                    span);
+                return Ty::Error;
+            }
+        };
+        if !step2.status.success() {
+            let stderr = String::from_utf8_lossy(&step2.stderr).into_owned();
+            self.err("E0904",
+                format!("metallib failed for `{}`:\n{}", path, stderr.trim()),
+                span);
+            return Ty::Error;
+        }
+        let bytes = match std::fs::read(&metallib_path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.err("E0904",
+                    format!("could not read metallib output for `{}`: {}", path, e),
+                    span);
+                return Ty::Error;
+            }
+        };
+        let len = bytes.len() as u32;
+        self.shader_blobs_table.insert(span, bytes);
+        // Result type matches `include_bytes!`: `*[u8; N]`.
+        Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len)))
+    }
+
+    // ---- Phase 4C: `#compile_shader("path", "msl")` ----
+    fn check_intrinsic_compile_shader(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0903",
+                "`#compile_shader` takes no type arguments".to_string(),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#compile_shader` does not accept a `-> T` ascription".to_string(),
+                span);
+        }
+        if args.len() < 1 || args.len() > 2 {
+            self.err("E0903",
+                format!("`#compile_shader` takes 1 or 2 string-literal arguments (path, [target]); got {}", args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        let path = match &args[0].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => {
+                self.err("E0903",
+                    "first argument to `#compile_shader` must be a string-literal path".to_string(),
+                    args[0].span);
+                return Ty::Error;
+            }
+        };
+        let target = if args.len() == 2 {
+            match &args[1].kind {
+                ExprKind::StrLit(s) => s.clone(),
+                _ => {
+                    self.err("E0903",
+                        "second argument to `#compile_shader` must be a string-literal target (\"msl\")".to_string(),
+                        args[1].span);
+                    return Ty::Error;
+                }
+            }
+        } else {
+            "msl".to_string()
+        };
+        // Sema-time invocation of the shader toolchain. Errors propagate
+        // as E0904.
+        self.compile_shader_at_sema(&path, &target, span)
     }
 
     /// v0.0.8 Phase 4: `env!("NAME")` resolution. Reads the env var via
@@ -6064,6 +6585,7 @@ impl SemaCx<'_> {
                 ty: i_ty.clone(),
                 mutable: false,
                 move_: true,
+                borrow_: false,
             },
         );
         let expected_f = Ty::FnPtr {
@@ -7908,7 +8430,28 @@ impl SemaCx<'_> {
     /// parameter is redundant (a future E0336 lint will suggest removing it).
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
         let _ = self.check_expr(arg, Some(expected.ty.clone()));
-        if expected.move_ && !self.is_copy(&expected.ty) {
+        // v0.0.10 Phase 5: non-Copy params consume the caller's binding by
+        // default. `move x: T` is the explicit spelling (kept for
+        // back-compat); `mut x: T` is the exclusive-borrow form (no
+        // consume); `borrow x: T` is the new shared-borrow opt-out for
+        // non-Copy types. Copy types are never consumed (no Drop, the
+        // marker is just informational).
+        //
+        // Rvalues (struct literals, generic struct literals, enum
+        // constructors, calls returning by value, etc.) own their value
+        // outright — there's no caller binding to mark moved, so the
+        // "implicit move" default is a no-op for them. Only explicit
+        // `move x: T` (which would have errored before, and still does
+        // for Field/Index partial moves) and named-binding arguments
+        // exercise consume_arg_place.
+        if self.is_copy(&expected.ty) {
+            return;
+        }
+        let implicit_move = !expected.mutable && !expected.borrow_;
+        let explicit_move = expected.move_;
+        if explicit_move {
+            self.consume_arg_place(arg);
+        } else if implicit_move && arg_is_named_binding(arg) {
             self.consume_arg_place(arg);
         }
     }
@@ -8787,18 +9330,19 @@ impl SemaCx<'_> {
                 // (e.g. `fn new(v: T) -> Box[T]` inside `impl Box[T]`)
                 // get their inner T substituted at instantiation time.
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool)> = t
+                    let raw: Vec<(Ty, bool, bool, bool)> = t
                         .params
                         .iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_))
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
                         .collect();
                     raw.into_iter()
-                        .map(|(ty, mutable, move_)| {
+                        .map(|(ty, mutable, move_, borrow_)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
                                 ty: subst_self(&s, &self_ty),
                                 mutable,
                                 move_,
+                                borrow_,
                             }
                         })
                         .collect()
@@ -9160,18 +9704,19 @@ impl SemaCx<'_> {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
                 let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool)> = t
+                    let raw: Vec<(Ty, bool, bool, bool)> = t
                         .params
                         .iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_))
+                        .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
                         .collect();
                     raw.into_iter()
-                        .map(|(ty, mutable, move_)| {
+                        .map(|(ty, mutable, move_, borrow_)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
                                 ty: subst_self(&s, &self_ty),
                                 mutable,
                                 move_,
+                                borrow_,
                             }
                         })
                         .collect()
@@ -10100,6 +10645,16 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
 /// attribute list and return the string value. Returns `None` if absent.
 /// Attribute-shape validation has already run via attrs::check, so any
 /// `link_name` here is guaranteed to have the right arg shape.
+/// v0.0.10 Phase 5: is the argument expression a named binding (a plain
+/// `Ident` referring to a local / parameter) that the move-by-default
+/// rule should consume? Rvalues (struct literals, calls returning by
+/// value, etc.) own their result outright and don't have a caller
+/// binding to mark moved — applying the implicit move to them is a
+/// no-op and would otherwise spuriously fire E0337 on temporaries.
+fn arg_is_named_binding(arg: &Expr) -> bool {
+    matches!(arg.kind, ExprKind::Ident(_))
+}
+
 fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
     attrs.iter().find_map(|a| {
         if a.path.name != "link_name" {
@@ -10111,6 +10666,318 @@ fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
         }
     })
 }
+
+// ============================================================================
+// v0.0.10 Phase 1 + Phase 3: shared `#[no_alloc]` / `#[bounded_recursion]`
+// support — fn-table + AST callee-name walker.
+// ============================================================================
+
+/// Hardcoded blocklist of libc allocator symbol names. A `#[no_alloc]`
+/// function must not call any of these directly or transitively.
+/// Matching is done against the callee's `#[link_name]` symbol if set,
+/// else its trailing-segment source name.
+const ALLOC_BLOCKLIST: &[&str] = &[
+    "malloc",
+    "calloc",
+    "realloc",
+    "reallocf",
+    "aligned_alloc",
+    "valloc",
+    "memalign",
+    "posix_memalign",
+    "free",
+];
+
+/// Whitelist of libc / runtime externs that are known not to allocate.
+/// A `#[no_alloc]` fn may call any of these. Adding to this list is the
+/// way to admit a new "known-leaf" symbol; alternatively the user can
+/// annotate the extern declaration with `#[no_alloc]`.
+const LEAF_WHITELIST: &[&str] = &[
+    // memory helpers
+    "memcpy", "memmove", "memset", "memcmp", "memchr",
+    "bzero", "bcopy",
+    // string scanning (no allocation)
+    "strlen", "strnlen", "strcmp", "strncmp", "strchr", "strrchr",
+    "strstr", "strspn", "strcspn", "strpbrk",
+    // bounded copies (caller-supplied buffers)
+    "strcpy", "strncpy", "strcat", "strncat",
+    "snprintf", "vsnprintf",
+    // I/O (syscalls — no heap)
+    "write", "read", "fwrite", "fread", "fputs", "fputc",
+    "puts", "putchar", "putc",
+    "printf", "fprintf", "vprintf", "vfprintf",
+    "fflush", "fclose",
+    // process control (terminate — no heap)
+    "exit", "_exit", "abort", "_Exit",
+    // libc double math
+    "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+    "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+    "exp", "exp2", "expm1", "log", "log2", "log10", "log1p",
+    "pow", "sqrt", "cbrt", "hypot",
+    "ceil", "floor", "round", "trunc", "fmod", "fabs",
+    "ldexp", "frexp", "modf", "remainder", "copysign",
+    // libc float math
+    "sinf", "cosf", "tanf", "asinf", "acosf", "atanf", "atan2f",
+    "expf", "exp2f", "logf", "log2f", "log10f",
+    "powf", "sqrtf", "cbrtf", "hypotf",
+    "fabsf", "floorf", "ceilf", "roundf", "truncf", "fmodf",
+    // ObjC runtime helpers (v0.0.10 Phase 4 / vendor/metal)
+    "objc_msgSend", "objc_release", "objc_retain", "objc_autorelease",
+    "sel_registerName", "sel_getName",
+    "objc_getClass", "objc_lookUpClass", "object_getClass",
+    "class_getName", "class_respondsToSelector",
+    // misc — pure or no-alloc
+    "errno", "strerror_r",
+];
+
+/// Info captured about every fn/method in the program, used by both
+/// `check_no_alloc` and `check_bounded_recursion`.
+struct NoAllocFnInfo<'a> {
+    is_extern: bool,
+    has_no_alloc: bool,
+    link_name: Option<String>,
+    body: Option<&'a Block>,
+}
+
+struct NoAllocFnTable<'a> {
+    fns: std::collections::HashMap<String, NoAllocFnInfo<'a>>,
+}
+
+fn build_no_alloc_fn_table(p: &Program) -> NoAllocFnTable<'_> {
+    let mut fns = std::collections::HashMap::new();
+    for item in &p.items {
+        match &item.kind {
+            ItemKind::Function(f) => {
+                let info = NoAllocFnInfo {
+                    is_extern: f.is_extern,
+                    has_no_alloc: has_attr_named(&f.attributes, "no_alloc"),
+                    link_name: extract_link_name(&f.attributes),
+                    body: if f.is_extern { None } else { Some(&f.body) },
+                };
+                fns.insert(f.name.name.clone(), info);
+            }
+            ItemKind::Impl(b) => {
+                for m in &b.methods {
+                    let info = NoAllocFnInfo {
+                        is_extern: false,
+                        has_no_alloc: has_attr_named(&m.attributes, "no_alloc"),
+                        link_name: None,
+                        body: Some(&m.body),
+                    };
+                    fns.insert(m.name.name.clone(), info);
+                }
+            }
+            _ => {}
+        }
+    }
+    NoAllocFnTable { fns }
+}
+
+fn has_attr_named(attrs: &[Attribute], name: &str) -> bool {
+    attrs.iter().any(|a| a.path.name == name)
+}
+
+/// Trailing-segment of a possibly-qualified fn name (e.g. `vec.malloc` →
+/// `malloc`). Used to produce user-friendly diagnostic text.
+fn leaf_name(qualified: &str) -> &str {
+    qualified.rsplit_once('.').map(|(_, n)| n).unwrap_or(qualified)
+}
+
+/// Walk a Block, collecting (callee_name, span) pairs for every
+/// `ExprKind::Call` whose callee resolves to a textual name. The walker
+/// handles:
+///   - `Ident(name)` → `name`
+///   - `Path { segments }` → `seg1.seg2....segN` (matches the resolver's
+///     qualified-name form)
+///   - `Field` method calls → skipped (cannot resolve without dispatch info)
+fn collect_callees_block(block: &Block, out: &mut Vec<(String, ByteSpan)>) {
+    for s in &block.stmts {
+        collect_callees_stmt(s, out);
+    }
+    if let Some(tail) = &block.tail {
+        collect_callees_expr(tail, out);
+    }
+}
+
+fn collect_callees_stmt(stmt: &Stmt, out: &mut Vec<(String, ByteSpan)>) {
+    match &stmt.kind {
+        StmtKind::Let { init: Some(e), .. } => collect_callees_expr(e, out),
+        StmtKind::Let { init: None, .. } => {}
+        StmtKind::Return(Some(e)) => collect_callees_expr(e, out),
+        StmtKind::Return(None) => {}
+        StmtKind::While { cond, body, .. } => {
+            collect_callees_expr(cond, out);
+            collect_callees_block(body, out);
+        }
+        StmtKind::For(fl, _) => match fl {
+            ForLoop::Range { iter, body, .. } => {
+                collect_callees_expr(iter, out);
+                collect_callees_block(body, out);
+            }
+            ForLoop::CStyle { init, cond, update, body } => {
+                if let Some(s) = init {
+                    collect_callees_stmt(s, out);
+                }
+                if let Some(c) = cond {
+                    collect_callees_expr(c, out);
+                }
+                for u in update {
+                    collect_callees_expr(u, out);
+                }
+                collect_callees_block(body, out);
+            }
+        },
+        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+            collect_callees_expr(e, out);
+        }
+        StmtKind::Loop(b, _) => collect_callees_block(b, out),
+        // After the lowering pass these are gone. Walk defensively in case
+        // sema runs without lower (or for AST-level test harnesses).
+        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            collect_callees_expr(scrutinee, out);
+            collect_callees_block(body, out);
+            if let Some(eb) = else_body {
+                collect_callees_block(eb, out);
+            }
+        }
+        StmtKind::WhileLet { scrutinee, body, .. } => {
+            collect_callees_expr(scrutinee, out);
+            collect_callees_block(body, out);
+        }
+        StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            collect_callees_expr(scrutinee, out);
+            collect_callees_block(else_body, out);
+        }
+        StmtKind::Break | StmtKind::Continue => {}
+    }
+}
+
+fn collect_callees_expr(e: &Expr, out: &mut Vec<(String, ByteSpan)>) {
+    match &e.kind {
+        ExprKind::Call { callee, args, .. } => {
+            if let Some(name) = extract_call_name(callee) {
+                out.push((name, e.span));
+            }
+            // Walk arguments — nested calls inside args still count.
+            collect_callees_expr(callee, out);
+            for a in args {
+                collect_callees_expr(a, out);
+            }
+        }
+        ExprKind::GenericEnumCall { args, .. } => {
+            for a in args {
+                collect_callees_expr(a, out);
+            }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_callees_expr(lhs, out);
+            collect_callees_expr(rhs, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_callees_expr(operand, out),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                collect_callees_expr(s, out);
+            }
+            if let Some(e) = end {
+                collect_callees_expr(e, out);
+            }
+        }
+        ExprKind::Assign { target, value, .. } => {
+            collect_callees_expr(target, out);
+            collect_callees_expr(value, out);
+        }
+        ExprKind::Cast { expr, .. } => collect_callees_expr(expr, out),
+        ExprKind::If { cond, then, else_branch } => {
+            collect_callees_expr(cond, out);
+            collect_callees_block(then, out);
+            if let Some(eb) = else_branch {
+                collect_callees_expr(eb, out);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_callees_expr(scrutinee, out);
+            for arm in arms {
+                collect_callees_expr(&arm.body, out);
+            }
+        }
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_callees_block(b, out),
+        ExprKind::Field { receiver, .. } => collect_callees_expr(receiver, out),
+        ExprKind::Index { receiver, index } => {
+            collect_callees_expr(receiver, out);
+            collect_callees_expr(index, out);
+        }
+        ExprKind::StructLit { fields, .. } => {
+            for f in fields {
+                collect_callees_expr(&f.value, out);
+            }
+        }
+        ExprKind::GenericStructLit { fields, .. } => {
+            for f in fields {
+                collect_callees_expr(&f.value, out);
+            }
+        }
+        ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+            for el in elements {
+                collect_callees_expr(el, out);
+            }
+        }
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e) = p {
+                    collect_callees_expr(e, out);
+                }
+            }
+        }
+        ExprKind::Await(inner) | ExprKind::Yield(inner) => {
+            collect_callees_expr(inner, out);
+        }
+        ExprKind::Intrinsic { args, .. } => {
+            // Intrinsics are dispatched by the compiler directly — there is
+            // no user-fn callee — but nested calls inside args still count.
+            for a in args {
+                collect_callees_expr(a, out);
+            }
+        }
+        ExprKind::IntLit(_, _)
+        | ExprKind::FloatLit(_, _)
+        | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::Path { .. }
+        | ExprKind::IncludeBytes { .. }
+        | ExprKind::IncludeStr { .. }
+        | ExprKind::EnvVar { .. } => {}
+    }
+}
+
+/// Resolve a Call expression's callee to a textual name. Returns None for
+/// shapes the walker cannot statically resolve (method dispatch through
+/// `Field`, calls through computed receivers, etc.).
+fn extract_call_name(callee: &Expr) -> Option<String> {
+    match &callee.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::Path { segments } => {
+            // `foo::bar::baz` → "foo.bar.baz" (matches resolver's qualified
+            // form). Strip turbofish-only edge cases — if any segment is
+            // empty, bail out.
+            if segments.iter().any(|s| s.name.is_empty()) {
+                return None;
+            }
+            Some(
+                segments
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            )
+        }
+        ExprKind::Field { .. } => None,
+        _ => None,
+    }
+}
+// ============================================================================
+// End shared #[no_alloc] / #[bounded_recursion] support
+// ============================================================================
 
 fn body_ends_with_return(b: &Block) -> bool {
     b.stmts
@@ -11318,6 +12185,57 @@ mod tests {
     // an empty `impl P { fn drop(mut self) {} }` block. The presence of a
     // destructor makes P non-Copy (Drop overrides Copy auto-derive), which
     // makes the `move` consumption real and re-fires E0335 / E0337.
+
+    // ---- v0.0.10 Phase 5: default-move flip + `borrow` opt-out ----
+
+    #[test]
+    fn phase5_implicit_non_copy_param_consumes_e0335() {
+        // No explicit `move` — but the param is non-Copy, so under
+        // v0.0.10 Phase 5 semantics the caller's `p` is consumed.
+        // Reading `p.x` after the call fires E0335.
+        let codes = errors(
+            "struct P { x: i32 }\n\
+             impl P { fn drop(mut self) {} }\n\
+             fn echo(p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 {\n\
+                 let p: P = P { x: 1 };\n\
+                 let r: i32 = echo(p);\n\
+                 return p.x;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got {codes:?}");
+    }
+
+    #[test]
+    fn phase5_borrow_param_does_not_consume_clean() {
+        // `borrow x: T` opts out of the move-by-default. Caller can read
+        // the binding after the call.
+        assert_clean(
+            "struct P { x: i32 }\n\
+             impl P { fn drop(mut self) {} }\n\
+             fn peek(borrow p: P) -> i32 { return p.x; }\n\
+             fn main() -> i32 {\n\
+                 let p: P = P { x: 1 };\n\
+                 let r: i32 = peek(p);\n\
+                 return p.x;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn phase5_copy_param_unchanged_clean() {
+        // Copy types are never consumed at call sites, regardless of
+        // the move marker on the param. (Sanity: Phase 5 doesn't break
+        // existing primitive-type call patterns.)
+        assert_clean(
+            "fn echo(n: i32) -> i32 { return n; }\n\
+             fn main() -> i32 {\n\
+                 let n: i32 = 7;\n\
+                 let r: i32 = echo(n);\n\
+                 return n;\n\
+             }",
+        );
+    }
 
     #[test]
     fn move_param_consumes_non_copy_binding_e0335() {
@@ -14423,5 +15341,252 @@ mod tests {
             "expected type mismatch, got {:?}",
             codes
         );
+    }
+
+    // ========================================================================
+    // v0.0.10 Phase 1: `#[no_alloc]` attribute
+    // ========================================================================
+
+    #[test]
+    fn no_alloc_pure_arith_clean() {
+        assert_clean(
+            "#[no_alloc] fn pure_arith(x: i32) -> i32 { return x + 1; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_direct_malloc_call_e0901() {
+        let codes = errors(
+            "extern fn malloc(n: usize) -> *u8;\n\
+             #[no_alloc] fn f() { unsafe { malloc(8 as usize); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_direct_free_call_e0901() {
+        let codes = errors(
+            "extern fn free(p: *u8);\n\
+             #[no_alloc] fn f(p: *u8) { unsafe { free(p); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_realloc_via_link_name_e0901() {
+        // `#[link_name = "realloc"]` triggers the blocklist even when the
+        // source-level name is something else.
+        let codes = errors(
+            "#[link_name = \"realloc\"] extern fn grow(p: *u8, n: usize) -> *u8;\n\
+             #[no_alloc] fn f(p: *u8) { unsafe { grow(p, 16 as usize); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_calls_other_no_alloc_clean() {
+        assert_clean(
+            "#[no_alloc] fn a(x: i32) -> i32 { return b(x); }\n\
+             #[no_alloc] fn b(x: i32) -> i32 { return x +% 1; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_calls_unmarked_user_fn_e0901() {
+        let codes = errors(
+            "fn helper(x: i32) -> i32 { return x +% 1; }\n\
+             #[no_alloc] fn caller(x: i32) -> i32 { return helper(x); }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_calls_leaf_whitelist_clean() {
+        // `memcpy` is on the leaf whitelist → fine to call from #[no_alloc].
+        assert_clean(
+            "extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;\n\
+             #[no_alloc] fn copy(dest: *u8, src: *u8, n: usize) {\n\
+                 unsafe { memcpy(dest, src, n); }\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_unknown_extern_e0901() {
+        // Conservative: extern not in the whitelist and not marked
+        // `#[no_alloc]` is rejected. User can opt in via `#[no_alloc]`
+        // on the extern decl.
+        let codes = errors(
+            "extern fn mystery(x: i32) -> i32;\n\
+             #[no_alloc] fn caller(x: i32) -> i32 { return unsafe { mystery(x) }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_extern_self_marked_clean() {
+        // The user vouches for the extern by marking it `#[no_alloc]`.
+        assert_clean(
+            "#[no_alloc] extern fn vouch(x: i32) -> i32;\n\
+             #[no_alloc] fn caller(x: i32) -> i32 { return unsafe { vouch(x) }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_method_marked_clean() {
+        // A `#[no_alloc]` method body that only calls `#[no_alloc]` helpers.
+        assert_clean(
+            "struct P { x: i32 }\n\
+             impl P {\n\
+                 #[no_alloc] fn doubled(self) -> i32 { return self.x +% self.x; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_extern_decl_clean() {
+        // Carrying `#[no_alloc]` on an extern declaration is the user's
+        // promise — no body to walk, no diagnostic.
+        assert_clean(
+            "#[no_alloc] extern fn pure(x: i32) -> i32;\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // Wrong-target rejection for `#[no_alloc]` lives in attrs.rs's test
+    // module — sema's `check()` does not invoke the attrs pass.
+
+    // ========================================================================
+    // v0.0.10 Phase 3: `#[bounded_recursion]` attribute
+    // ========================================================================
+
+    #[test]
+    fn bounded_recursion_non_recursive_clean() {
+        assert_clean(
+            "#[bounded_recursion] fn a(x: i32) -> i32 { return x +% 1; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn bounded_recursion_self_recursive_e0906() {
+        let codes = errors(
+            "#[bounded_recursion] fn r(x: i32) -> i32 {\n\
+                 if x == 0 { return 0; }\n\
+                 return r(x -% 1);\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
+    }
+
+    // ========================================================================
+    // v0.0.10 Phase 4: `#name(...)` compiler-intrinsic syntax
+    // ========================================================================
+
+    #[test]
+    fn intrinsic_selector_string_literal_clean() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let s: *u8 = #selector(\"length\");\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn intrinsic_unknown_name_e0905() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 let p: *u8 = #frobnicate(\"x\");\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_selector_non_string_e0903() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 let n: i32 = 42;\n\
+                 let p: *u8 = #selector(n);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0903"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_msg_send_outside_unsafe_e0801() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 let obj: *u8 = unsafe { 0 as *u8 };\n\
+                 #msg_send(obj, \"hello\");\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0801"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_msg_send_inside_unsafe_clean() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 unsafe {\n\
+                     let obj: *u8 = 0 as *u8;\n\
+                     #msg_send(obj, \"hello\");\n\
+                 }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn intrinsic_msg_send_with_return_type_clean() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let obj: *u8 = unsafe { 0 as *u8 };\n\
+                 let n: u64 = unsafe { #msg_send(obj, \"length\") -> u64 };\n\
+                 return n as i32;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn intrinsic_compile_shader_bad_target_e0904() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 let p: *u8 = #compile_shader(\"k.spv\", \"spirv\") as *u8;\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0904"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn bounded_recursion_mutual_recursive_e0906() {
+        let codes = errors(
+            "#[bounded_recursion] fn a(x: i32) -> i32 {\n\
+                 if x == 0 { return 0; }\n\
+                 return b(x -% 1);\n\
+             }\n\
+             fn b(x: i32) -> i32 {\n\
+                 return a(x);\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
     }
 }

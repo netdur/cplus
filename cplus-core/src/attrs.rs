@@ -95,6 +95,27 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_FN,
         allow_duplicate: false,
     },
+    // v0.0.10 Phase 1: `#[no_alloc]` — verifiable real-time contract.
+    // A `#[no_alloc]`-marked function and everything it transitively calls
+    // must not heap-allocate. Surface-shape only; the call-graph walk and
+    // E0901 emission live in sema (see `check_no_alloc`). Free functions
+    // only — methods get the marker via their impl block's fn after sema's
+    // collect_methods normalizes them to FnSig entries.
+    AttrSpec {
+        name: "no_alloc",
+        args: ArgsSpec::None,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
+    // v0.0.10 Phase 3: `#[bounded_recursion]` — companion to `#[no_alloc]`.
+    // Rejects any function whose call graph leads back to itself. Same
+    // call-graph walk machinery as `#[no_alloc]`; sema-emitted E0906.
+    AttrSpec {
+        name: "bounded_recursion",
+        args: ArgsSpec::None,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
     // v0.0.7 Slice 1.3: `#[unroll(N)]` on a loop statement. Codegen
     // attaches `!{!"llvm.loop.unroll.count", i32 N}` to the back-edge
     // branch's `!llvm.loop` group. Sema validates N ∈ [1, 256] (E0510).
@@ -749,6 +770,63 @@ mod tests {
     fn no_attributes_no_diagnostics() {
         let diags = check_src("fn main() -> i32 { return 0; }");
         assert!(diags.is_empty());
+    }
+
+    // ---- v0.0.10 Phase 1: `#[no_alloc]` attribute target validation ----
+
+    #[test]
+    fn no_alloc_on_free_fn_clean() {
+        let diags = check_src("#[no_alloc] fn ok(x: i32) -> i32 { return x; }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn no_alloc_on_struct_rejected_e0356() {
+        let diags = check_src("#[no_alloc] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn no_alloc_on_enum_rejected_e0356() {
+        let diags = check_src("#[no_alloc] enum E { A, B }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn no_alloc_with_args_rejected_e0355() {
+        let diags = check_src("#[no_alloc(foo)] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    #[test]
+    fn no_alloc_duplicate_e0357() {
+        let diags = check_src("#[no_alloc] #[no_alloc] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0357"]);
+    }
+
+    #[test]
+    fn no_alloc_on_method_clean() {
+        let diags = check_src(
+            "struct X { v: i32 }\n\
+             impl X { #[no_alloc] fn t(self) -> i32 { return self.v; } }",
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    // ---- v0.0.10 Phase 3: `#[bounded_recursion]` target validation ----
+
+    #[test]
+    fn bounded_recursion_on_free_fn_clean() {
+        let diags = check_src(
+            "#[bounded_recursion] fn ok(x: i32) -> i32 { return x; }",
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn bounded_recursion_on_struct_rejected_e0356() {
+        let diags = check_src("#[bounded_recursion] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
     }
 
     #[test]

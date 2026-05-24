@@ -1922,6 +1922,17 @@ fn rewrite_expr(
         | ExprKind::IncludeBytes { .. }
         | ExprKind::IncludeStr { .. }
         | ExprKind::EnvVar { .. } => {}
+        ExprKind::Intrinsic { type_args, args, ret_ty, .. } => {
+            for t in type_args {
+                rewrite_type(t, ctx)?;
+            }
+            if let Some(t) = ret_ty {
+                rewrite_type(t, ctx)?;
+            }
+            for a in args {
+                rewrite_expr(a, ctx, scope)?;
+            }
+        }
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let crate::ast::InterpStrPart::Expr(inner) = p {
