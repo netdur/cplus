@@ -269,6 +269,47 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn neg_lit_with_lhs_type_runtime_g023() {
+    // v0.0.12 G-023: `let x: i64 = -100;` must work end-to-end. Pre-fix,
+    // sema rejected this with E0302 because the i64 expected-type wasn't
+    // propagated into unary-minus' operand; codegen then emitted `sub i32`
+    // into an i64 store. Covers multiple widths in one binary so a future
+    // regression in any of them surfaces here.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("neg_lit_g023.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let a: i64 = -100;\n\
+             let b: i64 = -2_147_483_649;\n\
+             let c: i16 = -32768;\n\
+             let d: i8  = -1;\n\
+             let e: f32 = -1.5f32;\n\
+             let f: f64 = -3.14;\n\
+             let _a = a; let _b = b; let _c = c; let _d = d;\n\
+             let _e = e; let _f = f;\n\
+             if a >= (0 as i64) { return 1; }\n\
+             if b >= (0 as i64) { return 2; }\n\
+             if c >= (0 as i16) { return 3; }\n\
+             if d >= (0 as i8)  { return 4; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("neg_lit_g023");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "neg-literal G-023 must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "neg-literal program returned non-zero");
+}
+
+#[test]
 fn wrapping_add_does_not_trap_in_debug() {
     // Plain `+` would trap; the wrapping form must NOT trap.
     let cpc = env!("CARGO_BIN_EXE_cpc");

@@ -3696,13 +3696,24 @@ impl SemaCx<'_> {
         // tail expression. Block expressions remain valid in let initializers,
         // assignments, and return expressions — just not at function-body level.
         if let Some(tail) = &body.tail {
-            self.err(
-                "E0333",
-                "function body cannot end with an implicit tail expression; use `return ...;` instead".to_string(),
-                tail.span,
-            );
-            // Still type-check the tail for cascading diagnostics.
-            let _ = self.check_expr(tail, Some(expected.clone()));
+            // Type-check the tail first so the E0333 message can suggest the
+            // right fix. v0.0.12 G-022: when the function returns `()` and
+            // the tail expression is itself unit-typed (the very common
+            // `fn f() { unsafe { ... } }` / `fn f() { if c { ... } }`
+            // shape), the right fix is `;` after the closing brace, not
+            // `return ...;`. The previous one-size message led writers to
+            // append `return;` which compiles but reads worse than `};`.
+            let tail_ty = self.check_expr(tail, Some(expected.clone()));
+            let msg = if expected == Ty::Unit && tail_ty == Ty::Unit {
+                "function body cannot end with an implicit tail expression; \
+                 add `;` after the closing `}` (or `return;` if you prefer the explicit form)"
+                    .to_string()
+            } else {
+                "function body cannot end with an implicit tail expression; \
+                 use `return ...;` instead"
+                    .to_string()
+            };
+            self.err("E0333", msg, tail.span);
         } else if expected != Ty::Unit && expected != Ty::Error && !body_ends_with_return(body) {
             self.err(
                 "E0306",
@@ -4098,7 +4109,7 @@ impl SemaCx<'_> {
                 type_args,
             } => self.check_call(callee, args, type_args, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
-            ExprKind::Unary { op, operand } => self.check_unary(*op, operand, e.span),
+            ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expected, e.span),
             ExprKind::Assign { op, target, value } => self.check_assign(*op, target, value, e.span),
             ExprKind::Range { .. } => {
                 self.err(
@@ -8856,10 +8867,26 @@ impl SemaCx<'_> {
         }
     }
 
-    fn check_unary(&mut self, op: UnaryOp, operand: &Expr, span: ByteSpan) -> Ty {
+    fn check_unary(
+        &mut self,
+        op: UnaryOp,
+        operand: &Expr,
+        expected: Option<Ty>,
+        span: ByteSpan,
+    ) -> Ty {
         match op {
             UnaryOp::Neg => {
-                let t = self.check_expr(operand, None);
+                // v0.0.12 G-023: propagate the expected type into the
+                // operand so `let x: i64 = -100;` works the same way
+                // `let x: i64 = 100;` already does. The literal/float-lit
+                // checkers (`check_int_lit` / `check_float_lit`) already
+                // honor an expected type that's numeric; for non-numeric
+                // expected types this is harmless (the existing operand
+                // checks below still gate). Unsigned expected types fall
+                // through to the `is_unsigned_int` error below with the
+                // same message as before.
+                let op_expected = expected.filter(|t| t.is_signed_int() || t.is_float());
+                let t = self.check_expr(operand, op_expected);
                 if t == Ty::Error {
                     return Ty::Error;
                 }
@@ -11720,6 +11747,77 @@ mod tests {
     #[test]
     fn negate_float_clean() {
         assert_clean("fn main() -> i32 { let x: f64 = 5.0; let _y: f64 = -x; return 0; }");
+    }
+
+    // v0.0.12 G-023: LHS type annotation propagates into unary-minus
+    // operand so `let x: i64 = -100;` works the same way the positive
+    // literal `let x: i64 = 100;` already did.
+
+    #[test]
+    fn neg_lit_i64_from_lhs_clean() {
+        assert_clean("fn main() -> i32 { let _x: i64 = -100; return 0; }");
+    }
+
+    #[test]
+    fn neg_lit_i16_from_lhs_clean() {
+        assert_clean("fn main() -> i32 { let _x: i16 = -32768; return 0; }");
+    }
+
+    #[test]
+    fn neg_lit_i8_from_lhs_clean() {
+        assert_clean("fn main() -> i32 { let _x: i8 = -1; return 0; }");
+    }
+
+    #[test]
+    fn neg_lit_i64_past_i32_min_clean() {
+        assert_clean("fn main() -> i32 { let _x: i64 = -2_147_483_649; return 0; }");
+    }
+
+    #[test]
+    fn neg_lit_f32_from_lhs_clean() {
+        assert_clean("fn main() -> i32 { let _x: f32 = -1.5f32; return 0; }");
+    }
+
+    #[test]
+    fn neg_lit_unsigned_target_still_e0302() {
+        let codes = errors("fn main() -> i32 { let _x: u32 = -1; return 0; }");
+        assert!(codes.contains(&"E0302"));
+    }
+
+    // v0.0.12 G-022: E0333 diagnostic suggests `;` for unit-typed tail
+    // blocks in unit-returning functions, and `return ...;` only when
+    // there's an actual value being abandoned.
+
+    fn first_e0333_message(src: &str) -> String {
+        let d = check_src(src)
+            .into_iter()
+            .find(|d| d.code.0 == "E0333")
+            .expect("expected E0333");
+        d.message
+    }
+
+    #[test]
+    fn e0333_unit_tail_suggests_semicolon_g022() {
+        let msg = first_e0333_message(
+            "fn f() { unsafe { let mut x: i32 = 1; x = x +% 1; } }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        assert!(
+            msg.contains("add `;`"),
+            "expected `;`-fix in unit-tail message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn e0333_value_tail_still_suggests_return_g022() {
+        let msg = first_e0333_message(
+            "fn f() -> i32 { 42 }\n\
+             fn main() -> i32 { return f(); }",
+        );
+        assert!(
+            msg.contains("`return ...;`"),
+            "expected `return ...;` suggestion for value tail, got: {msg}"
+        );
     }
 
     // Casts

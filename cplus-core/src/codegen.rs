@@ -9135,6 +9135,20 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_unary(&mut self, op: UnaryOp, operand: &Expr) -> (String, Ty) {
+        // v0.0.12 G-023: const-fold `-LIT` on an unsuffixed numeric literal
+        // into the textual constant string. This mirrors how the unsuffixed
+        // literal itself flows ("100" is emitted as textual `100` and LLVM
+        // accepts it at any int width), so `let x: i64 = -100;` works the
+        // same as `let x: i64 = 100;`. With a suffix the literal already
+        // pins the type, so the regular SSA path below is correct.
+        if let UnaryOp::Neg = op {
+            if let ExprKind::IntLit(v, crate::lexer::NumSuffix::None) = &operand.kind {
+                return (format!("-{v}"), Ty::I32);
+            }
+            if let ExprKind::FloatLit(v, crate::lexer::NumSuffix::None) = &operand.kind {
+                return (format!("-{v}"), Ty::F64);
+            }
+        }
         let (v, ty) = self.gen_expr(operand).expect("unary operand has value");
         let r = self.next_tmp();
         match op {
