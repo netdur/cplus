@@ -48,7 +48,7 @@ struct Vec[T, A: Allocator] {
 
 impl Vec[T, A] {
     fn with_capacity(alloc: A, cap: usize) -> Vec[T, A] {
-        let bytes: usize = cap *% size_of::[T]();
+        let bytes: usize = cap *% #size_of::[T]();
         let buf: *u8 = alloc.allocate(bytes);
         return Vec[T, A] {
             ptr: buf,
@@ -84,8 +84,8 @@ impl Vec[T, A] {
 
     fn grow(mut self) {
         let new_cap: usize = if self.cap == 0 as usize { 8 as usize } else { self.cap *% 2 as usize };
-        let old_bytes: usize = self.cap *% size_of::[T]();
-        let new_bytes: usize = new_cap *% size_of::[T]();
+        let old_bytes: usize = self.cap *% #size_of::[T]();
+        let new_bytes: usize = new_cap *% #size_of::[T]();
         self.ptr = self.alloc.reallocate(self.ptr, old_bytes, new_bytes);
         self.cap = new_cap;
         return;
@@ -103,7 +103,7 @@ impl Vec[T, A] {
     }
 
     fn drop(mut self) {
-        let bytes: usize = self.cap *% size_of::[T]();
+        let bytes: usize = self.cap *% #size_of::[T]();
         self.alloc.deallocate(self.ptr, bytes);
         return;
     }

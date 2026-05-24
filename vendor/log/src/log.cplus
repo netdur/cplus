@@ -99,7 +99,7 @@ fn print_timestamp(fd: i32) {
     // snprintf scratch buffer now live on the stack — pre-`addr_of`
     // this function did two mallocs per log call.
     let mut t: i64 = unsafe { time(0 as *i64) };
-    let tm_ptr: *Tm = unsafe { localtime(addr_of(t)) };
+    let tm_ptr: *Tm = unsafe { localtime(#addr_of(t)) };
     if unsafe { tm_ptr as usize } == (0 as usize) { return; }
     let tm: Tm = unsafe { *tm_ptr };
     let year: i32 = tm.tm_year +% 1900;
@@ -112,12 +112,12 @@ fn print_timestamp(fd: i32) {
         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
     ];
     let n: i32 = unsafe {
-        snprintf(addr_of(buf) as *u8, 32 as usize,
+        snprintf(#addr_of(buf) as *u8, 32 as usize,
         str_ptr("[%04d-%02d-%02d %02d:%02d:%02d] \0"),
         year, mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
     };
     if n > 0 {
-        let view: str = unsafe { str_from_raw_parts(addr_of(buf) as *u8, n as usize) };
+        let view: str = unsafe { str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
         write_str(fd, view);
     }
     return;

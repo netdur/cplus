@@ -21,7 +21,7 @@ The cycle is **all package work** with one optional compiler diversion (the intr
 | Item | Status | v0.0.11 disposition |
 |---|---|---|
 | `vendor/static-arena` full implementation | Stub only in v0.0.10 ([vendor/static-arena/src/README.md](vendor/static-arena/src/README.md) explains the gap). | **Phase 3** below. Needs either const-generic struct params or a fixed-size-enum fallback. |
-| Intrinsic-spelling migration to `#` | Not done. v0.0.10 added `#selector` / `#msg_send` / `#compile_shader` as new `#`-prefixed intrinsics, but kept `addr_of(x)`, `include_bytes!("path")`, `env!("NAME")`, `size_of::[T]()`, `align_of::[T]()` at their existing spellings. | **Phase 4** below (optional — only if we want consistency). Pre-1.0, no users — can land cleanly any cycle. |
+| Intrinsic-spelling migration to `#` | Not done. v0.0.10 added `#selector` / `#msg_send` / `#compile_shader` as new `#`-prefixed intrinsics, but kept `addr_of(x)`, `include_bytes!("path")`, `env!("NAME")`, `size_of::[T]()`, `align_of::[T]()` at their existing spellings. | **Phase 4** below — ✅ shipped. Hard cutover; all six legacy spellings now produce parse/sema errors. |
 | Per-field TBAA | Stays open since v0.0.9. Raytracer didn't show a measurable win in v0.0.8. | Stays deferred. Revisit if a tensor / GEMM workload measures it. |
 | `vendor/sqlite` (dropped in v0.0.8) | "Wait for a real consumer." | Still deferred. |
 
@@ -130,25 +130,28 @@ Option A (full const-generics) remains a future flagship feature. The fill-array
 
 ---
 
-## Phase 4 — Intrinsic-spelling migration to `#` · size XS (optional)
+## Phase 4 — Intrinsic-spelling migration to `#` · ✅ shipped
 
-v0.0.10 added three `#`-prefixed intrinsics (`#selector`, `#msg_send`, `#compile_shader`) but kept the existing intrinsics at their old spellings (`addr_of(x)`, `include_bytes!("path")`, `env!("NAME")`, `size_of::[T]()`, `align_of::[T]()`). The result is an inconsistent surface: half the intrinsics use `#`, half use `!`, two use bare names.
+v0.0.10 added three `#`-prefixed intrinsics (`#selector`, `#msg_send`, `#compile_shader`) but kept the existing intrinsics at their old spellings. Phase 4 finished the migration. The surface is now uniform: every compiler-known builtin uses `#name(...)`.
 
-The plan called for full migration. Skipped in v0.0.10 because the new intrinsics took priority and the cosmetic cleanup wasn't blocking anything.
+### What landed
 
-### Decision point
+- Parser: `#name(args)` (with optional turbofish `::[T...]` and `-> RetTy`) routes universally into `ExprKind::Intrinsic`. The legacy `include_bytes!("path")` / `include_str!("path")` / `env!("NAME")` macro-suffix forms removed outright.
+- Sema: `check_intrinsic` dispatch gained arms for `addr_of`, `include_bytes`, `include_str`, `env`, `size_of`, `align_of`. The old bare-name `addr_of`/`size_of`/`align_of` special-cases in `check_named_call` deleted — those names now produce E0300 (undefined function) when called without `#`.
+- Codegen: `gen_intrinsic` extended with parallel arms; lookup tables (`compile_time_blobs`, `env_var_globals`) are keyed off the Intrinsic node span.
+- Monomorphization: added Intrinsic + ArrayFill walker arms in `rewrite_expr` / `rewrite_expr_self` / `visit_ident_calls` / `rewrite_alias_expr`. Critical for `#size_of::[T]()` inside generic bodies (T must get substituted).
+- Hard cutover: ~150 .cplus call sites migrated across `vendor/`, `docs/examples/`, `proves/`, and Rust test fixtures. No deprecation path (pre-1.0, no users — per locked principle).
 
-Land in v0.0.11 if we want the surface consistent before any more intrinsics get added. Skip if the inconsistency doesn't bother anyone in practice.
+### New surface
 
-### If landed
-
-- Lexer: parse `#name(...)` as the canonical intrinsic-call form.
-- Sema: rename internal dispatch from `addr_of` / `include_bytes` / `env` / `size_of` / `align_of` to `#addr_of` / `#include_bytes` / `#env` / `#size_of` / `#align_of`. Old spellings removed outright (pre-1.0, no users, no deprecation).
-- Migrate every call site across `vendor/` and `docs/examples/`. Probably ~30–50 sites.
-
-### Size estimate
-
-~100 LOC of compiler work + a mass `sed`-style migration of call sites. One session.
+| Old spelling | New spelling |
+|---|---|
+| `addr_of(x)` | `#addr_of(x)` |
+| `include_bytes!("path")` | `#include_bytes("path")` |
+| `include_str!("path")` | `#include_str("path")` |
+| `env!("NAME")` | `#env("NAME")` |
+| `size_of::[T]()` | `#size_of::[T]()` |
+| `align_of::[T]()` | `#align_of::[T]()` |
 
 ---
 
@@ -159,7 +162,7 @@ All four phases are independent.
 1. **Phase 1 (MPS)** — ✅ shipped in `361920d`. Fastest path to validating the v0.0.10 wedge in a real binding.
 2. **Phase 2 (Accelerate)** — ✅ shipped in `59634e8`. 17 in-package tests (CBLAS Level 1/2/3 + vDSP element-wise + reductions).
 3. **Phase 3 (static-arena full)** — ✅ shipped via Option B + `[EXPR; N]` fill-array literal as a bonus compiler feature. Const-generic struct params (Option A) deferred to a future flagship cycle.
-4. **Phase 4 (intrinsic migration)** — cosmetic cleanup. Skipping is fine.
+4. **Phase 4 (intrinsic migration)** — ✅ shipped. Hard cutover; uniform `#name(...)` surface for every compiler builtin.
 
 ---
 

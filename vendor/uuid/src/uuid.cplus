@@ -49,7 +49,7 @@ impl Uuid {
         }
         let mut filled: usize = 0 as usize;
         while filled < (16 as usize) {
-            let dst: *u8 = unsafe { (addr_of(uuid) as *u8) + filled };
+            let dst: *u8 = unsafe { (#addr_of(uuid) as *u8) + filled };
             let n: isize = unsafe { read(fd, dst, (16 as usize) -% filled) };
             if n <= (0 as isize) {
                 unsafe { close(fd); }
@@ -112,7 +112,7 @@ impl Uuid {
             0u8, 0u8, 0u8, 0u8, 0u8,
         ];
         let n: i32 = unsafe {
-            snprintf(addr_of(buf) as *u8, 37 as usize,
+            snprintf(#addr_of(buf) as *u8, 37 as usize,
             str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
             self.bytes[0] as i32, self.bytes[1] as i32, self.bytes[2] as i32, self.bytes[3] as i32,
             self.bytes[4] as i32, self.bytes[5] as i32,
@@ -120,7 +120,7 @@ impl Uuid {
             self.bytes[8] as i32, self.bytes[9] as i32,
             self.bytes[10] as i32, self.bytes[11] as i32, self.bytes[12] as i32, self.bytes[13] as i32, self.bytes[14] as i32, self.bytes[15] as i32)
         };
-        let view: str = unsafe { str_from_raw_parts(addr_of(buf) as *u8, n as usize) };
+        let view: str = unsafe { str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
         return view.to_string();
     }
 }

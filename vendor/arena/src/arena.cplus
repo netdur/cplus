@@ -6,7 +6,7 @@
 //
 // **API contract.**
 //   - `Arena::new(chunk_size)` chooses a per-chunk byte budget. Values
-//     smaller than `size_of::[Chunk]() + 8` are silently rounded up to
+//     smaller than `#size_of::[Chunk]() + 8` are silently rounded up to
 //     a 1 KiB payload so the first alloc has room.
 //   - `alloc_bytes(n)` returns 8-byte-aligned bytes; `alloc_bytes_aligned(n, a)`
 //     honors the requested alignment. `a == 0` is normalized to 1
@@ -49,7 +49,7 @@ pub struct Arena {
 }
 
 pub fn new(chunk_size: usize) -> Arena {
-    let header_size: usize = size_of::[Chunk]();
+    let header_size: usize = #size_of::[Chunk]();
     let mut chosen_size: usize = chunk_size;
     if chosen_size < header_size + 8 {
         chosen_size = header_size + 1024;
@@ -76,7 +76,7 @@ impl Arena {
         // math below would trap on SIGFPE otherwise.
         let mut align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
-        let header_size: usize = size_of::[Chunk]();
+        let header_size: usize = #size_of::[Chunk]();
 
         if unsafe { self.head as usize } != (0 as usize) {
             let chunk: *Chunk = unsafe { self.head as *Chunk };
@@ -139,8 +139,8 @@ impl Arena {
     }
 
     pub fn alloc[T](mut self, move val: T) -> *T {
-        let bytes: usize = size_of::[T]();
-        let align: usize = align_of::[T]();
+        let bytes: usize = #size_of::[T]();
+        let align: usize = #align_of::[T]();
         let ptr: *u8 = self.alloc_bytes_aligned(bytes, align);
         if unsafe { ptr as usize } == (0 as usize) {
             return unsafe { 0 as *T };

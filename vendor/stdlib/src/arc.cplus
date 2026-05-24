@@ -37,7 +37,7 @@ pub struct Arc[T] {
 // over-aligned T motivates it).
 pub fn new[T](move v: T) -> Arc[T] {
     let header: usize = 8 as usize;
-    let value_size: usize = size_of::[T]();
+    let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
     let raw: *u8 = unsafe { malloc(total) };
     let refct: *u64 = unsafe { raw as *u64 };

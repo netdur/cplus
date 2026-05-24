@@ -35,11 +35,12 @@ If you want history and rationale, read [plan.md](plan.md). If you want a tight 
 25. [Async / await](#25-async--await)
 26. [Iterators and `gen fn`](#26-iterators-and-gen-fn)
 27. [Standard library tour](#27-standard-library-tour)
-28. [Tooling — `cpc`](#28-tooling--cpc)
-29. [Common error codes](#29-common-error-codes)
-30. [Gotchas worth memorising](#30-gotchas-worth-memorising)
-31. [SIMD types](#31-simd-types)
-32. [Where to go next](#32-where-to-go-next)
+28. [Vendor packages](#28-vendor-packages)
+29. [Tooling — `cpc`](#29-tooling--cpc)
+30. [Common error codes](#30-common-error-codes)
+31. [Gotchas worth memorising](#31-gotchas-worth-memorising)
+32. [SIMD types](#32-simd-types)
+33. [Where to go next](#33-where-to-go-next)
 
 ---
 
@@ -582,13 +583,23 @@ for v in a { println(v); }
 
 ```cplus
 fn make_key(buf: *u8, n: u32) -> u32 {
-    let mut tmp: [u8; 10] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    let mut tmp: [u8; 10] = [0u8; 10];   // fill-array literal: ten zero bytes
     // fill tmp ...
     return 0;
 }
 ```
 
-**Known parser gap:** the repeat syntax `[0u8; 10]` doesn't parse yet. List elements explicitly.
+### Fill-array literal `[EXPR; N]`
+
+v0.0.11 added the fill-array literal `[EXPR; N]` — an array of `N` copies of `EXPR`, with `N` a literal `u32`. The codegen fast-paths the `[0u8; N]` / `[0i8; N]` zero-fill case to a single `llvm.memset` call (essential for kilobyte-scale stack buffers like `vendor/static-arena`'s 16 KiB / 64 KiB shapes); other shapes lower to a tight N-iteration store loop the optimizer unrolls.
+
+```cplus
+let zeros: [u8; 64]     = [0u8; 64];           // memset fast path
+let ones:  [i32; 4]     = [1; 4];              // (1, 1, 1, 1)
+let bytes: [u8; 16384]  = [0u8; 16384];        // 16 KiB zero buffer — single memset
+```
+
+The count must be a `u32` literal — no const-eval today.
 
 Slices `T[]` exist as a borrow-shaped construct used at FFI boundaries and inside the stdlib.
 
@@ -838,7 +849,7 @@ When the compiler can't infer a type parameter, supply it explicitly with `::[T]
 ```cplus
 let h = thread::spawn::[i32](worker);
 let v = vec::Vec[i32]::with_capacity(16);
-let s = size_of::[Point]();
+let s = #size_of::[Point]();
 ```
 
 Use `::[T]` for free fns / associated fns. Use `Vec[T]::new()` for type-attached associated fns. Both work; the difference is purely syntactic.
@@ -1088,20 +1099,28 @@ extern fn libfoo_subscribe(cb: fn(*u8, i32), user_data: *u8);
 
 ## 21. Compile-time intrinsics
 
-Six built-ins evaluate at compile time: `size_of::[T]()`, `align_of::[T]()`, `addr_of(x)`, `include_bytes!(...)`, `include_str!(...)`, and `env!(...)`. The first three are typed query primitives; the next two embed file contents into the binary as constants; the last reads an environment variable at build time.
+Every compiler-known builtin uses the `#name(...)` sigil — one uniform spelling, distinct from regular function calls. v0.0.11 Phase 4 completed the cutover; the old bare-name (`addr_of`), turbofish-shaped (`size_of::[T]()`), and `!`-suffix (`include_bytes!`) forms are now parse / sema errors.
 
-### `addr_of(x)` — address of a stack local as `*T`
+The intrinsics fall into three families:
+
+| Family | Intrinsics |
+|---|---|
+| Typed query primitives | `#size_of::[T]()`, `#align_of::[T]()`, `#addr_of(x)` |
+| Compile-time data embedding | `#include_bytes("path")`, `#include_str("path")`, `#env("NAME")` |
+| ObjC + GPU FFI (v0.0.10) | `#selector("name")`, `#msg_send(recv, "sel", ...) -> RetTy`, `#compile_shader("file.metal", "msl")` |
+
+### `#addr_of(x)` — address of a stack local as `*T`
 
 Returns `*T` where `T` is the type of the binding `x`. **Unsafe** — wrap in `unsafe { ... }` because the returned pointer aliases the binding's storage and the borrow checker does not track its lifetime.
 
-Use it when a C function needs to write through a pointer (`time`, `arc4random_buf`, `snprintf`, `localtime`, `objc_msgSend` with by-pointer args, etc.). Pre-`addr_of` the only option was a malloc-write-free dance:
+Use it when a C function needs to write through a pointer (`time`, `arc4random_buf`, `snprintf`, `localtime`, `objc_msgSend` with by-pointer args, etc.). Pre-`#addr_of` the only option was a malloc-write-free dance:
 
 ```cplus
 extern fn time(t: *i64) -> i64;
 
 fn now() -> i64 {
     let mut t: i64 = 0;
-    unsafe { time(addr_of(t)); }
+    unsafe { time(#addr_of(t)); }
     return t;
 }
 ```
@@ -1110,44 +1129,46 @@ Zero runtime cost — the alloca pointer is reused directly; codegen emits no GE
 
 **Rules** (kept tight on purpose; widen as use cases land):
 
-- Exactly one argument; no turbofish (`addr_of::[T](x)` is **E0501**).
-- Argument must be a bare identifier — `addr_of(p.x)` and `addr_of(v[0])` fire **E0302**. Take `addr_of(struct_local)` then cast or GEP through the field index if you need an interior pointer.
+- Exactly one argument; no turbofish (`#addr_of::[T](x)` is **E0501**).
+- Argument must be a bare identifier — `#addr_of(p.x)` and `#addr_of(v[0])` fire **E0302**. Take `#addr_of(struct_local)` then cast or GEP through the field index if you need an interior pointer.
 - Must appear inside `unsafe { ... }` — **E0801** outside.
 
-For a struct or array binding where you want a `*u8` (byte pointer), cast the result: `addr_of(my_struct) as *u8`.
+For a struct or array binding where you want a `*u8` (byte pointer), cast the result: `#addr_of(my_struct) as *u8`.
 
-### `size_of::[T]()` and `align_of::[T]()`
+### `#size_of::[T]()` and `#align_of::[T]()`
 
 Return `usize`. **Safe** — no memory access; LLVM folds the call to a constant at `-O1+`.
 
 ```cplus
-let s_i32: usize  = size_of::[i32]();          // 4
-let a_i32: usize  = align_of::[i32]();         // 4
-let s_p: usize    = size_of::[Point]();        // structural, depends on fields
+let s_i32: usize  = #size_of::[i32]();          // 4
+let a_i32: usize  = #align_of::[i32]();         // 4
+let s_p:   usize  = #size_of::[Point]();        // structural, depends on fields
 ```
 
 Used by user-level allocator libraries to compute byte counts for typed allocations:
 
 ```cplus
-let bytes: usize = size_of::[T]() *% (n as usize);
+let bytes: usize = #size_of::[T]() *% (n as usize);
 let p: *u8       = unsafe { malloc(bytes) };
 let typed: *T    = p as *T;
 ```
 
-### `include_bytes!("relative/path")`
+Type-arg substitution propagates through monomorphization, so `#size_of::[T]()` inside a generic body produces the right constant for every instantiation.
+
+### `#include_bytes("relative/path")`
 
 Embeds the raw bytes of a file as a `*[u8; N]` where `N` is the file's byte length, known at compile time. Path resolution is relative to the *source file containing the call*, not the project root.
 
 ```cplus
 fn main() -> i32 {
-    let shader: *[u8; 2048] = include_bytes!("../shaders/double.metallib");
+    let shader: *[u8; 2048] = #include_bytes("../shaders/double.metallib");
     let bytes: *u8 = unsafe { shader as *u8 };
     // pass to FFI, etc.
     return 0;
 }
 ```
 
-The bytes live in `.rodata`; writing through the returned pointer is UB. Two calls with the same resolved path share one global. The argument must be a string literal — variables fire **E0871** at parse time. Errors:
+The bytes live in `.rodata`; writing through the returned pointer is UB. Two calls with the same resolved path share one global. The argument must be a string literal — variables fire **E0871** at sema time. Errors:
 
 - **E0870** — path not found at compile time. Diagnostic carries the resolved absolute path.
 - **E0871** — non-string-literal argument.
@@ -1155,29 +1176,29 @@ The bytes live in `.rodata`; writing through the returned pointer is UB. Two cal
 
 Used by GPU recipes to embed `.metallib` / `.cubin` / `.spv` shader blobs, by ML packages to embed pretrained weights, and by anyone shipping baked-in fixtures.
 
-### `include_str!("relative/path")`
+### `#include_str("relative/path")`
 
 Same shape, but returns a `str` (fat pointer view; see §17). The byte length is part of the type, so the file's UTF-8 size is implicit:
 
 ```cplus
 fn main() -> i32 {
-    let manifest: str = include_str!("config.txt");
+    let manifest: str = #include_str("config.txt");
     println(manifest);   // str_len(manifest) == file size
     return 0;
 }
 ```
 
-The bytes must be valid UTF-8 — invalid byte sequences fire **E0875** at sema time with the byte offset of the first bad byte. Same `E0870` / `E0871` / `E0872` error path as `include_bytes!`.
+The bytes must be valid UTF-8 — invalid byte sequences fire **E0875** at sema time with the byte offset of the first bad byte. Same `E0870` / `E0871` / `E0872` error path as `#include_bytes`.
 
-Use case the `metal_compute` recipe surfaced: `include_str!("../shaders/double.metallib.size")` to read the byte count produced by `xcrun metallib` at build time — no shell-side source patching needed.
+Use case the `metal_compute` recipe surfaced: `#include_str("../shaders/double.metallib.size")` to read the byte count produced by `xcrun metallib` at build time — no shell-side source patching needed.
 
-### `env!("NAME")`
+### `#env("NAME")`
 
-v0.0.8 addition: read an environment variable at compile time. Returns a `str` pointing at a `.rodata` global that contains the variable's value as the compiler saw it.
+Read an environment variable at compile time. Returns a `str` pointing at a `.rodata` global that contains the variable's value as the compiler saw it.
 
 ```cplus
 fn main() -> i32 {
-    let greeting: str = env!("GREETING");   // resolved at sema time
+    let greeting: str = #env("GREETING");   // resolved at sema time
     println(greeting);
     return 0;
 }
@@ -1192,19 +1213,23 @@ GREETING="hi from build" cpc env_demo.cplus -o env_demo
 Useful for baking build-time config into a binary — sample count for a benchmark, version string, build hostname, etc. — without recompiling for every value change.
 
 Errors:
-- **E0871** — non-string-literal argument (same as `include_*!`).
+- **E0903** — non-string-literal argument.
 - **E0876** — environment variable not set when cpc was invoked.
 
-There is no `option_env!` for "missing → None" semantics; the strict form covers the build-time-config case cleanly, and the nullable variant complicates the type signature. If you need an optional, wrap the call:
+There is no `#env_opt` for "missing → None" semantics; the strict form covers the build-time-config case cleanly. If you need optional behavior, set a sentinel (`FOO_VAR="" cpc app.cplus`) and check `str_len(#env("FOO_VAR")) > 0` at runtime.
+
+### `#selector("name")`, `#msg_send(recv, "sel", ...) -> RetTy`, `#compile_shader("path", "msl")`
+
+The v0.0.10 GPU + ObjC interop wedge. `#selector` registers a method name once and caches the `SEL` pointer; `#msg_send` synthesizes a typed call to `objc_msgSend` with the correct ABI; `#compile_shader` invokes `xcrun metal` + `xcrun metallib` at sema time and embeds the resulting `.metallib` bytes.
 
 ```cplus
-// Not a real macro — illustrative pattern.
-// If you genuinely need optional build config, set a sentinel:
-//
-//   FOO_VAR="" cpc app.cplus
-//
-// and check `str_len(env!("FOO_VAR")) > 0` at runtime.
+unsafe {
+    let app: *u8 = #msg_send(class, "sharedApplication") -> *u8;
+    #msg_send(app, "activateIgnoringOtherApps:", true as bool);
+}
 ```
+
+These are the load-bearing primitives the `vendor/appkit` and `vendor/metal` bindings (incl. MPS) sit on top of — direct use is rare; consume them through those packages.
 
 ---
 
@@ -1693,77 +1718,183 @@ The `0..n` syntax lowers to a value of type `Range[i32]` (or similar) defined he
 
 Type-level markers used by the compiler (`Copy`, `Send`, `Sync` framework). You rarely interact with these directly.
 
-### Beyond stdlib: blessed vendored packages
-
-The same `vendor/<name>` model that hosts `stdlib` hosts other blessed binding packages. Consumers add `<name> = "*"` to `[dependencies]` and import as `import "<name>/..." as alias;`. Today's in-tree set:
-
-- **`vendor/appkit`** — typed Cocoa/AppKit bindings. 15 sub-modules (`runtime`, `application`, `window`, `view`, `controls`, `text`, `containers`, `data`, `graphics`, `menu`, `dialogs`, `panels`, `toolbar`, `controllers`, `convert`). Closure-free callbacks via `Button::set_on_click(fn(*u8))` (the runtime stashes the callback on the sender via `objc_setAssociatedObject`).
-
-  ```cplus
-  import "appkit/application" as application;
-  import "appkit/window" as window;
-  import "appkit/convert" as bridge;
-
-  fn on_click(sender: *u8) { /* ... */ }
-
-  fn main() -> i32 {
-      let pool = application::AutoreleasePool::new();
-      let app = application::Application::shared();
-      app.set_activation_policy(0 as i64);
-      let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-      // ... build UI ...
-      app.run();
-      pool.drain();
-      return 0;
-  }
-  ```
-
-  `appkit/convert` is the C+ ↔ ObjC data bridge: `cplus_str_to_nsstring(s) -> *u8`, `nsstring_to_cplus_string(ns) -> string`, `nsarray_to_vec_{i32,i64,f32,f64}`, `nsdata_to_vec_u8` / `vec_u8_to_nsdata`. Use it whenever you need to round-trip C+'s richer types (`string`, `Vec[T]`) through Cocoa APIs. Primitives + `#[repr(C)]` structs (NSPoint/NSSize/NSRect) cross the boundary verbatim — no bridge needed for those.
-
-  Cross-reference: [`docs/examples/recipes/appkit_hello/`](docs/examples/recipes/appkit_hello/) is the runnable reference (Window + label + button + bridge round-trip).
-
-- **`vendor/simd`** — 3D math built on `f32x4`. Three modules:
-  - `simd/vec3` — `Vec3` (f32x4 newtype with lane-3-zero invariant). Methods: `new / splat / zero / x / y / z / add / sub / mul / scale / neg / dot / cross / len2 / length / normalize / reflect / refract / min / max / clamp / lerp`.
-  - `simd/vec4` — `Vec4` (full 4 lanes). Same surface minus the cross/reflect/refract triad (no canonical 4D meaning); plus `raw()` / `from_raw()` escape hatches for matrix code.
-  - `simd/mat4x4` — `Mat4x4` as `[Vec4; 4]` columns (column-major). `mul_vec` is four `fma <4 x float>` ops; `mul` composes via four `mul_vec` calls. `identity / zero / add / scale` round out the basics.
-
-  ```cplus
-  import "simd/vec3" as vec3;
-  import "simd/vec4" as vec4;
-  import "simd/mat4x4" as mat;
-
-  let a: vec3::Vec3 = vec3::Vec3::new(1.0f32, 2.0f32, 3.0f32);
-  let b: vec3::Vec3 = vec3::Vec3::new(4.0f32, 5.0f32, 6.0f32);
-  let d: f32        = a.dot(b);                  // 32.0
-  let c: vec3::Vec3 = a.cross(b);                // (-3, 6, -3)
-
-  let id: mat::Mat4x4 = mat::Mat4x4::identity();
-  let p:  vec4::Vec4  = id.mul_vec(vec4::Vec4::new(1.0f32, 2.0f32, 3.0f32, 4.0f32));
-  ```
-
-  **Where this wins**: vector-math workloads that genuinely use all four lanes (Vec4, Mat4x4 chains, FMA-heavy gemm-style code). For Vec3-only code on Apple Silicon, the scalar FMA-chain codegen the compiler emits from straightforward source can be faster than the explicit-SIMD path because the shuffle overhead for the unused 4th lane dominates — measure before assuming SIMD types are a perf win for 3-wide data.
-
-  **Where this wins for sure**: code where readability of "this is a SIMD operation" matters more than the last few percent of perf, or hardware with narrower scalar FP issue width.
-
-  Cross-reference: [`docs/examples/recipes/simd_dot/`](docs/examples/recipes/simd_dot/) uses `f32x4` directly; `vendor/simd` is the wrapper for when you want named types + methods instead of raw vectors.
-
-- **`vendor/arena`** — bump-pointer arena allocator. `Arena::new(chunk_size)` rounds up to a chosen minimum; `alloc_bytes(n)` / `alloc_bytes_aligned(n, align)` / `alloc_zeroed_bytes(n)` / `alloc_str(s)` / `alloc[T](val)`. `reset()` frees every chunk and leaves the arena reusable; auto-Drop calls `reset()` at scope exit. OOM convention: raw APIs return `0 as *u8`; parallel `_opt` variants return `Option[*u8]` for callers that prefer explicit failure handling. `alloc[T]` requires `T: Copy` today (move-aware variant pending Phase 1).
-
-- **`vendor/clap`** — argparse with a fluent builder. `App::new("name").version(...).author(...).about(...).arg(Arg::new("v").short("v").long("verbose").flag())`. Long options accept both `--name value` and `--name=value`; short flags accept the combined `-abc` form. `get_matches_from(args: Vec[str])` is the cross-platform entry point — consumers construct argv themselves (via `stdlib/env` on macOS or `main(argc, argv)` once that lands on Linux). `ArgMatches` exposes typed `.is_present(name)`, `.value_of(name) -> Option[str]`, `.positional_count()`, `.positional_at(i)`.
-
-- **`vendor/json`** — typed-enum JSON parser + serializer. `Value` is a recursive enum: `Null / Bool(bool) / Number(f64) / Str(string) / Array(Vec[Value]) / Object(Vec[Member])`. Entry points: `json::parse(s: str) -> Result[Value, ParseError]`, `v.to_string() -> string` (shortest-round-trip number formatting; surrogate pairs handled). Accessors: `is_null / is_bool / is_number / is_string / is_array / is_object`, `as_bool / as_number / as_str`, `array_len / array_at(i)`, `object_len / object_get(key)`. Cleanup is automatic — dropping the outer `Value` recursively drops the payloads.
-
-- **`vendor/log`** — leveled structured logger writing to stderr. `set_max_level(Level::Info)` and `set_use_colors(true)` configure once before spawning workers (no atomic sync — single-threaded contract). Per-call API: `log::trace(s) / debug(s) / info(s) / warn(s) / error(s)`. Zero mallocs per log call (ANSI escapes are `static str`; timestamp buffer + `time_t` slot are stack-allocated via `addr_of`).
-
-- **`vendor/metal`** — typed Metal/Foundation bindings. `metal::default_device() -> Result[Device, MetalError]`, `device.new_command_queue()`, `device.new_buffer(len) / new_buffer_from_slice(slice)`, `device.new_library_with_data(bytes) -> Result[Library, MetalError]`, `library.new_function(name) -> Result[Function, MetalError]`, `device.new_compute_pipeline_state(fn) -> Result[ComputePipelineState, MetalError]`. All wrappers have `Drop` impls that `objc_release` the underlying object. `MetalError` discriminates `NoDefaultDevice / LibraryLoadFailed / FunctionNotFound / PipelineCreationFailed`.
-
-- **`vendor/uuid`** — RFC 4122 v4 UUIDs. `Uuid::new_v4() -> Option[Uuid]` (reads `/dev/urandom`; portable across macOS / Linux / BSD), `Uuid::parse(s) -> Option[Uuid]`, `uuid.to_string() -> string` (infallible — formats into a stack `[u8; 37]` buffer).
-
-These six packages all ship in-package `#[test]` fns runnable via `cpc test` from inside the package directory (e.g. `cd vendor/json && cpc test`). The driver auto-discovers `src/<package-name>.cplus` as the entry when no `[[bin]]` / `[lib]` is declared, threads in the package's `[link]` frameworks/libs, and falls back to `<manifest_root>/..` to resolve sibling vendor deps — so no per-package symlinks are needed.
+For the full set of blessed vendor packages beyond stdlib (`vendor/appkit`, `vendor/simd`, `vendor/arena`, `vendor/clap`, `vendor/json`, `vendor/log`, `vendor/metal`, `vendor/accelerate`, `vendor/static-arena`, `vendor/uuid`), see §28.
 
 ---
 
-## 28. Tooling — `cpc`
+## 28. Vendor packages
+
+Beyond `stdlib`, C+ ships a curated set of vendored packages — typed bindings to platform SDKs (Apple frameworks, ObjC runtime), self-contained utilities (allocators, parsers, loggers), and 3D-math helpers. They share `stdlib`'s deployment model: a directory under `vendor/`, a `Cplus.toml` manifest, a `<package-name>.cplus` library entry, and in-package `#[test]` fns runnable via `cd vendor/<pkg> && cpc test`.
+
+To consume one, add `<name> = "*"` to your `[dependencies]` and `import "<name>/..." as alias;`. The driver walks one directory up from your project to resolve sibling vendor deps, so no per-package symlinks are needed beyond the canonical `vendor/` checkout.
+
+The ten packages, in alphabetical order:
+
+### `vendor/accelerate` — Apple CPU-SIMD numerics (BLAS, vDSP)
+
+Bindings to Apple's `Accelerate.framework` — pre-tuned CPU numerics that already ship in every macOS binary. The "no GPU available" fallback path for matmul / matvec / dot / axpy, and the reference implementation when GPU results need checking.
+
+Two sub-modules:
+- `accelerate/cblas` — BLAS Level 1 / 2 / 3 (`sdot`, `ddot`, `saxpy`, `daxpy`, `sscal`, `dscal`, `snrm2`, `dnrm2`, `sasum`, `dasum`, `sgemv`, `dgemv`, `sgemm`, `dgemm`). Typed `Order` (RowMajor / ColMajor) + `Transpose` (NoTrans / Trans / ConjTrans) enums.
+- `accelerate/vdsp` — element-wise + reductions: `vadd`, `vmul`, `vsmul`, `dotpr`, `meanv`, `maxv` and `_d` (f64) variants.
+
+```cplus
+import "accelerate/cblas" as cblas;
+
+let x: [f32; 3] = [1.0f32, 2.0f32, 3.0f32];
+let y: [f32; 3] = [4.0f32, 5.0f32, 6.0f32];
+let dot: f32 = cblas::sdot(
+    3 as i32,
+    unsafe { #addr_of(x) as *f32 }, 1 as i32,
+    unsafe { #addr_of(y) as *f32 }, 1 as i32,
+);   // 32.0
+```
+
+### `vendor/appkit` — typed Cocoa/AppKit bindings
+
+15 sub-modules covering Cocoa for desktop apps: `runtime`, `application`, `window`, `view`, `controls`, `text`, `containers`, `data`, `graphics`, `menu`, `dialogs`, `panels`, `toolbar`, `controllers`, `convert`. Closure-free callbacks via `Button::set_on_click(fn(*u8))` (the runtime stashes the fn on the sender via `objc_setAssociatedObject`). `appkit/convert` is the C+ ↔ ObjC data bridge for `string`, `Vec[T]`, NSData; primitives + `#[repr(C)]` structs (NSPoint / NSSize / NSRect) cross the boundary verbatim.
+
+```cplus
+import "appkit/application" as application;
+import "appkit/window" as window;
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let app  = application::Application::shared();
+    app.set_activation_policy(0 as i64);
+    // ... build window + controls ...
+    app.run();
+    pool.drain();
+    return 0;
+}
+```
+
+Runnable reference: [`docs/examples/recipes/appkit_hello/`](docs/examples/recipes/appkit_hello/).
+
+### `vendor/arena` — growable bump-pointer arena
+
+Multi-chunk arena for "allocate many, free all" workloads (parsers, compilers, request-scoped allocations). `Arena::new(chunk_size)` rounds up to a chosen minimum; allocations stride through chunks, growing as needed. `reset()` (and auto-Drop) returns every chunk to the heap. OOM convention: raw APIs return `0 as *u8`; parallel `_opt` variants return `Option[*u8]`.
+
+```cplus
+import "arena/arena" as arena;
+
+let mut a: arena::Arena = arena::Arena::new(4096 as usize);
+let p: *u8 = unsafe { a.alloc_bytes(64 as usize) };
+let s: str = a.alloc_str("hello");
+// dropping `a` frees every chunk
+```
+
+### `vendor/clap` — argparse with a fluent builder
+
+`App::new(name).version(...).about(...).arg(Arg::new("v").short("v").long("verbose").flag())`. Long options accept both `--name value` and `--name=value`; short flags accept the combined `-abc` form. `get_matches_from(args: Vec[str])` is the cross-platform entry point; `ArgMatches` exposes typed `is_present(name)`, `value_of(name) -> Option[str]`, `positional_count()`, `positional_at(i)`.
+
+```cplus
+import "clap/clap" as clap;
+
+let app = clap::App::new("mytool")
+    .version("0.1.0")
+    .arg(clap::Arg::new("verbose").short("v").long("verbose").flag());
+let m = app.get_matches_from(argv);
+if m.is_present("verbose") { /* ... */ }
+```
+
+### `vendor/json` — typed-enum JSON parser + serializer
+
+`Value` is a recursive enum: `Null / Bool(bool) / Number(f64) / Str(string) / Array(Vec[Value]) / Object(Vec[Member])`. Entry points: `json::parse(s: str) -> Result[Value, ParseError]` and `v.to_string() -> string` (shortest-round-trip number formatting; surrogate pairs handled). Accessors via `is_*` / `as_*` / `array_*` / `object_*`. Dropping the outer `Value` recursively drops payloads.
+
+```cplus
+import "json/json" as json;
+
+guard let result::Result::Ok(v) = json::parse("{\"x\":42}") else { return 1; };
+if v.is_object() {
+    guard let option::Option::Some(x) = v.object_get("x") else { return 0; };
+    println(x.as_number() as i32);   // 42
+}
+```
+
+### `vendor/log` — leveled structured logger
+
+Single-threaded stderr logger: `set_max_level(Level::Info)` + `set_use_colors(true)` configure once, then `log::trace/debug/info/warn/error(s)` at every call site. Zero malloc per call — ANSI escapes are `static str`; the timestamp buffer + `time_t` slot live on the stack via `#addr_of`.
+
+```cplus
+import "log/log" as log;
+
+log::set_max_level(log::Level::Info);
+log::set_use_colors(true);
+log::info("server started on port 8080");
+log::warn("config file missing; using defaults");
+```
+
+### `vendor/metal` — typed Metal + MPS bindings
+
+Apple Metal compute via the `Foundation` + `Metal` + `MetalPerformanceShaders` frameworks. `metal::default_device()` returns a `Device`; chain into `new_command_queue()`, `new_buffer(len)`, `new_library_with_data(bytes)`, `new_compute_pipeline_state(fn)`. Every wrapper has a `Drop` impl that `objc_release`s the underlying object.
+
+The `metal/mps` sub-module adds **MPS bindings** (v0.0.11) — Apple's pre-tuned matmul / FFT / softmax. `MPSMatrixMultiplication` for batched gemm:
+
+```cplus
+import "metal/metal" as metal;
+import "metal/mps" as mps;
+
+guard let result::Result::Ok(dev) = metal::default_device() else { return 1; };
+let q   = dev.new_command_queue();
+let lhs = /* MPSMatrix wrapping an MTLBuffer */;
+let rhs = /* ... */;
+let out = /* ... */;
+let mm  = mps::MatrixMultiplication::new(dev, false, false, M, N, K, 1.0f64, 0.0f64);
+mm.encode_to(cmd_buf, lhs, rhs, out);
+```
+
+The v0.0.11 `test_2x2_matmul_identity_correctness` test exercises this end-to-end on real GPU hardware.
+
+### `vendor/simd` — 3D math on f32x4
+
+Named-type wrappers around `f32x4`. Three modules:
+- `simd/vec3` — `Vec3` (lane-3-zero invariant) with `dot / cross / length / normalize / reflect / refract / lerp / clamp / ...`.
+- `simd/vec4` — full 4-lane vector with `raw()` / `from_raw()` for matrix code.
+- `simd/mat4x4` — column-major `[Vec4; 4]` with `mul_vec` (four `fma <4 x float>` ops) and `mul`.
+
+```cplus
+import "simd/vec3" as vec3;
+
+let a = vec3::Vec3::new(1.0f32, 2.0f32, 3.0f32);
+let b = vec3::Vec3::new(4.0f32, 5.0f32, 6.0f32);
+let d: f32 = a.dot(b);     // 32.0
+let c = a.cross(b);        // (-3, 6, -3)
+```
+
+Use when the SIMD shape should be visible at the source level; the scalar FMA codegen can beat explicit Vec3 SIMD on Apple Silicon when the 4th lane is wasted. Measure before betting on SIMD types.
+
+### `vendor/static-arena` — fixed-size stack arena
+
+Bump-pointer arena whose buffer lives entirely on the stack (or in `static mut` storage). Zero `malloc`, zero `free`; composes with the `#[no_alloc]` real-time contract. Ships two fixed shapes — `StaticArena16K` (16 KiB) and `StaticArena64K` (64 KiB) — because C+ doesn't yet have const-generic struct params. The 16K shape has the full surface (`alloc_bytes`, `alloc_bytes_aligned`, `alloc_zeroed_bytes`, `alloc_str`, `reset`); the 64K shape is the same minus `alloc_str` / `alloc_zeroed_bytes`.
+
+```cplus
+import "static-arena/static-arena" as sa;
+
+let mut a: sa::StaticArena16K = sa::StaticArena16K::new();
+guard let option::Option::Some(p) = a.alloc_bytes_aligned(64 as usize, 8 as usize) else {
+    return 1;   // OOM
+};
+// ... use p ...
+a.reset();      // recover full capacity, reuse
+```
+
+Size ceiling ~128 KiB on the stack — for larger arenas, allocate in `static mut` and reference by pointer.
+
+### `vendor/uuid` — RFC 4122 v4 UUIDs
+
+Random UUIDs sourced from `/dev/urandom` (portable across macOS / Linux / BSD). `Uuid::new_v4() -> Option[Uuid]`, `Uuid::parse(s: str) -> Option[Uuid]`, `uuid.to_string() -> string` (infallible — formats into a stack `[u8; 37]` buffer).
+
+```cplus
+import "uuid/uuid" as uuid;
+
+guard let option::Option::Some(u) = uuid::Uuid::new_v4() else { return 1; };
+println(u.to_string().as_str());   // "550e8400-e29b-41d4-a716-446655440000"
+```
+
+---
+
+## 29. Tooling — `cpc`
 
 ```bash
 cpc build                      # multi-file project (reads Cplus.toml)
@@ -1808,7 +1939,7 @@ Vendor packages run their own in-package `#[test]` fns the same way: `cd vendor/
 
 ---
 
-## 29. Common error codes
+## 30. Common error codes
 
 The error codes you'll see most often. The full list lives in `cplus-core/src/sema.rs` and `borrowck.rs`.
 
@@ -1837,14 +1968,15 @@ The error codes you'll see most often. The full list lives in `cplus-core/src/se
 | E0502 | Bound not satisfied | `T: Ord` requires `impl Ord for T` |
 | E0801 | Operation requires `unsafe` | Wrap in `unsafe { ... }` |
 | E0821 | Cannot take address of generic fn | Specify type parameters at the take-address site |
-| E0876 | `env!("X")` — env var not set at compile time | Set the var when invoking cpc, or pick a different default |
+| E0876 | `#env("X")` — env var not set at compile time | Set the var when invoking cpc, or pick a different default |
+| E0905 | Unknown compiler intrinsic `#name` | Typo; check the §21 list of supported intrinsic names |
 | E0900 | Borrow-shaped param in `async fn` | Use `string` / `Vec[T]` instead of `str` / `T[]` |
 
 Every diagnostic carries a span and often a machine-applicable suggestion. Use `--diagnostics=json` for tool consumption.
 
 ---
 
-## 30. Gotchas worth memorising
+## 31. Gotchas worth memorising
 
 These bite once and are remembered forever. Read them now.
 
@@ -1937,7 +2069,7 @@ let n: i32 = unsafe { p as i32 };
 
 ---
 
-## 31. SIMD types
+## 32. SIMD types
 
 cpc ships fixed-width SIMD as primitive types. Nineteen widths cover the 128-bit and 256-bit families that map directly to NEON / SSE / AVX2 / AVX:
 
@@ -2099,7 +2231,7 @@ Don't reach for SIMD when:
 
 ---
 
-## 32. Where to go next
+## 33. Where to go next
 
 In rough priority order:
 
@@ -2113,7 +2245,7 @@ In rough priority order:
    - `concurrent_counter` — unsafe concurrency (shared `*u64` + atomic fetch_add)
    - `async_compute`, `async_fetch`, `async_yield_demo` — async patterns
    - `simd_dot` — `f32x4` dot product, NEON `fmla.4s` end-to-end
-   - `metal_compute` — GPU compute dispatch via ObjC interop + `include_bytes!`-embedded `.metallib` (macOS, needs the Metal toolchain)
+   - `metal_compute` — GPU compute dispatch via ObjC interop + `#include_bytes`-embedded `.metallib` (macOS, needs the Metal toolchain)
    - `appkit_hello` — Cocoa GUI app in pure C+ via `vendor/appkit` + the convert bridge
 2. **Read an example.** Every file in [docs/examples/](docs/examples/) compiles and runs.
 3. **Read a design note.** [docs/design/](docs/design/) has per-phase deep dives — pattern matching, generics, borrow rules, FFI, async, and the v0.0.6 "external-package enable" doc that explains the stdlib-model bet for SIMD and GPU.

@@ -4165,6 +4165,22 @@ impl SemaCx<'_> {
             "compile_shader" => {
                 self.check_intrinsic_compile_shader(type_args, args, ret_ty, span)
             }
+            // v0.0.11 Phase 4: intrinsic-spelling migration. The five names
+            // below were historically called as bare `#addr_of(x)` or
+            // `!`-suffix macros (`include_bytes!`, `include_str!`, `env!`)
+            // or as generic-fn-shaped calls (`#size_of::[T]()`,
+            // `#align_of::[T]()`). Routed through the unified `#name` dispatch
+            // so every compiler-known builtin shares one sigil.
+            "addr_of" => self.check_intrinsic_addr_of(type_args, args, ret_ty, span),
+            "include_bytes" => {
+                self.check_intrinsic_include_bytes(type_args, args, ret_ty, span)
+            }
+            "include_str" => {
+                self.check_intrinsic_include_str(type_args, args, ret_ty, span)
+            }
+            "env" => self.check_intrinsic_env(type_args, args, ret_ty, span),
+            "size_of" => self.check_intrinsic_layout("size_of", type_args, args, ret_ty, span),
+            "align_of" => self.check_intrinsic_layout("align_of", type_args, args, ret_ty, span),
             _ => {
                 self.err(
                     "E0905",
@@ -4420,6 +4436,191 @@ impl SemaCx<'_> {
         self.compile_shader_at_sema(&path, &target, span)
     }
 
+    // ---- v0.0.11 Phase 4: `#addr_of(x)` ----
+    fn check_intrinsic_addr_of(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0501",
+                format!("`#addr_of` takes no type arguments, got {}", type_args.len()),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#addr_of` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if args.len() != 1 {
+            self.err("E0308",
+                format!("`#addr_of` takes exactly 1 argument, got {}", args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        if self.unsafe_depth == 0 {
+            self.err("E0801",
+                "`#addr_of` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                span);
+        }
+        let arg = &args[0];
+        let ExprKind::Ident(binding) = &arg.kind else {
+            self.err("E0302",
+                "`#addr_of` argument must be a bare identifier (e.g. `#addr_of(x)`); \
+                 field/index/call expressions are not yet supported".to_string(),
+                arg.span);
+            let _ = self.check_expr(arg, None);
+            return Ty::Error;
+        };
+        let ty = self.resolve_value_ident(binding, arg.span, None);
+        if matches!(ty, Ty::Error) {
+            return Ty::Error;
+        }
+        Ty::RawPtr(Box::new(ty))
+    }
+
+    // ---- v0.0.11 Phase 4: `#include_bytes("path")` ----
+    fn check_intrinsic_include_bytes(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0903",
+                format!("`#include_bytes` takes no type arguments, got {}", type_args.len()),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#include_bytes` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if args.len() != 1 {
+            self.err("E0903",
+                format!("`#include_bytes` takes exactly 1 string-literal path, got {}", args.len()),
+                span);
+            return Ty::Error;
+        }
+        let path = match &args[0].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => {
+                self.err("E0871",
+                    "`#include_bytes` argument must be a string literal".to_string(),
+                    args[0].span);
+                return Ty::Error;
+            }
+        };
+        self.check_include_bytes(&path, span)
+    }
+
+    // ---- v0.0.11 Phase 4: `#include_str("path")` ----
+    fn check_intrinsic_include_str(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0903",
+                format!("`#include_str` takes no type arguments, got {}", type_args.len()),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#include_str` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if args.len() != 1 {
+            self.err("E0903",
+                format!("`#include_str` takes exactly 1 string-literal path, got {}", args.len()),
+                span);
+            return Ty::Error;
+        }
+        let path = match &args[0].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => {
+                self.err("E0871",
+                    "`#include_str` argument must be a string literal".to_string(),
+                    args[0].span);
+                return Ty::Error;
+            }
+        };
+        self.check_include_str(&path, span)
+    }
+
+    // ---- v0.0.11 Phase 4: `#env("NAME")` ----
+    fn check_intrinsic_env(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0903",
+                format!("`#env` takes no type arguments, got {}", type_args.len()),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#env` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if args.len() != 1 {
+            self.err("E0903",
+                format!("`#env` takes exactly 1 string-literal env-var name, got {}", args.len()),
+                span);
+            return Ty::Error;
+        }
+        let name = match &args[0].kind {
+            ExprKind::StrLit(s) => s.clone(),
+            _ => {
+                self.err("E0903",
+                    "`#env` argument must be a string literal".to_string(),
+                    args[0].span);
+                return Ty::Error;
+            }
+        };
+        self.check_env_var(&name, span)
+    }
+
+    // ---- v0.0.11 Phase 4: `#size_of::[T]()` / `#align_of::[T]()` ----
+    fn check_intrinsic_layout(
+        &mut self,
+        kind: &str,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if ret_ty.is_some() {
+            self.err("E0903",
+                format!("`#{}` does not accept a `-> T` return-type ascription", kind),
+                span);
+        }
+        if type_args.len() != 1 {
+            self.err("E0501",
+                format!("`#{}` takes exactly 1 type argument, got {}", kind, type_args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Usize;
+        }
+        if !args.is_empty() {
+            self.err("E0302",
+                format!("`#{}` takes no value arguments, got {}", kind, args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+        }
+        let _ = self.resolve_type(&type_args[0]);
+        Ty::Usize
+    }
+
     /// v0.0.8 Phase 4: `env!("NAME")` resolution. Reads the env var via
     /// `std::env::var` at sema time (cpc's own process environment).
     /// Errors:
@@ -4492,7 +4693,7 @@ impl SemaCx<'_> {
             self.err(
                 "E0875",
                 format!(
-                    "`include_str!` file `{}` is not valid UTF-8 (first invalid byte at offset {})",
+                    "`#include_str` file `{}` is not valid UTF-8 (first invalid byte at offset {})",
                     abs_path.display(),
                     e.valid_up_to(),
                 ),
@@ -4541,7 +4742,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0870",
                     format!(
-                        "`{macro_name}!` cannot find file `{}` (resolved to `{}`)",
+                        "`#{macro_name}` cannot find file `{}` (resolved to `{}`)",
                         path,
                         resolved.display(),
                     ),
@@ -4556,7 +4757,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0870",
                     format!(
-                        "`{macro_name}!` failed to read `{}`: {}",
+                        "`#{macro_name}` failed to read `{}`: {}",
                         abs_path.display(),
                         e,
                     ),
@@ -4570,7 +4771,7 @@ impl SemaCx<'_> {
             self.err(
                 "E0872",
                 format!(
-                    "`{macro_name}!` file `{}` is {} bytes; exceeds 64 MiB sanity limit",
+                    "`#{macro_name}` file `{}` is {} bytes; exceeds 64 MiB sanity limit",
                     abs_path.display(),
                     bytes.len(),
                 ),
@@ -5689,109 +5890,6 @@ impl SemaCx<'_> {
         // Slice 7GEN.5b: when type_args are explicit, use them directly.
         if let Some(gsig) = self.fns_generic.get(name).cloned() {
             return self.check_generic_named_call(name, &gsig, args, type_args, call_span);
-        }
-        // Phase 11 slice 11.LAYOUT: `size_of[T]()` and `align_of[T]()`
-        // are compiler intrinsics that take exactly one type argument
-        // (via turbofish) and no value arguments. Both return `usize`.
-        // Safe — no memory access, the LLVM lowering uses GEP on a null
-        // pointer to compute the layout query as a constant the optimizer
-        // folds at -O1+.
-        if name == "size_of" || name == "align_of" {
-            if type_args.len() != 1 {
-                self.err(
-                    "E0501",
-                    format!(
-                        "`{}` takes exactly 1 type argument, got {}",
-                        name,
-                        type_args.len()
-                    ),
-                    callee.span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return Ty::Usize;
-            }
-            if !args.is_empty() {
-                self.err(
-                    "E0302",
-                    format!("`{}` takes no value arguments, got {}", name, args.len()),
-                    call_span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-            }
-            // Resolve the type argument so unresolved names produce
-            // diagnostics here rather than reaching codegen.
-            let _ = self.resolve_type(&type_args[0]);
-            return Ty::Usize;
-        }
-        // v0.0.9 follow-up: `addr_of(x)` — take the address of a stack
-        // local (or function parameter) as `*T` without an intervening
-        // malloc + memcpy. Unsafe-gated because the returned pointer
-        // aliases the binding's storage and outlives nothing tracked by
-        // the borrow checker. The C-ABI parallel is `&x` in C; the Rust
-        // parallel is `&raw const x` / `&raw mut x`.
-        //
-        // Closes the "no address-of-local" gap surfaced by `vendor/uuid`,
-        // `vendor/log`, `vendor/metal`, and the raytracer. Each had to
-        // malloc a temporary slot, write into it, pass the pointer to a
-        // C fn, then free the temporary — `addr_of(x)` skips all of that.
-        //
-        // Constraints (kept tight on purpose; widen as use cases land):
-        //   - exactly 1 value argument, no type arguments
-        //   - argument must be a bare identifier (Field/Index/Call/etc.
-        //     rejected — those have separate addressing stories)
-        //   - inside `unsafe { ... }` (raw-pointer producer)
-        //
-        // The result type is `*T` where `T` is the binding's type. There
-        // is no compile-time const/mut distinction on `*T` in C+, so the
-        // unsafe contract is "caller can do anything with this pointer";
-        // sema doesn't try to forbid writes through `addr_of(let x)`.
-        if name == "addr_of" {
-            if !type_args.is_empty() {
-                self.err(
-                    "E0501",
-                    format!("`addr_of` takes no type arguments, got {}", type_args.len()),
-                    callee.span,
-                );
-            }
-            if args.len() != 1 {
-                self.err(
-                    "E0308",
-                    format!("`addr_of` takes exactly 1 argument, got {}", args.len()),
-                    call_span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return Ty::Error;
-            }
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`addr_of` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    call_span,
-                );
-            }
-            let arg = &args[0];
-            let ExprKind::Ident(binding) = &arg.kind else {
-                self.err(
-                    "E0302",
-                    "`addr_of` argument must be a bare identifier (e.g. `addr_of(x)`); \
-                     field/index/call expressions are not yet supported"
-                        .to_string(),
-                    arg.span,
-                );
-                let _ = self.check_expr(arg, None);
-                return Ty::Error;
-            };
-            let ty = self.resolve_value_ident(binding, arg.span, None);
-            if matches!(ty, Ty::Error) {
-                return Ty::Error;
-            }
-            return Ty::RawPtr(Box::new(ty));
         }
         // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Placed
         // before the "non-generic fn with turbofish" reject because both
@@ -11082,7 +11180,7 @@ mod tests {
         std::env::set_var("CPC_TEST_ENV_VAR", "from-test");
         assert_clean(
             "fn main() -> i32 {\n\
-                 let v: str = env!(\"CPC_TEST_ENV_VAR\");\n\
+                 let v: str = #env(\"CPC_TEST_ENV_VAR\");\n\
                  return 0;\n\
              }",
         );
@@ -11094,7 +11192,7 @@ mod tests {
         std::env::remove_var("CPC_TEST_DEFINITELY_MISSING_99");
         assert_only_code(
             "fn main() -> i32 {\n\
-                 let _v: str = env!(\"CPC_TEST_DEFINITELY_MISSING_99\");\n\
+                 let _v: str = #env(\"CPC_TEST_DEFINITELY_MISSING_99\");\n\
                  return 0;\n\
              }",
             "E0876",
@@ -11133,7 +11231,7 @@ mod tests {
         );
     }
 
-    // ---- addr_of(x) intrinsic ----
+    // ---- #addr_of(x) intrinsic ----
 
     // ---- v0.0.9 follow-up: `borrow x: T` parameter marker ----
 
@@ -11184,14 +11282,14 @@ mod tests {
 
     #[test]
     fn addr_of_local_in_unsafe_clean() {
-        // The happy path: `unsafe { addr_of(x) }` returns `*T` for a
+        // The happy path: `unsafe { #addr_of(x) }` returns `*T` for a
         // local binding. No-unsafe / non-Ident / wrong-arity cases are
         // checked separately below.
         assert_clean(
             "extern fn use_ptr(p: *i64);\n\
              fn main() -> i32 {\n\
                  let t: i64 = 0;\n\
-                 unsafe { use_ptr(addr_of(t)); }\n\
+                 unsafe { use_ptr(#addr_of(t)); }\n\
                  return 0;\n\
              }",
         );
@@ -11202,7 +11300,7 @@ mod tests {
         assert_only_code(
             "fn main() -> i32 {\n\
                  let t: i64 = 0;\n\
-                 let p: *i64 = addr_of(t);\n\
+                 let p: *i64 = #addr_of(t);\n\
                  return 0;\n\
              }",
             "E0801",
@@ -11217,7 +11315,7 @@ mod tests {
             "struct P { x: i32 }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 5 };\n\
-                 let q: *i32 = unsafe { addr_of(p.x) };\n\
+                 let q: *i32 = unsafe { #addr_of(p.x) };\n\
                  return 0;\n\
              }",
             "E0302",
@@ -11230,7 +11328,7 @@ mod tests {
             "fn main() -> i32 {\n\
                  let x: i64 = 0;\n\
                  let y: i64 = 0;\n\
-                 let p: *i64 = unsafe { addr_of(x, y) };\n\
+                 let p: *i64 = unsafe { #addr_of(x, y) };\n\
                  return 0;\n\
              }",
             "E0308",
@@ -13604,19 +13702,19 @@ mod tests {
 
     #[test]
     fn size_of_primitive_clean() {
-        assert_clean("fn main() -> i32 { let n: usize = size_of::[i32](); return 0; }");
+        assert_clean("fn main() -> i32 { let n: usize = #size_of::[i32](); return 0; }");
     }
 
     #[test]
     fn align_of_primitive_clean() {
-        assert_clean("fn main() -> i32 { let a: usize = align_of::[i32](); return 0; }");
+        assert_clean("fn main() -> i32 { let a: usize = #align_of::[i32](); return 0; }");
     }
 
     #[test]
     fn size_of_struct_clean() {
         assert_clean(
             "struct Point { x: i32, y: i32 } \
-             fn main() -> i32 { let n: usize = size_of::[Point](); return 0; }",
+             fn main() -> i32 { let n: usize = #size_of::[Point](); return 0; }",
         );
     }
 
@@ -13624,13 +13722,13 @@ mod tests {
     fn size_of_returns_usize() {
         // Result must be usable in usize arithmetic without a cast.
         assert_clean(
-            "fn main() -> i32 { let n: usize = size_of::[i32]() *% 10 as usize; return 0; }",
+            "fn main() -> i32 { let n: usize = #size_of::[i32]() *% 10 as usize; return 0; }",
         );
     }
 
     #[test]
     fn size_of_no_type_arg_rejected_e0501() {
-        let codes = errors("fn main() -> i32 { let n: usize = size_of(); return 0; }");
+        let codes = errors("fn main() -> i32 { let n: usize = #size_of(); return 0; }");
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for missing type arg, got: {codes:?}"
@@ -13639,7 +13737,7 @@ mod tests {
 
     #[test]
     fn size_of_two_type_args_rejected_e0501() {
-        let codes = errors("fn main() -> i32 { let n: usize = size_of::[i32, bool](); return 0; }");
+        let codes = errors("fn main() -> i32 { let n: usize = #size_of::[i32, bool](); return 0; }");
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for two type args, got: {codes:?}"
@@ -13648,7 +13746,7 @@ mod tests {
 
     #[test]
     fn size_of_with_value_arg_rejected_e0302() {
-        let codes = errors("fn main() -> i32 { let n: usize = size_of::[i32](7); return 0; }");
+        let codes = errors("fn main() -> i32 { let n: usize = #size_of::[i32](7); return 0; }");
         assert!(
             codes.contains(&"E0302"),
             "expected E0302 for value arg, got: {codes:?}"
@@ -13657,7 +13755,7 @@ mod tests {
 
     #[test]
     fn size_of_unknown_type_rejected_e0303() {
-        let codes = errors("fn main() -> i32 { let n: usize = size_of::[Bogus](); return 0; }");
+        let codes = errors("fn main() -> i32 { let n: usize = #size_of::[Bogus](); return 0; }");
         assert!(
             codes.contains(&"E0303"),
             "expected E0303 for unknown type, got: {codes:?}"
@@ -13666,7 +13764,7 @@ mod tests {
 
     #[test]
     fn align_of_no_type_arg_rejected_e0501() {
-        let codes = errors("fn main() -> i32 { let n: usize = align_of(); return 0; }");
+        let codes = errors("fn main() -> i32 { let n: usize = #align_of(); return 0; }");
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for missing type arg, got: {codes:?}"
@@ -13677,7 +13775,7 @@ mod tests {
     fn size_of_raw_pointer_type_clean() {
         // Verifies size_of works for raw-pointer types — needed for
         // allocator implementations that hand out typed pointers.
-        assert_clean("fn main() -> i32 { let n: usize = size_of::[*u8](); return 0; }");
+        assert_clean("fn main() -> i32 { let n: usize = #size_of::[*u8](); return 0; }");
     }
 
     // Phase 11 / P3 from null design (design.md): integer-to-raw-pointer
@@ -13990,11 +14088,11 @@ mod tests {
 
     #[test]
     fn size_of_inside_generic_fn_clean() {
-        // size_of::[T]() inside a generic fn body — the type arg `T` is
+        // #size_of::[T]() inside a generic fn body — the type arg `T` is
         // a Ty::Param at sema-time; resolve_type allows it; monomorphize
         // substitutes T to the concrete type via subst_type_ast.
         assert_clean(
-            "fn typed_alloc[T](n: usize) -> usize { return n *% size_of::[T](); } \
+            "fn typed_alloc[T](n: usize) -> usize { return n *% #size_of::[T](); } \
              fn main() -> i32 { let bytes: usize = typed_alloc::[i32](10 as usize); return 0; }",
         );
     }
@@ -14300,7 +14398,7 @@ mod tests {
     #[test]
     fn include_bytes_clean_when_file_exists() {
         let diags = check_with_asset(
-            "fn main() -> i32 { let p = include_bytes!(\"hello.bin\"); return 0; }",
+            "fn main() -> i32 { let p = #include_bytes(\"hello.bin\"); return 0; }",
             "hello.bin",
             b"hello",
         );
@@ -14312,7 +14410,7 @@ mod tests {
         // Reference a sibling file that does not exist.
         let dir = tempfile::tempdir().expect("tempdir");
         let src_path = dir.path().join("src.cplus");
-        let src = "fn main() -> i32 { let p = include_bytes!(\"missing.bin\"); return 0; }";
+        let src = "fn main() -> i32 { let p = #include_bytes(\"missing.bin\"); return 0; }";
         std::fs::write(&src_path, src).expect("write");
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
@@ -14347,7 +14445,7 @@ mod tests {
         let asset_path = dir.path().join("bytes.bin");
         std::fs::write(&src_path, "").expect("write");
         std::fs::write(&asset_path, b"abc").expect("write"); // len 3
-        let src = "fn main() -> i32 { let p: *[u8; 3] = include_bytes!(\"bytes.bin\"); return 0; }";
+        let src = "fn main() -> i32 { let p: *[u8; 3] = #include_bytes(\"bytes.bin\"); return 0; }";
         std::fs::write(&src_path, src).expect("write");
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
@@ -14365,7 +14463,7 @@ mod tests {
         let src_path = dir.path().join("src.cplus");
         let asset_path = dir.path().join("bytes.bin");
         std::fs::write(&asset_path, b"abc").expect("write"); // len 3
-        let src = "fn main() -> i32 { let p: *[u8; 5] = include_bytes!(\"bytes.bin\"); return 0; }";
+        let src = "fn main() -> i32 { let p: *[u8; 5] = #include_bytes(\"bytes.bin\"); return 0; }";
         std::fs::write(&src_path, src).expect("write");
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
@@ -14756,7 +14854,7 @@ mod tests {
     #[test]
     fn include_str_clean_when_file_is_utf8() {
         let diags = check_with_asset(
-            "fn main() -> i32 { let s: str = include_str!(\"hello.txt\"); return 0; }",
+            "fn main() -> i32 { let s: str = #include_str(\"hello.txt\"); return 0; }",
             "hello.txt",
             "hello, world\n".as_bytes(),
         );
@@ -14767,7 +14865,7 @@ mod tests {
     fn include_str_accepts_non_ascii_utf8() {
         // Multibyte UTF-8 (emoji + accented chars) must validate cleanly.
         let diags = check_with_asset(
-            "fn main() -> i32 { let s: str = include_str!(\"utf8.txt\"); return 0; }",
+            "fn main() -> i32 { let s: str = #include_str(\"utf8.txt\"); return 0; }",
             "utf8.txt",
             "café — résumé 🎉\n".as_bytes(),
         );
@@ -14778,7 +14876,7 @@ mod tests {
     fn include_str_rejects_invalid_utf8_with_e0875() {
         // 0xFF is never valid as a UTF-8 leading byte; sema must reject.
         let diags = check_with_asset(
-            "fn main() -> i32 { let s: str = include_str!(\"bad.bin\"); return 0; }",
+            "fn main() -> i32 { let s: str = #include_str(\"bad.bin\"); return 0; }",
             "bad.bin",
             &[b'o', b'k', 0xFF, b'!'],
         );
@@ -14794,7 +14892,7 @@ mod tests {
     fn include_str_missing_file_e0870() {
         let dir = tempfile::tempdir().expect("tempdir");
         let src_path = dir.path().join("src.cplus");
-        let src = "fn main() -> i32 { let s: str = include_str!(\"missing.txt\"); return 0; }";
+        let src = "fn main() -> i32 { let s: str = #include_str(\"missing.txt\"); return 0; }";
         std::fs::write(&src_path, src).expect("write");
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
@@ -14824,7 +14922,7 @@ mod tests {
         // type mismatch — `include_str!` and `include_bytes!` produce
         // different shapes.
         let diags = check_with_asset(
-            "fn main() -> i32 { let p: *[u8; 5] = include_str!(\"hi.txt\"); return 0; }",
+            "fn main() -> i32 { let p: *[u8; 5] = #include_str(\"hi.txt\"); return 0; }",
             "hi.txt",
             b"hello",
         );

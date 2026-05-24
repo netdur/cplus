@@ -2,7 +2,7 @@
 //
 // Demonstrates the Dart-FFI pattern: `Allocator` is a user-defined
 // interface, `CMalloc` wraps libc malloc/free, and a typed Vec is built
-// on top using size_of::[T]() + raw pointers.
+// on top using #size_of::[T]() + raw pointers.
 //
 // **Scope note**: this sample uses a concrete `VecI32` (not the fully
 // generic `Vec[T, A]`) because the fully-generic form hits two compound
@@ -87,8 +87,8 @@ impl VecI32 {
 
     fn grow(mut self) {
         let new_cap: usize = if self.cap == 0 as usize { 8 as usize } else { self.cap *% 2 as usize };
-        let old_bytes: usize = self.cap *% size_of::[i32]();
-        let new_bytes: usize = new_cap *% size_of::[i32]();
+        let old_bytes: usize = self.cap *% #size_of::[i32]();
+        let new_bytes: usize = new_cap *% #size_of::[i32]();
         self.ptr = self.alloc.reallocate(self.ptr, old_bytes, new_bytes);
         self.cap = new_cap;
         return;
@@ -106,7 +106,7 @@ impl VecI32 {
     }
 
     fn drop(mut self) {
-        let bytes: usize = self.cap *% size_of::[i32]();
+        let bytes: usize = self.cap *% #size_of::[i32]();
         self.alloc.deallocate(self.ptr, bytes);
         return;
     }
@@ -115,7 +115,7 @@ impl VecI32 {
 fn main() -> i32 {
     let alloc: CMalloc = CMalloc {};
     let initial_cap: usize = 4 as usize;
-    let initial_bytes: usize = initial_cap *% size_of::[i32]();
+    let initial_bytes: usize = initial_cap *% #size_of::[i32]();
     let buf: *u8 = alloc.allocate(initial_bytes);
     let mut v: VecI32 = VecI32 {
         ptr: buf,

@@ -356,10 +356,10 @@ fn test_2x2_matmul_identity_correctness() {
     let i_data: [f32; 4] = [1.0f32, 0.0f32, 0.0f32, 1.0f32];
 
     let buf_a: buffer::Buffer = dev.new_buffer_from_slice(
-        unsafe { slice_from_raw_parts(addr_of(a_data) as *u8, 16 as usize) },
+        unsafe { slice_from_raw_parts(#addr_of(a_data) as *u8, 16 as usize) },
     );
     let buf_i: buffer::Buffer = dev.new_buffer_from_slice(
-        unsafe { slice_from_raw_parts(addr_of(i_data) as *u8, 16 as usize) },
+        unsafe { slice_from_raw_parts(#addr_of(i_data) as *u8, 16 as usize) },
     );
     let buf_c: buffer::Buffer = dev.new_buffer(16 as usize);
 
@@ -393,7 +393,7 @@ fn test_2x2_matmul_identity_correctness() {
     // Read back. The result must equal A bit-for-bit.
     let mut out: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let _copied: usize = buf_c.copy_to_slice(
-        unsafe { slice_from_raw_parts(addr_of(out) as *u8, 16 as usize) },
+        unsafe { slice_from_raw_parts(#addr_of(out) as *u8, 16 as usize) },
     );
     assert out[0] == 1.0f32;
     assert out[1] == 2.0f32;

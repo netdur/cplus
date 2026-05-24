@@ -346,7 +346,7 @@ fn parse_number(mut p: Parser) -> ValParse {
     unsafe { memcpy(buf, src_q, n); }
     let nulslot: *u8 = unsafe { buf + n };
     unsafe { *nulslot = 0 as u8; }
-    let endp_slot: *u8 = unsafe { malloc(size_of::[*u8]()) };
+    let endp_slot: *u8 = unsafe { malloc(#size_of::[*u8]()) };
     let endp: **u8 = unsafe { endp_slot as **u8 };
     let val: f64 = unsafe { strtod(buf, endp) };
     let consumed_end: *u8 = unsafe { *endp };
@@ -626,7 +626,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     // sig figs ("0.1" → "0.10000000000000001").
     let buf: *u8 = unsafe { malloc(64 as usize) };
     let fmt_buf: *u8 = unsafe { malloc(8 as usize) };
-    let endp_slot: *u8 = unsafe { malloc(size_of::[*u8]()) };
+    let endp_slot: *u8 = unsafe { malloc(#size_of::[*u8]()) };
     let endp: **u8 = unsafe { endp_slot as **u8 };
 
     let mut chosen_len: i32 = 0;

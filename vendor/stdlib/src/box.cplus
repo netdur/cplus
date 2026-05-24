@@ -28,7 +28,7 @@ pub struct Box[T] {
 // non-Copy T (string, Vec[U], owned structs) so the caller's binding
 // is properly marked moved. Copy T's behave as if move were absent.
 pub fn new[T](move v: T) -> Box[T] {
-    let bytes: usize = size_of::[T]();
+    let bytes: usize = #size_of::[T]();
     let raw: *u8 = unsafe { malloc(bytes) };
     let p: *T = unsafe { raw as *T };
     unsafe { *p = v; }

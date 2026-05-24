@@ -8,7 +8,7 @@
 // Together with Phase 10's `extern fn malloc/free/memcpy` and raw pointers,
 // these unblock the Dart-FFI-style pattern: a user-defined `Allocator`
 // interface wrapping libc, plus generic types like `Vec[T]` that use
-// `size_of::[T]()` to compute byte counts for typed allocations.
+// `#size_of::[T]()` to compute byte counts for typed allocations.
 //
 // What this program does: prints the sizes/alignments of a few types,
 // then exits with the size of a Point struct (16 bytes — two i64-aligned i32s
@@ -22,13 +22,13 @@ struct Point {
 
 fn main() -> i32 {
     // Primitive layouts.
-    let s_i8: usize = size_of::[i8]();      // 1
-    let s_i32: usize = size_of::[i32]();    // 4
-    let s_i64: usize = size_of::[i64]();    // 8
+    let s_i8: usize = #size_of::[i8]();      // 1
+    let s_i32: usize = #size_of::[i32]();    // 4
+    let s_i64: usize = #size_of::[i64]();    // 8
 
-    let a_i8: usize = align_of::[i8]();     // 1
-    let a_i32: usize = align_of::[i32]();   // 4
-    let a_i64: usize = align_of::[i64]();   // 8
+    let a_i8: usize = #align_of::[i8]();     // 1
+    let a_i32: usize = #align_of::[i32]();   // 4
+    let a_i64: usize = #align_of::[i64]();   // 8
 
     println(s_i8 as i32);
     println(s_i32 as i32);
@@ -39,7 +39,7 @@ fn main() -> i32 {
 
     // Aggregate layout — Point is two i32s. On x86_64 / aarch64 this packs
     // to 8 bytes (4 + 4, no padding because alignof(i32) = 4 ≤ struct align).
-    let s_point: usize = size_of::[Point]();   // 8
+    let s_point: usize = #size_of::[Point]();   // 8
     println(s_point as i32);
 
     return s_point as i32;

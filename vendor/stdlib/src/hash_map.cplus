@@ -161,8 +161,8 @@ impl HashMap[K, V] {
         let old_occ: *u8 = self.occupied;
         let old_cap: usize = self.cap;
 
-        let keys_bytes: usize = new_cap *% size_of::[K]();
-        let vals_bytes: usize = new_cap *% size_of::[V]();
+        let keys_bytes: usize = new_cap *% #size_of::[K]();
+        let vals_bytes: usize = new_cap *% #size_of::[V]();
         let occ_bytes: usize = new_cap;
         let nk_raw: *u8 = unsafe { malloc(keys_bytes) };
         let nv_raw: *u8 = unsafe { malloc(vals_bytes) };

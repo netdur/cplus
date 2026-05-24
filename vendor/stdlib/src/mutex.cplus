@@ -52,7 +52,7 @@ pub struct MutexGuard[T] {
 pub fn new[T](move v: T) -> Mutex[T] {
     let refct_bytes: usize = 8 as usize;
     let mutex_bytes: usize = 64 as usize;
-    let value_size: usize = size_of::[T]();
+    let value_size: usize = #size_of::[T]();
     let total: usize = refct_bytes +% mutex_bytes +% value_size;
     let raw: *u8 = unsafe { malloc(total) };
     let refct: *u64 = unsafe { raw as *u64 };

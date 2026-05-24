@@ -33,7 +33,7 @@ fn parse_usize(s: str) -> usize {
 }
 
 fn shader_len() -> usize {
-    return parse_usize(include_str!("../shaders/double.metallib.size"));
+    return parse_usize(#include_str("../shaders/double.metallib.size"));
 }
 
 // ===========================================================================
@@ -146,7 +146,7 @@ pub fn main() -> i32 {
     let queue: *u8 = unsafe { msg_id(device, sel(str_ptr("newCommandQueue\0"))) };
 
     // ---- Embed the compiled .metallib + load it as an MTLLibrary ----
-    let shader_bytes = include_bytes!("../shaders/double.metallib");
+    let shader_bytes = #include_bytes("../shaders/double.metallib");
     let shader_ptr: *u8 = unsafe { shader_bytes as *u8 };
     let shader_data: *u8 = ns_data_view(shader_ptr, shader_len());
 

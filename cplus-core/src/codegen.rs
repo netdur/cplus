@@ -8088,8 +8088,8 @@ impl<'a> FnState<'a> {
                 unreachable!("sema rejects ranges outside `for ... in`")
             }
             ExprKind::Match { scrutinee, arms } => self.gen_match(scrutinee, arms),
-            ExprKind::Intrinsic { name, args, ret_ty, .. } => {
-                self.gen_intrinsic(name, args, ret_ty.as_ref(), e.span)
+            ExprKind::Intrinsic { name, type_args, args, ret_ty } => {
+                self.gen_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span)
             }
         }
     }
@@ -8330,6 +8330,7 @@ impl<'a> FnState<'a> {
     fn gen_intrinsic(
         &mut self,
         name: &str,
+        type_args: &[crate::ast::Type],
         args: &[Expr],
         ret_ty: Option<&crate::ast::Type>,
         span: crate::lexer::Span,
@@ -8338,10 +8339,111 @@ impl<'a> FnState<'a> {
             "selector" => Some(self.gen_intrinsic_selector(args)),
             "msg_send" => self.gen_intrinsic_msg_send(args, ret_ty),
             "compile_shader" => Some(self.gen_intrinsic_compile_shader(span)),
+            // v0.0.11 Phase 4: intrinsic-spelling migration.
+            "addr_of" => Some(self.gen_intrinsic_addr_of(args)),
+            "include_bytes" => Some(self.gen_intrinsic_include_bytes(span)),
+            "include_str" => Some(self.gen_intrinsic_include_str(span)),
+            "env" => Some(self.gen_intrinsic_env(span)),
+            "size_of" => Some(self.gen_intrinsic_size_of(type_args)),
+            "align_of" => Some(self.gen_intrinsic_align_of(type_args)),
             _ => panic!(
                 "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
             ),
         }
+    }
+
+    /// v0.0.11 Phase 4: `#addr_of(x)` — bare alloca pointer of a local.
+    fn gen_intrinsic_addr_of(&mut self, args: &[Expr]) -> (String, Ty) {
+        let (slot, ty) = self.gen_place(&args[0]);
+        (slot, Ty::RawPtr(Box::new(ty)))
+    }
+
+    /// v0.0.11 Phase 4: `#include_bytes("path")` — address of a private
+    /// `[N x i8]` global emitted by `emit_compile_time_blob_globals`.
+    fn gen_intrinsic_include_bytes(&mut self, span: crate::lexer::Span) -> (String, Ty) {
+        let (symbol, len) = {
+            let table = self.md.compile_time_blobs.borrow();
+            table
+                .get(&span)
+                .expect("#include_bytes: span not in module table — sema must have populated compile_time_blobs_table")
+                .clone()
+        };
+        (
+            symbol,
+            Ty::RawPtr(Box::new(Ty::Array(Box::new(Ty::U8), len))),
+        )
+    }
+
+    /// v0.0.11 Phase 4: `#include_str("path")` — `str` fat-pointer over
+    /// the same private `[N x i8]` global emitted by
+    /// `emit_compile_time_blob_globals`. UTF-8 validated at sema time.
+    fn gen_intrinsic_include_str(&mut self, span: crate::lexer::Span) -> (String, Ty) {
+        let (symbol, len) = {
+            let table = self.md.compile_time_blobs.borrow();
+            table
+                .get(&span)
+                .expect("#include_str: span not in module table — sema must have populated compile_time_blobs_table")
+                .clone()
+        };
+        let t1 = self.next_tmp();
+        let t2 = self.next_tmp();
+        self.body.push_str(&format!(
+            "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+        ));
+        self.body.push_str(&format!(
+            "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+        ));
+        (t2, Ty::Str)
+    }
+
+    /// v0.0.11 Phase 4: `#env("NAME")` — `str` fat-pointer over the
+    /// `[N x i8]` global emitted by `emit_env_var_globals`. Value was
+    /// read at sema time.
+    fn gen_intrinsic_env(&mut self, span: crate::lexer::Span) -> (String, Ty) {
+        let (symbol, len) = {
+            let table = self.md.env_var_globals.borrow();
+            table
+                .get(&span)
+                .expect("#env: span not in module table — sema must have populated env_vars_table")
+                .clone()
+        };
+        let t1 = self.next_tmp();
+        let t2 = self.next_tmp();
+        self.body.push_str(&format!(
+            "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+        ));
+        self.body.push_str(&format!(
+            "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+        ));
+        (t2, Ty::Str)
+    }
+
+    /// v0.0.11 Phase 4: `#size_of::[T]()` — GEP-null trick, folded to a
+    /// constant at -O1+.
+    fn gen_intrinsic_size_of(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
+        let t = ty_from(&type_args[0], &self.types);
+        let llvm_t = llvm_ty(&t, &self.types);
+        let ptr_tmp = self.next_tmp();
+        let int_tmp = self.next_tmp();
+        self.emit(&format!(
+            "{ptr_tmp} = getelementptr {llvm_t}, ptr null, i64 1"
+        ));
+        self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
+        (int_tmp, Ty::Usize)
+    }
+
+    /// v0.0.11 Phase 4: `#align_of::[T]()` — GEP-null on `{ i1, T }` to
+    /// extract T's alignment offset. Folded to a constant at -O1+.
+    fn gen_intrinsic_align_of(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
+        let t = ty_from(&type_args[0], &self.types);
+        let llvm_t = llvm_ty(&t, &self.types);
+        let ptr_tmp = self.next_tmp();
+        let int_tmp = self.next_tmp();
+        self.emit(&format!(
+            "{ptr_tmp} = getelementptr {{ i1, {llvm_t} }}, ptr null, i64 0, i32 1"
+        ));
+        self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
+        (int_tmp, Ty::Usize)
     }
 
     /// `#selector("name") -> *u8`. Look up the cached-pointer pair
@@ -9736,48 +9838,6 @@ impl<'a> FnState<'a> {
                 "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
             ));
             return Some((t2, Ty::Slice(Box::new(elem_ty))));
-        }
-        // Phase 11 slice 11.LAYOUT: `size_of[T]()` and `align_of[T]()`.
-        // The GEP-null trick gives a constant the LLVM optimizer folds
-        // at -O1+. At -O0 it becomes a real two-instruction sequence
-        // (getelementptr + ptrtoint) that returns the layout value.
-        //
-        // size_of:  ptrtoint (getelementptr T, ptr null, i64 1) to i64
-        // align_of: ptrtoint (getelementptr {i1, T}, ptr null, i64 0, i32 1) to i64
-        //
-        // The align_of trick exploits LLVM's struct layout: in `{i1, T}`,
-        // T starts at the alignment boundary of T after the i1's 1-byte
-        // storage + padding, so the offset of T is exactly alignof(T).
-        if name == "size_of" {
-            let t = ty_from(&type_args[0], &self.types);
-            let llvm_t = llvm_ty(&t, &self.types);
-            let ptr_tmp = self.next_tmp();
-            let int_tmp = self.next_tmp();
-            self.emit(&format!(
-                "{ptr_tmp} = getelementptr {llvm_t}, ptr null, i64 1"
-            ));
-            self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
-            return Some((int_tmp, Ty::Usize));
-        }
-        if name == "align_of" {
-            let t = ty_from(&type_args[0], &self.types);
-            let llvm_t = llvm_ty(&t, &self.types);
-            let ptr_tmp = self.next_tmp();
-            let int_tmp = self.next_tmp();
-            self.emit(&format!(
-                "{ptr_tmp} = getelementptr {{ i1, {llvm_t} }}, ptr null, i64 0, i32 1"
-            ));
-            self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
-            return Some((int_tmp, Ty::Usize));
-        }
-        // v0.0.9 follow-up: `addr_of(x)` returns the local's alloca
-        // pointer directly, typed as `*T`. Zero runtime cost — no load,
-        // no GEP — the alloca itself IS the address. Sema validated
-        // that `x` is a bare Ident, the call is unsafe-gated, and the
-        // binding resolves to a value type T.
-        if name == "addr_of" {
-            let (slot, ty) = self.gen_place(&args[0]);
-            return Some((slot, Ty::RawPtr(Box::new(ty))));
         }
         // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` lowers to
         // a call to the monomorphized `T::drop(p)` when T has Drop,

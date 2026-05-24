@@ -765,6 +765,16 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
                 .map(|e| rewrite_expr_self(e, mangled_name))
                 .collect(),
         },
+        ExprKind::ArrayFill { fill, count } => ExprKind::ArrayFill {
+            fill: Box::new(rewrite_expr_self(fill, mangled_name)),
+            count: *count,
+        },
+        ExprKind::Intrinsic { name, type_args, args, ret_ty } => ExprKind::Intrinsic {
+            name: name.clone(),
+            type_args: type_args.clone(),
+            args: args.iter().map(|a| rewrite_expr_self(a, mangled_name)).collect(),
+            ret_ty: ret_ty.clone(),
+        },
         other => other.clone(),
     };
     Expr {
@@ -955,6 +965,7 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
                 visit_ident_calls(e, f);
             }
         }
+        ExprKind::ArrayFill { fill, .. } => visit_ident_calls(fill, f),
         ExprKind::GenericEnumCall { args, .. } => {
             for a in args {
                 visit_ident_calls(a, f);
@@ -972,6 +983,11 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
                 if let InterpStrPart::Expr(e) = p {
                     visit_ident_calls(e, f);
                 }
+            }
+        }
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                visit_ident_calls(a, f);
             }
         }
         _ => {}
@@ -2432,6 +2448,46 @@ fn rewrite_expr(
                 })
                 .collect(),
         },
+        ExprKind::ArrayFill { fill, count } => ExprKind::ArrayFill {
+            fill: Box::new(rewrite_expr(
+                fill,
+                subst,
+                generic_names,
+                inst_lookup,
+                mono,
+                type_name_of,
+                struct_lookup,
+            )),
+            count: *count,
+        },
+        // v0.0.11 Phase 4: subst type-parameter references in `#name`
+        // intrinsics' turbofish type_args (e.g. `#size_of::[T]()` inside
+        // a generic body) through the active subst map. Without this,
+        // codegen sees `Ty::Param("T")` and panics.
+        ExprKind::Intrinsic { name, type_args, args, ret_ty } => ExprKind::Intrinsic {
+            name: name.clone(),
+            type_args: type_args
+                .iter()
+                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup))
+                .collect(),
+            args: args
+                .iter()
+                .map(|a| {
+                    rewrite_expr(
+                        a,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    )
+                })
+                .collect(),
+            ret_ty: ret_ty
+                .as_ref()
+                .map(|t| subst_type_ast(t, subst, type_name_of, struct_lookup)),
+        },
         other => other.clone(),
     };
     Expr {
@@ -2726,6 +2782,7 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
                 rewrite_alias_expr(el, aliases);
             }
         }
+        ExprKind::ArrayFill { fill, .. } => rewrite_alias_expr(fill, aliases),
         ExprKind::Index { receiver, index } => {
             rewrite_alias_expr(receiver, aliases);
             rewrite_alias_expr(index, aliases);
@@ -2734,6 +2791,17 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
             rewrite_alias_expr(scrutinee, aliases);
             for a in arms {
                 rewrite_alias_expr(&mut a.body, aliases);
+            }
+        }
+        ExprKind::Intrinsic { type_args, args, ret_ty, .. } => {
+            for t in type_args {
+                rewrite_alias_type(t, aliases);
+            }
+            for a in args {
+                rewrite_alias_expr(a, aliases);
+            }
+            if let Some(rt) = ret_ty {
+                rewrite_alias_type(rt, aliases);
             }
         }
         _ => {}

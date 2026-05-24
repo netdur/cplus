@@ -2502,80 +2502,6 @@ impl Parser {
             TokenKind::Ident(s) => {
                 let n = s.clone();
                 self.bump();
-                // v0.0.6 Slice 1A / v0.0.7 Slice 3.1: `include_bytes!`
-                // and `include_str!` compiler builtins. Routed before any
-                // other postfix handling. The `!` marks the (only) builtin
-                // macro form; sema/codegen treat the result as either an
-                // opaque pointer-to-byte-array constant (bytes) or a `str`
-                // fat-pointer view (str). The form is strict: `Ident(name)
-                // + ! + ( + StringLit + )`. Any deviation is a parse error.
-                let is_include_bytes = n == "include_bytes";
-                let is_include_str = n == "include_str";
-                let is_env_var = n == "env";
-                if (is_include_bytes || is_include_str || is_env_var)
-                    && matches!(self.peek_kind(), TokenKind::Bang)
-                {
-                    let macro_name = if is_include_bytes {
-                        "include_bytes"
-                    } else if is_include_str {
-                        "include_str"
-                    } else {
-                        "env"
-                    };
-                    let open_paren_msg = if is_include_bytes {
-                        "`(` after `include_bytes!`"
-                    } else if is_include_str {
-                        "`(` after `include_str!`"
-                    } else {
-                        "`(` after `env!`"
-                    };
-                    let arg_msg = if is_include_bytes {
-                        "string literal path in `include_bytes!`"
-                    } else if is_include_str {
-                        "string literal path in `include_str!`"
-                    } else {
-                        "string literal environment variable name in `env!`"
-                    };
-                    let close_paren_msg = if is_include_bytes {
-                        "`)` after `include_bytes!` path"
-                    } else if is_include_str {
-                        "`)` after `include_str!` path"
-                    } else {
-                        "`)` after `env!` name"
-                    };
-                    self.bump(); // `!`
-                    self.expect(&TokenKind::LParen, open_paren_msg)?;
-                    let path_tok = self.peek().clone();
-                    let arg_str = match &path_tok.kind {
-                        TokenKind::Str(s) => {
-                            let s = s.clone();
-                            self.bump();
-                            s
-                        }
-                        _ => {
-                            return Err(ParseError {
-                                kind: ParseErrorKind::Unexpected {
-                                    found: tok_name(&path_tok.kind).into(),
-                                    expected: arg_msg,
-                                },
-                                span: path_tok.span,
-                            })
-                        }
-                    };
-                    let end = self.expect(&TokenKind::RParen, close_paren_msg)?.span;
-                    let _ = macro_name;
-                    let kind = if is_include_bytes {
-                        ExprKind::IncludeBytes { path: arg_str }
-                    } else if is_include_str {
-                        ExprKind::IncludeStr { path: arg_str }
-                    } else {
-                        ExprKind::EnvVar { name: arg_str }
-                    };
-                    return Ok(Expr {
-                        kind,
-                        span: tok.span.merge(end),
-                    });
-                }
                 // Slice 7GEN.5b: if the next tokens are `::[`, leave them
                 // for `parse_postfix` to consume as a turbofish — don't
                 // start a path. A bare `Ident` with the cursor still on
@@ -4581,12 +4507,13 @@ mod tests {
         );
     }
 
-    // ---- v0.0.6 Slice 1A: include_bytes! ----
+    // ---- v0.0.11 Phase 4: `#include_bytes` / `#include_str` ----
 
     #[test]
-    fn include_bytes_macro_produces_include_bytes_node() {
-        let p = parse_src("fn main() -> i32 { let x = include_bytes!(\"foo.bin\"); return 0; }")
-            .unwrap();
+    fn include_bytes_intrinsic_produces_intrinsic_node() {
+        let p =
+            parse_src("fn main() -> i32 { let x = #include_bytes(\"foo.bin\"); return 0; }")
+                .unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!("fn");
         };
@@ -4594,85 +4521,54 @@ mod tests {
             panic!("let");
         };
         match &init.as_ref().unwrap().kind {
-            ExprKind::IncludeBytes { path } => assert_eq!(path, "foo.bin"),
-            other => panic!("expected IncludeBytes, got {other:?}"),
+            ExprKind::Intrinsic { name, args, .. } => {
+                assert_eq!(name, "include_bytes");
+                assert_eq!(args.len(), 1);
+                match &args[0].kind {
+                    ExprKind::StrLit(s) => assert_eq!(s, "foo.bin"),
+                    other => panic!("expected StrLit, got {other:?}"),
+                }
+            }
+            other => panic!("expected Intrinsic, got {other:?}"),
         }
     }
 
     #[test]
-    fn include_bytes_with_non_literal_arg_is_parse_error() {
-        let err = parse_src("fn main() -> i32 { let x = include_bytes!(some_var); return 0; }")
+    fn include_str_intrinsic_produces_intrinsic_node() {
+        let p =
+            parse_src("fn main() -> i32 { let x = #include_str(\"foo.txt\"); return 0; }")
+                .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("fn");
+        };
+        let StmtKind::Let { init, .. } = &f.body.stmts[0].kind else {
+            panic!("let");
+        };
+        match &init.as_ref().unwrap().kind {
+            ExprKind::Intrinsic { name, args, .. } => {
+                assert_eq!(name, "include_str");
+                assert_eq!(args.len(), 1);
+                match &args[0].kind {
+                    ExprKind::StrLit(s) => assert_eq!(s, "foo.txt"),
+                    other => panic!("expected StrLit, got {other:?}"),
+                }
+            }
+            other => panic!("expected Intrinsic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_include_bytes_macro_form_is_parse_error() {
+        // The legacy `include_bytes!("foo.bin")` macro form is no longer
+        // accepted — the `!` after a bare ident is unexpected. Use
+        // `#include_bytes("foo.bin")` instead.
+        let err = parse_src("fn main() -> i32 { let x = include_bytes!(\"foo.bin\"); return 0; }")
             .unwrap_err();
         assert!(
             matches!(err.kind, ParseErrorKind::Unexpected { .. }),
             "expected Unexpected, got {:?}",
             err.kind
         );
-    }
-
-    #[test]
-    fn include_bytes_without_bang_is_regular_call() {
-        // Without the `!`, `include_bytes("foo.bin")` parses as a
-        // normal function call (which sema will reject as undefined).
-        let p = parse_src("fn main() -> i32 { let x = include_bytes(\"foo.bin\"); return 0; }")
-            .unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!("fn");
-        };
-        let StmtKind::Let { init, .. } = &f.body.stmts[0].kind else {
-            panic!("let");
-        };
-        match &init.as_ref().unwrap().kind {
-            ExprKind::Call { .. } => {}
-            other => panic!("expected Call, got {other:?}"),
-        }
-    }
-
-    // ---- v0.0.7 Slice 3.1: include_str! ----
-
-    #[test]
-    fn include_str_macro_produces_include_str_node() {
-        let p = parse_src("fn main() -> i32 { let x = include_str!(\"foo.txt\"); return 0; }")
-            .unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!("fn");
-        };
-        let StmtKind::Let { init, .. } = &f.body.stmts[0].kind else {
-            panic!("let");
-        };
-        match &init.as_ref().unwrap().kind {
-            ExprKind::IncludeStr { path } => assert_eq!(path, "foo.txt"),
-            other => panic!("expected IncludeStr, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn include_str_with_non_literal_arg_is_parse_error() {
-        let err = parse_src("fn main() -> i32 { let x = include_str!(some_var); return 0; }")
-            .unwrap_err();
-        assert!(
-            matches!(err.kind, ParseErrorKind::Unexpected { .. }),
-            "expected Unexpected, got {:?}",
-            err.kind
-        );
-    }
-
-    #[test]
-    fn include_str_without_bang_is_regular_call() {
-        // Without the `!`, `include_str("foo.txt")` parses as a normal
-        // function call (which sema will reject as undefined).
-        let p = parse_src("fn main() -> i32 { let x = include_str(\"foo.txt\"); return 0; }")
-            .unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!("fn");
-        };
-        let StmtKind::Let { init, .. } = &f.body.stmts[0].kind else {
-            panic!("let");
-        };
-        match &init.as_ref().unwrap().kind {
-            ExprKind::Call { .. } => {}
-            other => panic!("expected Call, got {other:?}"),
-        }
     }
 
     // ---- v0.0.9 Phase 4: module-scope const + static ----

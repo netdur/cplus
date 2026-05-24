@@ -156,7 +156,7 @@ pub fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSiz
     // a 48-byte slot, memcpy both MTLSize args in, dispatch, and free.
     // Now the by-value parameters live on the stack and we pass their
     // addresses directly. Net: 0 mallocs per dispatch call.
-    unsafe { objc_msg_dispatch(recv, selector, addr_of(groups), addr_of(per_group)); }
+    unsafe { objc_msg_dispatch(recv, selector, #addr_of(groups), #addr_of(per_group)); }
     return;
 }
 

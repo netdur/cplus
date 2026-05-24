@@ -55,7 +55,7 @@ pub fn collect[T](move source: iterator::Iterator[T]) -> Vec[T] {
 
 // Pre-allocate room for `n` elements (len stays 0).
 pub fn with_capacity[T](n: usize) -> Vec[T] {
-    let bytes: usize = n *% size_of::[T]();
+    let bytes: usize = n *% #size_of::[T]();
     let raw: *u8 = unsafe { malloc(bytes) };
     return Vec[T] { ptr: unsafe { raw as *T }, len: 0 as usize, cap: n };
 }
@@ -68,7 +68,7 @@ impl Vec[T] {
             if new_cap == (0 as usize) {
                 new_cap = 1 as usize;
             }
-            let new_bytes: usize = new_cap *% size_of::[T]();
+            let new_bytes: usize = new_cap *% #size_of::[T]();
             let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
             self.ptr = unsafe { raw as *T };
             self.cap = new_cap;
@@ -90,7 +90,7 @@ impl Vec[T] {
         if required <= self.cap {
             return;
         }
-        let new_bytes: usize = required *% size_of::[T]();
+        let new_bytes: usize = required *% #size_of::[T]();
         let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
         self.ptr = unsafe { raw as *T };
         self.cap = required;
@@ -121,13 +121,13 @@ impl Vec[T] {
             if new_cap == (0 as usize) {
                 new_cap = required;
             }
-            let new_bytes: usize = new_cap *% size_of::[T]();
+            let new_bytes: usize = new_cap *% #size_of::[T]();
             let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
             self.ptr = unsafe { raw as *T };
             self.cap = new_cap;
         }
         let dest: *T = unsafe { self.ptr + self.len };
-        let bytes_to_copy: usize = count *% size_of::[T]();
+        let bytes_to_copy: usize = count *% #size_of::[T]();
         unsafe { memcpy(dest as *u8, src as *u8, bytes_to_copy); }
         self.len = required;
         return;

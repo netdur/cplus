@@ -5084,7 +5084,7 @@ fn phase11_size_of_align_of_demo_runs() {
 
 #[test]
 fn phase11_size_of_inside_generic_fn_runs() {
-    // size_of::[T]() inside a generic fn body — monomorphize must substitute
+    // #size_of::[T]() inside a generic fn body — monomorphize must substitute
     // T to the concrete type via subst_type_ast in the call's type_args, or
     // codegen panics on Ty::Param. This pins that substitution.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -5092,7 +5092,7 @@ fn phase11_size_of_inside_generic_fn_runs() {
     let src = dir.join("size_of_generic.cplus");
     std::fs::write(
         &src,
-        "fn typed_size[T]() -> usize { return size_of::[T](); }\n\
+        "fn typed_size[T]() -> usize { return #size_of::[T](); }\n\
          fn main() -> i32 { let n: usize = typed_size::[i32](); return n as i32; }\n",
     )
     .unwrap();
@@ -5122,7 +5122,7 @@ fn phase11_size_of_no_type_arg_rejected() {
     let src = dir.join("bad_size_of.cplus");
     std::fs::write(
         &src,
-        "fn main() -> i32 { let n: usize = size_of(); return 0; }\n",
+        "fn main() -> i32 { let n: usize = #size_of(); return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -5132,7 +5132,7 @@ fn phase11_size_of_no_type_arg_rejected() {
         .expect("invoke cpc");
     assert!(
         !out.status.success(),
-        "size_of() with no type arg should reject"
+        "#size_of() with no type arg should reject"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -10508,7 +10508,7 @@ fn include_bytes_embeds_file_and_reads_bytes_back() {
         &src,
         "\
 fn main() -> i32 {
-    let p: *[u8; 6] = include_bytes!(\"hello.bin\");
+    let p: *[u8; 6] = #include_bytes(\"hello.bin\");
     let bytes: *u8 = unsafe { p as *u8 };
     let b0: u8 = unsafe { bytes[0 as usize] };
     let b1: u8 = unsafe { bytes[1 as usize] };
@@ -10553,8 +10553,8 @@ fn include_bytes_dedupes_repeated_path() {
         &src,
         "\
 fn main() -> i32 {
-    let p1: *[u8; 3] = include_bytes!(\"a.bin\");
-    let p2: *[u8; 3] = include_bytes!(\"a.bin\");
+    let p1: *[u8; 3] = #include_bytes(\"a.bin\");
+    let p2: *[u8; 3] = #include_bytes(\"a.bin\");
     let b1: *u8 = unsafe { p1 as *u8 };
     let b2: *u8 = unsafe { p2 as *u8 };
     let v1: u8 = unsafe { b1[0 as usize] };
@@ -10605,7 +10605,7 @@ fn include_str_embeds_utf8_file_and_reads_back() {
         &src,
         "\
 fn main() -> i32 {
-    let s: str = include_str!(\"greet.txt\");
+    let s: str = #include_str(\"greet.txt\");
     if str_len(s) != (3 as usize) { return 1 as i32; }
     let p: *u8 = str_ptr(s);
     let b0: u8 = unsafe { p[0 as usize] };
@@ -10648,7 +10648,7 @@ fn include_str_rejects_non_utf8_file_with_e0875() {
         &src,
         "\
 fn main() -> i32 {
-    let s: str = include_str!(\"bad.bin\");
+    let s: str = #include_str(\"bad.bin\");
     return 0 as i32;
 }
 ",
@@ -10683,8 +10683,8 @@ fn include_str_and_include_bytes_share_global() {
         &src,
         "\
 fn main() -> i32 {
-    let s: str = include_str!(\"shared.txt\");
-    let b: *[u8; 3] = include_bytes!(\"shared.txt\");
+    let s: str = #include_str(\"shared.txt\");
+    let b: *[u8; 3] = #include_bytes(\"shared.txt\");
     if str_len(s) != (3 as usize) { return 1 as i32; }
     return 0 as i32;
 }
@@ -14613,7 +14613,7 @@ fn env_macro_round_trip_runs() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n\
-             let g: str = env!(\"CPC_E2E_GREETING\");\n\
+             let g: str = #env(\"CPC_E2E_GREETING\");\n\
              // Exit code = length of the env-var value (14 chars for\n\
              // `hello-from-env`). Confirms the str's len field was wired up.\n\
              return str_len(g) as i32;\n\
@@ -14647,7 +14647,7 @@ fn env_macro_missing_var_errors_e0876() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n\
-             let _x: str = env!(\"CPC_E2E_DEFINITELY_MISSING_VAR_PHASE4\");\n\
+             let _x: str = #env(\"CPC_E2E_DEFINITELY_MISSING_VAR_PHASE4\");\n\
              return 0;\n\
          }\n",
     )
@@ -15299,7 +15299,7 @@ fn simd_mask_compare_select_runs() {
     );
 }
 
-// ---- addr_of(x) intrinsic: takes the address of a stack local as
+// ---- #addr_of(x) intrinsic: takes the address of a stack local as
 // `*T` with zero runtime cost — the alloca pointer is returned
 // directly. Closes the "no address-of-local" gap that forced
 // vendor/uuid, vendor/log, and vendor/metal to malloc per call. ----
@@ -15307,7 +15307,7 @@ fn simd_mask_compare_select_runs() {
 #[test]
 fn addr_of_round_trips_through_libc_time() {
     // The canonical addr_of use case: pass a stack local's address to
-    // a libc fn that writes through the pointer. `time(addr_of(t))`
+    // a libc fn that writes through the pointer. `time(#addr_of(t))`
     // both writes `t` and returns the same value — assert they match
     // to prove the addr_of pointer actually aliased the stack slot.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -15320,7 +15320,7 @@ fn addr_of_round_trips_through_libc_time() {
          \n\
          fn main() -> i32 {\n\
              let mut t: i64 = 0;\n\
-             let returned: i64 = unsafe { time(addr_of(t)) };\n\
+             let returned: i64 = unsafe { time(#addr_of(t)) };\n\
              if t == returned { return 0; }\n\
              return 1;\n\
          }\n",
@@ -15337,7 +15337,7 @@ fn addr_of_round_trips_through_libc_time() {
     let out = Command::new(&bin).output().expect("run produced binary");
     assert!(
         out.status.success(),
-        "time(addr_of(t)) should write t and return the same value; \
+        "time(#addr_of(t)) should write t and return the same value; \
          exited {:?}",
         out.status
     );
@@ -15345,8 +15345,8 @@ fn addr_of_round_trips_through_libc_time() {
 
 #[test]
 fn addr_of_emits_no_alloca_or_load_extras() {
-    // Pin codegen: `addr_of(x)` reuses the existing local alloca with
-    // no GEP, no load, no extra store. The IR for `time(addr_of(t))`
+    // Pin codegen: `#addr_of(x)` reuses the existing local alloca with
+    // no GEP, no load, no extra store. The IR for `time(#addr_of(t))`
     // should reference `%t` directly as the argument to `@time`.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
@@ -15356,7 +15356,7 @@ fn addr_of_emits_no_alloca_or_load_extras() {
         "extern fn time(t: *i64) -> i64;\n\
          fn main() -> i32 {\n\
              let mut t: i64 = 0;\n\
-             let _r: i64 = unsafe { time(addr_of(t)) };\n\
+             let _r: i64 = unsafe { time(#addr_of(t)) };\n\
              return 0;\n\
          }\n",
     )
@@ -15496,7 +15496,7 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          extern fn malloc(n: usize) -> *u8;\n\
          \n\
          fn place[T](move val: T) -> *T {\n\
-             let raw: *u8 = unsafe { malloc(size_of::[T]()) };\n\
+             let raw: *u8 = unsafe { malloc(#size_of::[T]()) };\n\
              let p: *T = unsafe { raw as *T };\n\
              unsafe { *p = val; }\n\
              return p;\n\

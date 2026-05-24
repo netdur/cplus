@@ -94,7 +94,7 @@ pub fn new[T]() -> Channel[T] {
     unsafe { *cap_ptr = initial_capacity(); }
     unsafe { *closed_ptr = 0 as u64; }
     // allocate the element buffer
-    let elem_bytes: usize = size_of::[T]();
+    let elem_bytes: usize = #size_of::[T]();
     let buf_bytes: usize = initial_capacity() *% elem_bytes;
     let buf_raw: *u8 = unsafe { malloc(buf_bytes) };
     let buf_ptr_slot: **u8 = unsafe { (raw + off_buffer()) as **u8 };
@@ -125,7 +125,7 @@ impl Channel[T] {
         let mut tail: usize = unsafe { *tail_ptr };
         let mut cap: usize = unsafe { *cap_ptr };
         let mut buf: *u8 = unsafe { *buf_ptr_slot };
-        let elem_bytes: usize = size_of::[T]();
+        let elem_bytes: usize = #size_of::[T]();
         // If tail reached capacity, either shift down or grow.
         if tail == cap {
             if head > (0 as usize) {
@@ -172,7 +172,7 @@ impl Channel[T] {
             let tail: usize = unsafe { *tail_ptr };
             if head < tail {
                 let buf: *u8 = unsafe { *buf_ptr_slot };
-                let elem_bytes: usize = size_of::[T]();
+                let elem_bytes: usize = #size_of::[T]();
                 let slot: *T = unsafe { (buf + (head *% elem_bytes)) as *T };
                 let v: T = unsafe { *slot };
                 unsafe { *head_ptr = head +% (1 as usize); }
