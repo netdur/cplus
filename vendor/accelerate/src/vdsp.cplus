@@ -1,0 +1,245 @@
+// vendor/accelerate/src/vdsp.cplus — Apple's vDSP signal-processing
+// primitives. Element-wise vector arithmetic + simple reductions,
+// hand-tuned for whatever SIMD the host CPU has (NEON on Apple
+// Silicon, AVX-512 on Intel Macs).
+//
+// Naming mirrors `<Accelerate/vDSP.h>` directly. The `vDSP_` prefix
+// is part of the C symbol; we keep it.
+
+// vDSP types per Apple's typedefs:
+//   typedef long      vDSP_Stride;   // signed
+//   typedef vDSP_uint vDSP_Length;   // unsigned long
+// On aarch64-darwin: `long` is 64-bit signed → i64; vDSP_Length is u64.
+
+// ---- extern declarations (the raw C ABI) ----
+
+// Element-wise vector operations.
+extern fn vDSP_vadd(
+    a: *f32, stride_a: i64,
+    b: *f32, stride_b: i64,
+    c: *f32, stride_c: i64,
+    n: u64,
+);
+extern fn vDSP_vaddD(
+    a: *f64, stride_a: i64,
+    b: *f64, stride_b: i64,
+    c: *f64, stride_c: i64,
+    n: u64,
+);
+extern fn vDSP_vmul(
+    a: *f32, stride_a: i64,
+    b: *f32, stride_b: i64,
+    c: *f32, stride_c: i64,
+    n: u64,
+);
+extern fn vDSP_vmulD(
+    a: *f64, stride_a: i64,
+    b: *f64, stride_b: i64,
+    c: *f64, stride_c: i64,
+    n: u64,
+);
+extern fn vDSP_vsmul(
+    a: *f32, stride_a: i64,
+    s: *f32,
+    c: *f32, stride_c: i64,
+    n: u64,
+);
+extern fn vDSP_vsmulD(
+    a: *f64, stride_a: i64,
+    s: *f64,
+    c: *f64, stride_c: i64,
+    n: u64,
+);
+
+// Reductions: dot product, mean, max.
+extern fn vDSP_dotpr(
+    a: *f32, stride_a: i64,
+    b: *f32, stride_b: i64,
+    c: *f32,
+    n: u64,
+);
+extern fn vDSP_dotprD(
+    a: *f64, stride_a: i64,
+    b: *f64, stride_b: i64,
+    c: *f64,
+    n: u64,
+);
+extern fn vDSP_meanv(a: *f32, stride_a: i64, c: *f32, n: u64);
+extern fn vDSP_meanvD(a: *f64, stride_a: i64, c: *f64, n: u64);
+extern fn vDSP_maxv(a: *f32, stride_a: i64, c: *f32, n: u64);
+extern fn vDSP_maxvD(a: *f64, stride_a: i64, c: *f64, n: u64);
+
+// ---- typed C+ wrappers ----
+//
+// Naming convention: drop the `vDSP_` prefix (the module qualifier
+// `vdsp::` provides the namespace). Keep the suffix-D distinction for
+// f64 — matches Apple's convention.
+
+pub fn vadd(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, sc: i64, n: u64) {
+    unsafe { vDSP_vadd(a, sa, b, sb, c, sc, n); }
+    return;
+}
+
+pub fn vadd_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, sc: i64, n: u64) {
+    unsafe { vDSP_vaddD(a, sa, b, sb, c, sc, n); }
+    return;
+}
+
+pub fn vmul(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, sc: i64, n: u64) {
+    unsafe { vDSP_vmul(a, sa, b, sb, c, sc, n); }
+    return;
+}
+
+pub fn vmul_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, sc: i64, n: u64) {
+    unsafe { vDSP_vmulD(a, sa, b, sb, c, sc, n); }
+    return;
+}
+
+pub fn vsmul(a: *f32, sa: i64, s: *f32, c: *f32, sc: i64, n: u64) {
+    unsafe { vDSP_vsmul(a, sa, s, c, sc, n); }
+    return;
+}
+
+pub fn vsmul_d(a: *f64, sa: i64, s: *f64, c: *f64, sc: i64, n: u64) {
+    unsafe { vDSP_vsmulD(a, sa, s, c, sc, n); }
+    return;
+}
+
+pub fn dotpr(a: *f32, sa: i64, b: *f32, sb: i64, c: *f32, n: u64) {
+    unsafe { vDSP_dotpr(a, sa, b, sb, c, n); }
+    return;
+}
+
+pub fn dotpr_d(a: *f64, sa: i64, b: *f64, sb: i64, c: *f64, n: u64) {
+    unsafe { vDSP_dotprD(a, sa, b, sb, c, n); }
+    return;
+}
+
+pub fn meanv(a: *f32, sa: i64, c: *f32, n: u64) {
+    unsafe { vDSP_meanv(a, sa, c, n); }
+    return;
+}
+
+pub fn meanv_d(a: *f64, sa: i64, c: *f64, n: u64) {
+    unsafe { vDSP_meanvD(a, sa, c, n); }
+    return;
+}
+
+pub fn maxv(a: *f32, sa: i64, c: *f32, n: u64) {
+    unsafe { vDSP_maxv(a, sa, c, n); }
+    return;
+}
+
+pub fn maxv_d(a: *f64, sa: i64, c: *f64, n: u64) {
+    unsafe { vDSP_maxvD(a, sa, c, n); }
+    return;
+}
+
+// ---------------- Unit tests ----------------
+
+#[test]
+fn test_vadd_basic() {
+    let a: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
+    let b: [f32; 4] = [10.0f32, 20.0f32, 30.0f32, 40.0f32];
+    let mut c: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    vadd(
+        unsafe { addr_of(a) as *f32 }, 1 as i64,
+        unsafe { addr_of(b) as *f32 }, 1 as i64,
+        unsafe { addr_of(c) as *f32 }, 1 as i64,
+        4 as u64,
+    );
+    assert c[0] == 11.0f32;
+    assert c[1] == 22.0f32;
+    assert c[2] == 33.0f32;
+    assert c[3] == 44.0f32;
+}
+
+#[test]
+fn test_vmul_basic() {
+    let a: [f32; 3] = [2.0f32, 3.0f32, 4.0f32];
+    let b: [f32; 3] = [5.0f32, 6.0f32, 7.0f32];
+    let mut c: [f32; 3] = [0.0f32, 0.0f32, 0.0f32];
+    vmul(
+        unsafe { addr_of(a) as *f32 }, 1 as i64,
+        unsafe { addr_of(b) as *f32 }, 1 as i64,
+        unsafe { addr_of(c) as *f32 }, 1 as i64,
+        3 as u64,
+    );
+    assert c[0] == 10.0f32;
+    assert c[1] == 18.0f32;
+    assert c[2] == 28.0f32;
+}
+
+#[test]
+fn test_vsmul_scales_by_constant() {
+    let a: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
+    let s: [f32; 1] = [10.0f32];
+    let mut c: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    vsmul(
+        unsafe { addr_of(a) as *f32 }, 1 as i64,
+        unsafe { addr_of(s) as *f32 },
+        unsafe { addr_of(c) as *f32 }, 1 as i64,
+        4 as u64,
+    );
+    assert c[0] == 10.0f32;
+    assert c[3] == 40.0f32;
+}
+
+#[test]
+fn test_dotpr_matches_manual_sum() {
+    let a: [f32; 3] = [1.0f32, 2.0f32, 3.0f32];
+    let b: [f32; 3] = [4.0f32, 5.0f32, 6.0f32];
+    let mut out: [f32; 1] = [0.0f32];
+    dotpr(
+        unsafe { addr_of(a) as *f32 }, 1 as i64,
+        unsafe { addr_of(b) as *f32 }, 1 as i64,
+        unsafe { addr_of(out) as *f32 },
+        3 as u64,
+    );
+    assert out[0] == 32.0f32; // 4 + 10 + 18
+}
+
+#[test]
+fn test_meanv_basic() {
+    let a: [f32; 4] = [2.0f32, 4.0f32, 6.0f32, 8.0f32];
+    let mut out: [f32; 1] = [0.0f32];
+    meanv(unsafe { addr_of(a) as *f32 }, 1 as i64, unsafe { addr_of(out) as *f32 }, 4 as u64);
+    assert out[0] == 5.0f32;
+}
+
+#[test]
+fn test_maxv_basic() {
+    let a: [f32; 5] = [3.0f32, 1.0f32, 4.0f32, 1.0f32, 5.0f32];
+    let mut out: [f32; 1] = [0.0f32];
+    maxv(unsafe { addr_of(a) as *f32 }, 1 as i64, unsafe { addr_of(out) as *f32 }, 5 as u64);
+    assert out[0] == 5.0f32;
+}
+
+#[test]
+fn test_vadd_d_basic() {
+    let a: [f64; 2] = [1.5f64, 2.5f64];
+    let b: [f64; 2] = [10.5f64, 20.5f64];
+    let mut c: [f64; 2] = [0.0f64, 0.0f64];
+    vadd_d(
+        unsafe { addr_of(a) as *f64 }, 1 as i64,
+        unsafe { addr_of(b) as *f64 }, 1 as i64,
+        unsafe { addr_of(c) as *f64 }, 1 as i64,
+        2 as u64,
+    );
+    assert c[0] == 12.0f64;
+    assert c[1] == 23.0f64;
+}
+
+#[test]
+fn test_dotpr_d_matches_manual() {
+    let a: [f64; 4] = [1.0f64, 2.0f64, 3.0f64, 4.0f64];
+    let b: [f64; 4] = [2.0f64, 2.0f64, 2.0f64, 2.0f64];
+    let mut out: [f64; 1] = [0.0f64];
+    dotpr_d(
+        unsafe { addr_of(a) as *f64 }, 1 as i64,
+        unsafe { addr_of(b) as *f64 }, 1 as i64,
+        unsafe { addr_of(out) as *f64 },
+        4 as u64,
+    );
+    assert out[0] == 20.0f64;
+}

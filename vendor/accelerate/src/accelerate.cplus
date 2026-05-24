@@ -1,0 +1,14 @@
+// vendor/accelerate/src/accelerate.cplus — facade for the Apple
+// Accelerate framework bindings. Re-exports submodule types so
+// consumers can `import "accelerate/accelerate" as accel;` and get
+// everything via one alias.
+//
+// Position (docs/GPU.md): the CPU-SIMD fallback when no GPU is
+// available, or when the problem is small enough that host↔device
+// transfer would dominate.
+
+import "./cblas" as cblas;
+import "./vdsp" as vdsp;
+
+pub type Order = cblas::Order;
+pub type Transpose = cblas::Transpose;
