@@ -269,6 +269,81 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn unit_type_in_turbofish_runtime_g026() {
+    // v0.0.12 G-026: `()` parses as the unit type in turbofish slots
+    // and explicit return positions. Drives a generic fn through both
+    // and confirms it executes.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("unit_type_g026.cplus");
+    std::fs::write(
+        &src,
+        "fn run[T]() -> () { return; }\n\
+         fn main() -> i32 {\n\
+             run::[i32]();\n\
+             run::[()]();\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("unit_type_g026");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "unit-type turbofish must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success());
+}
+
+#[test]
+fn parse_error_in_entry_file_has_real_span_g026() {
+    // v0.0.12 G-026 (span half): parse errors on the entry file in
+    // project mode previously rendered with a `1:1` fallback span.
+    // The fix registers each file's source into the loader BEFORE
+    // attempting parse, so the diagnostic gets the real span back.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    let stdlib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor")
+        .join("stdlib");
+    std::os::unix::fs::symlink(&stdlib, dir.join("vendor").join("stdlib")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"sp\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"sp\"\npath = \"src/main.cplus\"\n\
+         [dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\nfn main() -> i32 {\n    let x: ( = 5;\n    return 0;\n}\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "bad syntax must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("4:14") || stderr.contains("main.cplus:4:"),
+        "expected real span on line 4, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("main.cplus:1:1"),
+        "regression — span fell back to 1:1: {stderr}"
+    );
+}
+
+#[test]
 fn is_null_methods_runtime_g024() {
     // v0.0.12 G-024: `is_null()` / `is_not_null()` are builtin methods
     // on raw pointers; lower to a single `icmp eq/ne ptr %p, null`.

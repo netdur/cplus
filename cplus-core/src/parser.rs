@@ -1248,8 +1248,10 @@ impl Parser {
             // never called at an item-declaration site (item parsing handles
             // `fn name(...)` via its own path).
             // v0.0.5 Phase 3 Slice 3B: tuple type `(T1, T2, ...)`. The
-            // unit type `()` is spelled `Path("()")` elsewhere in the
-            // codebase; we only enter the LParen branch for arity ≥ 2.
+            // unit type `()` is parsed here too (v0.0.12 G-026) and
+            // produced as `Path("()")`, matching the canonical encoding
+            // used elsewhere (Ty::Unit's name() is "()"). 1-tuples
+            // `(T)` are not a thing — write `T` directly.
             TokenKind::LParen => {
                 let start = self.bump().span;
                 let mut elems: Vec<Type> = Vec::new();
@@ -1262,6 +1264,15 @@ impl Parser {
                 let end = self
                     .expect(&TokenKind::RParen, "`)` (tuple type element list)")?
                     .span;
+                // `()` — the unit type. Round-trips as `Path("()")` so
+                // sema's resolve_type can recognize it without a new
+                // TypeKind variant.
+                if elems.is_empty() {
+                    return Ok(Type {
+                        kind: TypeKind::Path("()".to_string()),
+                        span: start.merge(end),
+                    });
+                }
                 if elems.len() < 2 {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
@@ -4508,6 +4519,31 @@ mod tests {
     }
 
     // ---- v0.0.11 Phase 4: `#include_bytes` / `#include_str` ----
+
+    // v0.0.12 G-026: `()` as the unit type — parsed as `Path("()")`
+    // matching the canonical name `Ty::Unit` renders to. Previously
+    // hit the arity-≥2 tuple check and errored.
+
+    #[test]
+    fn parses_unit_type_as_fn_return_g026() {
+        let p = parse_src("fn f() -> () { return; }\nfn main() -> i32 { return 0; }")
+            .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!("fn"); };
+        let rt = f.return_type.as_ref().expect("explicit -> () return type");
+        match &rt.kind {
+            TypeKind::Path(name) => assert_eq!(name, "()"),
+            other => panic!("expected Path(\"()\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_unit_in_fnptr_return_g026() {
+        let p = parse_src("fn main() -> i32 { let _f: fn(i32) -> () = main_helper; return 0; }\nfn main_helper(_x: i32) { return; }")
+            .unwrap();
+        // Just assert it parses; deeper shape check would chase
+        // postfix-coercion sema noise we're not exercising here.
+        assert!(!p.items.is_empty());
+    }
 
     #[test]
     fn include_bytes_intrinsic_produces_intrinsic_node() {

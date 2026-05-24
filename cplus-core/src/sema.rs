@@ -9266,6 +9266,12 @@ impl SemaCx<'_> {
             "bool" => Ty::Bool,
             "str" => Ty::Str,
             "string" => Ty::String,
+            // v0.0.12 G-026: `()` as a type — the unit type. Parser
+            // produces `Path("()")` for source-level `()` (in turbofish
+            // type args, fn-pointer return types, etc.) so it resolves
+            // through this name path. `Ty::Unit` is the same unit type
+            // implicit `fn f() { ... }` returns.
+            "()" => Ty::Unit,
             // v0.0.6 Slice 1B: SIMD type names. Each entry here must also
             // appear in `simd_ty_from_name` (free fn below) for path
             // dispatch, and in codegen's `simd_ty_from_name` mirror.
@@ -11491,6 +11497,22 @@ mod tests {
                  return 1;\n\
              }",
         );
+    }
+
+    // v0.0.12 G-026: `()` resolves to `Ty::Unit` and round-trips
+    // through generic instantiation (e.g. `spawn::[()]`).
+
+    #[test]
+    fn unit_type_as_turbofish_arg_clean_g026() {
+        assert_clean(
+            "fn id[T]() -> () { return; }\n\
+             fn main() -> i32 { id::[()](); return 0; }",
+        );
+    }
+
+    #[test]
+    fn unit_type_as_explicit_return_clean_g026() {
+        assert_clean("fn f() -> () { return; }\nfn main() -> i32 { f(); return 0; }");
     }
 
     #[test]

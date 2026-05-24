@@ -378,11 +378,16 @@ pub struct LoadFailure {
 
 impl LoadFailure {
     fn new(error: ResolveError, loader: &Loader) -> Self {
-        let sources = loader
-            .files
-            .iter()
-            .map(|(_, u)| (u.canonical_path.clone(), u.source.clone()))
-            .collect();
+        // Start with raw_sources (every file the loader has *read*, even if
+        // lex/parse failed) so the failing file's source is always
+        // available for span rendering. Then overlay loader.files (which
+        // for successfully-parsed files carries the post-doctest source
+        // that matches the spans the parser produced).
+        let mut sources: std::collections::BTreeMap<PathBuf, String> =
+            loader.raw_sources.clone();
+        for (_, u) in &loader.files {
+            sources.insert(u.canonical_path.clone(), u.source.clone());
+        }
         Self { error, sources }
     }
 
@@ -762,6 +767,11 @@ pub struct LoadedProject {
 struct Loader {
     manifest_root: PathBuf,
     files: BTreeMap<String, FileUnit>,       // file_id → unit
+    /// v0.0.12 G-026: per-file source snapshot, populated the moment a
+    /// file is read — *before* lex/parse. If lex or parse fails, the
+    /// LoadFailure can still attach a real source so the diagnostic
+    /// renders a proper line/column span instead of falling back to 1:1.
+    raw_sources: BTreeMap<PathBuf, String>,
     by_canonical: BTreeMap<PathBuf, String>, // canonical_path → file_id
     edges: BTreeMap<String, Vec<String>>,    // file_id → imported file_ids
     /// Phase 2 Slice 2B: declared dependencies (consumer's `[dependencies]`).
@@ -791,6 +801,7 @@ impl Loader {
         Self {
             manifest_root,
             files: BTreeMap::new(),
+            raw_sources: BTreeMap::new(),
             by_canonical: BTreeMap::new(),
             edges: BTreeMap::new(),
             deps,
@@ -847,6 +858,12 @@ impl Loader {
         // and participate in `attrs::discover_tests` later. Files without
         // doctest fences are unchanged.
         let source = crate::doctest::extract(&raw_source);
+        // v0.0.12 G-026: register the source BEFORE lex/parse so a failure
+        // in either step lands in LoadFailure with a real source attached.
+        // Without this the diagnostic falls back to a 1:1 span when the
+        // first parse error hits the entry file.
+        self.raw_sources
+            .insert(canonical.clone(), source.clone());
         let tokens = crate::lexer::tokenize(&source).map_err(|e| ResolveError::Lex {
             path: canonical.clone(),
             source: e,

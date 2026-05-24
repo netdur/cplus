@@ -2951,6 +2951,10 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         "bool" => Ty::Bool,
         "str" => Ty::Str,
         "string" => Ty::String,
+        // v0.0.12 G-026: `()` is the unit type. Sema's `resolve_type`
+        // has the same arm; codegen mirrors it because `collect_sigs`
+        // walks the raw AST through this helper, not through sema.
+        "()" => Ty::Unit,
         // v0.0.6 Slice 1B: SIMD type names. Mirror sema's resolve_type.
         "f32x4" => Ty::Simd {
             elem: Box::new(Ty::F32),
@@ -7265,6 +7269,17 @@ impl<'a> FnState<'a> {
                         // the caller's sret slot.
                         if let ExprKind::Ident(name) = &e.kind {
                             self.mark_moved(name);
+                        }
+                        // v0.0.12 G-026: `return CALL();` where CALL returns
+                        // `()` (e.g. a generic body monomorphized with O=())
+                        // produces no SSA value. Fall through to the Unit
+                        // return path — emit drops, then `ret void`.
+                        if v.is_none() && matches!(ret_ty, Ty::Unit) {
+                            self.emit_all_scope_exits();
+                            if !self.terminated {
+                                self.emit_terminator("ret void");
+                            }
+                            return;
                         }
                         let raw = v.expect("non-Unit return value").0;
                         // v0.0.5 Slice 1A: auto-clone-on-return-of-borrowed.

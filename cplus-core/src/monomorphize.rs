@@ -2832,6 +2832,11 @@ fn rewrite_alias_ident(ident: &mut Ident, aliases: &std::collections::BTreeMap<S
 /// AST shapes that don't appear inside generic args today.
 fn mangle_type_ast_arg(t: &Type) -> String {
     match &t.kind {
+        // v0.0.12 G-026: `()` source-spelled unit type. Sema's `mangle_ty`
+        // renders Ty::Unit as "unit"; the AST-side mangler has to match
+        // that name so the struct-lookup map hits when the same type is
+        // reached via the AST instead of via Ty.
+        TypeKind::Path(name) if name == "()" => "unit".to_string(),
         TypeKind::Path(name) => name.clone(),
         TypeKind::Array { elem, len } => format!("arr{}_{}", len, mangle_type_ast_arg(elem)),
         TypeKind::Borrowed { inner, .. } => mangle_type_ast_arg(inner),
