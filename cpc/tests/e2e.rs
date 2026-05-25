@@ -716,6 +716,94 @@ fn extern_struct_return_sret_cross_language_g027() {
 }
 
 #[test]
+fn extern_struct_param_abi_cross_language_g034() {
+    // v0.0.12 G-034 (llama.cplus G-033): call-site mirror of G-027 on
+    // the param side. cpc's *declaration* of an extern fn taking a
+    // struct-by-value param classified it correctly per the AArch64-
+    // Darwin C ABI (≤8B → coerce i64, ≤16B → coerce [2 x i64], >16B →
+    // ptr indirect). The *call site* passed the raw `%T` aggregate
+    // instead, silently mismatching → SIGSEGV on the first call.
+    //
+    // Drive all three size buckets through one cross-language binary.
+    // Exit 0 means the ABI agrees end-to-end for each. Pre-fix:
+    // SIGSEGV on the first call (exit 139).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let c_src = dir.join("c_side.c");
+    let c_obj = dir.join("c_side.o");
+    let cplus_src = dir.join("main.cplus");
+    let ll = dir.join("main.ll");
+    let bin = dir.join("g034");
+    std::fs::write(
+        &c_src,
+        "#include <stdbool.h>\n\
+         #include <stdint.h>\n\
+         #include <stddef.h>\n\
+         struct S8  { int64_t a; };\n\
+         struct S16 { int64_t a; int64_t b; };\n\
+         struct S24 { size_t  a; void *  b; bool    c; };\n\
+         int64_t take_s8(struct S8 s)   { return s.a; }\n\
+         int64_t take_s16(struct S16 s) { return s.a * 10 + s.b; }\n\
+         int64_t take_s24(struct S24 s) { return (int64_t)s.a + (s.c ? 1000 : 0); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &cplus_src,
+        "#[repr(C)]\n\
+         struct S8 { a: i64 }\n\
+         #[repr(C)]\n\
+         struct S16 { a: i64, b: i64 }\n\
+         #[repr(C)]\n\
+         struct S24 { a: usize, b: *u8, c: bool }\n\
+         extern fn take_s8(s: S8) -> i64;\n\
+         extern fn take_s16(s: S16) -> i64;\n\
+         extern fn take_s24(s: S24) -> i64;\n\
+         fn main() -> i32 {\n\
+             let v8: S8 = S8 { a: 1 as i64 };\n\
+             let r8: i64 = unsafe { take_s8(v8) };\n\
+             if r8 != (1 as i64) { return 1; }\n\
+             let v16: S16 = S16 { a: 1 as i64, b: 2 as i64 };\n\
+             let r16: i64 = unsafe { take_s16(v16) };\n\
+             if r16 != (12 as i64) { return 2; }\n\
+             let v24: S24 = S24 { a: 1 as usize, b: unsafe { 0 as *u8 }, c: true };\n\
+             let r24: i64 = unsafe { take_s24(v24) };\n\
+             if r24 != (1001 as i64) { return 3; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let clang_c = Command::new("clang")
+        .args(["-c", "-o"])
+        .arg(&c_obj)
+        .arg(&c_src)
+        .status()
+        .expect("invoke clang for C side");
+    assert!(clang_c.success(), "clang -c failed for C side");
+    let ll_out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&cplus_src)
+        .output()
+        .expect("invoke cpc --emit-ll");
+    assert!(ll_out.status.success(), "cpc --emit-ll failed");
+    std::fs::write(&ll, &ll_out.stdout).unwrap();
+    let link = Command::new("clang")
+        .arg("-Wno-override-module")
+        .arg(&ll)
+        .arg(&c_obj)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke clang to link");
+    assert!(link.success(), "clang link failed");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?} (ABI regression — call-site struct-by-value coercion lost?)",
+        run.status
+    );
+}
+
+#[test]
 fn unit_type_in_turbofish_runtime_g026() {
     // v0.0.12 G-026: `()` parses as the unit type in turbofish slots
     // and explicit return positions. Drives a generic fn through both

@@ -10070,6 +10070,66 @@ impl<'a> FnState<'a> {
                 };
                 arg_vals.push((addr, ty_str));
             } else {
+                // v0.0.12 G-034 (llama.cplus G-033): mirror G-027 on the
+                // param side. For extern imports, struct-by-value args must
+                // honor the AArch64-Darwin / x86_64-sysv C ABI just like
+                // the declaration. The import-decl path classifies via
+                // `classify_c_abi` (≤8B → Coerce i64, ≤16B → Coerce
+                // [2 x i64], >16B → Indirect ptr); the call site previously
+                // passed the raw `%T` aggregate, silently mismatching the
+                // callee's coerced/indirect signature → SIGSEGV on the
+                // first real call.
+                if sig.is_extern {
+                    match classify_c_abi(pty, self.types) {
+                        CAbiClass::Coerce { llvm_ty, size, align } => {
+                            let (v, _) = self.gen_expr(a).expect("call arg is a value");
+                            let pty_lty = self.lty(pty);
+                            let slot = self.alloca_named_raw("arg.coerce", &llvm_ty, align);
+                            // Store the struct verbatim, then reload through
+                            // the coerced LLVM type. The alloca was sized
+                            // for the coerced type (≥ struct size), so
+                            // store/load slop falls within the slot.
+                            let (_, struct_al) = static_layout(pty, self.types)
+                                .unwrap_or((size, align));
+                            self.emit(&format!(
+                                "store {pty_lty} {v}, ptr {slot}, align {struct_al}"
+                            ));
+                            let coerced = self.next_tmp();
+                            self.emit(&format!(
+                                "{coerced} = load {llvm_ty}, ptr {slot}, align {align}"
+                            ));
+                            arg_vals.push((coerced, llvm_ty));
+                            if *move_flag {
+                                if let ExprKind::Ident(name) = &a.kind {
+                                    self.mark_moved(name);
+                                }
+                            }
+                            continue;
+                        }
+                        CAbiClass::Indirect => {
+                            let (v, _) = self.gen_expr(a).expect("call arg is a value");
+                            let pty_lty = self.lty(pty);
+                            let (_, al) = static_layout(pty, self.types)
+                                .expect("indirect arg has layout");
+                            let slot = self.alloca_anon(pty.clone());
+                            self.emit(&format!(
+                                "store {pty_lty} {v}, ptr {slot}, align {al}"
+                            ));
+                            // aarch64-darwin doesn't use `byval` here (the
+                            // caller-allocated slot is implicitly shared);
+                            // x86_64-sysv would — matching the import-decl
+                            // side which mirrors the same convention.
+                            arg_vals.push((slot, "ptr".to_string()));
+                            if *move_flag {
+                                if let ExprKind::Ident(name) = &a.kind {
+                                    self.mark_moved(name);
+                                }
+                            }
+                            continue;
+                        }
+                        CAbiClass::Direct => {}
+                    }
+                }
                 let (v, _) = self.gen_expr(a).expect("call arg is a value");
                 // v0.0.8 post-bench-gap: mirror `restrict *T` at the
                 // scalar-arg call site so it matches the callee's
@@ -16008,6 +16068,82 @@ mod tests {
         assert!(
             ir.contains("call void @make_str(ptr "),
             "extern fn returning 24B aggregate must call with sret slot, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn extern_fn_taking_8b_struct_coerces_to_i64_g034() {
+        // v0.0.12 G-034 (llama.cplus G-033): ≤8B struct-by-value param to
+        // an extern import must be coerced to i64 at the call site,
+        // matching the declaration. Pre-fix: passed raw `%T` aggregate.
+        let ir = gen_src(
+            "#[repr(C)] struct S8 { a: i64 }\n\
+             extern fn take_s8(s: S8) -> i64;\n\
+             fn main() -> i32 {\n\
+                 let v: S8 = S8 { a: 1 as i64 };\n\
+                 let _r: i64 = unsafe { take_s8(v) };\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(
+            ir.contains("declare i64 @take_s8(i64)"),
+            "≤8B struct param must declare as i64, got:\n{ir}"
+        );
+        assert!(
+            ir.contains("= call i64 @take_s8(i64 "),
+            "≤8B struct call site must pass i64 (coerced), not %S8, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn extern_fn_taking_16b_struct_coerces_to_array_g034() {
+        // v0.0.12 G-034: 9..16B struct → coerce to `[2 x i64]` on
+        // aarch64-darwin (or `{ i64, i64 }` on x86_64-sysv).
+        let ir = gen_src(
+            "#[repr(C)] struct S16 { a: i64, b: i64 }\n\
+             extern fn take_s16(s: S16) -> i64;\n\
+             fn main() -> i32 {\n\
+                 let v: S16 = S16 { a: 1 as i64, b: 2 as i64 };\n\
+                 let _r: i64 = unsafe { take_s16(v) };\n\
+                 return 0;\n\
+             }",
+        );
+        let coerced = if cfg!(target_arch = "x86_64") {
+            "{ i64, i64 }"
+        } else {
+            "[2 x i64]"
+        };
+        assert!(
+            ir.contains(&format!("declare i64 @take_s16({coerced})")),
+            "16B struct param must declare as {coerced}, got:\n{ir}"
+        );
+        assert!(
+            ir.contains(&format!("= call i64 @take_s16({coerced} ")),
+            "16B struct call site must pass {coerced} (coerced), not %S16, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn extern_fn_taking_large_struct_passes_indirect_g034() {
+        // v0.0.12 G-034: >16B struct → indirect (bare ptr) on both
+        // aarch64-darwin and x86_64-sysv. The call site allocates the
+        // struct on the caller's frame and passes its address.
+        let ir = gen_src(
+            "#[repr(C)] struct S24 { a: i64, b: i64, c: i64 }\n\
+             extern fn take_s24(s: S24) -> i64;\n\
+             fn main() -> i32 {\n\
+                 let v: S24 = S24 { a: 1 as i64, b: 2 as i64, c: 3 as i64 };\n\
+                 let _r: i64 = unsafe { take_s24(v) };\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(
+            ir.contains("declare i64 @take_s24(ptr)"),
+            ">16B struct param must declare as ptr (indirect), got:\n{ir}"
+        );
+        assert!(
+            ir.contains("= call i64 @take_s24(ptr "),
+            ">16B struct call site must pass ptr to caller-alloca'd slot, got:\n{ir}"
         );
     }
 
