@@ -269,6 +269,88 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn zero_initialized_static_aggregate_cross_lang_g033() {
+    // v0.0.12 G-033 (llama.cplus G-032): cpc-defined aggregate globals
+    // initialized with `#zero::[T]()` link cleanly into a C TU that
+    // declares them `extern T name;`. Validates the flip-ownership
+    // story end-to-end for arrays + #[repr(C)] structs: C reads from
+    // and writes to cpc-owned BSS storage, cpc reads the C-side
+    // writes back through the same symbol.
+    //
+    // Coincidentally also exercises a regression-prone codegen
+    // ordering bug — pre-fix the struct type was declared *after* the
+    // static that used it as a zeroinitializer operand, and clang
+    // rejected it with "invalid type for null constant".
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let cplus_src = dir.join("g033.cplus");
+    let c_src = dir.join("c_user.c");
+    let cplus_obj = dir.join("g033.o");
+    let c_obj = dir.join("c_user.o");
+    let bin = dir.join("g033_bin");
+    std::fs::write(
+        &cplus_src,
+        "#[repr(C)] struct S { a: i32, b: i64, c: *u8 }\n\
+         pub static mut MUT_I32_TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+         pub static mut MUT_STRUCT:    S         = #zero::[S]();\n\
+         extern fn c_set_table(idx: i32, val: i32);\n\
+         extern fn c_set_struct(a: i32, b: i64);\n\
+         fn main() -> i32 {\n\
+             // initial: cpc-owned, both zero\n\
+             let v0: i32 = unsafe { MUT_I32_TABLE[5] };\n\
+             if v0 != (0 as i32) { return 1; }\n\
+             if unsafe { MUT_STRUCT.a } != (0 as i32) { return 2; }\n\
+             // C writes through extern decl, cpc reads same storage\n\
+             unsafe { c_set_table(5 as i32, 42 as i32); }\n\
+             unsafe { c_set_struct(7 as i32, 99 as i64); }\n\
+             if unsafe { MUT_I32_TABLE[5] } != (42 as i32) { return 3; }\n\
+             if unsafe { MUT_STRUCT.a } != (7 as i32) { return 4; }\n\
+             if unsafe { MUT_STRUCT.b } != (99 as i64) { return 5; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         extern int32_t MUT_I32_TABLE[16];\n\
+         extern struct S { int a; long b; void* c; } MUT_STRUCT;\n\
+         void c_set_table(int idx, int val) { MUT_I32_TABLE[idx] = val; }\n\
+         void c_set_struct(int a, long b) { MUT_STRUCT.a = a; MUT_STRUCT.b = b; }\n",
+    )
+    .unwrap();
+    let clang_c = Command::new("clang")
+        .args(["-c", "-o"])
+        .arg(&c_obj)
+        .arg(&c_src)
+        .status()
+        .expect("invoke clang for C side");
+    assert!(clang_c.success(), "clang -c failed for C side");
+    let cpc_emit = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(&cplus_src)
+        .arg("-o")
+        .arg(&cplus_obj)
+        .status()
+        .expect("invoke cpc --emit-obj");
+    assert!(cpc_emit.success(), "cpc --emit-obj failed");
+    let link = Command::new("clang")
+        .arg(&cplus_obj)
+        .arg(&c_obj)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke clang link");
+    assert!(link.success(), "clang link failed");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?} (cross-language aggregate-global regression?)",
+        run.status
+    );
+}
+
+#[test]
 fn atomic_thread_fence_runtime_g030() {
     // v0.0.12 G-030 (llama.cplus G-029): standalone memory fence
     // through `stdlib/atomic`. The fence is correctness-irrelevant on

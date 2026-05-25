@@ -13,6 +13,8 @@
 > | G-029 | G-028 | `--emit-obj` reads `Cplus.toml` |
 > | G-030 | G-029 | `atomic_thread_fence` + E0405 diagnostic |
 > | G-031 | G-030 | `#cpu_relax()` spin-loop hint |
+> | (none) | G-031 | declare-only `pub static` — open, downgraded to ergonomics by llama.cplus after ownership-flip survey |
+> | G-033 | G-032 | `#zero::[T]()` accepted in static/const init |
 
 - **G-022** — ✅ `4067546` — E0333 diagnostic suggests `};` when the function returns `()` and the tail is unit-typed; `return ...;` only when an actual value is being abandoned.
 - **G-023** — ✅ `4067546` — `let x: i64 = -100;` works the same as `let x: i64 = 100;`. Expected type propagates through unary-minus; codegen const-folds `-LIT` so it flows as a textual constant at any width.
@@ -28,3 +30,5 @@
   - `__cplus_atomic_fence_<ord>()` intrinsic + `pub fn atomic_thread_fence(ord: Ordering)` in `stdlib/atomic`. Lowers to LLVM `fence <ord>`; `Relaxed` is a no-op (LLVM rejects `fence monotonic`). Unblocks `ggml_barrier`-style publish-without-load patterns.
   - Bonus diagnostic: new **E0405** "no item named X in module Y" for cross-file references to genuinely-missing names. Pre-fix the resolver lumped these into E0403 ("function X is private — mark it pub"), which was actively misleading.
 - **G-031** (= llama.cplus G-030) — ✅ `#cpu_relax()` spin-loop hint. Per-arch lowering: aarch64 → `llvm.aarch64.hint(i32 1)` (YIELD); x86_64 → `llvm.x86.sse2.pause()`; other → no instruction emitted. Safe; correctness-irrelevant (the C convention treats unknown targets as a no-op). Picked option (a) from the gap report — smallest surface, defers inline-asm to a future flagship cycle.
+- **llama.cplus G-031** (no cpc-side ID) — declare-only `pub static NAME: T;` for aliasing C-defined globals. Open, but **downgraded to ergonomics** by llama.cplus after their port survey: of 17 ggml globals, 0 require staying in C, so ownership-flip (cpc defines, C consumes via plain `extern`) closes the case without language work. Two fix options stay open for the eventual third-party-library case: (a) `pub static NAME: T;` no-init, implicit extern; (b) `#[link_name = "..."]` on statics.
+- **G-033** (= llama.cplus G-032) — ✅ `#zero::[T]()` accepted in `const` / `static` / `static mut` initializer position. Lowers to LLVM `zeroinitializer`, lands in `.rodata` / `.data` / BSS depending on mutability. Closes the BSS-zero global case (lookup tables + zero-init structs) the llama port hit when porting `ggml_cpu_init`-owned globals into cpc. Also fixed a latent codegen ordering bug: struct type declarations now precede static emission so `@T = global %S zeroinitializer` lands in a context where `%S` is known (pre-fix clang rejected with "invalid type for null constant"). Other non-literal initializer shapes (array literals, fill-arrays) still rejected — minimum-surface fix per llama.cplus's option (a).

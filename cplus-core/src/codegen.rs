@@ -1070,6 +1070,14 @@ fn generate_inner(
     // emit the right shape (raw pointer or `str` fat-pointer).
     emit_compile_time_blob_globals(&mut out, compile_time_blobs_map, &md);
     emit_env_var_globals(&mut out, env_vars_map, &md);
+    // v0.0.12 G-033 (llama.cplus G-032): struct type declarations must
+    // precede static-global emission so `@NAME = global %S zeroinitializer`
+    // (for `pub static NAME: S = #zero::[S]();`) lands in a context where
+    // `%S` is already declared. Pre-fix `emit_statics` ran first and
+    // clang's IR parser rejected the forward struct reference with
+    // "invalid type for null constant". The selector + shader-blob
+    // globals use primitive types only and stay where they are.
+    write_struct_decls(&mut out, &types, program);
     // v0.0.9 Phase 4: emit one LLVM global per module-scope `static`.
     // Immutable statics → `@NAME = constant <ty> <lit>` (lives in
     // `.rodata`). Mutable statics → `@NAME = global <ty> <lit>` (lives
@@ -1080,7 +1088,6 @@ fn generate_inner(
     emit_selector_globals(&mut out, selectors_set, &md);
     // v0.0.10 Phase 4C: emit per-call shader-blob globals.
     emit_shader_blob_globals(&mut out, shader_blobs_map, &md);
-    write_struct_decls(&mut out, &types, program);
     // Phase 11 / ObjC interop: multiple `extern fn` declarations may share
     // a single linker symbol via `#[link_name = "..."]`. Track emitted
     // symbols so we never emit two `declare`s with the same name (LLVM
@@ -4096,6 +4103,17 @@ fn render_static_literal(e: &Expr, _ty: &Ty) -> Option<String> {
         // lower-substitutes the literal at every use site (no global
         // needed).
         ExprKind::StrLit(_) => None,
+        // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` initializer.
+        // LLVM's `zeroinitializer` lands the global in BSS (`.bss` /
+        // Mach-O `__DATA,__bss`) with no runtime cost — same as C's
+        // `static T name = {0};` / `static T name;`. Closes the
+        // lookup-table and BSS-zero-struct cases the llama port hit
+        // when porting `ggml_cpu_init`-owned globals into cpc.
+        ExprKind::Intrinsic { name, args, type_args, .. }
+            if name == "zero" && args.is_empty() && type_args.len() == 1 =>
+        {
+            Some("zeroinitializer".to_string())
+        }
         _ => None,
     }
 }

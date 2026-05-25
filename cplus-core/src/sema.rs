@@ -11734,6 +11734,41 @@ mod tests {
         assert!(codes.contains(&"E0308"));
     }
 
+    // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` accepted in
+    // const/static initializer position. Closes the BSS-zero global case.
+
+    #[test]
+    fn zero_in_static_init_clean_g033() {
+        assert_clean(
+            "#[repr(C)] struct S { a: i32, b: i64 }\n\
+             pub static T: S = #zero::[S]();\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn zero_in_static_mut_init_clean_g033() {
+        assert_clean(
+            "pub static mut TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn zero_in_const_init_clean_g033() {
+        // const FOO also accepts #zero (papercut they hit in
+        // threadpool.cplus). Same shape as static.
+        assert_clean(
+            "pub const ZEROS: [u8; 64] = #zero::[[u8; 64]]();\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // Note: E0X30 lives in the lower pass, not sema, so the negative
+    // tests for it live near the other lower-pass tests further down
+    // (using `lowered_errors`). Cross-ref: array_literal_still_rejected
+    // / fill_array_in_static_still_rejected, both labeled `_g033`.
+
     #[test]
     fn cpu_relax_with_type_args_e0501_g031() {
         let codes = errors(
@@ -15913,6 +15948,40 @@ mod tests {
              const B: i32 = A;",
         );
         assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+    }
+
+    // v0.0.12 G-033: array literals + fill literals still rejected in
+    // static-init position. `#zero::[T]()` is the only non-scalar shape
+    // accepted (option a from llama.cplus G-032 ranking).
+    #[test]
+    fn array_literal_still_rejected_e0x30_g033() {
+        let codes = lowered_errors(
+            "pub static T: [i32; 4] = [1, 2, 3, 4];",
+        );
+        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn fill_array_in_static_still_rejected_e0x30_g033() {
+        let codes = lowered_errors(
+            "pub static T: [u8; 256] = [0u8; 256];",
+        );
+        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn zero_intrinsic_in_static_accepted_g033() {
+        // The complementary positive — lower accepts #zero::[T]() as
+        // a const-init shape; sema then type-checks the RHS against
+        // the declared type.
+        let codes = lowered_errors(
+            "pub static T: [u8; 256] = #zero::[[u8; 256]]();",
+        );
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
     }
 
     #[test]

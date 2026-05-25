@@ -627,7 +627,7 @@ impl Lower {
                     if !is_const_initializer(&c.value) {
                         self.err(
                             "E0X30",
-                            "const initializer must be a literal (integer, float, bool, string, or unary-negated numeric literal)".to_string(),
+                            "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`)".to_string(),
                             c.value.span,
                         );
                         continue;
@@ -638,7 +638,7 @@ impl Lower {
                     if !is_const_initializer(&s.value) {
                         self.err(
                             "E0X30",
-                            "static initializer must be a literal (integer, float, bool, string, or unary-negated numeric literal)".to_string(),
+                            "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`)".to_string(),
                             s.value.span,
                         );
                     }
@@ -703,6 +703,17 @@ fn is_const_initializer(e: &Expr) -> bool {
             operand.kind,
             ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
         ),
+        // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` is a
+        // sema-known constant zero of type T. For statics this lowers
+        // to LLVM `zeroinitializer` — no runtime memset, just BSS.
+        // Closes the inbound side of the flip-ownership story for
+        // aggregate globals (lookup tables, struct globals) where
+        // the C side previously held an all-zero / partially-init
+        // aggregate that cpc now owns. Type-arg arity is validated
+        // downstream by `check_intrinsic_zero` (E0501 on wrong shape).
+        ExprKind::Intrinsic { name, args, type_args, .. } => {
+            name == "zero" && args.is_empty() && type_args.len() == 1
+        }
         _ => false,
     }
 }
