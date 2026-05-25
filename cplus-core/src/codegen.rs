@@ -1543,6 +1543,15 @@ struct FnSig {
     /// sites use `@s` instead of `@<source_name>`. Only ever set on
     /// extern fns; sema rejects on non-extern.
     link_name: Option<String>,
+    /// v0.0.12 G-027: `extern fn name(...)` import (no body). Distinguishes
+    /// "this is a C-ABI import" from "this is an internal cpc fn". Drives
+    /// sret application on the import-declaration and call-site paths so
+    /// the AArch64-Darwin ABI for >16B struct returns matches what clang
+    /// emits on the C side. `pub extern fn` definitions (which have
+    /// bodies, exported with the C ABI) are also `true`; the call-site
+    /// branch only cares for the import direction since exports define
+    /// their own sret shape via the def-side path.
+    is_extern: bool,
 }
 
 fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
@@ -1555,6 +1564,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
             return_type: Ty::Unit,
             is_variadic: false,
             link_name: None,
+            is_extern: false,
         },
     );
     for item in &p.items {
@@ -1605,6 +1615,7 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
                 return_type: ret,
                 is_variadic: f.is_variadic,
                 link_name,
+                is_extern: f.is_extern,
             },
         );
     }
@@ -4283,20 +4294,59 @@ fn gen_function(
             return;
         }
         emitted_extern_symbols.insert(resolved_symbol.to_string());
-        write!(
-            out,
-            "declare {} @{}(",
-            llvm_ty(&return_ty, types),
-            resolved_symbol
-        )
-        .unwrap();
+        // v0.0.12 G-027: apply the same C-ABI classification on extern
+        // *imports* that `pub extern fn` *exports* already use. Previously
+        // the import side emitted `declare %T @f(...)` for any return type
+        // — the AArch64-Darwin ABI requires structs >16B to be returned
+        // via a hidden `ptr sret(%T)` first arg, and clang on the C side
+        // emits exactly that. The mismatch silently miscompiled call sites
+        // (caller wrote args into x0 where the callee expected the sret
+        // pointer → SIGSEGV on first call). Mirroring `classify_c_abi`
+        // here makes the two halves of the ABI agree.
+        let ret_abi = classify_c_abi(&return_ty, types);
+        let uses_sret = matches!(ret_abi, CAbiClass::Indirect);
+        let coerce_ret_ty: Option<String> = if let CAbiClass::Coerce { llvm_ty, .. } = &ret_abi {
+            Some(llvm_ty.clone())
+        } else {
+            None
+        };
+        let sig_ret_ty: String = if uses_sret {
+            "void".to_string()
+        } else if let Some(t) = &coerce_ret_ty {
+            t.clone()
+        } else {
+            llvm_ty(&return_ty, types)
+        };
+        write!(out, "declare {} @{}(", sig_ret_ty, resolved_symbol).unwrap();
+        if uses_sret {
+            let ret_inner = llvm_ty(&return_ty, types);
+            let (sz, al) = static_layout(&return_ty, types)
+                .expect("extern sret return type must have a known layout");
+            write!(
+                out,
+                "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {}",
+                ret_inner, sz, al
+            )
+            .unwrap();
+            if !f.params.is_empty() || f.is_variadic {
+                out.push_str(", ");
+            }
+        }
         for (i, (_param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
             f.params.iter().zip(sig.params.iter()).enumerate()
         {
             if i > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&llvm_ty(pty, types));
+            // Classify each param too — symmetric with the export path.
+            // For Indirect, the C ABI passes by pointer; for Coerce, an
+            // integer-class type packs the aggregate; Direct passes the
+            // type unchanged.
+            match classify_c_abi(pty, types) {
+                CAbiClass::Indirect => out.push_str("ptr"),
+                CAbiClass::Coerce { llvm_ty, .. } => out.push_str(&llvm_ty),
+                CAbiClass::Direct => out.push_str(&llvm_ty(pty, types)),
+            }
         }
         // Slice 10.FFI.4: trailing `, ...` for variadic extern fns.
         if f.is_variadic {
@@ -8361,6 +8411,11 @@ impl<'a> FnState<'a> {
             "env" => Some(self.gen_intrinsic_env(span)),
             "size_of" => Some(self.gen_intrinsic_size_of(type_args)),
             "align_of" => Some(self.gen_intrinsic_align_of(type_args)),
+            // v0.0.12 G-028: `#zero::[T]()` — alloca a fresh T-sized slot,
+            // memset to zero, load aggregate value. For zero-sized types
+            // the memset is skipped (LLVM is fine with size=0, but it's
+            // cleaner to avoid emitting the call entirely).
+            "zero" => Some(self.gen_intrinsic_zero(type_args)),
             _ => panic!(
                 "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
             ),
@@ -8465,6 +8520,26 @@ impl<'a> FnState<'a> {
         ));
         self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
         (int_tmp, Ty::Usize)
+    }
+
+    /// v0.0.12 G-028: `#zero::[T]()` — a zeroed value of type `T`.
+    /// Allocates a T-sized slot on the stack, memsets to zero, loads
+    /// the aggregate back as a value. `llvm.memset.p0.i64` is already
+    /// declared in the preamble (see `write_preamble`).
+    fn gen_intrinsic_zero(&mut self, type_args: &[crate::ast::Type]) -> (String, Ty) {
+        let t = ty_from(&type_args[0], &self.types);
+        let slot = self.alloca_anon(t.clone());
+        if let Some((sz, _al)) = static_layout(&t, self.types) {
+            if sz > 0 {
+                self.emit(&format!(
+                    "call void @llvm.memset.p0.i64(ptr {slot}, i8 0, i64 {sz}, i1 false)"
+                ));
+            }
+        }
+        let v = self.next_tmp();
+        // Aggregate load — gen_load skips TBAA for aggregates.
+        self.gen_load(&v, &t, &slot);
+        (v, t)
     }
 
     /// `#selector("name") -> *u8`. Look up the cached-pointer pair
@@ -9996,11 +10071,24 @@ impl<'a> FnState<'a> {
         // returns (24-byte aggregate with Drop).
         // v0.0.3 Slice 1P: widen sret to non-Copy struct returns from
         // non-extern user functions, matching the widened predicate in
-        // emit_function_signature. Variadic / link_name'd (extern) callees
-        // stay on the value-return path.
+        // emit_function_signature. Variadic callees stay on the value-
+        // return path.
+        //
+        // v0.0.12 G-027: for extern *imports*, classify the return via
+        // the C ABI rules and use sret when Indirect (>16B aggregate on
+        // aarch64-darwin). Previously the call site emitted a direct
+        // struct return for any extern callee, which silently mismatched
+        // the sret shape clang emitted on the C side → SIGSEGV. The
+        // import-declaration path was just updated to emit the matching
+        // sret signature; this is the call-side companion.
+        let extern_sret = sig.is_extern
+            && !sig.is_variadic
+            && matches!(classify_c_abi(&sig.return_type, self.types), CAbiClass::Indirect);
         let uses_sret = !sig.is_variadic
-            && sig.link_name.is_none()
-            && return_passes_by_sret_widened(&sig.return_type, self.types);
+            && ((sig.link_name.is_none()
+                && !sig.is_extern
+                && return_passes_by_sret_widened(&sig.return_type, self.types))
+                || extern_sret);
         if uses_sret {
             // musttail + sret would require the caller's own sret slot to
             // be forwarded as the callee's sret arg. Supported when caller
@@ -10908,6 +10996,22 @@ impl<'a> FnState<'a> {
                 let cmp = if name.name == "is_null" { "eq" } else { "ne" };
                 self.emit(&format!("{r} = icmp {cmp} ptr {pv}, null"));
                 return Some((r, Ty::Bool));
+            }
+        }
+        // v0.0.12 G-028: blessed `write_zeroed()` on `*T` — memset the
+        // T-many bytes the pointer refers to. Companion to `#zero::[T]()`.
+        // Uses `llvm.memset.p0.i64` (already declared in the preamble).
+        if name.name == "write_zeroed" && args.is_empty() {
+            let (pv, pt) = self.gen_expr(receiver).expect("write_zeroed receiver");
+            if let Ty::RawPtr(inner) = pt {
+                if let Some((sz, _al)) = static_layout(&inner, self.types) {
+                    if sz > 0 {
+                        self.emit(&format!(
+                            "call void @llvm.memset.p0.i64(ptr {pv}, i8 0, i64 {sz}, i1 false)"
+                        ));
+                    }
+                }
+                return None;
             }
         }
         // Materialize the receiver as a place (pointer) — works for Ident,
@@ -15811,22 +15915,28 @@ mod tests {
     }
 
     #[test]
-    fn extern_fn_returning_string_keeps_value_abi() {
-        // sret is a C+ convention; extern fns keep the C ABI the user
-        // declared. (No real C fn returns a `string` aggregate, but the
-        // ABI invariant must hold.)
+    fn extern_fn_returning_large_aggregate_uses_sret_g027() {
+        // v0.0.12 G-027: extern fn returning a >16-byte aggregate MUST
+        // emit sret on the import declaration AND at every call site,
+        // because the C ABI on aarch64-darwin (and x86_64-sysv) requires
+        // the caller to allocate the return slot and pass a hidden first
+        // pointer. Pre-fix this declared `declare %T @f(...)` and called
+        // with a direct struct return — the call wrote args into x0
+        // where the callee expected the sret pointer → SIGSEGV.
+        //
+        // `string` is a 24-byte aggregate (ptr, len, cap); any 24B
+        // `#[repr(C)]` struct would hit the same path.
         let ir = gen_src(
             "extern fn make_str() -> string;\n\
              fn main() -> i32 { let s: string = unsafe { make_str() }; return 0; }",
         );
-        // The declare line must use the value-return form, not sret.
         assert!(
-            ir.contains("declare { ptr, i64, i64 } @make_str()"),
-            "extern fn must keep value ABI, got:\n{ir}"
+            ir.contains("declare void @make_str(ptr sret"),
+            "extern fn returning 24B aggregate must declare with sret, got:\n{ir}"
         );
         assert!(
-            !ir.contains("declare void @make_str(ptr sret"),
-            "extern fn must not be sret-converted, got:\n{ir}"
+            ir.contains("call void @make_str(ptr "),
+            "extern fn returning 24B aggregate must call with sret slot, got:\n{ir}"
         );
     }
 

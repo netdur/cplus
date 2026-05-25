@@ -269,6 +269,121 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn zero_intrinsic_and_write_zeroed_runtime_g028() {
+    // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` returns a
+    // zeroed T; `*T.write_zeroed()` zeroes T-many bytes through a
+    // raw pointer. Closes the C99 partial-init silent-garbage gap
+    // that caught a real bug in ggml_dyn_tallocr_new.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g028.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         #[repr(C)]\n\
+         struct Chunk { offset: usize, size: usize, next: *u8, pad: i64 }\n\
+         fn main() -> i32 {\n\
+             // #zero::[T]() — stack value, all bytes zeroed.\n\
+             let mut c: Chunk = #zero::[Chunk]();\n\
+             if c.offset != (0 as usize) { return 1; }\n\
+             if c.size   != (0 as usize) { return 2; }\n\
+             c.size = 64 as usize;\n\
+             if c.size != (64 as usize) { return 3; }\n\
+             // *T.write_zeroed() — heap pointer, T-many bytes zeroed.\n\
+             let p: *Chunk = unsafe { malloc(#size_of::[Chunk]()) as *Chunk };\n\
+             unsafe { p.write_zeroed(); }\n\
+             let d: Chunk = unsafe { *p };\n\
+             if d.offset != (0 as usize) { return 4; }\n\
+             if d.size   != (0 as usize) { return 5; }\n\
+             unsafe { free(p as *u8); }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("g028");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#zero / write_zeroed must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success(), "expected exit 0, got {:?}", run.status);
+}
+
+#[test]
+fn extern_struct_return_sret_cross_language_g027() {
+    // v0.0.12 G-027: cpc was emitting `declare %T @f(...)` + a direct
+    // struct-return call for any extern fn returning >16B aggregate.
+    // The AArch64-Darwin (and x86_64-sysv) C ABI requires sret — a
+    // hidden `ptr sret(%T)` first arg. Mismatch → caller wrote args
+    // into x0 where the callee expected the sret pointer → SIGSEGV.
+    //
+    // This test compiles a C side returning a 24B struct, a C+ side
+    // importing it via `extern fn`, links them, and runs. Exit 0 means
+    // the ABI agrees end-to-end. Pre-fix: SIGSEGV (139). Post-fix: 0.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let c_src = dir.join("c_side.c");
+    let c_obj = dir.join("c_side.o");
+    let cplus_src = dir.join("main.cplus");
+    let ll = dir.join("main.ll");
+    let bin = dir.join("g027");
+    std::fs::write(
+        &c_src,
+        "typedef struct { long a; long b; long c; } Big24;\n\
+         Big24 make_big(long x) {\n\
+             Big24 r = { x + 1, x + 2, x + 3 };\n\
+             return r;\n\
+         }\n",
+    ).unwrap();
+    std::fs::write(
+        &cplus_src,
+        "#[repr(C)]\n\
+         struct Big24 { a: i64, b: i64, c: i64 }\n\
+         extern fn make_big(x: i64) -> Big24;\n\
+         fn main() -> i32 {\n\
+             let r: Big24 = unsafe { make_big(10 as i64) };\n\
+             if r.a != (11 as i64) { return 1; }\n\
+             if r.b != (12 as i64) { return 2; }\n\
+             if r.c != (13 as i64) { return 3; }\n\
+             return 0;\n\
+         }\n",
+    ).unwrap();
+    let clang_c = Command::new("clang")
+        .args(["-c", "-o"])
+        .arg(&c_obj)
+        .arg(&c_src)
+        .status()
+        .expect("invoke clang for C side");
+    assert!(clang_c.success(), "clang -c failed for C side");
+    let ll_out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&cplus_src)
+        .output()
+        .expect("invoke cpc --emit-ll");
+    assert!(ll_out.status.success(), "cpc --emit-ll failed");
+    std::fs::write(&ll, &ll_out.stdout).unwrap();
+    let link = Command::new("clang")
+        .arg("-Wno-override-module")
+        .arg(&ll)
+        .arg(&c_obj)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke clang to link");
+    assert!(link.success(), "clang link failed");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?} (ABI regression — sret no longer emitted on extern import?)",
+        run.status
+    );
+}
+
+#[test]
 fn unit_type_in_turbofish_runtime_g026() {
     // v0.0.12 G-026: `()` parses as the unit type in turbofish slots
     // and explicit return positions. Drives a generic fn through both

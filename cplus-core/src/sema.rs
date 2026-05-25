@@ -4192,6 +4192,13 @@ impl SemaCx<'_> {
             "env" => self.check_intrinsic_env(type_args, args, ret_ty, span),
             "size_of" => self.check_intrinsic_layout("size_of", type_args, args, ret_ty, span),
             "align_of" => self.check_intrinsic_layout("align_of", type_args, args, ret_ty, span),
+            // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` returns a
+            // value of type `T` with all bytes zeroed. Composes with
+            // normal field-set syntax (`let mut x = #zero::[T](); x.a = 1;`)
+            // so users can express C99-style partial init without leaking
+            // garbage from `malloc`. Safe — no memory access, just an
+            // alloca + memset at codegen.
+            "zero" => self.check_intrinsic_zero(type_args, args, ret_ty, span),
             _ => {
                 self.err(
                     "E0905",
@@ -4641,6 +4648,41 @@ impl SemaCx<'_> {
         }
         let _ = self.resolve_type(&type_args[0]);
         Ty::Usize
+    }
+
+    // ---- v0.0.12 G-028: `#zero::[T]() -> T` ----
+    //
+    // A value of type `T` with every byte set to zero. Safe — no memory
+    // access at the call site beyond writing to a fresh stack slot.
+    // Composes with the regular field-set / index-write syntax to
+    // express C99 `(T){.a = 1}` partial init without leaking garbage
+    // from `malloc`.
+    fn check_intrinsic_zero(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#zero` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if type_args.len() != 1 {
+            self.err("E0501",
+                format!("`#zero` takes exactly 1 type argument, got {}", type_args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+            return Ty::Error;
+        }
+        if !args.is_empty() {
+            self.err("E0302",
+                format!("`#zero` takes no value arguments, got {}", args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+        }
+        self.resolve_type(&type_args[0])
     }
 
     /// v0.0.8 Phase 4: `env!("NAME")` resolution. Reads the env var via
@@ -7064,6 +7106,31 @@ impl SemaCx<'_> {
                 );
             }
             return Ty::Bool;
+        }
+        // v0.0.12 G-028 (llama.cplus G-026): blessed `write_zeroed()` on a
+        // raw-pointer receiver — zero the *T-many bytes* the pointer
+        // refers to. Companion to `#zero::[T]()` for the through-pointer
+        // case (e.g. just after `malloc(#size_of::[T]())`). Unsafe
+        // because we're writing through a raw pointer the borrow checker
+        // can't reason about; sema enforces the unsafe block (E0801).
+        if let Ty::RawPtr(_inner) = &recv_ty {
+            if args.is_empty() && name.name == "write_zeroed" {
+                if !type_args.is_empty() {
+                    self.err(
+                        "E0501",
+                        "`write_zeroed` takes no type arguments".to_string(),
+                        call_span,
+                    );
+                }
+                if self.unsafe_depth == 0 {
+                    self.err(
+                        "E0801",
+                        "`write_zeroed` is unsafe (writes through a raw pointer); wrap in `unsafe { ... }`".to_string(),
+                        call_span,
+                    );
+                }
+                return Ty::Unit;
+            }
         }
         // v0.0.5 Phase 2C: dispatch on enum receivers via the new
         // `EnumDef::methods` table. Same shape as the struct path —
@@ -11501,6 +11568,55 @@ mod tests {
 
     // v0.0.12 G-026: `()` resolves to `Ty::Unit` and round-trips
     // through generic instantiation (e.g. `spawn::[()]`).
+
+    // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` and `*T.write_zeroed()`
+    // for explicit zero-fill — closes the C99 partial-init / silent-garbage gap.
+
+    #[test]
+    fn zero_intrinsic_returns_type_clean_g028() {
+        assert_clean(
+            "struct P { x: i32, y: i32 }\n\
+             fn main() -> i32 { let _p: P = #zero::[P](); return 0; }",
+        );
+    }
+
+    #[test]
+    fn zero_intrinsic_primitive_clean_g028() {
+        assert_clean("fn main() -> i32 { let _x: i64 = #zero::[i64](); return 0; }");
+    }
+
+    #[test]
+    fn zero_intrinsic_no_type_arg_rejected_e0501_g028() {
+        let codes = errors("fn main() -> i32 { let _x: i32 = #zero(); return 0; }");
+        assert!(codes.contains(&"E0501"));
+    }
+
+    #[test]
+    fn write_zeroed_on_raw_ptr_clean_g028() {
+        assert_clean(
+            "extern fn malloc(n: usize) -> *u8;\n\
+             struct P { x: i32 }\n\
+             fn main() -> i32 {\n\
+                 let p: *P = unsafe { malloc(#size_of::[P]()) as *P };\n\
+                 unsafe { p.write_zeroed(); }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn write_zeroed_outside_unsafe_e0801_g028() {
+        let codes = errors(
+            "extern fn malloc(n: usize) -> *u8;\n\
+             struct P { x: i32 }\n\
+             fn main() -> i32 {\n\
+                 let p: *P = unsafe { malloc(#size_of::[P]()) as *P };\n\
+                 p.write_zeroed();\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0801"));
+    }
 
     #[test]
     fn unit_type_as_turbofish_arg_clean_g026() {
