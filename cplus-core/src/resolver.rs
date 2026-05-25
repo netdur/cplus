@@ -72,6 +72,18 @@ pub enum ResolveError {
         owner: String, // for methods: the type name; for fields: the struct; else the file id
         name: String,  // the item being denied
     },
+    /// v0.0.12 G-030-bonus (llama.cplus G-029 bonus): cross-file reference
+    /// to a name that doesn't exist at all in the target module. Pre-fix,
+    /// the resolver lumped this into PrivateAccess with the misleading
+    /// message "function X is private (mark it `pub` ...)" — but there's
+    /// nothing to mark `pub` because the name isn't there. Distinct
+    /// variant + clean message.
+    UnknownItem {
+        file: PathBuf,
+        span: Span,
+        owner: String, // file id of the target module
+        name: String,
+    },
     /// Generic I/O error while reading a `.cplus` file the import graph
     /// reaches. Distinct from `ImportNotFound`: the file exists but
     /// couldn't be read (permission denied, etc.).
@@ -206,6 +218,13 @@ impl std::fmt::Display for ResolveError {
                         file.display(),
                     ),
                 }
+            }
+            ResolveError::UnknownItem { file, owner, name, .. } => {
+                write!(
+                    f,
+                    "[E0405] {}: no item named `{name}` in module `{owner}`",
+                    file.display(),
+                )
             }
             ResolveError::Io { path, source } => {
                 write!(f, "I/O error reading {}: {source}", path.display())
@@ -400,6 +419,7 @@ impl LoadFailure {
             ResolveError::DuplicatePrefix { file, .. } => Some(file),
             ResolveError::UnknownPrefix { file, .. } => Some(file),
             ResolveError::PrivateAccess { file, .. } => Some(file),
+            ResolveError::UnknownItem { file, .. } => Some(file),
             ResolveError::Cycle { chain } => chain.first().map(|p| p.as_path()),
             ResolveError::Parse { path, .. } => Some(path),
             ResolveError::Lex { path, .. } => Some(path),
@@ -565,6 +585,10 @@ impl LoadFailure {
                     ),
                 };
                 ("E0403", msg, span_in(file, *span))
+            }
+            ResolveError::UnknownItem { file, span, owner, name } => {
+                let msg = format!("no item named `{name}` in module `{owner}`");
+                ("E0405", msg, span_in(file, *span))
             }
             ResolveError::Io { path, source } => (
                 "E0401",
@@ -1458,21 +1482,28 @@ impl RewriteCtx {
         if target_id == self.self_file_id {
             return Ok(());
         }
-        let kind = self
-            .item_kind
-            .get(target_id)
-            .and_then(|m| m.get(name))
-            .copied()
-            .map(|k| match k {
-                ItemKindTag::Function => PrivateKind::Function,
-                ItemKindTag::Struct => PrivateKind::Struct,
-                ItemKindTag::Enum => PrivateKind::Enum,
-                ItemKindTag::Interface => PrivateKind::Interface,
-                ItemKindTag::TypeAlias => PrivateKind::TypeAlias,
-                ItemKindTag::Const => PrivateKind::Const,
-                ItemKindTag::Static => PrivateKind::Static,
-            })
-            .unwrap_or(PrivateKind::Function);
+        // v0.0.12 G-030-bonus: separate "name doesn't exist in module"
+        // from "name exists but isn't pub". Pre-fix both lumped into
+        // PrivateAccess with the same "mark it `pub`" message, which
+        // was misleading when the name truly wasn't there.
+        let existing_kind = self.item_kind.get(target_id).and_then(|m| m.get(name)).copied();
+        let Some(raw_kind) = existing_kind else {
+            return Err(ResolveError::UnknownItem {
+                file: self.self_file_path.clone(),
+                span,
+                owner: target_id.to_string(),
+                name: name.to_string(),
+            });
+        };
+        let kind = match raw_kind {
+            ItemKindTag::Function => PrivateKind::Function,
+            ItemKindTag::Struct => PrivateKind::Struct,
+            ItemKindTag::Enum => PrivateKind::Enum,
+            ItemKindTag::Interface => PrivateKind::Interface,
+            ItemKindTag::TypeAlias => PrivateKind::TypeAlias,
+            ItemKindTag::Const => PrivateKind::Const,
+            ItemKindTag::Static => PrivateKind::Static,
+        };
         let is_pub = self
             .pub_items
             .get(target_id)

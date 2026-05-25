@@ -331,3 +331,21 @@ pub fn atomic_compare_exchange_u64(p: *u64, expected: u64, desired: u64, ord: Or
         Ordering::SeqCst => unsafe { __cplus_atomic_cmpxchg_u64_seqcst(p, expected, desired) },
     };
 }
+
+// v0.0.12 G-030 (llama.cplus G-029): standalone memory fence — no
+// pointer, no value, just a barrier. Maps to LLVM's `fence` instruction
+// with the matching ordering. `Relaxed` is a no-op per C and LLVM
+// (LLVM rejects `fence monotonic`; codegen emits nothing). Required
+// by `ggml_barrier`-style spin-wait publish patterns where the
+// publishing store has already happened on another path and we need
+// to seal the happens-before edge with a separate fence.
+pub fn atomic_thread_fence(ord: Ordering) {
+    match ord {
+        Ordering::Relaxed => { unsafe { __cplus_atomic_fence_relaxed(); } }
+        Ordering::Acquire => { unsafe { __cplus_atomic_fence_acquire(); } }
+        Ordering::Release => { unsafe { __cplus_atomic_fence_release(); } }
+        Ordering::AcqRel => { unsafe { __cplus_atomic_fence_acqrel(); } }
+        Ordering::SeqCst => { unsafe { __cplus_atomic_fence_seqcst(); } }
+    };
+    return;
+}

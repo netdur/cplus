@@ -4199,6 +4199,13 @@ impl SemaCx<'_> {
             // garbage from `malloc`. Safe — no memory access, just an
             // alloca + memset at codegen.
             "zero" => self.check_intrinsic_zero(type_args, args, ret_ty, span),
+            // v0.0.12 G-031 (llama.cplus G-030): `#cpu_relax()` — spin-loop
+            // hint. Per-arch lowering at codegen (aarch64 `yield`, x86_64
+            // `pause`, no-op elsewhere). No args, no type args, returns
+            // unit. Correctness-irrelevant — without it spin-waits still
+            // terminate; with it CPUs throttle pipeline + reduce power.
+            // Safe — pure hint, no memory access.
+            "cpu_relax" => self.check_intrinsic_cpu_relax(type_args, args, ret_ty, span),
             _ => {
                 self.err(
                     "E0905",
@@ -4683,6 +4690,39 @@ impl SemaCx<'_> {
             for a in args { let _ = self.check_expr(a, None); }
         }
         self.resolve_type(&type_args[0])
+    }
+
+    // ---- v0.0.12 G-031: `#cpu_relax() -> ()` ----
+    //
+    // Spin-loop hint. Lowers to `llvm.aarch64.hint(i32 1)` on aarch64
+    // (the YIELD hint) or `llvm.x86.sse2.pause()` on x86_64. On other
+    // targets it lowers to nothing (no instruction emitted). Safe;
+    // correctness-irrelevant by design — a missing hint just wastes
+    // power in tight spin loops, but never changes program output.
+    fn check_intrinsic_cpu_relax(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err("E0501",
+                format!("`#cpu_relax` takes no type arguments, got {}", type_args.len()),
+                span);
+        }
+        if ret_ty.is_some() {
+            self.err("E0903",
+                "`#cpu_relax` does not accept a `-> T` return-type ascription".to_string(),
+                span);
+        }
+        if !args.is_empty() {
+            self.err("E0308",
+                format!("`#cpu_relax` takes 0 arguments, got {}", args.len()),
+                span);
+            for a in args { let _ = self.check_expr(a, None); }
+        }
+        Ty::Unit
     }
 
     /// v0.0.8 Phase 4: `env!("NAME")` resolution. Reads the env var via
@@ -6293,6 +6333,31 @@ impl SemaCx<'_> {
             } else {
                 Ty::Unit
             };
+        }
+        // v0.0.12 G-030 (llama.cplus G-029): standalone memory fence
+        // `__cplus_atomic_fence_<ord>()`. No type, no operand — just a
+        // barrier on the sequenced-before/happens-before edges of the
+        // surrounding atomic ops. Same unsafe requirement as the typed
+        // atomic ops (it influences other unsafe-gated atomic accesses).
+        if crate::atomic::parse_atomic_fence(name).is_some() {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    format!("`{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
+                    call_span,
+                );
+            }
+            if !args.is_empty() {
+                self.err(
+                    "E0308",
+                    format!("`{}` takes 0 arguments, got {}", name, args.len()),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+            }
+            return Ty::Unit;
         }
         let Some(sig) = self.fns.get(name).cloned() else {
             self.err("E0300", format!("undefined function `{name}`"), callee.span);
@@ -11602,6 +11667,79 @@ mod tests {
                  return 0;\n\
              }",
         );
+    }
+
+    // v0.0.12 G-030 (llama.cplus G-029): `__cplus_atomic_fence_<ord>`
+    // memory fence intrinsic. Requires unsafe; 0 args.
+
+    #[test]
+    fn atomic_fence_seqcst_in_unsafe_clean_g030() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 unsafe { __cplus_atomic_fence_seqcst(); }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn atomic_fence_relaxed_clean_g030() {
+        // Relaxed is accepted by sema (it's a no-op at codegen).
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 unsafe { __cplus_atomic_fence_relaxed(); }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn atomic_fence_outside_unsafe_e0801_g030() {
+        let codes = errors(
+            "fn main() -> i32 { __cplus_atomic_fence_seqcst(); return 0; }",
+        );
+        assert!(codes.contains(&"E0801"));
+    }
+
+    #[test]
+    fn atomic_fence_with_args_e0308_g030() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 unsafe { __cplus_atomic_fence_seqcst(1 as i32); }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0308"));
+    }
+
+    // v0.0.12 G-031 (llama.cplus G-030): `#cpu_relax()` spin-loop hint.
+    // Safe; 0 args; 0 type args; returns unit.
+
+    #[test]
+    fn cpu_relax_clean_g031() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let mut i: i32 = 0;\n\
+                 while i < 3 { #cpu_relax(); i = i +% 1; }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn cpu_relax_with_args_e0308_g031() {
+        let codes = errors(
+            "fn main() -> i32 { #cpu_relax(1 as i32); return 0; }",
+        );
+        assert!(codes.contains(&"E0308"));
+    }
+
+    #[test]
+    fn cpu_relax_with_type_args_e0501_g031() {
+        let codes = errors(
+            "fn main() -> i32 { #cpu_relax::[i32](); return 0; }",
+        );
+        assert!(codes.contains(&"E0501"));
     }
 
     #[test]

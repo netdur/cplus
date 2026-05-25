@@ -269,6 +269,158 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn atomic_thread_fence_runtime_g030() {
+    // v0.0.12 G-030 (llama.cplus G-029): standalone memory fence
+    // through `stdlib/atomic`. The fence is correctness-irrelevant on
+    // a single thread (no other writes to order), but the program must
+    // compile and run without trapping. IR check confirms LLVM emits
+    // `fence seq_cst`/etc. for the non-Relaxed orderings; Relaxed is
+    // elided.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    let stdlib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor")
+        .join("stdlib");
+    std::os::unix::fs::symlink(&stdlib, dir.join("vendor").join("stdlib")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
+         [dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/atomic\" as atomic;\n\
+         fn main() -> i32 {\n\
+             atomic::atomic_thread_fence(atomic::Ordering::SeqCst);\n\
+             atomic::atomic_thread_fence(atomic::Ordering::Acquire);\n\
+             atomic::atomic_thread_fence(atomic::Ordering::Release);\n\
+             atomic::atomic_thread_fence(atomic::Ordering::AcqRel);\n\
+             atomic::atomic_thread_fence(atomic::Ordering::Relaxed);\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "atomic_thread_fence must compile under cpc build");
+    let run = Command::new(dir.join("target/debug/f"))
+        .output()
+        .expect("run");
+    assert!(run.status.success(), "fence program returned non-zero");
+}
+
+#[test]
+fn cpu_relax_runtime_g031() {
+    // v0.0.12 G-031 (llama.cplus G-030): spin-loop hint. Correctness-
+    // irrelevant; check the program compiles + runs and the expected
+    // architecture intrinsic appears in the IR.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("relax.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let mut i: i32 = 0;\n\
+             while i < 4 { #cpu_relax(); i = i +% 1; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("relax");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#cpu_relax() must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success());
+
+    // IR-level check: aarch64 → llvm.aarch64.hint; x86_64 → llvm.x86.sse2.pause
+    let ll = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    if cfg!(target_arch = "aarch64") {
+        assert!(
+            ir.contains("llvm.aarch64.hint"),
+            "aarch64 build must emit llvm.aarch64.hint, got:\n{ir}"
+        );
+    } else if cfg!(target_arch = "x86_64") {
+        assert!(
+            ir.contains("llvm.x86.sse2.pause"),
+            "x86_64 build must emit llvm.x86.sse2.pause, got:\n{ir}"
+        );
+    }
+}
+
+#[test]
+fn cross_module_unknown_item_reports_e0405_g030() {
+    // v0.0.12 G-030 bonus: pre-fix, the resolver lumped "name doesn't
+    // exist in module X" into PrivateAccess (E0403) with the misleading
+    // "mark it `pub` ..." message. New variant E0405 fires for the
+    // genuinely-missing case; E0403 stays for "exists but not pub".
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub fn real_fn() -> i32 { return 0; }\n\
+         fn hidden_fn() -> i32 { return 1; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/missing.cplus"),
+        "import \"./lib\" as lib;\nfn main() -> i32 { return lib::nope(); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/private.cplus"),
+        "import \"./lib\" as lib;\nfn main() -> i32 { return lib::hidden_fn(); }\n",
+    )
+    .unwrap();
+    let missing = Command::new(cpc)
+        .arg("check")
+        .arg(dir.join("src/missing.cplus"))
+        .output()
+        .expect("invoke cpc check (missing)");
+    assert!(!missing.status.success());
+    let missing_err = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        missing_err.contains("E0405") && missing_err.contains("no item named"),
+        "missing item must report E0405, got:\n{missing_err}"
+    );
+    assert!(
+        !missing_err.contains("is private"),
+        "missing item must NOT say `is private`, got:\n{missing_err}"
+    );
+
+    let private = Command::new(cpc)
+        .arg("check")
+        .arg(dir.join("src/private.cplus"))
+        .output()
+        .expect("invoke cpc check (private)");
+    assert!(!private.status.success());
+    let private_err = String::from_utf8_lossy(&private.stderr);
+    assert!(
+        private_err.contains("E0403") && private_err.contains("is private"),
+        "genuinely-private item must still report E0403, got:\n{private_err}"
+    );
+}
+
+#[test]
 fn emit_obj_auto_detects_cplus_toml_g029() {
     // v0.0.12 G-029 (llama.cplus G-028): `cpc --emit-obj src/foo.cplus`
     // (the CMake `add_custom_command` shape) used to bypass `Cplus.toml`

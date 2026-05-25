@@ -3212,6 +3212,13 @@ fn write_preamble(out: &mut String) {
         "declare void @llvm.memset.p0.i64(ptr noalias noundef writeonly, \
          i8 noundef, i64 noundef, i1 immarg)\n",
     );
+    // v0.0.12 G-031: per-arch spin-loop hint. Declared unconditionally
+    // (DCE strips the unused one), used by `#cpu_relax()` codegen.
+    if cfg!(target_arch = "aarch64") {
+        out.push_str("declare void @llvm.aarch64.hint(i32 immarg)\n");
+    } else if cfg!(target_arch = "x86_64") {
+        out.push_str("declare void @llvm.x86.sse2.pause()\n");
+    }
     // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
     // alloca helpers bracket each local's live range with these so
     // LLVM's SROA can reuse stack slots across non-overlapping
@@ -8416,6 +8423,12 @@ impl<'a> FnState<'a> {
             // the memset is skipped (LLVM is fine with size=0, but it's
             // cleaner to avoid emitting the call entirely).
             "zero" => Some(self.gen_intrinsic_zero(type_args)),
+            // v0.0.12 G-031: `#cpu_relax()` — spin-loop hint, per-arch.
+            // Returns no value (caller-side: dropped on the floor).
+            "cpu_relax" => {
+                self.gen_intrinsic_cpu_relax();
+                None
+            }
             _ => panic!(
                 "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
             ),
@@ -8540,6 +8553,26 @@ impl<'a> FnState<'a> {
         // Aggregate load — gen_load skips TBAA for aggregates.
         self.gen_load(&v, &t, &slot);
         (v, t)
+    }
+
+    /// v0.0.12 G-031: `#cpu_relax()` — per-arch spin-loop hint.
+    ///
+    /// * aarch64 → `call void @llvm.aarch64.hint(i32 1)` (YIELD)
+    /// * x86_64  → `call void @llvm.x86.sse2.pause()`
+    /// * other   → no instruction emitted (the hint is correctness-
+    ///   irrelevant; the C convention treats unknown targets as a no-op)
+    ///
+    /// Declarations are added once per module via the preamble. The
+    /// codegen module's preamble already declares many libc/llvm
+    /// intrinsics; these two are added there as well.
+    fn gen_intrinsic_cpu_relax(&mut self) {
+        if cfg!(target_arch = "aarch64") {
+            self.emit("call void @llvm.aarch64.hint(i32 1)");
+        } else if cfg!(target_arch = "x86_64") {
+            self.emit("call void @llvm.x86.sse2.pause()");
+        }
+        // else: emit nothing — the hint is a power optimization, not
+        // a correctness requirement.
     }
 
     /// `#selector("name") -> *u8`. Look up the cached-pointer pair
@@ -9870,6 +9903,26 @@ impl<'a> FnState<'a> {
         // is mechanical.
         if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
             return self.gen_atomic_intrinsic(&spec, args);
+        }
+        // v0.0.12 G-030 (llama.cplus G-029): standalone memory fence.
+        // LLVM's `fence` instruction accepts acquire / release / acq_rel /
+        // seq_cst (not monotonic — that would be rejected). The stdlib
+        // wrapper passes a `relaxed` arg through as a no-op for parity
+        // with C's `atomic_thread_fence(memory_order_relaxed)`.
+        if let Some(ord) = crate::atomic::parse_atomic_fence(name) {
+            let llvm_ord = match ord {
+                "relaxed" => {
+                    // No instruction emitted — matches C's behavior.
+                    return None;
+                }
+                "acquire" => "acquire",
+                "release" => "release",
+                "acqrel"  => "acq_rel",
+                "seqcst"  => "seq_cst",
+                _ => unreachable!("parse_atomic_fence already validated"),
+            };
+            self.emit(&format!("fence {llvm_ord}"));
+            return None;
         }
         // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Sema
         // validated args + JoinHandle[O] shape + the surrounding

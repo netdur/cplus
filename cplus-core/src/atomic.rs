@@ -112,6 +112,30 @@ pub fn parse_atomic_intrinsic(name: &str) -> Option<AtomicSpec> {
     Some(AtomicSpec { op, ty, bits, llvm_ordering })
 }
 
+/// v0.0.12 G-030 (llama.cplus G-029): parse `__cplus_atomic_fence_<ord>`
+/// — a standalone memory fence with no operand and no type. Returns the
+/// LLVM `fence` ordering keyword on hit. Distinct from the typed atomic
+/// ops because there's no pointer or value to thread through.
+///
+/// Lowering note: LLVM's `fence relaxed`-equivalent (`fence monotonic`)
+/// is rejected by the verifier — only acquire / release / acq_rel /
+/// seq_cst are valid orderings for `fence`. We honor that here: a
+/// `relaxed` argument from the stdlib wrapper is a no-op (returns
+/// `Some("relaxed")` so sema accepts the call, and codegen emits no
+/// instruction at all — matching what every C compiler does for
+/// `atomic_thread_fence(memory_order_relaxed)`).
+pub fn parse_atomic_fence(name: &str) -> Option<&'static str> {
+    let rest = name.strip_prefix("__cplus_atomic_fence_")?;
+    match rest {
+        "relaxed" => Some("relaxed"),
+        "acquire" => Some("acquire"),
+        "release" => Some("release"),
+        "acqrel"  => Some("acqrel"),
+        "seqcst"  => Some("seqcst"),
+        _ => None,
+    }
+}
+
 const ORDERINGS: &[&str] = &["relaxed", "acquire", "release", "acqrel", "seqcst"];
 const TYPES: &[&str] = &["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"];
 
