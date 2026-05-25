@@ -2037,6 +2037,34 @@ fn compile_file(
     status
 }
 
+/// v0.0.12 G-029 (llama.cplus G-028): walk up from `start` looking for
+/// `Cplus.toml`. Returns the manifest path on the first hit, or `None`
+/// if we walk all the way to the filesystem root without finding one.
+/// Used by the single-file driver paths (`build_ir` for `cpc FILE`,
+/// `cpc check`, `cpc --emit-obj`, `cpc --emit-ll`) so they pick up the
+/// project's `[dependencies]` when the file lives under a real project
+/// — closing the per-file-CMake-invocation gap that blocked llama.cplus
+/// from importing `stdlib/atomic` through `cpc --emit-obj`.
+fn find_manifest_upward(start: &Path) -> Option<PathBuf> {
+    let start = if start.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        start
+    };
+    let abs = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut cur: &Path = &abs;
+    loop {
+        let candidate = cur.join("Cplus.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        match cur.parent() {
+            Some(p) if p != cur => cur = p,
+            _ => return None,
+        }
+    }
+}
+
 fn build_ir(
     file: &Path,
     src: &str,
@@ -2064,12 +2092,33 @@ fn build_ir(
     // sample-program e2e suite) unchanged.
     let has_imports = src.contains("\nimport ") || src.starts_with("import ");
     let (mut prog, files_map) = if has_imports {
-        // Manifest root for `./` resolution is the entry file's parent
-        // directory. The loader uses this for vendor lookups too —
-        // since we pass `Some(&[])` (no deps), no vendor lookup ever
-        // succeeds and bare paths fall through to E0853.
-        let manifest_root = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let loaded = match resolver::load_project_full(file, &manifest_root, false, Some(&[])) {
+        // v0.0.12 G-029 (llama.cplus G-028): walk up from FILE's parent
+        // looking for `Cplus.toml`. If found, use that directory as the
+        // manifest root and pull `[dependencies]` from it so vendor
+        // imports (`import "stdlib/atomic"`) resolve the same way they
+        // would under `cpc build`. Previously this path hard-coded an
+        // empty deps list, which made `cpc --emit-obj src/main.cplus`
+        // (the CMake `add_custom_command` shape) fail with E0852 even
+        // when the file lived under a project with `stdlib = "*"` in
+        // its manifest. Single-file mode without a reachable manifest
+        // keeps the old behavior — no deps, only `./` paths resolve.
+        let start_dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let manifest_hit = find_manifest_upward(&start_dir);
+        let (manifest_root, dep_names): (PathBuf, Vec<String>) = match manifest_hit {
+            Some(manifest_path) => match manifest::load(&manifest_path) {
+                Ok(m) => {
+                    let deps: Vec<String> =
+                        m.dependencies.iter().map(|d| d.name.clone()).collect();
+                    (m.root, deps)
+                }
+                Err(e) => {
+                    emit_diag(&e.to_diagnostic(), mode, "");
+                    return Err(ExitCode::FAILURE);
+                }
+            },
+            None => (start_dir, Vec::new()),
+        };
+        let loaded = match resolver::load_project_full(file, &manifest_root, false, Some(&dep_names)) {
             Ok(l) => l,
             Err(failure) => {
                 let d = failure.to_diagnostic();

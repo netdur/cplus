@@ -269,6 +269,104 @@ fn wrap_arith_runs() {
 }
 
 #[test]
+fn emit_obj_auto_detects_cplus_toml_g029() {
+    // v0.0.12 G-029 (llama.cplus G-028): `cpc --emit-obj src/foo.cplus`
+    // (the CMake `add_custom_command` shape) used to bypass `Cplus.toml`
+    // entirely — so `import "stdlib/atomic"` fired E0852 even when the
+    // file lived under a project that declared `stdlib = "*"`. The fix
+    // walks up from the file's directory looking for `Cplus.toml`; if
+    // found, the resolver gets the project's deps list. Three checks:
+    //   (a) imports resolve when run from the project root
+    //   (b) imports resolve when invoked from a different cwd (CMake's
+    //       build/ directory)
+    //   (c) single-file mode with no reachable manifest still rejects
+    //       bare imports — backward-compat preserved.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    let stdlib = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("vendor")
+        .join("stdlib");
+    std::os::unix::fs::symlink(&stdlib, dir.join("vendor").join("stdlib")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"g029\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"g029\"\npath = \"src/main.cplus\"\n\
+         [dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/_probe.cplus"),
+        "import \"stdlib/atomic\" as atomic;\n\
+         fn touch() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+
+    // (a) from project root
+    let obj_a = dir.join("probe_a.o");
+    let a = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(dir.join("src/_probe.cplus"))
+        .arg("-o")
+        .arg(&obj_a)
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc --emit-obj from project root");
+    assert!(
+        a.status.success(),
+        "(a) --emit-obj from project root must resolve stdlib import: {}",
+        String::from_utf8_lossy(&a.stderr)
+    );
+    assert!(obj_a.exists(), "(a) .o not produced");
+
+    // (b) from a different cwd (simulates CMake build dir)
+    let cmake_dir = tempdir();
+    let obj_b = cmake_dir.join("probe_b.o");
+    let b = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(dir.join("src/_probe.cplus"))
+        .arg("-o")
+        .arg(&obj_b)
+        .current_dir(&cmake_dir)
+        .output()
+        .expect("invoke cpc --emit-obj from external cwd");
+    assert!(
+        b.status.success(),
+        "(b) --emit-obj from external cwd must auto-detect Cplus.toml: {}",
+        String::from_utf8_lossy(&b.stderr)
+    );
+    assert!(obj_b.exists(), "(b) .o not produced");
+
+    // (c) no manifest reachable — bare import still fails with E0852
+    let bare_dir = tempdir();
+    std::fs::write(
+        bare_dir.join("bare.cplus"),
+        "import \"stdlib/atomic\" as atomic;\nfn f() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let obj_c = bare_dir.join("bare.o");
+    let c = Command::new(cpc)
+        .arg("--emit-obj")
+        .arg(bare_dir.join("bare.cplus"))
+        .arg("-o")
+        .arg(&obj_c)
+        .output()
+        .expect("invoke cpc --emit-obj on no-manifest file");
+    assert!(
+        !c.status.success(),
+        "(c) bare-import without manifest must still fail"
+    );
+    let stderr_c = String::from_utf8_lossy(&c.stderr);
+    assert!(
+        stderr_c.contains("E0852"),
+        "(c) expected E0852 for bare import without manifest, got: {stderr_c}"
+    );
+}
+
+#[test]
 fn zero_intrinsic_and_write_zeroed_runtime_g028() {
     // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` returns a
     // zeroed T; `*T.write_zeroed()` zeroes T-many bytes through a
