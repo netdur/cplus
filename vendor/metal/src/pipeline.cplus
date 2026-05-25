@@ -51,7 +51,14 @@ impl Function {
 }
 
 impl ComputePipelineState {
-    pub fn new(device_raw: *u8, function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
+    pub fn new(device_raw: *u8, borrow function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
+        // v0.0.12 — `borrow function`: `newComputePipelineStateWithFunction:`
+        // retains the function internally if it keeps it. The caller may
+        // want to create multiple pipelines from the same function (the
+        // standard ObjC pattern); consuming it precluded that. Pre-fix
+        // post-v0.0.10 default-move dropped the cpc Function wrapper at
+        // fn-exit, releasing the underlying MTLFunction before Metal had
+        // safely retained it.
         if device_raw == unsafe { 0 as *u8 } || function.raw == unsafe { 0 as *u8 } {
             return result::Result[ComputePipelineState, runtime::MetalError]::Err(runtime::MetalError::PipelineCreationFailed);
         }

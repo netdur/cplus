@@ -43,6 +43,12 @@ fn shader_len() -> usize {
 extern fn objc_getClass(name: *u8) -> *u8;
 extern fn sel_registerName(name: *u8) -> *u8;
 
+// libdispatch — `dispatch_data_create(buf, len, NULL queue, NULL destructor)`
+// defaults to DISPATCH_DATA_DESTRUCTOR_DEFAULT which copies the buffer.
+// We need this for `newLibraryWithData:error:` which wants `dispatch_data_t`,
+// not `NSData`.
+extern fn dispatch_data_create(buffer: *u8, size: usize, queue: *u8, destructor: *u8) -> *u8;
+
 // `objc_msgSend` — one C symbol, many typed signatures.
 #[link_name = "objc_msgSend"]
 extern fn msg_id(recv: *u8, sel: *u8) -> *u8;
@@ -58,6 +64,14 @@ extern fn msg_void(recv: *u8, sel: *u8);
 
 #[link_name = "objc_msgSend"]
 extern fn msg_id_ptr_len_opt(recv: *u8, sel: *u8, ptr: *u8, len: usize, opts: u64) -> *u8;
+
+// `+ newBufferWithLength:options:` — only 2 ObjC args (length, options).
+// Distinct from `msg_id_ptr_len_opt` (3 args including a leading bytes
+// ptr) — using the wrong helper here makes the impl read `length` out
+// of the wrong register, producing a 0-byte buffer whose `contents`
+// returns null. Caught the hard way by a memmove crash on readback.
+#[link_name = "objc_msgSend"]
+extern fn msg_id_usize_u64(recv: *u8, sel: *u8, len: usize, opts: u64) -> *u8;
 
 #[link_name = "objc_msgSend"]
 extern fn msg_void_buf_idx(recv: *u8, sel: *u8, buf: *u8, offset: usize, idx: usize);
@@ -81,12 +95,19 @@ struct MTLSize {
     depth: usize,
 }
 
+// `dispatchThreadgroups:threadsPerThreadgroup:` takes two `MTLSize` (24 B)
+// args. cpc's current ABI lowering for >16 B aggregate args passes them
+// via a hidden pointer; the Apple AArch64 PCS expects them register-split.
+// Mismatch → garbage width/height/depth read by Metal → SIGSEGV in
+// `dispatchThreadgroups:`. Workaround: declare the args as `*MTLSize`
+// (register-passed pointers) and pass `#addr_of` at the call site —
+// same trick `vendor/metal/src/runtime.cplus` uses.
 #[link_name = "objc_msgSend"]
 extern fn msg_dispatch(
     recv: *u8,
     sel: *u8,
-    groups: MTLSize,
-    per_group: MTLSize,
+    groups: *MTLSize,
+    per_group: *MTLSize,
 );
 
 // `MTLCreateSystemDefaultDevice` — single-function entry; not a
@@ -106,17 +127,16 @@ extern fn printf(fmt: *u8, ...) -> i32;
 fn sel(name: *u8) -> *u8 { return unsafe { sel_registerName(name) }; }
 fn cls(name: *u8) -> *u8 { return unsafe { objc_getClass(name) }; }
 
-// Wrap the embedded `.metallib` bytes as a no-copy NSData. The bytes
-// live in `.rodata` and outlive the dispatch — `freeWhenDone:NO`
-// (encoded as the trailing `0 as u64` arg).
-fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
-    return unsafe {
-        msg_id_ptr_len_opt(
-            cls(str_ptr("NSData\0")),
-            sel(str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0")),
-            ptr, len, 0 as u64,
-        )
-    };
+// Wrap the embedded `.metallib` bytes as a `dispatch_data_t`. Metal's
+// `newLibraryWithData:error:` takes `dispatch_data_t`, NOT `NSData` —
+// passing an NSData here crashes inside Metal's library-builder SHA256
+// hashing (it interprets the NSData ivars as a dispatch-data offset and
+// reads garbage). `dispatch_data_create` with NULL queue + NULL
+// destructor copies the buffer (DISPATCH_DATA_DESTRUCTOR_DEFAULT), so
+// `.rodata` lifetime + Metal lifetime cooperate without explicit
+// retain bookkeeping.
+fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
+    return unsafe { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
 }
 
 // ===========================================================================
@@ -148,7 +168,12 @@ pub fn main() -> i32 {
     // ---- Embed the compiled .metallib + load it as an MTLLibrary ----
     let shader_bytes = #include_bytes("../shaders/double.metallib");
     let shader_ptr: *u8 = unsafe { shader_bytes as *u8 };
-    let shader_data: *u8 = ns_data_view(shader_ptr, shader_len());
+    // `newLibraryWithData:error:` wants a `dispatch_data_t`, NOT an NSData.
+    // Passing an NSData here crashes inside the Metal library builder
+    // when it tries to SHA-256 hash the bytes (reads through a bogus
+    // dispatch-data offset pointer). Use `ns_dispatch_data` which calls
+    // `dispatch_data_create` — that IS the type Metal expects.
+    let shader_data: *u8 = ns_dispatch_data(shader_ptr, shader_len());
 
     let err_slot: *u8 = unsafe { malloc(8 as usize) };
     let library: *u8 = unsafe {
@@ -187,10 +212,10 @@ pub fn main() -> i32 {
         )
     };
     let mtl_out: *u8 = unsafe {
-        msg_id_ptr_len_opt(
+        msg_id_usize_u64(
             device,
             sel(str_ptr("newBufferWithLength:options:\0")),
-            0 as *u8, bytes, 0 as u64,
+            bytes, 0 as u64,
         )
     };
 
@@ -207,7 +232,7 @@ pub fn main() -> i32 {
     let groups: MTLSize = MTLSize { width: 1 as usize, height: 1 as usize, depth: 1 as usize };
     let per_group: MTLSize = MTLSize { width: n, height: 1 as usize, depth: 1 as usize };
     unsafe {
-        msg_dispatch(encoder, sel(str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), groups, per_group);
+        msg_dispatch(encoder, sel(str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), #addr_of(groups), #addr_of(per_group));
         msg_void(encoder, sel(str_ptr("endEncoding\0")));
         msg_void(cmd_buf, sel(str_ptr("commit\0")));
         msg_void(cmd_buf, sel(str_ptr("waitUntilCompleted\0")));
