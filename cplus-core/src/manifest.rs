@@ -49,6 +49,27 @@ pub struct Manifest {
     /// Directory containing the manifest file. All bin `path` entries are
     /// resolved relative to this directory.
     pub root: PathBuf,
+    /// v0.0.12 realtime Phase 8: optional `[profile.realtime]` table. When
+    /// present, the build/check driver synthesizes the corresponding contract
+    /// attributes (`#[no_alloc]`, `#[no_block]`, `#[max_stack(N)]`) onto every
+    /// function defined in *this* package (dependencies are exempt), turning
+    /// the per-function opt-in into a project-wide CI gate.
+    pub realtime_profile: Option<RealtimeProfile>,
+}
+
+/// v0.0.12 realtime Phase 8 — parsed `[profile.realtime]` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealtimeProfile {
+    /// Deny heap allocation (synthesizes `#[no_alloc]`).
+    pub deny_alloc: bool,
+    /// Deny blocking primitives (synthesizes `#[no_block]`).
+    pub deny_block: bool,
+    /// Reject calls to externs not known/marked non-allocating/non-blocking.
+    /// Subsumed by `deny_alloc`/`deny_block` (both already reject unknown
+    /// externs); kept as an explicit knob for clarity and forward use.
+    pub deny_unknown_extern: bool,
+    /// Per-function stack budget in bytes (synthesizes `#[max_stack(N)]`).
+    pub stack_limit: Option<u64>,
 }
 
 /// Phase 2 (v0.0.2) — top-level `[link]` table on a vendor package's
@@ -147,24 +168,46 @@ pub struct BinTarget {
 
 #[derive(Debug)]
 pub enum ManifestError {
-    Io { path: PathBuf, source: std::io::Error },
-    Parse { path: PathBuf, message: String },
-    MissingField { path: PathBuf, field: &'static str },
-    UnsupportedEdition { path: PathBuf, found: String },
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Parse {
+        path: PathBuf,
+        message: String,
+    },
+    MissingField {
+        path: PathBuf,
+        field: &'static str,
+    },
+    UnsupportedEdition {
+        path: PathBuf,
+        found: String,
+    },
     /// Phase 5 (E0408): both `[[bin]]` and `[lib]` declared. A manifest is
     /// either a binary target or a library target, not both. Users with a
     /// genuine "executable + library" need two manifests today.
-    BinAndLibConflict { path: PathBuf },
+    BinAndLibConflict {
+        path: PathBuf,
+    },
     /// Phase 5 (E0412): `crate-type` value not in `{staticlib, cdylib, both}`.
-    UnsupportedCrateType { path: PathBuf, found: String },
+    UnsupportedCrateType {
+        path: PathBuf,
+        found: String,
+    },
     /// Phase 2 (E0857): `[dependencies]` key fails the lowercase-ident
     /// rule. Dep names must match `[a-z][a-z0-9_]*` so the import path's
     /// first segment is unambiguous.
-    InvalidDependencyName { path: PathBuf, found: String },
+    InvalidDependencyName {
+        path: PathBuf,
+        found: String,
+    },
     /// Phase 2 (E0863): `[link].bundled` is non-empty but `[link].triples`
     /// is empty. The build driver can't know what hosts the bundled
     /// binaries are built for without a declared triples list.
-    BundledRequiresTriples { path: PathBuf },
+    BundledRequiresTriples {
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for ManifestError {
@@ -177,10 +220,18 @@ impl fmt::Display for ManifestError {
                 write!(f, "parsing manifest {}: {message}", path.display())
             }
             ManifestError::MissingField { path, field } => {
-                write!(f, "manifest {} is missing required field `{field}`", path.display())
+                write!(
+                    f,
+                    "manifest {} is missing required field `{field}`",
+                    path.display()
+                )
             }
             ManifestError::UnsupportedEdition { path, found } => {
-                write!(f, "manifest {}: unsupported edition `{found}` (only `2026` is currently valid)", path.display())
+                write!(
+                    f,
+                    "manifest {}: unsupported edition `{found}` (only `2026` is currently valid)",
+                    path.display()
+                )
             }
             ManifestError::BinAndLibConflict { path } => {
                 write!(f, "manifest {}: cannot declare both `[[bin]]` and `[lib]` (a manifest is either an executable or a library)", path.display())
@@ -218,8 +269,16 @@ impl ManifestError {
         };
         let primary = SourceSpan {
             file: path.clone(),
-            start: Position { line: 1, col: 1, byte: 0 },
-            end: Position { line: 1, col: 1, byte: 0 },
+            start: Position {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
+            end: Position {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
         };
         let mut suggestions: Vec<Suggestion> = Vec::new();
         let (code, message) = match self {
@@ -296,6 +355,28 @@ struct RawManifest {
     /// — fine for MVP; consumers shouldn't depend on dep ordering).
     #[serde(default)]
     dependencies: std::collections::BTreeMap<String, String>,
+    /// v0.0.12 realtime Phase 8: `[profile.<name>]` tables. Only `realtime`
+    /// is recognized today; unknown profile names are ignored.
+    #[serde(default)]
+    profile: Option<RawProfiles>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProfiles {
+    #[serde(default)]
+    realtime: Option<RawRealtimeProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRealtimeProfile {
+    #[serde(default)]
+    deny_alloc: bool,
+    #[serde(default)]
+    deny_block: bool,
+    #[serde(default)]
+    deny_unknown_extern: bool,
+    #[serde(default)]
+    stack_limit: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,17 +478,20 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         None => None,
         Some(rl) => {
             let lib_name = rl.name.clone().unwrap_or_else(|| name.clone());
-            let lib_path = rl.path
+            let lib_path = rl
+                .path
                 .map(|p| root.join(p))
                 .unwrap_or_else(|| root.join("src").join("lib.cplus"));
             let crate_type = match rl.crate_type.as_deref() {
                 None | Some("both") => CrateType::Both,
-                Some("staticlib")   => CrateType::Staticlib,
-                Some("cdylib")      => CrateType::Cdylib,
-                Some(other) => return Err(ManifestError::UnsupportedCrateType {
-                    path: manifest_path.to_path_buf(),
-                    found: other.to_string(),
-                }),
+                Some("staticlib") => CrateType::Staticlib,
+                Some("cdylib") => CrateType::Cdylib,
+                Some(other) => {
+                    return Err(ManifestError::UnsupportedCrateType {
+                        path: manifest_path.to_path_buf(),
+                        found: other.to_string(),
+                    })
+                }
             };
             Some(LibTarget {
                 name: lib_name,
@@ -431,18 +515,22 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             libs: Vec::new(),
         }]
     } else {
-        raw.bin.into_iter().map(|b| {
-            let bin_name = b.name.clone().unwrap_or_else(|| name.clone());
-            let bin_path = b.path
-                .map(|p| root.join(p))
-                .unwrap_or_else(|| root.join("src").join("main.cplus"));
-            BinTarget {
-                name: bin_name,
-                path: bin_path,
-                frameworks: b.frameworks,
-                libs: b.libs,
-            }
-        }).collect()
+        raw.bin
+            .into_iter()
+            .map(|b| {
+                let bin_name = b.name.clone().unwrap_or_else(|| name.clone());
+                let bin_path = b
+                    .path
+                    .map(|p| root.join(p))
+                    .unwrap_or_else(|| root.join("src").join("main.cplus"));
+                BinTarget {
+                    name: bin_name,
+                    path: bin_path,
+                    frameworks: b.frameworks,
+                    libs: b.libs,
+                }
+            })
+            .collect()
     };
 
     // Phase 2: convert raw `[link]` to LinkSpec + enforce
@@ -461,11 +549,8 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             // path relative to the manifest directory. We don't check
             // file existence at parse time — that happens at link time
             // (E0864) so the diagnostic carries the full link context.
-            let extra_objects: Vec<PathBuf> = rl
-                .extra_objects
-                .into_iter()
-                .map(|p| root.join(p))
-                .collect();
+            let extra_objects: Vec<PathBuf> =
+                rl.extra_objects.into_iter().map(|p| root.join(p)).collect();
             Some(LinkSpec {
                 frameworks: rl.frameworks,
                 libs: rl.libs,
@@ -493,13 +578,28 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         });
     }
 
+    let realtime_profile = raw
+        .profile
+        .and_then(|p| p.realtime)
+        .map(|r| RealtimeProfile {
+            deny_alloc: r.deny_alloc,
+            deny_block: r.deny_block,
+            deny_unknown_extern: r.deny_unknown_extern,
+            stack_limit: r.stack_limit,
+        });
+
     Ok(Manifest {
-        package: Package { name, version, edition },
+        package: Package {
+            name,
+            version,
+            edition,
+        },
         bins,
         lib,
         link,
         dependencies,
         root,
+        realtime_profile,
     })
 }
 
@@ -528,8 +628,57 @@ mod tests {
         parse(text, &dir.join("Cplus.toml"))
     }
 
+    #[test]
+    fn no_profile_table_means_none() {
+        let text = r#"
+            [package]
+            name = "hello"
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        assert!(m.realtime_profile.is_none());
+    }
+
+    #[test]
+    fn profile_realtime_parsed() {
+        let text = r#"
+            [package]
+            name = "rt"
+
+            [profile.realtime]
+            deny_alloc = true
+            deny_block = true
+            deny_unknown_extern = true
+            stack_limit = 4096
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let p = m.realtime_profile.expect("profile parsed");
+        assert!(p.deny_alloc);
+        assert!(p.deny_block);
+        assert!(p.deny_unknown_extern);
+        assert_eq!(p.stack_limit, Some(4096));
+    }
+
+    #[test]
+    fn profile_realtime_defaults_when_fields_omitted() {
+        let text = r#"
+            [package]
+            name = "rt"
+
+            [profile.realtime]
+            deny_alloc = true
+        "#;
+        let m = parse_in(&std::env::temp_dir(), text).unwrap();
+        let p = m.realtime_profile.expect("profile parsed");
+        assert!(p.deny_alloc);
+        assert!(!p.deny_block);
+        assert!(!p.deny_unknown_extern);
+        assert_eq!(p.stack_limit, None);
+    }
+
     fn assert_bin_relpath(m: &Manifest, idx: usize, expected_rel: &str) {
-        let actual = m.bins[idx].path.strip_prefix(&m.root)
+        let actual = m.bins[idx]
+            .path
+            .strip_prefix(&m.root)
             .expect("bin path should sit under manifest root");
         assert_eq!(actual, Path::new(expected_rel));
     }
@@ -576,7 +725,13 @@ mod tests {
             version = "0.1.0"
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(matches!(err, ManifestError::MissingField { field: "package.name", .. }));
+        assert!(matches!(
+            err,
+            ManifestError::MissingField {
+                field: "package.name",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -610,7 +765,10 @@ mod tests {
             libs = ["objc", "z"]
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
-        assert_eq!(m.bins[0].frameworks, vec!["Cocoa".to_string(), "Foundation".to_string()]);
+        assert_eq!(
+            m.bins[0].frameworks,
+            vec!["Cocoa".to_string(), "Foundation".to_string()]
+        );
         assert_eq!(m.bins[0].libs, vec!["objc".to_string(), "z".to_string()]);
     }
 
@@ -643,7 +801,10 @@ mod tests {
         assert_eq!(lib.crate_type, CrateType::Both);
         assert!(lib.path.ends_with("src/lib.cplus"));
         // `[lib]` suppresses the default-bin auto-injection.
-        assert!(m.bins.is_empty(), "bins should be empty when only [lib] present");
+        assert!(
+            m.bins.is_empty(),
+            "bins should be empty when only [lib] present"
+        );
     }
 
     #[test]
@@ -679,8 +840,10 @@ mod tests {
             crate-type = "rlib"
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(matches!(err, ManifestError::UnsupportedCrateType { .. }),
-            "expected UnsupportedCrateType, got: {err:?}");
+        assert!(
+            matches!(err, ManifestError::UnsupportedCrateType { .. }),
+            "expected UnsupportedCrateType, got: {err:?}"
+        );
     }
 
     #[test]
@@ -695,8 +858,10 @@ mod tests {
             [lib]
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(matches!(err, ManifestError::BinAndLibConflict { .. }),
-            "expected BinAndLibConflict, got: {err:?}");
+        assert!(
+            matches!(err, ManifestError::BinAndLibConflict { .. }),
+            "expected BinAndLibConflict, got: {err:?}"
+        );
     }
 
     #[test]
@@ -771,8 +936,10 @@ mod tests {
             Stdlib = "*"
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(matches!(err, ManifestError::InvalidDependencyName { ref found, .. } if found == "Stdlib"),
-            "expected InvalidDependencyName for `Stdlib`, got: {err:?}");
+        assert!(
+            matches!(err, ManifestError::InvalidDependencyName { ref found, .. } if found == "Stdlib"),
+            "expected InvalidDependencyName for `Stdlib`, got: {err:?}"
+        );
     }
 
     #[test]
@@ -785,8 +952,10 @@ mod tests {
             "stdlib/vec" = "*"
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(matches!(err, ManifestError::InvalidDependencyName { .. }),
-            "expected InvalidDependencyName for `stdlib/vec`, got: {err:?}");
+        assert!(
+            matches!(err, ManifestError::InvalidDependencyName { .. }),
+            "expected InvalidDependencyName for `stdlib/vec`, got: {err:?}"
+        );
     }
 
     #[test]

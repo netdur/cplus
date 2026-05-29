@@ -1586,7 +1586,11 @@ fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
         let params: Vec<(Ty, bool, bool, bool)> = f
             .params
             .iter()
-            .map(|p| (ty_from(&p.ty, types), p.move_, p.mutable, p.restrict))
+            .map(|p| {
+                let ty = ty_from(&p.ty, types);
+                let mv = effective_move(p, &ty, types);
+                (ty, mv, p.mutable, p.restrict)
+            })
             .collect();
         let declared_ret = match &f.return_type {
             Some(t) => ty_from(t, types),
@@ -1977,7 +1981,11 @@ fn collect_types(p: &Program) -> TypeTable {
                 let params: Vec<(Ty, bool, bool, bool)> = m
                     .params
                     .iter()
-                    .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable, p.restrict))
+                    .map(|p| {
+                        let ty = ty_from(&p.ty, &t);
+                        let mv = effective_move(p, &ty, &t);
+                        (ty, mv, p.mutable, p.restrict)
+                    })
                     .collect();
                 let declared_ret = match &m.return_type {
                     Some(ty) => ty_from(ty, &t),
@@ -2155,14 +2163,49 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
 /// Fires on:
 /// - `mut x: T` where T is a non-Copy struct (slice 5BC.codegen) — exclusive
 ///   borrow ABI; writes propagate back, paired with LLVM `noalias` in 6BC.codegen.
-/// - `x: T` where T is a non-Copy struct (slice 6BC.codegen) — shared borrow
-///   pointer-pass paired with LLVM `readonly`. Eliminates the byte-copy at
-///   call sites of large non-Copy aggregates.
+/// - `borrow x: T` where T is a non-Copy struct — shared borrow pointer-pass
+///   paired with LLVM `readonly`. Eliminates the byte-copy at call sites of
+///   large non-Copy aggregates while leaving ownership (and the drop) with the
+///   caller.
 ///
-/// `move x: T` stays value-passed (the value is the transfer; the caller's
-/// drop flag flip suppresses the caller-side drop).
+/// Note: a *bare* `x: T` on a non-Copy struct no longer reaches the shared-borrow
+/// branch — `effective_move` (below) rewrites it to `move_`, so it is value-passed
+/// like an explicit `move x: T`. `move x: T` stays value-passed (the value is the
+/// transfer; the caller's drop flag flip suppresses the caller-side drop).
 fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> bool {
     if move_ {
+        return false;
+    }
+    matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
+}
+
+/// v0.0.12: the v0.0.10 "non-Copy moves by default" rule, wired through to
+/// codegen.
+///
+/// The borrow checker already treats a bare `x: T` on a non-Copy struct as a
+/// move (use-after-move is E0335), but codegen historically lowered it like a
+/// shared borrow: pointer-pass with `readonly`, the callee binding aliasing the
+/// caller's storage, and the caller keeping the drop. That mismatch
+/// double-freed whenever the callee duplicated the value back out —
+/// `fn f(x: T) -> T { return x; }` then `let c = f(b);` dropped the one heap
+/// allocation twice (caller's unconditional drop of `b` + new owner `c`'s drop).
+///
+/// Collapsing the bare case onto the existing, sound `move x: T` lowering fixes
+/// it: value-pass, caller flips the arg's drop flag (`mark_moved`), and the
+/// callee `register_drop`s the param so it is freed exactly once — by the callee
+/// at scope exit, or by whoever it is forwarded to. `mut x` (exclusive borrow)
+/// and `borrow x` (shared borrow) do not consume, so they keep their
+/// by-pointer borrow ABI.
+///
+/// Scoped to `Ty::Struct`: that matches `param_passes_by_ptr`'s domain and the
+/// `register_drop` callee path. `Ty::String` / `Vec[T]` value params already
+/// dodge the double-free via the auto-clone-on-return safety net
+/// (`borrowed_params`), so they are left untouched here.
+fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
+    if p.move_ {
+        return true;
+    }
+    if p.mutable || p.borrow_ {
         return false;
     }
     matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
@@ -13979,12 +14022,12 @@ mod tests {
 
     #[test]
     fn shared_param_call_site_mirrors_readonly_attrs() {
-        // v0.0.8 fix B (finish): shared `t: Tag` ptr-passed param gets
-        // `readonly` (not `noalias`) at both def and call site.
+        // v0.0.8 fix B (finish): shared borrow `borrow t: Tag` ptr-passed param
+        // gets `readonly` (not `noalias`) at both def and call site.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(mut self) { return; } }\n\
-             fn peek(t: Tag) -> i32 { return t.v; }\n\
+             fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 1 }; return peek(x); }",
         );
         assert!(
@@ -14937,24 +14980,58 @@ mod tests {
 
     #[test]
     fn shared_param_noncopy_struct_lowers_to_ptr_readonly() {
-        // Slice 6BC.codegen: non-Copy shared `x: T` is now
+        // Slice 6BC.codegen: a non-Copy shared borrow `borrow x: T` is
         // pointer-passed (avoids the byte-copy) and tagged
         // `readonly` (callee provably can't write). `noalias` would
         // be unsound — two shared args can be the same place.
+        // (Bare `x: T` now *moves* — see `bare_noncopy_param_moves_value_passed`.)
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(mut self) { return; } }\n\
-             fn peek(t: Tag) -> i32 { return t.v; }\n\
+             fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
         assert!(
             ir.contains("i32 @peek(ptr readonly "),
-            "expected `t: Tag` to lower to `ptr readonly` param, got: {ir}"
+            "expected `borrow t: Tag` to lower to `ptr readonly` param, got: {ir}"
         );
         // v0.0.8 fix C: non-pub `peek` → fastcc at the call.
         assert!(
             ir.contains("call fastcc i32 @peek(ptr "),
             "expected call site to pass ptr for non-Copy shared arg, got: {ir}"
+        );
+    }
+
+    #[test]
+    fn bare_noncopy_param_moves_value_passed() {
+        // v0.0.12 fix: the v0.0.10 "non-Copy moves by default" rule, wired
+        // through to codegen. A *bare* `x: T` on a non-Copy struct now lowers
+        // like an explicit `move x: T` — struct-by-value, callee drop, caller
+        // drop-flag flip — NOT the old `ptr readonly` borrow shape. The old
+        // lowering double-freed when the value was forwarded back out
+        // (`fn f(x: T) -> T { return x; }`): the caller's unconditional drop
+        // and the new owner's drop both fired on the same heap.
+        let ir = gen_src(
+            "struct Tag { v: i32 }\n\
+             impl Tag { fn drop(mut self) { return; } }\n\
+             fn forward(x: Tag) -> Tag { return x; }\n\
+             fn main() -> i32 { let b: Tag = Tag { v: 7 }; let c: Tag = forward(b); return c.v; }",
+        );
+        // Bare param is value-passed, like `move x: Tag`. (`forward` returns a
+        // struct, so arg 0 is the sret pointer and the moved value is the
+        // trailing `%Tag` by-value param.)
+        assert!(
+            ir.contains(", %Tag %"),
+            "expected bare `x: Tag` to move (struct-by-value), got: {ir}"
+        );
+        assert!(
+            !ir.contains("@forward(ptr readonly"),
+            "bare `x: Tag` must NOT use the shared-borrow `ptr readonly` shape, got: {ir}"
+        );
+        // The caller emits a drop flag so it does not double-drop the moved `b`.
+        assert!(
+            ir.contains("b.drop_flag"),
+            "expected caller drop-flag for the moved bare param, got: {ir}"
         );
     }
 
@@ -15221,13 +15298,13 @@ mod tests {
 
     #[test]
     fn shared_param_noncopy_struct_emits_readonly_attr_set() {
-        // Shared `t: Tag` (non-Copy) gets readonly (not noalias) plus the
-        // rest. Two shared params may legally point at the same place, so
-        // noalias would be unsound.
+        // Shared borrow `borrow t: Tag` (non-Copy) gets readonly (not noalias)
+        // plus the rest. Two shared params may legally point at the same place,
+        // so noalias would be unsound.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(mut self) { return; } }\n\
-             fn peek(t: Tag) -> i32 { return t.v; }\n\
+             fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
         assert!(
@@ -15278,7 +15355,7 @@ mod tests {
         let ir = gen_src(
             "struct Big { tag: i8, n: i32 }\n\
              impl Big { fn drop(mut self) { return; } }\n\
-             fn use_it(b: Big) -> i32 { return b.n; }\n\
+             fn use_it(borrow b: Big) -> i32 { return b.n; }\n\
              fn main() -> i32 { let x: Big = Big { tag: 1, n: 42 }; return use_it(x); }",
         );
         assert!(

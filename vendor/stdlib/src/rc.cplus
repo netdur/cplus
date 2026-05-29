@@ -5,10 +5,10 @@
 // thread (saves the atomic-op overhead); use `Arc` when sharing across
 // threads.
 //
-// Future (post-`Send`/`Sync`): `Rc[T]` will be marked `!Send`, so
-// `thread::spawn_with::[Rc[T], ...]` rejects at sema time. For v0.0.4
-// the contract is documentation-only — passing an `Rc` across threads
-// will compile but is unsound (concurrent refcount writes will race).
+// `Rc[T]` is `!Send` and `!Sync` (v0.0.12 realtime Phase 6): passing one to
+// a `Send`/`Sync`-bounded generic — e.g. `thread::spawn_with::[Rc[T], ...]` —
+// is rejected at sema time with E0502. Sharing a non-atomic refcount across
+// threads would race; use `Arc[T]` (which is `Send + Sync`) for that.
 //
 // Inherits the v0.0.4 stdlib limitations: no `make_mut`, inner T's
 // Drop on last reference is not invoked automatically.

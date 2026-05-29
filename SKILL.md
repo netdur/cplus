@@ -2,7 +2,7 @@
 
 Dense reference for an LLM about to write or edit C+ code. Not a tutorial; not the spec. For the friendly walkthrough see [tutorial.md](tutorial.md); for history see [plan.md](plan.md) and the per-cycle `plan-0.0.N.md` archives.
 
-When in doubt about syntax, **read [docs/examples/](docs/examples/)** — every file there compiles and runs.
+When in doubt about syntax, **read [docs/examples/](docs/examples/)** — every file there compiles and runs. The compiler is the source of truth; this doc is verified against it but if they ever disagree, the compiler wins — run `cpc check` / `cpc build` and trust the diagnostic.
 
 ---
 
@@ -18,6 +18,8 @@ import "stdlib/io" as io;         // vendored, first segment is dep name
 math::area(2, 3);
 io::println("hi");
 ```
+
+> Any file containing an `import` must be compiled with **`cpc build`** (which reads `Cplus.toml`). `cpc check FILE` does **not** read the manifest and will fail (E0852) on imported modules — it's for single-file, import-free snippets only. See §15.
 
 ### Paths
 
@@ -56,21 +58,23 @@ EOF
 
 ## 2. Locked principles — never propose violating
 
-| # | Principle | What that means |
-|---|---|---|
-| 1 | No `null` | Use `Option[T]`. FFI null is `0 as *T` in `unsafe`. |
-| 2 | No closures / lambdas | Named `fn` only. Stateful callbacks via `(fn_ptr, user_data: *u8)`. |
-| 3 | No `&T` / `&mut T` types | Borrowing is a parameter marker, not a type. |
-| 4 | No exceptions / `try` / `?` | Errors are tagged-union values; `match` or `guard let`. |
-| 5 | No implicit conversions | Every width change needs `as`. |
-| 6 | No overloading | One name, one signature. |
-| 7 | No macros / decorators / comptime | Attributes are pure metadata. |
-| 8 | No `class` / `function` / `var` | `struct` + `impl`, `fn`, `let`. |
-| 9 | No mutable-by-default | `mut` is opt-in. |
-| 10 | Generics use `[T]`, not `<T>` | Avoids `a<b>(c)` ambiguity. |
-| 11 | Explicit `return` | No implicit tail returns at function level (E0333). |
-| 12 | `::` for types, `.` for instances | Strict separation. |
-| 13 | Module-private by default | `pub` is the export marker. Public symbols are intentional, not accidental. |
+All thirteen are **compiler-enforced**, not convention. The error code you hit when you break one is in the right column.
+
+| # | Principle | What that means | If violated |
+|---|---|---|---|
+| 1 | No `null` | Use `Option[T]`. FFI null is `0 as *T` in `unsafe`. | E0300 |
+| 2 | No closures / lambdas | Named `fn` only. Stateful callbacks via `(fn_ptr, user_data: *u8)`. | E0100 |
+| 3 | No `&T` / `&mut T` types | Borrowing is a parameter marker, not a type. | E0100 |
+| 4 | No exceptions / `try` / `?` | Errors are tagged-union values; `match` or `guard let`. | E0001 |
+| 5 | No implicit conversions | Every width change needs `as`. | E0302 |
+| 6 | No overloading | One name, one signature. | E0301 |
+| 7 | No macros / decorators / comptime | Only compiler-known attributes; they are pure metadata. | E0354 |
+| 8 | No `class` / `function` / `var` | `struct` + `impl`, `fn`, `let`. | E0100 |
+| 9 | No mutable-by-default | `mut` is opt-in. | sema |
+| 10 | Generics use `[T]`, not `<T>` | Avoids `a<b>(c)` ambiguity. | E0100 |
+| 11 | Explicit `return` | No implicit tail returns at function level. | E0333 |
+| 12 | `::` for types, `.` for instances | Strict separation. | E0303 / E0327 |
+| 13 | Module-private by default | `pub` is the export marker. Public symbols are intentional, not accidental. | E0403 |
 
 Compact examples of the non-obvious ones:
 
@@ -94,7 +98,7 @@ return match parse(s) {
 };
 
 // 10 — generics with [T], turbofish with ::[T]
-let v = vec::Vec[i32]::with_capacity(16);
+let v = vec::with_capacity::[i32](16 as usize);
 let h = thread::spawn::[i32](worker);
 ```
 
@@ -138,23 +142,32 @@ if cond { ... } else if other { ... } else { ... }
 let r: i32 = if cond { 1 } else { 2 };
 while x < 10 { x = x +% 1; }
 for i in 0..10 { ... }                       // 0..n exclusive; 0..=n inclusive
-for v in arr { ... }                          // array
 for (let mut i: i32 = 0; i < 10; i = i +% 1) { ... }   // C-style
 loop { if done { break; } continue; }
 while let Option[i32]::Some(v) = next() { ... }
+assert x > 0;                                 // traps on false
 ```
+
+> **Arrays are NOT iterable with `for ... in`.** `for v in arr` is rejected (E0312 — `for...in` wants a range `0..n` or an `Iterator[T]`). Iterate by index instead:
+> ```cplus
+> let a: [i32; 3] = [10, 20, 30];
+> for i in 0..3 { let v: i32 = a[i]; /* ... */ }
+> ```
 
 ### Structs + methods + receivers
 ```cplus
 struct Point { x: i32, y: i32 }
 impl Point {
-    fn new(x: i32, y: i32) -> Point { return Point { x, y }; }   // assoc fn
-    fn read(self) -> i32 { return self.x +% self.y; }            // shared borrow
+    fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }   // assoc fn
+    fn read(self) -> i32 { return self.x +% self.y; }            // read access, doesn't consume
     fn translate(mut self, dx: i32) { self.x = self.x +% dx; }   // exclusive
     fn into_raw(move self) -> i32 { return self.x; }             // consumes self
 }
 struct Public { pub value: i32, internal: i32 }                  // field visibility
 ```
+
+> **No struct-literal field shorthand.** Write `Point { x: x, y: y }`, not `Point { x, y }`.
+> **Receivers are `self` / `mut self` / `move self` only — there is no `borrow self`.** `borrow` is a *parameter* marker (§4), not a receiver. Use bare `self` for read-only method access.
 
 ### Enums
 ```cplus
@@ -200,7 +213,7 @@ fn identity[T](x: T) -> T { return x; }
 fn max[T: Ord](a: T, b: T) -> T { ... }            // bounds: Ord, Eq, Hash
 struct Pair[A, B] { pub first: A, pub second: B }
 
-let v = vec::Vec[i32]::with_capacity(16);
+let v = vec::with_capacity::[i32](16 as usize);
 let s = #size_of::[Point]();
 ```
 
@@ -217,17 +230,23 @@ let a: str = "hello";                             // literal — always str
 let b: string = "hello".to_string();              // copies to heap
 str_ptr(s); str_len(s);                           // safe accessors
 unsafe { str_from_raw_parts(p, n) };              // unsafe constructor
+b.len(); b.is_empty(); b.as_str(); b.clone();     // string methods
 ```
 
 `str` is forbidden in `async fn` signatures (E0900). Pass `string` instead.
 
+> **String ops are sparse.** There is **no `+` concatenation** and **no stdlib `split` / `parse` / `slice` / `find`** on strings. Build strings with interpolation (below), and do byte-level work via `str_ptr` / `str_len` + manual pointer logic (see `docs/examples/recipes/http_get/`).
+
 ### String interpolation
 ```cplus
 let n: i32 = 42;
-let s: string = "answer is \{n}, name is \{name}".to_string();
+let s: string = "answer is ${n}, name is ${name}".to_string();
 ```
 
-Format specifiers (`\{x:04d}`) not implemented — convert numbers manually if needed.
+Syntax is `${expr}` (not `\{...}`). Format specifiers (`${x:04d}`) are **not** implemented — convert numbers manually if needed.
+
+### Also supported
+Type aliases (`type Name = ExistingType;`) and tuples (`(a, b)` literal, `(T, U)` type) parse and compile. See `docs/examples/` for exact usage before relying on tuple method surface.
 
 ---
 
@@ -243,7 +262,7 @@ Format specifiers (`\{x:04d}`) not implemented — convert numbers manually if n
 | `borrow x: T` | Shared borrow — caller retains | (redundant on Copy) |
 | `restrict p: *T` | Adds LLVM `noalias` to a raw pointer | — |
 
-Method receivers follow the same model: `self`, `mut self`, `move self`, `borrow self`.
+Method receivers: `self` (read access), `mut self` (exclusive), `move self` (consume). **No `borrow self`** — `borrow` is a parameter marker only.
 
 ```cplus
 fn echo(x: string) -> string { return x; }        // x moves in, returns out — fine
@@ -271,14 +290,14 @@ fn make_buf() -> Buf { ... }    // no marker — return is always a move
 ### Borrow checker — aliasing XOR mutability
 
 ```cplus
-let mut v = vec::Vec[i32]::new();
+let mut v = vec::new::[i32]();
 v.push(1);
 let n = v.len();         // shared borrow
 let p = v.get(0);        // shared borrow — fine
 v.push(2);               // exclusive — but no live shared borrow, fine
 ```
 
-Common errors: `E0372` move out of borrowed, `E0383` read while exclusively borrowed, `E0370-family` overlapping. Fix is almost always a `{ ... }` scope boundary so the conflicting borrows don't co-exist.
+Under default-move, the **most common** conflict you'll see is `E0335` (use of moved value). Others: `E0372` move out of borrowed, `E0383` read while exclusively borrowed, `E0370`-family overlapping borrows. Fixes, in order of preference: add a `{ ... }` scope so a borrow ends earlier; add a `borrow` marker so the callee doesn't consume; `.clone()`; or restructure ownership. **Not every conflict is fixable by scoping alone** — some are genuine ownership-restructuring problems.
 
 ### Drop + defer
 ```cplus
@@ -299,6 +318,12 @@ fn main() -> i32 {
 
 No `try`, `catch`, `throw`, `?`. Fallible fns return a tagged union.
 
+> **Critical — Result/Option have NO methods to lean on.** `Result[T,E]` and `Option[T]` provide **only** their variants (and a few constructors). There is **no** `.unwrap()`, `.expect()`, `.map()`, `.and_then()`, `.unwrap_or()`, `.ok_or()`, `.is_ok()`, `.is_some()`. Handle them **only** with `match`, `if let`, or `guard let`. (`.unwrap()` exists on `Box[T]` — that is unrelated.) There is also **no `panic()` / `abort()`**: the only hard bail is `assert` (which traps). Do not write any of the missing methods — they won't compile.
+
+Constructors that exist:
+- `Result`: variants `Result[T,E]::Ok(v)` / `Result[T,E]::Err(e)`; helpers `result::ok`, `result::err`, `result::io_ok`, `result::io_err`. `result::IoError` has fixed variants.
+- `Option`: variants `Option[T]::Some(v)` / `Option[T]::None`; helper `option::some`.
+
 ```cplus
 enum ParseResult { Ok(i32), BadInput, Overflow }
 
@@ -311,7 +336,7 @@ fn or_zero(s: str) -> i32 {
     };
 }
 
-// Readable
+// Readable — guard let is the dominant idiom across the recipes
 fn handle(s: str) -> i32 {
     guard let ParseResult::Ok(v) = parse(s) else { return 0 -% 1; };
     return v +% 100;
@@ -325,6 +350,8 @@ import "stdlib/option" as option;
 result::Result[i32, result::IoError]    // ok or err
 option::Option[i32]                     // some or none
 ```
+
+> **No error context / wrapping.** There is no source-chaining, no message-attach, and no uniform/boxed error (no `anyhow` analog). If you need context, encode it in your own enum variants or carry it in the payload.
 
 ---
 
@@ -370,10 +397,12 @@ Pointer ↔ int casts go through `usize`, never directly to `i32` (E0315).
 |---|---|---|
 | `#size_of::[T]()` | `usize` | Safe; LLVM folds to constant |
 | `#align_of::[T]()` | `usize` | Safe |
-| `#addr_of(x)` | `*T` | Unsafe; arg must be bare ident |
+| `#addr_of(place)` | `*T` | Unsafe; arg must be an addressable place |
 | `#include_bytes("path")` | `*[u8; N]` | Path relative to source file |
 | `#include_str("path")` | `str` | UTF-8 validated at sema time |
 | `#env("NAME")` | `str` | Resolved at sema; E0876 if unset |
+| `#zero::[T]()` | `T` | Safe all-zero value |
+| `#cpu_relax()` | `()` | Safe spin-loop hint |
 | `#selector("name")` | `*u8` | ObjC SEL pointer, cached |
 | `#msg_send(recv, "sel", ...) -> RetTy` | RetTy | Typed objc_msgSend call |
 | `#compile_shader("file.metal", "msl")` | `*[u8; N]` | xcrun metal at sema time |
@@ -399,16 +428,16 @@ let greeting: str = #env("GREETING");
 | Module | What |
 |---|---|
 | `io` | `print` / `println` / `eprintln` over printf |
-| `result` / `option` | Generic `Result[T, E]` / `Option[T]` |
+| `result` / `option` | Generic `Result[T, E]` / `Option[T]` (variants + constructors only — no combinators) |
 | `vec` | `Vec[T]` growable vector (Drop on scope exit) |
-| `hash_map` | `HashMap[K, V]` (K: Hash + Eq; primitives + str) |
+| `hash_map` | `HashMap[K, V]` (K: Hash + Eq; primitives + str). `new` / `insert` / `get` / `contains_key` |
 | `string` | builtin type (no module needed) |
 | `fs` | File I/O |
 | `net` | TCP (IPv4, numeric IPs only) |
 | `env` | env vars + argv |
 | `thread` | `spawn::[T](fn)` / `spawn_with::[I, O](data, fn)` / `JoinHandle[T]` |
 | `atomic` | `atomic_fetch_add_*` + `Ordering::{Relaxed,Acquire,Release,AcqRel,SeqCst}` |
-| `mutex` | pthread-backed, internally refcounted |
+| `mutex` | pthread-backed, internally refcounted (collapses the `Arc<Mutex>` pair) |
 | `box` / `arc` / `rc` | Owned-on-heap; atomic refcount; non-atomic refcount |
 | `channel` | typed MPMC message passing |
 | `future` / `executor` / `reactor` / `time` | `async fn`, `await`, kqueue reactor |
@@ -417,6 +446,8 @@ let greeting: str = #env("GREETING");
 | `range` | `0..n` lowers to `Range[i32]` |
 | `marker` | Copy / Send / Sync framework |
 
+`marker`, `range`, and `time` are mostly import/marker shims with little public surface.
+
 ---
 
 ## 9. Vendor packages — `import "<name>/..." as ...;`
@@ -424,7 +455,7 @@ let greeting: str = #env("GREETING");
 | Package | Adds | One-liner example |
 |---|---|---|
 | `accelerate` | BLAS + vDSP via Apple Accelerate.framework | `cblas::sdot(n, x_ptr, 1, y_ptr, 1)` |
-| `appkit` | Cocoa/AppKit bindings, 15 sub-modules | `application::Application::shared().run()` |
+| `appkit` | Cocoa/AppKit bindings, 15+ sub-modules | `application::Application::shared().run()` |
 | `arena` | Growable bump-pointer arena | `let mut a = arena::Arena::new(4096 as usize);` |
 | `clap` | Fluent argparse | `App::new("x").arg(Arg::new("v").short("v").flag())` |
 | `json` | Typed-enum JSON parser + serializer | `json::parse(s) -> Result[Value, ParseError]` |
@@ -434,14 +465,14 @@ let greeting: str = #env("GREETING");
 | `static-arena` | Fixed-size stack arena (16K / 64K shapes) | `StaticArena16K::new(); a.alloc_bytes(n)` |
 | `uuid` | RFC 4122 v4 from /dev/urandom | `Uuid::new_v4() -> Option[Uuid]` |
 
-Each ships in-package `#[test]` fns runnable via `cd vendor/<pkg> && cpc test`.
+Each ships in-package `#[test]` fns runnable via `cd vendor/<pkg> && cpc test`. Vendor packages are self-contained (deps are stdlib or none) — `cpc` does not resolve transitive C+ dependencies, so there is no deep tree to audit.
 
 ---
 
 ## 10. Threads + async snapshots
 
 ```cplus
-// Safe pattern: partition + join. No shared memory = no race.
+// Safe pattern: partition + join. No shared memory = no race. THIS is the idiomatic path.
 import "stdlib/thread" as thread;
 struct Range { start: i64, end: i64 }
 fn sum_r(r: Range) -> i64 { /* ... */ }
@@ -457,6 +488,8 @@ fn main() -> i32 { return executor::block_on::[i32](outer()); }
 
 Borrow-shaped params (`str`, `T[]`, `mut x: NonCopy`) are rejected in `async fn` (E0900). Use `string`, `Vec[T]`.
 
+Shared mutable state exists (`mutex`, `atomic`, `arc`), but prefer partition+join. There is no literal `Arc<Mutex<T>>` pattern — `Mutex[T]` is internally refcounted, so reach for it directly only when message-passing or partitioning won't do.
+
 ---
 
 ## 11. SIMD types (one-paragraph summary)
@@ -466,6 +499,8 @@ Nineteen widths: `f32x4 f64x2 f32x8 f64x4 i{8,16,32,64}x{16,8,4,2} u...` plus 25
 ---
 
 ## 12. Attributes (pure metadata, no codegen by them)
+
+Only compiler-known attributes are accepted; an unknown attribute is rejected (E0354).
 
 ```cplus
 #[test]                                          // register a test fn
@@ -483,27 +518,34 @@ fn rt_safe() { ... }
 
 | Code | Meaning | Fix |
 |---|---|---|
-| E0300 | Undefined name | Typo / missing import / `pub` |
+| E0001 | Lexer: unexpected character | Bad token (e.g. `?`, `\{`) — not part of C+ |
+| E0100 | Parser: unexpected token | Wrong form (closure, `<T>`, `class`, `borrow self`, etc.) |
+| E0300 | Undefined name | Typo / missing import / `pub` (also `null`) |
+| E0301 | Duplicate definition | No overloading — rename |
 | E0302 | Type mismatch | Insert `as` or fix declared type |
 | E0303 | Unknown type | Typo / missing import / generic param oos |
+| E0312 | `for ... in` needs range or `Iterator[T]` | Don't iterate arrays directly — index `0..n` |
 | E0315 | Invalid cast | Some pairs forbidden (`*T → i32`, `int → bool`) |
 | E0327 | Wrong call form | `Type::method()` vs `value.method()` |
 | E0333 | Implicit return | Add explicit `return EXPR;` |
-| E0335 | Use of moved value | Don't read after move |
+| E0335 | Use of moved value | Don't read after move (most common borrow error) |
 | E0337 | Move out of method-call result | Bind to local first |
 | E0340 | Non-exhaustive match | Add missing arm or `_` |
 | E0345 | Possibly-unassigned binding | Init on every path |
-| E0370–86 | Borrow checker conflicts | Read the specific message |
+| E0354 | Unknown attribute | Only compiler-known attributes allowed |
+| E0370–86 | Borrow checker conflicts | Read the specific message; scope/borrow/clone/restructure |
+| E0403 | Private symbol used across modules | Mark it `pub` |
 | E0411 | `restrict` on non-pointer param | Only `*T` accepts `restrict` |
 | E0500/E0501 | Inference fail / wrong type-arg count | Use `name::[T1, T2](...)` |
 | E0801 | Needs `unsafe` | Wrap in `unsafe { ... }` |
+| E0852 | Import used outside a build | Use `cpc build` (reads `Cplus.toml`), not single-file `cpc check` |
 | E0871 | Non-string-literal arg to `#include_*` / `#env` | Use a string literal |
 | E0876 | `#env("X")` not set | Set the var at cpc invocation |
 | E0900 | Borrow-shaped param in `async fn` | Use `string` / `Vec[T]` |
-| E0902 | non-Copy moved by default — add `borrow` if caller should retain | Add `borrow` or accept the move |
+| E0902 | non-Copy moved by default | Add `borrow` or accept the move |
 | E0905 | Unknown `#name` intrinsic | Typo in intrinsic name |
 
-`cpc --diagnostics=json` for tool-friendly output.
+`cpc --diagnostics=json` for tool-friendly output (NDJSON: `severity`, `code`, `message`, `primary` span, optional `labels`/`notes`/`suggestions`).
 
 ---
 
@@ -536,14 +578,22 @@ let a: str    = "hello";
 let b: string = "hello".to_string();
 ```
 
+Recurring traps for generated code:
+- **No `.unwrap()` / `.map()` / `.is_some()` on Result/Option** — use `match` / `guard let`. No `panic()` either.
+- **No string `+`, `split`, `parse`** — interpolate (`${x}`) or do pointer/length work.
+- **`for v in arr` is invalid** — index with `for i in 0..n`.
+- **Struct literals need named fields** — `Point { x: x, y: y }`, not `{ x, y }`.
+- **`cpc check` can't see imports** — anything with `import` must go through `cpc build`.
+- Interpolation is `${x}`, not `\{x}`; no format specifiers.
+
 ---
 
 ## 15. Tooling
 
 ```bash
-cpc build                      # multi-file (reads Cplus.toml)
-cpc FILE.cplus -o BIN          # single-file
-cpc check FILE                 # parse + sema only
+cpc build                      # multi-file project (reads Cplus.toml) — REQUIRED for any code with imports
+cpc FILE.cplus -o BIN          # single-file, no imports
+cpc check FILE                 # parse + sema only, single-file no-import (does NOT read Cplus.toml)
 cpc fmt FILE                   # format in place
 cpc fmt --check DIR            # CI mode
 cpc test                       # run #[test] + doctests
@@ -551,9 +601,11 @@ cpc lsp                        # language server
 cpc --emit-ll FILE             # pre-opt LLVM IR
 cpc --emit-ll-opt FILE         # post-opt LLVM IR
 cpc --emit-asm FILE            # native asm
-cpc --diagnostics=json         # machine-readable
+cpc --diagnostics=json         # machine-readable (NDJSON)
 cpc --release                  # -O2 (default: debug -O0 with overflow traps)
 ```
+
+> Builds are fast (a small project compiles in well under a second). For the agentic edit→compile loop, prefer `cpc build` as the feedback command for any project with imports; reserve `cpc check FILE` for self-contained snippets.
 
 ### Linking against Apple frameworks
 
@@ -577,7 +629,7 @@ The vendor packages (`metal`, `appkit`, `accelerate`) already declare their `[li
 
 Every new feature ships with **three** test shapes:
 1. **Positive** — compiles and runs.
-2. **Negative-with-code** — rejects with the specific Exxxx code.
+2. **Negative-with-code** — rejects with the specific Exxxx code (assert on `status != 0` + stderr contains the code).
 3. **End-to-end** — drives `cpc build` from start to finish.
 
 Canonical patterns: [cpc/tests/e2e.rs](cpc/tests/e2e.rs) for the compiler; in-package `#[test]` fns for vendor pkgs.

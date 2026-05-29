@@ -3355,7 +3355,7 @@ fn shared_param_tagged_readonly_in_ir() {
         "\
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 7 };
     return peek(v);
@@ -3376,13 +3376,244 @@ fn main() -> i32 {
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
         ir.contains("i32 @peek(ptr readonly "),
-        "expected shared `b: B` to lower to `ptr readonly`; got: {ir}"
+        "expected shared borrow `borrow b: B` to lower to `ptr readonly`; got: {ir}"
     );
     // And NOT `noalias` — shared borrows can alias per §2.9.
     assert!(
         !ir.contains("@peek(ptr noalias"),
         "shared borrow must not get `noalias`; got: {ir}"
     );
+}
+
+#[test]
+fn bare_noncopy_param_move_forwarded_no_double_free() {
+    // v0.0.12 regression: a bare `x: T` non-Copy param that is forwarded back
+    // out (`fn forward(x: T) -> T { return x; }`) used to lower as a shared
+    // borrow — the caller dropped its binding unconditionally AND the returned
+    // value's new owner dropped it, double-freeing the same heap allocation.
+    // macOS libmalloc aborts on the second free, so a regression makes the
+    // program exit non-zero. The fix moves the value (caller drop-flag flip +
+    // callee-owned drop), so it frees exactly once and exits 0.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+struct Owned { ptr: *u8 }
+impl Owned {
+    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
+    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+}
+fn forward(x: Owned) -> Owned { return x; }
+fn main() -> i32 {
+    let b: Owned = Owned::make();
+    let c: Owned = forward(b);
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "expected clean compile; stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run binary");
+    assert!(
+        run.status.success(),
+        "forwarded move double-freed (non-zero exit); stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn partial_move_out_of_drop_type_rejected_e0509() {
+    // v0.0.12 fix (E0509): moving a non-Copy field out of a value whose type
+    // implements `drop` is rejected. The owning destructor frees its fields by
+    // hand (docs/design/phase3-drop.md §5), so stealing a field would
+    // double-free it. Both the `let`-binding and `return` move positions are
+    // guarded.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "\
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+struct Owned { ptr: *u8 }
+impl Owned {
+    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
+    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+}
+struct Pair { a: Owned, b: Owned }
+impl Pair {
+    fn drop(mut self) { unsafe { free(self.a.ptr); } unsafe { free(self.b.ptr); } return; }
+}
+fn main() -> i32 {
+    let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
+    let q: Owned = p.a;
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected E0509 rejection, but compile succeeded"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0509"),
+        "expected E0509, got: {stderr}"
+    );
+}
+
+#[test]
+fn partial_move_out_of_non_drop_type_allowed() {
+    // Counterpart to E0509: moving a field out of a NON-Drop aggregate is
+    // fine — a struct with no `drop` impl never frees its fields (C+ does not
+    // synthesize per-field drops), so there is no destructor to double-free.
+    // This must keep compiling.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+struct Owned { ptr: *u8 }
+impl Owned {
+    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
+    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+}
+struct Pair { a: Owned, b: Owned }
+fn main() -> i32 {
+    let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
+    let q: Owned = p.a;
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "non-Drop partial move must compile; stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+}
+
+/// Helper: compile a snippet with `--emit-ll`, return (success, stderr).
+fn try_compile_snippet(src_text: &str) -> (bool, String) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, src_text).unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    (out.status.success(), String::from_utf8_lossy(&out.stderr).to_string())
+}
+
+#[test]
+fn return_region_undeclared_rejected_e0511() {
+    // v0.0.12 (#2): a return type naming a borrow region (`-> borrow Z str`)
+    // must tie that region to a parameter. An undeclared region is inert —
+    // reject it rather than silently accept (was the deferred "future polish").
+    let (ok, stderr) = try_compile_snippet(
+        "fn f(a: borrow A str) -> borrow Z str { return a; }\n\
+         fn main() -> i32 { return str_len(f(\"x\")) as i32; }\n",
+    );
+    assert!(!ok, "expected E0511 rejection, compiled instead");
+    assert!(stderr.contains("E0511"), "expected E0511, got: {stderr}");
+}
+
+#[test]
+fn return_region_mismatch_rejected_e0512() {
+    // v0.0.12 (#2): returning a borrow from a different region than the
+    // signature declares is rejected — regions are now meaningful.
+    let (ok, stderr) = try_compile_snippet(
+        "fn weird(a: borrow A str, b: borrow B str) -> borrow A str { return b; }\n\
+         fn main() -> i32 { return str_len(weird(\"x\", \"y\")) as i32; }\n",
+    );
+    assert!(!ok, "expected E0512 rejection, compiled instead");
+    assert!(stderr.contains("E0512"), "expected E0512, got: {stderr}");
+}
+
+#[test]
+fn return_region_matching_compiles() {
+    // v0.0.12 (#2) positive: a region-annotated return that borrows a
+    // same-region parameter is valid and must keep compiling.
+    let (ok, stderr) = try_compile_snippet(
+        "fn pick(a: borrow A str, b: borrow A str) -> borrow A str {\n\
+             if str_len(a) > str_len(b) { return a; }\n\
+             return b;\n\
+         }\n\
+         fn main() -> i32 { return str_len(pick(\"hello\", \"worldlong\")) as i32; }\n",
+    );
+    assert!(ok, "valid same-region return must compile; stderr: {stderr}");
+}
+
+#[test]
+fn return_borrow_of_local_owned_rejected_e0513() {
+    // v0.0.12 (#3): returning a `str` view into a function-local owned value
+    // (a `string`, which drops at function exit) dangles — reject it.
+    let (ok, stderr) = try_compile_snippet(
+        "fn bad() -> str {\n\
+             let s: string = \"heap\".to_string();\n\
+             return s.as_str();\n\
+         }\n\
+         fn main() -> i32 { return str_len(bad()) as i32; }\n",
+    );
+    assert!(!ok, "expected E0513 rejection, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn return_literal_str_view_compiles() {
+    // v0.0.12 (#3) positive: a `str` bound to a string literal is `'static`;
+    // returning it is sound and must keep compiling (no false positive).
+    let (ok, stderr) = try_compile_snippet(
+        "fn ok() -> str { let s: str = \"literal\"; return s; }\n\
+         fn main() -> i32 { return str_len(ok()) as i32; }\n",
+    );
+    assert!(ok, "returning a literal-backed str must compile; stderr: {stderr}");
+}
+
+#[test]
+fn return_slice_of_param_compiles() {
+    // v0.0.12 (#3) positive: returning a view borrowed from a parameter is
+    // caller-tied and sound — must not be flagged as a dangling local.
+    let (ok, stderr) = try_compile_snippet(
+        "fn first(borrow s: str) -> str { return s; }\n\
+         fn main() -> i32 { return str_len(first(\"x\")) as i32; }\n",
+    );
+    assert!(ok, "returning a borrow of a parameter must compile; stderr: {stderr}");
 }
 
 #[test]
@@ -6864,7 +7095,7 @@ fn phase11_cli_help_documents_sanitizer_and_debuginfo_flags() {
         );
     }
     assert!(
-        stdout.contains("cpc check FILE"),
+        stdout.contains("cpc check"),
         "--help should document `check`: {stdout}"
     );
 }
@@ -16264,6 +16495,66 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          exited {:?}",
         out.status
     );
+}
+
+/// v0.0.12 realtime Phase 8: a `[profile.realtime]` project applies the
+/// contract to *local* functions — `cpc check` rejects an allocation in
+/// local code with E0901 (and the unknown-extern E0907 from deny_block).
+#[test]
+fn realtime_profile_rejects_local_allocation() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
+         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\nstack_limit = 4096\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn hot() -> *u8 { return unsafe { malloc(64 as usize) }; }\n\
+         fn main() -> i32 { let _p: *u8 = hot(); return 0; }",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "profile must reject local allocation");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0901"), "expected E0901, got: {stderr}");
+}
+
+/// A clean real-time program (no allocation, no blocking, small frame) passes
+/// `cpc check` under an active `[profile.realtime]`.
+#[test]
+fn realtime_profile_clean_program_passes() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
+         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\nstack_limit = 4096\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn dsp(x: i32) -> i32 { return x +% 1; }\n\
+         fn main() -> i32 { return dsp(41); }",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc check");
+    assert!(status.success(), "clean realtime program must pass cpc check");
 }
 
 fn tempdir() -> std::path::PathBuf {

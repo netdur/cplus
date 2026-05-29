@@ -627,6 +627,9 @@ fn check_with_files_inner<'a>(
         current_fn_is_async: false,
         current_fn_is_gen: false,
         current_gen_yield_ty: None,
+        current_fn_param_names: std::collections::HashSet::new(),
+        current_fn_param_regions: HashMap::new(),
+        current_fn_return_region: None,
         current_file: None,
         files,
         loop_depth: 0,
@@ -694,7 +697,9 @@ fn check_with_files_inner<'a>(
     // call sites have already been type-checked (we trust the AST shape).
     // v0.0.10 Phase 3: `#[bounded_recursion]` rides the same walker.
     cx.check_no_alloc(program);
+    cx.check_no_block(program);
     cx.check_bounded_recursion(program);
+    cx.check_max_stack(program);
     // v0.0.5 Phase 3 Slice 3C: enum-pattern-discovery propagation.
     //
     // Sema's check_method type-checks each impl method body *once* using
@@ -804,7 +809,11 @@ fn check_with_files_inner<'a>(
         type_aliases,
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
         env_vars: std::mem::take(&mut cx.env_vars_table),
-        statics: cx.statics_table.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        statics: cx
+            .statics_table
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
         selectors: std::mem::take(&mut cx.selectors_table),
         shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
     };
@@ -856,6 +865,19 @@ struct SemaCx<'a> {
     /// surrounding `gen fn`. `None` outside a gen fn or when the
     /// return type is malformed.
     current_gen_yield_ty: Option<Ty>,
+    /// v0.0.12 (returned-borrow checking): names bound as parameters (plus
+    /// `self` for methods) of the function currently being checked. Lets the
+    /// `return` site tell a parameter-rooted borrow (caller-tied, sound) from a
+    /// local-rooted one (dropped at function exit → dangling). Set fresh at the
+    /// top of `check_function` / `check_method`.
+    current_fn_param_names: std::collections::HashSet<String>,
+    /// v0.0.12 (#2 region enforcement): map from parameter name to the explicit
+    /// `borrow REGION T` region it carries, for parameters that have one. Used
+    /// to validate that a region-annotated return borrows a same-region param.
+    current_fn_param_regions: HashMap<String, String>,
+    /// v0.0.12 (#2 region enforcement): the explicit region on the current
+    /// function's return type (`-> borrow REGION T`), if any.
+    current_fn_return_region: Option<String>,
     /// Slice 4C: file the currently-checked item originated from (post
     /// resolver merge). `None` in single-file mode or for items the
     /// resolver didn't touch. Used both to gate field-pub access (see
@@ -1316,29 +1338,44 @@ impl SemaCx<'_> {
         }
     }
 
-    /// v0.0.4 Phase 2 Slice 2A: structural Send membership.
+    /// Structural Send membership.
     ///
-    /// v0.0.4 baseline: every type is Send. The check exists as a
-    /// vocabulary anchor — generic signatures can declare `T: Send`
-    /// bounds (e.g. `thread::spawn[O: Send]`) and the check accepts
-    /// every type today, but the surface is forward-compatible with
-    /// the tightening planned for future slices:
-    /// - `Rc[T]`, `MutexGuard[T]`: explicit `!Send`.
-    /// - Structs with raw-pointer fields: `!Send` unless the user
-    ///   opts in via `unsafe impl Send for T {}`.
+    /// v0.0.12 realtime Phase 6 (core): the single-threaded shared-ownership
+    /// type `Rc[T]` and a `MutexGuard[T]` are `!Send` — moving either across
+    /// threads is a soundness bug (non-atomic refcount race; a guard is bound
+    /// to the acquiring thread). All other types remain `Send`. Detected by
+    /// the generic template name behind the instantiated struct.
     ///
-    /// Today the check returns true regardless. The bound itself is
-    /// the documentation; enforcement tightens incrementally.
-    pub fn is_send(&self, _ty: &Ty) -> bool {
-        true
+    /// Deferred (needs an `unsafe impl Send for T {}` opt-in that doesn't
+    /// exist yet): the broad "structs with raw-pointer fields are `!Send`"
+    /// rule. Enabling it without an escape hatch would reject most FFI code
+    /// (ObjC bindings, channels, mutexes). Structural propagation through a
+    /// struct that *holds* an `Rc` is likewise future work.
+    pub fn is_send(&self, ty: &Ty) -> bool {
+        !matches!(
+            self.nominal_template_leaf(ty),
+            Some("Rc") | Some("MutexGuard")
+        )
     }
 
-    /// v0.0.4 Phase 2 Slice 2A: structural Sync membership. Same
-    /// baseline + roadmap as `is_send` — vacuous true for now;
-    /// tightening tracks per-type `!Sync` markers + structural
-    /// inference for cells/refcells when those land.
-    pub fn is_sync(&self, _ty: &Ty) -> bool {
-        true
+    /// Structural Sync membership. `Rc[T]` is `!Sync` (shared `&Rc` across
+    /// threads would race the non-atomic refcount). Everything else is `Sync`
+    /// today; `Cell`/`RefCell` join the `!Sync` set when they land.
+    pub fn is_sync(&self, ty: &Ty) -> bool {
+        !matches!(self.nominal_template_leaf(ty), Some("Rc"))
+    }
+
+    /// For an instantiated generic struct, the trailing segment of its
+    /// template name (`stdlib.rc.Rc` → `"Rc"`). `None` for non-struct or
+    /// non-generic types. Used by `is_send`/`is_sync` to recognize the
+    /// stdlib marker types structurally rather than by mangled name.
+    fn nominal_template_leaf(&self, ty: &Ty) -> Option<&str> {
+        if let Ty::Struct(id) = ty {
+            if let Some((tmpl, _)) = &self.structs[id.0 as usize].generic_origin {
+                return Some(tmpl.rsplit('.').next().unwrap_or(tmpl));
+            }
+        }
+        None
     }
 
     /// Slice 7GEN.5e step 4: verify each `(param, arg)` pair against
@@ -2475,6 +2512,7 @@ impl SemaCx<'_> {
                 },
             );
         }
+        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver.is_some());
         self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
         self.scopes.pop();
         self.current_fn_is_gen = prev_gen;
@@ -2572,6 +2610,7 @@ impl SemaCx<'_> {
                 },
             );
         }
+        self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver.is_some());
         self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
         self.scopes.pop();
         self.current_fn_is_gen = prev_gen;
@@ -3058,7 +3097,8 @@ impl SemaCx<'_> {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
                 self.walk_block_for_param_compare(else_body, param_idents);
             }
-            StmtKind::For(_, _) | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::For(_, _) | StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {
+            }
         }
     }
 
@@ -3177,7 +3217,7 @@ impl SemaCx<'_> {
             self.current_file = item.origin_file.clone();
             match &item.kind {
                 ItemKind::Function(f) => {
-                    if !has_attr_named(&f.attributes, "no_alloc") {
+                    if !marks_no_alloc(&f.attributes) {
                         continue;
                     }
                     // `#[no_alloc] extern fn ...` is the user's promise that
@@ -3189,7 +3229,7 @@ impl SemaCx<'_> {
                 }
                 ItemKind::Impl(b) => {
                     for m in &b.methods {
-                        if !has_attr_named(&m.attributes, "no_alloc") {
+                        if !marks_no_alloc(&m.attributes) {
                             continue;
                         }
                         self.walk_no_alloc_body(&m.body, &m.name.name, &fn_table);
@@ -3201,16 +3241,22 @@ impl SemaCx<'_> {
         self.current_file = None;
     }
 
-    fn walk_no_alloc_body(
-        &mut self,
-        body: &Block,
-        caller: &str,
-        fn_table: &NoAllocFnTable,
-    ) {
-        let mut calls: Vec<(String, ByteSpan)> = Vec::new();
-        collect_callees_block(body, &mut calls);
-        for (callee_raw, span) in calls {
-            self.check_no_alloc_call(&callee_raw, span, caller, fn_table);
+    fn walk_no_alloc_body(&mut self, body: &Block, caller: &str, fn_table: &NoAllocFnTable) {
+        let mut effects = BodyEffects::default();
+        collect_effects_block(body, &mut effects);
+        for (callee_raw, span) in &effects.calls {
+            self.check_no_alloc_call(callee_raw, *span, caller, fn_table);
+        }
+        // Allocating language constructs (string interpolation → malloc).
+        for span in &effects.interps {
+            self.err(
+                "E0901",
+                format!(
+                    "function `{}` is marked `#[no_alloc]` but uses string interpolation, which heap-allocates",
+                    leaf_name(caller),
+                ),
+                *span,
+            );
         }
     }
 
@@ -3288,7 +3334,7 @@ impl SemaCx<'_> {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
             let (caller, body, span) = match &item.kind {
-                ItemKind::Function(f) if has_attr_named(&f.attributes, "bounded_recursion") => {
+                ItemKind::Function(f) if marks_bounded_recursion(&f.attributes) => {
                     if f.is_extern {
                         continue;
                     }
@@ -3301,9 +3347,9 @@ impl SemaCx<'_> {
             let mut worklist: Vec<&Block> = vec![body];
             let mut found_cycle = false;
             while let Some(blk) = worklist.pop() {
-                let mut calls: Vec<(String, ByteSpan)> = Vec::new();
-                collect_callees_block(blk, &mut calls);
-                for (callee_raw, _span) in calls {
+                let mut effects = BodyEffects::default();
+                collect_effects_block(blk, &mut effects);
+                for (callee_raw, _span) in effects.calls {
                     // Try full + leaf lookup, same as no_alloc.
                     let key_full = callee_raw.clone();
                     let leaf = callee_raw
@@ -3346,9 +3392,265 @@ impl SemaCx<'_> {
         }
         self.current_file = None;
     }
+    // v0.0.12 realtime Phase 3: `#[no_block]` pass. Same walker shape as
+    // `check_no_alloc`, different verdict: a `#[no_block]` (or `#[realtime]`)
+    // function must not call a blocking primitive directly or transitively.
+    fn check_no_block(&mut self, p: &Program) {
+        let fn_table = build_no_alloc_fn_table(p);
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            match &item.kind {
+                ItemKind::Function(f) => {
+                    if !marks_no_block(&f.attributes) {
+                        continue;
+                    }
+                    // `#[no_block] extern fn ...` is the user's promise that
+                    // the C symbol doesn't block; no body to walk.
+                    if f.is_extern {
+                        continue;
+                    }
+                    self.walk_no_block_body(&f.body, &f.name.name, &fn_table);
+                }
+                ItemKind::Impl(b) => {
+                    for m in &b.methods {
+                        if !marks_no_block(&m.attributes) {
+                            continue;
+                        }
+                        self.walk_no_block_body(&m.body, &m.name.name, &fn_table);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.current_file = None;
+    }
+
+    fn walk_no_block_body(&mut self, body: &Block, caller: &str, fn_table: &NoAllocFnTable) {
+        let mut effects = BodyEffects::default();
+        collect_effects_block(body, &mut effects);
+        for (callee_raw, span) in &effects.calls {
+            self.check_no_block_call(callee_raw, *span, caller, fn_table);
+        }
+        // String interpolation allocates but does not block — not a no_block
+        // concern; `effects.interps` is intentionally ignored here.
+    }
+
+    fn check_no_block_call(
+        &mut self,
+        callee_raw: &str,
+        span: ByteSpan,
+        caller: &str,
+        fn_table: &NoAllocFnTable,
+    ) {
+        let leaf = callee_raw
+            .rsplit_once('.')
+            .map(|(_, n)| n)
+            .unwrap_or(callee_raw);
+
+        let info = fn_table
+            .fns
+            .get(callee_raw)
+            .or_else(|| fn_table.fns.get(leaf));
+
+        if let Some(fi) = info {
+            // Effective C symbol: prefer #[link_name], else the leaf name.
+            let symbol = fi.link_name.as_deref().unwrap_or(leaf);
+            if BLOCK_BLOCKLIST.contains(&symbol) {
+                self.err(
+                    "E0907",
+                    format!(
+                        "function `{}` is marked `#[no_block]` but calls blocking function `{}`",
+                        leaf_name(caller),
+                        symbol,
+                    ),
+                    span,
+                );
+                return;
+            }
+            if fi.is_extern {
+                if BLOCK_SAFE_LEAF.contains(&symbol) || fi.has_no_block {
+                    return;
+                }
+                self.err(
+                    "E0907",
+                    format!(
+                        "function `{}` is marked `#[no_block]` but calls extern `{}` which is not in the known-nonblocking leaf set; add `#[no_block]` to the extern declaration if it is known not to block",
+                        leaf_name(caller),
+                        symbol,
+                    ),
+                    span,
+                );
+                return;
+            }
+            // User-defined fn: must itself be `#[no_block]` (or `#[realtime]`).
+            if !fi.has_no_block {
+                self.err(
+                    "E0907",
+                    format!(
+                        "function `{}` is marked `#[no_block]` but calls `{}` which is not marked `#[no_block]`",
+                        leaf_name(caller),
+                        leaf,
+                    ),
+                    span,
+                );
+            }
+            return;
+        }
+        // Unresolved callee — method-dispatch shape we don't statically
+        // resolve here. Skip silently; the rule blocks the common cases
+        // (direct blocking externs, free/assoc fns).
+    }
     // ========================================================================
-    // End #[no_alloc] / #[bounded_recursion]
+    // End #[no_alloc] / #[no_block] / #[bounded_recursion]
     // ========================================================================
+
+    // v0.0.12 realtime Phase 4: `#[max_stack(N)]` — bound a function's stack
+    // frame. The estimate is the sum of (a) parameter sizes and (b) the sizes
+    // of every `let` binding with a known type, walked through all nested
+    // blocks. This is deliberately a conservative over-estimate (all locals
+    // counted as live simultaneously, regardless of scope overlap) so a pass
+    // is a real guarantee. It is also a *lower bound on coverage*: locals
+    // whose type can only be inferred (untyped `let x = ...`) and
+    // compiler-inserted temporaries are not yet counted; the headline cases
+    // (large fixed arrays, by-value aggregates) carry explicit types in
+    // practice. Call-chain worst-case and coroutine frames are future work.
+    fn check_max_stack(&mut self, p: &Program) {
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            match &item.kind {
+                ItemKind::Function(f) => {
+                    if f.is_extern {
+                        continue;
+                    }
+                    if let Some((budget, span)) = max_stack_budget(&f.attributes) {
+                        self.check_one_max_stack(&f.params, &f.body, &f.name.name, budget, span);
+                    }
+                }
+                ItemKind::Impl(b) => {
+                    for m in &b.methods {
+                        if let Some((budget, span)) = max_stack_budget(&m.attributes) {
+                            self.check_one_max_stack(
+                                &m.params,
+                                &m.body,
+                                &m.name.name,
+                                budget,
+                                span,
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.current_file = None;
+    }
+
+    fn check_one_max_stack(
+        &mut self,
+        params: &[crate::ast::Param],
+        body: &Block,
+        name: &str,
+        budget: u64,
+        span: ByteSpan,
+    ) {
+        let mut total: u64 = 0;
+        for pm in params {
+            let ty = self.resolve_type(&pm.ty);
+            total = total.saturating_add(self.stack_size_of(&ty));
+        }
+        let mut effects = BodyEffects::default();
+        collect_effects_block(body, &mut effects);
+        for t in &effects.let_tys {
+            let ty = self.resolve_type(t);
+            total = total.saturating_add(self.stack_size_of(&ty));
+        }
+        if total > budget {
+            self.err(
+                "E0908",
+                format!(
+                    "function `{}` is marked `#[max_stack({})]` but its estimated stack frame is {} bytes (parameters + locals with known types)",
+                    leaf_name(name),
+                    budget,
+                    total,
+                ),
+                span,
+            );
+        }
+    }
+
+    /// Static byte size of a type for the `#[max_stack]` estimate. Mirrors
+    /// codegen's `static_layout` ABI rules (the two must agree); kept in sema
+    /// so the bounded-stack pass needs no codegen type table. Unsizable types
+    /// (`Param`, `Error`) contribute 0 — a generic frame can't be sized
+    /// before monomorphization.
+    fn stack_size_of(&self, ty: &Ty) -> u64 {
+        self.layout_of(ty).0
+    }
+
+    fn layout_of(&self, ty: &Ty) -> (u64, u64) {
+        fn align_up(off: u64, al: u64) -> u64 {
+            if al == 0 {
+                off
+            } else {
+                (off + al - 1) & !(al - 1)
+            }
+        }
+        match ty {
+            Ty::I8 | Ty::U8 | Ty::Bool => (1, 1),
+            Ty::I16 | Ty::U16 => (2, 2),
+            Ty::I32 | Ty::U32 | Ty::F32 => (4, 4),
+            Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => (8, 8),
+            Ty::RawPtr(_) | Ty::FnPtr { .. } => (8, 8),
+            Ty::Str | Ty::Slice(_) => (16, 8),
+            Ty::String => (24, 8),
+            Ty::Unit => (0, 1),
+            Ty::Array(elem, n) => {
+                let (esz, ea) = self.layout_of(elem);
+                (esz.saturating_mul(*n as u64), ea)
+            }
+            Ty::Struct(id) => {
+                let info = &self.structs[id.0 as usize];
+                let mut off: u64 = 0;
+                let mut max_al: u64 = 1;
+                for (_, fty, _) in &info.fields {
+                    let (sz, al) = self.layout_of(fty);
+                    if al > max_al {
+                        max_al = al;
+                    }
+                    off = align_up(off, al);
+                    off = off.saturating_add(sz);
+                }
+                (align_up(off, max_al), max_al.max(1))
+            }
+            Ty::Enum(id) => {
+                let info = &self.enums[id.0 as usize];
+                if !info.is_tagged {
+                    (4, 4)
+                } else {
+                    let mut max_slots: u64 = 0;
+                    for v in &info.variants {
+                        let mut bytes: u64 = 0;
+                        for pty in &v.payload {
+                            let (sz, _) = self.layout_of(pty);
+                            bytes = bytes.saturating_add((sz + 7) & !7);
+                        }
+                        let slots = (bytes + 7) / 8;
+                        if slots > max_slots {
+                            max_slots = slots;
+                        }
+                    }
+                    (8u64.saturating_add(max_slots.saturating_mul(8)), 8)
+                }
+            }
+            Ty::Simd { elem, lanes } | Ty::Mask { elem, lanes } => {
+                let (esz, ea) = self.layout_of(elem);
+                let size = esz.saturating_mul(*lanes as u64);
+                let align = if size.is_power_of_two() { size } else { ea };
+                (size, align)
+            }
+            Ty::Error | Ty::Param(_) => (0, 0),
+        }
+    }
 
     /// Phase 5 slice 5ATTR.2 — validate sema-level rules for `#[test]` fns:
     /// - **E0358**: test function must have signature `fn() -> i32` or `fn()`.
@@ -3533,6 +3835,7 @@ impl SemaCx<'_> {
                 },
             );
         }
+        self.setup_returned_borrow_ctx(&f.params, &f.return_type, false);
         self.check_function_body(&f.body, body_return, f.body.span);
         self.scopes.pop();
         self.current_fn_is_async = prev_async;
@@ -3741,7 +4044,10 @@ impl SemaCx<'_> {
                 let (final_ty, assigned) = match init {
                     Some(init_expr) => {
                         let inferred = self.check_expr(init_expr, declared.clone());
-                        let final_ty = declared.unwrap_or(inferred);
+                        let final_ty = declared.clone().unwrap_or(inferred);
+                        // E0509: `let q = drop_typed.field;` moves a field out
+                        // from under a live destructor — double-free. Reject.
+                        self.reject_partial_move_of_drop(init_expr, &final_ty);
                         (final_ty, true)
                     }
                     None => {
@@ -3772,7 +4078,18 @@ impl SemaCx<'_> {
                 let ret = self.current_return.clone();
                 match (value, &ret) {
                     (Some(e), _) => {
-                        self.check_expr(e, Some(ret));
+                        let t = self.check_expr(e, Some(ret.clone()));
+                        // E0509: `return drop_typed.field;` moves a field out
+                        // from under a live destructor — double-free. Reject.
+                        let moved_ty = if matches!(ret, Ty::Error) {
+                            t
+                        } else {
+                            ret.clone()
+                        };
+                        self.reject_partial_move_of_drop(e, &moved_ty);
+                        // E0512/E0513: returned borrow must outlive the call —
+                        // region-matched (#2) and not rooted at a dropped local (#3).
+                        self.check_returned_borrow(e);
                     }
                     (None, &Ty::Unit) | (None, &Ty::Error) => {}
                     (None, _) => {
@@ -3787,7 +4104,11 @@ impl SemaCx<'_> {
                     }
                 }
             }
-            StmtKind::While { cond, body, attributes } => {
+            StmtKind::While {
+                cond,
+                body,
+                attributes,
+            } => {
                 self.check_loop_attrs(attributes);
                 let _ = self.check_cond(cond);
                 self.scopes.push(HashMap::new());
@@ -4136,7 +4457,9 @@ impl SemaCx<'_> {
             } => self.check_generic_enum_call(enum_name, type_args, variant, args, e.span),
             ExprKind::Field { receiver, name } => self.check_field(receiver, name),
             ExprKind::ArrayLit { elements } => self.check_array_lit(elements, expected, e.span),
-            ExprKind::ArrayFill { fill, count } => self.check_array_fill(fill, *count, expected, e.span),
+            ExprKind::ArrayFill { fill, count } => {
+                self.check_array_fill(fill, *count, expected, e.span)
+            }
             ExprKind::TupleLit { elements } => self.check_tuple_lit(elements, expected, e.span),
             ExprKind::Index { receiver, index } => self.check_index(receiver, index, e.span),
             ExprKind::Match { scrutinee, arms } => {
@@ -4145,9 +4468,12 @@ impl SemaCx<'_> {
             ExprKind::IncludeBytes { path } => self.check_include_bytes(path, e.span),
             ExprKind::IncludeStr { path } => self.check_include_str(path, e.span),
             ExprKind::EnvVar { name } => self.check_env_var(name, e.span),
-            ExprKind::Intrinsic { name, type_args, args, ret_ty } => {
-                self.check_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span)
-            }
+            ExprKind::Intrinsic {
+                name,
+                type_args,
+                args,
+                ret_ty,
+            } => self.check_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span),
         }
     }
 
@@ -4173,9 +4499,7 @@ impl SemaCx<'_> {
             "msg_send" => self.check_intrinsic_msg_send(type_args, args, ret_ty, span),
             // Phase 4C: `#compile_shader("path", "msl")` → `*[u8; N]`.
             // First arg is a string-literal path, second is the target.
-            "compile_shader" => {
-                self.check_intrinsic_compile_shader(type_args, args, ret_ty, span)
-            }
+            "compile_shader" => self.check_intrinsic_compile_shader(type_args, args, ret_ty, span),
             // v0.0.11 Phase 4: intrinsic-spelling migration. The five names
             // below were historically called as bare `#addr_of(x)` or
             // `!`-suffix macros (`include_bytes!`, `include_str!`, `env!`)
@@ -4183,12 +4507,8 @@ impl SemaCx<'_> {
             // `#align_of::[T]()`). Routed through the unified `#name` dispatch
             // so every compiler-known builtin shares one sigil.
             "addr_of" => self.check_intrinsic_addr_of(type_args, args, ret_ty, span),
-            "include_bytes" => {
-                self.check_intrinsic_include_bytes(type_args, args, ret_ty, span)
-            }
-            "include_str" => {
-                self.check_intrinsic_include_str(type_args, args, ret_ty, span)
-            }
+            "include_bytes" => self.check_intrinsic_include_bytes(type_args, args, ret_ty, span),
+            "include_str" => self.check_intrinsic_include_str(type_args, args, ret_ty, span),
             "env" => self.check_intrinsic_env(type_args, args, ret_ty, span),
             "size_of" => self.check_intrinsic_layout("size_of", type_args, args, ret_ty, span),
             "align_of" => self.check_intrinsic_layout("align_of", type_args, args, ret_ty, span),
@@ -4233,29 +4553,45 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0903",
-                format!("`#selector` takes no type arguments, got {}", type_args.len()),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#selector` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#selector` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0903",
-                format!("`#selector` takes exactly 1 string-literal argument, got {}", args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0903",
+                format!(
+                    "`#selector` takes exactly 1 string-literal argument, got {}",
+                    args.len()
+                ),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::RawPtr(Box::new(Ty::U8));
         }
         // Sema-time validation: arg must be a string literal.
         let name = match &args[0].kind {
             ExprKind::StrLit(s) => s.clone(),
             _ => {
-                self.err("E0903",
+                self.err(
+                    "E0903",
                     "`#selector` argument must be a string literal".to_string(),
-                    args[0].span);
+                    args[0].span,
+                );
                 let _ = self.check_expr(&args[0], None);
                 return Ty::RawPtr(Box::new(Ty::U8));
             }
@@ -4276,20 +4612,27 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#msg_send` takes no type arguments".to_string(),
-                span);
+                span,
+            );
         }
         if self.unsafe_depth == 0 {
-            self.err("E0801",
-                "`#msg_send` is an unsafe FFI primitive; wrap the call in `unsafe { ... }`".to_string(),
-                span);
+            self.err(
+                "E0801",
+                "`#msg_send` is an unsafe FFI primitive; wrap the call in `unsafe { ... }`"
+                    .to_string(),
+                span,
+            );
         }
         if args.len() < 2 {
             self.err("E0903",
                 format!("`#msg_send` takes a receiver, a selector string literal, and zero or more arguments (got {})", args.len()),
                 span);
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         // Arg 0: receiver expression (any type, ObjC objects are *u8 in C+).
@@ -4298,9 +4641,12 @@ impl SemaCx<'_> {
         let sel = match &args[1].kind {
             ExprKind::StrLit(s) => s.clone(),
             _ => {
-                self.err("E0903",
-                    "second argument to `#msg_send` must be a string-literal selector name".to_string(),
-                    args[1].span);
+                self.err(
+                    "E0903",
+                    "second argument to `#msg_send` must be a string-literal selector name"
+                        .to_string(),
+                    args[1].span,
+                );
                 String::new()
             }
         };
@@ -4336,7 +4682,11 @@ impl SemaCx<'_> {
         // Resolve `path` relative to the current source file (mirrors
         // include_bytes' behaviour). For minimal viable scope, only the
         // entry file is consulted.
-        let base = self.file.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let base = self
+            .file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
         let shader_path = base.join(path);
         // Invoke xcrun + metallib via `Command::new`. Two-step:
         //   xcrun -sdk macosx metal -c <src> -o <tmp.air>
@@ -4359,17 +4709,25 @@ impl SemaCx<'_> {
         let step1 = match step1 {
             Ok(o) => o,
             Err(e) => {
-                self.err("E0904",
+                self.err(
+                    "E0904",
                     format!("failed to invoke `xcrun metal` for `{}`: {}", path, e),
-                    span);
+                    span,
+                );
                 return Ty::Error;
             }
         };
         if !step1.status.success() {
             let stderr = String::from_utf8_lossy(&step1.stderr).into_owned();
-            self.err("E0904",
-                format!("shader compilation failed for `{}`:\n{}", path, stderr.trim()),
-                span);
+            self.err(
+                "E0904",
+                format!(
+                    "shader compilation failed for `{}`:\n{}",
+                    path,
+                    stderr.trim()
+                ),
+                span,
+            );
             return Ty::Error;
         }
         let step2 = std::process::Command::new("xcrun")
@@ -4381,25 +4739,31 @@ impl SemaCx<'_> {
         let step2 = match step2 {
             Ok(o) => o,
             Err(e) => {
-                self.err("E0904",
+                self.err(
+                    "E0904",
                     format!("failed to invoke `xcrun metallib` for `{}`: {}", path, e),
-                    span);
+                    span,
+                );
                 return Ty::Error;
             }
         };
         if !step2.status.success() {
             let stderr = String::from_utf8_lossy(&step2.stderr).into_owned();
-            self.err("E0904",
+            self.err(
+                "E0904",
                 format!("metallib failed for `{}`:\n{}", path, stderr.trim()),
-                span);
+                span,
+            );
             return Ty::Error;
         }
         let bytes = match std::fs::read(&metallib_path) {
             Ok(b) => b,
             Err(e) => {
-                self.err("E0904",
+                self.err(
+                    "E0904",
                     format!("could not read metallib output for `{}`: {}", path, e),
-                    span);
+                    span,
+                );
                 return Ty::Error;
             }
         };
@@ -4418,28 +4782,36 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#compile_shader` takes no type arguments".to_string(),
-                span);
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#compile_shader` does not accept a `-> T` ascription".to_string(),
-                span);
+                span,
+            );
         }
         if args.len() < 1 || args.len() > 2 {
             self.err("E0903",
                 format!("`#compile_shader` takes 1 or 2 string-literal arguments (path, [target]); got {}", args.len()),
                 span);
-            for a in args { let _ = self.check_expr(a, None); }
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         let path = match &args[0].kind {
             ExprKind::StrLit(s) => s.clone(),
             _ => {
-                self.err("E0903",
+                self.err(
+                    "E0903",
                     "first argument to `#compile_shader` must be a string-literal path".to_string(),
-                    args[0].span);
+                    args[0].span,
+                );
                 return Ty::Error;
             }
         };
@@ -4470,26 +4842,39 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0501",
-                format!("`#addr_of` takes no type arguments, got {}", type_args.len()),
-                span);
+            self.err(
+                "E0501",
+                format!(
+                    "`#addr_of` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#addr_of` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0308",
+            self.err(
+                "E0308",
                 format!("`#addr_of` takes exactly 1 argument, got {}", args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         if self.unsafe_depth == 0 {
-            self.err("E0801",
+            self.err(
+                "E0801",
                 "`#addr_of` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                span);
+                span,
+            );
         }
         let arg = &args[0];
         // v0.0.12 G-025: accept any place expression — `Ident`, `Field`,
@@ -4527,27 +4912,41 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0903",
-                format!("`#include_bytes` takes no type arguments, got {}", type_args.len()),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#include_bytes` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#include_bytes` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0903",
-                format!("`#include_bytes` takes exactly 1 string-literal path, got {}", args.len()),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#include_bytes` takes exactly 1 string-literal path, got {}",
+                    args.len()
+                ),
+                span,
+            );
             return Ty::Error;
         }
         let path = match &args[0].kind {
             ExprKind::StrLit(s) => s.clone(),
             _ => {
-                self.err("E0871",
+                self.err(
+                    "E0871",
                     "`#include_bytes` argument must be a string literal".to_string(),
-                    args[0].span);
+                    args[0].span,
+                );
                 return Ty::Error;
             }
         };
@@ -4563,27 +4962,41 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0903",
-                format!("`#include_str` takes no type arguments, got {}", type_args.len()),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#include_str` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#include_str` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0903",
-                format!("`#include_str` takes exactly 1 string-literal path, got {}", args.len()),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#include_str` takes exactly 1 string-literal path, got {}",
+                    args.len()
+                ),
+                span,
+            );
             return Ty::Error;
         }
         let path = match &args[0].kind {
             ExprKind::StrLit(s) => s.clone(),
             _ => {
-                self.err("E0871",
+                self.err(
+                    "E0871",
                     "`#include_str` argument must be a string literal".to_string(),
-                    args[0].span);
+                    args[0].span,
+                );
                 return Ty::Error;
             }
         };
@@ -4599,27 +5012,38 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 format!("`#env` takes no type arguments, got {}", type_args.len()),
-                span);
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#env` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if args.len() != 1 {
-            self.err("E0903",
-                format!("`#env` takes exactly 1 string-literal env-var name, got {}", args.len()),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#env` takes exactly 1 string-literal env-var name, got {}",
+                    args.len()
+                ),
+                span,
+            );
             return Ty::Error;
         }
         let name = match &args[0].kind {
             ExprKind::StrLit(s) => s.clone(),
             _ => {
-                self.err("E0903",
+                self.err(
+                    "E0903",
                     "`#env` argument must be a string literal".to_string(),
-                    args[0].span);
+                    args[0].span,
+                );
                 return Ty::Error;
             }
         };
@@ -4636,22 +5060,39 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if ret_ty.is_some() {
-            self.err("E0903",
-                format!("`#{}` does not accept a `-> T` return-type ascription", kind),
-                span);
+            self.err(
+                "E0903",
+                format!(
+                    "`#{}` does not accept a `-> T` return-type ascription",
+                    kind
+                ),
+                span,
+            );
         }
         if type_args.len() != 1 {
-            self.err("E0501",
-                format!("`#{}` takes exactly 1 type argument, got {}", kind, type_args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0501",
+                format!(
+                    "`#{}` takes exactly 1 type argument, got {}",
+                    kind,
+                    type_args.len()
+                ),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Usize;
         }
         if !args.is_empty() {
-            self.err("E0302",
+            self.err(
+                "E0302",
                 format!("`#{}` takes no value arguments, got {}", kind, args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
         }
         let _ = self.resolve_type(&type_args[0]);
         Ty::Usize
@@ -4672,22 +5113,35 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#zero` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if type_args.len() != 1 {
-            self.err("E0501",
-                format!("`#zero` takes exactly 1 type argument, got {}", type_args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+            self.err(
+                "E0501",
+                format!(
+                    "`#zero` takes exactly 1 type argument, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
         }
         if !args.is_empty() {
-            self.err("E0302",
+            self.err(
+                "E0302",
                 format!("`#zero` takes no value arguments, got {}", args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
         }
         self.resolve_type(&type_args[0])
     }
@@ -4707,20 +5161,31 @@ impl SemaCx<'_> {
         span: ByteSpan,
     ) -> Ty {
         if !type_args.is_empty() {
-            self.err("E0501",
-                format!("`#cpu_relax` takes no type arguments, got {}", type_args.len()),
-                span);
+            self.err(
+                "E0501",
+                format!(
+                    "`#cpu_relax` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
         }
         if ret_ty.is_some() {
-            self.err("E0903",
+            self.err(
+                "E0903",
                 "`#cpu_relax` does not accept a `-> T` return-type ascription".to_string(),
-                span);
+                span,
+            );
         }
         if !args.is_empty() {
-            self.err("E0308",
+            self.err(
+                "E0308",
                 format!("`#cpu_relax` takes 0 arguments, got {}", args.len()),
-                span);
-            for a in args { let _ = self.check_expr(a, None); }
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
         }
         Ty::Unit
     }
@@ -4747,9 +5212,7 @@ impl SemaCx<'_> {
             Err(_) => {
                 self.err(
                     "E0876",
-                    format!(
-                        "environment variable `{name}` is not set at compile time"
-                    ),
+                    format!("environment variable `{name}` is not set at compile time"),
                     span,
                 );
                 Ty::Error
@@ -7705,7 +8168,9 @@ impl SemaCx<'_> {
                     ),
                     name.span,
                 );
-                for a in args { let _ = this.check_expr(a, None); }
+                for a in args {
+                    let _ = this.check_expr(a, None);
+                }
                 true
             } else {
                 false
@@ -7723,7 +8188,9 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "fma" => {
-                if reject_on_mask(self, "fma", args) { return Ty::Error; }
+                if reject_on_mask(self, "fma", args) {
+                    return Ty::Error;
+                }
                 if !elem_ty.is_float() {
                     self.err(
                         "E0324",
@@ -7746,7 +8213,9 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "sqrt" => {
-                if reject_on_mask(self, "sqrt", args) { return Ty::Error; }
+                if reject_on_mask(self, "sqrt", args) {
+                    return Ty::Error;
+                }
                 if !elem_ty.is_float() {
                     self.err(
                         "E0324",
@@ -7764,7 +8233,9 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "abs" => {
-                if reject_on_mask(self, "abs", args) { return Ty::Error; }
+                if reject_on_mask(self, "abs", args) {
+                    return Ty::Error;
+                }
                 // `abs` available on signed-integer + float SIMD widths.
                 // Unsigned-integer `abs` would be a no-op; reject to keep
                 // the matrix clear.
@@ -7783,7 +8254,9 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "min" | "max" => {
-                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
                 // Available on all numeric SIMD widths. Float widths use
                 // `llvm.minnum`/`maxnum` (treats NaN as missing); integer
                 // widths use the signed (`smin`/`smax`) or unsigned
@@ -7853,7 +8326,9 @@ impl SemaCx<'_> {
                 recv.clone()
             }
             "shl" | "shr" => {
-                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
                 // Element-wise shift by a scalar count (every lane shifted
                 // by the same amount). The amount must be `u32` and a
                 // literal in `0..lane_bits` — sema enforces both. `shr`
@@ -8049,17 +8524,22 @@ impl SemaCx<'_> {
             // (signed for signed-int lanes, unsigned for unsigned-int
             // lanes); the result is sext'd to the mask shape.
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" => {
-                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
                 if !elem_ty.is_numeric() {
                     self.err(
                         "E0324",
                         format!(
                             "comparison `{}` requires a numeric SIMD type, not `{}`",
-                            name.name, ty_display(recv)
+                            name.name,
+                            ty_display(recv)
                         ),
                         name.span,
                     );
-                    for a in args { let _ = self.check_expr(a, None); }
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
                     return Ty::Error;
                 }
                 if !arity_err(self, 1) {
@@ -8067,7 +8547,10 @@ impl SemaCx<'_> {
                 }
                 let _ = self.check_expr(&args[0], Some(recv.clone()));
                 // Result type: mask of matching lane width.
-                Ty::Mask { elem: Box::new(matching_signed_int_lane(&elem_ty)), lanes: lanes_u }
+                Ty::Mask {
+                    elem: Box::new(matching_signed_int_lane(&elem_ty)),
+                    lanes: lanes_u,
+                }
             }
             // v0.0.7 Slice 2.1: blend per lane. v0.0.9 follow-up:
             // receiver must be a `Ty::Mask`; the two value args must
@@ -8083,7 +8566,9 @@ impl SemaCx<'_> {
                         ),
                         name.span,
                     );
-                    for a in args { let _ = self.check_expr(a, None); }
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
                     return Ty::Error;
                 }
                 if !arity_err(self, 2) {
@@ -8131,13 +8616,16 @@ impl SemaCx<'_> {
             // `product` available on every numeric width. Result type
             // is the lane scalar.
             "sum" | "product" => {
-                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
                 if !elem_ty.is_numeric() {
                     self.err(
                         "E0324",
                         format!(
                             "`{}` requires a numeric SIMD type, not `{}`",
-                            name.name, ty_display(recv)
+                            name.name,
+                            ty_display(recv)
                         ),
                         name.span,
                     );
@@ -8152,13 +8640,16 @@ impl SemaCx<'_> {
             // `llvm.vector.reduce.fmin/fmax`; int widths use the
             // signed (`smin`/`smax`) or unsigned (`umin`/`umax`) variant.
             "min_across" | "max_across" => {
-                if reject_on_mask(self, name.name.as_str(), args) { return Ty::Error; }
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
                 if !elem_ty.is_numeric() {
                     self.err(
                         "E0324",
                         format!(
                             "`{}` requires a numeric SIMD type, not `{}`",
-                            name.name, ty_display(recv)
+                            name.name,
+                            ty_display(recv)
                         ),
                         name.span,
                     );
@@ -8212,8 +8703,13 @@ impl SemaCx<'_> {
                     );
                     return Ty::Error;
                 }
-                if !arity_err(self, 0) { return Ty::Error; }
-                Ty::Simd { elem: Box::new(elem_ty.clone()), lanes: lanes_u }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                Ty::Simd {
+                    elem: Box::new(elem_ty.clone()),
+                    lanes: lanes_u,
+                }
             }
             "to_mask" => {
                 if is_mask {
@@ -8235,8 +8731,13 @@ impl SemaCx<'_> {
                     );
                     return Ty::Error;
                 }
-                if !arity_err(self, 0) { return Ty::Error; }
-                Ty::Mask { elem: Box::new(elem_ty.clone()), lanes: lanes_u }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                Ty::Mask {
+                    elem: Box::new(elem_ty.clone()),
+                    lanes: lanes_u,
+                }
             }
             _ => {
                 self.err(
@@ -8549,7 +9050,9 @@ impl SemaCx<'_> {
                     ),
                     call_span,
                 );
-                for a in args { let _ = self.check_expr(a, None); }
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
                 return Ty::Error;
             }
             if !type_args.is_empty() {
@@ -8817,6 +9320,191 @@ impl SemaCx<'_> {
                     format!("method `{}::{}` consumes `self`; the receiver must be a whole binding (partial moves are deferred to a later phase)", type_name, method_name),
                     receiver.span,
                 );
+            }
+        }
+    }
+
+    /// Resolve the type of a *place* expression by lookup only — no error
+    /// emission, no move-state mutation. Returns `None` for non-place
+    /// expressions or places this lightweight resolver can't follow
+    /// (method results, calls, etc.). Used by `reject_partial_move_of_drop`
+    /// to walk a projection chain.
+    fn place_ty_quiet(&self, e: &Expr) -> Option<Ty> {
+        match &e.kind {
+            ExprKind::Ident(name) => self.lookup_local(name).map(|i| i.ty.clone()),
+            ExprKind::Field { receiver, name } => {
+                let Ty::Struct(id) = self.place_ty_quiet(receiver)? else {
+                    return None;
+                };
+                self.structs
+                    .get(id.0 as usize)?
+                    .field(&name.name)
+                    .map(|(_, ty)| ty)
+            }
+            ExprKind::Index { receiver, .. } => match self.place_ty_quiet(receiver)? {
+                Ty::Array(elem, _) => Some(*elem),
+                Ty::Slice(elem) => Some(*elem),
+                _ => None,
+            },
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => match self.place_ty_quiet(operand)? {
+                Ty::RawPtr(pointee) => Some(*pointee),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// E0509: reject moving a non-Copy value out of a field/index of a place
+    /// whose type — at any level of the projection chain — implements `drop`.
+    ///
+    /// C+'s drop model (docs/design/phase3-drop.md §5) makes a destructor
+    /// responsible for freeing its own fields by hand; the compiler does not
+    /// synthesize per-field drops for Drop types. So stealing a field out from
+    /// under a live destructor is a guaranteed double-free / use-after-free:
+    /// the moved-to binding drops the field, and the owner's destructor frees
+    /// it again. Mirrors Rust's "cannot move out of type which implements
+    /// `Drop`". `move_ty` is the already-checked type of `e`; a `Copy` move is
+    /// a harmless read and is exempt.
+    fn reject_partial_move_of_drop(&mut self, e: &Expr, moved_ty: &Ty) {
+        if self.is_copy(moved_ty) {
+            return;
+        }
+        let mut cur = e;
+        loop {
+            match &cur.kind {
+                ExprKind::Field { receiver, .. } | ExprKind::Index { receiver, .. } => {
+                    if let Some(base_ty) = self.place_ty_quiet(receiver) {
+                        if self.ty_carries_drop(&base_ty) {
+                            let base_name = match &base_ty {
+                                Ty::Struct(id) => self.structs[id.0 as usize].name.clone(),
+                                Ty::Array(elem, _) => format!("[{}; N]", elem.name()),
+                                _ => base_ty.name().to_string(),
+                            };
+                            self.err(
+                                "E0509",
+                                format!(
+                                    "cannot move a field out of `{base_name}` because its type implements `drop` — the destructor would free the moved field a second time. Clone the field instead, or restructure so the value isn't owned by a Drop type."
+                                ),
+                                e.span,
+                            );
+                            return;
+                        }
+                    }
+                    cur = receiver;
+                }
+                ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    operand,
+                } => {
+                    cur = operand;
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// v0.0.12 (#2/#3 returned-borrow checking): record the param names,
+    /// per-param borrow regions, and return region of the function/method
+    /// about to be body-checked, and validate the signature-level region rule
+    /// (E0511). Call once before checking the body; the `return`-site checks
+    /// (`check_returned_borrow`) read this state.
+    fn setup_returned_borrow_ctx(
+        &mut self,
+        params: &[Param],
+        ret_ty: &Option<Type>,
+        has_self_receiver: bool,
+    ) {
+        let mut names = std::collections::HashSet::new();
+        let mut regions: HashMap<String, String> = HashMap::new();
+        if has_self_receiver {
+            names.insert("self".to_string());
+        }
+        for p in params {
+            names.insert(p.name.name.clone());
+            if let TypeKind::Borrowed { region, .. } = &p.ty.kind {
+                regions.insert(p.name.name.clone(), region.clone());
+            }
+        }
+        let ret_region = match ret_ty {
+            Some(t) => match &t.kind {
+                TypeKind::Borrowed { region, .. } => Some(region.clone()),
+                _ => None,
+            },
+            None => None,
+        };
+        // E0511: a return region must be declared on some parameter — otherwise
+        // the borrow it names has no provenance and the annotation is inert.
+        if let Some(r) = &ret_region {
+            if !regions.values().any(|pr| pr == r) {
+                if let Some(t) = ret_ty {
+                    self.err(
+                        "E0511",
+                        format!(
+                            "return type names borrow region `{r}`, but no parameter declares region `{r}` — a returned borrow must originate from a same-region parameter"
+                        ),
+                        t.span,
+                    );
+                }
+            }
+        }
+        self.current_fn_param_names = names;
+        self.current_fn_param_regions = regions;
+        self.current_fn_return_region = ret_region;
+    }
+
+    /// v0.0.12 (#2/#3): validate a `return EXPR` whose value is borrow-shaped.
+    ///
+    /// - **#2 (E0512)** — if the signature declares a return region, a returned
+    ///   borrow rooted at a parameter must root at a *same-region* parameter.
+    ///   `fn f(a: borrow A str, b: borrow B str) -> borrow A str { return b; }`
+    ///   is rejected (b lives in region B, not A).
+    /// - **#3 (E0513)** — a `str` / `T[]` view rooted at a *local* non-Copy
+    ///   owned value (a `string`, `Vec[T]`, or any Drop type — directly, or via
+    ///   `as_str` / `as_slice`) dangles: that local is freed when the function
+    ///   returns. Borrows rooted at parameters / `self` are caller-tied and
+    ///   left alone; literals and untraceable call results are conservatively
+    ///   allowed.
+    fn check_returned_borrow(&mut self, e: &Expr) {
+        let ret_borrow_shaped = matches!(self.current_return, Ty::Str | Ty::Slice(_));
+        let ret_region = self.current_fn_return_region.clone();
+        if !ret_borrow_shaped && ret_region.is_none() {
+            return;
+        }
+        let Some(root) = returned_borrow_root(e) else {
+            return; // literal ('static) or untraceable — not provably dangling
+        };
+        let root = root.to_string();
+        // #2 — region provenance on a region-annotated return.
+        if let Some(r) = &ret_region {
+            if let Some(pr) = self.current_fn_param_regions.get(&root) {
+                if pr != r {
+                    self.err(
+                        "E0512",
+                        format!(
+                            "returning a borrow from region `{pr}` where the signature declares region `{r}` — the returned borrow must come from a `{r}`-region parameter"
+                        ),
+                        e.span,
+                    );
+                    return;
+                }
+            }
+        }
+        // #3 — dangling view into a local owned value.
+        if ret_borrow_shaped && !self.current_fn_param_names.contains(&root) {
+            let local_ty = self.lookup_local(&root).map(|i| i.ty.clone());
+            if let Some(ty) = local_ty {
+                if !self.is_copy(&ty) {
+                    self.err(
+                        "E0513",
+                        format!(
+                            "cannot return a borrow of local `{root}`: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`string` / `Vec[T]`) instead, or borrow from a parameter"
+                        ),
+                        e.span,
+                    );
+                }
             }
         }
     }
@@ -9452,30 +10140,84 @@ impl SemaCx<'_> {
             // native 256-bit vectors. Same elem-type leaves as the
             // 128-bit family — the type-name and lane-count are the
             // only thing that changes.
-            "f32x8"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  },
-            "f64x4"  => Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  },
-            "i8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
-            "u8x32"  => Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 },
-            "i16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
-            "u16x16" => Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 },
-            "i32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
-            "u32x8"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  },
-            "i64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
-            "u64x4"  => Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  },
+            "f32x8" => Ty::Simd {
+                elem: Box::new(Ty::F32),
+                lanes: 8,
+            },
+            "f64x4" => Ty::Simd {
+                elem: Box::new(Ty::F64),
+                lanes: 4,
+            },
+            "i8x32" => Ty::Simd {
+                elem: Box::new(Ty::I8),
+                lanes: 32,
+            },
+            "u8x32" => Ty::Simd {
+                elem: Box::new(Ty::U8),
+                lanes: 32,
+            },
+            "i16x16" => Ty::Simd {
+                elem: Box::new(Ty::I16),
+                lanes: 16,
+            },
+            "u16x16" => Ty::Simd {
+                elem: Box::new(Ty::U16),
+                lanes: 16,
+            },
+            "i32x8" => Ty::Simd {
+                elem: Box::new(Ty::I32),
+                lanes: 8,
+            },
+            "u32x8" => Ty::Simd {
+                elem: Box::new(Ty::U32),
+                lanes: 8,
+            },
+            "i64x4" => Ty::Simd {
+                elem: Box::new(Ty::I64),
+                lanes: 4,
+            },
+            "u64x4" => Ty::Simd {
+                elem: Box::new(Ty::U64),
+                lanes: 4,
+            },
             // v0.0.9 follow-up: mask types are a distinct `Ty::Mask`
             // variant. Codegen lowers them identically to the matching
             // signed-int SIMD, but sema rejects Mask <-> Simd implicit
             // assignment, requires `Ty::Mask` for `select` / `any` /
             // `all`, and rejects arithmetic. Use `.to_bits()` /
             // `.to_mask()` for explicit conversions.
-            "mask8x16"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 16 },
-            "mask16x8"  => Ty::Mask { elem: Box::new(Ty::I16), lanes: 8  },
-            "mask32x4"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 4  },
-            "mask64x2"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 2  },
-            "mask8x32"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 32 },
-            "mask16x16" => Ty::Mask { elem: Box::new(Ty::I16), lanes: 16 },
-            "mask32x8"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 8  },
-            "mask64x4"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 4  },
+            "mask8x16" => Ty::Mask {
+                elem: Box::new(Ty::I8),
+                lanes: 16,
+            },
+            "mask16x8" => Ty::Mask {
+                elem: Box::new(Ty::I16),
+                lanes: 8,
+            },
+            "mask32x4" => Ty::Mask {
+                elem: Box::new(Ty::I32),
+                lanes: 4,
+            },
+            "mask64x2" => Ty::Mask {
+                elem: Box::new(Ty::I64),
+                lanes: 2,
+            },
+            "mask8x32" => Ty::Mask {
+                elem: Box::new(Ty::I8),
+                lanes: 32,
+            },
+            "mask16x16" => Ty::Mask {
+                elem: Box::new(Ty::I16),
+                lanes: 16,
+            },
+            "mask32x8" => Ty::Mask {
+                elem: Box::new(Ty::I32),
+                lanes: 8,
+            },
+            "mask64x4" => Ty::Mask {
+                elem: Box::new(Ty::I64),
+                lanes: 4,
+            },
             _ => {
                 // Slice 7GEN.4: `Self` inside an `impl Type { ... }` body
                 // resolves to the impl target's concrete `Ty`. Inside an
@@ -9967,7 +10709,8 @@ impl SemaCx<'_> {
         let resolved_args: Vec<Ty> = type_args
             .iter()
             .map(|t| {
-                let substituted = substitute_param_in_type_ast_with_tables(t, subst, &self.structs, &self.enums);
+                let substituted =
+                    substitute_param_in_type_ast_with_tables(t, subst, &self.structs, &self.enums);
                 self.resolve_field_type_with_subst(&substituted, subst)
             })
             .collect();
@@ -10095,7 +10838,14 @@ impl SemaCx<'_> {
                 // inside the args, then recurse via the on-demand path.
                 let substituted_args: Vec<Type> = args
                     .iter()
-                    .map(|a| substitute_param_in_type_ast_with_tables(a, subst, &self.structs, &self.enums))
+                    .map(|a| {
+                        substitute_param_in_type_ast_with_tables(
+                            a,
+                            subst,
+                            &self.structs,
+                            &self.enums,
+                        )
+                    })
                     .collect();
                 let synthetic = Type {
                     kind: TypeKind::Generic {
@@ -10639,27 +11389,81 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
             lanes: 8,
         }),
         // v0.0.7 Slice 2.2: 256-bit widths.
-        "f32x8"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  }),
-        "f64x4"  => Some(Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  }),
-        "i8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
-        "u8x32"  => Some(Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 }),
-        "i16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
-        "u16x16" => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 }),
-        "i32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
-        "u32x8"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  }),
-        "i64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
-        "u64x4"  => Some(Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  }),
+        "f32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 8,
+        }),
+        "f64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::F64),
+            lanes: 4,
+        }),
+        "i8x32" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 32,
+        }),
+        "u8x32" => Some(Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 32,
+        }),
+        "i16x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 16,
+        }),
+        "u16x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 16,
+        }),
+        "i32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 8,
+        }),
+        "u32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 8,
+        }),
+        "i64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I64),
+            lanes: 4,
+        }),
+        "u64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::U64),
+            lanes: 4,
+        }),
         // v0.0.9 follow-up: mask types resolve to `Ty::Mask`, a sema-
         // level type distinct from Ty::Simd. Codegen lowers both to the
         // same `<N x iN>` LLVM type, so layout/ABI is unchanged.
-        "mask8x16"  => Some(Ty::Mask { elem: Box::new(Ty::I8),  lanes: 16 }),
-        "mask16x8"  => Some(Ty::Mask { elem: Box::new(Ty::I16), lanes: 8  }),
-        "mask32x4"  => Some(Ty::Mask { elem: Box::new(Ty::I32), lanes: 4  }),
-        "mask64x2"  => Some(Ty::Mask { elem: Box::new(Ty::I64), lanes: 2  }),
-        "mask8x32"  => Some(Ty::Mask { elem: Box::new(Ty::I8),  lanes: 32 }),
-        "mask16x16" => Some(Ty::Mask { elem: Box::new(Ty::I16), lanes: 16 }),
-        "mask32x8"  => Some(Ty::Mask { elem: Box::new(Ty::I32), lanes: 8  }),
-        "mask64x4"  => Some(Ty::Mask { elem: Box::new(Ty::I64), lanes: 4  }),
+        "mask8x16" => Some(Ty::Mask {
+            elem: Box::new(Ty::I8),
+            lanes: 16,
+        }),
+        "mask16x8" => Some(Ty::Mask {
+            elem: Box::new(Ty::I16),
+            lanes: 8,
+        }),
+        "mask32x4" => Some(Ty::Mask {
+            elem: Box::new(Ty::I32),
+            lanes: 4,
+        }),
+        "mask64x2" => Some(Ty::Mask {
+            elem: Box::new(Ty::I64),
+            lanes: 2,
+        }),
+        "mask8x32" => Some(Ty::Mask {
+            elem: Box::new(Ty::I8),
+            lanes: 32,
+        }),
+        "mask16x16" => Some(Ty::Mask {
+            elem: Box::new(Ty::I16),
+            lanes: 16,
+        }),
+        "mask32x8" => Some(Ty::Mask {
+            elem: Box::new(Ty::I32),
+            lanes: 8,
+        }),
+        "mask64x4" => Some(Ty::Mask {
+            elem: Box::new(Ty::I64),
+            lanes: 4,
+        }),
         _ => None,
     }
 }
@@ -10719,12 +11523,16 @@ fn substitute_param_in_type_ast_with_tables(
             }
         }
         TypeKind::Array { elem, len } => TypeKind::Array {
-            elem: Box::new(substitute_param_in_type_ast_with_tables(elem, subst, structs, enums)),
+            elem: Box::new(substitute_param_in_type_ast_with_tables(
+                elem, subst, structs, enums,
+            )),
             len: *len,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),
-            inner: Box::new(substitute_param_in_type_ast_with_tables(inner, subst, structs, enums)),
+            inner: Box::new(substitute_param_in_type_ast_with_tables(
+                inner, subst, structs, enums,
+            )),
         },
         TypeKind::Generic { name, args } => TypeKind::Generic {
             name: name.clone(),
@@ -10733,9 +11541,9 @@ fn substitute_param_in_type_ast_with_tables(
                 .map(|a| substitute_param_in_type_ast_with_tables(a, subst, structs, enums))
                 .collect(),
         },
-        TypeKind::RawPtr(inner) => {
-            TypeKind::RawPtr(Box::new(substitute_param_in_type_ast_with_tables(inner, subst, structs, enums)))
-        }
+        TypeKind::RawPtr(inner) => TypeKind::RawPtr(Box::new(
+            substitute_param_in_type_ast_with_tables(inner, subst, structs, enums),
+        )),
         TypeKind::FnPtr {
             params,
             return_type,
@@ -10744,13 +11552,15 @@ fn substitute_param_in_type_ast_with_tables(
                 .iter()
                 .map(|p| substitute_param_in_type_ast_with_tables(p, subst, structs, enums))
                 .collect(),
-            return_type: return_type
-                .as_ref()
-                .map(|rt| Box::new(substitute_param_in_type_ast_with_tables(rt, subst, structs, enums))),
+            return_type: return_type.as_ref().map(|rt| {
+                Box::new(substitute_param_in_type_ast_with_tables(
+                    rt, subst, structs, enums,
+                ))
+            }),
         },
-        TypeKind::Slice(inner) => {
-            TypeKind::Slice(Box::new(substitute_param_in_type_ast_with_tables(inner, subst, structs, enums)))
-        }
+        TypeKind::Slice(inner) => TypeKind::Slice(Box::new(
+            substitute_param_in_type_ast_with_tables(inner, subst, structs, enums),
+        )),
         TypeKind::Tuple(elems) => TypeKind::Tuple(
             elems
                 .iter()
@@ -10804,7 +11614,10 @@ fn ty_to_source_name(ty: &Ty) -> String {
         Ty::Simd { elem, lanes } => format!("{}x{}", ty_to_source_name(elem), lanes),
         Ty::Mask { elem, lanes } => {
             let width: u32 = match elem.as_ref() {
-                Ty::I8 => 8, Ty::I16 => 16, Ty::I32 => 32, Ty::I64 => 64,
+                Ty::I8 => 8,
+                Ty::I16 => 16,
+                Ty::I32 => 32,
+                Ty::I64 => 64,
                 _ => 0,
             };
             format!("mask{width}x{lanes}")
@@ -10962,9 +11775,7 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
     // crosses the type system; the borrow checker has no way to reason
     // about whether the resulting integer round-trips back to a
     // pointer that gets dereferenced.
-    if matches!(from, Ty::RawPtr(_))
-        && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64)
-    {
+    if matches!(from, Ty::RawPtr(_)) && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64) {
         return true;
     }
     // Forbidden:
@@ -10989,6 +11800,35 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
 /// no-op and would otherwise spuriously fire E0337 on temporaries.
 fn arg_is_named_binding(arg: &Expr) -> bool {
     matches!(arg.kind, ExprKind::Ident(_))
+}
+
+/// v0.0.12 (returned-borrow checking): the binding a borrow-shaped value
+/// (`str` / `T[]`) is rooted at, tracing through place projections
+/// (field / index / deref) and the canonical view accessors `as_str` /
+/// `as_slice` (which borrow their receiver). Returns `None` for values
+/// whose provenance can't be traced syntactically — literals (`'static`),
+/// arbitrary call results, etc. — which the return check then treats
+/// conservatively as "not provably dangling".
+fn returned_borrow_root(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Ident(n) => Some(n.as_str()),
+        ExprKind::Field { receiver, .. } => returned_borrow_root(receiver),
+        ExprKind::Index { receiver, .. } => returned_borrow_root(receiver),
+        ExprKind::Unary {
+            op: UnaryOp::Deref,
+            operand,
+        } => returned_borrow_root(operand),
+        // `recv.as_str()` / `recv.as_slice()` return a view borrowing `recv`.
+        ExprKind::Call { callee, .. } => {
+            if let ExprKind::Field { receiver, name } = &callee.kind {
+                if matches!(name.name.as_str(), "as_str" | "as_slice") {
+                    return returned_borrow_root(receiver);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 fn extract_link_name(attrs: &[Attribute]) -> Option<String> {
@@ -11030,49 +11870,341 @@ const ALLOC_BLOCKLIST: &[&str] = &[
 /// annotate the extern declaration with `#[no_alloc]`.
 const LEAF_WHITELIST: &[&str] = &[
     // memory helpers
-    "memcpy", "memmove", "memset", "memcmp", "memchr",
-    "bzero", "bcopy",
+    "memcpy",
+    "memmove",
+    "memset",
+    "memcmp",
+    "memchr",
+    "bzero",
+    "bcopy",
     // string scanning (no allocation)
-    "strlen", "strnlen", "strcmp", "strncmp", "strchr", "strrchr",
-    "strstr", "strspn", "strcspn", "strpbrk",
+    "strlen",
+    "strnlen",
+    "strcmp",
+    "strncmp",
+    "strchr",
+    "strrchr",
+    "strstr",
+    "strspn",
+    "strcspn",
+    "strpbrk",
     // bounded copies (caller-supplied buffers)
-    "strcpy", "strncpy", "strcat", "strncat",
-    "snprintf", "vsnprintf",
+    "strcpy",
+    "strncpy",
+    "strcat",
+    "strncat",
+    "snprintf",
+    "vsnprintf",
     // I/O (syscalls — no heap)
-    "write", "read", "fwrite", "fread", "fputs", "fputc",
-    "puts", "putchar", "putc",
-    "printf", "fprintf", "vprintf", "vfprintf",
-    "fflush", "fclose",
+    "write",
+    "read",
+    "fwrite",
+    "fread",
+    "fputs",
+    "fputc",
+    "puts",
+    "putchar",
+    "putc",
+    "printf",
+    "fprintf",
+    "vprintf",
+    "vfprintf",
+    "fflush",
+    "fclose",
     // process control (terminate — no heap)
-    "exit", "_exit", "abort", "_Exit",
+    "exit",
+    "_exit",
+    "abort",
+    "_Exit",
     // libc double math
-    "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-    "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-    "exp", "exp2", "expm1", "log", "log2", "log10", "log1p",
-    "pow", "sqrt", "cbrt", "hypot",
-    "ceil", "floor", "round", "trunc", "fmod", "fabs",
-    "ldexp", "frexp", "modf", "remainder", "copysign",
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asinh",
+    "acosh",
+    "atanh",
+    "exp",
+    "exp2",
+    "expm1",
+    "log",
+    "log2",
+    "log10",
+    "log1p",
+    "pow",
+    "sqrt",
+    "cbrt",
+    "hypot",
+    "ceil",
+    "floor",
+    "round",
+    "trunc",
+    "fmod",
+    "fabs",
+    "ldexp",
+    "frexp",
+    "modf",
+    "remainder",
+    "copysign",
     // libc float math
-    "sinf", "cosf", "tanf", "asinf", "acosf", "atanf", "atan2f",
-    "expf", "exp2f", "logf", "log2f", "log10f",
-    "powf", "sqrtf", "cbrtf", "hypotf",
-    "fabsf", "floorf", "ceilf", "roundf", "truncf", "fmodf",
+    "sinf",
+    "cosf",
+    "tanf",
+    "asinf",
+    "acosf",
+    "atanf",
+    "atan2f",
+    "expf",
+    "exp2f",
+    "logf",
+    "log2f",
+    "log10f",
+    "powf",
+    "sqrtf",
+    "cbrtf",
+    "hypotf",
+    "fabsf",
+    "floorf",
+    "ceilf",
+    "roundf",
+    "truncf",
+    "fmodf",
     // ObjC runtime helpers (v0.0.10 Phase 4 / vendor/metal)
-    "objc_msgSend", "objc_release", "objc_retain", "objc_autorelease",
-    "sel_registerName", "sel_getName",
-    "objc_getClass", "objc_lookUpClass", "object_getClass",
-    "class_getName", "class_respondsToSelector",
+    "objc_msgSend",
+    "objc_release",
+    "objc_retain",
+    "objc_autorelease",
+    "sel_registerName",
+    "sel_getName",
+    "objc_getClass",
+    "objc_lookUpClass",
+    "object_getClass",
+    "class_getName",
+    "class_respondsToSelector",
     // misc — pure or no-alloc
-    "errno", "strerror_r",
+    "errno",
+    "strerror_r",
 ];
 
-/// Info captured about every fn/method in the program, used by both
-/// `check_no_alloc` and `check_bounded_recursion`.
+/// Blocklist of blocking primitives. A `#[no_block]` function must not call
+/// any of these directly or transitively. Matching is done against the
+/// callee's `#[link_name]` symbol if set, else its trailing-segment name.
+/// Covers the hazards enumerated in `realtime.md` Phase 3: lock acquisition,
+/// condvar/barrier waits, thread join, sleep/timer waits, blocking file and
+/// socket I/O, and blocking I/O multiplexing.
+const BLOCK_BLOCKLIST: &[&str] = &[
+    // pthread lock acquisition + waits
+    "pthread_mutex_lock",
+    "pthread_mutex_timedlock",
+    "pthread_rwlock_rdlock",
+    "pthread_rwlock_wrlock",
+    "pthread_rwlock_timedrdlock",
+    "pthread_rwlock_timedwrlock",
+    "pthread_cond_wait",
+    "pthread_cond_timedwait",
+    "pthread_barrier_wait",
+    "pthread_join",
+    "pthread_spin_lock",
+    // sleep / timer waits
+    "sleep",
+    "usleep",
+    "nanosleep",
+    "clock_nanosleep",
+    // process waits
+    "wait",
+    "waitpid",
+    "wait3",
+    "wait4",
+    "waitid",
+    // blocking I/O multiplexing
+    "poll",
+    "ppoll",
+    "select",
+    "pselect",
+    "epoll_wait",
+    "kevent",
+    // blocking file I/O (raw syscalls + buffered reads + flush/sync)
+    "read",
+    "pread",
+    "readv",
+    "write",
+    "pwrite",
+    "writev",
+    "fread",
+    "fwrite",
+    "fgets",
+    "fgetc",
+    "getc",
+    "getchar",
+    "getline",
+    "fputs",
+    "fputc",
+    "putc",
+    "putchar",
+    "puts",
+    "fflush",
+    "scanf",
+    "fscanf",
+    "vscanf",
+    "vfscanf",
+    "fsync",
+    "fdatasync",
+    "msync",
+    // blocking socket I/O
+    "recv",
+    "recvfrom",
+    "recvmsg",
+    "send",
+    "sendto",
+    "sendmsg",
+    "accept",
+    "connect",
+    // buffered stdio writers that can block on a slow sink
+    "printf",
+    "fprintf",
+    "vprintf",
+    "vfprintf",
+];
+
+/// Whitelist of externs known not to block. A `#[no_block]` fn may call any
+/// of these. Pure computation (math), caller-buffer memory/string ops, and
+/// process termination — none of which wait on another thread, a lock, a
+/// timer, or I/O. Deliberately excludes the I/O helpers on `LEAF_WHITELIST`
+/// (those are no-alloc but *can* block on a pipe/socket).
+const BLOCK_SAFE_LEAF: &[&str] = &[
+    // memory helpers (caller-supplied buffers — no I/O, no waiting)
+    "memcpy",
+    "memmove",
+    "memset",
+    "memcmp",
+    "memchr",
+    "bzero",
+    "bcopy",
+    // string scanning (pure)
+    "strlen",
+    "strnlen",
+    "strcmp",
+    "strncmp",
+    "strchr",
+    "strrchr",
+    "strstr",
+    "strspn",
+    "strcspn",
+    "strpbrk",
+    // bounded copies / formatting into caller buffers (no I/O)
+    "strcpy",
+    "strncpy",
+    "strcat",
+    "strncat",
+    "snprintf",
+    "vsnprintf",
+    // process control (terminate — does not return, never blocks a hot path)
+    "exit",
+    "_exit",
+    "abort",
+    "_Exit",
+    // libc double math
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "atan2",
+    "sinh",
+    "cosh",
+    "tanh",
+    "asinh",
+    "acosh",
+    "atanh",
+    "exp",
+    "exp2",
+    "expm1",
+    "log",
+    "log2",
+    "log10",
+    "log1p",
+    "pow",
+    "sqrt",
+    "cbrt",
+    "hypot",
+    "ceil",
+    "floor",
+    "round",
+    "trunc",
+    "fmod",
+    "fabs",
+    "ldexp",
+    "frexp",
+    "modf",
+    "remainder",
+    "copysign",
+    // libc float math
+    "sinf",
+    "cosf",
+    "tanf",
+    "asinf",
+    "acosf",
+    "atanf",
+    "atan2f",
+    "expf",
+    "exp2f",
+    "logf",
+    "log2f",
+    "log10f",
+    "powf",
+    "sqrtf",
+    "cbrtf",
+    "hypotf",
+    "fabsf",
+    "floorf",
+    "ceilf",
+    "roundf",
+    "truncf",
+    "fmodf",
+    // nonblocking synchronization primitives + hints
+    "pthread_mutex_trylock",
+    "pthread_rwlock_tryrdlock",
+    "pthread_rwlock_trywrlock",
+    "pthread_spin_trylock",
+    "sched_yield",
+    // misc — pure
+    "errno",
+    "strerror_r",
+];
+
+/// Info captured about every fn/method in the program, used by the
+/// `check_no_alloc`, `check_no_block`, and `check_bounded_recursion` passes.
 struct NoAllocFnInfo<'a> {
     is_extern: bool,
     has_no_alloc: bool,
+    has_no_block: bool,
     link_name: Option<String>,
     body: Option<&'a Block>,
+}
+
+/// A function satisfies the `#[no_alloc]` contract at a call site if it is
+/// marked `#[no_alloc]` directly or `#[realtime]` (which bundles it).
+fn marks_no_alloc(attrs: &[Attribute]) -> bool {
+    has_attr_named(attrs, "no_alloc") || has_attr_named(attrs, "realtime")
+}
+
+/// A function satisfies the `#[no_block]` contract at a call site if it is
+/// marked `#[no_block]` directly or `#[realtime]` (which bundles it).
+fn marks_no_block(attrs: &[Attribute]) -> bool {
+    has_attr_named(attrs, "no_block") || has_attr_named(attrs, "realtime")
+}
+
+/// A function is subject to the `#[bounded_recursion]` pass if it is marked
+/// `#[bounded_recursion]` directly or `#[realtime]` (which bundles it).
+fn marks_bounded_recursion(attrs: &[Attribute]) -> bool {
+    has_attr_named(attrs, "bounded_recursion") || has_attr_named(attrs, "realtime")
 }
 
 struct NoAllocFnTable<'a> {
@@ -11086,7 +12218,8 @@ fn build_no_alloc_fn_table(p: &Program) -> NoAllocFnTable<'_> {
             ItemKind::Function(f) => {
                 let info = NoAllocFnInfo {
                     is_extern: f.is_extern,
-                    has_no_alloc: has_attr_named(&f.attributes, "no_alloc"),
+                    has_no_alloc: marks_no_alloc(&f.attributes),
+                    has_no_block: marks_no_block(&f.attributes),
                     link_name: extract_link_name(&f.attributes),
                     body: if f.is_extern { None } else { Some(&f.body) },
                 };
@@ -11096,7 +12229,8 @@ fn build_no_alloc_fn_table(p: &Program) -> NoAllocFnTable<'_> {
                 for m in &b.methods {
                     let info = NoAllocFnInfo {
                         is_extern: false,
-                        has_no_alloc: has_attr_named(&m.attributes, "no_alloc"),
+                        has_no_alloc: marks_no_alloc(&m.attributes),
+                        has_no_block: marks_no_block(&m.attributes),
                         link_name: None,
                         body: Some(&m.body),
                     };
@@ -11113,166 +12247,233 @@ fn has_attr_named(attrs: &[Attribute], name: &str) -> bool {
     attrs.iter().any(|a| a.path.name == name)
 }
 
+/// Extract the byte budget + attribute span from a `#[max_stack(N)]` attribute,
+/// if present. Returns `None` when absent or malformed (attrs validation has
+/// already rejected the malformed shape with E0355).
+fn max_stack_budget(attrs: &[Attribute]) -> Option<(u64, ByteSpan)> {
+    for a in attrs {
+        if a.path.name == "max_stack" {
+            if let [AttrArg::Int(v, _)] = a.args.as_slice() {
+                return Some((*v as u64, a.span));
+            }
+        }
+    }
+    None
+}
+
 /// Trailing-segment of a possibly-qualified fn name (e.g. `vec.malloc` →
 /// `malloc`). Used to produce user-friendly diagnostic text.
 fn leaf_name(qualified: &str) -> &str {
-    qualified.rsplit_once('.').map(|(_, n)| n).unwrap_or(qualified)
+    qualified
+        .rsplit_once('.')
+        .map(|(_, n)| n)
+        .unwrap_or(qualified)
 }
 
-/// Walk a Block, collecting (callee_name, span) pairs for every
-/// `ExprKind::Call` whose callee resolves to a textual name. The walker
-/// handles:
+/// Hot-path-relevant effects gathered from a function body by the shared
+/// real-time walker. Extensible: future allocating constructs (e.g. owned
+/// container growth) add a field here rather than a parallel traversal.
+#[derive(Default)]
+struct BodyEffects {
+    /// `(callee_name, call_span)` for every resolvable `ExprKind::Call`.
+    calls: Vec<(String, ByteSpan)>,
+    /// Spans of allocating language constructs that are not function calls.
+    /// Today: string interpolation (lowers to a `__string_concat` malloc).
+    interps: Vec<ByteSpan>,
+    /// Declared types of `let` bindings with a type annotation. Used by the
+    /// `#[max_stack]` frame estimate; ignored by the no_alloc/no_block passes.
+    let_tys: Vec<Type>,
+}
+
+/// Walk a Block, collecting hot-path effects into `out`. Calls are recorded
+/// for every `ExprKind::Call` whose callee resolves to a textual name:
 ///   - `Ident(name)` → `name`
 ///   - `Path { segments }` → `seg1.seg2....segN` (matches the resolver's
 ///     qualified-name form)
 ///   - `Field` method calls → skipped (cannot resolve without dispatch info)
-fn collect_callees_block(block: &Block, out: &mut Vec<(String, ByteSpan)>) {
+/// Allocating non-call constructs (string interpolation) are recorded too.
+fn collect_effects_block(block: &Block, out: &mut BodyEffects) {
     for s in &block.stmts {
-        collect_callees_stmt(s, out);
+        collect_effects_stmt(s, out);
     }
     if let Some(tail) = &block.tail {
-        collect_callees_expr(tail, out);
+        collect_effects_expr(tail, out);
     }
 }
 
-fn collect_callees_stmt(stmt: &Stmt, out: &mut Vec<(String, ByteSpan)>) {
+fn collect_effects_stmt(stmt: &Stmt, out: &mut BodyEffects) {
     match &stmt.kind {
-        StmtKind::Let { init: Some(e), .. } => collect_callees_expr(e, out),
-        StmtKind::Let { init: None, .. } => {}
-        StmtKind::Return(Some(e)) => collect_callees_expr(e, out),
+        StmtKind::Let { init, ty, .. } => {
+            // Capture the annotated type for the `#[max_stack]` frame estimate.
+            if let Some(t) = ty {
+                out.let_tys.push(t.clone());
+            }
+            if let Some(e) = init {
+                collect_effects_expr(e, out);
+            }
+        }
+        StmtKind::Return(Some(e)) => collect_effects_expr(e, out),
         StmtKind::Return(None) => {}
         StmtKind::While { cond, body, .. } => {
-            collect_callees_expr(cond, out);
-            collect_callees_block(body, out);
+            collect_effects_expr(cond, out);
+            collect_effects_block(body, out);
         }
         StmtKind::For(fl, _) => match fl {
             ForLoop::Range { iter, body, .. } => {
-                collect_callees_expr(iter, out);
-                collect_callees_block(body, out);
+                collect_effects_expr(iter, out);
+                collect_effects_block(body, out);
             }
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 if let Some(s) = init {
-                    collect_callees_stmt(s, out);
+                    collect_effects_stmt(s, out);
                 }
                 if let Some(c) = cond {
-                    collect_callees_expr(c, out);
+                    collect_effects_expr(c, out);
                 }
                 for u in update {
-                    collect_callees_expr(u, out);
+                    collect_effects_expr(u, out);
                 }
-                collect_callees_block(body, out);
+                collect_effects_block(body, out);
             }
         },
         StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
-            collect_callees_expr(e, out);
+            collect_effects_expr(e, out);
         }
-        StmtKind::Loop(b, _) => collect_callees_block(b, out),
+        StmtKind::Loop(b, _) => collect_effects_block(b, out),
         // After the lowering pass these are gone. Walk defensively in case
         // sema runs without lower (or for AST-level test harnesses).
-        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
-            collect_callees_expr(scrutinee, out);
-            collect_callees_block(body, out);
+        StmtKind::IfLet {
+            scrutinee,
+            body,
+            else_body,
+            ..
+        } => {
+            collect_effects_expr(scrutinee, out);
+            collect_effects_block(body, out);
             if let Some(eb) = else_body {
-                collect_callees_block(eb, out);
+                collect_effects_block(eb, out);
             }
         }
-        StmtKind::WhileLet { scrutinee, body, .. } => {
-            collect_callees_expr(scrutinee, out);
-            collect_callees_block(body, out);
+        StmtKind::WhileLet {
+            scrutinee, body, ..
+        } => {
+            collect_effects_expr(scrutinee, out);
+            collect_effects_block(body, out);
         }
-        StmtKind::GuardLet { scrutinee, else_body, .. } => {
-            collect_callees_expr(scrutinee, out);
-            collect_callees_block(else_body, out);
+        StmtKind::GuardLet {
+            scrutinee,
+            else_body,
+            ..
+        } => {
+            collect_effects_expr(scrutinee, out);
+            collect_effects_block(else_body, out);
         }
         StmtKind::Break | StmtKind::Continue => {}
     }
 }
 
-fn collect_callees_expr(e: &Expr, out: &mut Vec<(String, ByteSpan)>) {
+fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
     match &e.kind {
         ExprKind::Call { callee, args, .. } => {
             if let Some(name) = extract_call_name(callee) {
-                out.push((name, e.span));
+                out.calls.push((name, e.span));
             }
             // Walk arguments — nested calls inside args still count.
-            collect_callees_expr(callee, out);
+            collect_effects_expr(callee, out);
             for a in args {
-                collect_callees_expr(a, out);
+                collect_effects_expr(a, out);
             }
         }
         ExprKind::GenericEnumCall { args, .. } => {
             for a in args {
-                collect_callees_expr(a, out);
+                collect_effects_expr(a, out);
             }
         }
         ExprKind::Binary { lhs, rhs, .. } => {
-            collect_callees_expr(lhs, out);
-            collect_callees_expr(rhs, out);
+            collect_effects_expr(lhs, out);
+            collect_effects_expr(rhs, out);
         }
-        ExprKind::Unary { operand, .. } => collect_callees_expr(operand, out),
+        ExprKind::Unary { operand, .. } => collect_effects_expr(operand, out),
         ExprKind::Range { start, end, .. } => {
             if let Some(s) = start {
-                collect_callees_expr(s, out);
+                collect_effects_expr(s, out);
             }
             if let Some(e) = end {
-                collect_callees_expr(e, out);
+                collect_effects_expr(e, out);
             }
         }
         ExprKind::Assign { target, value, .. } => {
-            collect_callees_expr(target, out);
-            collect_callees_expr(value, out);
+            collect_effects_expr(target, out);
+            collect_effects_expr(value, out);
         }
-        ExprKind::Cast { expr, .. } => collect_callees_expr(expr, out),
-        ExprKind::If { cond, then, else_branch } => {
-            collect_callees_expr(cond, out);
-            collect_callees_block(then, out);
+        ExprKind::Cast { expr, .. } => collect_effects_expr(expr, out),
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            collect_effects_expr(cond, out);
+            collect_effects_block(then, out);
             if let Some(eb) = else_branch {
-                collect_callees_expr(eb, out);
+                collect_effects_expr(eb, out);
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            collect_callees_expr(scrutinee, out);
+            collect_effects_expr(scrutinee, out);
             for arm in arms {
-                collect_callees_expr(&arm.body, out);
+                collect_effects_expr(&arm.body, out);
             }
         }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_callees_block(b, out),
-        ExprKind::Field { receiver, .. } => collect_callees_expr(receiver, out),
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_effects_block(b, out),
+        ExprKind::Field { receiver, .. } => collect_effects_expr(receiver, out),
         ExprKind::Index { receiver, index } => {
-            collect_callees_expr(receiver, out);
-            collect_callees_expr(index, out);
+            collect_effects_expr(receiver, out);
+            collect_effects_expr(index, out);
         }
         ExprKind::StructLit { fields, .. } => {
             for f in fields {
-                collect_callees_expr(&f.value, out);
+                collect_effects_expr(&f.value, out);
             }
         }
         ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
-                collect_callees_expr(&f.value, out);
+                collect_effects_expr(&f.value, out);
             }
         }
         ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
             for el in elements {
-                collect_callees_expr(el, out);
+                collect_effects_expr(el, out);
             }
         }
-        ExprKind::ArrayFill { fill, .. } => collect_callees_expr(fill, out),
+        ExprKind::ArrayFill { fill, .. } => collect_effects_expr(fill, out),
         ExprKind::InterpStr { parts } => {
+            // String interpolation lowers to `__string_concat` — a malloc per
+            // evaluation (see codegen `gen_interp_str`). Any interpolation with
+            // an embedded expression allocates; record the site so the
+            // `#[no_alloc]` pass can reject it. (Pure-literal strings never
+            // reach this node — the lexer emits a plain `Str` token.)
+            if parts.iter().any(|p| matches!(p, InterpStrPart::Expr(_))) {
+                out.interps.push(e.span);
+            }
             for p in parts {
                 if let InterpStrPart::Expr(e) = p {
-                    collect_callees_expr(e, out);
+                    collect_effects_expr(e, out);
                 }
             }
         }
         ExprKind::Await(inner) | ExprKind::Yield(inner) => {
-            collect_callees_expr(inner, out);
+            collect_effects_expr(inner, out);
         }
         ExprKind::Intrinsic { args, .. } => {
             // Intrinsics are dispatched by the compiler directly — there is
             // no user-fn callee — but nested calls inside args still count.
             for a in args {
-                collect_callees_expr(a, out);
+                collect_effects_expr(a, out);
             }
         }
         ExprKind::IntLit(_, _)
@@ -11329,7 +12530,9 @@ fn body_ends_with_return(b: &Block) -> bool {
 fn is_addr_of_place(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Ident(_) => true,
-        ExprKind::Unary { op: UnaryOp::Deref, .. } => true,
+        ExprKind::Unary {
+            op: UnaryOp::Deref, ..
+        } => true,
         ExprKind::Field { receiver, .. } => is_addr_of_place(receiver),
         ExprKind::Index { receiver, .. } => is_addr_of_place(receiver),
         _ => false,
@@ -11695,9 +12898,7 @@ mod tests {
 
     #[test]
     fn atomic_fence_outside_unsafe_e0801_g030() {
-        let codes = errors(
-            "fn main() -> i32 { __cplus_atomic_fence_seqcst(); return 0; }",
-        );
+        let codes = errors("fn main() -> i32 { __cplus_atomic_fence_seqcst(); return 0; }");
         assert!(codes.contains(&"E0801"));
     }
 
@@ -11728,9 +12929,7 @@ mod tests {
 
     #[test]
     fn cpu_relax_with_args_e0308_g031() {
-        let codes = errors(
-            "fn main() -> i32 { #cpu_relax(1 as i32); return 0; }",
-        );
+        let codes = errors("fn main() -> i32 { #cpu_relax(1 as i32); return 0; }");
         assert!(codes.contains(&"E0308"));
     }
 
@@ -11771,9 +12970,7 @@ mod tests {
 
     #[test]
     fn cpu_relax_with_type_args_e0501_g031() {
-        let codes = errors(
-            "fn main() -> i32 { #cpu_relax::[i32](); return 0; }",
-        );
+        let codes = errors("fn main() -> i32 { #cpu_relax::[i32](); return 0; }");
         assert!(codes.contains(&"E0501"));
     }
 
@@ -11808,9 +13005,8 @@ mod tests {
     fn is_null_on_non_pointer_rejected_g024() {
         // Receiver isn't a raw pointer → falls through to normal method
         // lookup → no `is_null` on i32 → E0324.
-        let codes = errors(
-            "fn main() -> i32 { let x: i32 = 5; if x.is_null() { return 1; } return 0; }",
-        );
+        let codes =
+            errors("fn main() -> i32 { let x: i32 = 5; if x.is_null() { return 1; } return 0; }");
         assert!(codes.iter().any(|c| c.starts_with("E0")));
     }
 
@@ -14300,7 +15496,8 @@ mod tests {
 
     #[test]
     fn size_of_two_type_args_rejected_e0501() {
-        let codes = errors("fn main() -> i32 { let n: usize = #size_of::[i32, bool](); return 0; }");
+        let codes =
+            errors("fn main() -> i32 { let n: usize = #size_of::[i32, bool](); return 0; }");
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for two type args, got: {codes:?}"
@@ -14940,6 +16137,80 @@ mod tests {
         );
     }
 
+    // ---- v0.0.12 realtime Phase 6 (core): Rc / MutexGuard are !Send ----
+
+    #[test]
+    fn send_bound_rejects_rc_e0502() {
+        // `Rc[T]` is `!Send` — passing one to a `Send`-bounded generic fails.
+        // (Matched by template-name leaf, so a local `Rc` exercises the rule.)
+        let codes = errors(
+            "struct Rc[T] { v: T }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let r: Rc[i32] = Rc[i32] { v: 5 };\n\
+                 let _q: Rc[i32] = ship::[Rc[i32]](r);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn send_bound_rejects_mutex_guard_e0502() {
+        let codes = errors(
+            "struct MutexGuard[T] { v: T }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let g: MutexGuard[i32] = MutexGuard[i32] { v: 5 };\n\
+                 let _q: MutexGuard[i32] = ship::[MutexGuard[i32]](g);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn sync_bound_rejects_rc_e0502() {
+        let codes = errors(
+            "struct Rc[T] { v: T }\n\
+             fn share[T: Sync](x: T) -> T { return x; }\n\
+             fn main() -> i32 {\n\
+                 let r: Rc[i32] = Rc[i32] { v: 5 };\n\
+                 let _q: Rc[i32] = share::[Rc[i32]](r);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn send_bound_accepts_other_generic_struct() {
+        // A generic struct that is *not* Rc/MutexGuard stays Send.
+        assert_clean(
+            "struct Holder[T] { v: T }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let h: Holder[i32] = Holder[i32] { v: 5 };\n\
+                 let q: Holder[i32] = ship::[Holder[i32]](h);\n\
+                 return q.v;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn mutex_guard_is_still_sync() {
+        // Only Rc is !Sync; a MutexGuard satisfies a Sync bound.
+        assert_clean(
+            "struct MutexGuard[T] { v: T }\n\
+             fn share[T: Sync](x: T) -> T { return x; }\n\
+             fn main() -> i32 {\n\
+                 let g: MutexGuard[i32] = MutexGuard[i32] { v: 5 };\n\
+                 let q: MutexGuard[i32] = share::[MutexGuard[i32]](g);\n\
+                 return q.v;\n\
+             }",
+        );
+    }
+
     // ---- v0.0.6 Slice 1A: include_bytes! ----
 
     /// Helper: write `src` to `<dir>/src.cplus`, write `bytes` to
@@ -15404,8 +16675,8 @@ mod tests {
         // (well — actually a Pound followed by anything that isn't
         // while/loop/for is a parser error). Verify that the error
         // fires at the parsing boundary by attempting the construct.
-        let toks = tokenize("fn main() -> i32 { #[unroll(4)] let x: i32 = 7; return x; }")
-            .expect("lex");
+        let toks =
+            tokenize("fn main() -> i32 { #[unroll(4)] let x: i32 = 7; return x; }").expect("lex");
         assert!(
             parse(toks).is_err(),
             "expected parse error: loop-attr on a non-loop statement"
@@ -15955,17 +17226,13 @@ mod tests {
     // accepted (option a from llama.cplus G-032 ranking).
     #[test]
     fn array_literal_still_rejected_e0x30_g033() {
-        let codes = lowered_errors(
-            "pub static T: [i32; 4] = [1, 2, 3, 4];",
-        );
+        let codes = lowered_errors("pub static T: [i32; 4] = [1, 2, 3, 4];");
         assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
     }
 
     #[test]
     fn fill_array_in_static_still_rejected_e0x30_g033() {
-        let codes = lowered_errors(
-            "pub static T: [u8; 256] = [0u8; 256];",
-        );
+        let codes = lowered_errors("pub static T: [u8; 256] = [0u8; 256];");
         assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
     }
 
@@ -15974,9 +17241,7 @@ mod tests {
         // The complementary positive — lower accepts #zero::[T]() as
         // a const-init shape; sema then type-checks the RHS against
         // the declared type.
-        let codes = lowered_errors(
-            "pub static T: [u8; 256] = #zero::[[u8; 256]]();",
-        );
+        let codes = lowered_errors("pub static T: [u8; 256] = #zero::[[u8; 256]]();");
         assert!(
             !codes.iter().any(|c| c == "E0X30"),
             "expected no E0X30, got {:?}",
@@ -16203,6 +17468,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn no_alloc_string_interpolation_e0901() {
+        // `"...${x}..."` lowers to a `__string_concat` malloc — rejected.
+        let codes = errors(
+            "#[no_alloc] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_plain_string_literal_clean() {
+        // A non-interpolated string literal is a static constant — no alloc.
+        assert_clean(
+            "#[no_alloc] fn f() -> str { return \"static\"; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_string_interpolation_clean() {
+        // Interpolation allocates but does not block — fine under #[no_block].
+        assert_clean(
+            "#[no_block] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn realtime_string_interpolation_e0901() {
+        // The bundle includes no_alloc, so interpolation is rejected.
+        let codes = errors(
+            "#[realtime] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
     // Wrong-target rejection for `#[no_alloc]` lives in attrs.rs's test
     // module — sema's `check()` does not invoke the attrs pass.
 
@@ -16228,6 +17531,278 @@ mod tests {
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
+    }
+
+    // ========================================================================
+    // v0.0.12 realtime Phase 3: `#[no_block]` attribute
+    // ========================================================================
+
+    #[test]
+    fn no_block_pure_arith_clean() {
+        assert_clean(
+            "#[no_block] fn pure_arith(x: i32) -> i32 { return x +% 1; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_direct_mutex_lock_e0907() {
+        let codes = errors(
+            "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
+             #[no_block] fn f(m: *u8) { unsafe { pthread_mutex_lock(m); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_block_direct_sleep_e0907() {
+        let codes = errors(
+            "extern fn sleep(secs: u32) -> u32;\n\
+             #[no_block] fn f() { unsafe { sleep(1); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_block_blocking_read_e0907() {
+        // `read` is a blocking syscall — rejected even though it never heap-allocs.
+        let codes = errors(
+            "extern fn read(fd: i32, buf: *u8, n: usize) -> isize;\n\
+             #[no_block] fn f(fd: i32, buf: *u8) { unsafe { read(fd, buf, 8 as usize); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_block_cond_wait_via_link_name_e0907() {
+        // `#[link_name]` resolves to a blocklisted symbol even when the
+        // source name is something else.
+        let codes = errors(
+            "#[link_name = \"pthread_cond_wait\"] extern fn park(c: *u8, m: *u8) -> i32;\n\
+             #[no_block] fn f(c: *u8, m: *u8) { unsafe { park(c, m); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_block_safe_leaf_math_clean() {
+        // `sqrtf` is a pure leaf — fine to call from #[no_block].
+        assert_clean(
+            "extern fn sqrtf(x: f32) -> f32;\n\
+             #[no_block] fn root(x: f32) -> f32 { return unsafe { sqrtf(x) }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_trylock_clean() {
+        // The nonblocking `pthread_mutex_trylock` is on the safe-leaf set.
+        assert_clean(
+            "extern fn pthread_mutex_trylock(m: *u8) -> i32;\n\
+             #[no_block] fn f(m: *u8) -> i32 { return unsafe { pthread_mutex_trylock(m) }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_calls_other_no_block_clean() {
+        assert_clean(
+            "#[no_block] fn a(x: i32) -> i32 { return b(x); }\n\
+             #[no_block] fn b(x: i32) -> i32 { return x +% 1; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_calls_unmarked_user_fn_e0907() {
+        let codes = errors(
+            "fn helper(x: i32) -> i32 { return x +% 1; }\n\
+             #[no_block] fn caller(x: i32) -> i32 { return helper(x); }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_block_unknown_extern_e0907() {
+        let codes = errors(
+            "extern fn mystery(x: i32) -> i32;\n\
+             #[no_block] fn caller(x: i32) -> i32 { return unsafe { mystery(x) }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_block_extern_self_marked_clean() {
+        // The user vouches for the extern by marking it `#[no_block]`.
+        assert_clean(
+            "#[no_block] extern fn vouch(x: i32) -> i32;\n\
+             #[no_block] fn caller(x: i32) -> i32 { return unsafe { vouch(x) }; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_method_clean() {
+        assert_clean(
+            "struct P { x: i32 }\n\
+             impl P {\n\
+                 #[no_block] fn doubled(self) -> i32 { return self.x +% self.x; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_block_cpu_relax_intrinsic_clean() {
+        // `#cpu_relax()` is an intrinsic, not a call — the allowed spin hint.
+        assert_clean(
+            "#[no_block] fn spin() { #cpu_relax(); return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // ========================================================================
+    // v0.0.12 realtime Phase 4: `#[realtime]` bundle attribute
+    // ========================================================================
+
+    #[test]
+    fn realtime_pure_arith_clean() {
+        assert_clean(
+            "#[realtime] fn process(x: i32) -> i32 { return x +% 1; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn realtime_alloc_violation_e0901() {
+        let codes = errors(
+            "extern fn malloc(n: usize) -> *u8;\n\
+             #[realtime] fn f() { unsafe { malloc(8 as usize); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn realtime_block_violation_e0907() {
+        let codes = errors(
+            "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
+             #[realtime] fn f(m: *u8) { unsafe { pthread_mutex_lock(m); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn realtime_recursion_violation_e0906() {
+        let codes = errors(
+            "#[realtime] fn r(x: i32) -> i32 {\n\
+                 if x == 0 { return 0; }\n\
+                 return r(x -% 1);\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0906"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn realtime_satisfies_no_alloc_callee_clean() {
+        // A `#[realtime]` callee satisfies a `#[no_alloc]` caller's requirement.
+        assert_clean(
+            "#[realtime] fn leaf(x: i32) -> i32 { return x +% 1; }\n\
+             #[no_alloc] fn caller(x: i32) -> i32 { return leaf(x); }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn realtime_satisfies_no_block_callee_clean() {
+        assert_clean(
+            "#[realtime] fn leaf(x: i32) -> i32 { return x +% 1; }\n\
+             #[no_block] fn caller(x: i32) -> i32 { return leaf(x); }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // ========================================================================
+    // v0.0.12 realtime Phase 4: `#[max_stack(N)]` bounded-stack estimate
+    // ========================================================================
+
+    #[test]
+    fn max_stack_small_frame_clean() {
+        // 100-byte array is under the 256-byte budget.
+        assert_clean(
+            "#[max_stack(256)] fn f() { let buf: [u8; 100] = [0u8; 100]; return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn max_stack_large_array_over_budget_e0908() {
+        let codes = errors(
+            "#[max_stack(64)] fn f() { let buf: [u8; 100] = [0u8; 100]; return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn max_stack_params_counted_clean_at_boundary() {
+        // Two i64 params = 16 bytes; budget 16; `>` not `>=`, so clean.
+        assert_clean(
+            "#[max_stack(16)] fn f(a: i64, b: i64) -> i64 { return a +% b; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn max_stack_params_over_budget_e0908() {
+        let codes = errors(
+            "#[max_stack(8)] fn f(a: i64, b: i64) -> i64 { return a +% b; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn max_stack_by_value_struct_over_budget_e0908() {
+        // A 1000-byte by-value aggregate local blows a 128-byte budget.
+        let codes = errors(
+            "struct Big { data: [u8; 1000] }\n\
+             #[max_stack(128)] fn f() { let b: Big = Big { data: [0u8; 1000] }; return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn max_stack_nested_block_locals_counted_e0908() {
+        // Locals inside nested blocks are summed (conservative: all live).
+        let codes = errors(
+            "#[max_stack(64)] fn f(flag: bool) {\n\
+                 if flag { let buf: [u8; 100] = [0u8; 100]; }\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0908"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn max_stack_method_clean() {
+        assert_clean(
+            "struct P { x: i32 }\n\
+             impl P {\n\
+                 #[max_stack(64)] fn small(self) -> i32 { let t: i32 = self.x; return t; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
     }
 
     // ========================================================================

@@ -36,11 +36,12 @@ If you want history and rationale, read [plan.md](plan.md). If you want a tight 
 26. [Iterators and `gen fn`](#26-iterators-and-gen-fn)
 27. [Standard library tour](#27-standard-library-tour)
 28. [Vendor packages](#28-vendor-packages)
-29. [Tooling — `cpc`](#29-tooling--cpc)
-30. [Common error codes](#30-common-error-codes)
-31. [Gotchas worth memorising](#31-gotchas-worth-memorising)
-32. [SIMD types](#32-simd-types)
-33. [Where to go next](#33-where-to-go-next)
+29. [C+ for LLMs](#29-c-for-llms)
+30. [Tooling — `cpc`](#30-tooling--cpc)
+31. [Common error codes](#31-common-error-codes)
+32. [Gotchas worth memorising](#32-gotchas-worth-memorising)
+33. [SIMD types](#33-simd-types)
+34. [Where to go next](#34-where-to-go-next)
 
 ---
 
@@ -230,7 +231,7 @@ fn current() -> i32 {
 
 Three rules:
 
-1. **Initialiser must be a literal** — integer, float, bool, string, or a unary-negated numeric literal. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error.
+1. **Initialiser must be a literal or `#zero::[T]()`** — integer, float, bool, string, a unary-negated numeric literal, or explicit zero-fill. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error.
 2. **Type annotation is required** — no inference. `const FOO = 5;` and `static FOO = 5;` are rejected with **E0X31**.
 3. **`static mut` reads need `unsafe`** (E0X33). Writes need `unsafe` (E0X34). Writing to an immutable `static` is **E0305** ("cannot assign to immutable static").
 
@@ -334,21 +335,29 @@ let mut x: i32 = 0;
 while x < 10 { x = x +% 1; }
 ```
 
-### `for` — three flavours
+### `for` — two flavours plus iterators
 
 ```cplus
 // Range. 0..n is exclusive; 0..=n is inclusive.
 for i in 0..10 { println(i); }
-
-// Array.
-let arr: [i32; 4] = [10, 20, 30, 40];
-for v in arr { println(v); }
 
 // C-style. Standard `for` with init / cond / step.
 for (let mut i: i32 = 0; i < 10; i = i +% 1) {
     println(i);
 }
 ```
+
+Arrays are not directly iterable. Iterate by index:
+
+```cplus
+let arr: [i32; 4] = [10, 20, 30, 40];
+for i in 0..4 {
+    println(arr[i as usize]);
+}
+```
+
+Iterator values from `gen fn` and stdlib iterator adapters also work in
+`for ... in`; see §26.
 
 ### `loop` / `break` / `continue`
 
@@ -441,13 +450,15 @@ fn main() -> i32 {
 }
 ```
 
-### Struct-literal shorthand
+### Struct literals
 
 ```cplus
 let x: i32 = 1;
 let y: i32 = 2;
-let p: Point = Point { x, y };          // shorthand when names match
+let p: Point = Point { x: x, y: y };
 ```
+
+There is no field shorthand today; write every `name: value` pair explicitly.
 
 ### Field visibility
 
@@ -577,7 +588,9 @@ let x: i32 = a[2];               // 30; out-of-range traps
 let mut buf: [i32; 4] = [0, 0, 0, 0];
 buf[0] = 5;
 
-for v in a { println(v); }
+for i in 0..4 {
+    println(a[i as usize]);
+}
 ```
 
 **Use small `[u8; N]` arrays for scratch buffers in hot loops** — they live on the stack (or in registers after SROA). `malloc` is real heap allocation; it dominates tight loops.
@@ -602,7 +615,14 @@ let bytes: [u8; 16384]  = [0u8; 16384];        // 16 KiB zero buffer — single 
 
 The count must be a `u32` literal — no const-eval today.
 
-Slices `T[]` exist as a borrow-shaped construct used at FFI boundaries and inside the stdlib.
+Slices `T[]` are fat-pointer views over contiguous elements. They are
+borrow-shaped, so they are useful at FFI boundaries and inside the stdlib:
+
+```cplus
+let xs: i32[] = unsafe { slice_from_raw_parts(ptr, 3 as usize) };
+let p: *i32 = slice_ptr(xs);
+let n: usize = slice_len(xs);
+```
 
 ---
 
@@ -623,7 +643,8 @@ v0.0.10 flipped the default: **non-Copy values move by default**. `borrow` is th
 | `move x: T` | Move (explicit; same as `x: T`) | Pass-by-value |
 | `borrow x: T` | Shared borrow — caller keeps ownership, function reads only | (redundant on Copy) |
 
-Method receivers follow the same model: `self`, `mut self`, `move self`, `borrow self`.
+Method receivers are `self`, `mut self`, or `move self`. There is no
+`borrow self`; use bare `self` for read-only method access.
 
 ### `Copy` is structural
 
@@ -717,9 +738,24 @@ println(s.as_str());
 println(r.as_str());
 ```
 
-`move x: T` is now redundant on non-Copy params (same as the default) — kept as an explicit marker for readers who want the consumption visible at the signature. Old code with `move x: string` still works; new code can drop it.
+`move x: T` is now redundant on non-Copy params (same as the default) — kept as an explicit marker for readers who want the consumption visible at the signature. Old code with `move x: string` still works; new code can drop it. The two lower identically: both pass the value by value, flip the caller's drop flag, and make the callee responsible for the single drop. (This is a genuine move, not the old borrow-shaped lowering — forwarding a moved value back out, `fn f(x: T) -> T { return x; }`, frees the heap exactly once.)
 
 The compiler suggests `borrow` when it spots a `borrow`-shaped use (read-only, no consume) inside a default-move body (**E0902** points to a precise fix-it).
+
+### Partial moves out of a `Drop` type are rejected
+
+A `Drop` type's destructor frees its fields by hand (the compiler does not synthesize per-field drops — see §13). So moving a field *out* from under a live destructor would double-free it. The compiler rejects this with **E0509**:
+
+```cplus
+struct Pair { a: string, b: string }
+impl Pair { fn drop(mut self) { /* frees a and b */ } }
+
+fn steal(p: Pair) -> string {
+    return p.a;          // ❌ E0509 — `p`'s drop would free `a` again
+}
+```
+
+The fix is to clone the field, or restructure so the value isn't owned by a `Drop` type. Moving a field out of a struct that has **no** `drop` impl is fine (no destructor, no double-free).
 
 ### Lifetime annotations (rare)
 
@@ -733,6 +769,15 @@ fn longest(a: borrow A string, b: borrow A string) -> borrow A string {
 ```
 
 `A` is a region name local to one signature; there's no separate declaration block. You will rarely write these.
+
+The region is enforced, not decorative: a return region must be declared on some parameter (**E0511** otherwise), and a `return` must hand back a borrow from a *same-region* parameter (**E0512** on a mismatch — e.g. returning a `borrow B` value where the signature promised `borrow A`). And a function may not return a `str` / `T[]` view of one of its own **locals**: that local is freed when the function returns, so the view would dangle (**E0513**). Borrow a parameter (or return an owned `string` / `Vec[T]`) instead:
+
+```cplus
+fn bad() -> str {
+    let s: string = "hi".to_string();
+    return s.as_str();          // ❌ E0513 — view into a local that drops here
+}
+```
 
 ---
 
@@ -781,7 +826,7 @@ fn main() -> i32 {
 The rule: **aliasing XOR mutability**. At any program point, a place has either any number of shared borrows OR exactly one exclusive borrow, never both.
 
 ```cplus
-let mut v: vec::Vec[i32] = vec::Vec[i32]::new();
+let mut v: vec::Vec[i32] = vec::new::[i32]();
 v.push(1);
 let n: usize = v.len();      // shared borrow — fine
 let p: i32 = v.get(0);       // shared borrow — fine
@@ -860,11 +905,13 @@ When the compiler can't infer a type parameter, supply it explicitly with `::[T]
 
 ```cplus
 let h = thread::spawn::[i32](worker);
-let v = vec::Vec[i32]::with_capacity(16);
+let v = vec::with_capacity::[i32](16 as usize);
 let s = #size_of::[Point]();
 ```
 
-Use `::[T]` for free fns / associated fns. Use `Vec[T]::new()` for type-attached associated fns. Both work; the difference is purely syntactic.
+Use `::[T]` for free functions and associated functions. For module-level
+stdlib constructors like `vec::new::[T]()` and `vec::with_capacity::[T](n)`,
+the type arguments attach to the function name.
 
 ### Internal vs source names
 
@@ -953,22 +1000,23 @@ let v: str     = unsafe { str_from_raw_parts(p, n) };   // unsafe (caller assert
 - String literals are `str`. Treat them as program-lifetime constants.
 - Owned string parameters move by default (`x: string` consumes the caller's value). Use `borrow x: string` if the callee should only read.
 - `str` parameters are **not allowed** in `async fn` signatures — pass `string` instead (E0900).
+- A function can't **return** a `str` (or `T[]`) that views one of its own locals — the local drops at return and the view would dangle (**E0513**). Return an owned `string` / `Vec[T]`, or borrow from a parameter. A `str` borrowing a parameter or a string literal is fine.
 - For interop with libc, `str_ptr(s)` gives you a `*u8` you can hand to `printf`, `write`, etc.
 
 ---
 
 ## 18. String interpolation
 
-Phase 8 added `\{EXPR}` interpolation inside string literals:
+Phase 8 added `${EXPR}` interpolation inside string literals:
 
 ```cplus
 let name: str = "world";
 let n: i32 = 42;
-let s: string = "hello \{name}, the answer is \{n}".to_string();
+let s: string = "hello ${name}, the answer is ${n}";
 io::println(s.as_str());
 ```
 
-The interpolation lowers to a series of concatenations, so any expression you can write in a position that produces `str` / `string` / a number is interpolable. Format specifiers (`\{x:04d}`) are **not** in v0.0.4 — convert numbers to strings explicitly when you need formatting.
+The interpolation lowers to an owned `string`, so any expression you can write in a position that produces `str` / `string` / a number is interpolable. Format specifiers (`${x:04d}`) are **not** in v0.0.4 — convert numbers to strings explicitly when you need formatting.
 
 ---
 
@@ -999,6 +1047,16 @@ unsafe {
 ```
 
 Pointer arithmetic itself is "safe" math (no memory access), but in practice you almost always use it inside `unsafe` since the next thing you do is dereference.
+
+Raw pointers also have a few blessed helper methods:
+
+```cplus
+if p.is_null() { return 1; }
+if p.is_not_null() { unsafe { p.write_zeroed(); } }
+```
+
+`is_null()` / `is_not_null()` are safe bit-pattern checks. `write_zeroed()` is
+unsafe because it writes through the pointer.
 
 ### `unsafe { ... }`
 
@@ -1034,6 +1092,35 @@ When one C symbol has multiple typed shapes (the ObjC `objc_msgSend` pattern):
 ```
 
 Both resolve to `_objc_msgSend` at link time.
+
+### Objective-C interop
+
+Objective-C is the one non-C-shaped ABI that C+ treats as a first-class
+systems target, because AppKit, Foundation, Metal, and MPS all sit behind it on
+macOS. The low-level surface is still explicit: object handles are opaque
+`*u8`, selectors are data, and message sends are unsafe calls.
+
+The direct compiler intrinsics are:
+
+```cplus
+let sel: *u8 = #selector("setTitle:");
+unsafe {
+    let title: *u8 = #msg_send(button, "title") -> *u8;
+    #msg_send(button, "setEnabled:", true);
+}
+```
+
+`#selector("name")` registers and caches the `SEL`. `#msg_send(recv, "sel",
+...) -> T` emits a typed `objc_msgSend` call with the return type you spell at
+the call site. This matters on Apple ABIs: `objc_msgSend` must not be declared
+as a C varargs function, and each call must have the shape the runtime expects.
+
+Use `#[repr(C)]` for structs that cross the boundary (`NSPoint`, `NSSize`,
+`NSRect`), `#addr_of(place)` when Cocoa wants an out-pointer, and `#[link_name]`
+only when you need to bind a C/ObjC runtime symbol manually. Most application
+code should import the typed packages instead: `vendor/appkit` wraps Cocoa, and
+`vendor/metal` wraps Metal/MPS. Those packages keep the unsafe ObjC details at
+the edge and expose normal C+ structs, methods, and `Drop`.
 
 ### Variadic ABI gotcha
 
@@ -1117,13 +1204,14 @@ The intrinsics fall into three families:
 
 | Family | Intrinsics |
 |---|---|
-| Typed query primitives | `#size_of::[T]()`, `#align_of::[T]()`, `#addr_of(x)` |
+| Typed query primitives | `#size_of::[T]()`, `#align_of::[T]()`, `#addr_of(place)`, `#zero::[T]()` |
 | Compile-time data embedding | `#include_bytes("path")`, `#include_str("path")`, `#env("NAME")` |
+| CPU hints | `#cpu_relax()` |
 | ObjC + GPU FFI (v0.0.10) | `#selector("name")`, `#msg_send(recv, "sel", ...) -> RetTy`, `#compile_shader("file.metal", "msl")` |
 
-### `#addr_of(x)` — address of a stack local as `*T`
+### `#addr_of(place)` — address of a place expression as `*T`
 
-Returns `*T` where `T` is the type of the binding `x`. **Unsafe** — wrap in `unsafe { ... }` because the returned pointer aliases the binding's storage and the borrow checker does not track its lifetime.
+Returns `*T` where `T` is the type of the addressed place. **Unsafe** — wrap in `unsafe { ... }` because the returned pointer aliases existing storage and the borrow checker does not track its lifetime.
 
 Use it when a C function needs to write through a pointer (`time`, `arc4random_buf`, `snprintf`, `localtime`, `objc_msgSend` with by-pointer args, etc.). Pre-`#addr_of` the only option was a malloc-write-free dance:
 
@@ -1139,13 +1227,39 @@ fn now() -> i64 {
 
 Zero runtime cost — the alloca pointer is reused directly; codegen emits no GEP, no load, no extra store.
 
-**Rules** (kept tight on purpose; widen as use cases land):
+**Rules**:
 
 - Exactly one argument; no turbofish (`#addr_of::[T](x)` is **E0501**).
-- Argument must be a bare identifier — `#addr_of(p.x)` and `#addr_of(v[0])` fire **E0302**. Take `#addr_of(struct_local)` then cast or GEP through the field index if you need an interior pointer.
+- Argument must be a place expression: a bare identifier, field access (`p.x`,
+  `(*p).x`), index (`a[2]`), dereference (`*p`), or a chain of those. Call
+  results and arithmetic temporaries are rejected.
 - Must appear inside `unsafe { ... }` — **E0801** outside.
 
 For a struct or array binding where you want a `*u8` (byte pointer), cast the result: `#addr_of(my_struct) as *u8`.
+
+```cplus
+let p: *Point = unsafe { #addr_of(point) };
+let xp: *i32 = unsafe { #addr_of((*p).x) };
+let item: *i32 = unsafe { #addr_of(arr[2]) };
+```
+
+### `#zero::[T]()` — all-zero value of type `T`
+
+Returns a value whose bytes are all zero. It is safe and useful for C-style
+aggregate initialization when you will fill selected fields afterward.
+
+```cplus
+let mut p: Point = #zero::[Point]();
+p.x = 10;
+```
+
+`#zero::[T]()` is also accepted in `const`, `static`, and `static mut`
+initializers.
+
+### `#cpu_relax()`
+
+Spin-loop CPU hint. It lowers to the platform pause/yield instruction where
+available and to no code elsewhere. It is safe and returns `()`.
 
 ### `#size_of::[T]()` and `#align_of::[T]()`
 
@@ -1333,11 +1447,75 @@ while i < n {
 
 #[vectorize_width(8)]
 for i in 0..count {
-    out[i] = a[i] * b[i];
+    out[i as usize] = a[i as usize] * b[i as usize];
 }
 ```
 
 `#[unroll(N)]` asks LLVM to unroll the loop N times; `#[vectorize_width(N)]` hints the autovectorizer toward an N-wide SIMD shape. Marginal for general code; **load-bearing for tight inner loops** that the compiler doesn't choose well by default.
+
+### Real-time contracts
+
+C+ is growing a real-time contract surface around attributes rather than a
+separate dialect. The current shipped pieces are:
+
+- `#[no_alloc]` — reject heap allocation in the annotated function's checked
+  call graph (**E0901**). String interpolation is rejected here because it
+  allocates an owned `string`.
+- `#[no_block]` — reject known blocking primitives such as mutex locks, condvar
+  waits, sleeps, blocking I/O, sockets, and unknown blocking externs (**E0907**).
+- `#[bounded_recursion]` — reject recursion cycles (**E0906**).
+- `#[max_stack(N)]` — bound the function's estimated stack frame to `N` bytes
+  (params + typed locals across all nested blocks, a conservative all-live sum);
+  over-budget is **E0908**. Catches large fixed arrays and by-value aggregates.
+- `#[realtime]` — bundle of `#[no_alloc]`, `#[no_block]`, and
+  `#[bounded_recursion]`.
+
+```cplus
+#[realtime]
+#[max_stack(256)]
+fn process_frame(input: *f32, output: *f32, n: usize, gain: f32) {
+    // no heap allocation, no blocking call, no recursion cycle, frame <= 256 B
+    // ... apply gain to the buffer ...
+    return;
+}
+```
+
+Project-wide enforcement is opt-in via the manifest — a `[profile.realtime]`
+table synthesizes the contract attributes onto every function in *your* package
+(dependencies are exempt), turning the per-function opt-in into a CI gate:
+
+```toml
+[profile.realtime]
+deny_alloc          = true
+deny_block          = true
+deny_unknown_extern = true
+stack_limit         = 4096
+```
+
+`cpc check` (no FILE argument) runs the whole-project front-end — including the
+profile gate — and stops before codegen, the fast CI command;
+`--diagnostics=json` emits machine-readable violations.
+
+`Send` / `Sync` are tightened so the threadsafe contract is real: `Rc[T]` is
+`!Send` + `!Sync` and `MutexGuard[T]` is `!Send`, so passing one to a `Send` /
+`Sync`-bounded generic — e.g. `thread::spawn` — is rejected (**E0502**); `Arc[T]`
+stays `Send` + `Sync`.
+
+The real-time data-structure work lives in `vendor/rt`: a lock-free
+`SpscRingU64` and a fixed `FixedPoolU64`, hot methods marked `#[no_alloc]` /
+`#[no_block]`. Platform controls live in `vendor/rt_darwin`: `clock`
+(monotonic-ns timestamps), `thread` (QoS scheduling priority), and `mem`
+(`mlock`/`munlock` page locking) — each fallible op returns an explicit
+`Result`. The demo is `proves/realtime_audio`, where a `#[realtime]` audio
+callback uses an SPSC control channel, raises thread QoS before the hot loop,
+records per-frame latency with the monotonic clock, and shows E0901 / E0907 /
+E0908 firing when an allocation, blocking call, or oversized frame is introduced.
+
+This is still soft real-time on normal operating systems. The roadmap is tracked
+in [realtime.md](realtime.md); remaining follow-ups are the broad
+"raw-pointer structs are `!Send`" rule (needs an `unsafe impl Send` opt-in),
+the `rt_linux` / `rt_posix` siblings, and method-dispatch hardening for the
+allocation checker.
 
 ### Doc comments
 
@@ -1579,7 +1757,7 @@ Both types are generic. Match on the variant. There's no `?` propagation — use
 ```cplus
 import "stdlib/vec" as vec;
 
-let mut v: vec::Vec[i32] = vec::Vec[i32]::with_capacity(16);
+let mut v: vec::Vec[i32] = vec::with_capacity::[i32](16 as usize);
 v.push(1);
 v.push(2);
 v.push(3);
@@ -1628,8 +1806,9 @@ import "stdlib/fs" as fs;
 let r: result::Result[fs::File, result::IoError] = fs::open_read("data.txt");
 guard let result::Result::Ok(f) = r else { return 1; };
 
-let mut buf: [u8; 256] = [0u8, 0u8, ...];   // expand as needed
-let n: isize = f.read(str_ptr_from_raw(...), 256 as usize);
+let bytes = f.read_to_end();
+guard let result::Result::Ok(buf) = bytes else { return 1; };
+let n: usize = buf.len();
 
 let w = fs::create("out.txt");
 // File implements Drop — closes on scope exit.
@@ -1643,13 +1822,13 @@ import "stdlib/net" as net;
 // Client
 let c = net::connect_tcp("127.0.0.1", 8080 as u16);
 guard let result::Result::Ok(sock) = c else { return 1; };
-sock.send_bytes(payload_ptr, payload_len);
-let n: isize = sock.recv_bytes(buf_ptr, buf_cap);
+let written = sock.write_all(payload);
+let bytes = sock.read_to_end();
 
 // Server
 let l = net::listen_tcp(8080 as u16);
 guard let result::Result::Ok(listener) = l else { return 1; };
-let a = listener.accept();
+let accepted = listener.accept();
 ```
 
 v0.0.4 supports IPv4 with numeric IPs only. For hostname resolution use `gethostbyname` directly via FFI.
@@ -1658,9 +1837,12 @@ v0.0.4 supports IPv4 with numeric IPs only. For hostname resolution use `gethost
 
 ```cplus
 import "stdlib/env" as env;
+import "stdlib/vec" as vec;
 
-let port = env::var("PORT");                            // Result[string, IoError]
-guard let result::Result::Ok(p) = port else { ... };
+let mut port: vec::Vec[u8] = vec::new::[u8]();
+if env::var_into("PORT", port) {
+    // bytes were appended to port
+}
 
 // argv access is platform-specific — on darwin via _NSGetArgc/_NSGetArgv.
 ```
@@ -1689,7 +1871,7 @@ let c2 = root.clone();
 
 ### `stdlib/rc` — single-threaded refcount
 
-Same as `Arc` but non-atomic. Cheaper, single-thread only. The compiler doesn't yet enforce `!Send` for `Rc`, so don't ship it across threads by hand.
+Same as `Arc` but non-atomic. Cheaper, single-thread only. `Rc[T]` is `!Send` and `!Sync` — the compiler rejects passing one to a `Send`/`Sync`-bounded generic such as `thread::spawn` (**E0502**). Use `Arc[T]` to share across threads.
 
 ### `stdlib/mutex` — pthread-backed mutual exclusion
 
@@ -1700,10 +1882,11 @@ See §24. Internally refcounted (collapses `Arc` into itself — C+ has no `&T` 
 ```cplus
 import "stdlib/channel" as channel;
 
-let (tx, rx) = channel::unbounded::[i32]();
-// tx and rx can be cloned for multi-producer / multi-consumer use.
+let tx = channel::new::[i32]();
+let rx = tx.clone();
+// Channel handles can be cloned for multi-producer / multi-consumer use.
 tx.send(42);
-let v: option::Option[i32] = rx.recv();
+let v: channel::RecvResult[i32] = rx.recv();
 ```
 
 ### `stdlib/future`, `stdlib/executor`, `stdlib/reactor`, `stdlib/time` — see §25
@@ -1739,6 +1922,9 @@ For the full set of blessed vendor packages beyond stdlib (`vendor/appkit`, `ven
 Beyond `stdlib`, C+ ships a curated set of vendored packages — typed bindings to platform SDKs (Apple frameworks, ObjC runtime), self-contained utilities (allocators, parsers, loggers), and 3D-math helpers. They share `stdlib`'s deployment model: a directory under `vendor/`, a `Cplus.toml` manifest, a `<package-name>.cplus` library entry, and in-package `#[test]` fns runnable via `cd vendor/<pkg> && cpc test`.
 
 To consume one, add `<name> = "*"` to your `[dependencies]` and `import "<name>/..." as alias;`. The driver walks one directory up from your project to resolve sibling vendor deps, so no per-package symlinks are needed beyond the canonical `vendor/` checkout.
+
+(The real-time packages `vendor/rt` and `vendor/rt_darwin` follow the same
+deployment model but are documented with the real-time contracts in §23.)
 
 The ten packages, in alphabetical order:
 
@@ -1906,12 +2092,98 @@ println(u.to_string().as_str());   // "550e8400-e29b-41d4-a716-446655440000"
 
 ---
 
-## 29. Tooling — `cpc`
+## 29. C+ for LLMs
+
+C+ is deliberately shaped so an LLM can produce useful systems code with a
+small correction loop. The language avoids features that require hidden global
+knowledge: no overload sets, no implicit conversions, no closures with capture
+rules, no exceptions, no macros, no `null`, and no reference types. Most
+meaning is visible in the local function signature: ownership markers are on
+parameters, `unsafe` is written at the operation, imports name their source, and
+generic arguments use `::[T]` instead of grammar-ambiguous `<T>`.
+
+### Small surface, strong diagnostics
+
+The compiler is expected to be part of the writing process. A model can emit a
+first draft, run `cpc check` or `cpc build`, then use the diagnostic code and
+span to repair the program. Errors are intentionally specific: E0302 means a
+type mismatch, E0335 means use after move, E0340 means a non-exhaustive match,
+E0801 means an unsafe operation needs an `unsafe` block, and so on. The
+`--diagnostics=json` mode exposes the same information in a machine-readable
+shape for editors and agents.
+
+Formatting is also part of the contract. `cpc fmt` gives one canonical layout,
+so repeated LLM edits do not accumulate formatting noise. `cpc fmt --check`
+lets CI reject drift without arguing about style.
+
+### Examples over lore
+
+The repository is organized so examples are executable documentation:
+
+- `docs/examples/` contains small language examples.
+- `docs/examples/recipes/` contains task-shaped programs.
+- `vendor/<pkg>` packages carry in-package `#[test]` functions.
+- `cpc/tests/e2e.rs` is the source of truth for accepted and rejected compiler
+  behavior.
+
+When a generated snippet is uncertain, prefer proving it with `cpc check`,
+`cpc build`, or a focused e2e-style test instead of relying on prose. This is
+why examples avoid pseudocode when a runnable shape exists.
+
+### Hand-emitted LLVM IR
+
+`cpc` does not build IR through LLVM's C++ API. It emits textual LLVM IR from
+Rust code, then hands that `.ll` to the normal LLVM/Clang toolchain for
+optimization, assembly, and linking.
+
+That choice is pragmatic for a young language and unusually friendly to agents:
+
+- `cpc --emit-ll FILE` prints the exact pre-optimization IR.
+- `cpc --emit-ll-opt FILE` shows what LLVM kept after optimization.
+- `cpc --emit-asm FILE` shows the native output when performance or ABI details
+  matter.
+- IR diffs are plain text, so codegen bugs can be inspected and patched without
+  knowing LLVM's C++ builder API.
+
+The generated IR is not a public language surface, but it is an intentional
+debugging surface. If a benchmark regresses, an agent can compare C+'s emitted
+IR against C/Clang output, find redundant loads or missing attributes, and fix
+the textual emission path in `cplus-core/src/codegen.rs`.
+
+### Contracts an agent can check
+
+C+ prefers explicit contracts that the compiler can reject. `#[repr(C)]` says a
+type crosses an ABI boundary. `restrict` says raw pointer parameters do not
+alias. `#[no_alloc]`, `#[no_block]`, `#[max_stack(N)]`, and `#[realtime]` say a
+hot path must avoid allocation, blocking, an oversized stack frame, and
+recursion cycles — and a `[profile.realtime]` manifest table applies them
+project-wide so `cpc check` becomes a CI gate. These are useful for humans, but
+they are especially useful for LLM-generated code because the compiler can turn
+a vague requirement ("make this audio callback real-time safe") into concrete
+diagnostics.
+
+The practical loop is:
+
+```bash
+cpc fmt src/main.cplus
+cpc build
+cpc build --diagnostics=json
+```
+
+For imported project code, use `cpc build`; single-file `cpc check FILE` is for
+import-free snippets. If an answer depends on current compiler behavior, the
+compiler wins over this tutorial.
+
+---
+
+## 30. Tooling — `cpc`
 
 ```bash
 cpc build                      # multi-file project (reads Cplus.toml)
 cpc FILE.cplus -o BIN          # single-file build
-cpc check FILE                 # parse + sema only — fast feedback
+cpc check FILE                 # parse + sema only — fast feedback (single file)
+cpc check                      # whole-project front-end check (reads Cplus.toml,
+                               #   enforces [profile.realtime]); no codegen — CI gate
 cpc fmt FILE                   # canonical format in place
 cpc fmt --check DIR            # CI mode — exits 1 on drift
 cpc test                       # run #[test] functions + doctests
@@ -1951,7 +2223,7 @@ Vendor packages run their own in-package `#[test]` fns the same way: `cd vendor/
 
 ---
 
-## 30. Common error codes
+## 31. Common error codes
 
 The error codes you'll see most often. The full list lives in `cplus-core/src/sema.rs` and `borrowck.rs`.
 
@@ -1978,17 +2250,25 @@ The error codes you'll see most often. The full list lives in `cplus-core/src/se
 | E0500 | Cannot infer type parameter | Use `name::[T1, T2](...)` turbofish |
 | E0501 | Wrong type-arg count | Match the generic param list |
 | E0502 | Bound not satisfied | `T: Ord` requires `impl Ord for T` |
+| E0509 | Move of a field out of a `Drop` type | Clone the field, or restructure so it isn't owned by a Drop type |
+| E0511 | Return type names a borrow region no parameter declares | Add a same-region parameter, or drop the region |
+| E0512 | Returned borrow's region ≠ the declared return region | Return a borrow from a same-region parameter |
+| E0513 | Returning a `str` / `T[]` view of a local that drops | Return an owned value (`string` / `Vec[T]`), or borrow from a parameter |
 | E0801 | Operation requires `unsafe` | Wrap in `unsafe { ... }` |
 | E0821 | Cannot take address of generic fn | Specify type parameters at the take-address site |
 | E0876 | `#env("X")` — env var not set at compile time | Set the var when invoking cpc, or pick a different default |
+| E0901 | `#[no_alloc]` violation | Function (or a callee) heap-allocates or interpolates a string — remove it or drop the contract |
 | E0905 | Unknown compiler intrinsic `#name` | Typo; check the §21 list of supported intrinsic names |
+| E0906 | `#[bounded_recursion]` violation | The call graph cycles back to the function — break the recursion |
+| E0907 | `#[no_block]` violation | Function (or a callee) calls a blocking primitive — use a non-blocking API |
+| E0908 | `#[max_stack(N)]` exceeded | Estimated frame > N bytes — shrink locals/arrays or raise the budget |
 | E0900 | Borrow-shaped param in `async fn` | Use `string` / `Vec[T]` instead of `str` / `T[]` |
 
 Every diagnostic carries a span and often a machine-applicable suggestion. Use `--diagnostics=json` for tool consumption.
 
 ---
 
-## 31. Gotchas worth memorising
+## 32. Gotchas worth memorising
 
 These bite once and are remembered forever. Read them now.
 
@@ -2005,6 +2285,32 @@ fn label(borrow x: string) -> string { return x.clone(); }
 ```
 
 Pre-v0.0.10 code that wrote `move x: string` to prevent a double-free is now redundant but harmless; new code can drop the marker.
+
+### You can't move a field out of a `Drop` type
+
+A `Drop` type frees its own fields by hand, so the compiler won't let you steal one out from under the destructor — it would double-free:
+
+```cplus
+struct Pair { a: string, b: string }
+impl Pair { fn drop(mut self) { /* frees a, b */ } }
+
+let p: Pair = make_pair();
+let a: string = p.a;     // ❌ E0509 — clone it, or don't make Pair a Drop type
+```
+
+(A struct with **no** `drop` impl has no destructor, so moving a field out of it is fine.)
+
+### You can't return a borrow of a local
+
+A `str` / `T[]` view of a function-local owned value dangles once the local drops at return — **E0513**. Return an owned value, or borrow a parameter:
+
+```cplus
+// ❌ E0513 — view into `s`, which drops when `bad` returns.
+fn bad() -> str { let s: string = "x".to_string(); return s.as_str(); }
+
+// ✅ return the owned string instead.
+fn good() -> string { return "x".to_string(); }
+```
 
 ### `move self` doesn't auto-disarm the callee's exit-Drop
 
@@ -2085,7 +2391,7 @@ let n: i32 = unsafe { p as i32 };
 
 ---
 
-## 32. SIMD types
+## 33. SIMD types
 
 cpc ships fixed-width SIMD as primitive types. Nineteen widths cover the 128-bit and 256-bit families that map directly to NEON / SSE / AVX2 / AVX:
 
@@ -2247,7 +2553,7 @@ Don't reach for SIMD when:
 
 ---
 
-## 33. Where to go next
+## 34. Where to go next
 
 In rough priority order:
 

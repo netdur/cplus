@@ -281,6 +281,7 @@ pub fn atomic_compare_exchange_u32(p: *u32, expected: u32, desired: u32, ord: Or
 // u64
 // ============================================================
 
+#[no_alloc] #[no_block]
 pub fn atomic_load_u64(p: *u64, ord: Ordering) -> u64 {
     return match ord {
         Ordering::Relaxed => unsafe { __cplus_atomic_load_u64_relaxed(p) },
@@ -291,6 +292,7 @@ pub fn atomic_load_u64(p: *u64, ord: Ordering) -> u64 {
     };
 }
 
+#[no_alloc] #[no_block]
 pub fn atomic_store_u64(p: *u64, val: u64, ord: Ordering) {
     match ord {
         Ordering::Relaxed => unsafe { __cplus_atomic_store_u64_relaxed(p, val); },
@@ -302,6 +304,7 @@ pub fn atomic_store_u64(p: *u64, val: u64, ord: Ordering) {
     return;
 }
 
+#[no_alloc] #[no_block]
 pub fn atomic_fetch_add_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
     return match ord {
         Ordering::Relaxed => unsafe { __cplus_atomic_fetch_add_u64_relaxed(p, val) },
@@ -312,6 +315,7 @@ pub fn atomic_fetch_add_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
     };
 }
 
+#[no_alloc] #[no_block]
 pub fn atomic_fetch_sub_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
     return match ord {
         Ordering::Relaxed => unsafe { __cplus_atomic_fetch_sub_u64_relaxed(p, val) },
@@ -322,6 +326,7 @@ pub fn atomic_fetch_sub_u64(p: *u64, val: u64, ord: Ordering) -> u64 {
     };
 }
 
+#[no_alloc] #[no_block]
 pub fn atomic_compare_exchange_u64(p: *u64, expected: u64, desired: u64, ord: Ordering) -> u64 {
     return match ord {
         Ordering::Relaxed => unsafe { __cplus_atomic_cmpxchg_u64_relaxed(p, expected, desired) },
@@ -339,6 +344,7 @@ pub fn atomic_compare_exchange_u64(p: *u64, expected: u64, desired: u64, ord: Or
 // by `ggml_barrier`-style spin-wait publish patterns where the
 // publishing store has already happened on another path and we need
 // to seal the happens-before edge with a separate fence.
+#[no_alloc] #[no_block]
 pub fn atomic_thread_fence(ord: Ordering) {
     match ord {
         Ordering::Relaxed => { unsafe { __cplus_atomic_fence_relaxed(); } }

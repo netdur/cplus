@@ -39,7 +39,9 @@ cpc — C+ compiler
 usage:
   cpc FILE [-o OUT]                 compile single-file FILE.cplus to a binary (default OUT: ./a.out)
   cpc build [-o OUT]                multi-file build: reads ./Cplus.toml, walks imports
-  cpc check FILE                    parse + sema + borrowck FILE, no codegen (fast feedback loop)
+  cpc check [FILE]                  parse + sema + borrowck, no codegen (fast feedback loop).
+                                    With no FILE: whole-project check via Cplus.toml,
+                                    enforcing any [profile.realtime] gate.
   cpc doc FILE                      extract `pub` items + `///` docs from FILE, emit
                                     Markdown to ./target/doc/<basename>.md
   cpc test [FILE] [--json]          discover + run `#[test]` functions. Single-file mode
@@ -487,10 +489,7 @@ fn main() -> ExitCode {
         (Some(Subcommand::Test), _) => run_test(test_input, test_opts, diag_mode, build_mode),
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
         (Some(Subcommand::Check), Some(path)) => run_check(path, diag_mode),
-        (Some(Subcommand::Check), None) => {
-            eprintln!("cpc: `check` requires a FILE argument");
-            ExitCode::FAILURE
-        }
+        (Some(Subcommand::Check), None) => run_check_project(diag_mode),
         (Some(Subcommand::Doc), Some(path)) => run_doc(path),
         (Some(Subcommand::Doc), None) => {
             eprintln!("cpc: `doc` requires a FILE argument");
@@ -914,7 +913,7 @@ fn build_project(
     // vendor/<dep>/src/. The consumer's bin path is the entry.
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
     let (program, _entry_file_id, mono) =
-        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
+        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names), m.realtime_profile.as_ref()) {
             Ok(p) => p,
             Err(code) => return code,
         };
@@ -1031,7 +1030,7 @@ fn build_lib_project(
     }
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
     let (program, _entry_file_id, mono) =
-        match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names)) {
+        match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names), m.realtime_profile.as_ref()) {
             Ok(p) => p,
             Err(code) => return code,
         };
@@ -1248,7 +1247,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
     }
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
     let (program, _, mono) =
-        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names)) {
+        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names), m.realtime_profile.as_ref()) {
             Ok(p) => p,
             Err(code) => return code,
         };
@@ -1267,7 +1266,7 @@ fn load_and_check_project(
 ) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
     // Legacy single-file path: no manifest, no dep list. `None` keeps
     // pre-Slice-2B file-relative resolution semantics.
-    load_and_check_project_full(entry, root, diag_mode, false, None)
+    load_and_check_project_full(entry, root, diag_mode, false, None, None)
 }
 
 /// Phase 5 Slice 5.A: variant that passes `is_lib` to the resolver so
@@ -1279,7 +1278,82 @@ fn load_and_check_project_with_mode(
     diag_mode: DiagMode,
     is_lib: bool,
 ) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
-    load_and_check_project_full(entry, root, diag_mode, is_lib, None)
+    load_and_check_project_full(entry, root, diag_mode, is_lib, None, None)
+}
+
+/// v0.0.12 realtime Phase 8: synthesize `[profile.realtime]` contract
+/// attributes onto every function defined in the entry package. A function is
+/// "local" iff its origin file's canonical path lives under the project root
+/// but not under `root/vendor` (dependency packages — including symlinked ones
+/// that resolve outside the tree — are exempt). Injection is idempotent: an
+/// attribute already present (or a `#[realtime]` that bundles it) is left
+/// alone, so no E0357 duplicate fires.
+fn apply_realtime_profile(
+    program: &mut cplus_core::ast::Program,
+    files: &std::collections::BTreeMap<String, (PathBuf, String)>,
+    root: &Path,
+    profile: &cplus_core::manifest::RealtimeProfile,
+) {
+    use cplus_core::ast::{Attribute, AttrArg, Ident, ItemKind};
+    use cplus_core::lexer::Span;
+
+    let canon_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let vendor_dir = canon_root.join("vendor");
+    let local: std::collections::HashSet<String> = files
+        .iter()
+        .filter(|(_, (p, _))| {
+            let cp = fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+            cp.starts_with(&canon_root) && !cp.starts_with(&vendor_dir)
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+
+    fn inject(
+        attrs: &mut Vec<Attribute>,
+        span: Span,
+        profile: &cplus_core::manifest::RealtimeProfile,
+    ) {
+        let has = |n: &str, a: &[Attribute]| a.iter().any(|x| x.path.name == n);
+        let bare = |name: &str| Attribute {
+            path: Ident { name: name.to_string(), span },
+            args: Vec::new(),
+            span,
+        };
+        if profile.deny_alloc && !has("no_alloc", attrs) && !has("realtime", attrs) {
+            attrs.push(bare("no_alloc"));
+        }
+        if profile.deny_block && !has("no_block", attrs) && !has("realtime", attrs) {
+            attrs.push(bare("no_block"));
+        }
+        if let Some(n) = profile.stack_limit {
+            if !has("max_stack", attrs) {
+                attrs.push(Attribute {
+                    path: Ident { name: "max_stack".to_string(), span },
+                    args: vec![AttrArg::Int(n as i64, span)],
+                    span,
+                });
+            }
+        }
+    }
+
+    let is_local = |o: &Option<String>| o.as_ref().map(|f| local.contains(f)).unwrap_or(false);
+
+    for item in &mut program.items {
+        let origin_local = is_local(&item.origin_file);
+        match &mut item.kind {
+            ItemKind::Function(f) if origin_local && !f.is_extern => {
+                let span = f.name.span;
+                inject(&mut f.attributes, span, profile);
+            }
+            ItemKind::Impl(b) if origin_local => {
+                for m in &mut b.methods {
+                    let span = m.name.span;
+                    inject(&mut m.attributes, span, profile);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Phase 2 Slice 2B: variant that passes the consumer's declared
@@ -1292,6 +1366,7 @@ fn load_and_check_project_full(
     diag_mode: DiagMode,
     is_lib: bool,
     deps: Option<&[String]>,
+    rt_profile: Option<&cplus_core::manifest::RealtimeProfile>,
 ) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
     let mut loaded = match resolver::load_project_full(entry, root, is_lib, deps) {
         Ok(l) => l,
@@ -1334,6 +1409,15 @@ fn load_and_check_project_full(
     }
     if attr_errors {
         return Err(ExitCode::FAILURE);
+    }
+    // v0.0.12 realtime Phase 8: if a `[profile.realtime]` is active,
+    // synthesize the contract attributes onto every function defined in
+    // *this* package (dependencies are exempt). Runs after attribute
+    // validation (the synthesized attrs are valid by construction) and
+    // before sema, so the existing no_alloc/no_block/max_stack passes do the
+    // enforcement with no special-casing.
+    if let Some(profile) = rt_profile {
+        apply_realtime_profile(&mut loaded.program, &loaded.files, root, profile);
     }
     // Lower `if let` / `guard let` (slice 4A.5) before sema.
     let lower_diags = lower::lower(&mut loaded.program, &entry.to_path_buf(), &entry_src);
@@ -1683,6 +1767,7 @@ fn run_test(
                 diag_mode,
                 is_lib_pkg,
                 Some(&dep_names),
+                m.realtime_profile.as_ref(),
             ) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -1878,6 +1963,62 @@ fn build_program(
 /// runs the same diagnostic pipeline as a full compile but stops short
 /// of LLVM emission, so it's significantly faster on large files. Exit
 /// code matches diagnostics: 0 if clean, 1 if any error emitted.
+/// v0.0.12 realtime Phase 8: `cpc check` with no FILE — project-mode
+/// verification. Loads `./Cplus.toml`, resolves the entry like `cpc test`,
+/// runs the full front-end (incl. any `[profile.realtime]` enforcement)
+/// through sema/borrowck, and stops before codegen. The fast CI gate for a
+/// whole package: exit 0 iff clean. Diagnostics honor `--json`.
+fn run_check_project(diag_mode: DiagMode) -> ExitCode {
+    let manifest_path = PathBuf::from("Cplus.toml");
+    let m = match manifest::load(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Entry resolution mirrors `cpc test` (no-arg): [lib], then a real
+    // [[bin]], then the `src/<package-name>.cplus` fallback for library-only
+    // vendor packages that declare no on-disk target.
+    let (entry_path, is_lib_pkg) = if let Some(lt) = m.lib.as_ref() {
+        (lt.path.clone(), true)
+    } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
+        (m.bins[0].path.clone(), false)
+    } else if m.bins.len() == 1 {
+        let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
+        if !guess.is_file() {
+            eprintln!(
+                "cpc check: bin entry `{}` not found, and no `{}` fallback either",
+                m.bins[0].path.display(),
+                guess.display()
+            );
+            return ExitCode::FAILURE;
+        }
+        (guess, true)
+    } else {
+        eprintln!(
+            "cpc check: project must declare at most one [[bin]]; found {}",
+            m.bins.len()
+        );
+        return ExitCode::FAILURE;
+    };
+    if let Err(code) = collect_dep_link_args(&m, diag_mode) {
+        return code;
+    }
+    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    match load_and_check_project_full(
+        &entry_path,
+        &m.root,
+        diag_mode,
+        is_lib_pkg,
+        Some(&dep_names),
+        m.realtime_profile.as_ref(),
+    ) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(code) => code,
+    }
+}
+
 fn run_check(path: PathBuf, mode: DiagMode) -> ExitCode {
     let src = match fs::read_to_string(&path) {
         Ok(s) => s,

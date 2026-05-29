@@ -24,12 +24,12 @@ use crate::diagnostics::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const TARGET_FN: u8       = 0b0_0000_0001;
-const TARGET_METHOD: u8   = 0b0_0000_0010;
-const TARGET_STRUCT: u8   = 0b0_0000_0100;
-const TARGET_ENUM: u8     = 0b0_0000_1000;
-const TARGET_FIELD: u8    = 0b0_0001_0000;
-const TARGET_VARIANT: u8  = 0b0_0010_0000;
+const TARGET_FN: u8 = 0b0_0000_0001;
+const TARGET_METHOD: u8 = 0b0_0000_0010;
+const TARGET_STRUCT: u8 = 0b0_0000_0100;
+const TARGET_ENUM: u8 = 0b0_0000_1000;
+const TARGET_FIELD: u8 = 0b0_0001_0000;
+const TARGET_VARIANT: u8 = 0b0_0010_0000;
 /// v0.0.7 Slice 1.3: attribute on a loop statement (`while`, `loop`,
 /// `for`). Used by `#[unroll(N)]` / `#[vectorize_width(N)]`.
 const TARGET_LOOP_STMT: u8 = 0b0_0100_0000;
@@ -113,6 +113,40 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     AttrSpec {
         name: "bounded_recursion",
         args: ArgsSpec::None,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
+    // v0.0.12 realtime Phase 3: `#[no_block]` — verifiable no-blocking
+    // contract. A `#[no_block]`-marked function and everything it
+    // transitively calls must not call a blocking primitive (mutex lock,
+    // condvar wait, thread join, sleep, blocking I/O, blocking socket op).
+    // Surface-shape only; the call-graph walk and E0907 emission live in
+    // sema (see `check_no_block`). Composes transitively like `#[no_alloc]`.
+    AttrSpec {
+        name: "no_block",
+        args: ArgsSpec::None,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
+    // v0.0.12 realtime Phase 4: `#[realtime]` — bundle attribute. Sugar for
+    // the implemented hot-path contracts: `#[no_alloc]` + `#[no_block]` +
+    // `#[bounded_recursion]`. A `#[realtime]` fn is checked by all three
+    // passes and, transitively, satisfies a no_alloc/no_block requirement at
+    // a call site. (Bounded-stack / call-graph-closure checks join the
+    // bundle when those passes land.)
+    AttrSpec {
+        name: "realtime",
+        args: ArgsSpec::None,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
+    // v0.0.12 realtime Phase 4 (bounded stack): `#[max_stack(N)]` — bound the
+    // function's estimated stack frame to N bytes. Surface-shape only; the
+    // frame estimate (parameters + locals with known types) and E0908
+    // emission live in sema (see `check_max_stack`).
+    AttrSpec {
+        name: "max_stack",
+        args: ArgsSpec::ExactlyOneInt,
         targets: TARGET_FN | TARGET_METHOD,
         allow_duplicate: false,
     },
@@ -250,7 +284,11 @@ impl Ctx {
 
     fn walk_stmt_for_loop_attrs(&mut self, stmt: &Stmt) {
         match &stmt.kind {
-            StmtKind::While { cond, body, attributes } => {
+            StmtKind::While {
+                cond,
+                body,
+                attributes,
+            } => {
                 self.check_attrs(attributes, TARGET_LOOP_STMT, "loop statement");
                 self.walk_expr_for_loop_attrs(cond);
                 self.walk_block_for_loop_attrs(body);
@@ -266,7 +304,12 @@ impl Ctx {
                         self.walk_expr_for_loop_attrs(iter);
                         self.walk_block_for_loop_attrs(body);
                     }
-                    ForLoop::CStyle { init, cond, update, body } => {
+                    ForLoop::CStyle {
+                        init,
+                        cond,
+                        update,
+                        body,
+                    } => {
                         if let Some(s) = init {
                             self.walk_stmt_for_loop_attrs(s);
                         }
@@ -289,18 +332,29 @@ impl Ctx {
             | StmtKind::Return(None)
             | StmtKind::Break
             | StmtKind::Continue => {}
-            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            StmtKind::IfLet {
+                scrutinee,
+                body,
+                else_body,
+                ..
+            } => {
                 self.walk_expr_for_loop_attrs(scrutinee);
                 self.walk_block_for_loop_attrs(body);
                 if let Some(eb) = else_body {
                     self.walk_block_for_loop_attrs(eb);
                 }
             }
-            StmtKind::WhileLet { scrutinee, body, .. } => {
+            StmtKind::WhileLet {
+                scrutinee, body, ..
+            } => {
                 self.walk_expr_for_loop_attrs(scrutinee);
                 self.walk_block_for_loop_attrs(body);
             }
-            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            StmtKind::GuardLet {
+                scrutinee,
+                else_body,
+                ..
+            } => {
                 self.walk_expr_for_loop_attrs(scrutinee);
                 self.walk_block_for_loop_attrs(else_body);
             }
@@ -310,7 +364,11 @@ impl Ctx {
     fn walk_expr_for_loop_attrs(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::Block(b) | ExprKind::Unsafe(b) => self.walk_block_for_loop_attrs(b),
-            ExprKind::If { cond, then, else_branch } => {
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
                 self.walk_expr_for_loop_attrs(cond);
                 self.walk_block_for_loop_attrs(then);
                 if let Some(eb) = else_branch {
@@ -339,7 +397,11 @@ impl Ctx {
                 return (path.clone(), src.as_str(), lm);
             }
         }
-        (self.entry_file.clone(), self.entry_src.as_str(), &self.entry_lm)
+        (
+            self.entry_file.clone(),
+            self.entry_src.as_str(),
+            &self.entry_lm,
+        )
     }
 
     fn make_span(&self, span: crate::lexer::Span) -> SourceSpan {
@@ -496,7 +558,11 @@ impl Ctx {
             message: format!(
                 "attribute `#[{}]` requires exactly one of: {}",
                 spec.name,
-                allowed.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(" / ")
+                allowed
+                    .iter()
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
             ),
             primary,
             labels: Vec::new(),
@@ -538,12 +604,24 @@ impl Ctx {
 
 fn describe_targets(mask: u8) -> String {
     let mut parts: Vec<&str> = Vec::new();
-    if mask & TARGET_FN != 0      { parts.push("functions"); }
-    if mask & TARGET_METHOD != 0  { parts.push("methods"); }
-    if mask & TARGET_STRUCT != 0  { parts.push("structs"); }
-    if mask & TARGET_ENUM != 0    { parts.push("enums"); }
-    if mask & TARGET_FIELD != 0   { parts.push("struct fields"); }
-    if mask & TARGET_VARIANT != 0 { parts.push("enum variants"); }
+    if mask & TARGET_FN != 0 {
+        parts.push("functions");
+    }
+    if mask & TARGET_METHOD != 0 {
+        parts.push("methods");
+    }
+    if mask & TARGET_STRUCT != 0 {
+        parts.push("structs");
+    }
+    if mask & TARGET_ENUM != 0 {
+        parts.push("enums");
+    }
+    if mask & TARGET_FIELD != 0 {
+        parts.push("struct fields");
+    }
+    if mask & TARGET_VARIANT != 0 {
+        parts.push("enum variants");
+    }
     match parts.len() {
         0 => "(no targets)".to_string(),
         1 => parts[0].to_string(),
@@ -599,7 +677,9 @@ pub struct TestFn {
 pub fn discover_tests(prog: &Program) -> Vec<TestFn> {
     let mut tests = Vec::new();
     for item in &prog.items {
-        let ItemKind::Function(f) = &item.kind else { continue; };
+        let ItemKind::Function(f) = &item.kind else {
+            continue;
+        };
         if !f.attributes.iter().any(|a| a.path.name == "test") {
             continue;
         }
@@ -630,8 +710,8 @@ fn edit_distance(a: &str, b: &str) -> usize {
     for i in 1..=a.len() {
         curr[0] = i;
         for j in 1..=b.len() {
-            let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j-1] + 1).min(prev[j-1] + cost);
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -674,8 +754,10 @@ mod tests {
     fn unknown_attribute_no_close_match_no_suggestion() {
         let diags = check_src("#[totally_unrelated] fn x() { return; }");
         assert_eq!(codes(&diags), vec!["E0354"]);
-        assert!(diags[0].suggestions.is_empty(),
-            "no suggestion for distant unknown name");
+        assert!(
+            diags[0].suggestions.is_empty(),
+            "no suggestion for distant unknown name"
+        );
     }
 
     // ---- Slice 10.FFI.5: `#[repr(C)]` ----
@@ -735,7 +817,7 @@ mod tests {
         // layer — both errors will eventually point at the same span).
         let diags = check_src(
             "struct X { v: i32 }\n\
-             impl X { #[test] fn t(self) { return; } }"
+             impl X { #[test] fn t(self) { return; } }",
         );
         assert_eq!(codes(&diags), vec!["E0356"]);
     }
@@ -817,9 +899,7 @@ mod tests {
 
     #[test]
     fn bounded_recursion_on_free_fn_clean() {
-        let diags = check_src(
-            "#[bounded_recursion] fn ok(x: i32) -> i32 { return x; }",
-        );
+        let diags = check_src("#[bounded_recursion] fn ok(x: i32) -> i32 { return x; }");
         assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
     }
 
@@ -827,6 +907,94 @@ mod tests {
     fn bounded_recursion_on_struct_rejected_e0356() {
         let diags = check_src("#[bounded_recursion] struct S { x: i32 }");
         assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    // ---- v0.0.12 realtime Phase 3/4: `#[no_block]` / `#[realtime]` ----
+
+    #[test]
+    fn no_block_on_free_fn_clean() {
+        let diags = check_src("#[no_block] fn ok(x: i32) -> i32 { return x; }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn no_block_on_method_clean() {
+        let diags = check_src(
+            "struct X { v: i32 }\n\
+             impl X { #[no_block] fn t(self) -> i32 { return self.v; } }",
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn no_block_on_struct_rejected_e0356() {
+        let diags = check_src("#[no_block] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn no_block_with_args_rejected_e0355() {
+        let diags = check_src("#[no_block(foo)] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    #[test]
+    fn no_block_duplicate_e0357() {
+        let diags = check_src("#[no_block] #[no_block] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0357"]);
+    }
+
+    #[test]
+    fn realtime_on_free_fn_clean() {
+        let diags = check_src("#[realtime] fn ok(x: i32) -> i32 { return x; }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn realtime_on_enum_rejected_e0356() {
+        let diags = check_src("#[realtime] enum E { A, B }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn realtime_with_args_rejected_e0355() {
+        let diags = check_src("#[realtime(2048)] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    // ---- v0.0.12 realtime Phase 4: `#[max_stack(N)]` validation ----
+
+    #[test]
+    fn max_stack_on_free_fn_clean() {
+        let diags = check_src("#[max_stack(4096)] fn ok(x: i32) -> i32 { return x; }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn max_stack_on_method_clean() {
+        let diags = check_src(
+            "struct X { v: i32 }\n\
+             impl X { #[max_stack(256)] fn t(self) -> i32 { return self.v; } }",
+        );
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn max_stack_on_struct_rejected_e0356() {
+        let diags = check_src("#[max_stack(64)] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn max_stack_no_arg_rejected_e0355() {
+        let diags = check_src("#[max_stack] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    #[test]
+    fn max_stack_string_arg_rejected_e0355() {
+        let diags = check_src("#[max_stack(\"big\")] fn x() { return; }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
     }
 
     #[test]
@@ -840,8 +1008,11 @@ mod tests {
         let p = &diags[0].primary;
         // line 1, somewhere after the `#[`
         assert_eq!(p.start.line, 1);
-        assert!(p.start.col >= 3,
-            "expected column inside `#[...]`, got {}", p.start.col);
+        assert!(
+            p.start.col >= 3,
+            "expected column inside `#[...]`, got {}",
+            p.start.col
+        );
     }
 
     // ---- 5ATTR.2: discover_tests ----
@@ -898,7 +1069,10 @@ mod tests {
         );
         let tests = discover_tests(&prog);
         assert_eq!(tests.len(), 2);
-        assert!(!tests[0].returns_i32, "fn() shouldn't be flagged returns_i32");
+        assert!(
+            !tests[0].returns_i32,
+            "fn() shouldn't be flagged returns_i32"
+        );
         assert!(tests[1].returns_i32, "fn() -> i32 should be flagged");
     }
 
@@ -908,7 +1082,9 @@ mod tests {
         // with a `.`-qualified name. Discovery should map it to `::` in
         // display while keeping the `.` form in qualified_name.
         let mut prog = parse_src("#[test] fn t() { return; }");
-        let ItemKind::Function(ref mut f) = prog.items[0].kind else { panic!() };
+        let ItemKind::Function(ref mut f) = prog.items[0].kind else {
+            panic!()
+        };
         f.name.name = "src.math.t".to_string();
         let tests = discover_tests(&prog);
         assert_eq!(tests[0].qualified_name, "src.math.t");

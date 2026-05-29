@@ -1,0 +1,62 @@
+// vendor/rt_darwin/src/clock.cplus — monotonic, high-resolution timestamps.
+//
+// The real-time hot path needs a cheap, monotonic clock to measure callback
+// latency without a blocking syscall. On Darwin, `clock_gettime(CLOCK_MONOTONIC)`
+// reads the mach timebase and never goes backwards (immune to wall-clock
+// adjustments) — exactly what a latency benchmark wants.
+//
+// **Platform note**: `CLOCK_MONOTONIC` is `6` on Darwin/BSD (it is `1` on
+// Linux). This constant is why the clock lives in `rt_darwin` rather than a
+// shared `rt_posix` — see `realtime.md` Phase 7 (one package per OS).
+
+// `struct timespec { time_t tv_sec; long tv_nsec; }` is two 64-bit words on
+// 64-bit Darwin. We pass a `[i64; 2]` in its place: slot 0 = tv_sec, slot 1
+// = tv_nsec. Avoids needing a `#[repr(C)]` struct just to receive two ints.
+extern fn clock_gettime(clk_id: i32, tp: *i64) -> i32;
+
+// Darwin `CLOCK_MONOTONIC`.
+fn clock_monotonic() -> i32 { return 6 as i32; }
+
+// Current monotonic time in nanoseconds. Monotonic and cheap — safe to call
+// on a real-time hot path (it is a vDSO-style read, not a blocking syscall).
+pub fn now_monotonic_ns() -> u64 {
+    let mut ts: [i64; 2] = [0i64; 2];
+    let _r: i32 = unsafe { clock_gettime(clock_monotonic(), #addr_of(ts[0])) };
+    let sec: u64 = ts[0] as u64;
+    let nsec: u64 = ts[1] as u64;
+    return (sec *% (1000000000 as u64)) +% nsec;
+}
+
+// Nanoseconds between an earlier `start` and a later `end` (both from
+// `now_monotonic_ns`). Wrapping subtraction; the caller is responsible for
+// ordering (monotonic guarantees end >= start in practice).
+pub fn elapsed_ns(start: u64, end: u64) -> u64 {
+    return end -% start;
+}
+
+// ---------------- Unit tests ----------------
+
+#[test]
+fn test_monotonic_nondecreasing() {
+    let a: u64 = now_monotonic_ns();
+    let b: u64 = now_monotonic_ns();
+    assert b >= a;
+}
+
+#[test]
+fn test_clock_returns_plausible_value() {
+    // Monotonic clock since boot is comfortably > 1 ms on any running system.
+    let t: u64 = now_monotonic_ns();
+    assert t > (1000000 as u64);
+}
+
+#[test]
+fn test_elapsed_basic() {
+    assert elapsed_ns(100 as u64, 250 as u64) == (150 as u64);
+}
+
+#[test]
+fn test_elapsed_zero_span() {
+    let t: u64 = now_monotonic_ns();
+    assert elapsed_ns(t, t) == (0 as u64);
+}
