@@ -2431,6 +2431,7 @@ let n: i32 = unsafe { p as i32 };
 
 cpc ships fixed-width SIMD as primitive types. Nineteen widths cover the 128-bit and 256-bit families that map directly to NEON / SSE / AVX2 / AVX:
 
+- **64-bit (sub-128) widths**: `i8x8`, `u8x8`, `i16x4`, `u16x4`, `i32x2`, `u32x2`, `f32x2` (the NEON D-register family; mainly produced by `.low()`/`.high()` and consumed by `.widen()`/`.combine()`)
 - **128-bit floats**: `f32x4`, `f64x2`
 - **128-bit signed ints**: `i8x16`, `i16x8`, `i32x4`, `i64x2`
 - **128-bit unsigned ints**: `u8x16`, `u16x8`, `u32x4`, `u64x2`
@@ -2486,7 +2487,37 @@ let shorts: i16x8 = i16x8::reinterpret(signed);  // same 128 bits, fewer/wider l
 - `FLOATxN::from_int(v)` / `INTxN::from_float(v)`: the source must be a SIMD of the **same lane count and lane width** (`i32x4` ↔ `f32x4`, `i64x2` ↔ `f64x2`). Signedness of the integer side picks signed vs unsigned conversion. Mismatches are **E0324**.
 - `TARGET::reinterpret(v)`: a bit-preserving cast. The source must have the **same total width** (e.g. `i8x16` → `i16x8`, both 128 bits); lane count and type may differ. A width mismatch is **E0324**. Safe — no memory access, no value change.
 
-These are the lane primitives that let integer pipelines widen and dequantize (the building blocks under a quantized dot product); the scalar `as` cast works per-value but does not convert a whole vector.
+### Half-width splits, joins, widen, and narrow
+
+These instance methods move between a full-width vector and its 64-bit halves, and between adjacent integer lane widths — the building blocks of integer widening pipelines (NEON `vget_low`/`vget_high`/`vcombine`/`vmovl`/`vmovn`):
+
+```cplus
+let v: i8x16 = i8x16::splat(3i8);
+let lo: i8x8 = v.low();              // bottom 8 lanes (shufflevector)
+let hi: i8x8 = v.high();             // top 8 lanes
+let back: i8x16 = lo.combine(hi);    // join two halves, lo fills the low lanes
+
+let wide:   i16x8 = lo.widen();      // each lane to the next int size up: sext (signed) / zext (unsigned)
+let narrow: i8x8  = wide.narrow();   // each lane to the next int size down: trunc
+```
+
+- `.low()` / `.high()`: a full vector → its 64-bit half (same lane type, half the lanes). The receiver must have an even lane count.
+- `.combine(other)`: two equal half-width vectors → a full-width one (twice the lanes); the receiver fills the low lanes.
+- `.widen()`: each **integer** lane to the next size up (`i8x8` → `i16x8`, `u16x4` → `u32x4`), lane count unchanged. Signed lanes sign-extend, unsigned zero-extend. 64-bit or float lanes have nothing wider — **E0324**.
+- `.narrow()`: each **integer** lane to the next size down by truncation (`i16x8` → `i8x8`), lane count unchanged. 8-bit or float lanes have nothing narrower — **E0324**.
+
+Together these make a widening integer dot product (the core quantized-kernel op) expressible without a dedicated builtin — widen the operands, multiply, widen the products, accumulate, reduce:
+
+```cplus
+fn dot8(a: i8x8, b: i8x8) -> i32 {
+    let prod: i16x8 = a.widen().mul(b.widen());   // products fit in i16, no i8 wrap
+    let plo: i32x4 = prod.low().widen();
+    let phi: i32x4 = prod.high().widen();
+    return plo.add(phi).sum();
+}
+```
+
+These are the lane primitives that let integer pipelines widen and dequantize; the scalar `as` cast works per-value but does not convert a whole vector.
 
 ### Lane access
 

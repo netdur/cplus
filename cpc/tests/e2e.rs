@@ -11376,6 +11376,104 @@ fn simd_convert_rejects_shape_mismatches() {
     }
 }
 
+/// SIMD Tier-1 (G-039a/b, G-038b): 64-bit lane types plus the bridges that
+/// produce and consume them — low/high (split), combine (join), widen
+/// (sext/zext, double lane width), narrow (trunc, half lane width).
+#[test]
+fn simd_low_high_combine_widen_narrow_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("halves.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let v: i8x16 = i8x16::new(1i8,2i8,3i8,4i8,5i8,6i8,7i8,8i8,
+                              9i8,10i8,11i8,12i8,13i8,14i8,15i8,16i8);
+    let lo: i8x8 = v.low();
+    let hi: i8x8 = v.high();
+    let rejoined: i8x16 = lo.combine(hi);
+    if rejoined.lane(0 as u32) != 1i8 { return 1; }
+    if rejoined.lane(15 as u32) != 16i8 { return 2; }
+    if lo.lane(7 as u32) != 8i8 { return 3; }
+    if hi.lane(0 as u32) != 9i8 { return 4; }
+    // widen i8x8 -> i16x8 sign-extends: -1 stays -1
+    let w: i16x8 = i8x8::splat(0i8 - 1i8).widen();
+    if w.lane(0 as u32) != (0i16 - 1i16) { return 5; }
+    // widen u8x8 -> u16x8 zero-extends: 255 stays positive
+    let uw: u16x8 = u8x8::splat(255u8).widen();
+    if uw.lane(0 as u32) != 255u16 { return 6; }
+    // narrow i16x8 -> i8x8 truncates: 0x1FF -> 0xFF == -1
+    let n: i8x8 = i16x8::splat(511i16).narrow();
+    if n.lane(0 as u32) != (0i8 - 1i8) { return 7; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("halves");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD low/high/combine/widen/narrow");
+    let run = Command::new(&bin).status().expect("run halves");
+    assert_eq!(run.code(), Some(0), "SIMD half/widen/narrow failed; exit {:?}", run.code());
+}
+
+/// G-036 keystone: a widening integer dot product is now *composable* from
+/// Tier-1 primitives (widen + low/high + arithmetic), with no dedicated
+/// compiler builtin — and it computes the correct non-wrapping result where a
+/// naive `i8.mul` would overflow.
+#[test]
+fn simd_widening_dot_product_composes() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("qdot.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn dot8(a: i8x8, b: i8x8) -> i32 {
+    let aw: i16x8 = a.widen();
+    let bw: i16x8 = b.widen();
+    let prod: i16x8 = aw.mul(bw);
+    let plo: i32x4 = prod.low().widen();
+    let phi: i32x4 = prod.high().widen();
+    return plo.add(phi).sum();
+}
+fn main() -> i32 {
+    // 50 * 3 = 150 overflows i8; the widening path keeps it correct.
+    // 8 lanes * 150 = 1200.
+    if dot8(i8x8::splat(50i8), i8x8::splat(3i8)) != 1200 { return 1; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("qdot");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for widening dot product");
+    let run = Command::new(&bin).status().expect("run qdot");
+    assert_eq!(run.code(), Some(0), "widening dot product wrong; exit {:?}", run.code());
+}
+
+/// Negative: widen/narrow reject lane types with no wider/narrower step.
+#[test]
+fn simd_widen_narrow_reject_invalid() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let cases: &[(&str, &str)] = &[
+        ("widen_float", "let a: f32x4 = f32x4::splat(1.0f32); let _b = a.widen();"),
+        ("widen_64bit_lane", "let a: i64x2 = i64x2::splat(1i64); let _b = a.widen();"),
+        ("narrow_byte_lane", "let a: i8x16 = i8x16::splat(1i8); let _b = a.narrow();"),
+    ];
+    for (label, body) in cases {
+        let src = dir.join(format!("{label}.cplus"));
+        std::fs::write(&src, format!("fn main() -> i32 {{ {body} return 0; }}\n")).unwrap();
+        let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+        assert!(!out.status.success(), "{label}: expected rejection");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("E0324"), "{label}: expected E0324, got:\n{stderr}");
+    }
+}
+
 /// v0.0.6 Slice 1B expansion: byte and short SIMD widths
 /// (`i8x16`, `i16x8`, `u8x16`, `u16x8`) — completes the 128-bit family.
 #[test]

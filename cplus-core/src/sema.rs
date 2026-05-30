@@ -8862,6 +8862,94 @@ impl SemaCx<'_> {
                 }
                 recv.clone()
             }
+            // G-039b: split a SIMD vector into its low / high half (NEON
+            // `vget_low`/`vget_high`). Result has the same lane type, half the
+            // lanes (e.g. `i8x16` → `i8x8`). Requires an even lane count.
+            "low" | "high" => {
+                if reject_on_mask(self, name.name.as_str(), args) {
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                if lanes_u < 2 || lanes_u % 2 != 0 {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::{}` requires an even-lane SIMD (got {} lanes)",
+                            ty_display(recv),
+                            name.name,
+                            lanes_u
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                Ty::Simd { elem: Box::new(elem_ty), lanes: lanes_u / 2 }
+            }
+            // G-039b: join two equal half-width vectors into a full-width one
+            // (NEON `vcombine`). `lo.combine(hi)` → twice the lanes, same lane
+            // type (e.g. two `i8x8` → `i8x16`); `lo` fills the low lanes.
+            "combine" => {
+                if reject_on_mask(self, "combine", args) {
+                    return Ty::Error;
+                }
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let _ = self.check_expr(&args[0], Some(recv.clone()));
+                Ty::Simd { elem: Box::new(elem_ty), lanes: lanes_u * 2 }
+            }
+            // G-038b: widen each integer lane to the next size up, preserving
+            // lane count (NEON `vmovl`: `i8x8` → `i16x8`). Signed lanes
+            // sign-extend, unsigned zero-extend (decided in codegen).
+            "widen" => {
+                if reject_on_mask(self, "widen", args) {
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                match simd_widen_elem(&elem_ty) {
+                    Some(w) => Ty::Simd { elem: Box::new(w), lanes: lanes_u },
+                    None => {
+                        self.err(
+                            "E0324",
+                            format!(
+                                "`{}::widen` requires an integer SIMD with lanes ≤ 32 bits",
+                                ty_display(recv)
+                            ),
+                            name.span,
+                        );
+                        Ty::Error
+                    }
+                }
+            }
+            // G-038b: narrow each integer lane to the next size down by
+            // truncation, preserving lane count (NEON `vmovn`: `i16x8` →
+            // `i8x8`). Drops the high bits of each lane.
+            "narrow" => {
+                if reject_on_mask(self, "narrow", args) {
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                match simd_narrow_elem(&elem_ty) {
+                    Some(n) => Ty::Simd { elem: Box::new(n), lanes: lanes_u },
+                    None => {
+                        self.err(
+                            "E0324",
+                            format!(
+                                "`{}::narrow` requires an integer SIMD with lanes ≥ 16 bits",
+                                ty_display(recv)
+                            ),
+                            name.span,
+                        );
+                        Ty::Error
+                    }
+                }
+            }
             "swizzle" => {
                 if !arity_err(self, 1) {
                     return Ty::Error;
@@ -10579,6 +10667,17 @@ impl SemaCx<'_> {
                 elem: Box::new(Ty::U16),
                 lanes: 8,
             },
+            // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths — the
+            // NEON D-register family. Mostly produced by `i8x16::low`/`high`
+            // and consumed by `widen` / `combine`; also constructible
+            // directly via `splat`/`new`. Same elem leaves, half the lanes.
+            "i8x8" => Ty::Simd { elem: Box::new(Ty::I8), lanes: 8 },
+            "u8x8" => Ty::Simd { elem: Box::new(Ty::U8), lanes: 8 },
+            "i16x4" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 },
+            "u16x4" => Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 },
+            "i32x2" => Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 },
+            "u32x2" => Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 },
+            "f32x2" => Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 },
             // v0.0.7 Slice 2.2: 256-bit widths. AArch64 splits these
             // into two 128-bit ops at codegen; AVX2 / SVE2 hosts use
             // native 256-bit vectors. Same elem-type leaves as the
@@ -11832,6 +11931,14 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
             elem: Box::new(Ty::U16),
             lanes: 8,
         }),
+        // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths.
+        "i8x8" => Some(Ty::Simd { elem: Box::new(Ty::I8), lanes: 8 }),
+        "u8x8" => Some(Ty::Simd { elem: Box::new(Ty::U8), lanes: 8 }),
+        "i16x4" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 }),
+        "u16x4" => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 }),
+        "i32x2" => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 }),
+        "u32x2" => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 }),
+        "f32x2" => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 }),
         // v0.0.7 Slice 2.2: 256-bit widths.
         "f32x8" => Some(Ty::Simd {
             elem: Box::new(Ty::F32),
@@ -11924,6 +12031,34 @@ fn simd_lane_bits(ty: &Ty) -> u32 {
         Ty::I32 | Ty::U32 | Ty::F32 => 32,
         Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => 64,
         _ => 0,
+    }
+}
+
+/// G-038b widen: the integer lane type one step wider (i8→i16, …, i32→i64).
+/// `None` for float lanes or 64-bit lanes (nothing wider). Signedness preserved.
+fn simd_widen_elem(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::I8 => Some(Ty::I16),
+        Ty::I16 => Some(Ty::I32),
+        Ty::I32 => Some(Ty::I64),
+        Ty::U8 => Some(Ty::U16),
+        Ty::U16 => Some(Ty::U32),
+        Ty::U32 => Some(Ty::U64),
+        _ => None,
+    }
+}
+
+/// G-038b narrow: the integer lane type one step narrower (i16→i8, …,
+/// i64→i32). `None` for float lanes or 8-bit lanes. Signedness preserved.
+fn simd_narrow_elem(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::I16 => Some(Ty::I8),
+        Ty::I32 => Some(Ty::I16),
+        Ty::I64 => Some(Ty::I32),
+        Ty::U16 => Some(Ty::U8),
+        Ty::U32 => Some(Ty::U16),
+        Ty::U64 => Some(Ty::U32),
+        _ => None,
     }
 }
 

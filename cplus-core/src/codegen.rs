@@ -3077,6 +3077,16 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             elem: Box::new(Ty::U16),
             lanes: 8,
         },
+        // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths — the NEON
+        // D-register family. The result of `i8x16::low/high` and the input
+        // to `widen` / `combine`.
+        "i8x8"   => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 8 },
+        "u8x8"   => Ty::Simd { elem: Box::new(Ty::U8),  lanes: 8 },
+        "i16x4"  => Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 },
+        "u16x4"  => Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 },
+        "i32x2"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 },
+        "u32x2"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 },
+        "f32x2"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 },
         // v0.0.7 Slice 2.2: 256-bit widths.
         "f32x8"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  },
         "f64x4"  => Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  },
@@ -13077,6 +13087,72 @@ impl<'a> FnState<'a> {
                 ));
                 (result, recv_ty.clone())
             }
+            // G-039b: low / high half via shufflevector. Result has half the
+            // lanes; the mask selects the bottom or top `lanes/2` indices.
+            "low" | "high" => {
+                let half = *lanes / 2;
+                let base: u32 = if method == "high" { half } else { 0 };
+                let mask: Vec<String> =
+                    (0..half).map(|i| format!("i32 {}", base + i)).collect();
+                let target = Ty::Simd { elem: elem.clone(), lanes: half };
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = shufflevector {lty} {recv}, {lty} poison, <{half} x i32> <{}>",
+                    mask.join(", ")
+                ));
+                (result, target)
+            }
+            // G-039b: combine two half-width vectors into a full-width one.
+            // recv fills the low lanes (0..lanes), the arg the high lanes.
+            "combine" => {
+                let (b, _) = self.gen_expr(&args[0]).expect("combine arg");
+                let total = *lanes * 2;
+                let mask: Vec<String> = (0..total).map(|i| format!("i32 {i}")).collect();
+                let target = Ty::Simd { elem: elem.clone(), lanes: total };
+                let result = self.next_tmp();
+                self.emit(&format!(
+                    "{result} = shufflevector {lty} {recv}, {lty} {b}, <{total} x i32> <{}>",
+                    mask.join(", ")
+                ));
+                (result, target)
+            }
+            // G-038b: widen each integer lane to the next size up. Signed
+            // lanes sign-extend, unsigned zero-extend; lane count unchanged.
+            "widen" => {
+                let welem = match elem.as_ref() {
+                    Ty::I8 => Ty::I16,
+                    Ty::I16 => Ty::I32,
+                    Ty::I32 => Ty::I64,
+                    Ty::U8 => Ty::U16,
+                    Ty::U16 => Ty::U32,
+                    Ty::U32 => Ty::U64,
+                    _ => unreachable!("sema validated widen lane type"),
+                };
+                let target = Ty::Simd { elem: Box::new(welem), lanes: *lanes };
+                let tlty = self.lty(&target);
+                let op = if elem.is_unsigned_int() { "zext" } else { "sext" };
+                let result = self.next_tmp();
+                self.emit(&format!("{result} = {op} {lty} {recv} to {tlty}"));
+                (result, target)
+            }
+            // G-038b: narrow each integer lane to the next size down by
+            // truncation; lane count unchanged.
+            "narrow" => {
+                let nelem = match elem.as_ref() {
+                    Ty::I16 => Ty::I8,
+                    Ty::I32 => Ty::I16,
+                    Ty::I64 => Ty::I32,
+                    Ty::U16 => Ty::U8,
+                    Ty::U32 => Ty::U16,
+                    Ty::U64 => Ty::U32,
+                    _ => unreachable!("sema validated narrow lane type"),
+                };
+                let target = Ty::Simd { elem: Box::new(nelem), lanes: *lanes };
+                let tlty = self.lty(&target);
+                let result = self.next_tmp();
+                self.emit(&format!("{result} = trunc {lty} {recv} to {tlty}"));
+                (result, target)
+            }
             _ => unreachable!("sema validated SIMD method `{method}`"),
         }
     }
@@ -13163,6 +13239,14 @@ fn codegen_simd_ty_from_name(name: &str) -> Option<Ty> {
             elem: Box::new(Ty::U16),
             lanes: 8,
         }),
+        // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths.
+        "i8x8"   => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 8 }),
+        "u8x8"   => Some(Ty::Simd { elem: Box::new(Ty::U8),  lanes: 8 }),
+        "i16x4"  => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 }),
+        "u16x4"  => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 }),
+        "i32x2"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 }),
+        "u32x2"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 }),
+        "f32x2"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 }),
         // v0.0.7 Slice 2.2: 256-bit widths.
         "f32x8"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  }),
         "f64x4"  => Some(Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  }),
