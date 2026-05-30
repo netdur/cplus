@@ -3686,6 +3686,104 @@ fn main() -> i32 { return str_len(pick(true)) as i32; }
 }
 
 #[test]
+fn musttail_wrong_return_type_and_nested_expr_compile() {
+    // bench-cplus handoff #3 regression: the tail-call detector used to
+    // over-mark `return CALL(...)` shapes as `musttail`, so `return
+    // dot(d,n) > 0.0f32;` (return type differs from the callee) and
+    // `return sub(v, scale(...))` (callee result feeds another call, not
+    // a tail position) tripped LLVM's musttail verifier. Both must now
+    // emit a plain `call` and compile clean. (The detector only marks a
+    // literal `return CALL(args);` whose return type matches the callee.)
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+struct V { x: f32, y: f32, z: f32 }
+fn v_make(x: f32, y: f32, z: f32) -> V { return V { x: x, y: y, z: z }; }
+fn dot(a: V, b: V) -> f32 { return a.x * b.x + a.y * b.y + a.z * b.z; }
+fn scale(v: V, s: f32) -> V { return v_make(v.x * s, v.y * s, v.z * s); }
+fn sub(a: V, b: V) -> V { return v_make(a.x - b.x, a.y - b.y, a.z - b.z); }
+fn check(d: V, n: V) -> bool { return dot(d, n) > 0.0f32; }
+fn reflect(v: V, n: V) -> V { return sub(v, scale(n, 2.0f32 * dot(v, n))); }
+fn main() -> i32 {
+    let a: V = v_make(1.0f32, 2.0f32, 3.0f32);
+    let b: V = v_make(4.0f32, 5.0f32, 6.0f32);
+    let r: V = reflect(a, b);
+    if check(a, b) {
+        if r.x < 0.0f32 { return 0; }
+    }
+    return 1;
+}
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg("--release")
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "musttail-shaped returns must compile (no verifier reject); stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run binary");
+    // dot(a,b)=32>0 so check is true; reflect = a - 64*b, r.x = -255 < 0.
+    assert_eq!(run.status.code(), Some(0), "expected the happy-path exit 0");
+}
+
+#[test]
+fn let_struct_eq_if_else_with_block_arm_compiles() {
+    // bench-cplus handoff #4 regression: `let R: STRUCT = if c { call } else
+    // { lets...; tail }` used to panic codegen for the struct-valued case.
+    // This is the handoff's exact repro (a struct result, an else arm that
+    // binds locals before its tail expression).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+struct V { x: f32, y: f32 }
+fn v_make(x: f32, y: f32) -> V { return V { x: x, y: y }; }
+fn main() -> i32 {
+    let cond: bool = true;
+    let dir: V = v_make(1.0f32, 2.0f32);
+    let result: V = if cond {
+        v_make(3.0f32, 4.0f32)
+    } else {
+        let r_perp: V = dir;
+        let mut k: f32 = 1.0f32 - r_perp.x;
+        if k < 0.0f32 { k = 0.0f32; }
+        r_perp
+    };
+    return result.x as i32;
+}
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "struct-typed let-if-else must compile, not panic; stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(3), "expected result.x == 3.0 → 3");
+}
+
+#[test]
 fn copy_struct_param_stays_by_value_no_attr() {
     // `mut p: Point` on a Copy struct is local-mutability, not a
     // borrow. Stays struct-by-value, no LLVM attribute.
