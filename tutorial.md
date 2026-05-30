@@ -2080,12 +2080,18 @@ mm.encode_to(cmd_buf, lhs, rhs, out);
 
 The v0.0.11 `test_2x2_matmul_identity_correctness` test exercises this end-to-end on real GPU hardware.
 
-### `vendor/simd`: 3D math on f32x4
+### `vendor/simd`: 3D math on f32x4 + integer lane helpers
 
-Named-type wrappers around `f32x4`. Three modules:
+Float geometry plus integer-widening lane ops. Four modules:
 - `simd/vec3`: `Vec3` (lane-3-zero invariant) with `dot / cross / length / normalize / reflect / refract / lerp / clamp / ...`.
 - `simd/vec4`: full 4-lane vector with `raw()` / `from_raw()` for matrix code.
 - `simd/mat4x4`: column-major `[Vec4; 4]` with `mul_vec` (four `fma <4 x float>` ops) and `mul`.
+- `simd/integer`: integer-widening lane helpers composed from the builtin Tier-1 SIMD primitives (`widen`/`low`/`high`/`swizzle`): `mull_i8`/`mull_lo_i8`/`mull_hi_i8` (widening multiply), `mlal_i8` (widening multiply-accumulate), `paddl_i8` (widening pairwise add), and `dot_i32` — a 16-lane signed-byte dot product accumulated in i32 (the composable answer to NEON `vdotq_s32`, exact where `i8x16.mul().sum()` would wrap). This is the lane surface quantized kernels build on.
+
+```cplus
+import "simd/integer" as si;
+let acc: i32 = si::dot_i32(i8x16::splat(2i8), i8x16::splat(3i8));   // 96
+```
 
 ```cplus
 import "simd/vec3" as vec3;
