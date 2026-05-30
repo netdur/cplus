@@ -643,8 +643,19 @@ v0.0.10 flipped the default: **non-Copy values move by default**. `borrow` is th
 | `move x: T` | Move (explicit; same as `x: T`) | Pass-by-value |
 | `borrow x: T` | Shared borrow — caller keeps ownership, function reads only | (redundant on Copy) |
 
-Method receivers are `self`, `mut self`, or `move self`. There is no
-`borrow self`; use bare `self` for read-only method access.
+Method receivers mirror the param forms, with one deliberate difference in the *default*:
+
+| Receiver | Meaning |
+|---|---|
+| `self` | Shared borrow — read-only access; caller keeps ownership |
+| `mut self` | Exclusive borrow — may mutate; mutations propagate back to the caller |
+| `move self` | Move — consumes the receiver; caller can't use it after |
+
+There is no `borrow self` — bare `self` already *is* the shared borrow.
+
+**Why bare `self` reads but a bare `x: T` param moves.** This is the one asymmetry worth memorising, and it's intentional: each defaults to its common case. Most method calls (`p.len()`, `v.get(0)`) only want to *look* at the receiver, so bare `self` is a borrow. Most function calls hand a value *over* to the callee, so a bare param consumes. When you want the other behaviour, you say so: `move self` to consume a receiver, `borrow x: T` to borrow a param. The marker is always visible in the signature — the reader never has to guess.
+
+There is also a second axis, only relevant to `mut`: on a **Copy** type, `mut x: T` (or `mut self` on a Copy struct) is *local mutability* — the callee gets its own copy and the caller's value is untouched. On a **non-Copy** type it's an exclusive borrow and the mutations *do* propagate back. Same syntax, but `Copy`-ness decides whether the caller sees the change. (`Copy` is structural — see just below — so you can always tell which case you're in from the type.)
 
 ### `Copy` is structural
 
@@ -778,6 +789,25 @@ fn bad() -> str {
     return s.as_str();          // ❌ E0513 — view into a local that drops here
 }
 ```
+
+### What the borrow rules check — and what they trust
+
+C+ ownership is **boundary-checked, not whole-program inferred**. There is no lifetime variable woven into your types: a `str` is just `{ptr, len}`, a `T[]` is `{ptr, len}`, and a region name like `A` is local to a single signature. That keeps the model simple and local — but it means it's worth knowing exactly where the compiler *enforces* a rule and where it *trusts you*. (A careful reader will ask "where is that borrow information stored, and what stops it escaping?" — here is the honest answer.)
+
+**Enforced by the compiler:**
+
+- **Use after move** — once a non-Copy value moves (into a default/`move` param, a `let`, or a struct field), the source is dead; reading it is **E0335**.
+- **Aliasing XOR mutation** — within a function, a place has either shared borrows *or* one exclusive borrow, never both (§14).
+- **Partial move out of a `Drop` type** — rejected (**E0509**); the destructor frees fields by hand, so stealing one would double-free.
+- **Returned borrows** — a `str` / `T[]` / `borrow REGION` result must come from a parameter (with a matching region: **E0511** / **E0512**) or from `'static` data — never from a local that drops at return (**E0513**).
+- **Borrows across `await`** — borrow-shaped params are banned in `async fn` (**E0900**), since a suspension can outlive the caller's frame.
+
+**Trusted to you (the escape hatches):**
+
+- **A `str` / `T[]` view stored into a longer-lived place.** These are `Copy` views, not tracked references. The compiler checks the *function boundary* (the rules above), but once you copy a view into a struct field, a `static`, or another binding, it no longer tracks that the backing storage outlives it. The contract is simple: **a view must not outlive the value it points into.**
+- **Raw pointers (`*T`).** Completely outside the borrow checker — returning, storing, or aliasing one is allowed. The `unsafe` you write at each *dereference* is the point where you take on the validity obligation. A `*u8` returned from borrowed data and used after the source drops is a use-after-free that the language deliberately does not stop — that's the cost of the escape hatch.
+
+One rule covers all of it: **a borrow, a view, or a raw pointer must not outlive the value it points into.** The compiler proves this for you at the enforced cases above; everywhere else it's a contract you keep, and `unsafe` marks the places where you've explicitly signed up for it.
 
 ---
 
@@ -1047,6 +1077,16 @@ unsafe {
 ```
 
 Pointer arithmetic itself is "safe" math (no memory access), but in practice you almost always use it inside `unsafe` since the next thing you do is dereference.
+
+**Raw pointers are outside the borrow checker — on purpose.** Unlike a `str`/`T[]` view, the compiler tracks nothing about a `*T`'s lifetime: you can return one, store it in a global, or alias it freely, and none of that is an error. That's the escape hatch that makes FFI possible. The flip side is that the validity obligation is entirely yours — a pointer into a value that has since dropped is a use-after-free the language will not catch:
+
+```cplus
+fn leak(borrow s: string) -> *u8 {
+    return str_ptr(s.as_str());   // compiles — returning a *u8 is always allowed
+}                                 // ...but the caller must not deref it after `s` drops
+```
+
+The `unsafe` you write at each dereference is exactly where you acknowledge taking on that obligation (see §12, "what the borrow rules check — and what they trust").
 
 Raw pointers also have a few blessed helper methods:
 
@@ -1455,26 +1495,24 @@ for i in 0..count {
 
 ### Real-time contracts
 
-C+ is growing a real-time contract surface around attributes rather than a
-separate dialect. The current shipped pieces are:
+**First, what "real-time" means here — because it's the most misunderstood word in systems programming.** Real-time is **not** about speed or throughput. It's about *predictability*: a real-time task must finish within a fixed deadline **every single time**, including its worst case. An audio callback that's usually fast but occasionally stalls for 3 ms produces an audible click; a control loop that misses its deadline once can crash the machine. Average speed is irrelevant — the *worst case* is everything. A slow-but-bounded function is real-time-safe; a fast-on-average function with an unbounded worst case is not.
 
-- `#[no_alloc]` — reject heap allocation in the annotated function's checked
-  call graph (**E0901**). String interpolation is rejected here because it
-  allocates an owned `string`.
-- `#[no_block]` — reject known blocking primitives such as mutex locks, condvar
-  waits, sleeps, blocking I/O, sockets, and unknown blocking externs (**E0907**).
-- `#[bounded_recursion]` — reject recursion cycles (**E0906**).
-- `#[max_stack(N)]` — bound the function's estimated stack frame to `N` bytes
-  (params + typed locals across all nested blocks, a conservative all-live sum);
-  over-budget is **E0908**. Catches large fixed arrays and by-value aggregates.
-- `#[realtime]` — bundle of `#[no_alloc]`, `#[no_block]`, and
-  `#[bounded_recursion]`.
+So the enemy isn't slowness — it's *operations whose duration you can't bound in advance*. There are a few classic ones, and C+ gives you a **compiler-checked attribute** for each. They're not optimizations; they're promises the compiler verifies by walking the function's entire **transitive call graph** (the function *and everything it calls*), so a hidden allocation three calls deep is still caught.
+
+- **`#[no_alloc]`** (**E0901**) — no heap allocation anywhere in the call graph. *Why it matters:* `malloc`/`free` have an unbounded worst case — they walk free lists, can take an internal lock, may fall into a syscall to grow the heap, and can trigger a page fault. None of that is bounded, so a single allocation can blow a deadline. Rejects the libc allocators (`malloc`, `calloc`, `realloc`, `free`, …), any unmarked user callee, unknown externs, **and string interpolation** (`"x = ${n}"` lowers to a `string` allocation). A whitelist of known non-allocating leaves (`memcpy`, `strlen`, the libc math functions, `printf`, …) is allowed.
+- **`#[no_block]`** (**E0907**) — no operation that parks the thread. *Why it matters:* taking a contended mutex, waiting on a condvar, `sleep`, or a blocking `read` hands the CPU to the OS scheduler for an *unbounded* time — your deadline is now at the mercy of whatever else is running. Rejects mutex/rwlock locks and condvar/barrier waits, `pthread_join`, the `sleep` family, `poll`/`select`/`kevent`, and blocking file/socket I/O, plus unknown externs. Non-blocking leaves (try-locks, pure math/memory ops) are fine.
+- **`#[bounded_recursion]`** (**E0906**) — the call graph must not cycle back to the function. *Why it matters:* if recursion depth depends on input, both stack usage and running time are unbounded — there's no static deadline to prove.
+- **`#[max_stack(N)]`** (**E0908**) — the function's estimated stack frame (parameters + every typed local across all nested blocks, summed conservatively with the real ABI layout) must be ≤ `N` bytes. *Why it matters:* real-time threads often run on small, fixed, sometimes page-locked stacks; an oversized frame overflows or faults. Catches large `[u8; N]` scratch arrays and big by-value aggregates.
+- **`#[realtime]`** — the bundle: `#[no_alloc]` + `#[no_block]` + `#[bounded_recursion]`. (It does **not** include `#[max_stack]` — add that separately, since the byte budget is task-specific.)
+
+Note what these attributes do *not* do: they don't make code faster, they don't reorder anything, they don't change codegen. They're pure verification — they reject a program that *could* miss a deadline, turning "I think this audio callback is real-time-safe" into a fact the compiler checks on every build.
 
 ```cplus
 #[realtime]
 #[max_stack(256)]
 fn process_frame(input: *f32, output: *f32, n: usize, gain: f32) {
-    // no heap allocation, no blocking call, no recursion cycle, frame <= 256 B
+    // Verified: no heap allocation, no blocking call, no recursion cycle,
+    // and a stack frame <= 256 bytes — anywhere in this function's call graph.
     // ... apply gain to the buffer ...
     return;
 }
