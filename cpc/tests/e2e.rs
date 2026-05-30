@@ -16724,6 +16724,108 @@ fn realtime_profile_clean_program_passes() {
     assert!(status.success(), "clean realtime program must pass cpc check");
 }
 
+/// v0.0.12 realtime Phase 1 (method-dispatch hole): a `#[no_alloc]` function
+/// that reaches an allocating method *through a receiver* (`b.grow()`) used to
+/// slip past the checker — only free-fn calls were walked. Now the dispatched
+/// method must itself carry the contract.
+#[test]
+fn no_alloc_rejects_allocating_method_through_receiver() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         struct Bag { ptr: *u8 }\n\
+         impl Bag {\n\
+             fn grow(mut self) { unsafe { self.ptr = malloc(64 as usize); } return; }\n\
+         }\n\
+         #[no_alloc]\n\
+         fn hot(mut b: Bag) { b.grow(); return; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "allocating method via receiver must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0901"), "expected E0901, got:\n{stderr}");
+    assert!(stderr.contains("Bag::grow"), "diagnostic should name the method, got:\n{stderr}");
+}
+
+/// Companion positive case: a `#[no_alloc]` function calling a method that is
+/// itself `#[no_alloc]` must compile (no false positive). Guards the realtime
+/// demo / vendor/rt pattern (e.g. `is_empty` → `self.len()`, both marked).
+#[test]
+fn no_alloc_allows_marked_method_through_receiver() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "struct Ctr { v: i32 }\n\
+         impl Ctr {\n\
+             #[no_alloc]\n\
+             fn bump(mut self) { self.v = self.v +% 1; return; }\n\
+         }\n\
+         #[no_alloc]\n\
+         fn hot(mut c: Ctr) { c.bump(); return; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "calling a #[no_alloc] method from a #[no_alloc] fn must pass; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// `to_string()` allocates an owned `string`; it must be rejected inside a
+/// `#[no_alloc]` body (blessed-method allocation, not a user method).
+#[test]
+fn no_alloc_rejects_to_string() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[no_alloc]\n\
+         fn hot(n: i32) { let _s: string = n.to_string(); return; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "to_string in #[no_alloc] must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0901"), "expected E0901, got:\n{stderr}");
+}
+
+/// `#[no_block]` mirrors the same dispatch fix: a blocking method reached
+/// through a receiver must be rejected when the callee method isn't marked
+/// `#[no_block]`.
+#[test]
+fn no_block_rejects_blocking_method_through_receiver() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
+         struct Lock { h: *u8 }\n\
+         impl Lock {\n\
+             fn take(self) { unsafe { let _r: i32 = pthread_mutex_lock(self.h); } return; }\n\
+         }\n\
+         #[no_block]\n\
+         fn hot(l: Lock) { l.take(); return; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "blocking method via receiver must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0907"), "expected E0907, got:\n{stderr}");
+}
+
 #[test]
 fn fp_contract_flag_controls_fmuladd_emission() {
     // B-10: `a*b+c` on a float type contracts to `llvm.fmuladd` by default

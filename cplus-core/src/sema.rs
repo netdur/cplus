@@ -634,6 +634,9 @@ fn check_with_files_inner<'a>(
         current_fn_param_names: std::collections::HashSet::new(),
         current_fn_param_regions: HashMap::new(),
         current_fn_return_region: None,
+        current_fn_no_alloc: false,
+        current_fn_no_block: false,
+        method_contracts: HashMap::new(),
         current_file: None,
         files,
         loop_depth: 0,
@@ -679,6 +682,7 @@ fn check_with_files_inner<'a>(
     cx.collect_struct_fields(program);
     cx.collect_enum_payloads(program);
     cx.collect_methods(program);
+    cx.collect_method_contracts(program);
     cx.compute_struct_copy_flags();
     cx.compute_enum_copy_flags(program);
     cx.collect_functions(program);
@@ -882,6 +886,24 @@ struct SemaCx<'a> {
     /// v0.0.12 (#2 region enforcement): the explicit region on the current
     /// function's return type (`-> borrow REGION T`), if any.
     current_fn_return_region: Option<String>,
+    /// v0.0.12 realtime Phase 1 (method-dispatch hole): whether the function
+    /// whose body is currently being checked carries `#[no_alloc]` (directly
+    /// or via `#[realtime]` / a `[profile.realtime]` injection). Set fresh at
+    /// the top of each body-check entry. Drives the method-call contract check
+    /// in `check_method_call` — the free-call / interpolation cases stay in the
+    /// post-pass `check_no_alloc`, but method dispatch (`recv.method()`) can
+    /// only be resolved precisely here, where the receiver type is known.
+    current_fn_no_alloc: bool,
+    /// Companion to `current_fn_no_alloc` for the `#[no_block]` contract.
+    current_fn_no_block: bool,
+    /// v0.0.12 realtime Phase 1: `(type_name, method_name)` → `(no_alloc,
+    /// no_block)` for every method in any `impl` block, keyed by the
+    /// *source-level* target type name (so a generic `impl Vec[T]` is keyed
+    /// `("Vec", "push")` and matches an instantiation via its generic origin).
+    /// Built once by `collect_method_contracts` from the actual method
+    /// attributes, so the verdict is correct for dependency methods regardless
+    /// of any local `[profile.realtime]` injection.
+    method_contracts: HashMap<(String, String), (bool, bool)>,
     /// Slice 4C: file the currently-checked item originated from (post
     /// resolver merge). `None` in single-file mode or for items the
     /// resolver didn't touch. Used both to gate field-pub access (see
@@ -2519,7 +2541,13 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver.is_some());
-        self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
+        self.check_function_body(
+            &m.body,
+            self.current_return.clone(),
+            m.body.span,
+            marks_no_alloc(&m.attributes),
+            marks_no_block(&m.attributes),
+        );
         self.scopes.pop();
         self.current_fn_is_gen = prev_gen;
         self.current_gen_yield_ty = prev_gen_ty;
@@ -2619,7 +2647,13 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&m.params, &m.return_type, m.receiver.is_some());
-        self.check_function_body(&m.body, self.current_return.clone(), m.body.span);
+        self.check_function_body(
+            &m.body,
+            self.current_return.clone(),
+            m.body.span,
+            marks_no_alloc(&m.attributes),
+            marks_no_block(&m.attributes),
+        );
         self.scopes.pop();
         self.current_fn_is_gen = prev_gen;
         self.current_gen_yield_ty = prev_gen_ty;
@@ -3218,6 +3252,94 @@ impl SemaCx<'_> {
     // the only way to construct an allocating receiver (Vec / String / Box /
     // HashMap) is through a free or assoc fn that the walker *does* see —
     // so the call to e.g. `vec::new()` already fires E0901.
+
+    /// v0.0.12 realtime Phase 1 (method-dispatch hole): record every
+    /// `impl` method's `#[no_alloc]` / `#[no_block]` status, keyed by
+    /// `(source-level target type name, method name)`. Built from the raw
+    /// AST so the recorded verdict reflects each method's actual attributes
+    /// — independent of any `[profile.realtime]` injection, which only
+    /// touches local functions. Generic impls (`impl Vec[T]`) key under the
+    /// template name (`"Vec"`); a call on an instantiation maps back via the
+    /// struct's `generic_origin` in `source_type_name`.
+    fn collect_method_contracts(&mut self, p: &Program) {
+        for item in &p.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            for m in &b.methods {
+                self.method_contracts.insert(
+                    (b.target.name.clone(), m.name.name.clone()),
+                    (marks_no_alloc(&m.attributes), marks_no_block(&m.attributes)),
+                );
+            }
+        }
+    }
+
+    /// Source-level type name for a resolved `Ty`, used to look up method
+    /// contracts. Generic instantiations (whose `StructDef`/`EnumDef` name is
+    /// mangled, e.g. `Vec__i32`) map back to their template name (`Vec`) via
+    /// `generic_origin`, since the `impl Vec[T]` block — and therefore the
+    /// contract entry — is keyed on the template.
+    fn source_type_name(&self, ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::Struct(id) => {
+                let sd = &self.structs[id.0 as usize];
+                Some(match &sd.generic_origin {
+                    Some((tmpl, _)) => tmpl.clone(),
+                    None => sd.name.clone(),
+                })
+            }
+            Ty::Enum(id) => {
+                let ed = &self.enums[id.0 as usize];
+                Some(match &ed.generic_origin {
+                    Some((tmpl, _)) => tmpl.clone(),
+                    None => ed.name.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// v0.0.12 realtime Phase 1 (method-dispatch hole): enforce the
+    /// `#[no_alloc]` / `#[no_block]` contract on a `recv.method()` call site
+    /// when the enclosing function carries the contract. Closes the hole where
+    /// method dispatch slipped past the post-pass walker (which only sees
+    /// free-fn calls). The receiver type is resolved precisely here, so the
+    /// verdict is the *dispatched* method's, not a name-collision guess.
+    /// Unknown `(type, method)` pairs — blessed/builtin methods handled in the
+    /// early branches of `check_method_call` — are not in the map and are
+    /// checked at their own sites (e.g. `to_string`).
+    fn check_method_contract(&mut self, recv_ty: &Ty, method: &str, span: ByteSpan) {
+        if !self.current_fn_no_alloc && !self.current_fn_no_block {
+            return;
+        }
+        let Some(tname) = self.source_type_name(recv_ty) else {
+            return;
+        };
+        let Some(&(m_no_alloc, m_no_block)) =
+            self.method_contracts.get(&(tname.clone(), method.to_string()))
+        else {
+            return;
+        };
+        if self.current_fn_no_alloc && !m_no_alloc {
+            self.err(
+                "E0901",
+                format!(
+                    "function is marked `#[no_alloc]` but calls method `{tname}::{method}` which is not marked `#[no_alloc]`",
+                ),
+                span,
+            );
+        }
+        if self.current_fn_no_block && !m_no_block {
+            self.err(
+                "E0907",
+                format!(
+                    "function is marked `#[no_block]` but calls method `{tname}::{method}` which is not marked `#[no_block]`",
+                ),
+                span,
+            );
+        }
+    }
 
     fn check_no_alloc(&mut self, p: &Program) {
         let fn_table = build_no_alloc_fn_table(p);
@@ -3845,7 +3967,13 @@ impl SemaCx<'_> {
             );
         }
         self.setup_returned_borrow_ctx(&f.params, &f.return_type, false);
-        self.check_function_body(&f.body, body_return, f.body.span);
+        self.check_function_body(
+            &f.body,
+            body_return,
+            f.body.span,
+            marks_no_alloc(&f.attributes),
+            marks_no_block(&f.attributes),
+        );
         self.scopes.pop();
         self.current_fn_is_async = prev_async;
         self.current_fn_is_gen = prev_gen;
@@ -3998,7 +4126,21 @@ impl SemaCx<'_> {
         }
     }
 
-    fn check_function_body(&mut self, body: &Block, expected: Ty, body_span: ByteSpan) {
+    fn check_function_body(
+        &mut self,
+        body: &Block,
+        expected: Ty,
+        body_span: ByteSpan,
+        no_alloc: bool,
+        no_block: bool,
+    ) {
+        // v0.0.12 realtime Phase 1: record the enclosing function's contract
+        // so `check_method_call` can enforce it on method-dispatch sites. Reset
+        // to the default (false) on exit — nothing nests, and every completed
+        // body leaves the flags clear so stray `check_expr` calls in later
+        // passes never see a stale contract.
+        self.current_fn_no_alloc = no_alloc;
+        self.current_fn_no_block = no_block;
         // Push the body scope.
         self.scopes.push(HashMap::new());
         for s in &body.stmts {
@@ -4037,6 +4179,8 @@ impl SemaCx<'_> {
             );
         }
         self.scopes.pop();
+        self.current_fn_no_alloc = false;
+        self.current_fn_no_block = false;
     }
 
     // ---- statements ----
@@ -7555,6 +7699,14 @@ impl SemaCx<'_> {
             }
             return Ty::Error;
         }
+        // v0.0.12 realtime Phase 1 (method-dispatch hole): if the enclosing
+        // function is `#[no_alloc]` / `#[no_block]`, the dispatched method must
+        // carry the same contract. The receiver type is resolved now, so this
+        // picks the *actual* method (not a name-collision guess). User struct /
+        // generic / enum methods live in `method_contracts`; blessed/builtin
+        // receivers (string / SIMD / raw-ptr / iterator) are not in the map and
+        // are handled at their own sites below (e.g. `to_string`).
+        self.check_method_contract(&recv_ty, &name.name, call_span);
         // Phase 8 slice 8.STR.3: blessed methods on owned `string`.
         if matches!(recv_ty, Ty::String) {
             if !type_args.is_empty() {
@@ -7594,6 +7746,15 @@ impl SemaCx<'_> {
                 self.err(
                     "E0501",
                     "`to_string` takes no type arguments".to_string(),
+                    call_span,
+                );
+            }
+            // v0.0.12 realtime Phase 1: blessed `to_string()` allocates an
+            // owned `string`, so it's banned in a `#[no_alloc]` body.
+            if self.current_fn_no_alloc {
+                self.err(
+                    "E0901",
+                    "function is marked `#[no_alloc]` but calls `to_string()`, which heap-allocates".to_string(),
                     call_span,
                 );
             }
@@ -8707,6 +8868,63 @@ impl SemaCx<'_> {
                 }
                 let want = Ty::Array(Box::new(Ty::U32), lanes_u);
                 let _ = self.check_expr(&args[0], Some(want));
+                // Codegen lowers `swizzle` to a constant `shufflevector`
+                // mask, so the index array must be an array literal of
+                // compile-time constants. Enforce that here (mirroring the
+                // `lane`/`shl` literal requirement) rather than letting
+                // codegen's `.expect(...)` panic on a runtime array. (G-035)
+                match &args[0].kind {
+                    ExprKind::ArrayLit { elements } => {
+                        for el in elements {
+                            let v = match &el.kind {
+                                ExprKind::IntLit(v, _) => Some(*v),
+                                ExprKind::Cast { expr, .. } => match &expr.kind {
+                                    ExprKind::IntLit(v, _) => Some(*v),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            match v {
+                                None => {
+                                    self.err(
+                                        "E0873",
+                                        format!(
+                                            "`{}.swizzle(...)` indices must be compile-time literals",
+                                            ty_display(recv)
+                                        ),
+                                        el.span,
+                                    );
+                                    return Ty::Error;
+                                }
+                                Some(i) if (i as u32) >= lanes_u => {
+                                    self.err(
+                                        "E0874",
+                                        format!(
+                                            "swizzle index {i} out of range for `{}` ({} lanes)",
+                                            ty_display(recv),
+                                            lanes_u
+                                        ),
+                                        el.span,
+                                    );
+                                    return Ty::Error;
+                                }
+                                Some(_) => {}
+                            }
+                        }
+                    }
+                    _ => {
+                        self.err(
+                            "E0873",
+                            format!(
+                                "`{}.swizzle(...)` requires a `[u32; {}]` array literal of compile-time lane indices",
+                                ty_display(recv),
+                                lanes_u
+                            ),
+                            args[0].span,
+                        );
+                        return Ty::Error;
+                    }
+                }
                 recv.clone()
             }
             // v0.0.7 Slice 2.1: even/odd interleaves with another
