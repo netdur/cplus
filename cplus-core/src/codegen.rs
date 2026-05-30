@@ -13246,6 +13246,13 @@ fn expr_value_ty(e: &Expr) -> Option<Ty> {
             _ => Ty::F64,
         }),
         ExprKind::BoolLit(_) => Some(Ty::Bool),
+        // String literals are `str`; `${…}` interpolation lowers to an owned
+        // `string`. Without these, `let v: str = if c { "a" } else { "b" };`
+        // (and the `string` interpolation form) makes `gen_if` see no result
+        // type, allocate no slot, return None, and panic in `gen_stmt`'s
+        // let-init with "let init produces a value".
+        ExprKind::StrLit(_) => Some(Ty::Str),
+        ExprKind::InterpStr { .. } => Some(Ty::String),
         ExprKind::Block(b) => block_value_ty(b),
         ExprKind::If { then, .. } => block_value_ty(then),
         ExprKind::Binary { op, lhs, .. } => match op {
@@ -17232,6 +17239,27 @@ mod tests {
         assert!(
             ir.contains("alloca %V"),
             "expected V alloca for if-result slot:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn let_str_eq_if_expression_does_not_panic() {
+        // Regression: `let v: str = if cond { "a" } else { "b" };` panicked
+        // codegen with "let init produces a value" because `expr_value_ty`
+        // didn't handle string literals, so `gen_if` allocated no result slot
+        // and returned None. (The struct case was already fixed; fat-pointer
+        // `str`/`string` arms were the residual.) Fixed by adding StrLit/
+        // InterpStr to `expr_value_ty`.
+        let ir = gen_src(
+            "fn main() -> i32 {\n\
+                 let cond: bool = true;\n\
+                 let v: str = if cond { \"aaa\" } else { \"bb\" };\n\
+                 return str_len(v) as i32;\n\
+             }",
+        );
+        assert!(
+            ir.contains("@main"),
+            "expected codegen to complete without panic:\n{ir}"
         );
     }
 

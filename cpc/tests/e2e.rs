@@ -3650,6 +3650,42 @@ fn return_slice_of_param_compiles() {
 }
 
 #[test]
+fn let_str_eq_if_expression_compiles_and_runs() {
+    // v0.0.12 regression: `let v: str = if cond { "a" } else { "b" };` crashed
+    // codegen ("let init produces a value") because `expr_value_ty` didn't
+    // handle string literals, so the if-expr got no result slot. The struct
+    // case was already fixed; `str` / fat-pointer arms were the residual.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+fn pick(c: bool) -> str {
+    let v: str = if c { \"aaa\" } else { \"bb\" };
+    return v;
+}
+fn main() -> i32 { return str_len(pick(true)) as i32; }
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        "str-typed let-if must compile, not panic; stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(3), "expected str_len(\"aaa\") == 3");
+}
+
+#[test]
 fn copy_struct_param_stays_by_value_no_attr() {
     // `mut p: Point` on a Copy struct is local-mutability, not a
     // borrow. Stays struct-by-value, no LLVM attribute.
