@@ -60,6 +60,9 @@ usage:
 build flags (apply to `cpc FILE` and `cpc build`):
   --release                         -O2, no overflow checks on `+ - *` (default: debug, checked)
   --debug                           -O0 with overflow traps (the default)
+  --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
+                                    fmul+fadd for bit-identical-to-C output (default: on).
+                                    Place before --emit-ll/--emit-asm/--emit-obj FILE.
   -g | --debug-info                 emit DWARF debug metadata + pass -g to clang
   --asan | --ubsan | --tsan | --msan
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
@@ -191,6 +194,12 @@ fn main() -> ExitCode {
     let mut out: Option<PathBuf> = None;
     let mut diag_mode = DiagMode::Human;
     let mut build_mode = BuildMode::Debug;
+    // B-10: floating-point contraction policy. On by default (matches
+    // clang's `-ffp-contract=on`): codegen contracts source-level `a*b+c`
+    // into `llvm.fmuladd` and tags float arithmetic `contract`. Set off
+    // with `--fp-contract=off` for output bit-identical to a C build
+    // compiled with `-ffp-contract=off`.
+    let mut fp_contract = true;
     // Phase 11 polish (2026-05-13): `-g` emits DWARF debug metadata.
     // v1 ships function-level DI only (DICompileUnit + DIFile +
     // DISubprogram). Per-instruction DILocation is a follow-up.
@@ -262,6 +271,7 @@ fn main() -> ExitCode {
                     PathBuf::from(v),
                     diag_mode,
                     build_mode,
+                    fp_contract,
                     emit_debug_info,
                     &sanitizers,
                 );
@@ -279,6 +289,7 @@ fn main() -> ExitCode {
                     PathBuf::from(v),
                     diag_mode,
                     build_mode,
+                    fp_contract,
                     ClangOutputKind::LlvmIr,
                 );
             }
@@ -294,6 +305,7 @@ fn main() -> ExitCode {
                     PathBuf::from(v),
                     diag_mode,
                     build_mode,
+                    fp_contract,
                     ClangOutputKind::Assembly,
                 );
             }
@@ -332,6 +344,23 @@ fn main() -> ExitCode {
             }
             Some("--debug") => {
                 build_mode = BuildMode::Debug;
+                i += 1;
+            }
+            // B-10: `--fp-contract=off|on|fast`. `off` suppresses FMA
+            // contraction (`a*b+c` stays fmul+fadd, float ops drop the
+            // `contract` flag) for bit-identical-to-C float output;
+            // `on`/`fast` keep the default fusing behavior.
+            Some(s) if s.starts_with("--fp-contract=") => {
+                match &s["--fp-contract=".len()..] {
+                    "off" => fp_contract = false,
+                    "on" | "fast" => fp_contract = true,
+                    other => {
+                        eprintln!(
+                            "cpc: --fp-contract expects off|on|fast, got `{other}`"
+                        );
+                        return ExitCode::from(2);
+                    }
+                }
                 i += 1;
             }
             Some("-g" | "--debug-info") => {
@@ -479,12 +508,16 @@ fn main() -> ExitCode {
             eprintln!("cpc: --emit-obj requires `-o OUT.o`");
             return ExitCode::FAILURE;
         };
-        return dump_obj(obj_in, obj_out, diag_mode, build_mode);
+        return dump_obj(obj_in, obj_out, diag_mode, build_mode, fp_contract);
     }
 
     match (subcommand, input) {
-        (Some(Subcommand::Build), _) => build_project(out, diag_mode, build_mode, &sanitizers),
-        (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode),
+        (Some(Subcommand::Build), _) => {
+            build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
+        }
+        (Some(Subcommand::EmitLlProject), _) => {
+            emit_ll_project(diag_mode, build_mode, fp_contract)
+        }
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => run_test(test_input, test_opts, diag_mode, build_mode),
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
@@ -500,6 +533,7 @@ fn main() -> ExitCode {
             out.unwrap_or_else(|| PathBuf::from("a.out")),
             diag_mode,
             build_mode,
+            fp_contract,
             emit_debug_info,
             &sanitizers,
         ),
@@ -854,6 +888,7 @@ fn build_project(
     out: Option<PathBuf>,
     diag_mode: DiagMode,
     build_mode: BuildMode,
+    fp_contract: bool,
     sanitizers: &[&str],
 ) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
@@ -870,7 +905,7 @@ fn build_project(
     // manifest-parse time (E0408), so reaching here with `lib` set
     // means no `[[bin]]` declared.
     if let Some(lib) = m.lib.clone() {
-        return build_lib_project(&m, &lib, out, diag_mode, build_mode);
+        return build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract);
     }
     if m.bins.len() != 1 {
         eprintln!(
@@ -923,7 +958,8 @@ fn build_project(
     // linked without `-fsanitize=...`), which meant every e2e ASan
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
-    let ir = codegen::generate_with_mono(&program, build_mode, None, sanitizers, false, &mono);
+    let ir =
+        codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono);
 
     let out_path = out.unwrap_or_else(|| {
         let sub = match build_mode {
@@ -1002,6 +1038,7 @@ fn build_lib_project(
     out_override: Option<PathBuf>,
     diag_mode: DiagMode,
     build_mode: BuildMode,
+    fp_contract: bool,
 ) -> ExitCode {
     if !lib.path.is_file() {
         let d = diag::Diagnostic {
@@ -1074,7 +1111,8 @@ fn build_lib_project(
         }
     }
 
-    let ir = codegen::generate_with_mono(&program, build_mode, None, &[], true, &mono);
+    let ir =
+        codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono);
 
     let mode_subdir = match build_mode {
         BuildMode::Debug => "debug",
@@ -1224,7 +1262,7 @@ fn build_lib_project(
 /// `--emit-ll-project`: project build, but emit IR to stdout instead of
 /// linking. Mirrors the single-file `--emit-ll FILE` flag. Mostly useful
 /// for testing.
-fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
         Ok(m) => m,
@@ -1251,7 +1289,8 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
             Ok(p) => p,
             Err(code) => return code,
         };
-    let ir = codegen::generate_with_mono(&program, build_mode, None, &[], false, &mono);
+    let ir =
+        codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], false, &mono);
     print!("{ir}");
     ExitCode::SUCCESS
 }
@@ -2032,7 +2071,7 @@ fn run_check(path: PathBuf, mode: DiagMode) -> ExitCode {
     // either the IR string (which we discard) or an ExitCode on any
     // error. No need to invoke clang. `debug_info=false`, no sanitizers
     // — `check` is purely diagnostic.
-    match build_ir(&path, &src, mode, BuildMode::Debug, false, &[]) {
+    match build_ir(&path, &src, mode, BuildMode::Debug, true, false, &[]) {
         Ok(_ir) => ExitCode::SUCCESS,
         Err(code) => code,
     }
@@ -2151,6 +2190,7 @@ fn compile_file(
     out: PathBuf,
     mode: DiagMode,
     build_mode: BuildMode,
+    fp_contract: bool,
     debug_info: bool,
     sanitizers: &[&str],
 ) -> ExitCode {
@@ -2161,7 +2201,7 @@ fn compile_file(
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&input, &src, mode, build_mode, debug_info, sanitizers) {
+    let ir = match build_ir(&input, &src, mode, build_mode, fp_contract, debug_info, sanitizers) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -2211,6 +2251,7 @@ fn build_ir(
     src: &str,
     mode: DiagMode,
     build_mode: BuildMode,
+    fp_contract: bool,
     debug_info: bool,
     sanitizers: &[&str],
 ) -> Result<String, ExitCode> {
@@ -2343,7 +2384,7 @@ fn build_ir(
     let post_mono = run_monomorphize(prog, &mono, &files_map);
     let dbg_path = if debug_info { Some(file) } else { None };
     Ok(codegen::generate_with_mono(
-        &post_mono, build_mode, dbg_path, sanitizers, false, &mono,
+        &post_mono, build_mode, fp_contract, dbg_path, sanitizers, false, &mono,
     ))
 }
 
@@ -2439,6 +2480,7 @@ fn dump_ll(
     path: PathBuf,
     mode: DiagMode,
     build_mode: BuildMode,
+    fp_contract: bool,
     debug_info: bool,
     sanitizers: &[&str],
 ) -> ExitCode {
@@ -2449,7 +2491,7 @@ fn dump_ll(
             return ExitCode::FAILURE;
         }
     };
-    match build_ir(&path, &src, mode, build_mode, debug_info, sanitizers) {
+    match build_ir(&path, &src, mode, build_mode, fp_contract, debug_info, sanitizers) {
         Ok(ir) => {
             print!("{ir}");
             ExitCode::SUCCESS
@@ -2767,7 +2809,13 @@ fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
     })
 }
 
-fn dump_obj(input: PathBuf, out: PathBuf, diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+fn dump_obj(
+    input: PathBuf,
+    out: PathBuf,
+    diag_mode: DiagMode,
+    build_mode: BuildMode,
+    fp_contract: bool,
+) -> ExitCode {
     let src = match fs::read_to_string(&input) {
         Ok(s) => s,
         Err(e) => {
@@ -2775,7 +2823,7 @@ fn dump_obj(input: PathBuf, out: PathBuf, diag_mode: DiagMode, build_mode: Build
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&input, &src, diag_mode, build_mode, false, &[]) {
+    let ir = match build_ir(&input, &src, diag_mode, build_mode, fp_contract, false, &[]) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -2826,6 +2874,7 @@ fn dump_ll_or_asm(
     path: PathBuf,
     mode: DiagMode,
     build_mode: BuildMode,
+    fp_contract: bool,
     output_kind: ClangOutputKind,
 ) -> ExitCode {
     let src = match fs::read_to_string(&path) {
@@ -2835,7 +2884,7 @@ fn dump_ll_or_asm(
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&path, &src, mode, build_mode, false, &[]) {
+    let ir = match build_ir(&path, &src, mode, build_mode, fp_contract, false, &[]) {
         Ok(ir) => ir,
         Err(code) => return code,
     };

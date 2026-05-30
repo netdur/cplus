@@ -106,6 +106,16 @@ struct ModuleMetadata {
     /// same symbol with different shapes; we emit each exactly once).
     selector_runtime_declared: Cell<bool>,
     msg_send_declared: Cell<bool>,
+    /// B-10: floating-point contraction policy. `true` (the default,
+    /// matching clang's `-ffp-contract=on`) lets codegen emit
+    /// `llvm.fmuladd` for source-level `a*b+c` and tag scalar/SIMD float
+    /// arithmetic with the `contract` fast-math flag so the optimizer may
+    /// fuse. `false` (`--fp-contract=off`) suppresses both, so float
+    /// output is bit-identical to a C build compiled with
+    /// `-ffp-contract=off`. Set once in `generate_inner`; the `Cell`
+    /// default of `false` is never observed because that setter always
+    /// runs before any function body is emitted.
+    fp_contract: Cell<bool>,
 }
 
 impl ModuleMetadata {
@@ -836,6 +846,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
     generate_inner(
         program,
         mode,
+        true,
         None,
         None,
         &[],
@@ -855,6 +866,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
 pub fn generate_with_mono(
     program: &Program,
     mode: BuildMode,
+    fp_contract: bool,
     debug_source: Option<&std::path::Path>,
     sanitizers: &[&str],
     is_lib: bool,
@@ -863,6 +875,7 @@ pub fn generate_with_mono(
     generate_inner(
         program,
         mode,
+        fp_contract,
         None,
         debug_source,
         sanitizers,
@@ -888,6 +901,7 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
     generate_inner(
         program,
         mode,
+        true,
         None,
         None,
         &[],
@@ -913,6 +927,7 @@ pub fn generate_with_debug(
     generate_inner(
         program,
         mode,
+        true,
         None,
         Some(source_file),
         &[],
@@ -939,6 +954,7 @@ pub fn generate_with_options(
     generate_inner(
         program,
         mode,
+        true,
         None,
         source_file,
         sanitizers,
@@ -977,6 +993,7 @@ pub fn generate_test_binary(
     generate_inner(
         program,
         mode,
+        true,
         Some(TestDriverConfig { tests, json }),
         None,
         &[],
@@ -997,6 +1014,7 @@ struct TestDriverConfig<'a> {
 fn generate_inner(
     program: &Program,
     mode: BuildMode,
+    fp_contract: bool,
     test_cfg: Option<TestDriverConfig<'_>>,
     debug_source: Option<&std::path::Path>,
     sanitizers: &[&str],
@@ -1015,6 +1033,8 @@ fn generate_inner(
     // codegen each function; flushed to `out` after every function body is
     // written and before DWARF (which has its own ID range).
     let md = ModuleMetadata::new();
+    // B-10: record the fp-contraction policy before any function body emits.
+    md.fp_contract.set(fp_contract);
     // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
     // user-defined function or method gets `fastcc` iff it has internal
     // linkage (non-`pub`, non-`main`, non-extern, non-drop) AND its
@@ -8907,6 +8927,20 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// B-10: fast-math flag prefix for floating-point arithmetic.
+    /// Returns `"contract "` when fp-contraction is on (the default,
+    /// matching clang's `-ffp-contract=on`) and `""` under
+    /// `--fp-contract=off`. Insert directly before the type in a float
+    /// `fadd`/`fsub`/`fmul`/`fdiv` so the optimizer is (or isn't)
+    /// licensed to fuse `a*b+c` into an FMA.
+    fn fmf(&self) -> &'static str {
+        if self.md.fp_contract.get() {
+            "contract "
+        } else {
+            ""
+        }
+    }
+
     /// FMA peephole. Returns Some when `lhs OP rhs` matches one of:
     /// - `(a * b) + c`   → `llvm.fmuladd.fN(a, b, c)`
     /// - `c + (a * b)`   → `llvm.fmuladd.fN(a, b, c)`
@@ -9023,7 +9057,11 @@ impl<'a> FnState<'a> {
         // time. Without this, raytracer-style hot loops were ~50% slower
         // than C even after adding `contract` to fmul/fadd, because the
         // explicit intrinsic conveys more information than fast-math flags.
-        if matches!(op, BinOp::Add | BinOp::Sub) {
+        // B-10: only contract `a*b+c` into `llvm.fmuladd` when fp-contraction
+        // is enabled. Under `--fp-contract=off` we fall through to plain
+        // fmul + fadd so float output is bit-identical to C built with
+        // `-ffp-contract=off`.
+        if self.md.fp_contract.get() && matches!(op, BinOp::Add | BinOp::Sub) {
             if let Some(out) = self.try_emit_fmuladd(op, lhs, rhs) {
                 return out;
             }
@@ -9066,7 +9104,8 @@ impl<'a> FnState<'a> {
                     // `-ffp-contract=on`; without it cpc raytracer-style code
                     // ran ~50% slower than the C equivalent because every
                     // dot/scale/madd pair stayed as discrete instructions.
-                    self.emit(&format!("{v} = {fop} contract {} {l}, {r}", self.lty(&lt)));
+                    let cf = self.fmf();
+                    self.emit(&format!("{v} = {fop} {cf}{} {l}, {r}", self.lty(&lt)));
                     return (v, lt);
                 }
                 // Integer: signed gets debug overflow checks, unsigned wraps.
@@ -9086,7 +9125,8 @@ impl<'a> FnState<'a> {
             BinOp::Div => {
                 if lt.is_float() {
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = fdiv contract {} {l}, {r}", self.lty(&lt)));
+                    let cf = self.fmf();
+                    self.emit(&format!("{v} = fdiv {cf}{} {l}, {r}", self.lty(&lt)));
                     return (v, lt);
                 }
                 (self.divide_with_zero_check(op, &lt, &l, &r), lt)
@@ -11819,7 +11859,8 @@ impl<'a> FnState<'a> {
                         AssignOp::MulAssign => "fmul",
                         _ => unreachable!(),
                     };
-                    self.emit(&format!("{v} = {fop} contract {lty} {l}, {r}"));
+                    let cf = self.fmf();
+                    self.emit(&format!("{v} = {fop} {cf}{lty} {l}, {r}"));
                     return v;
                 }
                 let bin = match op {
@@ -11844,7 +11885,8 @@ impl<'a> FnState<'a> {
             AssignOp::DivAssign => {
                 if ty.is_float() {
                     let v = self.next_tmp();
-                    self.emit(&format!("{v} = fdiv contract {lty} {l}, {r}"));
+                    let cf = self.fmf();
+                    self.emit(&format!("{v} = fdiv {cf}{lty} {l}, {r}"));
                     return v;
                 }
                 self.divide_with_zero_check(BinOp::Div, ty, l, r)
@@ -12678,10 +12720,10 @@ impl<'a> FnState<'a> {
             "add" | "sub" | "mul" | "div" => {
                 let (b, _) = self.gen_expr(&args[0]).expect("simd binop arg");
                 let op = match (method, elem.is_float()) {
-                    ("add", true) => "fadd contract",
-                    ("sub", true) => "fsub contract",
-                    ("mul", true) => "fmul contract",
-                    ("div", true) => "fdiv contract",
+                    ("add", true) => "fadd",
+                    ("sub", true) => "fsub",
+                    ("mul", true) => "fmul",
+                    ("div", true) => "fdiv",
                     ("add", false) => "add",
                     ("sub", false) => "sub",
                     ("mul", false) => "mul",
@@ -12694,8 +12736,11 @@ impl<'a> FnState<'a> {
                     }
                     _ => unreachable!(),
                 };
+                // B-10: float lanes carry the `contract` fast-math flag only
+                // when fp-contraction is on; int lanes never do.
+                let cf = if elem.is_float() { self.fmf() } else { "" };
                 let t = self.next_tmp();
-                self.emit(&format!("{t} = {op} {lty} {recv}, {b}"));
+                self.emit(&format!("{t} = {op} {cf}{lty} {recv}, {b}"));
                 (t, recv_ty.clone())
             }
             "fma" => {
@@ -13417,7 +13462,7 @@ mod tests {
         // shader_blobs) reaches codegen. Plain `generate()` would default
         // every table to empty and tests of `#selector` / `#msg_send` /
         // `#compile_shader` would panic in their pre-pass lookups.
-        generate_with_mono(&post, BuildMode::Debug, None, &[], false, &mono)
+        generate_with_mono(&post, BuildMode::Debug, true, None, &[], false, &mono)
     }
 
     #[test]
@@ -14474,6 +14519,60 @@ mod tests {
             count(&ir, "call {"),
             0,
             "no checked-arith calls expected for float ops"
+        );
+    }
+
+    /// B-10 helper: emit IR with floating-point contraction disabled, the
+    /// `--fp-contract=off` path. Mirrors `gen_src_with` but routes through
+    /// `generate_inner` with `fp_contract = false`.
+    fn gen_src_no_fp_contract(src: &str) -> String {
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        generate_inner(
+            &prog,
+            BuildMode::Debug,
+            false,
+            None,
+            None,
+            &[],
+            false,
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+        )
+    }
+
+    #[test]
+    fn fp_contract_off_drops_fmuladd_and_contract_flag() {
+        // B-10: `a*b+c` contracts to `llvm.fmuladd` by default.
+        let on = gen_src("fn f(a: f64, b: f64, c: f64) -> f64 { return a * b + c; }\n\
+                          fn main() -> i32 { return 0; }");
+        assert!(
+            on.contains("call contract double @llvm.fmuladd.f64"),
+            "default must contract to fmuladd, got:\n{on}"
+        );
+
+        // With fp-contraction off: plain fmul + fadd, no `contract` flag, no
+        // fmuladd *call* in the body.
+        let off = gen_src_no_fp_contract(
+            "fn f(a: f64, b: f64, c: f64) -> f64 { return a * b + c; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            !off.contains("call contract double @llvm.fmuladd.f64"),
+            "fp-contract=off must not emit an fmuladd call, got:\n{off}"
+        );
+        assert!(
+            off.contains(" = fmul double ") && off.contains(" = fadd double "),
+            "fp-contract=off must keep separate fmul + fadd, got:\n{off}"
+        );
+        assert!(
+            !off.contains("fmul contract") && !off.contains("fadd contract"),
+            "fp-contract=off must drop the `contract` fast-math flag, got:\n{off}"
         );
     }
 

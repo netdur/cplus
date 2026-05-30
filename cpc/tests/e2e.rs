@@ -16626,6 +16626,101 @@ fn realtime_profile_clean_program_passes() {
     assert!(status.success(), "clean realtime program must pass cpc check");
 }
 
+#[test]
+fn fp_contract_flag_controls_fmuladd_emission() {
+    // B-10: `a*b+c` on a float type contracts to `llvm.fmuladd` by default
+    // (matching clang's `-ffp-contract=on`). `--fp-contract=off` suppresses
+    // the contraction so the IR keeps a separate `fmul` + `fadd`, giving
+    // float output bit-identical to a C build compiled with
+    // `-ffp-contract=off`. The flag must precede `--emit-ll FILE`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("fma.cplus");
+    std::fs::write(
+        &src,
+        "fn compute(a: f32, b: f32, c: f32) -> f32 { return a * b + c; }\n\
+         fn main() -> i32 {\n\
+         let r: f32 = compute(2.0 as f32, 3.0 as f32, 4.0 as f32);\n\
+         return r as i32;\n\
+         }\n",
+    )
+    .unwrap();
+
+    // Default: one fused multiply-add, no separate fmul/fadd in the body.
+    let on = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll on");
+    assert!(on.status.success());
+    let on_ir = String::from_utf8_lossy(&on.stdout);
+    assert!(
+        on_ir.contains("call contract float @llvm.fmuladd.f32"),
+        "default build must contract a*b+c to fmuladd, got:\n{on_ir}"
+    );
+
+    // --fp-contract=off: plain fmul + fadd, no fmuladd *call* in the body
+    // (the preamble still `declare`s the intrinsic — that's harmless).
+    let off = Command::new(cpc)
+        .arg("--fp-contract=off")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll off");
+    assert!(off.status.success());
+    let off_ir = String::from_utf8_lossy(&off.stdout);
+    assert!(
+        !off_ir.contains("call contract float @llvm.fmuladd.f32"),
+        "--fp-contract=off must not contract to fmuladd, got:\n{off_ir}"
+    );
+    assert!(
+        off_ir.contains("fmul float") && off_ir.contains("fadd float"),
+        "--fp-contract=off must keep separate fmul + fadd, got:\n{off_ir}"
+    );
+    assert!(
+        !off_ir.contains("fmul contract float") && !off_ir.contains("fadd contract float"),
+        "--fp-contract=off must drop the `contract` fast-math flag, got:\n{off_ir}"
+    );
+
+    // Both modes still build and run to the same (integer-truncated) result.
+    for extra in [None, Some("--fp-contract=off")] {
+        let bin = dir.join(match extra {
+            Some(_) => "fma_off",
+            None => "fma_on",
+        });
+        let mut cmd = Command::new(cpc);
+        if let Some(flag) = extra {
+            cmd.arg(flag);
+        }
+        let status = cmd.arg(&src).arg("-o").arg(&bin).status().expect("build");
+        assert!(status.success(), "build failed for {extra:?}");
+        let run = Command::new(&bin).output().expect("run");
+        // 2*3+4 = 10
+        assert_eq!(run.status.code(), Some(10), "wrong result for {extra:?}");
+    }
+}
+
+#[test]
+fn fp_contract_rejects_invalid_value() {
+    // B-10: an unrecognized `--fp-contract=` value is a usage error.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("x.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--fp-contract=bogus")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "invalid --fp-contract must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--fp-contract expects off|on|fast"),
+        "expected usage error, got:\n{stderr}"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")
