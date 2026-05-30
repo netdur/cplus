@@ -333,26 +333,75 @@ fn is_number_byte(c: u8) -> bool {
 
 fn parse_number(mut p: Parser) -> ValParse {
     let start: usize = p.pos;
+    // Scan the number token, tracking whether it is integer-shaped (no
+    // fraction or exponent). The boundary rule (is_number_byte) is
+    // unchanged, so acceptance is identical to before.
+    let mut is_int: bool = true;
     while p.pos < p.len {
         let q: *u8 = unsafe { p.src + p.pos };
-        if !is_number_byte(unsafe { *q }) { break; }
+        let c: u8 = unsafe { *q };
+        if !is_number_byte(c) { break; }
+        if c == ('.' as u8) || c == ('e' as u8) || c == ('E' as u8) { is_int = false; }
         p.pos = p.pos +% (1 as usize);
     }
     let n: usize = p.pos -% start;
     if n == (0 as usize) { return fail(p); }
-    let buf: *u8 = unsafe { malloc(n +% (1 as usize)) };
-    if unsafe { buf as usize } == (0 as usize) { return fail(p); }
     let src_q: *u8 = unsafe { p.src + start };
+
+    // Integer fast-path. A canonical `-?[0-9]+` of at most 15 digits fits
+    // exactly in an f64 (|v| < 10^15 < 2^53), so accumulating in i64 and
+    // converting is bit-identical to strtod — with no malloc, no memcpy,
+    // and no strtod call. The benchmark workload is number-heavy, and this
+    // is where the two malloc/free pairs per number were going. Anything
+    // non-canonical (`+5`, leading `.`/`e`, `-0`, >15 digits, big ints)
+    // falls through to the strtod path below, so rounding stays correct.
+    if is_int {
+        let f0: u8 = unsafe { *src_q };
+        let mut i: usize = 0 as usize;
+        let mut neg: bool = false;
+        if f0 == ('-' as u8) { neg = true; i = 1 as usize; }
+        let digits: usize = n -% i;
+        if digits >= (1 as usize) && digits <= (15 as usize) {
+            let mut acc: i64 = 0 as i64;
+            let mut all_digits: bool = true;
+            let mut j: usize = i;
+            while j < n {
+                let d: u8 = unsafe { *(p.src + (start +% j)) };
+                if d < ('0' as u8) || d > ('9' as u8) { all_digits = false; break; }
+                acc = acc *% (10 as i64) +% ((d -% ('0' as u8)) as i64);
+                j = j +% (1 as usize);
+            }
+            // Skip `-0` so the strtod path keeps the signed-zero result.
+            if all_digits && !(neg && acc == (0 as i64)) {
+                if neg { acc = (0 as i64) -% acc; }
+                let val: f64 = acc as f64;
+                return ValParse { p: p, ok: true, v: Value::Number(val) };
+            }
+        }
+    }
+
+    // Float / big-integer / non-canonical fallback: strtod for correct
+    // decimal rounding. The digit copy lands in a stack buffer for the
+    // common case (numbers shorter than 63 bytes), so only pathologically
+    // long literals still touch the heap; the strtod end-pointer slot is a
+    // stack local addressed via `#addr_of` instead of a second malloc.
+    let mut stackbuf: [u8; 64] = [0u8; 64];
+    let usestack: bool = n < (63 as usize);
+    let buf: *u8 = if usestack {
+        unsafe { #addr_of(stackbuf) as *u8 }
+    } else {
+        unsafe { malloc(n +% (1 as usize)) }
+    };
+    if unsafe { buf as usize } == (0 as usize) { return fail(p); }
     unsafe { memcpy(buf, src_q, n); }
     let nulslot: *u8 = unsafe { buf + n };
     unsafe { *nulslot = 0 as u8; }
-    let endp_slot: *u8 = unsafe { malloc(#size_of::[*u8]()) };
-    let endp: **u8 = unsafe { endp_slot as **u8 };
+    let mut endp_stack: *u8 = unsafe { 0 as *u8 };
+    let endp: **u8 = unsafe { #addr_of(endp_stack) };
     let val: f64 = unsafe { strtod(buf, endp) };
     let consumed_end: *u8 = unsafe { *endp };
     let consumed: usize = unsafe { (consumed_end as usize) -% (buf as usize) };
-    unsafe { free(endp_slot); }
-    unsafe { free(buf); }
+    if !usestack { unsafe { free(buf); } }
     if consumed == (0 as usize) || consumed != n { return fail(p); }
     return ValParse { p: p, ok: true, v: Value::Number(val) };
 }
@@ -624,10 +673,43 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     // int range print as plain integers ("30", not "3e+01"). This
     // replaces the v0.0.9 unconditional %.17g which always emitted 17
     // sig figs ("0.1" → "0.10000000000000001").
-    let buf: *u8 = unsafe { malloc(64 as usize) };
-    let fmt_buf: *u8 = unsafe { malloc(8 as usize) };
-    let endp_slot: *u8 = unsafe { malloc(#size_of::[*u8]()) };
-    let endp: **u8 = unsafe { endp_slot as **u8 };
+    // Integer fast-path. An integer-valued double in exact range
+    // (|n| <= 9e15 < 2^53) formats with a manual base-10 conversion —
+    // no malloc, no snprintf, and no strtod round-trip probing. This is
+    // the same value the `%.0f` branch below would pick (it chooses the
+    // smallest place count that round-trips, and p=0 round-trips for an
+    // integer). `n == 0` falls through so signed zero ("-0") is left to
+    // snprintf, preserving prior output exactly.
+    let asi: i64 = n as i64;
+    if asi != (0 as i64) && (asi as f64) == n && n <= 9.0e15 && n >= (0.0 - 9.0e15) {
+        let mut x: i64 = asi;
+        let neg: bool = x < (0 as i64);
+        if neg { x = (0 as i64) -% x; }
+        let mut digs: [u8; 24] = [0u8; 24];
+        let mut len: usize = 0 as usize;
+        while x > (0 as i64) {
+            let d: i64 = x % (10 as i64);
+            digs[len] = ('0' as u8) +% (d as u8);
+            len = len +% (1 as usize);
+            x = x / (10 as i64);
+        }
+        if neg { b = buf_push(b, '-' as u8); }
+        let mut k: usize = len;
+        while k > (0 as usize) {
+            k = k -% (1 as usize);
+            b = buf_push(b, digs[k]);
+        }
+        return b;
+    }
+
+    // Float / large-magnitude fallback. Stack buffers + `#addr_of` for
+    // the strtod end-pointer keep the heap untouched here too.
+    let mut out_arr: [u8; 64] = [0u8; 64];
+    let mut fmt_arr: [u8; 8] = [0u8; 8];
+    let buf: *u8 = unsafe { #addr_of(out_arr) as *u8 };
+    let fmt_buf: *u8 = unsafe { #addr_of(fmt_arr) as *u8 };
+    let mut endp_stack: *u8 = unsafe { 0 as *u8 };
+    let endp: **u8 = unsafe { #addr_of(endp_stack) };
 
     let mut chosen_len: i32 = 0;
 
@@ -674,9 +756,6 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     if chosen_len > 0 {
         b = buf_push_bytes(b, buf, chosen_len as usize);
     }
-    unsafe { free(endp_slot); }
-    unsafe { free(fmt_buf); }
-    unsafe { free(buf); }
     return b;
 }
 

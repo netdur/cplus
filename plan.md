@@ -71,12 +71,12 @@ From `/Users/adel/Workspace/bench-cplus/handoff.md` (C+ vs C / Rust / Swift / No
 
 **Needs design (not a quick fix):**
 
-- **B-2 / auto-`noalias` from borrow-checker proofs** (P0, medium): the handoff wants borrow-checked non-aliasing params to get `noalias` without manual `restrict`. Nuance: `mut`/`move` pointer-passed struct params *already* emit `noalias` (see `param_attrs`); `restrict` exists specifically for raw `*T`, which the borrow checker deliberately does **not** track. So "the BC already knows" does not hold for the `*T` params that need it. A real improvement would extend the checker to reason about `*T` disjointness, which is a borrow-checker project, not an annotation tweak.
+- **B-2 / auto-`noalias` from borrow-checker proofs — AUDITED, no safe win.** Re-checked `param_attrs`: `mut`/`move` pointer-passed struct params *already* emit `noalias` (exactly the disjointness the BC proves); shared borrows get `readonly` and *cannot* be `noalias` (two shared borrows may alias the same object); raw `*T` is the only remaining shape, and the BC deliberately doesn't track it — that's what `restrict` is for. So the handoff's premise ("the BC proves disjointness but it doesn't reach the IR") is already false; auto-`noalias`-ing anything beyond what's emitted today would be a **soundness bug**. A real improvement needs a BC extension to track `*T` disjointness — a research project, not an annotation tweak.
 
 **Not reproducing on current build (verified fixed, candidates to close):**
 
-- **B-3 / `musttail` over-marking**: the handoff's repros (`return dot(..) > 0.0f32;`, `return sub(v, scale(..))`) now emit a plain `call fastcc`, not `musttail`. The tail-call detector already only marks literal `return CALL(args);` with matching return type. Add e2e regression tests, then close.
-- **B-4 / `let X: STRUCT = if { call } else { block-with-lets }` codegen panic**: the minimal repro compiles cleanly; this if-expression-value class has had fixes (see test comments near `codegen.rs` 17217/17381). Add the handoff's repro as an e2e test, then close.
+- **B-3 / `musttail` over-marking — CLOSED.** The handoff's repros (`return dot(..) > 0.0f32;`, `return sub(v, scale(..))`) emit a plain `call fastcc`, not `musttail`; the detector already only marks literal `return CALL(args);` with matching return type. Regression test added (`musttail_wrong_return_type_and_nested_expr_compile`).
+- **B-4 / `let X: STRUCT = if { call } else { block-with-lets }` codegen panic — CLOSED.** Fixed (`3230bbb`); the handoff's exact struct-`V` repro is now pinned by `let_struct_eq_if_else_with_block_arm_compiles` (alongside the `str`-arm test from the original fix).
 
 **Not a bug (do not "fix"):**
 
@@ -85,7 +85,7 @@ From `/Users/adel/Workspace/bench-cplus/handoff.md` (C+ vs C / Rust / Swift / No
 **Deferred (high effort or library, not language codegen):**
 
 - **B-7 / no SROA on `malloc`/arena `*T`** (P3, high): tree/graph workloads (binary_trees 8-32× vs Perry). Needs cross-function escape analysis; the pointer escapes opaquely from the allocator. Incremental angles: an `#[inline(always)]`-equivalent so `arena.alloc[T]` inlines and the bump math becomes visible; a compiler-recognized `Box[T]` form; or document "use arrays + indices for pointer-tree-shaped hot code".
-- **B-8 / `vendor/json` 2-7× slower than JS parsers** (P3, library): hand-rolled recursive descent with no SIMD whitespace skip, no integer number fast-path (always `strtod`), per-string `to_string()`. Library work, not codegen; 2-3× likely without API change.
+- **B-8 / `vendor/json` slower than JS parsers — 2.24× FIXED** (library, no API change). The number path was the cost: `parse_number` did 2 malloc/free + memcpy + `strtod` per number, and `encode_number` did 3 malloc/free + an snprintf-format-build + snprintf + a `strtod` round-trip-probe per number. Added an **integer fast-path on both sides**: a canonical `-?[0-9]+` of ≤15 digits is exact in f64 (|v| < 2^53), so it parses by i64 accumulation and emits by manual base-10 — no malloc, no strtod, no snprintf. Non-canonical / float / big-int forms fall back to the prior strtod/snprintf path (values bit-identical; the fast-path only fires where i64↔f64 is provably exact, and `-0`/signed-zero is deliberately routed to the slow path to preserve output). The fallback paths also moved their scratch buffers + strtod end-pointer to the stack via `#addr_of`, so only pathologically long literals touch the heap. Measured on a 140 KB number-heavy payload (200× parse+stringify): **1950ms → 871ms**, identical checksum; all 23 in-package tests green. Remaining headroom (not done): 8-byte-chunk whitespace skip, per-string buffer pre-sizing — smaller, string-shaped wins.
 
 - **B-9 / `size_of` → `#size_of`**: already shipped (v0.0.11 intrinsic-sigil cutover). Changelog/migration note is the only follow-up.
 
@@ -104,4 +104,4 @@ The handoff was re-run with `--release` / `cpc --release --emit-ll-opt`, confirm
 
 **Lesson recorded in the handoff:** `cpc --emit-ll` is pre-opt and not comparable to clang's optimized IR; `cpc --release --emit-ll-opt` is the apples-to-apples surface. Most of the original P0/P1 deflated once measured there.
 
-Net open: **B-1** (real codegen, low urgency since C+ already wins wall-time), **B-2** (borrow-checker → `noalias` auto-propagation, P1), **B-8** (json library perf, P2). **B-10** (fp-contract knob) shipped.
+Net open: **B-1** (real codegen — needs a mini-SLP pass to emit `<2 x T>` loads for runs of consecutive same-width struct fields; **low urgency**, C+ already wins wall-time so this widens the lead on non-Apple hardware rather than fixing a loss; high regression risk for a speculative win → not shipped speculatively). **B-2** audited: already covered for the shapes the BC proves; the rest needs a `*T`-disjointness BC project (unsound otherwise). Shipped this round: **B-3**/**B-4** regression tests, **B-8** number fast-paths (2.24×), **B-10** (fp-contract knob).
