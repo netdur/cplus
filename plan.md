@@ -59,3 +59,47 @@ Turned C+'s systems-language strengths into compiler-enforced soft-real-time con
 - **Phase 7 — platform packages** ✅ (Darwin) — `vendor/rt_darwin`: `clock` (monotonic ns via `clock_gettime`), `thread` (QoS priority → `Result`), `mem` (`mlock`/`munlock` → `Result`). 8 tests. `rt_linux`/`rt_posix` mirror it later.
 - **Phase 8 — profiles + tooling** ✅ — `[profile.realtime]` (`deny_alloc`/`deny_block`/`deny_unknown_extern`/`stack_limit`) synthesizes the contract attributes onto *local* functions (deps exempt). `cpc check` (no FILE) = whole-project front-end gate, no codegen; JSON via `--diagnostics=json`.
 - **Demo** ✅ — `proves/realtime_audio`: a `#[realtime]`+`#[max_stack]` audio callback over an SPSC control channel, raising thread QoS and recording per-frame latency; E0901/E0907/E0908 verified to fire in-context.
+
+## Benchmark gaps (bench-cplus handoff, triaged 2026-05-30)
+
+From `/Users/adel/Workspace/bench-cplus/handoff.md` (C+ vs C / Rust / Swift / Node / Bun). Each item was re-verified against the current build before recording; the handoff was written against a slightly older cpc, so several items no longer reproduce.
+
+**Confirmed open:**
+
+- **B-1 / no `<2 x float>` struct-field loads** (P0, medium): struct loads emit a scalar GEP + scalar `load` per field; LLVM's SLP-vectorizer does not re-fuse them on the raytracer hot path, so a `V3` dot stays scalar (0 vector ops in `--emit-ll-opt`). clang emits `load <2 x float>` for the leading pair. Direction: at struct-load-by-value emission, when a struct has ≥2 consecutive same-width fields at a naturally-aligned offset, emit `load <2 x T>` for the run plus a scalar tail load. This is the real raytracer perf gap; the FMA path already matches C, vectorized struct loads would push below it.
+- **B-5 / by-value `self` (and value params) still alloca+store at entry** (P1, low-med): `define %V3 @V3.add(%V3 %0, ...)` is correct, but the body still does `%self.addr = alloca %V3; store %V3 %0, ptr %self.addr` and reads through the pointer. mem2reg/SROA recovers it, so the runtime cost is marginal; the win is smaller pre-opt IR (cpc emits 2-3× clang's line count) and easier inliner heuristics. Direction: when a by-value param's address is never taken (note: `#addr_of(param)` *can* take it, so this must be checked, not assumed) and it is not `mut`, bind the SSA value directly and use `extractvalue` for field reads instead of alloca+GEP+load.
+
+**Needs design (not a quick fix):**
+
+- **B-2 / auto-`noalias` from borrow-checker proofs** (P0, medium): the handoff wants borrow-checked non-aliasing params to get `noalias` without manual `restrict`. Nuance: `mut`/`move` pointer-passed struct params *already* emit `noalias` (see `param_attrs`); `restrict` exists specifically for raw `*T`, which the borrow checker deliberately does **not** track. So "the BC already knows" does not hold for the `*T` params that need it. A real improvement would extend the checker to reason about `*T` disjointness, which is a borrow-checker project, not an annotation tweak.
+
+**Not reproducing on current build (verified fixed, candidates to close):**
+
+- **B-3 / `musttail` over-marking**: the handoff's repros (`return dot(..) > 0.0f32;`, `return sub(v, scale(..))`) now emit a plain `call fastcc`, not `musttail`. The tail-call detector already only marks literal `return CALL(args);` with matching return type. Add e2e regression tests, then close.
+- **B-4 / `let X: STRUCT = if { call } else { block-with-lets }` codegen panic**: the minimal repro compiles cleanly; this if-expression-value class has had fixes (see test comments near `codegen.rs` 17217/17381). Add the handoff's repro as an e2e test, then close.
+
+**Not a bug (do not "fix"):**
+
+- **B-6 / f32 literal "double-rounding"**: NOT a defect. The lexer already parses f32-suffixed literals directly to f32 (single rounding) and widens losslessly to f64 for AST storage. `0.4f32` emits `store float 0x3FD99999A0000000` = f32 `0x3ECCCCCD`, the correctly-rounded value, and **clang emits byte-identical IR for `0.4f`** (verified). The handoff's "C produces `0x3ECCCCCC`" is incorrect. Any MD5 divergence has another source; changing this path would make cpc *wrong*.
+
+**Deferred (high effort or library, not language codegen):**
+
+- **B-7 / no SROA on `malloc`/arena `*T`** (P3, high): tree/graph workloads (binary_trees 8-32× vs Perry). Needs cross-function escape analysis; the pointer escapes opaquely from the allocator. Incremental angles: an `#[inline(always)]`-equivalent so `arena.alloc[T]` inlines and the bump math becomes visible; a compiler-recognized `Box[T]` form; or document "use arrays + indices for pointer-tree-shaped hot code".
+- **B-8 / `vendor/json` 2-7× slower than JS parsers** (P3, library): hand-rolled recursive descent with no SIMD whitespace skip, no integer number fast-path (always `strtod`), per-string `to_string()`. Library work, not codegen; 2-3× likely without API change.
+
+- **B-9 / `size_of` → `#size_of`**: already shipped (v0.0.11 intrinsic-sigil cutover). Changelog/migration note is the only follow-up.
+
+### Re-validated at -O2 (bench agent, 2026-05-30)
+
+The handoff was re-run with `--release` / `cpc --release --emit-ll-opt`, confirming the `-O0` contamination. Final state:
+
+- **B-1 / scalar Vec3 arithmetic — CONFIRMED real at -O2** (the lone surviving codegen item). In `ray_color`, post-opt: C emits 52 `<2 x float>` fmul/fadd/fsub (asm: 27 `fmul.2s` + 13 `fadd.2s` + 6 `fsub.2s`); C+ emits 0 of any `.2s` op. So the vectorization gap is real at the actual codegen level, not an `-O0` artifact. *But* C+ already beats C on wall-time via its FMA path, so the perf urgency is low; this would widen the lead, not erase a loss. Direction unchanged: emit `<2 x T>` loads/arith for runs of consecutive same-width struct fields.
+- **B-5, B-6, B-7 — CLOSED, not bugs.** B-5: raytracer has 182 allocas pre-opt, **0 post-opt** (mem2reg/SROA). B-6: confirmed cpc == clang (`store float 0x3FD99999A0000000` for `0.4`); the original "C produces `0x3ECCCCCC`" was a misread. B-7: LLVM eliminates non-escaping mallocs at -O2; the `binary_trees` gap is escaping tree nodes (fundamental AOT-no-GC vs JIT-with-GC tradeoff), not a cpc gap.
+- **B-3, B-4 — CONFIRMED fixed.** Add e2e regression tests capturing the repros, then close.
+- **IR line count — not meaningful.** Post-opt cpc 871 vs clang 769 (13%), not the "2280 vs 769" the pre-opt comparison suggested.
+
+**B-10 / fp-contract default differs from C — NEW (the actual MD5-mismatch cause).** cpc allows fp-contraction by default (raytracer asm: 60 `fmadd`/`fmsub`); the reference C build used `-fno-fast-math -ffp-contract=off` (0 fused ops). Output bits diverge from FMA fusion, not literal precision. Not a correctness bug (FMA is more accurate), but it blocks bit-identical-to-C output. *This one touches the surface:* a `--fp-contract=off` CLI flag and/or a `#[fp_contract(off)]` attribute (fits the attribute-as-metadata model) would let a user opt into bit-reproducible FP. Decide on its own merits; it is the only handoff item that needs a surface addition.
+
+**Lesson recorded in the handoff:** `cpc --emit-ll` is pre-opt and not comparable to clang's optimized IR; `cpc --release --emit-ll-opt` is the apples-to-apples surface. Most of the original P0/P1 deflated once measured there.
+
+Net open: **B-1** (real codegen, low urgency since C+ already wins wall-time), **B-2** (borrow-checker → `noalias` auto-propagation, P1), **B-10** (fp-contract knob, surface decision), **B-8** (json library perf, P2).
