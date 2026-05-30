@@ -12674,6 +12674,41 @@ impl<'a> FnState<'a> {
                 self.emit(&format!("{out} = load {lty}, ptr {p}, align {align}"));
                 (out, recv.clone())
             }
+            // G-037: `TARGET::reinterpret(v)` → `bitcast`. Same total width
+            // (sema-checked); a same-type reinterpret is a legal no-op bitcast.
+            "reinterpret" => {
+                let (v, src_ty) = self.gen_expr(&args[0]).expect("reinterpret arg");
+                let src_lty = self.lty(&src_ty);
+                if src_lty == lty {
+                    return (v, recv.clone());
+                }
+                let out = self.next_tmp();
+                self.emit(&format!("{out} = bitcast {src_lty} {v} to {lty}"));
+                (out, recv.clone())
+            }
+            // G-038a: `FLOATxN::from_int(v)` → `sitofp`/`uitofp` (signedness of
+            // the source lane type).
+            "from_int" => {
+                let (v, src_ty) = self.gen_expr(&args[0]).expect("from_int arg");
+                let src_lty = self.lty(&src_ty);
+                let op = match &src_ty {
+                    Ty::Simd { elem: se, .. } if se.is_unsigned_int() => "uitofp",
+                    _ => "sitofp",
+                };
+                let out = self.next_tmp();
+                self.emit(&format!("{out} = {op} {src_lty} {v} to {lty}"));
+                (out, recv.clone())
+            }
+            // G-038a: `INTxN::from_float(v)` → `fptosi`/`fptoui` (signedness of
+            // the integer target lane type). Truncates toward zero.
+            "from_float" => {
+                let (v, src_ty) = self.gen_expr(&args[0]).expect("from_float arg");
+                let src_lty = self.lty(&src_ty);
+                let op = if elem.is_unsigned_int() { "fptoui" } else { "fptosi" };
+                let out = self.next_tmp();
+                self.emit(&format!("{out} = {op} {src_lty} {v} to {lty}"));
+                (out, recv.clone())
+            }
             _ => unreachable!("sema validated `{}::{method}`", "<simd>"),
         }
     }

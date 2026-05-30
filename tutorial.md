@@ -2469,6 +2469,25 @@ All numeric: `.min(b)`, `.max(b)` (NaN-as-missing for floats; signed/unsigned pe
 
 Integer-only: `.and(b)`, `.or(b)`, `.xor(b)`, `.not()`, `.shl(count)`, `.shr(count)` (logical for unsigned, arithmetic for signed; count is a literal `u32` in `0..lane_bits`).
 
+### Lane-type conversion and reinterpret
+
+Three associated constructors on the target type convert between lane shapes. They take the source vector as their argument and return the target type (the same `::new`/`::splat` call form):
+
+```cplus
+let i: i32x4 = i32x4::new(1, 2, 3, 4);
+let f: f32x4 = f32x4::from_int(i);          // int → float, lane-wise (sitofp/uitofp)
+let j: i32x4 = i32x4::from_float(f);        // float → int, truncates toward zero (fptosi/fptoui)
+
+let bytes: u8x16 = u8x16::splat(255u8);
+let signed: i8x16 = i8x16::reinterpret(bytes);   // same bits, different lane type (bitcast)
+let shorts: i16x8 = i16x8::reinterpret(signed);  // same 128 bits, fewer/wider lanes
+```
+
+- `FLOATxN::from_int(v)` / `INTxN::from_float(v)`: the source must be a SIMD of the **same lane count and lane width** (`i32x4` ↔ `f32x4`, `i64x2` ↔ `f64x2`). Signedness of the integer side picks signed vs unsigned conversion. Mismatches are **E0324**.
+- `TARGET::reinterpret(v)`: a bit-preserving cast. The source must have the **same total width** (e.g. `i8x16` → `i16x8`, both 128 bits); lane count and type may differ. A width mismatch is **E0324**. Safe — no memory access, no value change.
+
+These are the lane primitives that let integer pipelines widen and dequantize (the building blocks under a quantized dot product); the scalar `as` cast works per-value but does not convert a whole vector.
+
 ### Lane access
 
 ```cplus

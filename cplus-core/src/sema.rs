@@ -9117,6 +9117,158 @@ impl SemaCx<'_> {
                 let _ = self.check_expr(&args[0], Some(want));
                 recv.clone()
             }
+            // G-037: `TARGET::reinterpret(v)` — bitcast a SIMD value to the
+            // target lane shape, preserving the bits (NEON `vreinterpretq_*`).
+            // Source and target must have the same total width; lane type/count
+            // may differ (e.g. `i16x8::reinterpret(v: i8x16)`). Safe — no memory
+            // access, no value change.
+            "reinterpret" => {
+                if args.len() != 1 {
+                    self.err(
+                        "E0308",
+                        format!(
+                            "`{}::reinterpret` takes 1 argument, got {}",
+                            ty_display(recv),
+                            args.len()
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let at = self.check_expr(&args[0], None);
+                if let Ty::Simd { elem: se, lanes: sl } = &at {
+                    let src_bits = simd_lane_bits(se) * *sl;
+                    let dst_bits = simd_lane_bits(&elem_ty) * lanes_u;
+                    if src_bits == dst_bits && src_bits != 0 {
+                        return recv.clone();
+                    }
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::reinterpret` requires a SIMD value of the same total width ({} bits); `{}` is {} bits",
+                            ty_display(recv),
+                            dst_bits,
+                            ty_display(&at),
+                            src_bits
+                        ),
+                        call_span,
+                    );
+                } else if at != Ty::Error {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::reinterpret` expects a SIMD argument, found `{}`",
+                            ty_display(recv),
+                            ty_display(&at)
+                        ),
+                        call_span,
+                    );
+                }
+                Ty::Error
+            }
+            // G-038a: `FLOATxN::from_int(v)` — lane-wise integer→float convert
+            // (NEON `vcvtq_f32_s32` / `_u32`). Target lanes are float; the
+            // argument is an int SIMD of the same lane count and lane width
+            // (e.g. `f32x4::from_int(i32x4)`, `f64x2::from_int(u64x2)`).
+            // Signedness of the source picks `sitofp` vs `uitofp` in codegen.
+            "from_int" => {
+                if !elem_ty.is_float() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::from_int` is only valid on a float SIMD target",
+                            ty_display(recv)
+                        ),
+                        method.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if args.len() != 1 {
+                    self.err(
+                        "E0308",
+                        format!("`{}::from_int` takes 1 argument, got {}", ty_display(recv), args.len()),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let at = self.check_expr(&args[0], None);
+                if let Ty::Simd { elem: se, lanes: sl } = &at {
+                    if se.is_int() && *sl == lanes_u && simd_lane_bits(se) == simd_lane_bits(&elem_ty) {
+                        return recv.clone();
+                    }
+                }
+                if at != Ty::Error {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::from_int` expects an integer SIMD of the same lane count and width (e.g. `i32x4` → `f32x4`), found `{}`",
+                            ty_display(recv),
+                            ty_display(&at)
+                        ),
+                        call_span,
+                    );
+                }
+                Ty::Error
+            }
+            // G-038a: `INTxN::from_float(v)` — lane-wise float→integer convert
+            // (NEON `vcvtq_s32_f32` / `_u32`). Target lanes are int; the
+            // argument is a float SIMD of the same lane count and lane width
+            // (e.g. `i32x4::from_float(f32x4)`). Target signedness picks
+            // `fptosi` vs `fptoui`. Truncates toward zero, like a scalar `as`.
+            "from_float" => {
+                if !elem_ty.is_int() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::from_float` is only valid on an integer SIMD target",
+                            ty_display(recv)
+                        ),
+                        method.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                if args.len() != 1 {
+                    self.err(
+                        "E0308",
+                        format!("`{}::from_float` takes 1 argument, got {}", ty_display(recv), args.len()),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let at = self.check_expr(&args[0], None);
+                if let Ty::Simd { elem: se, lanes: sl } = &at {
+                    if se.is_float() && *sl == lanes_u && simd_lane_bits(se) == simd_lane_bits(&elem_ty) {
+                        return recv.clone();
+                    }
+                }
+                if at != Ty::Error {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::from_float` expects a float SIMD of the same lane count and width (e.g. `f32x4` → `i32x4`), found `{}`",
+                            ty_display(recv),
+                            ty_display(&at)
+                        ),
+                        call_span,
+                    );
+                }
+                Ty::Error
+            }
             _ => {
                 self.err(
                     "E0324",
@@ -11757,6 +11909,21 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
             lanes: 4,
         }),
         _ => None,
+    }
+}
+
+/// Bit width of a SIMD lane scalar type. `isize`/`usize` are 64-bit on the
+/// targets cpc supports today. Returns 0 for non-scalar types (callers only
+/// pass SIMD element types, which are always scalar). Used by the SIMD
+/// reinterpret / int↔float-convert assoc calls to check total-width and
+/// lane-width compatibility.
+fn simd_lane_bits(ty: &Ty) -> u32 {
+    match ty {
+        Ty::I8 | Ty::U8 => 8,
+        Ty::I16 | Ty::U16 => 16,
+        Ty::I32 | Ty::U32 | Ty::F32 => 32,
+        Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => 64,
+        _ => 0,
     }
 }
 

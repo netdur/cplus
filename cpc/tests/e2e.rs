@@ -11308,6 +11308,74 @@ fn main() -> i32 {
     );
 }
 
+/// SIMD Tier-1 (G-037 reinterpret, G-038a int↔float convert): lane-type
+/// bitcast and lane-wise int/float conversion, end to end. Covers signed and
+/// unsigned source conversion and a 64-bit-lane round trip.
+#[test]
+fn simd_reinterpret_and_int_float_convert_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("conv.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    // signed int -> float -> int round trip (sitofp / fptosi)
+    let a: i32x4 = i32x4::new(0 - 5, 7, 100, 3);
+    let back: i32x4 = i32x4::from_float(f32x4::from_int(a));
+    if back.lane(0 as u32) != (0 - 5) { return 1; }
+    if back.lane(3 as u32) != 3 { return 2; }
+    // unsigned -> float -> unsigned: a big u32 stays positive (uitofp/fptoui)
+    let u: u32x4 = u32x4::splat(4000000000u32);
+    let ui: u32x4 = u32x4::from_float(f32x4::from_int(u));
+    if ui.lane(0 as u32) < (2000000000u32) { return 3; }
+    // 64-bit lanes (sitofp/fptosi on <2 x i64>/<2 x double>)
+    let l: i64x2 = i64x2::new((0 as i64) - (42 as i64), 99 as i64);
+    let lb: i64x2 = i64x2::from_float(f64x2::from_int(l));
+    if lb.lane(0 as u32) != ((0 as i64) - (42 as i64)) { return 4; }
+    // reinterpret: u8 lanes as i8 (no-op width), then i8x16 as i16x8 (bitcast)
+    let bytes: u8x16 = u8x16::splat(255u8);
+    let signed: i8x16 = i8x16::reinterpret(bytes);
+    let shorts: i16x8 = i16x8::reinterpret(signed);
+    // 0xFFFF as i16 == -1; first lane must be -1
+    if shorts.lane(0 as u32) != ((0 as i16) - (1 as i16)) { return 5; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("conv");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD convert/reinterpret e2e");
+    let run = Command::new(&bin).status().expect("run conv");
+    assert_eq!(run.code(), Some(0), "SIMD convert/reinterpret failed; exit {:?}", run.code());
+}
+
+/// Negative: the SIMD Tier-1 conversions reject shape mismatches with E0324.
+#[test]
+fn simd_convert_rejects_shape_mismatches() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let cases: &[(&str, &str)] = &[
+        // from_int needs an int source of the same lane width
+        ("from_int_lane_width", "let a: i16x8 = i16x8::splat(1i16); let _b: f32x4 = f32x4::from_int(a);"),
+        // from_int target must be float
+        ("from_int_int_target", "let a: i32x4 = i32x4::splat(1); let _b: i32x4 = i32x4::from_int(a);"),
+        // from_float target must be int
+        ("from_float_float_target", "let a: f32x4 = f32x4::splat(1.0f32); let _b: f32x4 = f32x4::from_float(a);"),
+        // reinterpret needs equal total width (128 vs 256 bits)
+        ("reinterpret_width", "let a: f64x4 = f64x4::splat(1.0f64); let _b: i8x16 = i8x16::reinterpret(a);"),
+    ];
+    for (label, body) in cases {
+        let src = dir.join(format!("{label}.cplus"));
+        std::fs::write(&src, format!("fn main() -> i32 {{ {body} return 0; }}\n")).unwrap();
+        let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+        assert!(!out.status.success(), "{label}: expected rejection");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("E0324"), "{label}: expected E0324, got:\n{stderr}");
+    }
+}
+
 /// v0.0.6 Slice 1B expansion: byte and short SIMD widths
 /// (`i8x16`, `i16x8`, `u8x16`, `u16x8`) — completes the 128-bit family.
 #[test]
