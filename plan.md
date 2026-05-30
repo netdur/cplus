@@ -60,6 +60,26 @@ Turned C+'s systems-language strengths into compiler-enforced soft-real-time con
 - **Phase 8 — profiles + tooling** ✅ — `[profile.realtime]` (`deny_alloc`/`deny_block`/`deny_unknown_extern`/`stack_limit`) synthesizes the contract attributes onto *local* functions (deps exempt). `cpc check` (no FILE) = whole-project front-end gate, no codegen; JSON via `--diagnostics=json`.
 - **Demo** ✅ — `proves/realtime_audio`: a `#[realtime]`+`#[max_stack]` audio callback over an SPSC control channel, raising thread QoS and recording per-frame latency; E0901/E0907/E0908 verified to fire in-context.
 
+## SIMD lane primitives (llama.cplus quant port, see `llama.cplus/cpc-gaps.md` G-035..G-040)
+
+The ggml NEON quant kernels need integer-widening SIMD ops the builtin set lacked (`vdotq_s32`, `vmull`/`vmlal`, `vreinterpretq`, `vget_low/high`+`vcombine`, `vqtbl1q`). Triaged into three tiers by irreducibility: Tier-1 = compiler (must add to cpc), Tier-2 = `vendor/simd` (composable), Tier-3 = `src/ggml/` quant kernels (downstream consumer's, not cpc's). **Tier-1 and Tier-2 shipped 2026-05-31; Tier-3 is unblocked.**
+
+**Tier-1 — compiler (✅ complete).** All map to a single LLVM op / target intrinsic, added to `check_simd_assoc_call`/`check_simd_method_call` (sema) + `gen_simd_assoc_call`/`gen_simd_method_call` (codegen):
+- **G-037 `reinterpret`** (`eaaf881`) — `TARGET::reinterpret(v)` → `bitcast`, same total width.
+- **G-038a `from_int`/`from_float`** (`eaaf881`) — `sitofp`/`uitofp` / `fptosi`/`fptoui`, same lane count + width.
+- **G-039a 64-bit lane types** (`25f71d1`) — `i8x8`/`u8x8`/`i16x4`/`u16x4`/`i32x2`/`u32x2`/`f32x2` added to all four SIMD name tables (sema `resolve_type` + `simd_ty_from_name`; codegen's two recognizers); the per-width method/ABI/mangling machinery was already width-generic.
+- **G-039b `low`/`high`/`combine`** (`25f71d1`) — 128↔64 splits/joins via `shufflevector`.
+- **G-038b `widen`/`narrow`** (`25f71d1`) — `sext`/`zext` / `trunc`, one integer lane-size step.
+- **G-040 `table`** (`86080a7`) — `tbl.table(idx)` byte lookup; aarch64 `llvm.aarch64.neon.tbl1.v16i8`, portable per-lane gather elsewhere; out-of-range → 0.
+- **G-035 swizzle literal guard** — already present in-repo (E0873/E0874).
+- **G-036 (widening int dot — the silent-miscompute)** — *not* a compiler primitive; made composable by widen+low/high+arith, proven by a `dot8` e2e returning the correct non-wrapping result.
+
+**Tier-2 — `vendor/simd/integer` (✅ shipped, `3d9f094`).** Integer lane library composed purely from Tier-1, no compiler change: `mull_i8`/`mull_lo_i8`/`mull_hi_i8`, `mlal_i8`, `paddl_i8`, and `dot_i32` (16-lane signed-byte dot accumulated in i32 — the composable `vdotq_s32`). 8 in-package `#[test]`s + cross-package import verified.
+
+**Tier-3 — `src/ggml/` (downstream, not cpc).** q8_0 can call `simd/integer::dot_i32` now (no LUT); Q4/Q5 use `table` for nibble dequant.
+
+Tutorial §33 (SIMD types) + §28 (vendor/simd) document the full surface. Net: every cpc-side SIMD gap (G-035..G-040) is closed.
+
 ## Benchmark gaps (bench-cplus handoff, triaged 2026-05-30)
 
 From `/Users/adel/Workspace/bench-cplus/handoff.md` (C+ vs C / Rust / Swift / Node / Bun). Each item was re-verified against the current build before recording; the handoff was written against a slightly older cpc, so several items no longer reproduce.
