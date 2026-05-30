@@ -9,12 +9,13 @@ running on a normal OS. Hard real-time requires OS, scheduler, interrupt, and
 hardware guarantees outside the language; C+ can support that later, but the
 first milestone should be deterministic hot-path code on ordinary platforms.
 
-## Status (v0.0.12, 2026-05-29)
+## Status (v0.0.12, 2026-05-30)
 
 | Step | State |
 | :--- | :--- |
 | `#[no_alloc]` (Phase 1, first pass) | ✅ shipped (v0.0.10) |
 | `#[no_alloc]` string-interpolation detection (Phase 1 hardening) | ✅ shipped — E0901 on `"…${x}…"` in a marked fn |
+| `#[no_alloc]`/`#[no_block]` method-dispatch enforcement (Phase 1 hole) | ✅ shipped (2026-05-30) — `recv.method()` inside a marked body must dispatch to a method carrying the same contract (else E0901/E0907); resolved precisely at typecheck time via a `(source-type, method)` contract map; `to_string()` rejected as an allocator. No false positives across vendor/rt + the demo + full suites; 4 e2e tests |
 | Annotate atomic stdlib subset (Phase 2 slice) | ✅ `u64` atomics + `atomic_thread_fence` marked `#[no_alloc]`/`#[no_block]` |
 | `#[no_block]` (Phase 3) | ✅ shipped — E0907 on blocking primitives (locks, waits, sleep, blocking I/O, sockets) |
 | `#[realtime]` bundle (Phase 4) | ✅ shipped — `#[no_alloc]` + `#[no_block]` + `#[bounded_recursion]` |
@@ -25,13 +26,25 @@ first milestone should be deterministic hot-path code on ordinary platforms.
 | Platform RT packages (Phase 7) | ✅ shipped — `vendor/rt_darwin`: `clock` (monotonic ns timestamps), `thread` (QoS priority → `Result`), `mem` (`mlock`/`munlock` → `Result`); 8 tests; demo configures audio QoS + records per-frame latency. `rt_linux`/`rt_posix` mirror it later. |
 | Tighten `Send`/`Sync` (Phase 6) | 🟡 core shipped — `Rc[T]` is `!Send`+`!Sync`, `MutexGuard[T]` is `!Send` (E0502 at `Send`/`Sync`-bounded sites incl. `thread::spawn`); `Arc[T]` stays `Send`+`Sync`. Broad "raw-ptr structs `!Send`" rule deferred — needs an `unsafe impl Send` opt-in that doesn't exist yet |
 
-**Phase 1 remaining gap (documented, not yet closed):** the call-graph walk
-resolves free-function and associated-call names but **skips instance
-method-dispatch sites** (`recv.method()`) and **compiler-inserted drop glue**.
-The common allocation sources (libc allocators, string interpolation,
-`Vec`/`String`/`Box` constructors written as free/assoc fns) are caught; an
-allocation reached purely through an unannotated user *method* is not. Closing
-this needs a resolved-method-target map threaded into the real-time pass.
+**Phase 1 — method dispatch now enforced (2026-05-30).** `recv.method()` calls
+inside a `#[no_alloc]`/`#[no_block]`/`#[realtime]` body are now checked: the
+dispatched method must itself carry the same contract, else E0901/E0907.
+Resolved precisely at typecheck time in `check_method_call` (the receiver type
+is known there) against a `(source-type, method) → (no_alloc, no_block)` map
+built from every impl's actual attributes — keyed on the source type via
+`generic_origin` so an instantiation (`Vec[i32]`) maps to its template
+(`Vec`), and a dependency method's verdict stays correct regardless of any
+local `[profile.realtime]` injection. Blessed `to_string()` (which allocates)
+is rejected at its own site. The common sources (libc allocators, string
+interpolation, `Vec`/`String`/`Box` constructors as free/assoc fns) were
+already caught by the post-pass; this closes the allocation-through-a-method
+hole that was the one open *soundness* gap.
+
+**Phase 1 remaining gap (documented, deferred):** **compiler-inserted drop
+glue** — a `Drop` destructor that itself allocates, run implicitly at scope
+exit of a marked body. Narrow in practice (destructors free, they don't
+allocate) and closing it cleanly needs ownership analysis to know which values
+drop in the body. Not yet enforced.
 
 **Note on inline assembly:** raw inline `#asm` (if added — see `plan.asm.md`)
 must be treated as an unknown callee by these passes — rejected inside
@@ -92,16 +105,17 @@ real-time claims.
 
 Required work:
 
-1. Build the `#[no_alloc]` check from sema-resolved call information, not only
+1. ✅ Build the `#[no_alloc]` check from sema-resolved call information, not only
    textual AST call names.
-2. Resolve method calls, associated calls, generic instantiations, and imported
-   package functions.
-3. Reject unknown callees inside `#[no_alloc]` functions. Unknown must mean
-   "not proven", not "allowed".
-4. Include compiler-inserted work in the contract, especially drop glue and
-   string/interpolation helpers.
-5. Track `#[link_name]` externs by effective C symbol.
-6. Keep the explicit extern escape hatch:
+2. ✅ Resolve method calls (2026-05-30), associated calls, generic
+   instantiations, and imported package functions. Method dispatch is checked
+   at typecheck time against a `(source-type, method)` contract map.
+3. ✅ Reject unknown callees inside `#[no_alloc]` functions. Unknown extern must
+   mean "not proven", not "allowed".
+4. ⬜ Include compiler-inserted work in the contract: string/interpolation
+   helpers ✅ (interpolation rejected), **drop glue still deferred**.
+5. ✅ Track `#[link_name]` externs by effective C symbol.
+6. ✅ Keep the explicit extern escape hatch:
 
 ```cplus
 #[no_alloc]
