@@ -11454,6 +11454,62 @@ fn main() -> i32 {
     assert_eq!(run.code(), Some(0), "widening dot product wrong; exit {:?}", run.code());
 }
 
+/// SIMD Tier-1 (G-040): data-dependent byte table lookup (`vqtbl1q`).
+/// `tbl.table(idx)` gathers `tbl[idx[i]]` per lane; out-of-range indices
+/// yield 0. The one runtime-index shuffle (swizzle needs literal indices).
+#[test]
+fn simd_table_lookup_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("tbl.cplus");
+    std::fs::write(
+        &src,
+        "\
+fn main() -> i32 {
+    let t: u8x16 = u8x16::new(10u8,20u8,30u8,40u8,50u8,60u8,70u8,80u8,
+                              90u8,100u8,110u8,120u8,130u8,140u8,150u8,160u8);
+    // lanes 0,2,15 in range; lane 3 index 200 is out of range -> 0.
+    let idx: u8x16 = u8x16::new(0u8,2u8,15u8,200u8, 0u8,0u8,0u8,0u8,
+                               0u8,0u8,0u8,0u8, 0u8,0u8,0u8,0u8);
+    let r: u8x16 = t.table(idx);
+    if r.lane(0 as u32) != 10u8 { return 1; }   // t[0]
+    if r.lane(1 as u32) != 30u8 { return 2; }   // t[2]
+    if r.lane(2 as u32) != 160u8 { return 3; }  // t[15]
+    if r.lane(3 as u32) != 0u8 { return 4; }    // out of range
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("tbl");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for SIMD table lookup");
+    let run = Command::new(&bin).status().expect("run tbl");
+    assert_eq!(run.code(), Some(0), "SIMD table lookup wrong; exit {:?}", run.code());
+}
+
+/// Negative: `table` requires a 16-byte SIMD table.
+#[test]
+fn simd_table_rejects_non_byte16() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+         let t: i32x4 = i32x4::splat(1);\n\
+         let i: u8x16 = u8x16::splat(0u8);\n\
+         let _r = t.table(i);\n\
+         return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(!out.status.success(), "table on i32x4 must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0324"), "expected E0324, got:\n{stderr}");
+}
+
 /// Negative: widen/narrow reject lane types with no wider/narrower step.
 #[test]
 fn simd_widen_narrow_reject_invalid() {

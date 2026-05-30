@@ -2547,6 +2547,16 @@ let hi: f32x4 = v.interleave_hi(other);
 
 `sum()` / `product()` lower to `llvm.vector.reduce.{fadd,fmul}.<vN>`; `min_across()` / `max_across()` to `llvm.vector.reduce.{fmin,fmax,smin,smax,umin,umax}.<vN>`.
 
+`swizzle` needs **literal** indices. For a **runtime** index vector, use `table` on a 16-byte SIMD (NEON `vqtbl1q`):
+
+```cplus
+let t:   u8x16 = u8x16::splat(0u8);   // a 16-entry byte lookup table
+let idx: u8x16 = u8x16::splat(3u8);   // per-lane indices (runtime values)
+let r:   u8x16 = t.table(idx);        // r[i] = t[idx[i]]; out-of-range index -> 0
+```
+
+`tbl.table(idx)` requires a 16-byte receiver (`i8x16`/`u8x16`) and a `u8x16` index vector, and returns the receiver's type. On aarch64 it lowers to a single `vqtbl1q`; elsewhere to a per-lane gather with the same out-of-range-zeroing. This is the primitive behind 4-bit nibble dequant (expand packed nibbles through a lookup table).
+
 ### Masks + select
 
 Compare-and-blend is the canonical branchless pattern:

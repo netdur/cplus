@@ -3296,6 +3296,11 @@ fn write_preamble(out: &mut String) {
     // (DCE strips the unused one), used by `#cpu_relax()` codegen.
     if cfg!(target_arch = "aarch64") {
         out.push_str("declare void @llvm.aarch64.hint(i32 immarg)\n");
+        // v0.0.12 SIMD Tier-1 (G-040): NEON `vqtbl1q` byte table lookup,
+        // used by `i8x16/u8x16::table`. Out-of-range indices yield 0.
+        out.push_str(
+            "declare <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8>, <16 x i8>)\n",
+        );
     } else if cfg!(target_arch = "x86_64") {
         out.push_str("declare void @llvm.x86.sse2.pause()\n");
     }
@@ -13152,6 +13157,40 @@ impl<'a> FnState<'a> {
                 let result = self.next_tmp();
                 self.emit(&format!("{result} = trunc {lty} {recv} to {tlty}"));
                 (result, target)
+            }
+            // G-040: byte table lookup. On aarch64 this is a single
+            // `vqtbl1q` (out-of-range index -> 0). Elsewhere, a per-lane
+            // gather with the same out-of-range-zeroing semantics.
+            "table" => {
+                let (idx, _) = self.gen_expr(&args[0]).expect("table idx arg");
+                let result = self.next_tmp();
+                if cfg!(target_arch = "aarch64") {
+                    self.emit(&format!(
+                        "{result} = call <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8> {recv}, <16 x i8> {idx})"
+                    ));
+                    (result, recv_ty.clone())
+                } else {
+                    // Portable fallback: extract each index lane, bounds-check
+                    // (unsigned < 16), gather from the table, zero if out of
+                    // range, insert into the result.
+                    let mut cur = "undef".to_string();
+                    for i in 0..16u32 {
+                        let ei = self.next_tmp();
+                        self.emit(&format!("{ei} = extractelement <16 x i8> {idx}, i32 {i}"));
+                        let inb = self.next_tmp();
+                        self.emit(&format!("{inb} = icmp ult i8 {ei}, 16"));
+                        let safe = self.next_tmp();
+                        self.emit(&format!("{safe} = select i1 {inb}, i8 {ei}, i8 0"));
+                        let val = self.next_tmp();
+                        self.emit(&format!("{val} = extractelement <16 x i8> {recv}, i8 {safe}"));
+                        let val2 = self.next_tmp();
+                        self.emit(&format!("{val2} = select i1 {inb}, i8 {val}, i8 0"));
+                        let nxt = self.next_tmp();
+                        self.emit(&format!("{nxt} = insertelement <16 x i8> {cur}, i8 {val2}, i32 {i}"));
+                        cur = nxt;
+                    }
+                    (cur, recv_ty.clone())
+                }
             }
             _ => unreachable!("sema validated SIMD method `{method}`"),
         }

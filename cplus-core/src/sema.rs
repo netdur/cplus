@@ -8950,6 +8950,53 @@ impl SemaCx<'_> {
                     }
                 }
             }
+            // G-040: data-dependent byte table lookup (NEON `vqtbl1q`).
+            // `tbl.table(idx)` — the receiver is a 16-byte lookup table
+            // (`i8x16`/`u8x16`), `idx` is a `u8x16` of per-lane indices;
+            // result[i] = tbl[idx[i]], with out-of-range indices yielding 0.
+            // The one runtime-index shuffle (`swizzle` needs literal indices),
+            // used to expand 4-bit nibbles through a dequant LUT.
+            "table" => {
+                if reject_on_mask(self, "table", args) {
+                    return Ty::Error;
+                }
+                if !arity_err(self, 1) {
+                    return Ty::Error;
+                }
+                let is_byte16 =
+                    matches!(&elem_ty, Ty::I8 | Ty::U8) && lanes_u == 16;
+                if !is_byte16 {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::table` requires a 16-byte SIMD table (`i8x16` or `u8x16`)",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let want = Ty::Simd { elem: Box::new(Ty::U8), lanes: 16 };
+                let at = self.check_expr(&args[0], Some(want));
+                if !matches!(&at, Ty::Simd { elem, lanes } if matches!(**elem, Ty::U8) && *lanes == 16)
+                    && at != Ty::Error
+                {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`{}::table` index argument must be `u8x16`, found `{}`",
+                            ty_display(recv),
+                            ty_display(&at)
+                        ),
+                        call_span,
+                    );
+                    return Ty::Error;
+                }
+                recv.clone()
+            }
             "swizzle" => {
                 if !arity_err(self, 1) {
                     return Ty::Error;
