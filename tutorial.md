@@ -2305,8 +2305,9 @@ The error codes you'll see most often. The full list lives in `cplus-core/src/se
 | E0907 | `#[no_block]` violation | Function (or a callee) calls a blocking primitive — use a non-blocking API |
 | E0908 | `#[max_stack(N)]` exceeded | Estimated frame > N bytes — shrink locals/arrays or raise the budget |
 | E0900 | Borrow-shaped param in `async fn` | Use `string` / `Vec[T]` instead of `str` / `T[]` |
+| W0001 | *(warning)* `sum()`/`product()` over narrow integer SIMD lanes — silently wraps | `.widen()` the lanes first, or use `simd/integer::dot_i32` |
 
-Every diagnostic carries a span and often a machine-applicable suggestion. Use `--diagnostics=json` for tool consumption.
+Every diagnostic carries a span and often a machine-applicable suggestion. Use `--diagnostics=json` for tool consumption. **W**-prefixed codes are non-fatal warnings; the build continues.
 
 ---
 
@@ -2552,6 +2553,8 @@ let hi: f32x4 = v.interleave_hi(other);
 ```
 
 `sum()` / `product()` lower to `llvm.vector.reduce.{fadd,fmul}.<vN>`; `min_across()` / `max_across()` to `llvm.vector.reduce.{fmin,fmax,smin,smax,umin,umax}.<vN>`.
+
+A horizontal `sum()` / `product()` returns the **lane** type, so on narrow integer lanes (`i8`/`u8`/`i16`/`u16`) it cannot hold the reduction and silently wraps — the classic `i8x16.mul().sum()` mistake. The compiler emits a **W0001 warning** (non-fatal) at that site; the fix is to `.widen()` the lanes first, or use `simd/integer::dot_i32` (§28) for a widening dot product. Same-width arithmetic and reductions stay legal — the warning just flags the overflow-prone shape.
 
 `swizzle` needs **literal** indices. For a **runtime** index vector, use `table` on a 16-byte SIMD (NEON `vqtbl1q`):
 

@@ -1101,6 +1101,26 @@ impl SemaCx<'_> {
         });
     }
 
+    /// Emit a non-fatal warning. Same span-routing as `err`, but
+    /// `Severity::Warning` so the build continues (`has_error` ignores it).
+    /// Used for lints that flag a likely mistake without rejecting code that
+    /// is occasionally legitimate.
+    fn warn(&mut self, code: &'static str, msg: String, span: ByteSpan) {
+        let primary = match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
+            Some(fc) => fc.lm.span(&fc.path, span, &fc.src),
+            None => self.lm.span(&self.file, span, self.src),
+        };
+        self.sink.emit(Diagnostic {
+            severity: Severity::Warning,
+            code: DiagCode(code),
+            message: msg,
+            primary,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
+    }
+
     // ---- setup ----
 
     fn register_builtins(&mut self) {
@@ -8825,6 +8845,26 @@ impl SemaCx<'_> {
                 }
                 if !arity_err(self, 0) {
                     return Ty::Error;
+                }
+                // Lint (W0001): a horizontal `sum`/`product` over narrow
+                // integer lanes (< 32 bits) returns that same narrow lane
+                // type, which cannot hold the reduction of more than a couple
+                // of near-max lanes — the `i8x16.mul().sum()` quant footgun
+                // that silently wraps. Same-width arithmetic and `sum` stay
+                // legal (they're useful for small-valued lanes), so this is a
+                // non-fatal warning, not E0324. The fix: `.widen()` the lanes
+                // first, or use `simd/integer::dot_i32` for a widening dot.
+                if elem_ty.is_int() && simd_lane_bits(&elem_ty) < 32 {
+                    self.warn(
+                        "W0001",
+                        format!(
+                            "`{}` over narrow integer lanes (`{}`) returns `{}` and silently wraps when the reduction exceeds that type; `.widen()` the lanes first, or use `simd/integer::dot_i32` for a widening dot product",
+                            name.name,
+                            ty_display(recv),
+                            elem_ty.name(),
+                        ),
+                        name.span,
+                    );
                 }
                 elem_ty.clone()
             }

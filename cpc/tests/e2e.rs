@@ -11488,6 +11488,42 @@ fn main() -> i32 {
     assert_eq!(run.code(), Some(0), "SIMD table lookup wrong; exit {:?}", run.code());
 }
 
+/// W0001 lint: a horizontal `sum`/`product` over narrow integer lanes
+/// (the `i8x16.mul().sum()` quant footgun) warns but still compiles — the
+/// correct path is `.widen()` first or `simd/integer::dot_i32`. The
+/// widening `dot_i32` pipeline (sums i32x4) must stay warning-free.
+#[test]
+fn simd_narrow_int_sum_warns_but_compiles() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("foot.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+         let a: i8x16 = i8x16::splat(50i8);\n\
+         let prod: i8x16 = a.mul(i8x16::splat(50i8));\n\
+         return prod.sum() as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    assert!(out.status.success(), "W0001 is a warning — must not fail the build");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("W0001"), "expected W0001 warning, got:\n{stderr}");
+
+    // The correct widening sum (i32x4) must NOT warn.
+    let ok = dir.join("ok.cplus");
+    std::fs::write(
+        &ok,
+        "fn main() -> i32 { let a: i32x4 = i32x4::splat(5); return a.sum(); }\n",
+    )
+    .unwrap();
+    let out2 = Command::new(cpc).arg("check").arg(&ok).output().expect("invoke cpc");
+    assert!(out2.status.success());
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    assert!(!stderr2.contains("W0001"), "i32x4 sum must not warn, got:\n{stderr2}");
+}
+
 /// Negative: `table` requires a 16-byte SIMD table.
 #[test]
 fn simd_table_rejects_non_byte16() {

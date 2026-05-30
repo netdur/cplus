@@ -72,7 +72,7 @@ The ggml NEON quant kernels need integer-widening SIMD ops the builtin set lacke
 - **G-038b `widen`/`narrow`** (`25f71d1`) — `sext`/`zext` / `trunc`, one integer lane-size step.
 - **G-040 `table`** (`86080a7`) — `tbl.table(idx)` byte lookup; aarch64 `llvm.aarch64.neon.tbl1.v16i8`, portable per-lane gather elsewhere; out-of-range → 0.
 - **G-035 swizzle literal guard** — already present in-repo (E0873/E0874).
-- **G-036 (widening int dot — the silent-miscompute)** — *not* a compiler primitive; made composable by widen+low/high+arith, proven by a `dot8` e2e returning the correct non-wrapping result.
+- **G-036 (widening int dot — the silent-miscompute)** — *not* a compiler primitive; made composable by widen+low/high+arith, proven by a `dot8` e2e returning the correct non-wrapping result. **Residual footgun closed (`W0001` lint):** the naive `i8x16.mul().sum()` shape still compiles (same-width mul/sum are legitimate) but now emits a non-fatal warning — `sum`/`product` over narrow integer lanes (<32-bit) silently wraps; the lint points to `.widen()` or `simd/integer::dot_i32`. `dot_i32`'s i32-accumulation path is warning-free.
 
 **Tier-2 — `vendor/simd/integer` (✅ shipped, `3d9f094`).** Integer lane library composed purely from Tier-1, no compiler change: `mull_i8`/`mull_lo_i8`/`mull_hi_i8`, `mlal_i8`, `paddl_i8`, and `dot_i32` (16-lane signed-byte dot accumulated in i32 — the composable `vdotq_s32`). 8 in-package `#[test]`s + cross-package import verified.
 
