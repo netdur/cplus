@@ -33,7 +33,7 @@
 use crate::ast::*;
 use crate::diagnostics::{DiagCode, DiagSink, Diagnostic, LineMap, Severity};
 use crate::lexer::{NumSuffix, Span as ByteSpan};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 /// Stable identifier for a user-defined enum. Indices into `SemaCx::enums`,
@@ -433,6 +433,10 @@ struct LocalInfo {
     /// around `if`/`else`/`match` and merged by intersection — see
     /// `flow_snapshot`/`flow_restore`/`flow_merge`.
     assigned: bool,
+    /// Possible roots for a borrow-shaped local (`str` / `T[]`). Empty
+    /// means literal/static/unknown provenance. Non-empty roots are used
+    /// to reject returning views into locals that will be dropped.
+    borrow_roots: BTreeSet<String>,
 }
 
 /// Run sema on a parsed program. Returns all diagnostics produced;
@@ -2465,6 +2469,7 @@ impl SemaCx<'_> {
                     mutable,
                     moved: false,
                     assigned: true,
+                    borrow_roots: BTreeSet::new(),
                 },
             );
         }
@@ -2509,6 +2514,7 @@ impl SemaCx<'_> {
                     mutable: param.mutable,
                     moved: false,
                     assigned: true,
+                    borrow_roots: BTreeSet::new(),
                 },
             );
         }
@@ -2579,6 +2585,7 @@ impl SemaCx<'_> {
                     mutable,
                     moved: false,
                     assigned: true,
+                    borrow_roots: BTreeSet::new(),
                 },
             );
         }
@@ -2607,6 +2614,7 @@ impl SemaCx<'_> {
                     mutable: param.mutable,
                     moved: false,
                     assigned: true,
+                    borrow_roots: BTreeSet::new(),
                 },
             );
         }
@@ -3832,6 +3840,7 @@ impl SemaCx<'_> {
                     mutable: param.mutable,
                     moved: false,
                     assigned: true,
+                    borrow_roots: BTreeSet::new(),
                 },
             );
         }
@@ -4064,6 +4073,13 @@ impl SemaCx<'_> {
                         (final_ty, false)
                     }
                 };
+                let borrow_roots = if matches!(final_ty, Ty::Str | Ty::Slice(_)) {
+                    init.as_ref()
+                        .map(|e| self.returned_borrow_roots(e))
+                        .unwrap_or_default()
+                } else {
+                    BTreeSet::new()
+                };
                 self.scopes.last_mut().unwrap().insert(
                     name.name.clone(),
                     LocalInfo {
@@ -4071,6 +4087,7 @@ impl SemaCx<'_> {
                         mutable: *mutable,
                         moved: false,
                         assigned,
+                        borrow_roots,
                     },
                 );
             }
@@ -4236,6 +4253,7 @@ impl SemaCx<'_> {
                             mutable: false,
                             moved: false,
                             assigned: true,
+                            borrow_roots: BTreeSet::new(),
                         },
                     );
                     self.check_block_as_stmt(body);
@@ -4271,6 +4289,7 @@ impl SemaCx<'_> {
                         mutable: false,
                         moved: false,
                         assigned: true,
+                        borrow_roots: BTreeSet::new(),
                     },
                 );
                 self.check_block_as_stmt(body);
@@ -5594,7 +5613,7 @@ impl SemaCx<'_> {
         // Definite-assignment flow merge across arms: snapshot pre-match
         // state, run each arm from that state, intersect post-arm states.
         let pre_match = self.snapshot_assigned();
-        let mut merged_post: Option<Vec<Vec<(String, bool)>>> = None;
+        let mut merged_post: Option<Vec<Vec<(String, bool, BTreeSet<String>)>>> = None;
 
         for arm in arms {
             self.scopes.push(HashMap::new());
@@ -5705,6 +5724,7 @@ impl SemaCx<'_> {
                         mutable: false,
                         moved: false,
                         assigned: true,
+                        borrow_roots: BTreeSet::new(),
                     },
                 );
             }
@@ -5813,6 +5833,7 @@ impl SemaCx<'_> {
                                     mutable: false,
                                     moved: false,
                                     assigned: true,
+                                    borrow_roots: BTreeSet::new(),
                                 },
                             );
                         }
@@ -6273,42 +6294,52 @@ impl SemaCx<'_> {
         then_ty
     }
 
-    /// Snapshot the assigned-state of every binding currently in scope.
-    /// Used for definite-assignment flow merging at `if`/`match` boundaries.
-    fn snapshot_assigned(&self) -> Vec<Vec<(String, bool)>> {
+    /// Snapshot the assigned-state and borrow provenance of every binding
+    /// currently in scope. Used for flow merging at `if`/`match` boundaries.
+    fn snapshot_assigned(&self) -> Vec<Vec<(String, bool, BTreeSet<String>)>> {
         self.scopes
             .iter()
-            .map(|scope| scope.iter().map(|(k, v)| (k.clone(), v.assigned)).collect())
+            .map(|scope| {
+                scope
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.assigned, v.borrow_roots.clone()))
+                    .collect()
+            })
             .collect()
     }
 
-    /// Restore each binding's assigned-state from a prior snapshot. The
+    /// Restore each binding's flow state from a prior snapshot. The
     /// scope stack shape must match (same names per frame). Used to reset
     /// state before running a parallel control-flow branch.
-    fn restore_assigned(&mut self, snap: &[Vec<(String, bool)>]) {
+    fn restore_assigned(&mut self, snap: &[Vec<(String, bool, BTreeSet<String>)>]) {
         for (frame, snap_frame) in self.scopes.iter_mut().zip(snap.iter()) {
-            for (name, was_assigned) in snap_frame {
+            for (name, was_assigned, borrow_roots) in snap_frame {
                 if let Some(info) = frame.get_mut(name) {
                     info.assigned = *was_assigned;
+                    info.borrow_roots = borrow_roots.clone();
                 }
             }
         }
     }
 
-    /// Intersect two assigned-state snapshots: a binding is "assigned" in
-    /// the merge iff it was assigned in BOTH inputs. Used post-`if`/`match`
-    /// to compute the flow-merged state.
+    /// Merge two flow-state snapshots: a binding is "assigned" iff it was
+    /// assigned in BOTH inputs; borrow roots are unioned so any dangling path
+    /// remains visible after the merge.
     fn intersect_assigned(
         &self,
-        a: &[Vec<(String, bool)>],
-        b: &[Vec<(String, bool)>],
-    ) -> Vec<Vec<(String, bool)>> {
+        a: &[Vec<(String, bool, BTreeSet<String>)>],
+        b: &[Vec<(String, bool, BTreeSet<String>)>],
+    ) -> Vec<Vec<(String, bool, BTreeSet<String>)>> {
         a.iter()
             .zip(b.iter())
             .map(|(fa, fb)| {
                 fa.iter()
                     .zip(fb.iter())
-                    .map(|((name, av), (_, bv))| (name.clone(), *av && *bv))
+                    .map(|((name, av, ar), (_, bv, br))| {
+                        let mut roots = ar.clone();
+                        roots.extend(br.iter().cloned());
+                        (name.clone(), *av && *bv, roots)
+                    })
                     .collect()
             })
             .collect()
@@ -9473,40 +9504,62 @@ impl SemaCx<'_> {
         if !ret_borrow_shaped && ret_region.is_none() {
             return;
         }
-        let Some(root) = returned_borrow_root(e) else {
+        let roots = self.returned_borrow_roots(e);
+        if roots.is_empty() {
             return; // literal ('static) or untraceable — not provably dangling
-        };
-        let root = root.to_string();
+        }
         // #2 — region provenance on a region-annotated return.
-        if let Some(r) = &ret_region {
-            if let Some(pr) = self.current_fn_param_regions.get(&root) {
-                if pr != r {
-                    self.err(
-                        "E0512",
-                        format!(
-                            "returning a borrow from region `{pr}` where the signature declares region `{r}` — the returned borrow must come from a `{r}`-region parameter"
-                        ),
-                        e.span,
-                    );
-                    return;
+        for root in &roots {
+            if let Some(r) = &ret_region {
+                if let Some(pr) = self.current_fn_param_regions.get(root) {
+                    if pr != r {
+                        self.err(
+                            "E0512",
+                            format!(
+                                "returning a borrow from region `{pr}` where the signature declares region `{r}` — the returned borrow must come from a `{r}`-region parameter"
+                            ),
+                            e.span,
+                        );
+                        return;
+                    }
                 }
             }
         }
         // #3 — dangling view into a local owned value.
-        if ret_borrow_shaped && !self.current_fn_param_names.contains(&root) {
-            let local_ty = self.lookup_local(&root).map(|i| i.ty.clone());
-            if let Some(ty) = local_ty {
-                if !self.is_copy(&ty) {
-                    self.err(
-                        "E0513",
-                        format!(
-                            "cannot return a borrow of local `{root}`: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`string` / `Vec[T]`) instead, or borrow from a parameter"
-                        ),
-                        e.span,
-                    );
+        if ret_borrow_shaped {
+            for root in &roots {
+                if !self.current_fn_param_names.contains(root) {
+                    let local_ty = self.lookup_local(root).map(|i| i.ty.clone());
+                    if let Some(ty) = local_ty {
+                        if !self.is_copy(&ty) {
+                            self.err(
+                                "E0513",
+                                format!(
+                                    "cannot return a borrow of local `{root}`: it owns heap that is freed when the function returns, so the returned view would dangle. Return an owned value (`string` / `Vec[T]`) instead, or borrow from a parameter"
+                                ),
+                                e.span,
+                            );
+                            return;
+                        }
+                    }
                 }
             }
         }
+    }
+
+    fn returned_borrow_roots(&self, e: &Expr) -> BTreeSet<String> {
+        let mut roots = BTreeSet::new();
+        let Some(root) = returned_borrow_root(e) else {
+            return roots;
+        };
+        if let Some(info) = self.lookup_local(root) {
+            if !info.borrow_roots.is_empty() {
+                roots.extend(info.borrow_roots.iter().cloned());
+                return roots;
+            }
+        }
+        roots.insert(root.to_string());
+        roots
     }
 
     fn is_writable_place_quiet(&self, target: &Expr) -> bool {
@@ -9872,13 +9925,19 @@ impl SemaCx<'_> {
                         .map(|i| i.ty.clone())
                         .unwrap_or(Ty::Error);
                     if target_ty != Ty::Error {
-                        self.check_expr(value, Some(target_ty));
+                        self.check_expr(value, Some(target_ty.clone()));
                     } else {
                         let _ = self.check_expr(value, None);
                     }
+                    let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+                        self.returned_borrow_roots(value)
+                    } else {
+                        BTreeSet::new()
+                    };
                     for scope in self.scopes.iter_mut().rev() {
                         if let Some(info) = scope.get_mut(name) {
                             info.assigned = true;
+                            info.borrow_roots = borrow_roots.clone();
                             break;
                         }
                     }
@@ -9945,6 +10004,21 @@ impl SemaCx<'_> {
                     ),
                     span,
                 );
+            }
+        }
+        if matches!(op, AssignOp::Assign) {
+            if let ExprKind::Ident(name) = &target.kind {
+                let borrow_roots = if matches!(target_ty, Ty::Str | Ty::Slice(_)) {
+                    self.returned_borrow_roots(value)
+                } else {
+                    BTreeSet::new()
+                };
+                for scope in self.scopes.iter_mut().rev() {
+                    if let Some(info) = scope.get_mut(name) {
+                        info.borrow_roots = borrow_roots.clone();
+                        break;
+                    }
+                }
             }
         }
         Ty::Unit

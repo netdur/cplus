@@ -3595,6 +3595,39 @@ fn return_borrow_of_local_owned_rejected_e0513() {
 }
 
 #[test]
+fn return_borrow_alias_of_local_owned_rejected_e0513() {
+    // Returning an alias to `s.as_str()` is the same dangling view as
+    // returning `s.as_str()` directly.
+    let (ok, stderr) = try_compile_snippet(
+        "fn bad() -> str {\n\
+             let s: string = \"heap\".to_string();\n\
+             let view: str = s.as_str();\n\
+             return view;\n\
+         }\n\
+         fn main() -> i32 { return str_len(bad()) as i32; }\n",
+    );
+    assert!(!ok, "expected E0513 rejection, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn return_borrow_branch_alias_of_local_owned_rejected_e0513() {
+    // Flow merging must keep the unsafe branch provenance even when another
+    // branch assigns a literal-backed view.
+    let (ok, stderr) = try_compile_snippet(
+        "fn bad(flag: bool) -> str {\n\
+             let s: string = \"heap\".to_string();\n\
+             let mut view: str;\n\
+             if flag { view = s.as_str(); } else { view = \"static\"; }\n\
+             return view;\n\
+         }\n\
+         fn main() -> i32 { return str_len(bad(true)) as i32; }\n",
+    );
+    assert!(!ok, "expected E0513 rejection, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
 fn return_literal_str_view_compiles() {
     // v0.0.12 (#3) positive: a `str` bound to a string literal is `'static`;
     // returning it is sound and must keep compiling (no false positive).
