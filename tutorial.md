@@ -1981,7 +1981,7 @@ To consume one, add `<name> = "*"` to your `[dependencies]` and `import "<name>/
 (The real-time packages `vendor/rt` and `vendor/rt_darwin` follow the same
 deployment model but are documented with the real-time contracts in §23.)
 
-The ten packages, in alphabetical order:
+The eleven packages, in alphabetical order:
 
 ### `vendor/accelerate`: Apple CPU-SIMD numerics (BLAS, vDSP)
 
@@ -2050,6 +2050,32 @@ let app = clap::App::new("mytool")
 let m = app.get_matches_from(argv);
 if m.is_present("verbose") { /* ... */ }
 ```
+
+### `vendor/jni`: minimal JNI (Java Native Interface) bindings
+
+`#[repr(C)]` mirrors of the JVM's `jni.h` dispatch tables — `JNINativeInterface`
+(the `JNIEnv` function table) and `JNIInvokeInterface` (the `JavaVM` table) —
+plus the `jint`/`jlong`/`jobject`/… type aliases. The JVM hands you a
+pointer to one of these tables; you read a function pointer out of it and call
+it through `env`, exactly as C's `(*env)->FindClass(env, ...)` does:
+
+```cplus
+import "jni/jni" as jni;
+
+fn get_version(env: jni::JNIEnv) -> jni::jint {
+    let f: fn(jni::JNIEnv) -> jni::jint = unsafe { (*env).GetVersion };
+    return unsafe { f(env) };
+}
+```
+
+It's deliberately "min": the `JNINativeInterface` table is defined through the
+`Call*Method` family (enough preceding fields to keep every offset correct);
+extend it for later methods (`GetMethodID`, `NewStringUTF`, array ops, …) by
+appending fields in `jni.h` order. A layout `#[test]` pins the table sizes
+(344 / 64 bytes on 64-bit) so a dropped or mistyped field is caught immediately.
+This package is also the smallest demonstration that cpc handles
+function-pointer struct fields and a type that references itself through a
+pointer (`JNIEnv = *JNINativeInterface`, used inside the struct's own fields).
 
 ### `vendor/json`: typed-enum JSON parser + serializer
 

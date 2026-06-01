@@ -89,6 +89,10 @@ Four gaps surfaced porting ggml.c's type-traits table + `ggml_cpu_init` globals 
 - **G-034 — indexed `static mut` write.** `target_is_writable_place`'s `Ident` arm accepts a `static mut` root. Guards intact: immutable static → E0305, missing unsafe → E0X33 (receiver read), undefined → E0300.
 - **G-045 — native `f16` scalar.** `Ty::F16` (LLVM `half`, 2-byte), full float-family membership; `as` conversions ride `is_float`+`ty_bit_width` (fpext/fptrunc, int↔f16); bit-reinterpret `f16::from_bits(u16)` / `.to_bits()` → `bitcast` (also f32↔u32, f64↔u64), following the `from_X`/`to_X` (`::`/`.`) convention. Literal suffix `1.5f16` deferred. Makes fp16↔fp32 pure-C+. Tutorial §3 documents it.
 
+## vendor/jni — minimal JNI bindings adopted (2026-06-01)
+
+Adopted `vendor/jni` (minimal `jni.h` mirror: `JNINativeInterface` / `JNIInvokeInterface` `#[repr(C)]` tables + the `j*` type aliases). Doubles as an FFI proof-point — it's the smallest case exercising **function-pointer struct fields** and a **self-referential-through-pointer** type (`JNIEnv = *JNINativeInterface`, used inside the struct's own field signatures); both compile and run with no compiler change. Two adoption fixes: directory renamed `jni-min` → `jni` (dependency resolution keys on `vendor/<depname>/`, and `jni-min` is an invalid dep name), and the table fields marked `pub` (a consumer reading `(*env).GetVersion` hit **E0403** otherwise — the whole point of the binding is reading those fn-ptrs). A layout `#[test]` pins the table sizes (344 / 64 bytes on 64-bit) against offset drift. Tutorial §28 documents it.
+
 ## Benchmark gaps (bench-cplus handoff, triaged 2026-05-30)
 
 From `/Users/adel/Workspace/bench-cplus/handoff.md` (C+ vs C / Rust / Swift / Node / Bun). Each item was re-verified against the current build before recording; the handoff was written against a slightly older cpc, so several items no longer reproduce.

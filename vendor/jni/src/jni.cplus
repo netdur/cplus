@@ -1,0 +1,113 @@
+// jni-min: Core JNI interop types for C+
+// Maps the JVM's jni.h to C+ types using #[repr(C)] and TypeKind::FnPtr.
+
+pub type jint = i32;
+pub type jlong = i64;
+pub type jbyte = i8;
+pub type jboolean = u8;
+pub type jchar = u16;
+pub type jshort = i16;
+pub type jfloat = f32;
+pub type jdouble = f64;
+pub type jsize = i32;
+
+// Opaque pointers to Java objects/classes
+pub type jobject = *u8;
+pub type jclass = *u8;
+pub type jstring = *u8;
+pub type jarray = *u8;
+pub type jobjectArray = *u8;
+pub type jbooleanArray = *u8;
+pub type jbyteArray = *u8;
+pub type jcharArray = *u8;
+pub type jshortArray = *u8;
+pub type jintArray = *u8;
+pub type jlongArray = *u8;
+pub type jfloatArray = *u8;
+pub type jdoubleArray = *u8;
+pub type jthrowable = *u8;
+pub type jweak = *u8;
+
+pub type jfieldID = *u8;
+pub type jmethodID = *u8;
+
+pub type JNIEnv = *JNINativeInterface;
+pub type JavaVM = *JNIInvokeInterface;
+
+// The core JNI environment struct.
+// Note: This struct must exactly match the memory layout of JNINativeInterface_ in jni.h.
+// Since we only *read* from the JVM-provided pointer, we only need to define 
+// the fields up to the methods we actually intend to call.
+#[repr(C)]
+pub struct JNINativeInterface {
+    reserved0: *u8,
+    reserved1: *u8,
+    reserved2: *u8,
+    reserved3: *u8,
+    pub GetVersion: fn(JNIEnv) -> jint,
+    pub DefineClass: fn(JNIEnv, *u8, jobject, *u8, jsize) -> jclass,
+    pub FindClass: fn(JNIEnv, *u8) -> jclass,
+    pub FromReflectedMethod: fn(JNIEnv, jobject) -> jmethodID,
+    pub FromReflectedField: fn(JNIEnv, jobject) -> jfieldID,
+    pub ToReflectedMethod: fn(JNIEnv, jclass, jmethodID, jboolean) -> jobject,
+    pub GetSuperclass: fn(JNIEnv, jclass) -> jclass,
+    pub IsAssignableFrom: fn(JNIEnv, jclass, jclass) -> jboolean,
+    pub ToReflectedField: fn(JNIEnv, jclass, jfieldID, jboolean) -> jobject,
+    pub Throw: fn(JNIEnv, jthrowable) -> jint,
+    pub ThrowNew: fn(JNIEnv, jclass, *u8) -> jint,
+    pub ExceptionOccurred: fn(JNIEnv) -> jthrowable,
+    pub ExceptionDescribe: fn(JNIEnv),
+    pub ExceptionClear: fn(JNIEnv),
+    pub FatalError: fn(JNIEnv, *u8),
+    pub PushLocalFrame: fn(JNIEnv, jint) -> jint,
+    pub PopLocalFrame: fn(JNIEnv, jobject) -> jobject,
+    pub NewGlobalRef: fn(JNIEnv, jobject) -> jobject,
+    pub DeleteGlobalRef: fn(JNIEnv, jobject),
+    pub DeleteLocalRef: fn(JNIEnv, jobject),
+    pub IsSameObject: fn(JNIEnv, jobject, jobject) -> jboolean,
+    pub NewLocalRef: fn(JNIEnv, jobject) -> jobject,
+    pub EnsureLocalCapacity: fn(JNIEnv, jint) -> jint,
+    pub AllocObject: fn(JNIEnv, jclass) -> jobject,
+    pub NewObject: fn(JNIEnv, jclass, jmethodID) -> jobject, // varargs conceptually
+    pub NewObjectV: fn(JNIEnv, jclass, jmethodID, *u8) -> jobject,
+    pub NewObjectA: fn(JNIEnv, jclass, jmethodID, *u8) -> jobject,
+    pub GetObjectClass: fn(JNIEnv, jobject) -> jclass,
+    pub IsInstanceOf: fn(JNIEnv, jobject, jclass) -> jboolean,
+    pub GetMethodID: fn(JNIEnv, jclass, *u8, *u8) -> jmethodID,
+    pub CallObjectMethod: fn(JNIEnv, jobject, jmethodID) -> jobject,
+    pub CallObjectMethodV: fn(JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    pub CallObjectMethodA: fn(JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    pub CallBooleanMethod: fn(JNIEnv, jobject, jmethodID) -> jboolean,
+    pub CallBooleanMethodV: fn(JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    pub CallBooleanMethodA: fn(JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    pub CallByteMethod: fn(JNIEnv, jobject, jmethodID) -> jbyte,
+    pub CallByteMethodV: fn(JNIEnv, jobject, jmethodID, *u8) -> jbyte,
+    pub CallByteMethodA: fn(JNIEnv, jobject, jmethodID, *u8) -> jbyte,
+    // ... layout matching jni.h continues for ~230 methods.
+    // For a minimal package, you can define exactly what you need as long as 
+    // the preceding function pointers are accurately represented to preserve offsets.
+}
+
+#[repr(C)]
+pub struct JNIInvokeInterface {
+    reserved0: *u8,
+    reserved1: *u8,
+    reserved2: *u8,
+    pub DestroyJavaVM: fn(JavaVM) -> jint,
+    pub AttachCurrentThread: fn(JavaVM, *u8, *u8) -> jint,
+    pub DetachCurrentThread: fn(JavaVM) -> jint,
+    pub GetEnv: fn(JavaVM, *u8, jint) -> jint,
+    pub AttachCurrentThreadAsDaemon: fn(JavaVM, *u8, *u8) -> jint,
+}
+
+// Layout sanity: the binding's correctness rests entirely on every function
+// pointer sitting at its `jni.h` offset, so pin the total size. A dropped,
+// added, or mistyped field shifts every later offset and changes the size.
+// 64-bit: JNINativeInterface = 4 reserved + 39 fn-ptrs = 43 * 8 = 344;
+// JNIInvokeInterface = 3 reserved + 5 fn-ptrs = 8 * 8 = 64.
+#[test]
+fn jni_interface_layout_sizes() {
+    assert #size_of::[JNINativeInterface]() == (344 as usize);
+    assert #size_of::[JNIInvokeInterface]() == (64 as usize);
+    assert #align_of::[JNINativeInterface]() == (8 as usize);
+}
