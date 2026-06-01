@@ -63,6 +63,7 @@ pub enum Ty {
     Isize,
     Usize,
     // Floats
+    F16,
     F32,
     F64,
     // Other
@@ -153,6 +154,7 @@ impl Ty {
             Ty::U64 => "u64",
             Ty::Isize => "isize",
             Ty::Usize => "usize",
+            Ty::F16 => "f16",
             Ty::F32 => "f32",
             Ty::F64 => "f64",
             Ty::Bool => "bool",
@@ -182,7 +184,7 @@ impl Ty {
         self.is_signed_int() || self.is_unsigned_int()
     }
     pub fn is_float(&self) -> bool {
-        matches!(self, Ty::F32 | Ty::F64)
+        matches!(self, Ty::F16 | Ty::F32 | Ty::F64)
     }
     pub fn is_numeric(&self) -> bool {
         self.is_int() || self.is_float()
@@ -216,6 +218,7 @@ impl Ty {
             | Ty::U64
             | Ty::Isize
             | Ty::Usize
+            | Ty::F16
             | Ty::F32
             | Ty::F64
             | Ty::Bool
@@ -3747,7 +3750,7 @@ impl SemaCx<'_> {
         }
         match ty {
             Ty::I8 | Ty::U8 | Ty::Bool => (1, 1),
-            Ty::I16 | Ty::U16 => (2, 2),
+            Ty::I16 | Ty::U16 | Ty::F16 => (2, 2),
             Ty::I32 | Ty::U32 | Ty::F32 => (4, 4),
             Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => (8, 8),
             Ty::RawPtr(_) | Ty::FnPtr { .. } => (8, 8),
@@ -4054,7 +4057,7 @@ impl SemaCx<'_> {
             Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
             | Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64
             | Ty::Isize | Ty::Usize
-            | Ty::F32 | Ty::F64
+            | Ty::F16 | Ty::F32 | Ty::F64
             | Ty::Bool
             | Ty::RawPtr(_) => None,
             Ty::FnPtr { params, return_type } => {
@@ -7780,6 +7783,24 @@ impl SemaCx<'_> {
             }
             return Ty::String;
         }
+        // v0.0.12 G-045 (llama.cplus): blessed `to_bits()` on a float scalar —
+        // bit-preserving reinterpret to the same-width unsigned int (LLVM
+        // `bitcast`). Pairs with `fN::from_bits(uN)`. Safe; no allocation.
+        if name.name == "to_bits" && args.is_empty() && recv_ty.is_float() {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    "`to_bits` takes no type arguments".to_string(),
+                    call_span,
+                );
+            }
+            return match recv_ty {
+                Ty::F16 => Ty::U16,
+                Ty::F32 => Ty::U32,
+                Ty::F64 => Ty::U64,
+                _ => Ty::Error,
+            };
+        }
         // v0.0.4 Phase 4 Slice 4B: blessed `next()` on `Iterator[T]`
         // receiver — returns `Option[T]`. The method has no source-level
         // body (codegen lowers inline via coro.done + coro.resume +
@@ -8433,6 +8454,30 @@ impl SemaCx<'_> {
                         "E0324",
                         format!(
                             "`sqrt` is only available on floating-point SIMD types, not `{}`",
+                            ty_display(recv)
+                        ),
+                        name.span,
+                    );
+                    return Ty::Error;
+                }
+                if !arity_err(self, 0) {
+                    return Ty::Error;
+                }
+                recv.clone()
+            }
+            // G-042: round-to-nearest-even per lane (float SIMD only).
+            // Lowers to `llvm.roundeven` — same semantics as AArch64
+            // `vcvtnq_s32_f32`/FCVTNS. Compose with `INTxN::from_float`
+            // for a rounded float→int convert (the quantizer pattern).
+            "round" => {
+                if reject_on_mask(self, "round", args) {
+                    return Ty::Error;
+                }
+                if !elem_ty.is_float() {
+                    self.err(
+                        "E0324",
+                        format!(
+                            "`round` is only available on floating-point SIMD types, not `{}`",
                             ty_display(recv)
                         ),
                         name.span,
@@ -9611,6 +9656,59 @@ impl SemaCx<'_> {
             }
             return self.check_string_assoc_call(method_seg, args, call_span);
         }
+        // v0.0.12 G-045 (llama.cplus): blessed `fN::from_bits(uN)` — a
+        // bit-preserving reinterpret from the same-width unsigned int to the
+        // float (LLVM `bitcast`). Associated constructor on the float type;
+        // pairs with the `.to_bits()` instance method. Only `from_bits` is
+        // intercepted — any other `fN::x()` falls through to the normal
+        // (error) path.
+        if method_seg.name == "from_bits" {
+            let float_ty = match type_seg.name.as_str() {
+                "f16" => Some(Ty::F16),
+                "f32" => Some(Ty::F32),
+                "f64" => Some(Ty::F64),
+                _ => None,
+            };
+            if let Some(fty) = float_ty {
+                if !type_args.is_empty() {
+                    self.err(
+                        "E0501",
+                        "`from_bits` takes no type arguments".to_string(),
+                        call_span,
+                    );
+                }
+                let want = match fty {
+                    Ty::F16 => Ty::U16,
+                    Ty::F32 => Ty::U32,
+                    _ => Ty::U64,
+                };
+                if args.len() != 1 {
+                    self.err(
+                        "E0327",
+                        format!("`{}::from_bits` takes exactly one argument", type_seg.name),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
+                let got = self.check_expr(&args[0], Some(want.clone()));
+                if got != want && got != Ty::Error {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "`{}::from_bits` expects `{}`, got `{}`",
+                            type_seg.name,
+                            want.name(),
+                            got.name()
+                        ),
+                        args[0].span,
+                    );
+                }
+                return fty;
+            }
+        }
         // v0.0.6 Slice 1B: SIMD type associated functions —
         // `f32x4::splat(s)`, `f32x4::new(a, b, c, d)`, `f32x4::from_array(a)`.
         // v0.0.9 follow-up: `mask{N}x{M}::splat / new / from_array` are
@@ -10576,6 +10674,26 @@ impl SemaCx<'_> {
             ExprKind::Ident(name) => {
                 let local = self.lookup_local(name).cloned();
                 let Some(info) = local else {
+                    // v0.0.12 G-034 (llama.cplus): not a local — a module-scope
+                    // `static mut` is a writable place root. `TABLE[i] = v` and
+                    // `STATIC.field = v` reach here through the Index / Field
+                    // arms' recursion on their receiver; the scalar `STATIC = v`
+                    // case is handled earlier in `check_assign`. The `unsafe`
+                    // requirement is enforced when the receiver is read (the
+                    // Index/Field arm calls `check_expr`, which routes a
+                    // `static mut` read through E0X33). An immutable `static`
+                    // is E0305; anything else is genuinely undefined (E0300).
+                    if let Some(s) = self.statics_table.get(name).cloned() {
+                        if !s.is_mut {
+                            self.err(
+                                "E0305",
+                                format!("cannot assign to immutable `static {name}`; declare it as `static mut` to permit writes"),
+                                target.span,
+                            );
+                            return false;
+                        }
+                        return true;
+                    }
                     self.err("E0300", format!("undefined name `{name}`"), target.span);
                     return false;
                 };
@@ -10700,6 +10818,7 @@ impl SemaCx<'_> {
             "u64" => Ty::U64,
             "isize" => Ty::Isize,
             "usize" => Ty::Usize,
+            "f16" => Ty::F16,
             "f32" => Ty::F32,
             "f64" => Ty::F64,
             "bool" => Ty::Bool,
@@ -12278,6 +12397,7 @@ fn ty_to_source_name(ty: &Ty) -> String {
         Ty::U64 => "u64".into(),
         Ty::Isize => "isize".into(),
         Ty::Usize => "usize".into(),
+        Ty::F16 => "f16".into(),
         Ty::F32 => "f32".into(),
         Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(),
@@ -12337,6 +12457,7 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::U64 => "u64".into(),
         Ty::Isize => "isize".into(),
         Ty::Usize => "usize".into(),
+        Ty::F16 => "f16".into(),
         Ty::F32 => "f32".into(),
         Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(),
@@ -17905,16 +18026,27 @@ mod tests {
     // v0.0.12 G-033: array literals + fill literals still rejected in
     // static-init position. `#zero::[T]()` is the only non-scalar shape
     // accepted (option a from llama.cplus G-032 ranking).
+    // v0.0.12 G-043 (llama.cplus): array literal / fill IS now accepted as a
+    // `static` initializer (supersedes the G-033-era rejection). Codegen emits
+    // an LLVM constant aggregate; see `render_static_literal`.
     #[test]
-    fn array_literal_still_rejected_e0x30_g033() {
+    fn array_literal_in_static_accepted_g043() {
         let codes = lowered_errors("pub static T: [i32; 4] = [1, 2, 3, 4];");
-        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
     }
 
     #[test]
-    fn fill_array_in_static_still_rejected_e0x30_g033() {
+    fn fill_array_in_static_accepted_g043() {
         let codes = lowered_errors("pub static T: [u8; 256] = [0u8; 256];");
-        assert!(codes.iter().any(|c| c == "E0X30"), "got {:?}", codes);
+        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+    }
+
+    // G-043 keeps `const` literal-only: an array literal on a `const` is still
+    // E0X30 (consts inline at use sites; arrays belong in `static`).
+    #[test]
+    fn array_literal_in_const_still_rejected_e0x30_g043() {
+        let codes = lowered_errors("pub const C: [i32; 4] = [1, 2, 3, 4];");
+        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
 
     #[test]

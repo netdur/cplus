@@ -152,9 +152,28 @@ Pick **one** mode per program. Don't mix intrinsic `println` with `io::println` 
 |---|---|
 | Signed | `i8 i16 i32 i64 isize` |
 | Unsigned | `u8 u16 u32 u64 usize` |
-| Float | `f32 f64` |
+| Float | `f16 f32 f64` |
 
 No `int`, no `long`, no `byte`. The size is part of the name.
+
+`f16` is the IEEE half-precision float (LLVM `half`, 2 bytes) — primarily a
+**storage** type for ML/graphics data (e.g. ggml weight blocks). It converts to
+and from the wider floats with `as` (hardware `fpext`/`fptrunc`), and exposes a
+bit-preserving reinterpret to/from its raw `u16`:
+
+```cplus
+let h: f16 = 1.5f32 as f16;          // fptrunc
+let x: f32 = h as f32;               // fpext
+
+// Bit reinterpret (NOT a numeric convert) — pairs the storage u16 with the
+// float. Also defined for f32↔u32 and f64↔u64.
+let h2: f16 = f16::from_bits(0x3C00 as u16);   // IEEE half 1.0
+let raw: u16 = h2.to_bits();
+```
+
+There is no `f16` literal suffix yet — write `1.5 as f16`. Arithmetic on `f16`
+works (LLVM legalizes it), but the idiomatic hot-path pattern is to convert to
+`f32`, compute, then convert back.
 
 ### Other primitives
 

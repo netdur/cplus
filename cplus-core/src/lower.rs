@@ -635,10 +635,10 @@ impl Lower {
                     consts.insert(c.name.name.clone(), (c.value.clone(), c.ty.clone()));
                 }
                 ItemKind::Static(s) => {
-                    if !is_const_initializer(&s.value) {
+                    if !is_static_initializer(&s.value) {
                         self.err(
                             "E0X30",
-                            "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`)".to_string(),
+                            "static initializer must be a literal, `#zero::[T]()`, or an array literal/fill of such (integer, float, bool, string, unary-negated numeric literal)".to_string(),
                             s.value.span,
                         );
                     }
@@ -714,6 +714,24 @@ fn is_const_initializer(e: &Expr) -> bool {
         ExprKind::Intrinsic { name, args, type_args, .. } => {
             name == "zero" && args.is_empty() && type_args.len() == 1
         }
+        _ => false,
+    }
+}
+
+/// v0.0.12 G-043 (llama.cplus): a `static` initializer may additionally be an
+/// array literal `[a, b, c]` or fill `[v; N]` whose elements are themselves
+/// static initializers (recursively, so nested arrays work). Statics become
+/// real globals — codegen emits the array as an LLVM constant aggregate — so
+/// there is no substitution concern. `const` stays literal-only
+/// (`is_const_initializer`): a const is inlined at every use site, where an
+/// array literal would be both surprising and substitution-heavy.
+fn is_static_initializer(e: &Expr) -> bool {
+    if is_const_initializer(e) {
+        return true;
+    }
+    match &e.kind {
+        ExprKind::ArrayLit { elements } => elements.iter().all(is_static_initializer),
+        ExprKind::ArrayFill { fill, .. } => is_static_initializer(fill),
         _ => false,
     }
 }

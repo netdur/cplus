@@ -225,7 +225,8 @@ impl ModuleMetadata {
             Ty::U64 => "u64".into(),
             Ty::Isize => "isize".into(),
             Ty::Usize => "usize".into(),
-            Ty::F32 => "f32".into(),
+            Ty::F16 => "f16".into(),
+        Ty::F32 => "f32".into(),
             Ty::F64 => "f64".into(),
             Ty::RawPtr(_) | Ty::FnPtr { .. } => "ptr".into(),
             // v0.0.8 bench-gap finding 4: aggregate leaves keyed by
@@ -311,6 +312,7 @@ impl ModuleMetadata {
             Ty::U64 => Some("u64".into()),
             Ty::Isize => Some("isize".into()),
             Ty::Usize => Some("usize".into()),
+            Ty::F16 => Some("f16".into()),
             Ty::F32 => Some("f32".into()),
             Ty::F64 => Some("f64".into()),
             Ty::RawPtr(_) | Ty::FnPtr { .. } => Some("ptr".into()),
@@ -451,6 +453,7 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
         Ty::U64 => "u64".into(),
         Ty::Isize => "isize".into(),
         Ty::Usize => "usize".into(),
+        Ty::F16 => "f16".into(),
         Ty::F32 => "f32".into(),
         Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(),
@@ -645,6 +648,7 @@ fn is_thread_spawn_eligible(ty: &Ty) -> bool {
         | Ty::U64
         | Ty::Isize
         | Ty::Usize
+        | Ty::F16
         | Ty::F32
         | Ty::F64
         | Ty::Bool
@@ -1814,6 +1818,7 @@ fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
         Ty::U64 => "u64".into(),
         Ty::Isize => "isize".into(),
         Ty::Usize => "usize".into(),
+        Ty::F16 => "f16".into(),
         Ty::F32 => "f32".into(),
         Ty::F64 => "f64".into(),
         Ty::Bool => "bool".into(),
@@ -2151,6 +2156,7 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
         | Ty::U64
         | Ty::Usize
         | Ty::Isize
+        | Ty::F16
         | Ty::F32
         | Ty::F64
         | Ty::Str
@@ -2442,7 +2448,7 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
     }
     match ty {
         Ty::I8 | Ty::U8 | Ty::Bool => Some((1, 1)),
-        Ty::I16 | Ty::U16 => Some((2, 2)),
+        Ty::I16 | Ty::U16 | Ty::F16 => Some((2, 2)),
         Ty::I32 | Ty::U32 | Ty::F32 => Some((4, 4)),
         Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => Some((8, 8)),
         Ty::RawPtr(_) | Ty::FnPtr { .. } => Some((8, 8)),
@@ -3027,6 +3033,7 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         "u64" => Ty::U64,
         "isize" => Ty::Isize,
         "usize" => Ty::Usize,
+        "f16" => Ty::F16,
         "f32" => Ty::F32,
         "f64" => Ty::F64,
         "bool" => Ty::Bool,
@@ -3128,6 +3135,7 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         Ty::I16 | Ty::U16 => "i16".to_string(),
         Ty::I32 | Ty::U32 => "i32".to_string(),
         Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize => "i64".to_string(),
+        Ty::F16 => "half".to_string(),
         Ty::F32 => "float".to_string(),
         Ty::F64 => "double".to_string(),
         Ty::Bool => "i1".to_string(),
@@ -3196,7 +3204,7 @@ fn enum_struct_name(id: EnumId, _types: &TypeTable) -> String {
 fn ty_bit_width(ty: &Ty) -> u32 {
     match ty {
         Ty::I8 | Ty::U8 => 8,
-        Ty::I16 | Ty::U16 => 16,
+        Ty::I16 | Ty::U16 | Ty::F16 => 16,
         Ty::I32 | Ty::U32 | Ty::F32 | Ty::Enum(_) => 32,
         Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => 64,
         Ty::Bool => 1,
@@ -3328,6 +3336,8 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare <2 x double> @llvm.sqrt.v2f64(<2 x double>)\n");
     out.push_str("declare <4 x float> @llvm.fabs.v4f32(<4 x float>)\n");
     out.push_str("declare <2 x double> @llvm.fabs.v2f64(<2 x double>)\n");
+    out.push_str("declare <4 x float> @llvm.roundeven.v4f32(<4 x float>)\n");
+    out.push_str("declare <2 x double> @llvm.roundeven.v2f64(<2 x double>)\n");
     out.push_str("declare <4 x i32> @llvm.abs.v4i32(<4 x i32>, i1)\n");
     out.push_str("declare <2 x i64> @llvm.abs.v2i64(<2 x i64>, i1)\n");
     out.push_str("declare <16 x i8> @llvm.abs.v16i8(<16 x i8>, i1)\n");
@@ -3367,11 +3377,13 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare <8 x float> @llvm.fma.v8f32(<8 x float>, <8 x float>, <8 x float>)\n");
     out.push_str("declare <8 x float> @llvm.sqrt.v8f32(<8 x float>)\n");
     out.push_str("declare <8 x float> @llvm.fabs.v8f32(<8 x float>)\n");
+    out.push_str("declare <8 x float> @llvm.roundeven.v8f32(<8 x float>)\n");
     out.push_str("declare <8 x float> @llvm.minnum.v8f32(<8 x float>, <8 x float>)\n");
     out.push_str("declare <8 x float> @llvm.maxnum.v8f32(<8 x float>, <8 x float>)\n");
     out.push_str("declare <4 x double> @llvm.fma.v4f64(<4 x double>, <4 x double>, <4 x double>)\n");
     out.push_str("declare <4 x double> @llvm.sqrt.v4f64(<4 x double>)\n");
     out.push_str("declare <4 x double> @llvm.fabs.v4f64(<4 x double>)\n");
+    out.push_str("declare <4 x double> @llvm.roundeven.v4f64(<4 x double>)\n");
     out.push_str("declare <4 x double> @llvm.minnum.v4f64(<4 x double>, <4 x double>)\n");
     out.push_str("declare <4 x double> @llvm.maxnum.v4f64(<4 x double>, <4 x double>)\n");
     // i8x32 / u8x32
@@ -4125,7 +4137,7 @@ fn emit_statics(
             }
         }
         let lltype = llvm_ty(&info.ty, types);
-        let llvalue = match render_static_literal(&info.init, &info.ty) {
+        let llvalue = match render_static_literal(&info.init, &info.ty, types) {
             Some(s) => s,
             None => {
                 // Defense-in-depth: lower + sema should have rejected
@@ -4149,9 +4161,41 @@ fn emit_statics(
 /// from `gen_expr(ExprKind::FloatLit)`. Returns `None` on any unsupported
 /// shape — the caller emits a `poison` operand in that case so the
 /// failure surfaces at LLVM-assembly time rather than silently.
-fn render_static_literal(e: &Expr, _ty: &Ty) -> Option<String> {
+fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String> {
     use crate::lexer::NumSuffix;
     match &e.kind {
+        // v0.0.12 G-043 (llama.cplus): array literal / fill as a static
+        // initializer → LLVM constant aggregate `[N x T] [T v0, T v1, ...]`.
+        // Each element is rendered with the *declared* element type (`elem`),
+        // so bare int literals coerce to it (the static-position analog of
+        // G-044). A zero fill collapses to `zeroinitializer` to keep large
+        // tables out of the textual IR.
+        ExprKind::ArrayLit { elements } => {
+            let Ty::Array(elem, n) = ty else { return None; };
+            if elements.len() as u64 != *n as u64 {
+                return None;
+            }
+            let elem_ll = llvm_ty(elem, types);
+            let mut parts: Vec<String> = Vec::with_capacity(elements.len());
+            for el in elements {
+                let v = render_static_literal(el, elem, types)?;
+                parts.push(format!("{elem_ll} {v}"));
+            }
+            Some(format!("[{}]", parts.join(", ")))
+        }
+        ExprKind::ArrayFill { fill, count } => {
+            let Ty::Array(elem, n) = ty else { return None; };
+            if *count as u64 != *n as u64 {
+                return None;
+            }
+            let v = render_static_literal(fill, elem, types)?;
+            if v == "0" || v == "0x0000000000000000" {
+                return Some("zeroinitializer".to_string());
+            }
+            let elem_ll = llvm_ty(elem, types);
+            let parts: Vec<String> = (0..*count).map(|_| format!("{elem_ll} {v}")).collect();
+            Some(format!("[{}]", parts.join(", ")))
+        }
         ExprKind::IntLit(v, _) => Some(v.to_string()),
         ExprKind::BoolLit(b) => Some(if *b { "true".to_string() } else { "false".to_string() }),
         ExprKind::FloatLit(v, suf) => {
@@ -7302,7 +7346,18 @@ impl<'a> FnState<'a> {
                     self.noalias_local_slots.push(slot.clone());
                 }
                 if let Some(init_expr) = init {
-                    let (val, _) = self.gen_expr(init_expr).expect("let init produces a value");
+                    // G-044: when the destination is a typed array, build the
+                    // literal with the declared element type so the aggregate's
+                    // type matches the slot (else `[N x i32]` vs `[N x i64]`).
+                    let (val, _) = match (&init_expr.kind, &var_ty) {
+                        (ExprKind::ArrayLit { elements }, Ty::Array(elem, _)) => {
+                            self.gen_array_lit(elements, Some((**elem).clone()))
+                        }
+                        (ExprKind::ArrayFill { fill, count }, Ty::Array(elem, _)) => {
+                            self.gen_array_fill(fill, *count, Some((**elem).clone()))
+                        }
+                        _ => self.gen_expr(init_expr).expect("let init produces a value"),
+                    };
                     self.emit(&format!(
                         "store {} {}, ptr {}",
                         self.lty(&var_ty),
@@ -8248,9 +8303,9 @@ impl<'a> FnState<'a> {
             ExprKind::TupleLit { elements } => Some(self.gen_tuple_lit(elements)),
             ExprKind::Field { receiver, name } => Some(self.gen_field(receiver, name)),
             ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
-                Some(self.gen_array_lit(elements))
+                Some(self.gen_array_lit(elements, None))
             }
-            ExprKind::ArrayFill { fill, count } => Some(self.gen_array_fill(fill, *count)),
+            ExprKind::ArrayFill { fill, count } => Some(self.gen_array_fill(fill, *count, None)),
             ExprKind::Index { receiver, index } => Some(self.gen_index(receiver, index)),
             ExprKind::Range { .. } => {
                 unreachable!("sema rejects ranges outside `for ... in`")
@@ -8262,9 +8317,19 @@ impl<'a> FnState<'a> {
         }
     }
 
-    fn gen_array_lit(&mut self, elements: &[Expr]) -> (String, Ty) {
-        // Determine element type from the first element. Sema enforces uniformity.
-        let (first_val, elem_ty) = self.gen_expr(&elements[0]).expect("array lit element");
+    fn gen_array_lit(&mut self, elements: &[Expr], expected_elem: Option<Ty>) -> (String, Ty) {
+        // G-044: prefer the declared/expected element type when the
+        // destination is typed (`let a: [i64; 4] = [1, 2, 3, 4]`). Bare int
+        // literals report `i32` from `gen_expr` but emit width-agnostic
+        // constant strings, so storing them through an `i64`-typed GEP is
+        // correct — and it keeps the built aggregate's type equal to the
+        // destination slot's, avoiding the `[4 x i32]` vs `[4 x i64]` LLVM
+        // mismatch. Sema has already verified each element matches the
+        // expected element type, so non-literal elements are the right type.
+        // With no expected type (untyped `let a = [...]`), infer from the
+        // first element as before.
+        let (first_val, inferred_elem) = self.gen_expr(&elements[0]).expect("array lit element");
+        let elem_ty = expected_elem.unwrap_or(inferred_elem);
         let len = elements.len() as u32;
         let array_ty = Ty::Array(Box::new(elem_ty.clone()), len);
         let llvm_arr = self.lty(&array_ty);
@@ -8299,8 +8364,12 @@ impl<'a> FnState<'a> {
     /// or a tight SIMD store loop. For other shapes we emit an N-iteration
     /// LLVM loop — small N could be unrolled by an inliner pass but isn't
     /// here. The result mirrors `gen_array_lit`'s aggregate-load tail.
-    fn gen_array_fill(&mut self, fill: &Expr, count: u32) -> (String, Ty) {
-        let (fill_val, elem_ty) = self.gen_expr(fill).expect("array fill element");
+    fn gen_array_fill(&mut self, fill: &Expr, count: u32, expected_elem: Option<Ty>) -> (String, Ty) {
+        // G-044: same expected-element-type rule as `gen_array_lit` — a typed
+        // destination (`let a: [i64; N] = [1; N]`) coerces the bare fill
+        // literal to the declared element type.
+        let (fill_val, inferred_elem) = self.gen_expr(fill).expect("array fill element");
+        let elem_ty = expected_elem.unwrap_or(inferred_elem);
         let array_ty = Ty::Array(Box::new(elem_ty.clone()), count);
         let llvm_arr = self.lty(&array_ty);
         let _ = self.lty(&elem_ty);
@@ -11187,6 +11256,26 @@ impl<'a> FnState<'a> {
                 return Some(self.gen_to_string_intrinsic(&rv, &rt));
             }
         }
+        // v0.0.12 G-045: blessed `to_bits()` on a float scalar → LLVM
+        // `bitcast` to the same-width unsigned int. Bit-preserving, zero-cost.
+        if name.name == "to_bits" && args.is_empty() {
+            let (rv, rt) = self.gen_expr(receiver).expect("to_bits receiver has value");
+            let uty = match rt {
+                Ty::F16 => Some(Ty::U16),
+                Ty::F32 => Some(Ty::U32),
+                Ty::F64 => Some(Ty::U64),
+                _ => None,
+            };
+            if let Some(u) = uty {
+                let r = self.next_tmp();
+                self.emit(&format!(
+                    "{r} = bitcast {} {rv} to {}",
+                    self.lty(&rt),
+                    self.lty(&u)
+                ));
+                return Some((r, u));
+            }
+        }
         // v0.0.4 Phase 4 Slice 4B: blessed `next()` on `Iterator[T]`.
         // Inline lowering: check coro.done → if done return None; else
         // read promise into v, resume coroutine, return Some(v).
@@ -11544,6 +11633,27 @@ impl<'a> FnState<'a> {
         // Phase 8 slice 8.STR.3: blessed string assoc fns.
         if type_name == "string" {
             return Some(self.gen_string_assoc_call(method_name, args));
+        }
+        // v0.0.12 G-045: blessed `fN::from_bits(uN)` → LLVM `bitcast` from the
+        // unsigned int to the float. Bit-preserving, zero-cost. Pairs with
+        // `.to_bits()`.
+        if method_name == "from_bits" {
+            let fty = match type_name.as_str() {
+                "f16" => Some(Ty::F16),
+                "f32" => Some(Ty::F32),
+                "f64" => Some(Ty::F64),
+                _ => None,
+            };
+            if let Some(f) = fty {
+                let (uv, ut) = self.gen_expr(&args[0]).expect("from_bits arg has value");
+                let r = self.next_tmp();
+                self.emit(&format!(
+                    "{r} = bitcast {} {uv} to {}",
+                    self.lty(&ut),
+                    self.lty(&f)
+                ));
+                return Some((r, f));
+            }
         }
         // v0.0.6 Slice 1B: SIMD associated functions — `f32x4::splat`,
         // `f32x4::new`, `f32x4::from_array`.
@@ -12806,6 +12916,17 @@ impl<'a> FnState<'a> {
                 let t = self.next_tmp();
                 self.emit(&format!(
                     "{t} = call {lty} @llvm.sqrt.{elem_suffix}({lty} {recv})"
+                ));
+                (t, recv_ty.clone())
+            }
+            // G-042: round each lane to the nearest integer, ties to even
+            // (matches AArch64 FCVTNS / `vcvtnq_s32_f32` and IEEE default).
+            // Result stays float; pair with `INTxN::from_float(...)` to get
+            // a rounded integer SIMD (the quantizer pattern).
+            "round" => {
+                let t = self.next_tmp();
+                self.emit(&format!(
+                    "{t} = call {lty} @llvm.roundeven.{elem_suffix}({lty} {recv})"
                 ));
                 (t, recv_ty.clone())
             }

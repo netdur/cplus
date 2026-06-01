@@ -17179,6 +17179,223 @@ fn fp_contract_rejects_invalid_value() {
     );
 }
 
+/// G-044 (llama.cplus): array-literal elements coerce to the annotated element
+/// type. `let a: [i64; 4] = [1, 2, 3, 4]` used to build a `[4 x i32]` aggregate
+/// and store it into the `[4 x i64]` slot — an LLVM type error at codegen even
+/// though `cpc check` passed. Both the explicit-element and fill forms must now
+/// compile and produce the right values.
+#[test]
+fn g044_array_literal_element_coercion() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g044.cplus");
+    let bin = dir.join("g044");
+    std::fs::write(
+        &src,
+        "fn elems() -> i64 { let a: [i64; 4] = [1, 2, 3, 4]; return a[3 as usize]; }\n\
+         fn fill() -> i64 { let b: [i64; 5] = [7; 5]; return b[4 as usize]; }\n\
+         fn main() -> i32 {\n\
+             if elems() != (4 as i64) { return 1; }\n\
+             if fill() != (7 as i64) { return 2; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "G-044 program must compile: {compile}");
+    let run = Command::new(&bin).status().expect("run g044");
+    assert!(run.success(), "G-044 program must exit 0, got {run}");
+}
+
+/// G-043 (llama.cplus): a `static` array initializer may be an explicit element
+/// list (`[10, 20, 30, 40]`), a fill (`[v; N]`), or nested arrays — previously
+/// rejected with E0X30 (literal-only). Elements coerce to the declared element
+/// type (the static-position analog of G-044).
+#[test]
+fn g043_static_array_initializer() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g043.cplus");
+    let bin = dir.join("g043");
+    std::fs::write(
+        &src,
+        "static T: [i32; 4] = [10, 20, 30, 40];\n\
+         static T64: [i64; 5] = [1, 2, 3, 4, 5];\n\
+         static NESTED: [[i32; 2]; 2] = [[1, 2], [3, 4]];\n\
+         fn main() -> i32 {\n\
+             if T[2 as usize] != 30 { return 1; }\n\
+             if T64[4 as usize] != (5 as i64) { return 2; }\n\
+             if NESTED[1 as usize][0 as usize] != 3 { return 3; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "G-043 program must compile: {compile}");
+    let run = Command::new(&bin).status().expect("run g043");
+    assert!(run.success(), "G-043 program must exit 0, got {run}");
+}
+
+/// G-043 guard: `const` stays literal-only — an array initializer on a `const`
+/// is still E0X30 (consts are inlined at use sites; arrays belong in `static`).
+#[test]
+fn g043_const_array_initializer_still_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g043c.cplus");
+    std::fs::write(
+        &src,
+        "const C: [i32; 2] = [1, 2];\nfn main() -> i32 { return 0; }",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "const array initializer must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0X30"), "expected E0X30, got: {stderr}");
+}
+
+/// G-034 (llama.cplus): an indexed write to a `pub static mut [T; N]` resolved
+/// the static name (was E0300 "undefined name" — only the indexed-write LHS
+/// path failed, while indexed read and scalar write worked).
+#[test]
+fn g034_static_mut_indexed_write() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g034.cplus");
+    let bin = dir.join("g034");
+    std::fs::write(
+        &src,
+        "pub static mut TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+         fn fill() {\n\
+             let mut i: usize = 0 as usize;\n\
+             while i < (16 as usize) {\n\
+                 unsafe { TABLE[i] = (i as i32) *% (2 as i32); };\n\
+                 i = i +% (1 as usize);\n\
+             }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             fill();\n\
+             let v: i32 = unsafe { TABLE[5 as usize] };\n\
+             if v != 10 { return 1; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "G-034 program must compile: {compile}");
+    let run = Command::new(&bin).status().expect("run g034");
+    assert!(run.success(), "G-034 program must exit 0, got {run}");
+}
+
+/// G-034 guard: a genuinely undefined name in indexed-write position still
+/// reports E0300 (the fix must not swallow real undefined-name errors).
+#[test]
+fn g034_undefined_indexed_write_still_e0300() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("g034u.cplus");
+    std::fs::write(
+        &src,
+        "fn f() { NOPE[0 as usize] = 1; return; }\nfn main() -> i32 { return 0; }",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "undefined indexed write must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0300"), "expected E0300, got: {stderr}");
+}
+
+/// G-045 (llama.cplus): native `f16` scalar — `as` conversions (fpext/fptrunc),
+/// `from_bits`/`to_bits` (LLVM bitcast), struct/array storage, and arithmetic.
+/// This is the enabler for pure-C+ fp16↔fp32 (the "zero-`.c`" headline).
+#[test]
+fn g045_f16_scalar_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("f16.cplus");
+    let bin = dir.join("f16");
+    std::fs::write(
+        &src,
+        "fn fp16_to_fp32(bits: u16) -> f32 { return f16::from_bits(bits) as f32; }\n\
+         fn fp32_to_fp16(x: f32) -> u16 { return (x as f16).to_bits(); }\n\
+         struct Block { d: f16, n: i32 }\n\
+         fn main() -> i32 {\n\
+             // `as` round-trip (fptrunc + fpext); 1.5 is exact in f16\n\
+             let r: f32 = (1.5f32 as f16) as f32;\n\
+             if r < 1.49f32 { return 1; }\n\
+             if r > 1.51f32 { return 2; }\n\
+             // from_bits: IEEE half 0x3C00 == 1.0\n\
+             let one: f32 = fp16_to_fp32(0x3C00 as u16);\n\
+             if one < 0.999f32 { return 3; }\n\
+             if one > 1.001f32 { return 4; }\n\
+             // to_bits/from_bits round-trip through the u16 storage rep\n\
+             let back: f32 = fp16_to_fp32(fp32_to_fp16(2.5f32));\n\
+             if back < 2.49f32 { return 5; }\n\
+             if back > 2.51f32 { return 6; }\n\
+             // f64.to_bits bit pattern of 1.0\n\
+             if (1.0f64).to_bits() != 0x3FF0000000000000u64 { return 7; }\n\
+             // f16 as struct field + array storage\n\
+             let b: Block = Block { d: 1.5f32 as f16, n: 0 };\n\
+             if (b.d as f32) < 1.49f32 { return 8; }\n\
+             let mut arr: [f16; 2] = [0.0f32 as f16, 0.0f32 as f16];\n\
+             arr[1] = 3.0f32 as f16;\n\
+             if (arr[1] as f32) < 2.99f32 { return 9; }\n\
+             // f16 arithmetic (LLVM legalizes) + size_of\n\
+             let s: f16 = (2.0f32 as f16) + (3.0f32 as f16);\n\
+             if (s as f32) < 4.99f32 { return 10; }\n\
+             if #size_of::[f16]() != (2 as usize) { return 11; }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(compile.success(), "G-045 program must compile: {compile}");
+    let run = Command::new(&bin).status().expect("run f16");
+    assert!(run.success(), "G-045 program must exit 0, got {run}");
+}
+
+/// G-045 guard: `from_bits` is type-checked — `f16::from_bits` wants a `u16`,
+/// so passing a float is E0302 (the bitcast is bit-preserving, not a convert).
+#[test]
+fn g045_from_bits_wrong_arg_type_e0302() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("f16neg.cplus");
+    std::fs::write(
+        &src,
+        "fn f() -> f16 { return f16::from_bits(1.0f32); }\nfn main() -> i32 { return 0; }",
+    )
+    .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc check");
+    assert!(!out.status.success(), "from_bits with float arg must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0302"), "expected E0302, got: {stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")
