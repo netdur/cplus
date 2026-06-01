@@ -56,14 +56,46 @@ pure-C+ fp16↔fp32 (the "zero-`.c`" milestone); next is removing the remaining
 `cplus-shim` bridges and widening CPU-kernel coverage. Let the port lead and
 file gaps as it hits them, pulling ready items (A/B) as needed.
 
+### F. Code knowledge graph (agent + LSP navigation)
+Designed in [plan.graph.md](plan.graph.md). A compiler-backed, queryable index —
+resolved `def` / `refs` / `callers` / `call-hierarchy` / `type-at` / `members` /
+`context` — so an agent (and the LSP) navigates C+ by *symbol and type*, not by
+`grep`. The thesis: `cpc` already computes resolved names, types, spans, and call
+reachability on every build and throws them away; the graph is **retention +
+edge-inversion**, not new analysis. Lands in a new `cplus-core/src/graph.rs`
+(pure data over the resolved+typed program), with three consumers off one index:
+`cpc query`/`cpc graph` (CLI/CI), a **resident** mode backing `cpc lsp` (folds
+the LSP's coarse name-based goto-def onto the real index), and an **MCP adapter**
+for direct agent use. Two non-obvious load-bearing points the doc stresses:
+(1) **resident, not subprocess** — an on-demand re-parse per query is slower than
+ripgrep, so warm-in-memory is what actually kills the grep loop; (2) **adoption
+is a design concern** — tool names/descriptions and a `CLAUDE.md` nudge decide
+whether the model reaches for the graph instead of its trained `grep` reflex.
+The method-dispatch completeness for `callers`/`refs` is mechanical (C+ has no
+dynamic dispatch — sema resolves every `recv.method()` to a concrete
+`Type::method`), so the only irreducible gap is indirect fn-pointer calls.
+Phased roadmap (index skeleton → def/symbols → call edges → reference edges →
+type-at → bounds/imports → MCP) in the doc. **This is the strongest standalone
+headline candidate** — orthogonal to A–E, high agent-loop leverage, and "cheap"
+because the hard analyses already exist and are tested.
+
 ## Recommendation
 
-Two coherent shapes:
-- **"Finish the ownership model"** (A): land auto-field-drop + `own` +
-  `unsafe impl Send`. Highest conceptual payoff, but a global semantics change —
-  do it deliberately at a port-milestone boundary.
+Three coherent shapes:
+- **"Code knowledge graph"** (F): the strongest standalone headline. Additive
+  (no language-semantics change → low risk), self-contained, and high leverage
+  on the agent loop that *builds* C+. Cheap because the analyses already exist;
+  the real work is the data model, JSON surface, the resident mode, and the
+  adoption design. Doesn't touch the language, so it can run in parallel with
+  any of A/B/E.
+- **"Finish the ownership model"** (A): highest *conceptual* payoff, but a
+  global drop-semantics change — do it deliberately at a port-milestone
+  boundary, gated by the E0509 audit.
 - **"FFI polish + keep the port moving"** (B + E): `c"..."` and struct-literal
   statics are small, low-risk, and directly remove port friction; let the port
-  drive the rest. Lower risk, faster feedback.
+  drive the rest.
 
-Lead with B+E unless a milestone boundary opens the window for A.
+Suggested shape for v0.0.13: **F as the headline** (it improves how every future
+version gets built), **B + E in parallel** (cheap, port-driven), and **A reserved**
+for a clean milestone boundary. F and B/E don't contend — F is tooling, B/E is
+language+port — so they can land together.
