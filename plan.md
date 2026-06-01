@@ -80,6 +80,15 @@ The ggml NEON quant kernels need integer-widening SIMD ops the builtin set lacke
 
 Tutorial §33 (SIMD types) + §28 (vendor/simd) document the full surface. Net: every cpc-side SIMD gap (G-035..G-040) is closed.
 
+## llama-port gap round (2026-06-01, `1a4d671`)
+
+Four gaps surfaced porting ggml.c's type-traits table + `ggml_cpu_init` globals + the fp16 helpers. All `patched-upstream`; regression tests added (449 e2e + 1166 lib green). Canonical log: llama.cplus `cpc-gaps.md`.
+
+- **G-044 — array-literal element coercion.** `let a: [i64; 4] = [1,2,3,4]` built a `[4 x i32]` aggregate stored into a `[4 x i64]` slot (LLVM type error, though `cpc check` passed). `gen_array_lit`/`gen_array_fill` now take the declared element type; bare int literals are width-agnostic constants so they store correctly and the aggregate matches the slot.
+- **G-043 — `static` array initializers.** Explicit lists, fills, and nested arrays accepted (new `is_static_initializer` in lower; `render_static_literal` emits the constant aggregate with the declared element type). `const` stays literal-only.
+- **G-034 — indexed `static mut` write.** `target_is_writable_place`'s `Ident` arm accepts a `static mut` root. Guards intact: immutable static → E0305, missing unsafe → E0X33 (receiver read), undefined → E0300.
+- **G-045 — native `f16` scalar.** `Ty::F16` (LLVM `half`, 2-byte), full float-family membership; `as` conversions ride `is_float`+`ty_bit_width` (fpext/fptrunc, int↔f16); bit-reinterpret `f16::from_bits(u16)` / `.to_bits()` → `bitcast` (also f32↔u32, f64↔u64), following the `from_X`/`to_X` (`::`/`.`) convention. Literal suffix `1.5f16` deferred. Makes fp16↔fp32 pure-C+. Tutorial §3 documents it.
+
 ## Benchmark gaps (bench-cplus handoff, triaged 2026-05-30)
 
 From `/Users/adel/Workspace/bench-cplus/handoff.md` (C+ vs C / Rust / Swift / Node / Bun). Each item was re-verified against the current build before recording; the handoff was written against a slightly older cpc, so several items no longer reproduce.

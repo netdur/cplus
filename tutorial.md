@@ -250,7 +250,7 @@ fn current() -> i32 {
 
 Three rules:
 
-1. **Initialiser must be a literal or `#zero::[T]()`**: integer, float, bool, string, a unary-negated numeric literal, or explicit zero-fill. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error.
+1. **Initialiser must be a literal or `#zero::[T]()`**: integer, float, bool, string, a unary-negated numeric literal, or explicit zero-fill. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error. A **`static`** additionally accepts an array literal or fill (`static T: [i64; 3] = [1, 2, 3];`, `static Z: [u8; 64] = [0u8; 64];`, nested arrays too) — it becomes an LLVM constant aggregate, and bare integer elements coerce to the declared element type. `const` stays literal-only (it is inlined at use sites).
 2. **Type annotation is required**; there is no inference. `const FOO = 5;` and `static FOO = 5;` are rejected with **E0X31**.
 3. **`static mut` reads need `unsafe`** (E0X33). Writes need `unsafe` (E0X34). Writing to an immutable `static` is **E0305** ("cannot assign to immutable static").
 
@@ -262,7 +262,7 @@ The choice between `const` and `static`:
 | A module-private *fixed offset table* the program reads at runtime | `static` |
 | A *mutable* counter / RNG state / lazy cache | `static mut` |
 
-The C `static const sphere_t scene[10] = {...}` pattern is `static SCENE: ...` in C+ (once struct/array initialisers are admitted in a follow-up slice; v0.0.9 ships literal-only). The C `static uint32_t rng_state` pattern is `static mut RNG_STATE: u32 = ...;` today.
+The C array-table pattern `static const int blck[42] = {1, 1, 32, ...};` is `static BLCK: [i64; 42] = [1, 1, 32, ...];` today (array literals/fills are admitted as static initialisers; struct-literal statics like `static const sphere_t scene[10] = {...}` are still pending). The C `static uint32_t rng_state` pattern is `static mut RNG_STATE: u32 = ...;` today.
 
 ---
 
