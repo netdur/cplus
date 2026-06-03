@@ -24,7 +24,7 @@ pub enum NumSuffix {
     I8, I16, I32, I64,
     U8, U16, U32, U64,
     Isize, Usize,
-    F32, F64,
+    F16, F32, F64,
 }
 
 /// Phase 8 slice 8.STR.B.1: one piece of an interpolated string literal.
@@ -829,7 +829,7 @@ impl<'a> Lexer<'a> {
         };
 
         let _ = body_start;
-        let kind = if is_float || matches!(suf, NumSuffix::F32 | NumSuffix::F64) {
+        let kind = if is_float || matches!(suf, NumSuffix::F16 | NumSuffix::F32 | NumSuffix::F64) {
             // F32-suffixed literals parse directly to f32, then widen to f64
             // for AST storage. The widen is lossless (f32 → f64 is exact),
             // and codegen's `(*v as f32).to_bits()` recovers the exact f32.
@@ -987,6 +987,7 @@ fn parse_suffix(s: &str) -> Option<NumSuffix> {
         "u64" => NumSuffix::U64,
         "isize" => NumSuffix::Isize,
         "usize" => NumSuffix::Usize,
+        "f16" => NumSuffix::F16,
         "f32" => NumSuffix::F32,
         "f64" => NumSuffix::F64,
         _ => return None,
@@ -1287,6 +1288,15 @@ mod tests {
         // Uppercase hex digits.
         let toks = tokenize(r#""\x7F""#).unwrap();
         assert_eq!(toks[0].kind, TokenKind::Str("\u{7f}".to_string()));
+    }
+
+    #[test]
+    fn f16_literal_suffix() {
+        let toks = tokenize("1.5f16").unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Float(1.5, NumSuffix::F16));
+        // An integer-form mantissa with the f16 suffix still lexes as a float.
+        let toks = tokenize("3f16").unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Float(3.0, NumSuffix::F16));
     }
 
     #[test]

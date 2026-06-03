@@ -8066,7 +8066,7 @@ impl<'a> FnState<'a> {
                     // declared types still flow correctly because `let x: u64
                     // = 42` emits `store i64 42` (LLVM accepts width-agnostic
                     // numeric literals in the textual operand position).
-                    NumSuffix::None | NumSuffix::F32 | NumSuffix::F64 => Ty::I32,
+                    NumSuffix::None | NumSuffix::F16 | NumSuffix::F32 | NumSuffix::F64 => Ty::I32,
                 };
                 Some((v.to_string(), ty))
             }
@@ -8183,6 +8183,18 @@ impl<'a> FnState<'a> {
             ExprKind::InterpStr { parts } => Some(self.gen_interp_str(parts)),
             ExprKind::FloatLit(v, suf) => {
                 use crate::lexer::NumSuffix;
+                if matches!(suf, NumSuffix::F16) {
+                    // f16 literal: round the f64 value straight to `half` via a
+                    // single `fptrunc` — no double-rounding, no hand-computed
+                    // half bit pattern. (LLVM rejects a decimal half constant,
+                    // so we truncate from the f64-hex form.)
+                    let bits = v.to_bits();
+                    let t = self.next_tmp();
+                    self.body.push_str(&format!(
+                        "  {t} = fptrunc double 0x{bits:016X} to half\n"
+                    ));
+                    return Some((t, Ty::F16));
+                }
                 let ty = match suf {
                     NumSuffix::F32 => Ty::F32,
                     _ => Ty::F64,

@@ -6321,15 +6321,19 @@ impl SemaCx<'_> {
             NumSuffix::Usize => Ty::Usize,
             // Float suffix on integer literal shouldn't happen — the lexer
             // routes those to FloatLit. Treat defensively.
-            NumSuffix::F32 | NumSuffix::F64 => unreachable!("float suffix on int literal"),
+            NumSuffix::F16 | NumSuffix::F32 | NumSuffix::F64 => {
+                unreachable!("float suffix on int literal")
+            }
         }
     }
 
     fn check_float_lit(&mut self, suffix: NumSuffix, expected: Option<Ty>) -> Ty {
         match suffix {
+            NumSuffix::F16 => Ty::F16,
             NumSuffix::F32 => Ty::F32,
             NumSuffix::F64 => Ty::F64,
             NumSuffix::None => match expected {
+                Some(Ty::F16) => Ty::F16,
                 Some(Ty::F32) => Ty::F32,
                 _ => Ty::F64, // default
             },
@@ -13385,6 +13389,16 @@ mod tests {
             diags
         );
         assert_eq!(diags[0].code.0, code);
+    }
+
+    // ---- `f16` literal suffix ----
+
+    #[test]
+    fn f16_literal_types_as_f16() {
+        // `1.5f16` is an f16, and an unsuffixed literal coerces to an f16
+        // annotation.
+        assert!(errors("fn f() -> i32 { let h: f16 = 1.5f16; return 0; }").is_empty());
+        assert!(errors("fn f() -> i32 { let h: f16 = 1.5; return 0; }").is_empty());
     }
 
     // ---- `c"..."` C-string literals (type `*u8`) ----

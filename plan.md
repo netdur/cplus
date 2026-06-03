@@ -29,8 +29,9 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
   already-NUL-terminated str-lit globals), safe to form, so FFI (JNI, Cocoa,
   libc) drops the `"...\0"` + `str_ptr(...)` workaround. Lexer→codegen +
   unit/e2e tested.
-- **`f16` literal suffix** (`1.5f16`) — deferred polish from G-045; today needs
-  `1.5 as f16`.
+- **`f16` literal suffix** (`1.5f16`) — **SHIPPED.** `1.5f16` lexes as an f16
+  float (and an unsuffixed literal takes an `f16` annotation); codegen lowers it
+  with a single `fptrunc double→half` (no double-rounding). Unit/e2e tested.
 - **Struct-literal statics** (`static S: T = T { ... };`) — the remaining half of
   G-043 (array-literal statics shipped; struct/aggregate literals still rejected).
   The ggml `static const sphere_t scene[10] = {...}` pattern.
@@ -97,10 +98,10 @@ because the hard analyses already exist and are tested.
 that improves how every future version gets built. Remaining shapes:
 
 - **"FFI polish + keep the port moving"** (B + E): the natural next batch.
-  `c"..."` C-string literals are **shipped** (the `"...\0"` workaround is gone);
-  remaining B items — the `f16` literal suffix, struct-literal statics, and
-  const-eval for array lengths — are each small, low-risk, and directly remove
-  port friction. Let the port (E) drive which land next.
+  `c"..."` C-string literals and the `f16` literal suffix are **shipped**;
+  remaining B items — struct-literal statics and const-eval for array lengths —
+  are each small, low-risk, and directly remove port friction. Let the port (E)
+  drive which land next.
 - **"Finish the ownership model"** (A): highest *conceptual* payoff, now
   re-specced as raw-pointer accountability in [plan.opaque.md](plan.opaque.md)
   (supersedes the `own`-marker framing of [plan.own.md](plan.own.md)). Still a

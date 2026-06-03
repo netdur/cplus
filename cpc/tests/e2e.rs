@@ -17704,6 +17704,35 @@ fn cstring_literal_compiles_and_runs() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "hi\nn=7\n");
 }
 
+#[test]
+fn f16_literal_compiles_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("f16.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         fn main() -> i32 {\n\
+             let h: f16 = 0.5f16;\n\
+             let x: f32 = h as f32;\n\
+             unsafe { printf(c\"%.3f\\n\", x as f64); }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("f16");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "f16-literal program must compile");
+    let run = Command::new(&bin).output().expect("run produced binary");
+    assert!(run.status.success());
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "0.500\n");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

@@ -171,9 +171,10 @@ let h2: f16 = f16::from_bits(0x3C00 as u16);   // IEEE half 1.0
 let raw: u16 = h2.to_bits();
 ```
 
-There is no `f16` literal suffix yet — write `1.5 as f16`. Arithmetic on `f16`
-works (LLVM legalizes it), but the idiomatic hot-path pattern is to convert to
-`f32`, compute, then convert back.
+An `f16` literal is written with the `f16` suffix (`1.5f16`); an unsuffixed
+literal also takes an `f16` annotation (`let h: f16 = 1.5;`). Arithmetic on
+`f16` works (LLVM legalizes it), but the idiomatic hot-path pattern is to
+convert to `f32`, compute, then convert back.
 
 ### Other primitives
 
