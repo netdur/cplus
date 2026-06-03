@@ -28,7 +28,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "cpc"
-version = "0.0.1"
+version = "0.0.13"
 dependencies = [
  "cplus-core",
  "serde_json",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "cpc-lsp"
-version = "0.0.1"
+version = "0.0.13"
 dependencies = [
  "cplus-core",
  "lsp-server",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "cplus-core"
-version = "0.0.1"
+version = "0.0.13"
 dependencies = [
  "serde",
  "serde_json",
