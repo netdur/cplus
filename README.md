@@ -15,43 +15,42 @@ C+ provides the necessary primitives for low-level systems programming:
 
 Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit`) are implemented as regular packages, keeping the compiler focused and fast.
 
-- [Contributing to C+](#contributing-to-c)
 - [Getting Started](#getting-started)
-  - [Building the Compiler](#building-the-compiler)
+  - [Installing](#installing)
+  - [Requirements](#requirements)
   - [Language Tools](#language-tools)
+  - [Creating a C+ Project](#creating-a-c-project)
+- [Contributing to C+](#contributing-to-c)
+  - [Building from Source](#building-from-source)
 - [Learning More](#learning-more)
-
-## Contributing to C+
-
-Contributions to C+ are welcomed and encouraged! 
-
-The C+ toolchain is implemented as a Rust workspace containing:
-- `cplus-core`: The core compiler library (lexer, parser, AST, semantic analyzer, borrow checker, monomorphizer, LLVM IR codegen).
-- `cpc`: The command-line compiler and build driver.
-- `cpc-lsp`: The JSON-RPC language server for editor integration.
-- `cpc-bindgen`: A C header to C+ FFI generator.
-
-To test your changes before submitting a pull request, you can run the full test suite locally:
-
-```sh
-$ cargo test --workspace
-```
-
-To be a truly great community, C+ needs to welcome developers from all walks of life, with different backgrounds, and with a wide range of experience. A diverse and friendly community will have more great ideas, more unique perspectives, and produce more great code. We work diligently to make the C+ community welcoming to everyone.
 
 ## Getting Started
 
-### Building the Compiler
+### Installing
 
-Since the C+ compiler is built in Rust, you will need a Rust toolchain installed. To build the compiler from source:
+On macOS (Apple Silicon), install C+ with Homebrew:
 
 ```sh
-$ git clone https://github.com/netdur/cplus.git
-$ cd cplus
-$ cargo build --release
+brew install netdur/cplus/cplus
 ```
 
-Once built, the `cpc` compiler binary will be available in `target/release/cpc`.
+This installs prebuilt `cpc` (compiler), `cpc-lsp` (language server), and `cpc-bindgen` (FFI generator) binaries — **no build step, installed in seconds**. Update later with `brew upgrade cplus`.
+
+To build from source instead, see [Building from Source](#building-from-source).
+
+### Requirements
+
+C+ has a single external dependency: a C toolchain (**clang**), used to assemble and link the native binary. `cpc` emits textual LLVM IR and shells out to `clang`, detecting the host target with `clang -print-target-triple`. clang already bundles LLVM, so **no separate LLVM install is needed**.
+
+On macOS, install the Xcode Command Line Tools (most developers already have them):
+
+```sh
+xcode-select --install
+```
+
+The front-end-only commands (`cpc check`, `cpc --emit-ll`, `cpc lsp`, `cpc graph`, `cpc query`, `cpc mcp`, `cpc fmt`, `cpc doc`) are self-contained and need no external tools.
+
+C+ is developed and tested on macOS / Apple Silicon (`aarch64-apple-darwin`) against **Apple clang 21.0.0** — the configuration the test suite runs against. Other clang versions and targets may work but are not yet part of the tested matrix.
 
 ### Language Tools
 
@@ -77,6 +76,37 @@ import "stdlib/io" as io;
 import "metal/metal" as metal;
 ```
 Every import names its source and binds an alias (`import "X" as Y;`) — local paths start with `./`, vendored packages match a `[dependencies]` entry in the manifest. The compiler validates these artifacts to ensure robust, reproducible builds.
+
+## Contributing to C+
+
+Contributions to C+ are welcomed and encouraged!
+
+The C+ toolchain is implemented as a Rust workspace containing:
+- `cplus-core`: The core compiler library (lexer, parser, AST, semantic analyzer, borrow checker, monomorphizer, LLVM IR codegen).
+- `cpc`: The command-line compiler and build driver.
+- `cpc-lsp`: The JSON-RPC language server for editor integration.
+- `cpc-bindgen`: A C header to C+ FFI generator.
+- `cpc-wasm`: A WebAssembly build of the front end powering the in-browser playground on [cplus-lang.dev](https://cplus-lang.dev) (source → diagnostics + LLVM IR, client-side).
+
+### Building from Source
+
+Building the compiler from source requires a Rust toolchain:
+
+```sh
+$ git clone https://github.com/netdur/cplus.git
+$ cd cplus
+$ cargo build --release
+```
+
+Once built, the `cpc` compiler binary will be available in `target/release/cpc`.
+
+Run the full test suite before submitting a pull request:
+
+```sh
+$ cargo test --workspace
+```
+
+To be a truly great community, C+ needs to welcome developers from all walks of life, with different backgrounds, and with a wide range of experience. A diverse and friendly community will have more great ideas, more unique perspectives, and produce more great code. We work diligently to make the C+ community welcoming to everyone.
 
 ## Learning More
 
