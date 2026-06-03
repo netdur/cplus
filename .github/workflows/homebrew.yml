@@ -1,0 +1,67 @@
+name: Update Homebrew tap
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ TEST MODE — fires on push to main (and manual dispatch), targets the     │
+# │ existing v0.0.13 tag, and forces an empty commit so it verifies write    │
+# │ access to the tap end to end without needing a new tag.                   │
+# │                                                                          │
+# │ BEFORE RELYING ON IT FOR RELEASES, revert to tag mode:                   │
+# │   on: { push: { tags: ["v*"] } }                                         │
+# │   TAG="${GITHUB_REF_NAME}"        # instead of the hardcoded v0.0.13     │
+# │   git commit -m ...               # drop --allow-empty; keep diff guard  │
+# └─────────────────────────────────────────────────────────────────────────┘
+#
+# Requires a repo secret HOMEBREW_TAP_TOKEN: a PAT with Contents: read/write
+# on netdur/homebrew-cplus.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  bump-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version, URL, and sha256
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="v0.0.13"   # TEST: hardcoded. Real releases: TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+          # Compute the checksum from the exact artifact users will download.
+          SHA="$(curl -fsSL "$URL" | sha256sum | cut -d' ' -f1)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "url=$URL"         >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA"         >> "$GITHUB_OUTPUT"
+          echo "Bumping cplus -> $VERSION ($SHA)"
+
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: netdur/homebrew-cplus
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Rewrite formula url + sha256
+        run: |
+          set -euo pipefail
+          FORMULA="tap/Formula/cplus.rb"
+          sed -i -E "s#^  url \".*\"#  url \"${{ steps.meta.outputs.url }}\"#" "$FORMULA"
+          sed -i -E "s#^  sha256 \".*\"#  sha256 \"${{ steps.meta.outputs.sha }}\"#" "$FORMULA"
+          echo "----- updated formula -----"
+          grep -E "^  (url|sha256) " "$FORMULA"
+
+      - name: Commit and push to the tap
+        run: |
+          set -euo pipefail
+          cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/cplus.rb
+          # TEST: --allow-empty forces a push so tap write access is verified
+          # even when the formula values are unchanged.
+          git commit --allow-empty -m "ci test: cplus ${{ steps.meta.outputs.version }}"
+          git push
