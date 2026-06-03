@@ -1554,6 +1554,27 @@ for i in 0..count {
 
 `#[unroll(N)]` asks LLVM to unroll the loop N times; `#[vectorize_width(N)]` hints the autovectorizer toward an N-wide SIMD shape. Marginal for general code; **load-bearing for tight inner loops** that the compiler doesn't choose well by default.
 
+### `#[inline]`: inlining control
+
+A function- or method-level attribute that attaches an LLVM inlining attribute to the `define`. Three forms:
+
+```cplus
+#[inline]                 // inlinehint — raise the inliner's likelihood
+fn small_helper(x: i32) -> i32 { return x +% 1; }
+
+#[inline(always)]         // alwaysinline — force inlining
+fn scale(v: f32x4, k: f32) -> f32x4 { return v.mul(f32x4::splat(k)); }
+
+#[inline(never)]          // noinline — keep it a real call
+fn cold_path(code: i32) -> i32 { return code; }
+```
+
+- `#[inline]` → `inlinehint`. Only the optimizer acts on it, so it matters at `--release` (`-O3`); at debug `-O0` the inliner doesn't run, so it's a no-op.
+- `#[inline(always)]` → `alwaysinline`. Inlines **even at `-O0`** and **past LLVM's cost threshold**. This is the lever for hot kernels built from `vendor/simd` Tier-2 wrappers (and similar small-but-over-threshold helpers) that otherwise stay a `bl`/`call`.
+- `#[inline(never)]` → `noinline`. Pins a call boundary (cold paths, profiling, code-size control).
+
+These are pure hints — no behavioural change, no sema rule — so reach for them only on measured hot (or deliberately cold) paths. `--release` already runs LLVM's full inliner (`-O3`), so most code never needs the attribute; `#[inline(always)]` exists for the cases the cost model declines and for getting inlining in debug builds.
+
 ### Real-time contracts
 
 **First, what "real-time" means here, because it's the most misunderstood word in systems programming.** Real-time is **not** about speed or throughput. It's about *predictability*: a real-time task must finish within a fixed deadline **every single time**, including its worst case. An audio callback that's usually fast but occasionally stalls for 3 ms produces an audible click; a control loop that misses its deadline once can crash the machine. Average speed is irrelevant; the *worst case* is everything. A slow-but-bounded function is real-time-safe; a fast-on-average function with an unbounded worst case is not.

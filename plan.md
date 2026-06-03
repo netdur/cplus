@@ -55,11 +55,16 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
 - **`#[no_alloc]` drop-glue** — reject a `Drop` destructor that allocates, run
   implicitly at scope exit (needs ownership analysis; pairs with topic A).
 
-### D. Performance
-- **Cross-function inlining / `#[inline]`** (llama.cplus G-041) — cpc only
-  auto-inlines trivial getters; a kernel built from `vendor/simd` Tier-2 calls
-  keeps them as `bl`. Watch for the Q4_K CPU hot path; fix = run LLVM's inliner
-  at `--release` or honor `#[inline]`.
+### D. Performance — **DONE** (G-041)
+- **Cross-function inlining / `#[inline]`** — **SHIPPED.** Two parts: (1) `--release`
+  already runs LLVM's full inliner at `-O3`, so cross-function inlining happens
+  there automatically (verified: a `fastcc internal` SIMD wrapper inlines away at
+  `-O3`). (2) New **`#[inline]`** attribute (`fn`/method) attaches the LLVM
+  function attribute: `#[inline]`→`inlinehint`, `#[inline(always)]`→`alwaysinline`,
+  `#[inline(never)]`→`noinline`. `alwaysinline` is the lever G-041 wanted — it
+  inlines hot `vendor/simd` Tier-2 wrappers **even at `-O0`** and **past LLVM's
+  cost threshold**, where they previously stayed a `bl`. attrs→codegen +
+  unit/e2e tested (incl. the -O0 inline-away proof).
 
 ### E. Dogfood — the llama.cplus port — **DONE**
 The port was the engine that surfaced every gap this cycle. `f16` unblocked
@@ -121,10 +126,9 @@ that improves how every future version gets built. Remaining shapes:
   [plan.agent.md](plan.agent.md) (in-app + external agent surface, the
   set_agent_id / programmable-auth product bet).
 
-Suggested next shape: **B is done** and **E (the port) is done**. The release-polish
-order now runs through **D** (cross-function inlining / `#[inline]` — perf
-credibility), **C**'s small tail (`--realtime-report`), and the graph's
-non-invasive delivery tail (fold under `cpc lsp` + incremental rebuild), then a
-release-hygiene gate (examples/recipes compile, `cpc fmt --check`, version bump).
-**A reserved** for a clean milestone boundary; the graph's invasive depth work
-(value-refs, sema-retention precision) stays deferred.
+Suggested next shape: **B, D, and E are done.** The release-polish order continues
+through **C**'s small tail (`--realtime-report`), then the graph's non-invasive
+delivery tail (fold under `cpc lsp` + incremental rebuild), then a release-hygiene
+gate (examples/recipes compile, `cpc fmt --check`, version bump). **A reserved**
+for a clean milestone boundary; the graph's invasive depth work (value-refs,
+sema-retention precision) stays deferred.

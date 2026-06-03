@@ -4463,6 +4463,34 @@ fn emit_test_driver_main(out: &mut String, tests: &[crate::attrs::TestFn], json:
     let _ = (pass_fmt_len, fail_fmt_len, summary_fmt_len, name_lens);
 }
 
+/// v0.0.13 (topic D): map a function/method's `#[inline]` attribute to the
+/// LLVM function attribute to splice after the `define ... (...)` signature.
+///
+/// - `#[inline]`         → ` inlinehint` (raises the inliner's likelihood; only
+///                          matters once the inliner runs, i.e. `--release`/-O2+)
+/// - `#[inline(always)]` → ` alwaysinline` (forces inlining, including at -O0
+///                          and past LLVM's cost threshold — the lever for hot
+///                          SIMD/kernel wrappers that otherwise stay a `bl`)
+/// - `#[inline(never)]`  → ` noinline`
+///
+/// Returns `""` when the attribute is absent. The leading space is included so
+/// callers can splice it directly after the closing `)`. Arg-shape errors are
+/// already reported by `attrs.rs`, so an unrecognized arg yields `""` here.
+fn inline_fn_attr(attrs: &[Attribute]) -> &'static str {
+    for a in attrs {
+        if a.path.name != "inline" {
+            continue;
+        }
+        return match a.args.as_slice() {
+            [] => " inlinehint",
+            [AttrArg::Ident(id)] if id.name == "always" => " alwaysinline",
+            [AttrArg::Ident(id)] if id.name == "never" => " noinline",
+            _ => "",
+        };
+    }
+    ""
+}
+
 fn gen_function(
     out: &mut String,
     f: &Function,
@@ -4754,7 +4782,9 @@ fn gen_function(
             }
         }
     }
-    out.push_str(") {\n");
+    out.push_str(")");
+    out.push_str(inline_fn_attr(&f.attributes));
+    out.push_str(" {\n");
     out.push_str("entry:\n");
 
     // Build the function body
@@ -6183,7 +6213,10 @@ fn gen_method(
     } else {
         ""
     };
-    let fn_attrs = if is_drop_method { " cold" } else { "" };
+    // `cold` on drop glue, plus any `#[inline]` LLVM attribute. (A drop
+    // method is never user-marked `#[inline]`, so these don't collide.)
+    let fn_attrs = format!("{}{}", if is_drop_method { " cold" } else { "" }, inline_fn_attr(&m.attributes));
+    let fn_attrs = fn_attrs.as_str();
     // Phase 5 Slice 5.B: in library builds, non-`pub` methods get
     // `internal` linkage. `drop` is compiler-synthesized infrastructure —
     // not part of the public C-ABI surface even when `pub`; always
@@ -18200,6 +18233,40 @@ mod tests {
             ir.contains("@G = constant %W { half 0xH3C00, half 0xH3E00 }"),
             "expected half constants; IR:\n{ir}"
         );
+    }
+
+    // ---- v0.0.13 (topic D): `#[inline]` LLVM function attributes ----
+
+    #[test]
+    fn inline_attrs_on_functions_emit_llvm_attrs() {
+        let ir = gen_src(
+            "#[inline] fn a(x: i32) -> i32 { return x +% 1; }\n\
+             #[inline(always)] fn b(x: i32) -> i32 { return x +% 2; }\n\
+             #[inline(never)] fn c(x: i32) -> i32 { return x +% 3; }\n\
+             fn main() -> i32 { return a(0) +% b(0) +% c(0); }",
+        );
+        assert!(ir.contains("@a(i32 noundef %0) inlinehint {"), "IR:\n{ir}");
+        assert!(ir.contains("@b(i32 noundef %0) alwaysinline {"), "IR:\n{ir}");
+        assert!(ir.contains("@c(i32 noundef %0) noinline {"), "IR:\n{ir}");
+    }
+
+    #[test]
+    fn inline_attr_on_method_emits_llvm_attr() {
+        let ir = gen_src(
+            "struct P { v: i32 }\n\
+             impl P { #[inline(always)] fn get(self) -> i32 { return self.v; } }\n\
+             fn main() -> i32 { let p: P = P { v: 5 }; return p.get(); }",
+        );
+        assert!(ir.contains("@P.get(%P %0) alwaysinline {"), "IR:\n{ir}");
+    }
+
+    #[test]
+    fn no_inline_attr_emits_no_llvm_attr() {
+        let ir = gen_src("fn plain(x: i32) -> i32 { return x; }\nfn main() -> i32 { return plain(1); }");
+        // The signature closes straight into the body with no inline attribute.
+        assert!(ir.contains("@plain(i32 noundef %0) {"), "IR:\n{ir}");
+        assert!(!ir.contains("inlinehint"), "IR:\n{ir}");
+        assert!(!ir.contains("alwaysinline"), "IR:\n{ir}");
     }
 
     #[test]

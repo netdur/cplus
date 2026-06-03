@@ -17874,6 +17874,45 @@ fn unknown_const_array_length_rejected_e0x36() {
     assert!(stderr.contains("E0X36"), "expected E0X36, got: {stderr}");
 }
 
+// v0.0.13 (topic D): `#[inline(always)]` emits `alwaysinline`, which LLVM honors
+// even at debug -O0 — so a marked SIMD/kernel wrapper is inlined away (no `call`
+// survives) where an unmarked one stays a real call. This is the lever for hot
+// kernels built from vendor/simd Tier-2 wrappers. Verified via --emit-ll-opt.
+#[test]
+fn inline_always_inlines_at_debug_o0() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("inl.cplus");
+    std::fs::write(
+        &src,
+        "#[inline(always)] fn scale(v: f32x4, k: f32) -> f32x4 { return v.mul(f32x4::splat(k)); }\n\
+         fn main() -> i32 {\n\
+             let a: f32x4 = f32x4::splat(2.0f32);\n\
+             let b: f32x4 = scale(a, 3.0f32);\n\
+             return b.lane(0 as u32) as i32;   // 6\n\
+         }\n",
+    )
+    .unwrap();
+    // The post-opt debug IR must have no surviving call to @scale.
+    let out = Command::new(cpc)
+        .arg("--emit-ll-opt")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc --emit-ll-opt");
+    assert!(out.status.success(), "emit-ll-opt failed");
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !ir.contains("call") || !ir.contains("@scale"),
+        "alwaysinline fn should be inlined away at -O0; IR:\n{ir}"
+    );
+    // And it still runs correctly.
+    let bin = dir.join("inl");
+    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("cpc");
+    assert!(compile.success());
+    let run = Command::new(&bin).output().expect("run");
+    assert_eq!(run.status.code(), Some(6), "expected exit 6");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

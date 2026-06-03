@@ -40,6 +40,10 @@ enum ArgsSpec {
     /// `#[name(VAL)]` — exactly one ident arg from a fixed allow-list.
     /// Used by `#[repr(C)]` (slice 10.FFI.5).
     OneIdentFrom(&'static [&'static str]),
+    /// `#[name]` or `#[name(VAL)]` — zero args, or exactly one ident arg
+    /// from a fixed allow-list. Used by `#[inline]` / `#[inline(always)]` /
+    /// `#[inline(never)]` (v0.0.13).
+    OptionalIdentFrom(&'static [&'static str]),
     /// `#[name = "VAL"]` or `#[name("VAL")]` — exactly one string-literal arg.
     /// No allow-list — the value is opaque (e.g. a linker symbol name).
     /// Used by `#[link_name = "..."]` (Phase 11 / ObjC interop).
@@ -147,6 +151,19 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     AttrSpec {
         name: "max_stack",
         args: ArgsSpec::ExactlyOneInt,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
+    // v0.0.13 (topic D): `#[inline]` — LLVM inlining control. `#[inline]`
+    // emits `inlinehint` (raises the inliner's likelihood at -O2/-O3);
+    // `#[inline(always)]` emits `alwaysinline` (forces inlining, including in
+    // debug -O0 and past the cost threshold — the lever for hot SIMD/kernel
+    // wrappers that otherwise stay a `bl`); `#[inline(never)]` emits
+    // `noinline`. Surface-shape only; codegen attaches the LLVM attribute on
+    // the function/method `define`. No sema rule — these are pure hints.
+    AttrSpec {
+        name: "inline",
+        args: ArgsSpec::OptionalIdentFrom(&["always", "never"]),
         targets: TARGET_FN | TARGET_METHOD,
         allow_duplicate: false,
     },
@@ -464,6 +481,16 @@ impl Ctx {
                     self.emit_bad_repr_arg(attr, spec, allowed);
                 }
             }
+            ArgsSpec::OptionalIdentFrom(allowed) => {
+                let ok = match attr.args.as_slice() {
+                    [] => true,
+                    [AttrArg::Ident(id)] => allowed.contains(&id.name.as_str()),
+                    _ => false,
+                };
+                if !ok {
+                    self.emit_bad_optional_ident_arg(attr, spec, allowed);
+                }
+            }
             ArgsSpec::ExactlyOneStr => {
                 let ok = matches!(attr.args.as_slice(), [AttrArg::Str(_, _)]);
                 if !ok {
@@ -542,6 +569,33 @@ impl Ctx {
             severity: Severity::Error,
             code: DiagCode("E0355"),
             message: format!("attribute `#[{}]` takes no arguments", spec.name),
+            primary,
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
+        });
+    }
+
+    /// v0.0.13: `#[inline(...)]` with an unsupported arg shape.
+    fn emit_bad_optional_ident_arg(
+        &mut self,
+        attr: &Attribute,
+        spec: &AttrSpec,
+        allowed: &[&'static str],
+    ) {
+        let primary = self.make_span(attr.span);
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode("E0355"),
+            message: format!(
+                "attribute `#[{}]` takes no arguments, or exactly one of: {}",
+                spec.name,
+                allowed
+                    .iter()
+                    .map(|s| format!("`{s}`"))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            ),
             primary,
             labels: Vec::new(),
             notes: Vec::new(),
@@ -1095,5 +1149,45 @@ mod tests {
     fn discover_tests_empty_when_no_tests() {
         let prog = parse_src("fn main() -> i32 { return 0; }");
         assert!(discover_tests(&prog).is_empty());
+    }
+
+    // ---- v0.0.13 (topic D): `#[inline]` ----
+
+    #[test]
+    fn inline_bare_on_fn_clean() {
+        let diags = check_src("#[inline] fn f() -> i32 { return 0; }");
+        assert!(diags.is_empty(), "got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn inline_always_and_never_on_fn_clean() {
+        assert!(check_src("#[inline(always)] fn f() -> i32 { return 0; }").is_empty());
+        assert!(check_src("#[inline(never)] fn f() -> i32 { return 0; }").is_empty());
+    }
+
+    #[test]
+    fn inline_on_method_clean() {
+        let diags = check_src(
+            "struct P { x: i32 } impl P { #[inline(always)] fn get(self) -> i32 { return self.x; } }",
+        );
+        assert!(diags.is_empty(), "got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn inline_bad_arg_e0355() {
+        let diags = check_src("#[inline(sometimes)] fn f() -> i32 { return 0; }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    #[test]
+    fn inline_on_struct_e0356() {
+        let diags = check_src("#[inline] struct S { x: i32 }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
+    }
+
+    #[test]
+    fn inline_duplicate_e0357() {
+        let diags = check_src("#[inline] #[inline(always)] fn f() -> i32 { return 0; }");
+        assert_eq!(codes(&diags), vec!["E0357"]);
     }
 }
