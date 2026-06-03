@@ -17396,6 +17396,111 @@ fn g045_from_bits_wrong_arg_type_e0302() {
     assert!(stderr.contains("E0302"), "expected E0302, got: {stderr}");
 }
 
+/// Set up a minimal self-contained project (no deps) for the graph tests and
+/// return its root directory. The entry defines a struct with a method so the
+/// graph has fields, methods, and a `defines` edge to exercise.
+fn graph_project() -> std::path::PathBuf {
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"g\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "struct Point { pub x: i32, pub y: i32 }\n\
+         impl Point {\n\
+             fn sum(self) -> i32 { return self.x +% self.y; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let p: Point = Point { x: 1, y: 2 };\n\
+             return p.sum();\n\
+         }\n",
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn graph_emits_nodes_and_edges_json() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let out = Command::new(cpc)
+        .arg("graph")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc graph");
+    assert!(out.status.success(), "cpc graph exited non-zero: {}", out.status);
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("\"nodes\""), "missing nodes array: {s}");
+    assert!(s.contains("\"edges\""), "missing edges array: {s}");
+    assert!(s.contains("\"name\": \"Point\""), "missing Point node: {s}");
+    assert!(s.contains("\"name\": \"sum\""), "missing sum method node: {s}");
+    assert!(s.contains("\"has_field\""), "missing has_field edge: {s}");
+    assert!(s.contains("\"has_method\""), "missing has_method edge: {s}");
+    assert!(s.contains("\"defines\""), "missing defines edge: {s}");
+}
+
+#[test]
+fn query_def_and_members_resolve() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+
+    // def by bare name resolves the struct.
+    let def = Command::new(cpc)
+        .args(["query", "def", "Point"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query def");
+    assert!(def.status.success(), "query def Point should find the symbol");
+    let s = String::from_utf8_lossy(&def.stdout);
+    assert!(s.contains("\"kind\": \"struct\""), "def not a struct: {s}");
+    assert!(s.contains("\"name\": \"Point\""), "def wrong name: {s}");
+
+    // members lists fields and methods.
+    let mem = Command::new(cpc)
+        .args(["query", "members", "Point"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query members");
+    assert!(mem.status.success());
+    let m = String::from_utf8_lossy(&mem.stdout);
+    assert!(m.contains("\"name\": \"x\""), "members missing field x: {m}");
+    assert!(m.contains("\"name\": \"sum\""), "members missing method sum: {m}");
+}
+
+#[test]
+fn query_missing_symbol_exits_nonzero() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let out = Command::new(cpc)
+        .args(["query", "def", "Nonexistent"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query def");
+    assert!(!out.status.success(), "not-found must exit non-zero");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "[]");
+}
+
+#[test]
+fn query_unimplemented_kind_reports_and_fails() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let out = Command::new(cpc)
+        .args(["query", "callers", "Point"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query callers");
+    assert!(!out.status.success(), "deferred query must exit non-zero");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not available in this build"),
+        "expected a clear deferred-feature message, got: {err}"
+    );
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

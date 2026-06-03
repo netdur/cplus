@@ -169,6 +169,23 @@ Multi-file: run the build pipeline as `cpc build` would, but print the
 merged LLVM IR to stdout instead of invoking clang. Uses ./Cplus.toml.
 "
         }
+        Some(Subcommand::Graph) => {
+            "\
+cpc graph
+
+Build the project's code knowledge graph and print it as JSON (nodes +
+edges) on stdout. Reads ./Cplus.toml. The resolved index an agent or the
+LSP queries by symbol instead of by grep.
+"
+        }
+        Some(Subcommand::Query) => {
+            "\
+cpc query <kind> [args...]
+
+Answer one code-graph query as JSON. Kinds: `def SYMBOL`, `members TYPE`,
+`symbols [FILE]`. Reads ./Cplus.toml; exit code signals found / not-found.
+"
+        }
     }
 }
 
@@ -217,6 +234,10 @@ fn main() -> ExitCode {
     let mut fmt_inputs: Vec<PathBuf> = Vec::new();
     let mut test_opts = TestOpts::default();
     let mut test_input: Option<PathBuf> = None;
+    // `cpc query <kind> [args...]` — kind is the first positional after
+    // `query`, the rest are its arguments (e.g. a symbol or file id).
+    let mut query_kind: Option<String> = None;
+    let mut query_args: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let a = args[i].to_str();
@@ -422,6 +443,25 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::Lsp);
                 i += 1;
             }
+            Some("graph") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Graph);
+                i += 1;
+            }
+            Some("query") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Query);
+                i += 1;
+            }
+            // `cpc query`-specific flag: `--depth N` for call-hierarchy.
+            Some("--depth") if matches!(subcommand, Some(Subcommand::Query)) => {
+                if let Some(v) = args.get(i + 1) {
+                    query_args.push("--depth".to_string());
+                    query_args.push(v.to_string_lossy().into_owned());
+                    i += 2;
+                } else {
+                    eprintln!("cpc query: --depth requires a number");
+                    return ExitCode::FAILURE;
+                }
+            }
             // `cpc test`-specific flags.
             Some("--json") if matches!(subcommand, Some(Subcommand::Test)) => {
                 test_opts.json = true;
@@ -457,6 +497,14 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                     test_input = Some(PathBuf::from(&args[i]));
+                    i += 1;
+                } else if matches!(subcommand, Some(Subcommand::Query)) {
+                    // First positional is the query kind; the rest are args.
+                    if query_kind.is_none() {
+                        query_kind = Some(args[i].to_string_lossy().into_owned());
+                    } else {
+                        query_args.push(args[i].to_string_lossy().into_owned());
+                    }
                     i += 1;
                 } else {
                     if input.is_some() {
@@ -528,6 +576,8 @@ fn main() -> ExitCode {
             eprintln!("cpc: `doc` requires a FILE argument");
             ExitCode::FAILURE
         }
+        (Some(Subcommand::Graph), _) => run_graph(diag_mode),
+        (Some(Subcommand::Query), _) => run_query(query_kind, query_args, diag_mode),
         (None, Some(path)) => compile_file(
             path,
             out.unwrap_or_else(|| PathBuf::from("a.out")),
@@ -556,6 +606,12 @@ enum Subcommand {
     /// items + their `///` docs from a source file, emit Markdown to
     /// `target/doc/<basename>.md`.
     Doc,
+    /// `cpc graph` — build the code knowledge graph for the project and
+    /// print it as JSON (nodes + edges). See `plan.graph.md`.
+    Graph,
+    /// `cpc query <kind> [args...]` — answer one graph query (`def`,
+    /// `members`, `symbols`, …) as JSON.
+    Query,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -2055,6 +2111,113 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
     ) {
         Ok(_) => ExitCode::SUCCESS,
         Err(code) => code,
+    }
+}
+
+/// Load + resolve the current project (mirrors `cpc check`'s entry
+/// resolution), returning the resolved program for graph construction. On any
+/// failure it renders a diagnostic and returns the exit code to bubble up.
+fn load_project_for_graph(diag_mode: DiagMode) -> Result<resolver::LoadedProject, ExitCode> {
+    let manifest_path = PathBuf::from("Cplus.toml");
+    let m = match manifest::load(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return Err(ExitCode::FAILURE);
+        }
+    };
+    let (entry_path, is_lib_pkg) = if let Some(lt) = m.lib.as_ref() {
+        (lt.path.clone(), true)
+    } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
+        (m.bins[0].path.clone(), false)
+    } else if m.bins.len() == 1 {
+        let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
+        if !guess.is_file() {
+            eprintln!(
+                "cpc: bin entry `{}` not found, and no `{}` fallback either",
+                m.bins[0].path.display(),
+                guess.display()
+            );
+            return Err(ExitCode::FAILURE);
+        }
+        (guess, true)
+    } else {
+        eprintln!(
+            "cpc: project must declare at most one [[bin]]; found {}",
+            m.bins.len()
+        );
+        return Err(ExitCode::FAILURE);
+    };
+    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names)) {
+        Ok(loaded) => Ok(loaded),
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// `cpc graph` — build the project's code knowledge graph and print it as JSON
+/// (nodes + edges) on stdout.
+fn run_graph(diag_mode: DiagMode) -> ExitCode {
+    let loaded = match load_project_for_graph(diag_mode) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    let g = cplus_core::graph::CodeGraph::build(&loaded);
+    println!("{}", g.to_json());
+    ExitCode::SUCCESS
+}
+
+/// `cpc query <kind> [args...]` — answer one graph query as JSON on stdout.
+/// Exit code signals found (0) vs not-found (1), per plan.graph.md §6. This
+/// build ships the Phase 1 index: `def`, `members`, `symbols`. Call /
+/// reference / type queries land in later phases and report so explicitly.
+fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> ExitCode {
+    let Some(kind) = kind else {
+        eprintln!("cpc query: expected a query kind (def | members | symbols)");
+        return ExitCode::FAILURE;
+    };
+    let loaded = match load_project_for_graph(diag_mode) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    let g = cplus_core::graph::CodeGraph::build(&loaded);
+    let arg0 = args.first().map(|s| s.as_str());
+    let result = match kind.as_str() {
+        "def" => {
+            let Some(sym) = arg0 else {
+                eprintln!("cpc query def: expected a SYMBOL");
+                return ExitCode::FAILURE;
+            };
+            g.def(sym)
+        }
+        "members" => {
+            let Some(ty) = arg0 else {
+                eprintln!("cpc query members: expected a TYPE");
+                return ExitCode::FAILURE;
+            };
+            g.members(ty)
+        }
+        "symbols" => g.symbols(arg0),
+        "refs" | "callers" | "callees" | "call-hierarchy" | "type-at" | "context" => {
+            eprintln!(
+                "cpc query {kind}: not available in this build — it ships the Phase 1 index \
+                 (def, members, symbols). Call/reference/type queries land in a later phase."
+            );
+            return ExitCode::FAILURE;
+        }
+        other => {
+            eprintln!("cpc query: unknown query kind `{other}` (expected: def | members | symbols)");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("{}", cplus_core::graph::CodeGraph::nodes_to_json(&result));
+    if result.is_empty() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

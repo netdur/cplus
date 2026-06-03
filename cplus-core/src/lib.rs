@@ -13,6 +13,7 @@ pub mod diagnostics;
 pub mod doctest;
 pub mod docgen;
 pub mod fmt;
+pub mod graph;
 pub mod lexer;
 pub mod lower;
 pub mod manifest;
