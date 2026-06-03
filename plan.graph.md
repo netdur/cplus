@@ -4,6 +4,11 @@ This document records an architecture pass over the `cpc` front-end (lexer → p
 
 The bet is the same one the GPU and SIMD plans make: `cpc` already computes the hard part (resolved names, types, spans, call sites) on every build. Today that information is thrown away after diagnostics. A graph is just that information, kept and made addressable.
 
+## Status (v0.0.13)
+
+- **Phase 1 shipped.** `cplus-core/src/graph.rs` builds the index — nodes for modules, functions, extern fns, methods, structs/enums and their fields/variants, consts, statics, type aliases, interfaces — with stable source-name symbol IDs (`src.uuid::Uuid::new_v4`, never a mangled form) and resolved `file:line:col`, plus the structural edges `defines` / `has_method` / `has_field` / `has_variant`. CLI: `cpc graph` (whole graph as JSON) and `cpc query def | members | symbols` (JSON; exit code signals found/not-found). The remaining query kinds (`refs` / `callers` / `callees` / `call-hierarchy` / `type-at` / `context`) report "not available in this build" and exit non-zero, so nothing reads as done that isn't. Unit + e2e tested.
+- **Phases 3–7 open.** Call edges (Phase 3) are next; the resolution options and the staged decision are recorded in §12.
+
 ---
 
 ## 1. Problem statement
@@ -136,6 +141,8 @@ cpc query symbols src/main.cplus
 
 Output is JSON on stdout; exit code signals found/not-found. The same handlers back the LSP requests (`references`, `documentSymbol`, `callHierarchy`, resolved `definition`, `hover`). The MCP adapter holds the index resident and registers one tool per query kind, so an agent calls `cpc_query_refs(symbol)` with no per-query process spawn (§3).
 
+**MCP transport.** The adapter is a local **stdio** server: JSON-RPC 2.0 messages over the spawned process's stdin/stdout — not an HTTP server, not a socket. This is the natural fit with resident mode (§3): one long-lived `cpc`-spawned subprocess builds the graph once, then answers JSON-RPC requests from the warm in-memory index for the whole session. HTTP (Streamable HTTP) is the MCP transport for *remote* servers only, which is out of scope here.
+
 This keeps the agent loop short: instead of "grep, read, grep, guess", it is "`cpc query context X` → signature, callers, callees, and types in one shot".
 
 ---
@@ -158,7 +165,7 @@ Phased so each step ships a usable slice and reuses existing front-end output.
 
 - **Phase 1, index skeleton.** New `cplus-core/src/graph.rs`: build `CodeGraph` nodes from the resolved+typed program (functions, methods, types, fields, consts, statics, modules) with stable IDs and resolved spans. `cpc graph` emits nodes as JSON. No edges yet beyond `defines`/`has_method`/`has_field`, which come straight from sema tables.
 - **Phase 2, definitions and symbols.** `cpc query def` and `cpc query symbols`, resolved (not name-based). Retire the LSP's `find_decls_in_project` scan in favor of the index; `definition` becomes precise. Full positive + negative + e2e tests per [[feedback_test_discipline]].
-- **Phase 3, call edges.** Generalize `build_no_alloc_fn_table` into a reusable `calls` edge set; add `callers`/`callees`/`call-hierarchy`. Method-dispatch (`recv.method()`) is where `callers`/`refs` completeness is won or lost, and the realtime checker skips it today, but it is *mechanical, not theoretical*: C+ has no dynamic dispatch (no trait objects, no vtables), so sema already resolves every method call to a concrete `Type::method` from the receiver's known type. The fix is to consult the resolved target sema already computes, not to over-approximate virtual targets; the realtime checker skips it only because its effects-walker matches callees by name (see [[project_realtime_v0012]]). The one genuinely unresolvable case is indirect calls through fn-pointers, which §10 already scopes out as "indirect call through this fn-pointer type". So the bounded, irreducible gap is small and named; everything else resolves.
+- **Phase 3, call edges.** Generalize `build_no_alloc_fn_table` into a reusable `calls` edge set; add `callers`/`callees`/`call-hierarchy`. Method-dispatch (`recv.method()`) is where `callers`/`refs` completeness is won or lost, and the realtime checker skips it today, but it is *mechanical, not theoretical*: C+ has no dynamic dispatch (no trait objects, no vtables), so sema already resolves every method call to a concrete `Type::method` from the receiver's known type. The fix is to consult the resolved target sema already computes, not to over-approximate virtual targets; the realtime checker skips it only because its effects-walker matches callees by name (see [[project_realtime_v0012]]). The one genuinely unresolvable case is indirect calls through fn-pointers, which §10 already scopes out as "indirect call through this fn-pointer type". So the bounded, irreducible gap is small and named; everything else resolves. The concrete resolution options and the staged decision (pragmatic in-graph resolution now, with an explicit `unresolved` count; sema-retained full resolution later) are recorded in §12.
 - **Phase 4, reference edges.** Walk every `Ident`/`Field`/`Call` and bind it to its resolved symbol, producing `references` / `referenced_by`. This is the highest-value query (`refs`) and the most work, since it needs the same name resolution sema runs, retained per-node.
 - **Phase 5, types at positions.** `type-at <file:line:col>` by retaining sema's per-expression `Ty` keyed by span. Powers LSP `hover` too.
 - **Phase 6, bounds, imports, drop edges.** `impls`, `module-deps`, and the best-effort `drops` edge. Round out the LSP (`documentSymbol`, `callHierarchy`).
@@ -184,3 +191,47 @@ The LSP is a consumer, not a competitor. Today it reimplements a coarse subset (
 ## 11. Why this is cheap
 
 Every input already exists and is recomputed on every `cpc check`. The graph is retention plus inversion: keep the resolution/type results that sema computes and currently discards, key them by a stable symbol ID, and invert the forward edges once. The expensive analyses (name resolution, type checking, call reachability) are already written and tested. The new surface area is a data model, a JSON serializer, and a handful of query functions, with the LSP folding onto the same index as a bonus.
+
+---
+
+## 12. Call-edge resolution (Phase 3): options and decision
+
+Phase 3 needs a `calls` edge from each call site to the function or method it invokes. Free-function calls are easy; method calls are the crux. The deciding criterion is the project's whole point: let an agent stop using `grep` and stop reasoning about lossy `grep` results.
+
+### Finding
+
+The existing call-graph walker (`collect_effects` / `build_no_alloc_fn_table` in `sema.rs`) records callees through `extract_call_name`, which resolves `ExprKind::Ident` (a bare free-function name) and `ExprKind::Path` (a dotted module path), and returns `None` for `ExprKind::Field`. A method call `recv.method()` is a `Call` with a `Field` callee, so the current machinery records free-function calls and **misses every method call**. To draw a method edge the graph must recover the receiver's type — which sema computes during checking and then discards.
+
+### The agent constraint
+
+All three options below are **sound**: every edge they draw is correct, none point at the wrong target. They differ in **completeness**. For an agent this matters more than for a human: an agent treats `callers X → []` as ground truth and may act on it (e.g. change a signature on the belief that nothing calls it). A silently incomplete answer is therefore worse than `grep`, which at least surfaces the text hit. The grep loop is killed by *trust*, and trust requires either completeness or an explicit signal of where the answer is incomplete.
+
+### Options
+
+| | A — pragmatic in-graph | B — sema retention | C — free-functions only |
+|---|---|---|---|
+| `self.method()` | resolved (impl target) | resolved | missed |
+| typed local/param `.method()` | resolved | resolved | missed |
+| chained / inferred receiver | unresolved (counted) | resolved | missed |
+| free functions | resolved | resolved | resolved |
+| indirect fn-pointer call | unresolved (nobody can) | unresolved (nobody can) | unresolved |
+| wrong edges? | never | never | never |
+| effort / risk | moderate / low, `graph.rs` only | high / higher, touches 18k-line sema | low / low |
+| touches sema? | no | yes | no |
+
+- **A — pragmatic in-graph resolution.** Recover the receiver type locally, no sema change: `self.m()` → the enclosing `impl T`'s target `T`; `x.m()` where `x` is a local/param with an explicit type annotation → that type; everything else (chained receivers, inferred `let`, `self.field.m()`) is unresolved. Covers the majority in practice, because `self` calls and annotated bindings are common.
+- **B — full correctness via sema retention.** Record the resolved target sema already computes per method-call span, expose it on the result, and have the graph consume it verbatim. Complete for all direct dispatch; only indirect fn-pointer calls remain (§10). Invasive: touches the type checker and the `check` entry point, and risks the existing regression suite.
+- **C — free-functions only.** Ship the existing name resolution and exclude method calls. Smallest, but in a method-heavy language it answers `callers`/`refs` with mostly-empty, authoritative-looking results — actively misleading to an agent. Rejected.
+
+### Decision
+
+Ship **A now, with completeness reported explicitly**: every `callers` / `callees` / `refs` response carries an `unresolved` count (and the unresolved spans), so an agent trusts the resolved edges and falls back to `grep` only for the named residue. Then upgrade to **B** to drive `unresolved` toward zero (only indirect fn-pointer calls remain), which is the point at which the grep loop is actually eliminated.
+
+Rationale:
+
+1. **Honesty about incompleteness is what makes the tool agent-usable.** An answer that says "12 edges, 1 unresolved at `main.cplus:88`" tells the agent exactly when to stop grepping and when not to. A silently-empty answer recreates the "reason about lossy results" problem the graph exists to remove.
+2. **A covers the majority on day one at low risk**, without touching the type checker or the existing tests.
+3. **A and B share an identical query surface** (`callers` / `callees` / `call-hierarchy`); only the edge-resolution backend changes. B is a drop-in precision upgrade behind the same queries, not rework — so A is an on-ramp, not throwaway.
+4. **C and silent-A are rejected**: an authoritative-looking empty answer is worse than `grep` for an agent.
+
+The same staging applies to **Phase 4** (`references` edges): resolved-where-known now with an explicit `unresolved` count, full resolution via sema later.

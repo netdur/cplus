@@ -851,6 +851,61 @@ fn main() -> i32 {
 
 Defining `drop` makes the type non-`Copy`, which is necessary because copying a thing that owns a resource would lead to double-free.
 
+### Raw-pointer fields: `opaque` or a freeing `drop`
+
+A `drop` frees its struct's fields by hand (above). A raw-pointer field (`*T`) carries a fact the compiler cannot read from an address: does the struct *own* that memory (so a `drop` must free it) or only *borrow* it (so freeing it would be a double-free)? C+ does not guess. Every raw-pointer field must be **accounted for**, and the compiler verifies the account:
+
+```cplus
+// 1. Owned: free it in `drop`. The compiler checks that you did.
+struct Buf { ptr: *u8, len: usize }
+impl Buf {
+    fn drop(mut self) { unsafe { free(self.ptr); } }
+}
+
+// 2. Not owned: mark it `opaque`. No drop required.
+struct CameraFrame {
+    opaque buf: *u8,        // the camera owns this; we only read it
+    width: i32,
+    height: i32,
+}
+```
+
+The check is **per pointer, not per struct**: freeing one field and forgetting another is a compile error that names the field:
+
+```cplus
+struct Frame { a: *u8, b: *u8 }
+impl Frame {
+    fn drop(mut self) {
+        unsafe { free(self.a); }
+        // self.b is never released
+    }
+}
+// ❌ E0510: owned raw-pointer field `b` has no release in `drop`
+//           release it, or mark it `opaque` if the struct does not own it
+```
+
+It enforces this by **requiring a release you can see**, not by analyzing control flow. Each owned field's release must be **direct and local** to the `drop` body, in one of two shapes — unconditional, or guarded by a null-check on that same field:
+
+```cplus
+fn drop(mut self) {
+    unsafe { free(self.a); }                                // unconditional
+    if self.b.is_not_null() { unsafe { free(self.b); } }    // null-guarded (free(NULL) is a no-op,
+}                                                           //   but some releasers need the guard)
+```
+
+A release **hidden** from a local read is rejected — C+ is built on local clarity, and you can't tell whether such a free runs without tracing logic elsewhere:
+
+```cplus
+if self.ready { unsafe { free(self.b); } }   // ❌ E0510 — release behind an arbitrary condition
+self.cleanup();                              // ❌ E0510 — release delegated to another function
+```
+
+This closes the common leak (an allocation you forgot to free) at compile time, and keeps every release visible at the one place it happens. The compiler checks that a release is *present and direct*, not that the call is semantically a free: handing the field to a non-releaser like `printf("%p", self.b)` satisfies the rule, the same trust boundary as any `unsafe`.
+
+`opaque` reads as "opaque to the ownership system": the pointer is managed elsewhere, by a foreign runtime (ObjC `release`, JNI), a parent object, or a caller who lent it. The compiler does not free an `opaque` field and does not require a `drop` for it. It is the field-level counterpart to the parameter marker `borrow`: both say "not mine."
+
+The rule covers raw pointers only — the case where the compiler is blind. Owning C+ types like `string` and `Vec[T]` are not raw pointers and never take the marker; you free them in the `drop` body as before.
+
 ### `defer`: run at scope exit, LIFO
 
 ```cplus
@@ -2217,6 +2272,45 @@ When a generated snippet is uncertain, prefer proving it with `cpc check`,
 `cpc build`, or a focused e2e-style test instead of relying on prose. This is
 why examples avoid pseudocode when a runnable shape exists.
 
+### Querying code as a graph
+
+Navigating C+ by `grep` is lossy: text search cannot tell the `Point` struct from a local named `point`, follow `prefix::Item` to the module that defines it, or answer "who calls this". `cpc` exposes a resolved, typed **code graph** that answers these by symbol and type rather than by text. It is the same resolution, type, and call-reachability information the compiler already computes on every build, kept and made queryable instead of discarded.
+
+```bash
+cpc query def    math::area              # resolved definition site(s)
+cpc query refs   Point::translate        # every use site
+cpc query callers process_frame          # who calls it
+cpc query call-hierarchy render --depth 3
+cpc query type-at src/main.cplus:42:10   # the type of the expression under a cursor
+cpc query members Vec                     # fields + methods of a type
+cpc query context parse                   # one-shot edit pack: signature, callers, callees, referenced types
+```
+
+Every query returns JSON with clickable `file:line:col` locations, the same format diagnostics emit, so an agent acts on a result without parsing prose. Because the queries are resolved (not name-based), `math::area` and a local `area` are distinguished, and a method call binds to the concrete `Type::method` it dispatches to. The same index backs the LSP's go-to-definition, find-references, and call-hierarchy, so editor and CLI answer identically, and a resident mode (and an MCP adapter over it) keeps the graph warm in memory so an agent's query is faster than re-running `grep`. For C+ navigation, query the graph before reaching for `grep`: it resolves names text search cannot.
+
+A composite query returns a function's whole neighborhood in one call:
+
+```bash
+cpc query context sum_range
+```
+```json
+{
+  "symbol": "src.math::sum_range",
+  "kind": "function",
+  "signature": "fn sum_range(lo: i32, hi: i32) -> i32",
+  "location": { "file": "src/math.cplus", "line": 12, "col": 1 },
+  "callers": [
+    { "symbol": "src.main::main",  "location": { "file": "src/main.cplus", "line": 4, "col": 14 } }
+  ],
+  "callees": [
+    { "symbol": "src.math::clamp", "location": { "file": "src/math.cplus", "line": 3, "col": 1 } }
+  ],
+  "references": [ { "symbol": "i32", "kind": "primitive" } ]
+}
+```
+
+One call gives an agent the signature, who calls it, what it calls, and the types it touches, instead of several `grep` passes and a guess at which `sum_range` matched. Symbol IDs use source names (`src.math::sum_range`), never a monomorphized `sum_range__i32`, so a query answer is something you can paste straight back into source.
+
 ### Hand-emitted LLVM IR
 
 `cpc` does not build IR through LLVM's C++ API. It emits textual LLVM IR from
@@ -2275,6 +2369,16 @@ cpc fmt FILE                   # canonical format in place
 cpc fmt --check DIR            # CI mode — exits 1 on drift
 cpc test                       # run #[test] functions + doctests
 cpc lsp                        # start the language server
+cpc graph                      # whole-project code graph as JSON (nodes + edges)
+cpc query def SYMBOL           # resolved definition site(s)
+cpc query refs SYMBOL          # every use site
+cpc query callers FN           # who calls FN
+cpc query callees FN           # what FN calls
+cpc query call-hierarchy FN --depth N
+cpc query type-at FILE:LINE:COL # type of the expression at a position
+cpc query members TYPE         # fields + methods of a struct/enum
+cpc query symbols [FILE]       # outline of a file or the whole project
+cpc query context FN           # edit pack: signature, callers, callees, referenced types
 cpc --emit-ll FILE             # pre-optimisation LLVM IR
 cpc --emit-ll-opt FILE         # post-optimisation LLVM IR
 cpc --emit-asm FILE            # native assembly
@@ -2338,6 +2442,7 @@ The error codes you'll see most often. The full list lives in `cplus-core/src/se
 | E0501 | Wrong type-arg count | Match the generic param list |
 | E0502 | Bound not satisfied | `T: Ord` requires `impl Ord for T` |
 | E0509 | Move of a field out of a `Drop` type | Clone the field, or restructure so it isn't owned by a Drop type |
+| E0510 | Owned raw-pointer field has no direct release in `drop` (or the release is hidden behind a condition / in another function) | Add a direct release in the `drop` body (unconditional or null-guarded), or mark the field `opaque` if the struct doesn't own it |
 | E0511 | Return type names a borrow region no parameter declares | Add a same-region parameter, or drop the region |
 | E0512 | Returned borrow's region ≠ the declared return region | Return a borrow from a same-region parameter |
 | E0513 | Returning a `str` / `T[]` view of a local that drops | Return an owned value (`string` / `Vec[T]`), or borrow from a parameter |
