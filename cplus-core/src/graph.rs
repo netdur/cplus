@@ -638,11 +638,19 @@ impl CodeGraph {
     pub fn context_json(&self, name: &str) -> Option<String> {
         let target_id = self.callable_ids(name).into_iter().next()?;
         let target = self.nodes.iter().find(|n| n.id == target_id)?.clone();
+        // The named-type uses inside this function — the types it touches.
+        let type_refs: Vec<Reference> = self
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Type && r.in_context.as_deref() == Some(&target_id))
+            .cloned()
+            .collect();
         let res = ContextResult {
             kind: "context".to_string(),
             target,
             callers: self.callers(name).into_iter().cloned().collect(),
             callees: self.callees(name).into_iter().cloned().collect(),
+            type_refs,
             unresolved: self.unresolved_for(name),
         };
         Some(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
@@ -702,6 +710,8 @@ struct ContextResult {
     target: Node,
     callers: Vec<Node>,
     callees: Vec<Node>,
+    /// Named-type uses inside the target (the types it touches), with locations.
+    type_refs: Vec<Reference>,
     unresolved: u32,
 }
 
@@ -1648,7 +1658,18 @@ mod tests {
         assert!(j.contains("\"callees\""));
         assert!(j.contains("top"), "top is a caller of mid: {j}");
         assert!(j.contains("leaf"), "leaf is a callee of mid: {j}");
+        assert!(j.contains("\"type_refs\""), "context carries the types touched");
         // Not a function → None.
         assert!(g.context_json("nonexistent").is_none());
+    }
+
+    #[test]
+    fn context_includes_referenced_types() {
+        let src = "struct Cfg { n: i32 }\n\
+                   fn run(c: Cfg) -> i32 { return c.n; }";
+        let g = CodeGraph::build(&project(src));
+        let j = g.context_json("run").expect("run is a function");
+        assert!(j.contains("\"type_refs\""));
+        assert!(j.contains("Cfg"), "context surfaces the Cfg type run touches: {j}");
     }
 }
