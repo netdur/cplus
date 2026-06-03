@@ -2,13 +2,16 @@
 
 ## Welcome to C+
 
-C+ is an experimental, safety-oriented systems programming language and toolchain. Its main design philosophy is to keep the core language as small as possible while moving high-level capabilities into explicit, vendored packages. 
+C+ is an experimental, safety-oriented systems programming language and toolchain. Its main design philosophy is to keep the core language as small as possible while moving high-level capabilities into explicit, vendored packages.
+
+**Website:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 
 C+ provides the necessary primitives for low-level systems programming:
-- **Safety**: Ownership, borrow checking, and memory-safe abstractions.
+- **Safety**: Ownership, borrow checking, memory-safe abstractions, and raw-pointer accountability (every `*T` field must be released or marked `opaque`). No `null` in safe code.
 - **Modern Constructs**: Structs, tagged enums, generics, interfaces, methods, and modules.
-- **Low-Level Control**: Raw pointers, `unsafe` blocks, `#[repr(C)]`, SIMD primitives, atomics, threads, and direct LLVM IR generation.
+- **Low-Level Control**: Raw pointers, `unsafe` blocks, `#[repr(C)]`, SIMD primitives, atomics, threads, compiler-checked real-time contracts (`#[no_alloc]` / `#[realtime]`), and direct LLVM IR generation.
 - **C Interoperability**: Seamless C ABI interop, `extern fn`, and clang-based linking.
+- **Built for tools and LLMs**: a deliberately small, unambiguous surface, plus a resolved, typed **code-knowledge graph** the compiler exposes to editors and agents (`cpc query` / `cpc mcp`, and the LSP) — so navigation is by *symbol and type*, not text search.
 
 Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit`) are implemented as regular packages, keeping the compiler focused and fast.
 
@@ -55,11 +58,13 @@ Once built, the `cpc` compiler binary will be available in `target/release/cpc`.
 The C+ repository includes a robust suite of practical tooling to improve the developer experience:
 
 - **`cpc build`**: Compiles C+ projects and handles linking.
-- **`cpc check`**: Runs parsing, semantic analysis, and borrow checking without emitting code.
+- **`cpc check`**: Runs parsing, semantic analysis, and borrow checking without emitting code (whole-project front-end / CI gate; enforces any `[profile.realtime]`).
 - **`cpc test`**: Discovers and runs `#[test]` functions and doctests.
 - **`cpc fmt`**: Formats your C+ source code.
 - **`cpc doc`**: Generates Markdown documentation from public items.
-- **`cpc lsp`**: Starts the Language Server for your editor.
+- **`cpc lsp`**: Starts the Language Server (goto-definition, references, hover, outline — served from the code graph).
+- **`cpc graph` / `cpc query` / `cpc mcp`**: The resolved, typed code-knowledge graph — as JSON, as per-symbol queries (`def`/`refs`/`callers`/`callees`/`call-hierarchy`/`type-at`/`context`/…), or as a resident MCP server for agents.
+- **`cpc --realtime-report`**: Whole-project digest of the real-time contract analysis.
 - **`cpc-bindgen`**: Generates C+ FFI declarations from C headers.
 
 ### Creating a C+ Project
@@ -67,13 +72,13 @@ The C+ repository includes a robust suite of practical tooling to improve the de
 A C+ project uses a `Cplus.toml` manifest file. Imports in C+ have a strict, clean shape to ensure builds are predictable:
 
 ```cplus
-import "./local_module"
+import "./local_module" as local;
 import "stdlib/io" as io;
-import "metal/device" as metal;
+import "metal/metal" as metal;
 ```
-Vendored packages (like `stdlib`, `simd`, and `metal`) must be declared in your manifest. The compiler validates these artifacts to ensure robust, reproducible builds.
+Every import names its source and binds an alias (`import "X" as Y;`) — local paths start with `./`, vendored packages match a `[dependencies]` entry in the manifest. The compiler validates these artifacts to ensure robust, reproducible builds.
 
 ## Learning More
 
-- Check the `docs/` directory for examples, design notes, and deep dives into the language phases.
-- See the `/vendor/` directory to explore how major language features are implemented purely through the package system.
+- Check the [`docs/`](docs/) directory — runnable [`docs/examples/`](docs/examples/), design deep-dives in [`docs/design/`](docs/design/), and [`docs/SKILL.md`](docs/SKILL.md) (a dense reference for LLMs writing C+).
+- See the [`vendor/`](vendor/) directory to explore how major language features (stdlib, SIMD, GPU, AppKit, JNI) are implemented purely through the package system.
