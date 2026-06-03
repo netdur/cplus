@@ -112,7 +112,9 @@ pub fn object_new() -> Value {
 
 // ---------------- Internal byte buffer ------------------------------------
 
-struct Buf { ptr: *u8, len: usize, cap: usize }
+// `ptr` is owned but released explicitly via `buf_free`, not a `drop` —
+// `opaque` documents "not freed by this struct's drop" (see buf_free).
+struct Buf { opaque ptr: *u8, len: usize, cap: usize }
 
 fn buf_new() -> Buf {
     return Buf { ptr: unsafe { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
@@ -176,7 +178,7 @@ fn buf_push_utf8(mut b: Buf, cp: i32) -> Buf {
 // ---------------- Parser --------------------------------------------------
 
 struct Parser {
-    src: *u8,
+    opaque src: *u8,
     len: usize,
     pos: usize,
 }

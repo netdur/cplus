@@ -290,7 +290,7 @@ fn zero_initialized_static_aggregate_cross_lang_g033() {
     let bin = dir.join("g033_bin");
     std::fs::write(
         &cplus_src,
-        "#[repr(C)] struct S { a: i32, b: i64, c: *u8 }\n\
+        "#[repr(C)] struct S { a: i32, b: i64, opaque c: *u8 }\n\
          pub static mut MUT_I32_TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
          pub static mut MUT_STRUCT:    S         = #zero::[S]();\n\
          extern fn c_set_table(idx: i32, val: i32);\n\
@@ -614,7 +614,7 @@ fn zero_intrinsic_and_write_zeroed_runtime_g028() {
         "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          #[repr(C)]\n\
-         struct Chunk { offset: usize, size: usize, next: *u8, pad: i64 }\n\
+         struct Chunk { offset: usize, size: usize, opaque next: *u8, pad: i64 }\n\
          fn main() -> i32 {\n\
              // #zero::[T]() — stack value, all bytes zeroed.\n\
              let mut c: Chunk = #zero::[Chunk]();\n\
@@ -754,7 +754,7 @@ fn extern_struct_param_abi_cross_language_g034() {
          #[repr(C)]\n\
          struct S16 { a: i64, b: i64 }\n\
          #[repr(C)]\n\
-         struct S24 { a: usize, b: *u8, c: bool }\n\
+         struct S24 { a: usize, opaque b: *u8, c: bool }\n\
          extern fn take_s8(s: S8) -> i64;\n\
          extern fn take_s16(s: S16) -> i64;\n\
          extern fn take_s24(s: S24) -> i64;\n\

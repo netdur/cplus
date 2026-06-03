@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct View {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl View {
@@ -38,7 +38,7 @@ impl View {
 }
 
 pub struct StackView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl StackView {
@@ -80,7 +80,7 @@ impl StackView {
 }
 
 pub struct ScrollView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ScrollView {
@@ -109,7 +109,7 @@ impl ScrollView {
 }
 
 pub struct Box {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Box {
@@ -134,7 +134,7 @@ impl Box {
 }
 
 pub struct Scroller {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Scroller {
@@ -152,7 +152,7 @@ impl Scroller {
 }
 
 pub struct BackgroundExtensionView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl BackgroundExtensionView {

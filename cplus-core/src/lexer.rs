@@ -77,7 +77,7 @@ pub enum TokenKind {
     True, False, As, Unsafe, Extern,
     // keywords (reserved for future phases)
     Struct, Enum, Union, Match, Trait, Impl, Pub, Use, Mod, Import,
-    SelfLower, SelfUpper, Defer, Try, Break, Continue, Loop, Move, Restrict, Guard, Assert,
+    SelfLower, SelfUpper, Defer, Try, Break, Continue, Loop, Move, Restrict, Opaque, Guard, Assert,
     /// v0.0.3 Phase 5 Slice 5E.1: `async` fn modifier + `await` prefix
     /// expression. Lexed unconditionally; sema/parser gate the
     /// allowed contexts (`async fn` declarations only, `await` only
@@ -724,6 +724,7 @@ impl<'a> Lexer<'a> {
             "guard" => TokenKind::Guard,
             "assert" => TokenKind::Assert,
             "borrow" => TokenKind::Borrow,
+            "opaque" => TokenKind::Opaque,
             "interface" => TokenKind::Interface,
             "type" => TokenKind::TypeKw,
             "async" => TokenKind::Async,

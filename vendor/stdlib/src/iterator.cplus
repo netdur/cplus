@@ -22,7 +22,7 @@
 import "./option" as option;
 
 pub struct Iterator[T] {
-    pub handle: *u8,
+    pub opaque handle: *u8,
 }
 
 // v0.0.5 Phase 3 Slice 3C: iterator adapters. Each adapter is a

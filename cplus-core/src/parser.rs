@@ -816,9 +816,11 @@ impl Parser {
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         while !self.at(&TokenKind::RBrace) {
-            // Per-field attributes (slice 5ATTR.1) then per-field `pub` (slice 4B).
+            // Per-field attributes (slice 5ATTR.1), per-field `pub` (slice 4B),
+            // then the `opaque` marker (v0.0.13, plan.opaque.md).
             let field_attrs = self.parse_attributes()?;
             let field_pub = self.eat(&TokenKind::Pub);
+            let field_opaque = self.eat(&TokenKind::Opaque);
             let fname = self.expect_ident()?;
             self.expect(&TokenKind::Colon, "`:`")?;
             let ty = self.parse_type()?;
@@ -829,6 +831,7 @@ impl Parser {
                 span,
                 is_pub: field_pub,
                 attributes: field_attrs,
+                is_opaque: field_opaque,
             });
             if !self.eat(&TokenKind::Comma) {
                 break;

@@ -711,6 +711,12 @@ fn check_with_files_inner<'a>(
     cx.check_no_block(program);
     cx.check_bounded_recursion(program);
     cx.check_max_stack(program);
+    // v0.0.13 (plan.opaque.md): raw-pointer accountability. Every raw-pointer
+    // struct field must be accounted for — released by the struct's `drop`, or
+    // marked `opaque` (managed elsewhere) — otherwise E0510. Structural check
+    // over the `drop` body (no dataflow); runs after method collection so the
+    // drop bodies are available.
+    cx.check_raw_pointer_accountability(program);
     // v0.0.5 Phase 3 Slice 3C: enum-pattern-discovery propagation.
     //
     // Sema's check_method type-checks each impl method body *once* using
@@ -3667,6 +3673,205 @@ impl SemaCx<'_> {
     // compiler-inserted temporaries are not yet counted; the headline cases
     // (large fixed arrays, by-value aggregates) carry explicit types in
     // practice. Call-chain worst-case and coroutine frames are future work.
+    /// v0.0.13 (plan.opaque.md §2/§6): raw-pointer accountability. Every
+    /// raw-pointer (`*T`) struct field must be *accounted for*:
+    ///   - marked `opaque` (another owner releases it), or
+    ///   - released by the struct's `drop`, in one of two structural shapes —
+    ///     an unconditional direct release (`unsafe { free(self.f); }`) or a
+    ///     release guarded by a null-test on the same field
+    ///     (`if self.f.is_not_null() { ... }` / `if !self.f.is_null() { ... }`).
+    /// Anything else (no `drop`, an omitted field, or a release hidden behind an
+    /// arbitrary condition / loop / helper call) is **E0510**. The check is a
+    /// structural pattern match over the `drop` body — no dataflow, no
+    /// interprocedural walk — per the design's "local direct release" rule.
+    fn check_raw_pointer_accountability(&mut self, p: &Program) {
+        use std::collections::HashMap;
+
+        fn is_raw_ptr(t: &Type) -> bool {
+            matches!(t.kind, TypeKind::RawPtr(_))
+        }
+        /// `self.field` used as a call argument — seeing through an `as` cast,
+        /// since the common release idiom is `free(self.ptr as *u8)` (the
+        /// releaser takes `*u8` but the field is `*T`). The cast is trivial and
+        /// keeps the field visibly the call's argument, so it still satisfies
+        /// the "direct, local release" rule.
+        fn arg_is_self_field(e: &Expr, field: &str) -> bool {
+            match &e.kind {
+                ExprKind::Field { receiver, name } => {
+                    name.name == field
+                        && matches!(&receiver.kind, ExprKind::Ident(n) if n == "self")
+                }
+                ExprKind::Cast { expr, .. } => arg_is_self_field(expr, field),
+                _ => false,
+            }
+        }
+        /// `self.field.is_not_null()` or `!self.field.is_null()`.
+        fn is_null_guard(cond: &Expr, field: &str) -> bool {
+            match &cond.kind {
+                ExprKind::Call { callee, args, .. } if args.is_empty() => {
+                    matches!(&callee.kind, ExprKind::Field { receiver, name }
+                        if name.name == "is_not_null" && arg_is_self_field(receiver, field))
+                }
+                ExprKind::Unary { op: UnaryOp::Not, operand } => matches!(
+                    &operand.kind, ExprKind::Call { callee, args, .. } if args.is_empty()
+                    && matches!(&callee.kind, ExprKind::Field { receiver, name }
+                        if name.name == "is_null" && arg_is_self_field(receiver, field))),
+                _ => false,
+            }
+        }
+        fn expr_releases(e: &Expr, field: &str) -> bool {
+            match &e.kind {
+                // A direct release: `field` passed to a direct call.
+                ExprKind::Call { args, .. } => args.iter().any(|a| arg_is_self_field(a, field)),
+                // Transparent wrappers — `unsafe { ... }` and bare blocks.
+                ExprKind::Unsafe(b) | ExprKind::Block(b) => block_releases(b, field),
+                // The one allowed conditional: a null-guard on the same field,
+                // no `else`. Arbitrary conditions are intentionally NOT descended.
+                ExprKind::If { cond, then, else_branch } => {
+                    else_branch.is_none() && is_null_guard(cond, field) && block_releases(then, field)
+                }
+                _ => false,
+            }
+        }
+        /// PROVABLY released: an unconditional direct release, or one guarded
+        /// only by a null-test on the same field (both leak-free by inspection).
+        fn block_releases(b: &Block, field: &str) -> bool {
+            b.stmts.iter().any(|s| match &s.kind {
+                StmtKind::Expr(e) | StmtKind::Defer(e) => expr_releases(e, field),
+                _ => false,
+            }) || b.tail.as_ref().map_or(false, |t| expr_releases(t, field))
+        }
+
+        /// A direct release of `field` APPEARS somewhere in the drop body —
+        /// descending through *all* control flow (any `if`/`else`, loop, match).
+        /// Used to tell "freed conditionally" (→ warning) from "never freed at
+        /// all / delegated to a helper" (→ error). A method/helper call that
+        /// doesn't pass the field as an argument is not a release, so delegation
+        /// (`self.cleanup()`) correctly does not count.
+        fn appears_released(body: &Block, field: &str) -> bool {
+            fn e(x: &Expr, f: &str) -> bool {
+                match &x.kind {
+                    ExprKind::Call { callee, args, .. } => {
+                        args.iter().any(|a| arg_is_self_field(a, f))
+                            || e(callee, f)
+                            || args.iter().any(|a| e(a, f))
+                    }
+                    ExprKind::Unsafe(bl) | ExprKind::Block(bl) => b(bl, f),
+                    ExprKind::If { cond, then, else_branch } => {
+                        e(cond, f)
+                            || b(then, f)
+                            || else_branch.as_ref().is_some_and(|eb| e(eb, f))
+                    }
+                    ExprKind::Match { scrutinee, arms } => {
+                        e(scrutinee, f) || arms.iter().any(|a| e(&a.body, f))
+                    }
+                    ExprKind::Binary { lhs, rhs, .. } => e(lhs, f) || e(rhs, f),
+                    ExprKind::Unary { operand, .. } => e(operand, f),
+                    ExprKind::Cast { expr, .. } => e(expr, f),
+                    ExprKind::Field { receiver, .. } => e(receiver, f),
+                    ExprKind::Index { receiver, index } => e(receiver, f) || e(index, f),
+                    ExprKind::Assign { target, value, .. } => e(target, f) || e(value, f),
+                    ExprKind::Await(x2) | ExprKind::Yield(x2) => e(x2, f),
+                    ExprKind::Range { start, end, .. } => {
+                        start.as_ref().is_some_and(|s| e(s, f))
+                            || end.as_ref().is_some_and(|s| e(s, f))
+                    }
+                    _ => false,
+                }
+            }
+            fn s(st: &Stmt, f: &str) -> bool {
+                match &st.kind {
+                    StmtKind::Expr(x) | StmtKind::Defer(x) | StmtKind::Assert(x) => e(x, f),
+                    StmtKind::Return(Some(x)) => e(x, f),
+                    StmtKind::Let { init: Some(x), .. } => e(x, f),
+                    StmtKind::While { cond, body, .. } => e(cond, f) || b(body, f),
+                    StmtKind::Loop(bl, _) => b(bl, f),
+                    StmtKind::For(fl, _) => match fl {
+                        ForLoop::Range { iter, body, .. } => e(iter, f) || b(body, f),
+                        ForLoop::CStyle { init, cond, update, body } => {
+                            init.as_ref().is_some_and(|i| s(i, f))
+                                || cond.as_ref().is_some_and(|c| e(c, f))
+                                || update.iter().any(|u| e(u, f))
+                                || b(body, f)
+                        }
+                    },
+                    StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+                        e(scrutinee, f)
+                            || b(body, f)
+                            || else_body.as_ref().is_some_and(|eb| b(eb, f))
+                    }
+                    StmtKind::GuardLet { scrutinee, else_body, .. } => e(scrutinee, f) || b(else_body, f),
+                    StmtKind::WhileLet { scrutinee, body, .. } => e(scrutinee, f) || b(body, f),
+                    _ => false,
+                }
+            }
+            fn b(bl: &Block, f: &str) -> bool {
+                bl.stmts.iter().any(|st| s(st, f)) || bl.tail.as_ref().is_some_and(|t| e(t, f))
+            }
+            b(body, field)
+        }
+
+        // Each struct's `drop` body, keyed by the impl target name.
+        let mut drop_bodies: HashMap<&str, &Block> = HashMap::new();
+        for item in &p.items {
+            if let ItemKind::Impl(b) = &item.kind {
+                for m in &b.methods {
+                    if m.name.name == "drop" {
+                        drop_bodies.insert(b.target.name.as_str(), &m.body);
+                    }
+                }
+            }
+        }
+
+        for item in &p.items {
+            let ItemKind::Struct(s) = &item.kind else { continue; };
+            self.current_file = item.origin_file.clone();
+            let body = drop_bodies.get(s.name.name.as_str());
+            for f in &s.fields {
+                if f.is_opaque || !is_raw_ptr(&f.ty) {
+                    continue;
+                }
+                let fname = &f.name.name;
+                // Severity tracks what the compiler can prove (plan.opaque.md §6):
+                //   provably freed (unconditional / null-guarded)  -> clean
+                //   freed, but only under some other condition       -> W0002 warning
+                //   no direct free of the field appears at all       -> E0510 error
+                if body.is_some_and(|b| block_releases(b, fname)) {
+                    continue;
+                }
+                if body.is_some_and(|b| appears_released(b, fname)) {
+                    self.warn(
+                        "W0002",
+                        format!(
+                            "raw-pointer field `{fname}` is freed only conditionally in `drop`; \
+                             the compiler can't prove the release always runs. Intended for \
+                             refcounted/optional ownership — confirm it frees on every owning path"
+                        ),
+                        f.span,
+                    );
+                    continue;
+                }
+                let detail = if body.is_none() {
+                    "the struct has no `drop` to release it"
+                } else {
+                    "this struct's `drop` never frees it (a release delegated to a helper \
+                     doesn't count — it must be a direct call here)"
+                };
+                self.err(
+                    "E0510",
+                    format!(
+                        "raw-pointer field `{fname}` is unaccounted: {detail}. \
+                         Mark it `opaque {fname}: ...` if another owner frees it, \
+                         or release it in `fn drop(mut self)` — e.g. \
+                         `unsafe {{ free(self.{fname}); }}`"
+                    ),
+                    f.span,
+                );
+            }
+        }
+        self.current_file = None;
+    }
+
     fn check_max_stack(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
@@ -16879,7 +17084,7 @@ mod tests {
 
     // ---- v0.0.3 Phase 5 Slice 5E.2: async fn + await sema ----
 
-    const FUTURE_PRELUDE: &str = "pub struct Future[T] { pub handle: *u8 } ";
+    const FUTURE_PRELUDE: &str = "pub struct Future[T] { pub opaque handle: *u8 } ";
 
     #[test]
     fn async_fn_body_returns_inner_type() {

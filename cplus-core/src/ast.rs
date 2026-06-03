@@ -219,6 +219,12 @@ pub struct StructField {
     pub is_pub: bool,
     /// Slice 5ATTR.1: attributes attached to this field.
     pub attributes: Vec<Attribute>,
+    /// v0.0.13 (plan.opaque.md): `opaque field: *T` declares that a raw-pointer
+    /// field is *not this struct's responsibility* to release (managed
+    /// elsewhere). It suppresses the raw-pointer-accountability error (E0510)
+    /// that an unmarked, un-`drop`-released raw-pointer field otherwise triggers.
+    /// Only meaningful on `*T` fields; a no-op marker on any other type.
+    pub is_opaque: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

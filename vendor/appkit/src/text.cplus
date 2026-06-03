@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct TextView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TextView {
@@ -49,7 +49,7 @@ impl TextView {
 }
 
 pub struct SecureTextField {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl SecureTextField {
@@ -80,7 +80,7 @@ impl SecureTextField {
 }
 
 pub struct SearchField {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl SearchField {
@@ -119,7 +119,7 @@ impl SearchField {
 }
 
 pub struct TokenField {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TokenField {
@@ -146,7 +146,7 @@ impl TokenField {
 }
 
 pub struct ComboBox {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ComboBox {
@@ -181,7 +181,7 @@ impl ComboBox {
 }
 
 pub struct Form {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Form {

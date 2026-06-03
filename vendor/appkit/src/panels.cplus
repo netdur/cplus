@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct Panel {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Panel {
@@ -33,7 +33,7 @@ impl Panel {
 }
 
 pub struct SavePanel {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl SavePanel {
@@ -67,7 +67,7 @@ impl SavePanel {
 }
 
 pub struct OpenPanel {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl OpenPanel {
@@ -101,7 +101,7 @@ impl OpenPanel {
 }
 
 pub struct PageLayout {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl PageLayout {
@@ -115,7 +115,7 @@ impl PageLayout {
 }
 
 pub struct PrintPanel {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl PrintPanel {

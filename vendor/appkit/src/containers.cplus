@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct SplitView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl SplitView {
@@ -27,7 +27,7 @@ impl SplitView {
 }
 
 pub struct TabView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TabView {
@@ -49,7 +49,7 @@ impl TabView {
 }
 
 pub struct TabViewItem {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TabViewItem {
@@ -76,7 +76,7 @@ impl TabViewItem {
 }
 
 pub struct VisualEffectView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl VisualEffectView {
@@ -98,7 +98,7 @@ impl VisualEffectView {
 }
 
 pub struct GridView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl GridView {
@@ -120,7 +120,7 @@ impl GridView {
 }
 
 pub struct Browser {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Browser {
@@ -142,7 +142,7 @@ impl Browser {
 }
 
 pub struct Matrix {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Matrix {
@@ -160,7 +160,7 @@ impl Matrix {
 }
 
 pub struct ClipView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ClipView {
@@ -174,7 +174,7 @@ impl ClipView {
 }
 
 pub struct RulerView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl RulerView {
@@ -188,7 +188,7 @@ impl RulerView {
 }
 
 pub struct Popover {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Popover {

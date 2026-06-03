@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct TableView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TableView {
@@ -35,7 +35,7 @@ impl TableView {
 }
 
 pub struct TableColumn {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TableColumn {
@@ -62,7 +62,7 @@ impl TableColumn {
 }
 
 pub struct OutlineView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl OutlineView {
@@ -96,7 +96,7 @@ impl OutlineView {
 }
 
 pub struct TableCellView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TableCellView {
@@ -114,7 +114,7 @@ impl TableCellView {
 }
 
 pub struct TableRowView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TableRowView {
@@ -124,7 +124,7 @@ impl TableRowView {
 }
 
 pub struct CollectionView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl CollectionView {
@@ -150,7 +150,7 @@ impl CollectionView {
 }
 
 pub struct CollectionViewItem {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl CollectionViewItem {
@@ -164,7 +164,7 @@ impl CollectionViewItem {
 }
 
 pub struct CollectionViewFlowLayout {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl CollectionViewFlowLayout {
@@ -186,7 +186,7 @@ impl CollectionViewFlowLayout {
 }
 
 pub struct CollectionViewGridLayout {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl CollectionViewGridLayout {
@@ -204,7 +204,7 @@ impl CollectionViewGridLayout {
 }
 
 pub struct RuleEditor {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl RuleEditor {
@@ -222,7 +222,7 @@ impl RuleEditor {
 }
 
 pub struct PredicateEditor {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl PredicateEditor {

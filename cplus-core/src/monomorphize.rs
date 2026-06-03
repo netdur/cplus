@@ -267,6 +267,10 @@ pub fn monomorphize(
                 span: Span::new(0, 0),
                 is_pub: *is_pub,
                 attributes: Vec::new(),
+                // Accountability (E0510) is checked on the pre-mono source struct
+                // in sema; this post-mono copy never re-runs the check, so the
+                // flag is irrelevant here.
+                is_opaque: false,
             })
             .collect();
         let decl = StructDecl {

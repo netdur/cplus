@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct Alert {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Alert {

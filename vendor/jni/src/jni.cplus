@@ -40,10 +40,10 @@ pub type JavaVM = *JNIInvokeInterface;
 // the fields up to the methods we actually intend to call.
 #[repr(C)]
 pub struct JNINativeInterface {
-    reserved0: *u8,
-    reserved1: *u8,
-    reserved2: *u8,
-    reserved3: *u8,
+    opaque reserved0: *u8,
+    opaque reserved1: *u8,
+    opaque reserved2: *u8,
+    opaque reserved3: *u8,
     pub GetVersion: fn(JNIEnv) -> jint,
     pub DefineClass: fn(JNIEnv, *u8, jobject, *u8, jsize) -> jclass,
     pub FindClass: fn(JNIEnv, *u8) -> jclass,
@@ -90,9 +90,9 @@ pub struct JNINativeInterface {
 
 #[repr(C)]
 pub struct JNIInvokeInterface {
-    reserved0: *u8,
-    reserved1: *u8,
-    reserved2: *u8,
+    opaque reserved0: *u8,
+    opaque reserved1: *u8,
+    opaque reserved2: *u8,
     pub DestroyJavaVM: fn(JavaVM) -> jint,
     pub AttachCurrentThread: fn(JavaVM, *u8, *u8) -> jint,
     pub DetachCurrentThread: fn(JavaVM) -> jint,

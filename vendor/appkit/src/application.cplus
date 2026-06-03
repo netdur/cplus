@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct AutoreleasePool {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl AutoreleasePool {
@@ -18,7 +18,7 @@ impl AutoreleasePool {
 }
 
 pub struct Application {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Application {

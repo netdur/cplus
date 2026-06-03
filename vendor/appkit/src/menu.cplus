@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct Menu {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Menu {
@@ -27,7 +27,7 @@ impl Menu {
 }
 
 pub struct MenuItem {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl MenuItem {

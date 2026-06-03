@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct TextField {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TextField {
@@ -75,7 +75,7 @@ impl TextField {
 }
 
 pub struct Button {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Button {
@@ -121,7 +121,7 @@ impl Button {
 }
 
 pub struct Slider {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Slider {
@@ -154,7 +154,7 @@ impl Slider {
 }
 
 pub struct ProgressIndicator {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ProgressIndicator {
@@ -187,7 +187,7 @@ impl ProgressIndicator {
 }
 
 pub struct PopUpButton {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl PopUpButton {
@@ -225,7 +225,7 @@ impl PopUpButton {
 }
 
 pub struct Stepper {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Stepper {
@@ -259,7 +259,7 @@ impl Stepper {
 }
 
 pub struct Switch {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Switch {
@@ -281,7 +281,7 @@ impl Switch {
 }
 
 pub struct SegmentedControl {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl SegmentedControl {
@@ -316,7 +316,7 @@ impl SegmentedControl {
 }
 
 pub struct ComboButton {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ComboButton {
@@ -343,7 +343,7 @@ impl ComboButton {
 }
 
 pub struct DatePicker {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl DatePicker {
@@ -373,7 +373,7 @@ impl DatePicker {
 }
 
 pub struct ColorWell {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ColorWell {
@@ -399,7 +399,7 @@ impl ColorWell {
 }
 
 pub struct LevelIndicator {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl LevelIndicator {
@@ -425,7 +425,7 @@ impl LevelIndicator {
 }
 
 pub struct PathControl {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl PathControl {

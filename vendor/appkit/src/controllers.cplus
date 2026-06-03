@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct ViewController {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ViewController {
@@ -19,7 +19,7 @@ impl ViewController {
 }
 
 pub struct WindowController {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl WindowController {
@@ -41,7 +41,7 @@ impl WindowController {
 }
 
 pub struct TabViewController {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TabViewController {
@@ -55,7 +55,7 @@ impl TabViewController {
 }
 
 pub struct SplitViewController {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl SplitViewController {
@@ -69,7 +69,7 @@ impl SplitViewController {
 }
 
 pub struct ArrayController {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ArrayController {
@@ -83,7 +83,7 @@ impl ArrayController {
 }
 
 pub struct ObjectController {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ObjectController {

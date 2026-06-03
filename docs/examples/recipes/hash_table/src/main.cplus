@@ -46,9 +46,12 @@ fn fnv1a(bytes: *u8, len: usize) -> u64 {
 }
 
 struct Table {
-    keys: **u8,
-    klens: *usize,
-    vals: *i32,
+    // Owned, but released by hand at the end of `main` (this recipe keeps the
+    // allocation explicit rather than wrapping a Drop type); `opaque` records
+    // "not freed by a drop of this struct" — see the `free(t.keys ...)` calls.
+    opaque keys: **u8,
+    opaque klens: *usize,
+    opaque vals: *i32,
     cap: usize,
 }
 

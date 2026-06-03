@@ -10779,7 +10779,7 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{tid} = load i64, ptr {tid_slot}, align 8"));
         self.emit(&format!("call void @free(ptr {tid_slot})"));
         // Build the JoinHandle[O] aggregate. The stdlib defines its
-        // shape as { tid: u64, ctx: *u8 } — sema-resolved Ty is what
+        // shape as { tid: u64, opaque ctx: *u8 } — sema-resolved Ty is what
         // we ask the type table for the LLVM struct name.
         let handle_ty = self.lookup_join_handle_ty(&o_ty);
         let handle_llvm = self.lty(&handle_ty);
@@ -17100,7 +17100,7 @@ mod tests {
     // ---- v0.0.3 Phase 5 Slice 5B: thread::spawn + JoinHandle::join ----
 
     const THREAD_PRELUDE: &str =
-        "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
+        "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } fn worker() -> i64 { return 7 as i64; } ";
 
     #[test]
     fn thread_spawn_emits_pthread_create_and_trampoline() {
@@ -17165,7 +17165,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_for_bool_uses_align_1() {
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn flag() -> bool { return true; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[bool] = unsafe { __cplus_thread_spawn::[bool](flag) }; \
@@ -17246,7 +17246,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_emits_pthread_create_and_indexed_trampoline() {
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](21 as i32, double) }; \
@@ -17278,7 +17278,7 @@ mod tests {
         //   fn_ptr:      @ 8
         //   result_slot: @ 16 (i32, 4 bytes — slot ends at 20)
         //   input_slot:  @ 20 (i32, aligned)
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](7 as i32, double) }; \
@@ -17297,7 +17297,7 @@ mod tests {
     fn thread_spawn_with_for_i64_input_lives_at_offset_16() {
         // i64 result is 8 bytes; result slot at offset 8..16. i64
         // input aligned to 8 = offset 16.
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i64] = unsafe { __cplus_thread_spawn_with::[i64, i64](5 as i64, negate) }; \
@@ -17318,7 +17318,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_distinct_io_pairs_get_distinct_trampolines() {
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn d32(x: i32) -> i32 { return x; } \
                    fn d64(x: i64) -> i64 { return x; } \
                    fn main() -> i32 { \
@@ -17339,7 +17339,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_outside_unsafe_is_rejected() {
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = __cplus_thread_spawn_with::[i32, i32](21 as i32, double); \
@@ -17357,7 +17357,7 @@ mod tests {
 
     #[test]
     fn thread_spawn_with_wrong_type_arg_count_is_rejected() {
-        let src = "pub struct JoinHandle[O] { tid: u64, ctx: *u8 } \
+        let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
                        let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32](21 as i32, double) }; \

@@ -25,7 +25,7 @@ extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 
 struct Parser {
-    buf: *u8,
+    opaque buf: *u8,   // borrowed view of the input bytes — not owned here
     pos: usize,
     len: usize,
     err: bool,

@@ -40,11 +40,11 @@ extern fn memset(dst: *u8, c: i32, n: usize) -> *u8;
 struct Chunk {
     cap: usize,
     used: usize,
-    next: *u8,
+    opaque next: *u8,
 }
 
 pub struct Arena {
-    head: *u8,
+    opaque head: *u8,
     chunk_size: usize,
 }
 

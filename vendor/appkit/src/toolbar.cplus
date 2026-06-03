@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct Toolbar {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Toolbar {
@@ -23,7 +23,7 @@ impl Toolbar {
 }
 
 pub struct ToolbarItem {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ToolbarItem {
@@ -64,7 +64,7 @@ impl ToolbarItem {
 }
 
 pub struct ToolbarItemGroup {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ToolbarItemGroup {
@@ -81,7 +81,7 @@ impl ToolbarItemGroup {
 }
 
 pub struct StatusBar {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl StatusBar {
@@ -95,7 +95,7 @@ impl StatusBar {
 }
 
 pub struct StatusItem {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl StatusItem {
@@ -117,7 +117,7 @@ impl StatusItem {
 }
 
 pub struct StatusBarButton {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl StatusBarButton {
@@ -139,7 +139,7 @@ impl StatusBarButton {
 }
 
 pub struct TouchBar {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TouchBar {
@@ -153,7 +153,7 @@ impl TouchBar {
 }
 
 pub struct TouchBarItem {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl TouchBarItem {

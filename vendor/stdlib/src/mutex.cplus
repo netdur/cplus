@@ -39,8 +39,9 @@ pub struct Mutex[T] {
 
 pub struct MutexGuard[T] {
     // Same pointer the originating Mutex carries; the guard's Drop
-    // releases via the offset into the pthread mutex slot.
-    ctrl: *u8,
+    // unlocks via the offset into the pthread mutex slot but does NOT
+    // free it — the `Mutex` owns the heap block. Hence `opaque`.
+    opaque ctrl: *u8,
 }
 
 // Heap layout offsets — keep in sync between `new` / `clone` / `lock` /

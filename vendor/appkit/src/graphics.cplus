@@ -1,7 +1,7 @@
 import "./runtime" as rt;
 
 pub struct ImageView {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl ImageView {
@@ -22,7 +22,7 @@ impl ImageView {
 }
 
 pub struct Image {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Image {
@@ -41,7 +41,7 @@ impl Image {
 }
 
 pub struct Font {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Font {
@@ -62,7 +62,7 @@ impl Font {
 }
 
 pub struct Color {
-    pub obj: *u8,
+    pub opaque obj: *u8,
 }
 
 impl Color {
