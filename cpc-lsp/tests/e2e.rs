@@ -633,6 +633,32 @@ fn references_finds_type_use_sites() {
     }
 }
 
+/// `textDocument/references` on a free function now resolves its call sites
+/// (v0.0.13 call-resolution fix). `helper` is called twice from `mid`.
+#[test]
+fn references_finds_free_function_call_sites() {
+    let src = "fn helper() -> i32 { return 7; }\n\
+               fn mid() -> i32 { return helper() +% helper(); }\n\
+               fn main() -> i32 { return mid(); }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    // Cursor on the `helper` declaration name (line 0): `fn helper` → h at col 3.
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            references_request(99, &uri, 0, 3, false),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(5),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("references response");
+    let locs = resp["result"].as_array().expect("locations array");
+    assert_eq!(locs.len(), 2, "expected two call sites of `helper`, got: {locs:?}");
+}
+
 /// `textDocument/hover` reports the type of a parameter under the cursor,
 /// from the graph's type-at index.
 #[test]

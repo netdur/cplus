@@ -963,12 +963,21 @@ fn resolve_call_edges(
     resolve: &impl Fn(&str, Span) -> Option<Location>,
 ) {
     let mut fn_by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // v0.0.13: a free call's callee, after the resolver, is the *qualified*
+    // dotted name (`src.main.helper`), while node ids use `::`
+    // (`src.main::helper`) and `fn_by_name` is keyed by the short name. This
+    // map keys each fn by its qualified dotted form (id with `::`→`.`) so a
+    // qualified callee resolves *uniquely* — even when two modules share a
+    // short name. Without it, ordinary direct calls fall into `unresolved`,
+    // which is the bug that made `callers`/`refs` under-report (see plan.md F).
+    let mut fn_by_qualified: BTreeMap<String, String> = BTreeMap::new();
     let mut method_idx: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     let mut type_by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for n in &g.nodes {
         match n.kind {
             NodeKind::Function | NodeKind::ExternFn => {
                 fn_by_name.entry(n.name.clone()).or_default().push(n.id.clone());
+                fn_by_qualified.insert(n.id.replace("::", "."), n.id.clone());
             }
             NodeKind::Method => {
                 // id = "fid::Type::method"; pull the Type segment.
@@ -1005,6 +1014,7 @@ fn resolve_call_edges(
             env: BTreeMap::new(),
             self_type: &c.self_type,
             fn_by_name: &fn_by_name,
+            fn_by_qualified: &fn_by_qualified,
             method_idx: &method_idx,
             from_id: &c.from_id,
             edges: Vec::new(),
@@ -1074,6 +1084,7 @@ struct Resolver<'a> {
     env: BTreeMap<String, String>,
     self_type: &'a Option<String>,
     fn_by_name: &'a BTreeMap<String, Vec<String>>,
+    fn_by_qualified: &'a BTreeMap<String, String>,
     method_idx: &'a BTreeMap<(String, String), Vec<String>>,
     from_id: &'a str,
     edges: Vec<Edge>,
@@ -1311,7 +1322,7 @@ impl<'a> Resolver<'a> {
     /// unresolved count.
     fn resolve_call(&mut self, callee: &Expr, span: Span) {
         let target = match &callee.kind {
-            ExprKind::Ident(name) => unique(self.fn_by_name.get(name)),
+            ExprKind::Ident(name) => self.resolve_fn_name(name),
             ExprKind::Path { segments } => self.resolve_path(segments),
             ExprKind::Field { receiver, name } => match self.receiver_type(receiver) {
                 Some(ty) => unique(self.method_idx.get(&(ty, short_name(&name.name).to_string()))),
@@ -1322,6 +1333,25 @@ impl<'a> Resolver<'a> {
             _ => None,
         };
         self.link(target, span);
+    }
+
+    /// Resolve a (possibly qualified) free-function callee name to a node id.
+    /// The resolver rewrites a call's callee to its qualified dotted form
+    /// (`src.main.helper`); a bare name (`main`, or a lib-entry export) stays
+    /// short. Three tiers, most-precise first:
+    ///   1. exact short match (`fn_by_name["main"]`, unique) — bare callees;
+    ///   2. qualified-id match (`fn_by_qualified["src.main.helper"]`) — the
+    ///      common case, and the only one that disambiguates a short-name
+    ///      collision across modules;
+    ///   3. short-name fallback (`fn_by_name[short_name(...)]`, unique) — a
+    ///      safety net for any qualified form whose `::`→`.` reconstruction
+    ///      didn't line up, accepted only when the short name is unambiguous.
+    /// A miss at all three is a genuine non-resolution (e.g. a fn-pointer
+    /// indirection) and is counted as `unresolved`.
+    fn resolve_fn_name(&self, name: &str) -> Option<String> {
+        unique(self.fn_by_name.get(name))
+            .or_else(|| self.fn_by_qualified.get(name).cloned())
+            .or_else(|| unique(self.fn_by_name.get(short_name(name))))
     }
 
     /// `Type::assoc()` (associated fn / method) first, then `module::free_fn()`.
@@ -1336,7 +1366,13 @@ impl<'a> Resolver<'a> {
                 return Some(id);
             }
         }
-        unique(self.fn_by_name.get(&last))
+        // Try the qualified dotted join of all segments before the short
+        // fallback, so a `module::free_fn` path resolves uniquely too.
+        let joined: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        self.fn_by_qualified
+            .get(&joined.join("."))
+            .cloned()
+            .or_else(|| unique(self.fn_by_name.get(&last)))
     }
 
     /// Record every named-type occurrence in a type for later resolution.

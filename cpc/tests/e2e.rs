@@ -17577,6 +17577,80 @@ fn query_refs_returns_call_sites_with_locations() {
     assert!(!u.status.success(), "unknown symbol must exit non-zero");
 }
 
+/// v0.0.13: free-function (and `module::fn` path) calls resolve. The resolver
+/// rewrites the callee to its qualified dotted form; the graph now matches that
+/// against node ids, so ordinary direct calls produce `Calls` edges instead of
+/// landing in `unresolved`. Regression for the under-reporting bug that the
+/// method-only fixture above missed.
+#[test]
+fn query_callers_resolves_free_function_calls() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"g\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    // `helper` is a free function called twice from `mid`, which `main` calls.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn helper() -> i32 { return 7; }\n\
+         fn mid() -> i32 { return helper() +% helper(); }\n\
+         fn main() -> i32 { return mid(); }\n",
+    )
+    .unwrap();
+    // callers(helper) resolves to `mid`, with no unresolved residue.
+    let callers = Command::new(cpc)
+        .args(["query", "callers", "helper"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query callers");
+    assert!(callers.status.success());
+    let c = String::from_utf8_lossy(&callers.stdout);
+    assert!(c.contains("\"name\": \"mid\""), "mid should call helper: {c}");
+    assert!(c.contains("\"unresolved\": 0"), "free calls must resolve, not land in unresolved: {c}");
+    // refs(helper) finds both call sites.
+    let refs = Command::new(cpc)
+        .args(["query", "refs", "helper"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query refs");
+    let r = String::from_utf8_lossy(&refs.stdout);
+    assert_eq!(r.matches("\"line\"").count(), 2, "two call sites of helper: {r}");
+}
+
+/// The honest floor: a call *through a function pointer* genuinely can't be
+/// named, so it stays in `unresolved` (C+ has no other indirect dispatch).
+#[test]
+fn query_fn_pointer_call_stays_unresolved() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"g\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn h(x: i32) -> i32 { return x; }\n\
+         fn main() -> i32 { let f: fn(i32) -> i32 = h; return f(5); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .args(["query", "callees", "main"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query callees");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    // The indirect `f(5)` call is unresolved; `h` is not a resolved callee.
+    assert!(s.contains("\"unresolved\": 1"), "fn-pointer call is the unresolved floor: {s}");
+}
+
 #[test]
 fn query_context_packs_the_neighborhood() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

@@ -93,14 +93,22 @@ packages — well under the interactive budget), no incremental machinery. Built
 from on-disk sources today; a dirty-buffer overlay is the one follow-up for
 unsaved-edit accuracy. cpc-lsp e2e tested (def/refs/hover/outline).
 
-Remaining (depth, not delivery; all need sema-retention, the one invasive piece):
-value references, full `type-at` for inferred expressions, and driving the call
-`unresolved` count to zero. **Discovered during fold-in:** the graph leaves
-**bare free-function calls unresolved** (method calls on typed receivers and type
-references resolve fine) — so `callers`/call-site-`refs` under-report for free
-fns. This is the highest-leverage piece of the "drive unresolved→0" work and the
-main thing that would make LSP find-references on functions complete. The
-original framing follows.
+**Call resolution — free + path calls fixed (v0.0.13).** The graph used to leave
+*bare free-function calls* and collapsed `module::fn()` *path calls* unresolved
+(only method calls on typed receivers and type refs resolved), so `callers` /
+`callees` / call-hierarchy / call-site `refs` — and LSP find-references on a
+function — under-reported, often to empty. Root cause: the resolver rewrites a
+callee to its qualified dotted form (`src.main.helper`) while the graph's indexes
+were short-name-keyed, so the exact-match lookup missed. Fixed by matching the
+qualified callee against node ids (`fn_by_qualified`, id with `::`→`.`), which
+resolves uniquely *even across same-short-name collisions*. Now `unresolved`
+means only a genuine **fn-pointer indirection** (C+ has no other indirect
+dispatch) — the true, tiny floor, not a hole. graph.rs + cpc/cpc-lsp e2e tested
+(free-call callers/refs resolve; fn-pointer call stays the floor).
+
+Remaining (depth, not delivery; need sema-retention, the one invasive piece):
+value references and full `type-at` for inferred expressions. The original
+framing follows.
 
 Designed in [plan.graph.md](plan.graph.md). A compiler-backed, queryable index —
 resolved `def` / `refs` / `callers` / `call-hierarchy` / `type-at` / `members` /
