@@ -39,8 +39,13 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
   per-field types drive coercion, incl. correct `half`/`float` constants). The
   ggml `static const sphere_t scene[10] = {...}` pattern. The generic form stays
   rejected (it reaches codegen un-monomorphized). Lower→codegen + unit/e2e tested.
-- **Const-eval for array lengths** — `[EXPR; N]` / `[T; N]` still need `N` a
-  literal; a small const-evaluator would admit `[T; SOME_CONST]`.
+- **Const-eval for array lengths** — **SHIPPED.** `[T; N]` (type position) and
+  `[v; N]` (fill count) now accept a non-negative integer `const` name, folded to
+  a literal in a new lower pass (`resolve_const_array_lengths`) before sema, so
+  every later pass still sees a plain `u32`. AST carries `len_name`/`count_name`
+  placeholders from the parser; unknown/non-integer/overflow names fire **E0X36**.
+  No length *arithmetic* (`[T; N*2]`) — just a bare const name. Lower→parser +
+  unit/e2e tested. **This closes topic B.**
 
 ### C. Real-time tail (additive; the roadmap's wrapped, these are the long tail)
 - **`rt_linux` / `rt_posix`** siblings of `vendor/rt_darwin` (CLOCK_MONOTONIC=1,
@@ -102,11 +107,9 @@ because the hard analyses already exist and are tested.
 **F (code knowledge graph) shipped** as the headline — the agent-loop tooling
 that improves how every future version gets built. Remaining shapes:
 
-- **"FFI polish"** (B): the natural next batch. `c"..."` C-string literals, the
-  `f16` literal suffix, and **struct-literal statics** are **shipped**; the one
-  remaining B item — const-eval for array lengths — is small and low-risk. These
-  round out the static-data and array surfaces (the port (E) is now done, so
-  they stand on their own merit).
+- **"FFI polish"** (B) — **COMPLETE.** `c"..."` C-string literals, the `f16`
+  literal suffix, struct-literal statics, and const-eval for array lengths all
+  shipped; the static-data and array surfaces are rounded out. Nothing left in B.
 - **"Finish the ownership model"** (A): highest *conceptual* payoff, now
   re-specced as raw-pointer accountability in [plan.opaque.md](plan.opaque.md)
   (supersedes the `own`-marker framing of [plan.own.md](plan.own.md)). Still a
@@ -118,8 +121,10 @@ that improves how every future version gets built. Remaining shapes:
   [plan.agent.md](plan.agent.md) (in-app + external agent surface, the
   set_agent_id / programmable-auth product bet).
 
-Suggested next shape: **B as the working batch** (cheap, low risk, rounds out the
-static-data/array surfaces now that the port milestone (E) is reached),
-**A reserved** for a clean milestone boundary, and the graph's own depth/delivery
-tail (value-refs, sema-retention precision, resident incremental rebuild, LSP
-fold-in) pulled in as the agent loop demands.
+Suggested next shape: **B is done** and **E (the port) is done**. The release-polish
+order now runs through **D** (cross-function inlining / `#[inline]` — perf
+credibility), **C**'s small tail (`--realtime-report`), and the graph's
+non-invasive delivery tail (fold under `cpc lsp` + incremental rebuild), then a
+release-hygiene gate (examples/recipes compile, `cpc fmt --check`, version bump).
+**A reserved** for a clean milestone boundary; the graph's invasive depth work
+(value-refs, sema-retention precision) stays deferred.

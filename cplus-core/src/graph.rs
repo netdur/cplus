@@ -1422,7 +1422,7 @@ fn short_name(name: &str) -> &str {
 pub fn type_to_string(t: &Type) -> String {
     match &t.kind {
         TypeKind::Path(s) => short_name(s).to_string(),
-        TypeKind::Array { elem, len } => format!("[{}; {len}]", type_to_string(elem)),
+        TypeKind::Array { elem, len, .. } => format!("[{}; {len}]", type_to_string(elem)),
         TypeKind::Borrowed { region, inner } => {
             format!("borrow {region} {}", type_to_string(inner))
         }

@@ -1385,19 +1385,26 @@ impl Parser {
                 let elem = Box::new(self.parse_type()?);
                 self.expect(&TokenKind::Semi, "`;` in array type")?;
                 let len_tok = self.peek().clone();
-                let len = match &len_tok.kind {
+                let (len, len_name) = match &len_tok.kind {
                     TokenKind::Int(v, _) => {
                         if *v > u32::MAX as u64 {
                             return Err(self.err_at_peek("array length fitting in u32"));
                         }
                         self.bump();
-                        *v as u32
+                        (*v as u32, None)
                     }
-                    _ => return Err(self.err_at_peek("integer array length")),
+                    // v0.0.13: a non-negative integer `const` name. Folded to a
+                    // literal `u32` by lower's `resolve_const_array_lengths`.
+                    TokenKind::Ident(name) => {
+                        let n = name.clone();
+                        self.bump();
+                        (0, Some(n))
+                    }
+                    _ => return Err(self.err_at_peek("integer or `const`-name array length")),
                 };
                 let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                 Ok(Type {
-                    kind: TypeKind::Array { elem, len },
+                    kind: TypeKind::Array { elem, len, len_name },
                     span: start.merge(end),
                 })
             }
@@ -2802,19 +2809,34 @@ impl Parser {
                 if self.eat(&TokenKind::Semi) {
                     // Fill-array form: `[EXPR; N]`.
                     let count_tok = self.peek().clone();
-                    let count = match &count_tok.kind {
+                    let (count, count_name) = match &count_tok.kind {
                         TokenKind::Int(v, _) => {
                             if *v > u32::MAX as u64 {
                                 return Err(self.err_at_peek("fill-array count fitting in u32"));
                             }
                             self.bump();
-                            *v as u32
+                            (*v as u32, None)
                         }
-                        _ => return Err(self.err_at_peek("integer fill-array count after `;`")),
+                        // v0.0.13: a non-negative integer `const` name. Folded to
+                        // a literal `u32` by lower's `resolve_const_array_lengths`.
+                        TokenKind::Ident(name) => {
+                            let n = name.clone();
+                            self.bump();
+                            (0, Some(n))
+                        }
+                        _ => {
+                            return Err(
+                                self.err_at_peek("integer or `const`-name fill-array count after `;`")
+                            )
+                        }
                     };
                     let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                     return Ok(Expr {
-                        kind: ExprKind::ArrayFill { fill: Box::new(first), count },
+                        kind: ExprKind::ArrayFill {
+                            fill: Box::new(first),
+                            count,
+                            count_name,
+                        },
                         span: start.merge(end),
                     });
                 }

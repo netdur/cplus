@@ -3108,7 +3108,7 @@ fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
             s.push(')');
             s
         }
-        TypeKind::Array { elem, len } => {
+        TypeKind::Array { elem, len, .. } => {
             // In a parameter position, `T[N]` decays to `T*` in C —
             // technically the same ABI. We render the array form anyway
             // since the user's intent is "fixed-size buffer" and clang

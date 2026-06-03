@@ -4644,7 +4644,7 @@ impl SemaCx<'_> {
             } => self.check_generic_enum_call(enum_name, type_args, variant, args, e.span),
             ExprKind::Field { receiver, name } => self.check_field(receiver, name),
             ExprKind::ArrayLit { elements } => self.check_array_lit(elements, expected, e.span),
-            ExprKind::ArrayFill { fill, count } => {
+            ExprKind::ArrayFill { fill, count, .. } => {
                 self.check_array_fill(fill, *count, expected, e.span)
             }
             ExprKind::TupleLit { elements } => self.check_tuple_lit(elements, expected, e.span),
@@ -10765,7 +10765,7 @@ impl SemaCx<'_> {
     fn resolve_type(&mut self, t: &Type) -> Ty {
         let name = match &t.kind {
             TypeKind::Path(n) => n,
-            TypeKind::Array { elem, len } => {
+            TypeKind::Array { elem, len, .. } => {
                 let elem_ty = self.resolve_type(elem);
                 return Ty::Array(Box::new(elem_ty), *len);
             }
@@ -11581,7 +11581,7 @@ impl SemaCx<'_> {
                 }
                 self.resolve_type(ty)
             }
-            TypeKind::Array { elem, len } => {
+            TypeKind::Array { elem, len, .. } => {
                 let elem_ty = self.resolve_field_type_with_subst(elem, subst);
                 Ty::Array(Box::new(elem_ty), *len)
             }
@@ -12327,11 +12327,12 @@ fn substitute_param_in_type_ast_with_tables(
                 TypeKind::Path(name.clone())
             }
         }
-        TypeKind::Array { elem, len } => TypeKind::Array {
+        TypeKind::Array { elem, len, .. } => TypeKind::Array {
             elem: Box::new(substitute_param_in_type_ast_with_tables(
                 elem, subst, structs, enums,
             )),
             len: *len,
+            len_name: None,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),

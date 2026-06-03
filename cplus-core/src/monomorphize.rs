@@ -357,6 +357,7 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::Array(elem, n) => TypeKind::Array {
             elem: Box::new(ty_to_type_ast(elem, type_name_of)),
             len: *n,
+            len_name: None,
         },
         // v0.0.6 Slice 1B: SIMD vector source name is `<elem>x<lanes>`,
         // e.g. `f32x4`. Mirrors the resolver's accepted form.
@@ -514,9 +515,10 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
     let kind = match &ty.kind {
         TypeKind::Path(name) if name == "Self" => TypeKind::Path(mangled_name.to_string()),
         TypeKind::Path(name) => TypeKind::Path(name.clone()),
-        TypeKind::Array { elem, len } => TypeKind::Array {
+        TypeKind::Array { elem, len, .. } => TypeKind::Array {
             elem: Box::new(rewrite_self_in_type(elem, mangled_name)),
             len: *len,
+            len_name: None,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),
@@ -767,9 +769,10 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
                 .map(|e| rewrite_expr_self(e, mangled_name))
                 .collect(),
         },
-        ExprKind::ArrayFill { fill, count } => ExprKind::ArrayFill {
+        ExprKind::ArrayFill { fill, count, .. } => ExprKind::ArrayFill {
             fill: Box::new(rewrite_expr_self(fill, mangled_name)),
             count: *count,
+            count_name: None,
         },
         ExprKind::Intrinsic { name, type_args, args, ret_ty } => ExprKind::Intrinsic {
             name: name.clone(),
@@ -837,7 +840,7 @@ fn type_ast_to_ty_with_subst(
         TypeKind::Slice(inner) => {
             type_ast_to_ty_with_subst(inner, subst).map(|t| Ty::Slice(Box::new(t)))
         }
-        TypeKind::Array { elem, len } => {
+        TypeKind::Array { elem, len, .. } => {
             type_ast_to_ty_with_subst(elem, subst).map(|t| Ty::Array(Box::new(t), *len))
         }
         TypeKind::FnPtr {
@@ -1337,9 +1340,10 @@ fn subst_type_ast(
             }
             TypeKind::Path(name.clone())
         }
-        TypeKind::Array { elem, len } => TypeKind::Array {
+        TypeKind::Array { elem, len, .. } => TypeKind::Array {
             elem: Box::new(subst_type_ast(elem, subst, type_name_of, struct_lookup)),
             len: *len,
+            len_name: None,
         },
         TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
             region: region.clone(),
@@ -2451,7 +2455,7 @@ fn rewrite_expr(
                 })
                 .collect(),
         },
-        ExprKind::ArrayFill { fill, count } => ExprKind::ArrayFill {
+        ExprKind::ArrayFill { fill, count, .. } => ExprKind::ArrayFill {
             fill: Box::new(rewrite_expr(
                 fill,
                 subst,
@@ -2462,6 +2466,7 @@ fn rewrite_expr(
                 struct_lookup,
             )),
             count: *count,
+            count_name: None,
         },
         // v0.0.11 Phase 4: subst type-parameter references in `#name`
         // intrinsics' turbofish type_args (e.g. `#size_of::[T]()` inside
@@ -2841,7 +2846,7 @@ fn mangle_type_ast_arg(t: &Type) -> String {
         // reached via the AST instead of via Ty.
         TypeKind::Path(name) if name == "()" => "unit".to_string(),
         TypeKind::Path(name) => name.clone(),
-        TypeKind::Array { elem, len } => format!("arr{}_{}", len, mangle_type_ast_arg(elem)),
+        TypeKind::Array { elem, len, .. } => format!("arr{}_{}", len, mangle_type_ast_arg(elem)),
         TypeKind::Borrowed { inner, .. } => mangle_type_ast_arg(inner),
         TypeKind::RawPtr(inner) => format!("ptr_{}", mangle_type_ast_arg(inner)),
         TypeKind::FnPtr {

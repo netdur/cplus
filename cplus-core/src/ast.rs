@@ -409,11 +409,15 @@ pub struct Type {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
     Path(String),
-    /// Fixed-size array type: `[T; N]`. Length stored as a u32 (Phase 2D
-    /// requires an integer literal; const expressions come later).
+    /// Fixed-size array type: `[T; N]`. Length stored as a u32. `N` is an
+    /// integer literal, or (v0.0.13) a non-negative integer `const` name —
+    /// recorded in `len_name` with `len` a placeholder `0` and folded into
+    /// `len` by the lower pass `resolve_const_array_lengths` before sema, so
+    /// every later pass still sees a plain `u32` length.
     Array {
         elem: Box<Type>,
         len: u32,
+        len_name: Option<String>,
     },
     /// Slice 6BC.5: region-annotated borrow type — `borrow REGION T`.
     /// The region is a region-name identifier local to the enclosing
@@ -734,14 +738,20 @@ pub enum ExprKind {
     /// v0.0.11 Phase 3: fill-array literal `[EXPR; N]`. Shorthand for
     /// an N-element array where every slot is initialized to a clone of
     /// `EXPR`. Lowering: codegen emits one `memset` for byte-valued
-    /// fills, otherwise an enumerated store loop. Sema requires `N` to
-    /// be a literal `u32` (no const-expression evaluation today). The
+    /// fills, otherwise an enumerated store loop. The
     /// motivating consumer is `vendor/static-arena`'s 16KB / 64KB / etc.
     /// stack-allocated buffer fields, which can't be written as 16384
     /// enumerated literals.
+    ///
+    /// v0.0.13: `N` may also be a non-negative integer `const` name. The
+    /// parser records it in `count_name` with `count` a placeholder `0`; the
+    /// lower pass `resolve_const_array_lengths` folds the const value into
+    /// `count` (clearing `count_name`) before sema, so every later pass still
+    /// sees a plain `u32`.
     ArrayFill {
         fill: Box<Expr>,
         count: u32,
+        count_name: Option<String>,
     },
     /// Indexing: `expr[index]`. Phase 2D.
     Index {

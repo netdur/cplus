@@ -2974,7 +2974,7 @@ fn write_struct_decls(out: &mut String, types: &TypeTable, _p: &Program) {
 fn ty_from(t: &Type, types: &TypeTable) -> Ty {
     let name = match &t.kind {
         TypeKind::Path(n) => n,
-        TypeKind::Array { elem, len } => {
+        TypeKind::Array { elem, len, .. } => {
             let elem_ty = ty_from(elem, types);
             return Ty::Array(Box::new(elem_ty), *len);
         }
@@ -4191,7 +4191,7 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             }
             Some(format!("[{}]", parts.join(", ")))
         }
-        ExprKind::ArrayFill { fill, count } => {
+        ExprKind::ArrayFill { fill, count, .. } => {
             let Ty::Array(elem, n) = ty else { return None; };
             if *count as u64 != *n as u64 {
                 return None;
@@ -7454,7 +7454,7 @@ impl<'a> FnState<'a> {
                         (ExprKind::ArrayLit { elements }, Ty::Array(elem, _)) => {
                             self.gen_array_lit(elements, Some((**elem).clone()))
                         }
-                        (ExprKind::ArrayFill { fill, count }, Ty::Array(elem, _)) => {
+                        (ExprKind::ArrayFill { fill, count, .. }, Ty::Array(elem, _)) => {
                             self.gen_array_fill(fill, *count, Some((**elem).clone()))
                         }
                         _ => self.gen_expr(init_expr).expect("let init produces a value"),
@@ -8428,7 +8428,7 @@ impl<'a> FnState<'a> {
             ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
                 Some(self.gen_array_lit(elements, None))
             }
-            ExprKind::ArrayFill { fill, count } => Some(self.gen_array_fill(fill, *count, None)),
+            ExprKind::ArrayFill { fill, count, .. } => Some(self.gen_array_fill(fill, *count, None)),
             ExprKind::Index { receiver, index } => Some(self.gen_index(receiver, index)),
             ExprKind::Range { .. } => {
                 unreachable!("sema rejects ranges outside `for ... in`")

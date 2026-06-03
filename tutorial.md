@@ -633,7 +633,20 @@ let ones:  [i32; 4]     = [1; 4];              // (1, 1, 1, 1)
 let bytes: [u8; 16384]  = [0u8; 16384];        // 16 KiB zero buffer — single memset
 ```
 
-The count must be a `u32` literal; there is no const-eval today.
+The count is a `u32` literal, or (v0.0.13) a non-negative integer `const` name:
+
+```cplus
+const CAP: usize = 1024;
+let scratch: [u8; CAP] = [0u8; CAP];   // both the type length and the fill count
+                                       //   accept the `const`
+```
+
+The same `[T; N]` array-*type* length also accepts a `const` name, so a fixed
+buffer size lives in one place and is referenced everywhere (`struct`/`let`/
+parameter/return types and the fill count). The name must resolve to a `const`
+with a non-negative integer-literal initializer that is in scope; anything else
+is **E0X36**. The const is folded to a literal length before type-checking — there
+is still no length *arithmetic* (`[T; CAP * 2]` is not accepted).
 
 Slices `T[]` are fat-pointer views over contiguous elements. They are
 borrow-shaped, so they are useful at FFI boundaries and inside the stdlib:

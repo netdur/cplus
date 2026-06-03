@@ -17808,6 +17808,72 @@ fn struct_literal_static_non_literal_field_rejected_e0x30() {
     assert!(stderr.contains("E0X30"), "expected E0X30, got: {stderr}");
 }
 
+// v0.0.13: const-eval for array lengths — `[T; N]` and `[v; N]` where `N` is a
+// non-negative integer `const`. Folds in the lower pass; every later pass sees
+// a plain length. Exercises type position (let + param + struct field) and the
+// fill-count position.
+#[test]
+fn const_array_length_compiles_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("clen.cplus");
+    std::fs::write(
+        &src,
+        "const CAP: usize = 8;\n\
+         const ROWS: u32 = 3;\n\
+         struct Grid { cells: [i32; CAP] }\n\
+         fn sum(buf: [i32; CAP]) -> i32 {\n\
+             let mut s: i32 = 0;\n\
+             let mut i: i32 = 0;\n\
+             while i < (CAP as i32) { s = s +% buf[i as usize]; i = i +% 1; }\n\
+             return s;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let a: [i32; CAP] = [2; CAP];\n\
+             let g: Grid = Grid { cells: [1; CAP] };\n\
+             let mut total: i32 = sum(a);\n\
+             total = total +% g.cells[0];\n\
+             let m: [u8; ROWS] = [0u8; ROWS];\n\
+             total = total +% (m[2] as i32);\n\
+             return total;   // 2*8 + 1 + 0 = 17\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("clen");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "const-array-length program must compile");
+    let run = Command::new(&bin).output().expect("run produced binary");
+    assert_eq!(run.status.code(), Some(17), "expected exit 17");
+}
+
+// An unknown const-name array length is rejected with E0X36.
+#[test]
+fn unknown_const_array_length_rejected_e0x36() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("badlen.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 { let a: [i32; NOPE] = [0; 1]; return a[0]; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("badlen");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected compile failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0X36"), "expected E0X36, got: {stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

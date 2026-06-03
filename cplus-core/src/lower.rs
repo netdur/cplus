@@ -57,6 +57,10 @@ pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
     // lowering so any pattern-let desugar already turned `if let` /
     // `guard let` bodies into walkable expression trees.
     cx.substitute_consts(prog, &const_values);
+    // v0.0.13: fold `const`-name array lengths (`[T; N]`, `[v; N]`) into
+    // literal `u32`s using the same const table. After this, every later pass
+    // sees a plain length; `len_name` / `count_name` are cleared.
+    cx.resolve_const_array_lengths(prog, &const_values);
     cx.diags
 }
 
@@ -680,6 +684,337 @@ impl Lower {
             }
         }
     }
+
+    // ---- v0.0.13: const-eval for array lengths ----
+
+    /// Walk every type and expression in the program, folding `const`-name
+    /// array lengths into literal `u32`s. `[T; N]` (type position) and
+    /// `[v; N]` (fill expression) where `N` is a non-negative integer `const`
+    /// name are resolved against `consts` (the same table the substitution
+    /// pass uses); unknown names, non-integer consts, and overflow fire
+    /// **E0X36**. After this pass `len_name` / `count_name` are `None`.
+    fn resolve_const_array_lengths(
+        &mut self,
+        prog: &mut Program,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        for item in &mut prog.items {
+            match &mut item.kind {
+                ItemKind::Function(f) => {
+                    for p in &mut f.params {
+                        self.resolve_lens_in_type(&mut p.ty, consts);
+                    }
+                    if let Some(rt) = &mut f.return_type {
+                        self.resolve_lens_in_type(rt, consts);
+                    }
+                    self.resolve_lens_in_block(&mut f.body, consts);
+                }
+                ItemKind::Impl(b) => {
+                    for m in &mut b.methods {
+                        for p in &mut m.params {
+                            self.resolve_lens_in_type(&mut p.ty, consts);
+                        }
+                        if let Some(rt) = &mut m.return_type {
+                            self.resolve_lens_in_type(rt, consts);
+                        }
+                        self.resolve_lens_in_block(&mut m.body, consts);
+                    }
+                }
+                ItemKind::Struct(s) => {
+                    for fld in &mut s.fields {
+                        self.resolve_lens_in_type(&mut fld.ty, consts);
+                    }
+                }
+                ItemKind::Enum(e) => {
+                    for v in &mut e.variants {
+                        for t in &mut v.payload {
+                            self.resolve_lens_in_type(t, consts);
+                        }
+                    }
+                }
+                ItemKind::Interface(i) => {
+                    for m in &mut i.methods {
+                        for p in &mut m.params {
+                            self.resolve_lens_in_type(&mut p.ty, consts);
+                        }
+                        if let Some(rt) = &mut m.return_type {
+                            self.resolve_lens_in_type(rt, consts);
+                        }
+                    }
+                }
+                ItemKind::TypeAlias(a) => self.resolve_lens_in_type(&mut a.target, consts),
+                ItemKind::Const(c) => {
+                    self.resolve_lens_in_type(&mut c.ty, consts);
+                    self.resolve_lens_in_expr(&mut c.value, consts);
+                }
+                ItemKind::Static(s) => {
+                    self.resolve_lens_in_type(&mut s.ty, consts);
+                    self.resolve_lens_in_expr(&mut s.value, consts);
+                }
+            }
+        }
+    }
+
+    /// Resolve a single `const`-name length to a `u32`, emitting E0X36 on a
+    /// name that is not a usable non-negative integer `const`.
+    fn resolve_one_len(
+        &mut self,
+        name: &str,
+        span: Span,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) -> u32 {
+        match consts.get(name) {
+            None => {
+                self.err(
+                    "E0X36",
+                    format!(
+                        "array length `{name}` is not a known `const`; use an integer literal or a `const` (with a non-negative integer literal initializer) in scope"
+                    ),
+                    span,
+                );
+                0
+            }
+            Some((init, _)) => match &init.kind {
+                ExprKind::IntLit(v, _) if *v <= u32::MAX as u64 => *v as u32,
+                ExprKind::IntLit(_, _) => {
+                    self.err(
+                        "E0X36",
+                        format!("array length `const {name}` exceeds the u32 maximum"),
+                        span,
+                    );
+                    0
+                }
+                _ => {
+                    self.err(
+                        "E0X36",
+                        format!(
+                            "array length `const {name}` must be a non-negative integer literal"
+                        ),
+                        span,
+                    );
+                    0
+                }
+            },
+        }
+    }
+
+    fn resolve_lens_in_type(
+        &mut self,
+        t: &mut Type,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        let span = t.span;
+        match &mut t.kind {
+            TypeKind::Array { elem, len, len_name } => {
+                if let Some(name) = len_name.take() {
+                    *len = self.resolve_one_len(&name, span, consts);
+                }
+                self.resolve_lens_in_type(elem, consts);
+            }
+            TypeKind::Borrowed { inner, .. } => self.resolve_lens_in_type(inner, consts),
+            TypeKind::RawPtr(inner) => self.resolve_lens_in_type(inner, consts),
+            TypeKind::Slice(inner) => self.resolve_lens_in_type(inner, consts),
+            TypeKind::FnPtr { params, return_type } => {
+                for p in params {
+                    self.resolve_lens_in_type(p, consts);
+                }
+                if let Some(rt) = return_type {
+                    self.resolve_lens_in_type(rt, consts);
+                }
+            }
+            TypeKind::Generic { args, .. } => {
+                for a in args {
+                    self.resolve_lens_in_type(a, consts);
+                }
+            }
+            TypeKind::Tuple(elems) => {
+                for e in elems {
+                    self.resolve_lens_in_type(e, consts);
+                }
+            }
+            TypeKind::Path(_) => {}
+        }
+    }
+
+    fn resolve_lens_in_block(
+        &mut self,
+        b: &mut Block,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        for s in &mut b.stmts {
+            self.resolve_lens_in_stmt(s, consts);
+        }
+        if let Some(t) = &mut b.tail {
+            self.resolve_lens_in_expr(t, consts);
+        }
+    }
+
+    fn resolve_lens_in_stmt(
+        &mut self,
+        s: &mut Stmt,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        match &mut s.kind {
+            StmtKind::Let { ty, init, .. } => {
+                if let Some(t) = ty {
+                    self.resolve_lens_in_type(t, consts);
+                }
+                if let Some(e) = init {
+                    self.resolve_lens_in_expr(e, consts);
+                }
+            }
+            StmtKind::Return(opt) => {
+                if let Some(e) = opt {
+                    self.resolve_lens_in_expr(e, consts);
+                }
+            }
+            StmtKind::While { cond, body, .. } => {
+                self.resolve_lens_in_expr(cond, consts);
+                self.resolve_lens_in_block(body, consts);
+            }
+            StmtKind::Loop(b, _) => self.resolve_lens_in_block(b, consts),
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::Range { iter, body, .. } => {
+                    self.resolve_lens_in_expr(iter, consts);
+                    self.resolve_lens_in_block(body, consts);
+                }
+                ForLoop::CStyle { init, cond, update, body } => {
+                    if let Some(i) = init {
+                        self.resolve_lens_in_stmt(i, consts);
+                    }
+                    if let Some(c) = cond {
+                        self.resolve_lens_in_expr(c, consts);
+                    }
+                    for u in update {
+                        self.resolve_lens_in_expr(u, consts);
+                    }
+                    self.resolve_lens_in_block(body, consts);
+                }
+            },
+            StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+                self.resolve_lens_in_expr(e, consts)
+            }
+            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+                self.resolve_lens_in_expr(scrutinee, consts);
+                self.resolve_lens_in_block(body, consts);
+                if let Some(b) = else_body {
+                    self.resolve_lens_in_block(b, consts);
+                }
+            }
+            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+                self.resolve_lens_in_expr(scrutinee, consts);
+                self.resolve_lens_in_block(else_body, consts);
+            }
+            StmtKind::WhileLet { scrutinee, body, .. } => {
+                self.resolve_lens_in_expr(scrutinee, consts);
+                self.resolve_lens_in_block(body, consts);
+            }
+            StmtKind::Break | StmtKind::Continue => {}
+        }
+    }
+
+    fn resolve_lens_in_expr(
+        &mut self,
+        e: &mut Expr,
+        consts: &std::collections::HashMap<String, (Expr, Type)>,
+    ) {
+        let span = e.span;
+        match &mut e.kind {
+            ExprKind::ArrayFill { fill, count, count_name } => {
+                if let Some(name) = count_name.take() {
+                    *count = self.resolve_one_len(&name, span, consts);
+                }
+                self.resolve_lens_in_expr(fill, consts);
+            }
+            ExprKind::Cast { expr, ty } => {
+                self.resolve_lens_in_expr(expr, consts);
+                self.resolve_lens_in_type(ty, consts);
+            }
+            ExprKind::Call { callee, args, type_args } => {
+                self.resolve_lens_in_expr(callee, consts);
+                for a in args {
+                    self.resolve_lens_in_expr(a, consts);
+                }
+                for t in type_args {
+                    self.resolve_lens_in_type(t, consts);
+                }
+            }
+            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.resolve_lens_in_block(b, consts),
+            ExprKind::If { cond, then, else_branch } => {
+                self.resolve_lens_in_expr(cond, consts);
+                self.resolve_lens_in_block(then, consts);
+                if let Some(eb) = else_branch {
+                    self.resolve_lens_in_expr(eb, consts);
+                }
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.resolve_lens_in_expr(lhs, consts);
+                self.resolve_lens_in_expr(rhs, consts);
+            }
+            ExprKind::Unary { operand, .. } => self.resolve_lens_in_expr(operand, consts),
+            ExprKind::Range { start, end, .. } => {
+                if let Some(e2) = start {
+                    self.resolve_lens_in_expr(e2, consts);
+                }
+                if let Some(e2) = end {
+                    self.resolve_lens_in_expr(e2, consts);
+                }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                self.resolve_lens_in_expr(target, consts);
+                self.resolve_lens_in_expr(value, consts);
+            }
+            ExprKind::Field { receiver, .. } => self.resolve_lens_in_expr(receiver, consts),
+            ExprKind::StructLit { fields, .. } => {
+                for f in fields {
+                    self.resolve_lens_in_expr(&mut f.value, consts);
+                }
+            }
+            ExprKind::GenericStructLit { fields, type_args, .. } => {
+                for f in fields {
+                    self.resolve_lens_in_expr(&mut f.value, consts);
+                }
+                for t in type_args {
+                    self.resolve_lens_in_type(t, consts);
+                }
+            }
+            ExprKind::GenericEnumCall { type_args, args, .. } => {
+                for t in type_args {
+                    self.resolve_lens_in_type(t, consts);
+                }
+                for a in args {
+                    self.resolve_lens_in_expr(a, consts);
+                }
+            }
+            ExprKind::ArrayLit { elements } => {
+                for el in elements {
+                    self.resolve_lens_in_expr(el, consts);
+                }
+            }
+            ExprKind::Index { receiver, index } => {
+                self.resolve_lens_in_expr(receiver, consts);
+                self.resolve_lens_in_expr(index, consts);
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.resolve_lens_in_expr(scrutinee, consts);
+                for a in arms {
+                    self.resolve_lens_in_expr(&mut a.body, consts);
+                }
+            }
+            ExprKind::Intrinsic { type_args, args, ret_ty, .. } => {
+                for t in type_args {
+                    self.resolve_lens_in_type(t, consts);
+                }
+                for a in args {
+                    self.resolve_lens_in_expr(a, consts);
+                }
+                if let Some(rt) = ret_ty {
+                    self.resolve_lens_in_type(rt, consts);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// v0.0.9 Phase 4: returns true iff `e` is a shape accepted as a
@@ -1234,5 +1569,93 @@ mod tests {
             ItemKind::Impl(b) => b.methods.iter().any(|m| walk_block(&m.body)),
             _ => false,
         })
+    }
+
+    // ---- v0.0.13: const-eval for array lengths ----
+
+    /// Find the declared array length of the first `let` binding in `main`.
+    fn first_let_array_len(prog: &Program) -> Option<(u32, Option<String>)> {
+        let f = prog.items.iter().find_map(|it| match &it.kind {
+            ItemKind::Function(f) if f.name.name == "main" => Some(f),
+            _ => None,
+        })?;
+        for s in &f.body.stmts {
+            if let StmtKind::Let { ty: Some(t), .. } = &s.kind {
+                if let TypeKind::Array { len, len_name, .. } = &t.kind {
+                    return Some((*len, len_name.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn const_array_length_folds_to_literal() {
+        let (prog, diags) = run(
+            "const CAP: usize = 8;\n\
+             fn main() -> i32 { let a: [i32; CAP] = [0; CAP]; return a[0]; }",
+        );
+        assert!(!first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+        // The `len_name` placeholder is folded into a literal `8` and cleared.
+        assert_eq!(first_let_array_len(&prog), Some((8, None)));
+    }
+
+    #[test]
+    fn const_fill_count_folds_to_literal() {
+        let (prog, _diags) = run(
+            "const N: u32 = 4;\n\
+             fn main() -> i32 { let a: [i32; 4] = [7; N]; return a[0]; }",
+        );
+        // Walk to the fill expr and confirm count folded to 4, name cleared.
+        let f = prog
+            .items
+            .iter()
+            .find_map(|it| match &it.kind {
+                ItemKind::Function(f) if f.name.name == "main" => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        let mut found = false;
+        for s in &f.body.stmts {
+            if let StmtKind::Let { init: Some(e), .. } = &s.kind {
+                if let ExprKind::ArrayFill { count, count_name, .. } = &e.kind {
+                    assert_eq!((*count, count_name.clone()), (4, None));
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "no ArrayFill found");
+    }
+
+    #[test]
+    fn unknown_const_array_length_e0x36() {
+        let (_, diags) = run("fn main() -> i32 { let a: [i32; NOPE] = [0; 1]; return a[0]; }");
+        assert!(first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+    }
+
+    #[test]
+    fn non_integer_const_array_length_e0x36() {
+        let (_, diags) = run(
+            "const NAME: str = \"hi\";\n\
+             fn main() -> i32 { let a: [i32; NAME] = [0; 1]; return 0; }",
+        );
+        assert!(first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+    }
+
+    #[test]
+    fn const_array_length_in_struct_field_folds() {
+        // A const length used in a struct field type resolves too.
+        let (prog, diags) = run(
+            "const W: u32 = 16;\n\
+             struct Buf { data: [u8; W] }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(!first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
+        let s = prog.items.iter().find_map(|it| match &it.kind {
+            ItemKind::Struct(s) if s.name.name == "Buf" => Some(s),
+            _ => None,
+        });
+        let fld_ty = &s.unwrap().fields[0].ty;
+        assert!(matches!(&fld_ty.kind, TypeKind::Array { len: 16, len_name: None, .. }));
     }
 }
