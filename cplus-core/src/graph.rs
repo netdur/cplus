@@ -1298,6 +1298,7 @@ impl<'a> Resolver<'a> {
             | ExprKind::FloatLit(..)
             | ExprKind::BoolLit(..)
             | ExprKind::StrLit(..)
+            | ExprKind::CStrLit(..)
             | ExprKind::Path { .. }
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }

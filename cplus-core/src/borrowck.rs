@@ -2355,6 +2355,7 @@ impl Analyzer<'_> {
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
+            | ExprKind::CStrLit(_)
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
             | ExprKind::EnvVar { .. }
@@ -3192,6 +3193,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
+        | ExprKind::CStrLit(_)
         | ExprKind::IncludeBytes { .. }
         | ExprKind::IncludeStr { .. }
         | ExprKind::EnvVar { .. } => false,

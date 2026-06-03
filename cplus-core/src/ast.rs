@@ -612,6 +612,11 @@ pub enum ExprKind {
     /// `private unnamed_addr constant` and constructs a `{ptr, len}`
     /// fat-pointer struct at the use site.
     StrLit(String),
+    /// `c"..."` C-string literal. Decoded payload (NUL appended at codegen).
+    /// Type is `*u8` — a bare pointer to a NUL-terminated `.rodata` blob, for
+    /// FFI. Safe to *form* (it's a pointer to static data); dereferencing it
+    /// needs `unsafe` like any raw pointer.
+    CStrLit(String),
     /// Phase 8 slice 8.STR.B.1: interpolated string literal —
     /// `"hello ${name}, n is ${n}"`. Alternating Lit and Expr parts.
     /// Type is `Ty::String` (owned). Sema requires every Expr part's

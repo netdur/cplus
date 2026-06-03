@@ -46,6 +46,11 @@ pub enum TokenKind {
     /// path strings. Payload is the unescaped contents (currently no escape
     /// sequences are processed — path strings don't need them).
     Str(String),
+    /// `c"..."` C-string literal — a NUL-terminated `*u8` to a `.rodata`
+    /// blob, for FFI (libc / JNI / Cocoa) without the `"...\0"` workaround.
+    /// Payload is the decoded contents (same escapes as `Str`); the NUL is
+    /// appended at codegen. No interpolation.
+    CStr(String),
     /// Phase 8 slice 8.STR.B.1: interpolated string literal —
     /// `"hello ${name}, n is ${n}"`. The lexer splits the payload into
     /// alternating literal segments (escapes decoded; `$$` becomes `$`)
@@ -284,6 +289,13 @@ impl<'a> Lexer<'a> {
                 kind: TokenKind::BlockComment(body),
                 span: self.span_from(start),
             });
+        }
+
+        // `c"..."` C-string literal — checked before the identifier branch,
+        // since `c` is an identifier start.
+        if c == b'c' && self.peek(1) == Some(b'"') {
+            self.pos += 1; // consume the `c`
+            return self.lex_cstring(start);
         }
 
         // identifiers / keywords / `_`
@@ -584,6 +596,83 @@ impl<'a> Lexer<'a> {
                         parts.push(InterpPart::Lit(lit));
                     }
                     return Ok(Token { kind: TokenKind::InterpStr(parts), span: self.span_from(start) });
+                }
+                Some(b) => { decoded.push(b); self.pos += 1; }
+            }
+        }
+    }
+
+    /// Lex a `c"..."` C-string literal. On entry, `self.pos` is at the opening
+    /// `"` (the `c` was already consumed). Same escapes as `lex_string`
+    /// (`\n \t \r \\ \" \0 \xHH`, ASCII-only), but no `${...}` interpolation —
+    /// a `$` is a literal `$`. The NUL terminator is appended at codegen.
+    fn lex_cstring(&mut self, start: usize) -> Result<Token, LexError> {
+        self.pos += 1; // opening "
+        let mut decoded: Vec<u8> = Vec::new();
+        loop {
+            match self.peek(0) {
+                None | Some(b'\n') => {
+                    return Err(LexError {
+                        kind: LexErrorKind::UnterminatedString,
+                        span: self.span_from(start),
+                    });
+                }
+                Some(b'"') => {
+                    self.pos += 1; // closing "
+                    let body = String::from_utf8(decoded).unwrap_or_default();
+                    return Ok(Token {
+                        kind: TokenKind::CStr(body),
+                        span: self.span_from(start),
+                    });
+                }
+                Some(b'\\') => {
+                    self.pos += 1;
+                    match self.peek(0) {
+                        Some(b'n') => { decoded.push(b'\n'); self.pos += 1; }
+                        Some(b't') => { decoded.push(b'\t'); self.pos += 1; }
+                        Some(b'r') => { decoded.push(b'\r'); self.pos += 1; }
+                        Some(b'\\') => { decoded.push(b'\\'); self.pos += 1; }
+                        Some(b'"') => { decoded.push(b'"'); self.pos += 1; }
+                        Some(b'0') => { decoded.push(b'\0'); self.pos += 1; }
+                        Some(b'x') => {
+                            self.pos += 1;
+                            let hi = self.peek(0).and_then(hex_digit);
+                            let lo = self.peek(1).and_then(hex_digit);
+                            match (hi, lo) {
+                                (Some(h), Some(l)) => {
+                                    self.pos += 2;
+                                    let byte = (h << 4) | l;
+                                    if byte >= 0x80 {
+                                        return Err(LexError {
+                                            kind: LexErrorKind::UnexpectedChar(byte as char),
+                                            span: self.span_from(start),
+                                        });
+                                    }
+                                    decoded.push(byte);
+                                }
+                                _ => {
+                                    return Err(LexError {
+                                        kind: LexErrorKind::UnexpectedChar(
+                                            self.peek(0).unwrap_or(b'"') as char,
+                                        ),
+                                        span: self.span_from(start),
+                                    });
+                                }
+                            }
+                        }
+                        Some(other) => {
+                            return Err(LexError {
+                                kind: LexErrorKind::UnexpectedChar(other as char),
+                                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                            });
+                        }
+                        None => {
+                            return Err(LexError {
+                                kind: LexErrorKind::UnterminatedString,
+                                span: self.span_from(start),
+                            });
+                        }
+                    }
                 }
                 Some(b) => { decoded.push(b); self.pos += 1; }
             }
@@ -1198,6 +1287,20 @@ mod tests {
         // Uppercase hex digits.
         let toks = tokenize(r#""\x7F""#).unwrap();
         assert_eq!(toks[0].kind, TokenKind::Str("\u{7f}".to_string()));
+    }
+
+    #[test]
+    fn cstring_literal_lexes_with_escapes() {
+        // `c"..."` → a CStr token; same escapes as a normal string.
+        let toks = tokenize(r#"c"hi\n""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::CStr("hi\n".to_string()));
+        // A bare `c` (not followed by `"`) is still an identifier.
+        let toks = tokenize("c + 1").unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Ident("c".to_string()));
+        // An identifier ending in `c` is not mistaken for a c-string prefix.
+        let toks = tokenize(r#"abc"x""#).unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Ident("abc".to_string()));
+        assert_eq!(toks[1].kind, TokenKind::Str("x".to_string()));
     }
 
     #[test]

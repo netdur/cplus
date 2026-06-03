@@ -27,11 +27,11 @@ build.
 
 - **Package Structure**: ~~Should we create a `jni-min` package?~~ **Resolved** —
   shipped as `vendor/jni` (see Status).
-- **C-Strings**: JNI heavily relies on null-terminated strings. The package
-  currently expects the `"string\0"` workaround at call sites (e.g.
-  `FindClass(env, "java/lang/String\0")`). Proper `c"..."` literal support
-  remains the cleaner long-term answer; **still open** as an ergonomics
-  improvement, not a blocker.
+- **C-Strings**: ~~JNI heavily relies on null-terminated strings; the package
+  expects the `"string\0"` workaround at call sites.~~ **Resolved** — `c"..."`
+  C-string literals shipped (a bare `*u8` to a NUL-terminated `.rodata` blob),
+  so call sites can write `FindClass(env, c"java/lang/String")` instead of the
+  `"...\0"` workaround.
 - **Round-trip verification**: the layout `#[test]` covers offsets, but the full
   `.so` + JVM `System.loadLibrary` round-trip (Verification Plan below) is **not
   yet run** — it needs a JVM/Java toolchain in the test environment.

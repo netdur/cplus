@@ -2422,6 +2422,14 @@ impl Parser {
                     span: tok.span,
                 })
             }
+            TokenKind::CStr(s) => {
+                let s = s.clone();
+                self.bump();
+                Ok(Expr {
+                    kind: ExprKind::CStrLit(s),
+                    span: tok.span,
+                })
+            }
             TokenKind::InterpStr(lex_parts) => {
                 let lex_parts = lex_parts.clone();
                 self.bump();

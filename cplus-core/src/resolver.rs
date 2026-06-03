@@ -1967,6 +1967,7 @@ fn rewrite_expr(
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
+        | ExprKind::CStrLit(_)
         | ExprKind::IncludeBytes { .. }
         | ExprKind::IncludeStr { .. }
         | ExprKind::EnvVar { .. } => {}

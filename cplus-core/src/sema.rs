@@ -4535,6 +4535,7 @@ impl SemaCx<'_> {
             ExprKind::FloatLit(_, suf) => self.check_float_lit(*suf, expected),
             ExprKind::BoolLit(_) => Ty::Bool,
             ExprKind::StrLit(_) => Ty::Str,
+            ExprKind::CStrLit(_) => Ty::RawPtr(Box::new(Ty::U8)),
             ExprKind::InterpStr { parts } => self.check_interp_str(parts, e.span),
             ExprKind::Ident(name) => self.resolve_value_ident(name, e.span, expected.clone()),
             ExprKind::Block(b) => self.check_block_as_expr(b),
@@ -13282,6 +13283,7 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
+        | ExprKind::CStrLit(_)
         | ExprKind::Ident(_)
         | ExprKind::Path { .. }
         | ExprKind::IncludeBytes { .. }
@@ -13383,6 +13385,17 @@ mod tests {
             diags
         );
         assert_eq!(diags[0].code.0, code);
+    }
+
+    // ---- `c"..."` C-string literals (type `*u8`) ----
+
+    #[test]
+    fn cstring_literal_types_as_raw_ptr() {
+        // c"..." is `*u8` and safe to *form* (a pointer to static data); no
+        // `unsafe` is needed to bind it.
+        assert!(errors("fn f() -> i32 { let p: *u8 = c\"hi\"; return 0; }").is_empty());
+        // Binding it to a non-pointer is a type mismatch.
+        assert!(errors("fn f() -> i32 { let n: i32 = c\"hi\"; return 0; }").contains(&"E0302"));
     }
 
     // ---- v0.0.8 Phase 4: `env!("NAME")` compile-time env-var read ----

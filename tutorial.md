@@ -1092,6 +1092,23 @@ extern fn free(p: *u8);
 extern fn printf(fmt: *u8, ...) -> i32;   // varargs OK on extern only
 ```
 
+### C-string literals: `c"..."`
+
+C wants NUL-terminated `char*`. A `c"..."` literal is exactly that: a bare `*u8` pointing at a NUL-terminated `.rodata` blob. It removes the `"...\0"` + `str_ptr(...)` workaround that FFI (libc, JNI, Cocoa) otherwise needs.
+
+```cplus
+extern fn printf(fmt: *u8, ...) -> i32;
+
+fn main() -> i32 {
+    unsafe { printf(c"hello, %d\n", 42 as i32); }   // c"..." is a *u8
+    let banner: *u8 = c"=== ready ===\n";
+    unsafe { printf(banner); }
+    return 0;
+}
+```
+
+A `c"..."` is `*u8` (not the fat-pointer `str`), and is **safe to form** — it's just a pointer to static data; only *dereferencing* a raw pointer needs `unsafe`, as always. Same escapes as a normal string (`\n`, `\t`, `\xHH`, …); the NUL is appended for you. (For an owned, length-carrying string use `string`/`str`; `c"..."` is specifically the C-interop shape.)
+
 ### Raw pointers
 
 `*T` is an 8-byte opaque address. It's `Copy`. **Every operation** on it requires `unsafe`:

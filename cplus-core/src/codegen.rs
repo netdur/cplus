@@ -3565,6 +3565,13 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
             ExprKind::StrLit(s) => {
                 emit_str_global(s, table, next_id, out);
             }
+            ExprKind::CStrLit(s) => {
+                // Reuse the str-lit machinery: the globals are already
+                // NUL-terminated, so a c-string and a str of the same content
+                // share one `@.str.N`. Only the use site differs (ptr vs
+                // fat pointer).
+                emit_str_global(s, table, next_id, out);
+            }
             ExprKind::InterpStr { parts } => {
                 // Phase 8 slice 8.STR.B: each Lit segment gets the same
                 // @.str.N treatment as a plain StrLit so codegen at the
@@ -3829,6 +3836,7 @@ fn collect_address_taken_fns(
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
+            | ExprKind::CStrLit(_)
             | ExprKind::Path { .. }
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
@@ -8161,6 +8169,16 @@ impl<'a> FnState<'a> {
                     "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
                 ));
                 Some((t2, Ty::Str))
+            }
+            ExprKind::CStrLit(s) => {
+                // The NUL-terminated bytes already live in `@.str.N` (shared
+                // with str literals); a c-string is just that pointer as `*u8`.
+                let (symbol, _len) = self
+                    .str_lits
+                    .get(s)
+                    .expect("c-string literal not in table")
+                    .clone();
+                Some((symbol, Ty::RawPtr(Box::new(Ty::U8))))
             }
             ExprKind::InterpStr { parts } => Some(self.gen_interp_str(parts)),
             ExprKind::FloatLit(v, suf) => {

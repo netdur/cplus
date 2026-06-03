@@ -17675,6 +17675,35 @@ fn query_call_hierarchy_and_unknown_fn() {
     assert!(!u.status.success(), "unknown fn must exit non-zero");
 }
 
+#[test]
+fn cstring_literal_compiles_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("cstr.cplus");
+    std::fs::write(
+        &src,
+        "extern fn printf(fmt: *u8, ...) -> i32;\n\
+         fn main() -> i32 {\n\
+             let m: *u8 = c\"hi\\n\";\n\
+             unsafe { printf(m); }\n\
+             unsafe { printf(c\"n=%d\\n\", 7 as i32); }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("cstr");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "c-string program must compile");
+    let run = Command::new(&bin).output().expect("run produced binary");
+    assert!(run.status.success());
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "hi\nn=7\n");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

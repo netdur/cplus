@@ -24,10 +24,11 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
   Send/Sync piece) without breaking ObjC/channel/mutex FFI.
 
 ### B. FFI & literal polish (small, high-leverage, low-risk)
-- **`c"..."` C-string literals** ([plan.jni.md](plan.jni.md)) — null-terminated
-  string literals so FFI stops needing the `"...\0"` workaround (JNI, Cocoa,
-  libc). `str` is a fat pointer; `c"..."` would be a bare `*u8` to a
-  NUL-terminated `.rodata` blob.
+- **`c"..."` C-string literals** ([plan.jni.md](plan.jni.md)) — **SHIPPED.**
+  A `c"..."` is a bare `*u8` to a NUL-terminated `.rodata` blob (reusing the
+  already-NUL-terminated str-lit globals), safe to form, so FFI (JNI, Cocoa,
+  libc) drops the `"...\0"` + `str_ptr(...)` workaround. Lexer→codegen +
+  unit/e2e tested.
 - **`f16` literal suffix** (`1.5f16`) — deferred polish from G-045; today needs
   `1.5 as f16`.
 - **Struct-literal statics** (`static S: T = T { ... };`) — the remaining half of
@@ -96,10 +97,10 @@ because the hard analyses already exist and are tested.
 that improves how every future version gets built. Remaining shapes:
 
 - **"FFI polish + keep the port moving"** (B + E): the natural next batch.
-  `c"..."` C-string literals (kills the `"...\0"` FFI workaround across JNI /
-  Cocoa / libc), the `f16` literal suffix, struct-literal statics, and
-  const-eval for array lengths are each small, low-risk, and directly remove
-  port friction. Let the port (E) drive which land first.
+  `c"..."` C-string literals are **shipped** (the `"...\0"` workaround is gone);
+  remaining B items — the `f16` literal suffix, struct-literal statics, and
+  const-eval for array lengths — are each small, low-risk, and directly remove
+  port friction. Let the port (E) drive which land next.
 - **"Finish the ownership model"** (A): highest *conceptual* payoff, now
   re-specced as raw-pointer accountability in [plan.opaque.md](plan.opaque.md)
   (supersedes the `own`-marker framing of [plan.own.md](plan.own.md)). Still a

@@ -235,6 +235,7 @@ impl Lower {
             | ExprKind::FloatLit(..)
             | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_)
+            | ExprKind::CStrLit(_)
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
             | ExprKind::EnvVar { .. }
@@ -698,7 +699,8 @@ fn is_const_initializer(e: &Expr) -> bool {
         ExprKind::IntLit(_, _)
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
-        | ExprKind::StrLit(_) => true,
+        | ExprKind::StrLit(_)
+        | ExprKind::CStrLit(_) => true,
         ExprKind::Unary { op: UnaryOp::Neg, operand } => matches!(
             operand.kind,
             ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
@@ -837,6 +839,7 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
         | ExprKind::FloatLit(_, _)
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
+        | ExprKind::CStrLit(_)
         | ExprKind::Ident(_)
         | ExprKind::Path { .. }
         | ExprKind::IncludeBytes { .. }
