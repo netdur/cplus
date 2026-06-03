@@ -608,6 +608,26 @@ impl CodeGraph {
         let references: Vec<Reference> = self.refs(name).into_iter().cloned().collect();
         Some(refs_result_json(name, references))
     }
+
+    // ---- composite query ----
+
+    /// `cpc query context <fn>` — the one-shot edit pack: the function's node
+    /// (signature + location), its callers and callees, and the count of
+    /// unresolved calls inside it. One call gives an agent the neighborhood it
+    /// needs to change `fn` safely, instead of several. `None` if the name is
+    /// not a function or method.
+    pub fn context_json(&self, name: &str) -> Option<String> {
+        let target_id = self.callable_ids(name).into_iter().next()?;
+        let target = self.nodes.iter().find(|n| n.id == target_id)?.clone();
+        let res = ContextResult {
+            kind: "context".to_string(),
+            target,
+            callers: self.callers(name).into_iter().cloned().collect(),
+            callees: self.callees(name).into_iter().cloned().collect(),
+            unresolved: self.unresolved_for(name),
+        };
+        Some(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
+    }
 }
 
 /// JSON shape for a call query: the result nodes plus the explicit
@@ -651,6 +671,17 @@ fn refs_result_json(target: &str, references: Vec<Reference>) -> String {
         references,
     };
     serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// JSON shape for the composite `context` query: the target function's node
+/// alongside its caller and callee neighborhoods in one payload.
+#[derive(Serialize)]
+struct ContextResult {
+    kind: String,
+    target: Node,
+    callers: Vec<Node>,
+    callees: Vec<Node>,
+    unresolved: u32,
 }
 
 fn add_impl_methods<'a>(
@@ -1417,5 +1448,22 @@ mod tests {
         // `lonely` exists (so json is Some) but has no call sites.
         assert!(g.refs("lonely").is_empty());
         assert!(g.refs_json("lonely").is_some());
+    }
+
+    #[test]
+    fn context_packs_target_callers_and_callees() {
+        let src = "fn leaf() -> i32 { return 1; }\n\
+                   fn mid() -> i32 { return leaf(); }\n\
+                   fn top() -> i32 { return mid(); }";
+        let g = CodeGraph::build(&project(src));
+        let j = g.context_json("mid").expect("mid is a function");
+        assert!(j.contains("\"kind\": \"context\""));
+        // mid is called by top and calls leaf.
+        assert!(j.contains("\"callers\""));
+        assert!(j.contains("\"callees\""));
+        assert!(j.contains("top"), "top is a caller of mid: {j}");
+        assert!(j.contains("leaf"), "leaf is a callee of mid: {j}");
+        // Not a function → None.
+        assert!(g.context_json("nonexistent").is_none());
     }
 }

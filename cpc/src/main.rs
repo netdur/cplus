@@ -2264,18 +2264,34 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                 }
             };
         }
-        "type-at" | "context" => {
+        "context" => {
+            let Some(sym) = arg0 else {
+                eprintln!("cpc query context: expected a FN");
+                return ExitCode::FAILURE;
+            };
+            return match g.context_json(sym) {
+                Some(j) => {
+                    println!("{j}");
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("cpc query context: `{sym}` is not a known function or method");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        "type-at" => {
             eprintln!(
-                "cpc query {kind}: not available in this build — def/members/symbols, call edges \
-                 (callers/callees/call-hierarchy), and refs (call sites) are. type-at and context \
-                 land in a later phase."
+                "cpc query type-at: not available in this build — def/members/symbols, call edges \
+                 (callers/callees/call-hierarchy), refs (call sites), and context are. type-at \
+                 lands in a later phase."
             );
             return ExitCode::FAILURE;
         }
         other => {
             eprintln!(
-                "cpc query: unknown query kind `{other}` \
-                 (expected: def | members | symbols | refs | callers | callees | call-hierarchy)"
+                "cpc query: unknown query kind `{other}` (expected: def | members | symbols | \
+                 refs | callers | callees | call-hierarchy | context)"
             );
             return ExitCode::FAILURE;
         }

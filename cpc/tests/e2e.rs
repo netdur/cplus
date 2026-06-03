@@ -17488,13 +17488,13 @@ fn query_missing_symbol_exits_nonzero() {
 fn query_unimplemented_kind_reports_and_fails() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = graph_project();
-    // `context` is still deferred (def/members/symbols, call edges, and refs
-    // are now implemented).
+    // `type-at` is still deferred (def/members/symbols, call edges, refs, and
+    // context are now implemented).
     let out = Command::new(cpc)
-        .args(["query", "context", "main"])
+        .args(["query", "type-at", "src/main.cplus:1:1"])
         .current_dir(&dir)
         .output()
-        .expect("invoke cpc query context");
+        .expect("invoke cpc query type-at");
     assert!(!out.status.success(), "deferred query must exit non-zero");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17552,6 +17552,32 @@ fn query_refs_returns_call_sites_with_locations() {
         .output()
         .expect("invoke cpc query refs");
     assert!(!u.status.success(), "unknown symbol must exit non-zero");
+}
+
+#[test]
+fn query_context_packs_the_neighborhood() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    // `sum` is called by main → context(sum) has main as a caller; context(main)
+    // has sum as a callee. One call, the whole neighborhood.
+    let out = Command::new(cpc)
+        .args(["query", "context", "main"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query context");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("\"kind\": \"context\""));
+    assert!(s.contains("\"target\""), "context carries the target node: {s}");
+    assert!(s.contains("\"callees\""), "context carries callees: {s}");
+    assert!(s.contains("\"name\": \"sum\""), "main's callee sum appears: {s}");
+
+    let u = Command::new(cpc)
+        .args(["query", "context", "Point"]) // a struct, not a fn → not found
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query context");
+    assert!(!u.status.success(), "context of a non-function exits non-zero");
 }
 
 #[test]
