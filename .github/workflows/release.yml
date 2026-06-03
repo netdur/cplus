@@ -12,12 +12,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing tag to build a release binary for (test)"
-        required: true
-        default: "v0.0.13"
 
 permissions:
   contents: write # create the Release and upload assets
@@ -34,7 +28,7 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
