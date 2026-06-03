@@ -830,12 +830,12 @@ C+ ownership is **boundary-checked, not whole-program inferred**. There is no li
 - **Use after move**: once a non-Copy value moves (into a default/`move` param, a `let`, or a struct field), the source is dead; reading it is **E0335**.
 - **Aliasing XOR mutation**: within a function, a place has either shared borrows *or* one exclusive borrow, never both (§14).
 - **Partial move out of a `Drop` type**: rejected (**E0509**); the destructor frees fields by hand, so stealing one would double-free.
-- **Returned borrows**: a `str` / `T[]` / `borrow REGION` result must come from a parameter (with a matching region: **E0511** / **E0512**) or from `'static` data, never from a local that drops at return (**E0513**).
+- **Returned borrows**: a `str` / `T[]` / `borrow REGION` result must come from a parameter (with a matching region: **E0511** / **E0512**) or from `'static` data, never from a local that drops at return (**E0513**). This also catches a local-rooted view escaping *inside a returned aggregate* — `return Holder { view: local.as_str() };` is **E0513** too, not just a bare-view return.
 - **Borrows across `await`**: borrow-shaped params are banned in `async fn` (**E0900**), since a suspension can outlive the caller's frame.
 
 **Trusted to you (the escape hatches):**
 
-- **A `str` / `T[]` view stored into a longer-lived place.** These are `Copy` views, not tracked references. The compiler checks the *function boundary* (the rules above), but once you copy a view into a struct field, a `static`, or another binding, it no longer tracks that the backing storage outlives it. The contract is simple: **a view must not outlive the value it points into.**
+- **A `str` / `T[]` view stored into a longer-lived place.** These are `Copy` views, not tracked references. The compiler checks the *function boundary* — including a local-rooted view escaping inside the **returned** value (E0513, see above) — but it does not track a view copied into a `static`, written through an out-parameter, or handed to a function that pockets it. Past the return boundary, the contract is yours: **a view must not outlive the value it points into.**
 - **Raw pointers (`*T`).** Completely outside the borrow checker: returning, storing, or aliasing one is allowed. The `unsafe` you write at each *dereference* is the point where you take on the validity obligation. A `*u8` returned from borrowed data and used after the source drops is a use-after-free that the language deliberately does not stop; that's the cost of the escape hatch.
 
 One rule covers all of it: **a borrow, a view, or a raw pointer must not outlive the value it points into.** The compiler proves this for you at the enforced cases above; everywhere else it's a contract you keep, and `unsafe` marks the places where you've explicitly signed up for it.
@@ -2476,7 +2476,7 @@ The error codes you'll see most often. The full list lives in `cplus-core/src/se
 | E0509 | Move of a field out of a `Drop` type | Clone the field, or restructure so it isn't owned by a Drop type |
 | E0511 | Return type names a borrow region no parameter declares | Add a same-region parameter, or drop the region |
 | E0512 | Returned borrow's region ≠ the declared return region | Return a borrow from a same-region parameter |
-| E0513 | Returning a `str` / `T[]` view of a local that drops | Return an owned value (`string` / `Vec[T]`), or borrow from a parameter |
+| E0513 | Returning a `str` / `T[]` view of a local that drops (directly, or inside a returned struct/array) | Return an owned value (`string` / `Vec[T]`), or borrow from a parameter |
 | E0801 | Operation requires `unsafe` | Wrap in `unsafe { ... }` |
 | E0821 | Cannot take address of generic fn | Specify type parameters at the take-address site |
 | E0876 | `#env("X")` — env var not set at compile time | Set the var when invoking cpc, or pick a different default |

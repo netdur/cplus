@@ -10147,6 +10147,13 @@ impl SemaCx<'_> {
     ///   left alone; literals and untraceable call results are conservatively
     ///   allowed.
     fn check_returned_borrow(&mut self, e: &Expr) {
+        // v0.0.13 (Tier 1): a view rooted at a local escaping *inside a returned
+        // aggregate literal* — `return Holder { view: s.as_str() };`. The bare-
+        // view return below (#3) only fires when the return *type* is a view;
+        // this catches the same dangle hidden in a struct/array/tuple the
+        // function returns. Runs regardless of return type.
+        self.flag_escaping_local_views(e);
+
         let ret_borrow_shaped = matches!(self.current_return, Ty::Str | Ty::Slice(_));
         let ret_region = self.current_fn_return_region.clone();
         if !ret_borrow_shaped && ret_region.is_none() {
@@ -10188,6 +10195,58 @@ impl SemaCx<'_> {
                                 e.span,
                             );
                             return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// v0.0.13 (Tier 1): walk a returned **aggregate literal** and flag any
+    /// view leaf (`local.as_str()` / `local.as_slice()`) rooted at a non-Copy
+    /// local — that local drops at return, so the stored view would dangle.
+    /// Only engages for aggregate literals; a bare-view return is left to the
+    /// `ret_borrow_shaped` path (#3) so the two don't double-report. Only the
+    /// unambiguous view-producing forms are flagged, so moving an owned
+    /// `string`/`Vec` field (`Holder { s: local }`) is never a false positive.
+    fn flag_escaping_local_views(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::StructLit { .. }
+            | ExprKind::GenericStructLit { .. }
+            | ExprKind::ArrayLit { .. }
+            | ExprKind::TupleLit { .. }
+            | ExprKind::ArrayFill { .. } => self.flag_view_leaves(e),
+            _ => {}
+        }
+    }
+
+    fn flag_view_leaves(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    self.flag_view_leaves(&f.value);
+                }
+            }
+            ExprKind::ArrayLit { elements } | ExprKind::TupleLit { elements } => {
+                for el in elements {
+                    self.flag_view_leaves(el);
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => self.flag_view_leaves(fill),
+            // Leaf: a `local.as_str()` / `local.as_slice()` borrowing a non-Copy local.
+            _ => {
+                if let Some(root) = view_producing_root(e) {
+                    if !self.current_fn_param_names.contains(root) {
+                        if let Some(ty) = self.lookup_local(root).map(|i| i.ty.clone()) {
+                            if !self.is_copy(&ty) {
+                                self.err(
+                                    "E0513",
+                                    format!(
+                                        "view of local `{root}` escapes inside the returned value: `{root}` is freed when the function returns, so the stored view would dangle. Store an owned `string` / `Vec[T]`, or borrow the view from a parameter"
+                                    ),
+                                    e.span,
+                                );
+                            }
                         }
                     }
                 }
@@ -12617,6 +12676,22 @@ fn arg_is_named_binding(arg: &Expr) -> bool {
 /// whose provenance can't be traced syntactically — literals (`'static`),
 /// arbitrary call results, etc. — which the return check then treats
 /// conservatively as "not provably dangling".
+/// v0.0.13 (Tier 1): the root local of an *unambiguous view-producing*
+/// expression — only `recv.as_str()` / `recv.as_slice()`. Unlike
+/// `returned_borrow_root`, a bare identifier/field is NOT view-producing here
+/// (it might be an owned value being moved), so this never flags a legitimate
+/// move of an owned field into a returned aggregate.
+fn view_producing_root(e: &Expr) -> Option<&str> {
+    if let ExprKind::Call { callee, .. } = &e.kind {
+        if let ExprKind::Field { receiver, name } = &callee.kind {
+            if matches!(name.name.as_str(), "as_str" | "as_slice") {
+                return returned_borrow_root(receiver);
+            }
+        }
+    }
+    None
+}
+
 fn returned_borrow_root(e: &Expr) -> Option<&str> {
     match &e.kind {
         ExprKind::Ident(n) => Some(n.as_str()),

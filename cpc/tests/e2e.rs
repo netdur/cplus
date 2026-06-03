@@ -3650,6 +3650,51 @@ fn return_slice_of_param_compiles() {
 }
 
 #[test]
+fn escaping_view_in_returned_struct_rejected_e0513() {
+    // v0.0.13 (Tier 1): the dangle hidden inside a returned aggregate. The
+    // view borrows local `s`, which drops at return — so the struct carries a
+    // dangling view. E0513 even though the return *type* is a struct, not a view.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Holder { view: str }\n\
+         fn keep() -> Holder {\n\
+             let s: string = \"heap\".to_string();\n\
+             return Holder { view: s.as_str() };\n\
+         }\n\
+         fn main() -> i32 { let h: Holder = keep(); return 0; }\n",
+    );
+    assert!(!ok, "expected E0513 on the escaping view, compiled instead");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn move_owned_field_into_returned_struct_compiles() {
+    // v0.0.13 (Tier 1) negative-guard: moving an *owned* `string` into a
+    // returned struct is a normal ownership transfer — must NOT be flagged.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Owner { s: string }\n\
+         fn mk() -> Owner {\n\
+             let s: string = \"heap\".to_string();\n\
+             return Owner { s: s };\n\
+         }\n\
+         fn main() -> i32 { let o: Owner = mk(); return 0; }\n",
+    );
+    assert!(ok, "moving an owned string into a returned struct must compile; stderr: {stderr}");
+}
+
+#[test]
+fn param_rooted_view_in_returned_struct_compiles() {
+    // v0.0.13 (Tier 1) negative-guard: a view borrowed from a *parameter* is
+    // caller-tied (the source outlives the call), so storing it in a returned
+    // struct is sound — must not be flagged as a dangling local.
+    let (ok, stderr) = try_compile_snippet(
+        "struct Holder { view: str }\n\
+         fn wrap(borrow s: string) -> Holder { return Holder { view: s.as_str() }; }\n\
+         fn main() -> i32 { return 0; }\n",
+    );
+    assert!(ok, "param-rooted view in a returned struct must compile; stderr: {stderr}");
+}
+
+#[test]
 fn let_str_eq_if_expression_compiles_and_runs() {
     // v0.0.12 regression: `let v: str = if cond { "a" } else { "b" };` crashed
     // codegen ("let init produces a value") because `expr_value_ty` didn't
