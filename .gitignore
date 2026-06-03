@@ -7,3 +7,6 @@ a.out
 # Per-user Claude Code local state
 /.claude/
 .DS_Store
+
+# Scratch planning notes (local, untracked)
+/plans/
