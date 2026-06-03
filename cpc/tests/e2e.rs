@@ -17485,22 +17485,45 @@ fn query_missing_symbol_exits_nonzero() {
 }
 
 #[test]
-fn query_unimplemented_kind_reports_and_fails() {
+fn query_unknown_kind_reports_and_fails() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = graph_project();
-    // `type-at` is still deferred (def/members/symbols, call edges, refs, and
-    // context are now implemented).
     let out = Command::new(cpc)
-        .args(["query", "type-at", "src/main.cplus:1:1"])
+        .args(["query", "bogus-kind", "x"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query");
+    assert!(!out.status.success(), "unknown kind must exit non-zero");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("unknown query kind"),
+        "expected an unknown-kind message, got: {err}"
+    );
+}
+
+#[test]
+fn query_type_at_resolves_a_typed_local() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    // graph_project line 6 is `let p: Point = Point { x: 1, y: 2 };` (the
+    // string-continuation `\` strips indentation, so `p` is at column 5).
+    let out = Command::new(cpc)
+        .args(["query", "type-at", "src/main.cplus:6:5"])
         .current_dir(&dir)
         .output()
         .expect("invoke cpc query type-at");
-    assert!(!out.status.success(), "deferred query must exit non-zero");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("not available in this build"),
-        "expected a clear deferred-feature message, got: {err}"
-    );
+    assert!(out.status.success(), "type-at on `p` should resolve");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("\"type\": \"Point\""), "p is a Point: {s}");
+    assert!(s.contains("\"kind\": \"type-at\""));
+
+    // A bad position format exits non-zero.
+    let bad = Command::new(cpc)
+        .args(["query", "type-at", "src/main.cplus"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query type-at");
+    assert!(!bad.status.success(), "malformed position must exit non-zero");
 }
 
 #[test]

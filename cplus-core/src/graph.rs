@@ -144,6 +144,23 @@ pub struct CodeGraph {
     /// Resolved use sites with precise locations (Phase 4a: call sites).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<Reference>,
+    /// Spans whose type is known locally — parameters, fields, typed locals,
+    /// and their identifier uses — backing `type-at`. Internal (not part of the
+    /// `cpc graph` JSON surface); a sparse map, not every expression.
+    #[serde(skip)]
+    pub type_spots: Vec<TypeSpot>,
+}
+
+/// A source span with a locally-known type, for `type-at`. `what` names the
+/// kind of place (parameter, field, local, …) for a human/agent reading the
+/// answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeSpot {
+    pub fid: String,
+    pub span: Span,
+    pub location: Location,
+    pub ty: String,
+    pub what: String,
 }
 
 impl CodeGraph {
@@ -225,6 +242,15 @@ impl CodeGraph {
                     });
                     for p in &f.params {
                         push_type_refs(&p.ty, &fid, &id, &resolve, &mut sig_type_refs);
+                        if let Some(location) = resolve(&fid, p.name.span) {
+                            g.type_spots.push(TypeSpot {
+                                fid: fid.clone(),
+                                span: p.name.span,
+                                location,
+                                ty: type_to_string(&p.ty),
+                                what: "parameter".to_string(),
+                            });
+                        }
                     }
                     if let Some(rt) = &f.return_type {
                         push_type_refs(rt, &fid, &id, &resolve, &mut sig_type_refs);
@@ -271,6 +297,15 @@ impl CodeGraph {
                             kind: EdgeKind::HasField,
                         });
                         push_type_refs(&field.ty, &fid, &id, &resolve, &mut sig_type_refs);
+                        if let Some(location) = resolve(&fid, field.name.span) {
+                            g.type_spots.push(TypeSpot {
+                                fid: fid.clone(),
+                                span: field.name.span,
+                                location,
+                                ty: type_to_string(&field.ty),
+                                what: "field".to_string(),
+                            });
+                        }
                     }
                 }
                 ItemKind::Enum(e) => {
@@ -655,6 +690,58 @@ impl CodeGraph {
         };
         Some(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
     }
+
+    // ---- type-at ----
+
+    /// The locally-known type at a byte offset within a file id: the narrowest
+    /// typed spot whose span contains the offset. `None` for an inferred
+    /// expression (no spot) — type-at resolves parameters, fields, typed
+    /// locals, `self`, and their identifier uses, not arbitrary expressions.
+    pub fn type_at(&self, fid: &str, byte: u32) -> Option<&TypeSpot> {
+        self.type_spots
+            .iter()
+            .filter(|s| s.fid == fid && byte >= s.span.start && byte < s.span.end)
+            .min_by_key(|s| s.span.end.saturating_sub(s.span.start))
+    }
+
+    /// `cpc query type-at` — JSON for the type at a position, or `None` if no
+    /// locally-typed node covers it.
+    pub fn type_at_json(&self, fid: &str, byte: u32) -> Option<String> {
+        let spot = self.type_at(fid, byte)?;
+        let res = TypeAtResult {
+            kind: "type-at".to_string(),
+            ty: spot.ty.clone(),
+            of: spot.what.clone(),
+            location: spot.location.clone(),
+        };
+        Some(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
+    }
+}
+
+/// Byte offset of a 1-based `(line, col)` position in `src`, counted in chars
+/// (so multi-byte UTF-8 is handled). A column past the line's end clamps to the
+/// line end. `None` if `line`/`col` is 0 or the line doesn't exist.
+pub fn byte_offset(src: &str, line: u32, col: u32) -> Option<u32> {
+    if line == 0 || col == 0 {
+        return None;
+    }
+    let mut byte = 0usize;
+    let mut cur = 1u32;
+    for l in src.split_inclusive('\n') {
+        if cur == line {
+            let mut b = byte;
+            for (i, ch) in l.chars().enumerate() {
+                if ch == '\n' || (i as u32) >= col - 1 {
+                    break;
+                }
+                b += ch.len_utf8();
+            }
+            return Some(b as u32);
+        }
+        byte += l.len();
+        cur += 1;
+    }
+    None
 }
 
 /// JSON shape for a call query: the result nodes plus the explicit
@@ -715,6 +802,17 @@ struct ContextResult {
     unresolved: u32,
 }
 
+/// JSON shape for `type-at`: the resolved type, what kind of place it is, and
+/// where.
+#[derive(Serialize)]
+struct TypeAtResult {
+    kind: String,
+    #[serde(rename = "type")]
+    ty: String,
+    of: String,
+    location: Location,
+}
+
 fn add_impl_methods<'a>(
     g: &mut CodeGraph,
     fid: &str,
@@ -743,6 +841,15 @@ fn add_impl_methods<'a>(
         });
         for p in &m.params {
             push_type_refs(&p.ty, fid, &id, resolve, sig_type_refs);
+            if let Some(location) = resolve(fid, p.name.span) {
+                g.type_spots.push(TypeSpot {
+                    fid: fid.to_string(),
+                    span: p.name.span,
+                    location,
+                    ty: type_to_string(&p.ty),
+                    what: "parameter".to_string(),
+                });
+            }
         }
         if let Some(rt) = &m.return_type {
             push_type_refs(rt, fid, &id, resolve, sig_type_refs);
@@ -903,6 +1010,7 @@ fn resolve_call_edges(
             edges: Vec::new(),
             refs: Vec::new(),
             type_refs: Vec::new(),
+            spots: Vec::new(),
             unresolved: 0,
         };
         for p in c.params {
@@ -915,6 +1023,7 @@ fn resolve_call_edges(
             edges,
             refs,
             type_refs,
+            spots,
             unresolved,
             ..
         } = r;
@@ -941,6 +1050,17 @@ fn resolve_call_edges(
                 });
             }
         }
+        for (span, ty, what) in spots {
+            if let Some(location) = resolve(&c.fid, span) {
+                g.type_spots.push(TypeSpot {
+                    fid: c.fid.clone(),
+                    span,
+                    location,
+                    ty,
+                    what,
+                });
+            }
+        }
         if unresolved > 0 {
             g.unresolved_calls.insert(c.from_id.clone(), unresolved);
         }
@@ -963,6 +1083,9 @@ struct Resolver<'a> {
     /// (short type name, use-site span) for each type use in the body —
     /// resolved against the type index and located by the caller.
     type_refs: Vec<(String, Span)>,
+    /// (span, type, what) for typed locals, `self`, and identifier uses of a
+    /// param/local — backing `type-at`.
+    spots: Vec<(Span, String, String)>,
     unresolved: u32,
 }
 
@@ -984,6 +1107,8 @@ impl<'a> Resolver<'a> {
                         self.env.insert(name.name.clone(), bt);
                     }
                     self.record_type(t);
+                    self.spots
+                        .push((name.span, type_to_string(t), "local".to_string()));
                 }
                 if let Some(e) = init {
                     self.walk_expr(e);
@@ -1159,11 +1284,20 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
+            ExprKind::Ident(n) => {
+                if n == "self" {
+                    if let Some(st) = self.self_type {
+                        self.spots.push((e.span, st.clone(), "self".to_string()));
+                    }
+                } else if let Some(t) = self.env.get(n) {
+                    self.spots
+                        .push((e.span, t.clone(), "local".to_string()));
+                }
+            }
             ExprKind::IntLit(..)
             | ExprKind::FloatLit(..)
             | ExprKind::BoolLit(..)
             | ExprKind::StrLit(..)
-            | ExprKind::Ident(..)
             | ExprKind::Path { .. }
             | ExprKind::IncludeBytes { .. }
             | ExprKind::IncludeStr { .. }
@@ -1671,5 +1805,53 @@ mod tests {
         let j = g.context_json("run").expect("run is a function");
         assert!(j.contains("\"type_refs\""));
         assert!(j.contains("Cfg"), "context surfaces the Cfg type run touches: {j}");
+    }
+
+    // ---- type-at ----
+
+    #[test]
+    fn byte_offset_is_char_accurate() {
+        let src = "ab\ncde\n";
+        assert_eq!(byte_offset(src, 1, 1), Some(0)); // 'a'
+        assert_eq!(byte_offset(src, 1, 2), Some(1)); // 'b'
+        assert_eq!(byte_offset(src, 2, 1), Some(3)); // 'c' (after "ab\n")
+        assert_eq!(byte_offset(src, 2, 3), Some(5)); // 'e'
+        assert_eq!(byte_offset(src, 0, 1), None);
+    }
+
+    #[test]
+    fn type_at_resolves_params_locals_and_self() {
+        let src = "struct Point { x: i32 }\n\
+                   impl Point { fn mag(self) -> i32 { return self.x; } }\n\
+                   fn run(p: Point) -> i32 { let q: Point = p; return q.x; }";
+        let g = CodeGraph::build(&project(src));
+
+        // `self` inside mag → Point.
+        let self_spot = g
+            .type_spots
+            .iter()
+            .find(|s| s.what == "self")
+            .expect("a self spot exists");
+        assert_eq!(self_spot.ty, "Point");
+
+        // The `p` parameter of run.
+        let param = g
+            .type_spots
+            .iter()
+            .find(|s| s.what == "parameter" && s.ty == "Point")
+            .expect("p parameter spot");
+        // type_at at the param's own start byte resolves to it.
+        let at = g.type_at(&param.fid, param.span.start).expect("spot at param");
+        assert_eq!(at.ty, "Point");
+        assert_eq!(at.what, "parameter");
+
+        // The `q` local (typed let).
+        assert!(g
+            .type_spots
+            .iter()
+            .any(|s| s.what == "local" && s.ty == "Point"));
+
+        // A byte in dead space (e.g. offset 0, the `struct` keyword) has no spot.
+        assert!(g.type_at("src", 0).is_none());
     }
 }

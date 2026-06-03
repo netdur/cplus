@@ -2281,17 +2281,53 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
             };
         }
         "type-at" => {
-            eprintln!(
-                "cpc query type-at: not available in this build — def/members/symbols, call edges \
-                 (callers/callees/call-hierarchy), refs (call sites), and context are. type-at \
-                 lands in a later phase."
-            );
-            return ExitCode::FAILURE;
+            let Some(pos) = arg0 else {
+                eprintln!("cpc query type-at: expected FILE:LINE:COL");
+                return ExitCode::FAILURE;
+            };
+            // FILE:LINE:COL — split COL and LINE off the right so the path may
+            // contain no colons (the common case on unix).
+            let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
+            if parts.len() != 3 {
+                eprintln!("cpc query type-at: expected FILE:LINE:COL (got `{pos}`)");
+                return ExitCode::FAILURE;
+            }
+            let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
+                eprintln!("cpc query type-at: LINE and COL must be numbers");
+                return ExitCode::FAILURE;
+            };
+            let file = parts[2];
+            let Some((fid, (_, src))) = loaded
+                .files
+                .iter()
+                .find(|(_, (path, _))| path.ends_with(file) || path.to_string_lossy() == *file)
+            else {
+                eprintln!("cpc query type-at: no source file matching `{file}`");
+                return ExitCode::FAILURE;
+            };
+            let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
+                eprintln!("cpc query type-at: position {line}:{col} is out of range");
+                return ExitCode::FAILURE;
+            };
+            return match g.type_at_json(fid, byte) {
+                Some(j) => {
+                    println!("{j}");
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!(
+                        "cpc query type-at: no locally-typed node at {file}:{line}:{col} \
+                         (type-at resolves params, fields, typed locals, and their uses; \
+                         inferred expressions are not yet typed)"
+                    );
+                    ExitCode::FAILURE
+                }
+            };
         }
         other => {
             eprintln!(
                 "cpc query: unknown query kind `{other}` (expected: def | members | symbols | \
-                 refs | callers | callees | call-hierarchy | context)"
+                 refs | callers | callees | call-hierarchy | context | type-at)"
             );
             return ExitCode::FAILURE;
         }
