@@ -1,0 +1,13 @@
+[package]
+name = "cpc-wasm"
+version = "0.0.13"
+edition = "2021"
+description = "WASM front end for the C+ web playground (cplus-lang.dev): source -> diagnostics + LLVM IR, client-side."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cplus-core = { path = "../cplus-core" }
+wasm-bindgen = "0.2"
+serde_json = "1"
