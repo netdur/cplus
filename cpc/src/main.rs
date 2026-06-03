@@ -2248,18 +2248,34 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                 }
             };
         }
-        "refs" | "type-at" | "context" => {
+        "refs" => {
+            let Some(sym) = arg0 else {
+                eprintln!("cpc query refs: expected a SYMBOL");
+                return ExitCode::FAILURE;
+            };
+            return match g.refs_json(sym) {
+                Some(j) => {
+                    println!("{j}");
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("cpc query refs: `{sym}` is not a known symbol");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        "type-at" | "context" => {
             eprintln!(
-                "cpc query {kind}: not available in this build — call edges (callers/callees/\
-                 call-hierarchy) and def/members/symbols are. Reference, type-at, and context \
-                 queries land in a later phase."
+                "cpc query {kind}: not available in this build — def/members/symbols, call edges \
+                 (callers/callees/call-hierarchy), and refs (call sites) are. type-at and context \
+                 land in a later phase."
             );
             return ExitCode::FAILURE;
         }
         other => {
             eprintln!(
                 "cpc query: unknown query kind `{other}` \
-                 (expected: def | members | symbols | callers | callees | call-hierarchy)"
+                 (expected: def | members | symbols | refs | callers | callees | call-hierarchy)"
             );
             return ExitCode::FAILURE;
         }

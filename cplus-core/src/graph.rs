@@ -25,6 +25,7 @@ use crate::ast::{
     Receiver, Stmt, StmtKind, Type, TypeKind,
 };
 use crate::diagnostics::LineMap;
+use crate::lexer::Span;
 use crate::resolver::LoadedProject;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,6 +104,29 @@ pub struct Edge {
 }
 
 /// The whole-project index: nodes plus the structural edges between them.
+/// What a reference's use site is doing with the symbol.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RefKind {
+    /// A call site for the symbol (Phase 4a). Type and value references land
+    /// in a later slice.
+    Call,
+}
+
+/// A resolved use site of a symbol, with its precise `file:line:col`. This is
+/// the line-level answer to "where is X used", distinct from `callers` (which
+/// returns the enclosing functions).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Reference {
+    /// The referenced symbol's id.
+    pub symbol: String,
+    pub kind: RefKind,
+    pub location: Location,
+    /// The enclosing item the reference sits inside.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_context: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct CodeGraph {
     pub nodes: Vec<Node>,
@@ -114,6 +138,9 @@ pub struct CodeGraph {
     /// functions with no unresolved calls.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub unresolved_calls: BTreeMap<String, u32>,
+    /// Resolved use sites with precise locations (Phase 4a: call sites).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<Reference>,
 }
 
 impl CodeGraph {
@@ -193,6 +220,7 @@ impl CodeGraph {
                     if !f.is_extern {
                         callables.push(Callable {
                             from_id: id,
+                            fid: fid.clone(),
                             self_type: None,
                             params: &f.params,
                             body: &f.body,
@@ -346,7 +374,7 @@ impl CodeGraph {
             }
         }
 
-        resolve_call_edges(&mut g, &callables);
+        resolve_call_edges(&mut g, &callables, &resolve);
         g
     }
 
@@ -549,6 +577,37 @@ impl CodeGraph {
             self.unresolved_for(name),
         ))
     }
+
+    // ---- reference queries (Phase 4a: call-site references) ----
+
+    /// Ids of any nodes matching a query (by id or bare name), across kinds.
+    fn node_ids_matching(&self, name: &str) -> Vec<String> {
+        self.nodes
+            .iter()
+            .filter(|n| n.id == name || n.name == name)
+            .map(|n| n.id.clone())
+            .collect()
+    }
+
+    /// Resolved use sites of a symbol, with precise locations.
+    pub fn refs(&self, name: &str) -> Vec<&Reference> {
+        let ids = self.node_ids_matching(name);
+        self.references
+            .iter()
+            .filter(|r| ids.iter().any(|i| i == &r.symbol))
+            .collect()
+    }
+
+    /// `cpc query refs` — JSON, or `None` if the symbol isn't a known node.
+    /// Carries `scope: "call-sites"`, since this build resolves call-site
+    /// references only (type and value references land in a later slice).
+    pub fn refs_json(&self, name: &str) -> Option<String> {
+        if self.node_ids_matching(name).is_empty() {
+            return None;
+        }
+        let references: Vec<Reference> = self.refs(name).into_iter().cloned().collect();
+        Some(refs_result_json(name, references))
+    }
 }
 
 /// JSON shape for a call query: the result nodes plus the explicit
@@ -568,6 +627,28 @@ fn call_result_json(kind: &str, target: &str, nodes: Vec<&Node>, unresolved: u32
         target: target.to_string(),
         nodes: nodes.into_iter().cloned().collect(),
         unresolved,
+    };
+    serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// JSON shape for `refs`: the resolved use sites plus an explicit `scope` so a
+/// consumer knows the coverage (call sites today) and where to still use `grep`.
+#[derive(Serialize)]
+struct RefsQueryResult {
+    kind: String,
+    target: String,
+    scope: String,
+    count: usize,
+    references: Vec<Reference>,
+}
+
+fn refs_result_json(target: &str, references: Vec<Reference>) -> String {
+    let res = RefsQueryResult {
+        kind: "refs".to_string(),
+        target: target.to_string(),
+        scope: "call-sites".to_string(),
+        count: references.len(),
+        references,
     };
     serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
 }
@@ -599,6 +680,7 @@ fn add_impl_methods<'a>(
         });
         callables.push(Callable {
             from_id: id,
+            fid: fid.to_string(),
             self_type: Some(target.clone()),
             params: &m.params,
             body: &m.body,
@@ -612,6 +694,8 @@ fn add_impl_methods<'a>(
 /// node pass and walked once the node index exists.
 struct Callable<'a> {
     from_id: String,
+    /// The file id the body lives in, for resolving reference spans.
+    fid: String,
     /// For methods: the short name of the impl target (`self`'s type).
     self_type: Option<String>,
     params: &'a [Param],
@@ -641,7 +725,11 @@ fn unique(ids: Option<&Vec<String>>) -> Option<String> {
 /// Resolve call edges for every collected callable and record per-caller
 /// unresolved counts. Builds two name indexes from the node set first so the
 /// edge vector can be mutated without borrowing the nodes.
-fn resolve_call_edges(g: &mut CodeGraph, callables: &[Callable]) {
+fn resolve_call_edges(
+    g: &mut CodeGraph,
+    callables: &[Callable],
+    resolve: &impl Fn(&str, Span) -> Option<Location>,
+) {
     let mut fn_by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut method_idx: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for n in &g.nodes {
@@ -672,6 +760,7 @@ fn resolve_call_edges(g: &mut CodeGraph, callables: &[Callable]) {
             method_idx: &method_idx,
             from_id: &c.from_id,
             edges: Vec::new(),
+            refs: Vec::new(),
             unresolved: 0,
         };
         for p in c.params {
@@ -681,9 +770,22 @@ fn resolve_call_edges(g: &mut CodeGraph, callables: &[Callable]) {
         }
         r.walk_block(c.body);
         let Resolver {
-            edges, unresolved, ..
+            edges,
+            refs,
+            unresolved,
+            ..
         } = r;
         g.edges.extend(edges);
+        for (target, span) in refs {
+            if let Some(location) = resolve(&c.fid, span) {
+                g.references.push(Reference {
+                    symbol: target,
+                    kind: RefKind::Call,
+                    location,
+                    in_context: Some(c.from_id.clone()),
+                });
+            }
+        }
         if unresolved > 0 {
             g.unresolved_calls.insert(c.from_id.clone(), unresolved);
         }
@@ -700,6 +802,9 @@ struct Resolver<'a> {
     method_idx: &'a BTreeMap<(String, String), Vec<String>>,
     from_id: &'a str,
     edges: Vec<Edge>,
+    /// (target id, call-site span) for each resolved call, turned into a
+    /// `Reference` with a precise location by the caller.
+    refs: Vec<(String, Span)>,
     unresolved: u32,
 }
 
@@ -790,7 +895,7 @@ impl<'a> Resolver<'a> {
     fn walk_expr(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::Call { callee, args, .. } => {
-                self.resolve_call(callee);
+                self.resolve_call(callee, e.span);
                 self.walk_expr(callee);
                 for a in args {
                     self.walk_expr(a);
@@ -878,9 +983,10 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Classify a call's callee and add a `Calls` edge if its target resolves
-    /// uniquely; otherwise bump the unresolved count.
-    fn resolve_call(&mut self, callee: &Expr) {
+    /// Classify a call's callee and add a `Calls` edge (and a `Reference` at
+    /// the call site) if its target resolves uniquely; otherwise bump the
+    /// unresolved count.
+    fn resolve_call(&mut self, callee: &Expr, span: Span) {
         let target = match &callee.kind {
             ExprKind::Ident(name) => unique(self.fn_by_name.get(name)),
             ExprKind::Path { segments } => self.resolve_path(segments),
@@ -892,7 +998,7 @@ impl<'a> Resolver<'a> {
             // genuinely indirect, can't be resolved to a symbol.
             _ => None,
         };
-        self.link(target);
+        self.link(target, span);
     }
 
     /// `Type::assoc()` (associated fn / method) first, then `module::free_fn()`.
@@ -918,13 +1024,16 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn link(&mut self, target: Option<String>) {
+    fn link(&mut self, target: Option<String>, span: Span) {
         match target {
-            Some(id) => self.edges.push(Edge {
-                from: self.from_id.to_string(),
-                to: id,
-                kind: EdgeKind::Calls,
-            }),
+            Some(id) => {
+                self.edges.push(Edge {
+                    from: self.from_id.to_string(),
+                    to: id.clone(),
+                    kind: EdgeKind::Calls,
+                });
+                self.refs.push((id, span));
+            }
             None => self.unresolved += 1,
         }
     }
@@ -1266,5 +1375,47 @@ mod tests {
         assert!(j.contains("\"unresolved\""));
         assert!(j.contains("helper"));
         assert!(g.callees_json("nonexistent").is_none());
+    }
+
+    // ---- reference edges (Phase 4a: call-site references) ----
+
+    #[test]
+    fn call_sites_become_references_with_locations() {
+        let src = "fn helper() -> i32 { return 1; }\n\
+                   fn a() -> i32 { return helper(); }\n\
+                   fn b() -> i32 { return helper(); }";
+        let g = CodeGraph::build(&project(src));
+        let refs = g.refs("helper");
+        assert_eq!(refs.len(), 2, "two call sites reference helper");
+        assert!(refs.iter().all(|r| r.symbol == "src::helper"));
+        assert!(refs.iter().all(|r| r.kind == RefKind::Call));
+        // Distinct use-site locations, each carrying its enclosing context.
+        let lines: BTreeSet<u32> = refs.iter().map(|r| r.location.line).collect();
+        assert_eq!(lines.len(), 2, "two distinct call-site lines");
+        let ctxs: BTreeSet<&str> = refs
+            .iter()
+            .filter_map(|r| r.in_context.as_deref())
+            .collect();
+        assert!(ctxs.contains("src::a") && ctxs.contains("src::b"));
+    }
+
+    #[test]
+    fn refs_json_carries_scope_and_handles_missing() {
+        let src = "fn helper() {}\nfn main() -> i32 { helper(); return 0; }";
+        let g = CodeGraph::build(&project(src));
+        let j = g.refs_json("helper").expect("helper is a known symbol");
+        assert!(j.contains("\"scope\""), "refs carries a coverage scope");
+        assert!(j.contains("call-sites"));
+        assert!(j.contains("\"references\""));
+        assert!(g.refs_json("nonexistent").is_none());
+    }
+
+    #[test]
+    fn refs_of_uncalled_symbol_is_empty_but_found() {
+        let src = "fn lonely() {}\nfn main() -> i32 { return 0; }";
+        let g = CodeGraph::build(&project(src));
+        // `lonely` exists (so json is Some) but has no call sites.
+        assert!(g.refs("lonely").is_empty());
+        assert!(g.refs_json("lonely").is_some());
     }
 }

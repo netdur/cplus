@@ -17488,12 +17488,13 @@ fn query_missing_symbol_exits_nonzero() {
 fn query_unimplemented_kind_reports_and_fails() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = graph_project();
-    // `refs` is still deferred (call edges are now implemented).
+    // `context` is still deferred (def/members/symbols, call edges, and refs
+    // are now implemented).
     let out = Command::new(cpc)
-        .args(["query", "refs", "Point"])
+        .args(["query", "context", "main"])
         .current_dir(&dir)
         .output()
-        .expect("invoke cpc query refs");
+        .expect("invoke cpc query context");
     assert!(!out.status.success(), "deferred query must exit non-zero");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -17525,6 +17526,32 @@ fn query_callers_and_callees_resolve_method_calls() {
     assert!(callees.status.success());
     let ce = String::from_utf8_lossy(&callees.stdout);
     assert!(ce.contains("\"name\": \"sum\""), "callees of main include sum: {ce}");
+}
+
+#[test]
+fn query_refs_returns_call_sites_with_locations() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    // main calls Point::sum once → one resolved reference at a real location.
+    let out = Command::new(cpc)
+        .args(["query", "refs", "sum"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query refs");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("\"kind\": \"refs\""));
+    assert!(s.contains("\"scope\": \"call-sites\""), "refs states its coverage: {s}");
+    assert!(s.contains("\"in_context\""), "a reference carries its enclosing item: {s}");
+    assert!(s.contains("\"line\""), "a reference carries a location: {s}");
+
+    // An unknown symbol exits non-zero.
+    let u = Command::new(cpc)
+        .args(["query", "refs", "does_not_exist"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query refs");
+    assert!(!u.status.success(), "unknown symbol must exit non-zero");
 }
 
 #[test]
