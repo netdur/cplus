@@ -1,0 +1,108 @@
+name: Release binaries
+
+# On a vX.Y.Z tag (or manual dispatch against an existing tag) build the cpc
+# toolchain for macOS / Apple Silicon, attach a tarball to the GitHub Release,
+# and rewrite the Homebrew tap formula to install that prebuilt binary — so
+# `brew install netdur/cplus/cplus` needs no Rust and no compile.
+#
+# Requires repo secret HOMEBREW_TAP_TOKEN (Contents: read/write on
+# netdur/homebrew-cplus).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build a release binary for (test)"
+        required: true
+        default: "v0.0.13"
+
+permissions:
+  contents: write # create the Release and upload assets
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-14 # Apple Silicon
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      sha: ${{ steps.pkg.outputs.sha }}
+    steps:
+      - name: Resolve tag
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out source at the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+
+      - name: Package tarball
+        id: pkg
+        run: |
+          set -euo pipefail
+          ASSET="cplus-aarch64-apple-darwin.tar.gz"
+          tar -czf "$ASSET" -C target/release cpc cpc-lsp cpc-bindgen
+          SHA="$(shasum -a 256 "$ASSET" | cut -d' ' -f1)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "built $ASSET ($SHA)"
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG."
+          gh release upload "$TAG" "${{ steps.pkg.outputs.asset }}" --clobber
+
+  bump-tap:
+    needs: build-macos-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source (for the formula template)
+        uses: actions/checkout@v4
+
+      - name: Check out the tap
+        uses: actions/checkout@v4
+        with:
+          repository: netdur/homebrew-cplus
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Render formula from template
+        run: |
+          set -euo pipefail
+          sed -e "s/@VERSION@/${{ needs.build-macos-arm64.outputs.version }}/g" \
+              -e "s/@SHA@/${{ needs.build-macos-arm64.outputs.sha }}/g" \
+              .github/homebrew/cplus.rb.in > tap/Formula/cplus.rb
+          echo "----- rendered formula -----"
+          cat tap/Formula/cplus.rb
+
+      - name: Commit and push to the tap
+        run: |
+          set -euo pipefail
+          cd tap
+          if git diff --quiet; then
+            echo "Formula already up to date; nothing to push."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/cplus.rb
+          git commit -m "cplus ${{ needs.build-macos-arm64.outputs.version }} (prebuilt)"
+          git push

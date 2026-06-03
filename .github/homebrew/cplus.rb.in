@@ -1,0 +1,40 @@
+class Cplus < Formula
+  desc "Experimental, safety-oriented systems programming language and toolchain"
+  homepage "https://cplus-lang.dev"
+  version "@VERSION@"
+  url "https://github.com/netdur/cplus/releases/download/v@VERSION@/cplus-aarch64-apple-darwin.tar.gz"
+  sha256 "@SHA@"
+  license "MIT"
+
+  # Prebuilt for the tested platform only: macOS / Apple Silicon.
+  depends_on :macos
+  depends_on arch: :arm64
+
+  def install
+    bin.install "cpc", "cpc-lsp", "cpc-bindgen"
+  end
+
+  def caveats
+    <<~EOS
+      cpc compiles to LLVM IR and shells out to `clang` to produce a native
+      binary, so building/running a program needs Xcode Command Line Tools:
+        xcode-select --install
+      Front-end-only commands (cpc check / --emit-ll / lsp / graph / query /
+      mcp / fmt / doc) work without clang.
+
+      Prebuilt for macOS / Apple Silicon (aarch64-apple-darwin), tested against
+      Apple clang 21.0.0.
+    EOS
+  end
+
+  test do
+    (testpath/"hello.cplus").write <<~CPLUS
+      fn main() -> i32 {
+          return 0;
+      }
+    CPLUS
+    # Whole front end + codegen, no clang required: prints LLVM IR to stdout.
+    assert_match "define", shell_output("#{bin}/cpc --emit-ll #{testpath}/hello.cplus")
+    assert_match version.to_s, shell_output("#{bin}/cpc --version")
+  end
+end
