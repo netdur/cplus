@@ -83,11 +83,24 @@ plus the full `cpc query` surface (`def`/`members`/`symbols`/`refs`/`callers`/
 `callees`/`call-hierarchy`/`context`/`type-at`) are live, resolved, JSON, and
 honest about coverage (`unresolved`/`scope` fields); and **`cpc mcp`** is a
 resident stdio MCP server exposing nine agent-facing tools over the warm index.
-Unit + e2e tested throughout. Remaining (depth/delivery, not new queries):
-value references, full `type-at` for inferred expressions and driving the call
-`unresolved` count to zero (both need sema-retention, the one invasive piece),
-incremental rebuild, and folding the index under `cpc lsp`. The original framing
-follows.
+Unit + e2e tested throughout.
+
+**LSP fold-in — SHIPPED (v0.0.13).** `cpc lsp` now serves goto-definition,
+find-references, hover (type-at), and the document outline from the same
+`CodeGraph` index, so editor and agent share one resolved view. Recompute-first:
+the graph is rebuilt per request (measured 4–14 ms whole-process for 0.5–2.7k loc
+packages — well under the interactive budget), no incremental machinery. Built
+from on-disk sources today; a dirty-buffer overlay is the one follow-up for
+unsaved-edit accuracy. cpc-lsp e2e tested (def/refs/hover/outline).
+
+Remaining (depth, not delivery; all need sema-retention, the one invasive piece):
+value references, full `type-at` for inferred expressions, and driving the call
+`unresolved` count to zero. **Discovered during fold-in:** the graph leaves
+**bare free-function calls unresolved** (method calls on typed receivers and type
+references resolve fine) — so `callers`/call-site-`refs` under-report for free
+fns. This is the highest-leverage piece of the "drive unresolved→0" work and the
+main thing that would make LSP find-references on functions complete. The
+original framing follows.
 
 Designed in [plan.graph.md](plan.graph.md). A compiler-backed, queryable index —
 resolved `def` / `refs` / `callers` / `call-hierarchy` / `type-at` / `members` /

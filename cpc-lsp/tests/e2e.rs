@@ -225,8 +225,9 @@ fn did_open_publishes_empty_diagnostics_on_clean_source() {
 }
 
 /// Unadvertised request methods reply with MethodNotFound instead of
-/// hanging the editor. `textDocument/hover` isn't served yet (Phase 5),
-/// so it's a stable target for this assertion.
+/// hanging the editor. `textDocument/completion` isn't served (no
+/// completion provider advertised), so it's a stable target for this
+/// assertion. (hover/references/documentSymbol ARE served as of v0.0.13.)
 #[test]
 fn unsupported_request_returns_method_not_found() {
     let run = drive(
@@ -234,7 +235,7 @@ fn unsupported_request_returns_method_not_found() {
             init_request(),
             initialized_notif(),
             serde_json::json!({
-                "jsonrpc": "2.0", "id": 99, "method": "textDocument/hover",
+                "jsonrpc": "2.0", "id": 99, "method": "textDocument/completion",
                 "params": {
                     "textDocument": { "uri": "file:///nope.cplus" },
                     "position": { "line": 0, "character": 0 }
@@ -247,7 +248,7 @@ fn unsupported_request_returns_method_not_found() {
     );
     assert_eq!(run.exit_code, 0);
     let resp = run.messages.iter().find(|m| m["id"] == 99)
-        .expect("hover response present");
+        .expect("completion response present");
     assert!(resp["error"].is_object(), "expected error response, got: {resp}");
     assert_eq!(resp["error"]["code"].as_i64(), Some(-32601), "MethodNotFound");
 }
@@ -558,6 +559,131 @@ fn definition_on_keyword_returns_empty() {
     let empty = result.is_null()
         || (result.is_array() && result.as_array().unwrap().is_empty());
     assert!(empty, "expected empty / null result, got: {result}");
+}
+
+// ---- v0.0.13: graph fold-in (references / hover / documentSymbol) ----
+
+fn references_request(id: i64, uri: &str, line: u32, character: u32, incl_decl: bool) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": incl_decl }
+        }
+    })
+}
+
+fn hover_request(id: i64, uri: &str, line: u32, character: u32) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        }
+    })
+}
+
+fn document_symbol_request(id: i64, uri: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": "textDocument/documentSymbol",
+        "params": { "textDocument": { "uri": uri } }
+    })
+}
+
+/// A minimal project: `Cplus.toml` + `src/main.cplus` (default bin entry).
+/// Returns (dir, entry path, entry `file://` uri).
+fn mini_project(main_src: &str) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let entry = dir.join("src/main.cplus");
+    std::fs::write(&entry, main_src).unwrap();
+    let uri = format!("file://{}", entry.display());
+    (dir, entry, uri)
+}
+
+/// `textDocument/references` returns the resolved use sites of the symbol
+/// under the cursor, from the graph's reference index. `Point` is used in two
+/// type positions (a return type and a struct literal).
+#[test]
+fn references_finds_type_use_sites() {
+    let src = "struct Point { x: i32 }\n\
+               fn mk() -> Point { return Point { x: 1 }; }\n\
+               fn main() -> i32 { return mk().x; }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    // Cursor on the `Point` declaration name (line 0): `struct Point` → P at col 7.
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            references_request(99, &uri, 0, 7, false),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(5),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("references response");
+    let locs = resp["result"].as_array().expect("locations array");
+    assert_eq!(locs.len(), 2, "expected two type-use sites of `Point`, got: {locs:?}");
+    for l in locs {
+        assert!(l["uri"].as_str().unwrap().ends_with("main.cplus"));
+    }
+}
+
+/// `textDocument/hover` reports the type of a parameter under the cursor,
+/// from the graph's type-at index.
+#[test]
+fn hover_shows_parameter_type() {
+    // `n: i32` param; hover on its use inside the body.
+    let src = "fn sq(n: i32) -> i32 { return n *% n; }\nfn main() -> i32 { return sq(6); }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    // `fn sq(n: i32) -> i32 { return ` is 30 chars (0-based), so the first `n`
+    // of `return n *% n` sits at character 30.
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            hover_request(99, &uri, 0, 30),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(5),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("hover response");
+    let value = resp["result"]["contents"]["value"].as_str().unwrap_or("");
+    assert!(value.contains("i32"), "hover should mention the type i32, got: {value:?}");
+}
+
+/// `textDocument/documentSymbol` returns the file's top-level outline.
+#[test]
+fn document_symbol_lists_top_level_items() {
+    let src = "struct Point { x: i32, y: i32 }\n\
+               fn helper() -> i32 { return 7; }\n\
+               fn main() -> i32 { return helper(); }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            document_symbol_request(99, &uri),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(5),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("documentSymbol response");
+    let syms = resp["result"].as_array().expect("symbols array");
+    let names: Vec<&str> = syms.iter().filter_map(|s| s["name"].as_str()).collect();
+    assert!(names.contains(&"Point"), "expected `Point` in outline, got: {names:?}");
+    assert!(names.contains(&"helper"), "expected `helper` in outline, got: {names:?}");
+    assert!(names.contains(&"main"), "expected `main` in outline, got: {names:?}");
 }
 
 // ---- helpers ----

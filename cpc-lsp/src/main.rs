@@ -10,18 +10,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cplus_core::ast::ItemKind;
-use cplus_core::{attrs, borrowck, fmt as cpfmt, lexer, lower, manifest, parser, resolver, sema};
+use cplus_core::{attrs, borrowck, fmt as cpfmt, graph, lexer, lower, manifest, parser, resolver, sema};
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::notification::Notification as _;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentFormattingParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Location, NumberOrString, OneOf, Position,
-    PublishDiagnosticsParams, Range, SaveOptions, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
-    WorkspaceEdit,
+    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, Location, MarkupContent, MarkupKind, NumberOrString,
+    OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams, SaveOptions,
+    ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkspaceEdit,
 };
 use serde_json::Value;
 
@@ -61,8 +62,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
             will_save: None,
             will_save_wait_until: None,
         })),
-        // Slice 4E.3 — goto-definition for top-level item names.
+        // Slice 4E.3 — goto-definition. v0.0.13: served from the code graph
+        // (resolved) in project mode, with the name-based single-file fallback.
         definition_provider: Some(OneOf::Left(true)),
+        // v0.0.13 (graph fold-in): references, hover (type-at), and the
+        // document outline all read the same `CodeGraph` index that
+        // `cpc query` / `cpc mcp` use — editor and agent share one graph.
+        references_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
         // Slice 4E.2 — formatting wraps `fmt::format_source`; code-actions
         // lift `MachineApplicable` / `MaybeIncorrect` suggestions from
         // already-published diagnostics.
@@ -169,6 +177,27 @@ fn handle_request(conn: &Connection, state: &mut ServerState, req: Request) {
         "textDocument/definition" => {
             let resp = match serde_json::from_value::<GotoDefinitionParams>(req.params) {
                 Ok(p) => handle_definition(state, &p),
+                Err(e) => bad_params(id.clone(), &method, &e.to_string()),
+            };
+            let _ = conn.sender.send(Message::Response(resp_with_id(id, resp)));
+        }
+        "textDocument/references" => {
+            let resp = match serde_json::from_value::<ReferenceParams>(req.params) {
+                Ok(p) => handle_references(state, &p),
+                Err(e) => bad_params(id.clone(), &method, &e.to_string()),
+            };
+            let _ = conn.sender.send(Message::Response(resp_with_id(id, resp)));
+        }
+        "textDocument/hover" => {
+            let resp = match serde_json::from_value::<HoverParams>(req.params) {
+                Ok(p) => handle_hover(state, &p),
+                Err(e) => bad_params(id.clone(), &method, &e.to_string()),
+            };
+            let _ = conn.sender.send(Message::Response(resp_with_id(id, resp)));
+        }
+        "textDocument/documentSymbol" => {
+            let resp = match serde_json::from_value::<DocumentSymbolParams>(req.params) {
+                Ok(p) => handle_document_symbol(state, &p),
                 Err(e) => bad_params(id.clone(), &method, &e.to_string()),
             };
             let _ = conn.sender.send(Message::Response(resp_with_id(id, resp)));
@@ -362,14 +391,17 @@ fn handle_definition(state: &ServerState, params: &GotoDefinitionParams) -> Hand
         return HandlerResult::Ok(serde_json::Value::Null);
     };
 
-    let locations = match find_manifest(&open_path) {
-        ManifestProbe::Loaded { manifest, .. } if manifest.bins[0].path.is_file() => {
-            match resolver::load_project(&manifest.bins[0].path, &manifest.root) {
-                Ok(loaded) => find_decls_in_project(&ident_name, &loaded.program, &loaded.files),
-                Err(_) => find_decls_in_single_file(&ident_name, &open_path, &snap.text),
-            }
-        }
-        _ => find_decls_in_single_file(&ident_name, &open_path, &snap.text),
+    // v0.0.13 (graph fold-in): in project mode, resolve via the code graph —
+    // the same resolved index `cpc query` uses. Definition nodes carry a
+    // precise `file:line:col`. Single-file mode keeps the name-based fallback.
+    let locations = match build_project_graph(&open_path) {
+        Some((g, _loaded)) => g
+            .def(&ident_name)
+            .iter()
+            .filter_map(|n| n.location.as_ref().map(|loc| (loc, n.name.as_str())))
+            .filter_map(|(loc, name)| graph_loc_to_lsp(loc, name.chars().count() as u32))
+            .collect(),
+        None => find_decls_in_single_file(&ident_name, &open_path, &snap.text),
     };
 
     let resp = if locations.is_empty() {
@@ -382,6 +414,188 @@ fn handle_definition(state: &ServerState, params: &GotoDefinitionParams) -> Hand
         GotoDefinitionResponse::Array(locations)
     };
     HandlerResult::Ok(serde_json::to_value(resp).expect("GotoDefinitionResponse serializes"))
+}
+
+// ---------------- references / hover / outline (v0.0.13 graph fold-in) ----------------
+
+/// `textDocument/references`: the resolved use sites of the symbol under the
+/// cursor, from the code graph's reference index. Honors
+/// `context.include_declaration`. Project mode only (the graph needs a
+/// resolved project); single-file returns no results.
+fn handle_references(state: &ServerState, params: &ReferenceParams) -> HandlerResult {
+    let uri = &params.text_document_position.text_document.uri;
+    let pos = params.text_document_position.position;
+    let null = || HandlerResult::Ok(serde_json::Value::Null);
+    let Some(snap) = state.docs.get(uri) else { return null(); };
+    let Ok(open_path) = uri.to_file_path() else { return null(); };
+    let Some(ident) = identifier_at_position(&snap.text, pos) else { return null(); };
+    let Some((g, _loaded)) = build_project_graph(&open_path) else { return null(); };
+
+    let mut locs: Vec<Location> = Vec::new();
+    if params.context.include_declaration {
+        for n in g.def(&ident) {
+            if let Some(loc) = &n.location {
+                if let Some(l) = graph_loc_to_lsp(loc, n.name.chars().count() as u32) {
+                    locs.push(l);
+                }
+            }
+        }
+    }
+    let ident_len = ident.chars().count() as u32;
+    for r in g.refs(&ident) {
+        if let Some(l) = graph_loc_to_lsp(&r.location, ident_len) {
+            locs.push(l);
+        }
+    }
+    HandlerResult::Ok(serde_json::to_value(locs).expect("Vec<Location> serializes"))
+}
+
+/// `textDocument/hover`: the locally-known type at the cursor, from the
+/// graph's `type-at` index (parameters, fields, typed locals, and their
+/// identifier uses). Project mode only.
+fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
+    let uri = &params.text_document_position_params.text_document.uri;
+    let pos = params.text_document_position_params.position;
+    let null = || HandlerResult::Ok(serde_json::Value::Null);
+    let Some(_snap) = state.docs.get(uri) else { return null(); };
+    let Ok(open_path) = uri.to_file_path() else { return null(); };
+    let Some((g, loaded)) = build_project_graph(&open_path) else { return null(); };
+    let Some(fid) = fid_for_path(&loaded, &open_path) else { return null(); };
+    let Some((_, src)) = loaded.files.get(&fid) else { return null(); };
+    // The graph's spans are over the on-disk source; map the cursor (1-based)
+    // through that source so the byte aligns with the index.
+    let Some(byte) = graph::byte_offset(src, pos.line + 1, pos.character + 1) else {
+        return null();
+    };
+    let Some(spot) = g.type_at(&fid, byte) else { return null(); };
+    let value = format!("```cplus\n{}: {}\n```", spot.what, spot.ty);
+    // Highlight the spot's own span (ASCII identifiers ⇒ bytes == chars).
+    let width = spot.span.end.saturating_sub(spot.span.start);
+    let start = Position {
+        line: spot.location.line.saturating_sub(1),
+        character: spot.location.col.saturating_sub(1),
+    };
+    let hover = Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: Some(Range {
+            start,
+            end: Position { line: start.line, character: start.character + width },
+        }),
+    };
+    HandlerResult::Ok(serde_json::to_value(hover).expect("Hover serializes"))
+}
+
+/// `textDocument/documentSymbol`: the file's outline from the graph's
+/// `symbols` query (top-level items defined in this file). Project mode only.
+fn handle_document_symbol(_state: &ServerState, params: &DocumentSymbolParams) -> HandlerResult {
+    let uri = &params.text_document.uri;
+    let null = || HandlerResult::Ok(serde_json::Value::Null);
+    let Ok(open_path) = uri.to_file_path() else { return null(); };
+    let Some((g, loaded)) = build_project_graph(&open_path) else { return null(); };
+    let Some(fid) = fid_for_path(&loaded, &open_path) else { return null(); };
+
+    #[allow(deprecated)] // `DocumentSymbol.deprecated` field — required by the struct.
+    let syms: Vec<DocumentSymbol> = g
+        .symbols(Some(&fid))
+        .iter()
+        .filter_map(|n| {
+            let loc = n.location.as_ref()?;
+            let range = Range {
+                start: Position {
+                    line: loc.line.saturating_sub(1),
+                    character: loc.col.saturating_sub(1),
+                },
+                end: Position {
+                    line: loc.line.saturating_sub(1),
+                    character: loc.col.saturating_sub(1) + n.name.chars().count() as u32,
+                },
+            };
+            Some(DocumentSymbol {
+                name: n.name.clone(),
+                detail: n.signature.clone(),
+                kind: node_kind_to_symbol_kind(n.kind),
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            })
+        })
+        .collect();
+    HandlerResult::Ok(
+        serde_json::to_value(DocumentSymbolResponse::Nested(syms))
+            .expect("DocumentSymbolResponse serializes"),
+    )
+}
+
+/// Load + resolve the enclosing project and build the code graph. `None` in
+/// single-file mode (no reachable `Cplus.toml` with a real bin entry) or when
+/// the project fails to resolve. Built from the on-disk sources — matching the
+/// goto-definition behavior since 4E.3; a dirty-buffer overlay is a follow-up.
+fn build_project_graph(open_path: &Path) -> Option<(graph::CodeGraph, resolver::LoadedProject)> {
+    match find_manifest(open_path) {
+        ManifestProbe::Loaded { manifest, .. } if manifest.bins[0].path.is_file() => {
+            let loaded = resolver::load_project(&manifest.bins[0].path, &manifest.root).ok()?;
+            let g = graph::CodeGraph::build(&loaded);
+            Some((g, loaded))
+        }
+        _ => None,
+    }
+}
+
+/// Find the resolver file id whose path is the open document.
+fn fid_for_path(loaded: &resolver::LoadedProject, open_path: &Path) -> Option<String> {
+    let target = std::fs::canonicalize(open_path).ok();
+    loaded
+        .files
+        .iter()
+        .find(|(_, (p, _))| std::fs::canonicalize(p).ok() == target)
+        .map(|(fid, _)| fid.clone())
+}
+
+/// Convert a graph `Location` (1-based line/col, path string) to an LSP
+/// `Location`, highlighting `name_len` characters from the start.
+fn graph_loc_to_lsp(loc: &graph::Location, name_len: u32) -> Option<Location> {
+    let uri = Url::from_file_path(Path::new(&loc.file)).ok()?;
+    Some(Location {
+        uri,
+        range: one_line_range(loc.line, loc.col, name_len),
+    })
+}
+
+/// A one-line LSP `Range` from a 1-based (line, col) start spanning `width`
+/// characters. Names don't cross line boundaries, so a single line is fine.
+fn one_line_range(line: u32, col: u32, width: u32) -> Range {
+    let start = Position {
+        line: line.saturating_sub(1),
+        character: col.saturating_sub(1),
+    };
+    Range {
+        start,
+        end: Position {
+            line: start.line,
+            character: start.character + width,
+        },
+    }
+}
+
+fn node_kind_to_symbol_kind(k: graph::NodeKind) -> SymbolKind {
+    match k {
+        graph::NodeKind::Module => SymbolKind::MODULE,
+        graph::NodeKind::Function | graph::NodeKind::ExternFn => SymbolKind::FUNCTION,
+        graph::NodeKind::Method => SymbolKind::METHOD,
+        graph::NodeKind::Struct => SymbolKind::STRUCT,
+        graph::NodeKind::Enum => SymbolKind::ENUM,
+        graph::NodeKind::Variant => SymbolKind::ENUM_MEMBER,
+        graph::NodeKind::Field => SymbolKind::FIELD,
+        graph::NodeKind::Const => SymbolKind::CONSTANT,
+        graph::NodeKind::Static => SymbolKind::VARIABLE,
+        graph::NodeKind::TypeAlias => SymbolKind::CLASS,
+        graph::NodeKind::Interface => SymbolKind::INTERFACE,
+    }
 }
 
 /// Convert an LSP `Position` (0-based line, 0-based character) to a byte

@@ -2303,7 +2303,7 @@ cpc query members Vec                     # fields + methods of a type
 cpc query context parse                   # one-shot edit pack: signature, callers, callees, referenced types
 ```
 
-Every query returns JSON with clickable `file:line:col` locations, the same format diagnostics emit, so an agent acts on a result without parsing prose. Because the queries are resolved (not name-based), `math::area` and a local `area` are distinguished, and a method call binds to the concrete `Type::method` it dispatches to. The call and reference answers carry an explicit `unresolved` / `scope` field, so an agent knows exactly where coverage ends and a `grep` fallback is still needed. `cpc query` runs each lookup as a one-shot subprocess; for the agent loop, **`cpc mcp`** is a resident MCP server — it builds the graph once, keeps it warm, and exposes the queries as tools over stdio (newline-delimited JSON-RPC 2.0), so an agent calls `find_definition` / `find_references` / `find_callers` / `code_context` / `type_at` (and friends) directly. Point an MCP client at `cpc mcp` to give an agent resolved, typed C+ navigation in place of `grep`. (Folding the same index under `cpc lsp` so editor and agent share one graph is still to come.) For C+ navigation, query the graph before reaching for `grep`: it resolves names text search cannot.
+Every query returns JSON with clickable `file:line:col` locations, the same format diagnostics emit, so an agent acts on a result without parsing prose. Because the queries are resolved (not name-based), `math::area` and a local `area` are distinguished, and a method call binds to the concrete `Type::method` it dispatches to. The call and reference answers carry an explicit `unresolved` / `scope` field, so an agent knows exactly where coverage ends and a `grep` fallback is still needed. `cpc query` runs each lookup as a one-shot subprocess; for the agent loop, **`cpc mcp`** is a resident MCP server — it builds the graph once, keeps it warm, and exposes the queries as tools over stdio (newline-delimited JSON-RPC 2.0), so an agent calls `find_definition` / `find_references` / `find_callers` / `code_context` / `type_at` (and friends) directly. Point an MCP client at `cpc mcp` to give an agent resolved, typed C+ navigation in place of `grep`. The same index also backs the editor: `cpc lsp` serves goto-definition, find-references, hover (type-at), and the document outline from this graph, so editor and agent share one resolved view of the code. For C+ navigation, query the graph before reaching for `grep`: it resolves names text search cannot.
 
 A composite query returns a function's whole neighborhood in one call:
 
@@ -2398,7 +2398,8 @@ cpc --realtime-report[=json]   # whole-project real-time contract digest
 cpc fmt FILE                   # canonical format in place
 cpc fmt --check DIR            # CI mode — exits 1 on drift
 cpc test                       # run #[test] functions + doctests
-cpc lsp                        # start the language server
+cpc lsp                        # language server: diagnostics, formatting, code-actions,
+                               #   and graph-backed goto-def / references / hover / outline
 cpc graph                      # whole-project code graph as JSON (nodes + edges)
 cpc query def SYMBOL           # resolved definition site(s)
 cpc query refs SYMBOL          # every use site
