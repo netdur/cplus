@@ -17604,6 +17604,57 @@ fn query_context_packs_the_neighborhood() {
 }
 
 #[test]
+fn mcp_server_handshake_and_tool_call() {
+    use std::io::Write;
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let mut child = Command::new(cpc)
+        .arg("mcp")
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn cpc mcp");
+    {
+        let stdin = child.stdin.as_mut().expect("stdin");
+        let msgs = [
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"find_callers","arguments":{"function":"sum"}}}"#,
+        ];
+        for m in msgs {
+            writeln!(stdin, "{m}").expect("write");
+        }
+    } // dropping stdin closes it → server loop ends
+    let out = child.wait_with_output().expect("wait");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+    // initialize + tools/list + tools/call → 3 responses; the notification got none.
+    assert_eq!(lines.len(), 3, "expected 3 responses, got: {s}");
+
+    let init: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(init["id"], 1);
+    assert_eq!(init["result"]["serverInfo"]["name"], "cpc-graph");
+
+    let list: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    let names: Vec<String> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"find_callers".to_string()));
+    assert!(names.contains(&"code_context".to_string()));
+
+    let call: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+    let text = call["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("\"name\": \"main\""), "main calls sum: {text}");
+}
+
+#[test]
 fn query_call_hierarchy_and_unknown_fn() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = graph_project();

@@ -2244,7 +2244,7 @@ cpc query members Vec                     # fields + methods of a type
 cpc query context parse                   # one-shot edit pack: signature, callers, callees, referenced types
 ```
 
-Every query returns JSON with clickable `file:line:col` locations, the same format diagnostics emit, so an agent acts on a result without parsing prose. Because the queries are resolved (not name-based), `math::area` and a local `area` are distinguished, and a method call binds to the concrete `Type::method` it dispatches to. The call and reference answers carry an explicit `unresolved` / `scope` field, so an agent knows exactly where coverage ends and a `grep` fallback is still needed. Today these run as one-shot `cpc query` subprocesses; a **resident mode** that keeps the graph warm and an **MCP adapter** that exposes the queries as agent tools over stdio (so the LSP and an agent share one index) are designed but not yet built ([plan.graph.md](plan.graph.md) §3). For C+ navigation, query the graph before reaching for `grep`: it resolves names text search cannot.
+Every query returns JSON with clickable `file:line:col` locations, the same format diagnostics emit, so an agent acts on a result without parsing prose. Because the queries are resolved (not name-based), `math::area` and a local `area` are distinguished, and a method call binds to the concrete `Type::method` it dispatches to. The call and reference answers carry an explicit `unresolved` / `scope` field, so an agent knows exactly where coverage ends and a `grep` fallback is still needed. `cpc query` runs each lookup as a one-shot subprocess; for the agent loop, **`cpc mcp`** is a resident MCP server — it builds the graph once, keeps it warm, and exposes the queries as tools over stdio (newline-delimited JSON-RPC 2.0), so an agent calls `find_definition` / `find_references` / `find_callers` / `code_context` / `type_at` (and friends) directly. Point an MCP client at `cpc mcp` to give an agent resolved, typed C+ navigation in place of `grep`. (Folding the same index under `cpc lsp` so editor and agent share one graph is still to come.) For C+ navigation, query the graph before reaching for `grep`: it resolves names text search cannot.
 
 A composite query returns a function's whole neighborhood in one call:
 
@@ -2348,6 +2348,7 @@ cpc query type-at FILE:LINE:COL # type of a param/field/local at a position
 cpc query members TYPE         # fields + methods of a struct/enum
 cpc query symbols [FILE]       # outline of a file or the whole project
 cpc query context FN           # edit pack: signature, callers, callees, referenced types
+cpc mcp                        # resident MCP server over the graph (stdio JSON-RPC, for agents)
 cpc --emit-ll FILE             # pre-optimisation LLVM IR
 cpc --emit-ll-opt FILE         # post-optimisation LLVM IR
 cpc --emit-asm FILE            # native assembly

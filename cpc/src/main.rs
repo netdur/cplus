@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use tempfile::NamedTempFile;
 
+mod mcp;
+
 const HELLO_LL: &str = include_str!("hello.ll");
 
 /// v0.0.3 Phase 2 (CWE-377 hardening): create a secure temp file with the
@@ -183,7 +185,19 @@ LSP queries by symbol instead of by grep.
 cpc query <kind> [args...]
 
 Answer one code-graph query as JSON. Kinds: `def SYMBOL`, `members TYPE`,
-`symbols [FILE]`. Reads ./Cplus.toml; exit code signals found / not-found.
+`symbols [FILE]`, `refs SYMBOL`, `callers FN`, `callees FN`,
+`call-hierarchy FN [--depth N]`, `context FN`, `type-at FILE:LINE:COL`.
+Reads ./Cplus.toml; exit code signals found / not-found.
+"
+        }
+        Some(Subcommand::Mcp) => {
+            "\
+cpc mcp
+
+Resident MCP server over the code knowledge graph: builds the graph once
+from ./Cplus.toml, then answers MCP tool calls over stdio (newline-
+delimited JSON-RPC 2.0) until stdin closes. Point an MCP client at
+`cpc mcp` to give an agent resolved, typed C+ navigation in place of grep.
 "
         }
     }
@@ -451,6 +465,10 @@ fn main() -> ExitCode {
                 subcommand = Some(Subcommand::Query);
                 i += 1;
             }
+            Some("mcp") if subcommand.is_none() && input.is_none() => {
+                subcommand = Some(Subcommand::Mcp);
+                i += 1;
+            }
             // `cpc query`-specific flag: `--depth N` for call-hierarchy.
             Some("--depth") if matches!(subcommand, Some(Subcommand::Query)) => {
                 if let Some(v) = args.get(i + 1) {
@@ -578,6 +596,7 @@ fn main() -> ExitCode {
         }
         (Some(Subcommand::Graph), _) => run_graph(diag_mode),
         (Some(Subcommand::Query), _) => run_query(query_kind, query_args, diag_mode),
+        (Some(Subcommand::Mcp), _) => run_mcp(diag_mode),
         (None, Some(path)) => compile_file(
             path,
             out.unwrap_or_else(|| PathBuf::from("a.out")),
@@ -612,6 +631,8 @@ enum Subcommand {
     /// `cpc query <kind> [args...]` — answer one graph query (`def`,
     /// `members`, `symbols`, …) as JSON.
     Query,
+    /// `cpc mcp` — resident MCP server over the code graph (stdio JSON-RPC).
+    Mcp,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -2168,6 +2189,18 @@ fn run_graph(diag_mode: DiagMode) -> ExitCode {
     let g = cplus_core::graph::CodeGraph::build(&loaded);
     println!("{}", g.to_json());
     ExitCode::SUCCESS
+}
+
+/// `cpc mcp` — build the project's code graph once, then serve it over MCP
+/// (stdio JSON-RPC) until stdin closes. Resident: the graph stays warm for the
+/// whole session.
+fn run_mcp(diag_mode: DiagMode) -> ExitCode {
+    let loaded = match load_project_for_graph(diag_mode) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    let g = cplus_core::graph::CodeGraph::build(&loaded);
+    mcp::serve(&g, &loaded)
 }
 
 /// `cpc query <kind> [args...]` — answer one graph query as JSON on stdout.

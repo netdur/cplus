@@ -15,7 +15,7 @@ The bet is the same one the GPU and SIMD plans make: `cpc` already computes the 
 
 - **Precision (needs sema retention, option B / §12).** Full `type-at` for inferred expressions, and driving the call `unresolved` count toward zero, both want sema's per-expression types / resolved targets retained instead of recomputed-then-discarded. This is the one genuinely invasive piece.
 - **Coverage.** Value references (const/static/fn-as-value) to round out `refs` beyond calls+types.
-- **Delivery (§3, Phase 7).** Resident mode + MCP adapter — build the graph once, keep it warm, expose the queries as MCP tools over stdio. This is what makes the graph usable inside the agent loop rather than as a CLI, and is the strategic headline.
+- **Delivery (§3, Phase 7) — shipped.** `cpc mcp` is a resident MCP server: it builds the graph once from `Cplus.toml`, keeps it warm, and answers MCP tool calls over stdio (newline-delimited JSON-RPC 2.0) until stdin closes. Nine agent-facing tools (`find_definition` / `find_references` / `find_callers` / `find_callees` / `call_hierarchy` / `find_members` / `file_symbols` / `code_context` / `type_at`), named and described for the model per §7. Unit/e2e tested (handshake + notification + tools/list + tools/call). **Remaining delivery:** incremental rebuild-on-change (today the index is built once at startup; §10 keeps a persisted/incremental store out of scope), and folding this same index under `cpc lsp` so editor and agent share one graph.
 
 ---
 
