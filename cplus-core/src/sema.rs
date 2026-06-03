@@ -4918,6 +4918,11 @@ impl SemaCx<'_> {
             // terminate; with it CPUs throttle pipeline + reduce power.
             // Safe — pure hint, no memory access.
             "cpu_relax" => self.check_intrinsic_cpu_relax(type_args, args, ret_ty, span),
+            // v0.0.14 inline-asm Tier 1: `#asm("dmb ish")` — a bare template
+            // string with no operands, lowered to `call void asm sideeffect`.
+            // Unsafe-gated; useful for fences / barriers / hints. Operands and
+            // clobbers are a later tier (an explicit operand-syntax design).
+            "asm" => self.check_intrinsic_asm(type_args, args, ret_ty, span),
             _ => {
                 self.err(
                     "E0905",
@@ -5578,6 +5583,77 @@ impl SemaCx<'_> {
             for a in args {
                 let _ = self.check_expr(a, None);
             }
+        }
+        Ty::Unit
+    }
+
+    // ---- v0.0.14 inline-asm Tier 1: `#asm("template") -> ()` ----
+    //
+    // A bare template-string inline-asm with no operands and no clobbers.
+    // Lowers to `call void asm sideeffect "<template>", ""()`. Always
+    // `sideeffect`, so it is never DCE'd (the whole point: fences, barriers,
+    // serializing hints). Cannot read or write C+ values — that is Tier 2
+    // (operands + clobbers), which needs an explicit operand-syntax design.
+    //
+    // Requires `unsafe` (E0801): inline asm can violate every invariant the
+    // compiler relies on. Errors:
+    //   - **E0501**: type arguments supplied.
+    //   - **E0903**: a `-> T` return ascription (Tier 1 has no outputs).
+    //   - **E0308**: not exactly one argument.
+    //   - **E0871**: the argument is not a string literal.
+    //   - **E0801**: used outside an `unsafe` block.
+    fn check_intrinsic_asm(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err(
+                "E0501",
+                format!("`#asm` takes no type arguments, got {}", type_args.len()),
+                span,
+            );
+        }
+        if ret_ty.is_some() {
+            self.err(
+                "E0903",
+                "`#asm` does not accept a `-> T` return-type ascription; Tier 1 \
+                 inline asm has no outputs"
+                    .to_string(),
+                span,
+            );
+        }
+        if args.len() != 1 {
+            self.err(
+                "E0308",
+                format!(
+                    "`#asm` takes exactly 1 string-literal template, got {}",
+                    args.len()
+                ),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Unit;
+        }
+        if !matches!(args[0].kind, ExprKind::StrLit(_)) {
+            self.err(
+                "E0871",
+                "`#asm` template must be a string literal".to_string(),
+                args[0].span,
+            );
+            let _ = self.check_expr(&args[0], None);
+            return Ty::Unit;
+        }
+        if self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                "`#asm` is unsafe; wrap it in `unsafe { ... }`".to_string(),
+                span,
+            );
         }
         Ty::Unit
     }
@@ -19054,6 +19130,72 @@ mod tests {
                  return n as i32;\n\
              }",
         );
+    }
+
+    #[test]
+    fn intrinsic_asm_outside_unsafe_e0801() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 #asm(\"nop\");\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0801"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_asm_inside_unsafe_clean() {
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 unsafe { #asm(\"dmb ish\"); }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn intrinsic_asm_non_string_template_e0871() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 let x: i32 = 1;\n\
+                 unsafe { #asm(x); }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0871"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_asm_type_args_e0501() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 unsafe { #asm::[i32](\"nop\"); }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0501"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_asm_ret_ascription_e0903() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 unsafe { let _x: i32 = #asm(\"nop\") -> i32; }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0903"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn intrinsic_asm_wrong_arg_count_e0308() {
+        let codes = errors(
+            "fn main() -> i32 {\n\
+                 unsafe { #asm(\"a\", \"b\"); }\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0308"), "got {:?}", codes);
     }
 
     #[test]

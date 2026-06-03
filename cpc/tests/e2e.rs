@@ -449,6 +449,69 @@ fn cpu_relax_runtime_g031() {
 }
 
 #[test]
+fn inline_asm_tier1_runtime() {
+    // v0.0.14 inline-asm Tier 1: a bare-template `#asm` compiles, links, runs,
+    // and emits an operand-free side-effecting asm call. `nop` is valid on
+    // every target, so the IR check is arch-independent.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("asm.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             unsafe { #asm(\"nop\"); }\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("asm");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#asm Tier 1 must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert!(run.status.success());
+
+    let ll = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    assert!(
+        ir.contains("call void asm sideeffect \"nop\", \"\"()"),
+        "expected operand-free sideeffect asm call, got:\n{ir}"
+    );
+}
+
+#[test]
+fn inline_asm_outside_unsafe_rejected_e0801() {
+    // Negative: `#asm` is unsafe; using it outside an `unsafe` block fails.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("asm_unsafe.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             #asm(\"nop\");\n\
+             return 0;\n\
+         }",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "#asm outside unsafe must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0801"), "expected E0801, got:\n{stderr}");
+}
+
+#[test]
 fn cross_module_unknown_item_reports_e0405_g030() {
     // v0.0.12 G-030 bonus: pre-fix, the resolver lumped "name doesn't
     // exist in module X" into PrivateAccess (E0403) with the misleading

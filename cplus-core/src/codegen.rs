@@ -4341,6 +4341,28 @@ fn round_shift(value: u64, shift: u32) -> u64 {
     }
 }
 
+/// Escape an inline-asm template for an LLVM `asm` string operand.
+///
+/// Two layers stack here. The outer one is LLVM IR string-constant escaping
+/// (same convention as [`emit_cstr`]): `"`, `\`, and any non-printable byte
+/// become `\XX` hex; printable ASCII passes through. The inner one is
+/// inline-asm specific: `$` is LLVM's operand sigil, so a *literal* dollar in
+/// the final assembly must be `$$`. Since `$` is printable it survives the IR
+/// layer untouched, so we double it directly. (Tier 1 has no operands, but a
+/// template may still legitimately contain a `$`.)
+fn escape_asm_template(s: &str) -> String {
+    let mut out = String::new();
+    for byte in s.bytes() {
+        match byte {
+            b'$' => out.push_str("$$"),
+            b'"' | b'\\' => out.push_str(&format!("\\{byte:02X}")),
+            0x20..=0x7E => out.push(byte as char),
+            _ => out.push_str(&format!("\\{byte:02X}")),
+        }
+    }
+    out
+}
+
 /// Emit a `private unnamed_addr constant` LLVM string literal with a NUL
 /// terminator. Used by both `println` (the existing `@.fmt_int_nl`) and the
 /// slice 5ATTR.4 test driver. Returns the byte length including the null
@@ -8750,6 +8772,12 @@ impl<'a> FnState<'a> {
                 self.gen_intrinsic_cpu_relax();
                 None
             }
+            // v0.0.14 inline-asm Tier 1: emit the side-effecting asm call.
+            // Returns no value (the call is `void`).
+            "asm" => {
+                self.gen_intrinsic_asm(args);
+                None
+            }
             _ => panic!(
                 "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
             ),
@@ -8874,6 +8902,23 @@ impl<'a> FnState<'a> {
         // Aggregate load — gen_load skips TBAA for aggregates.
         self.gen_load(&v, &t, &slot);
         (v, t)
+    }
+
+    /// v0.0.14 inline-asm Tier 1: `#asm("template")` — emit a side-effecting,
+    /// operand-free inline-asm call: `call void asm sideeffect "<t>", ""()`.
+    ///
+    /// `sideeffect` is mandatory: with no outputs the call is otherwise dead and
+    /// LLVM would delete it, defeating the point (fences/barriers/hints). The
+    /// template is sema-guaranteed to be a string literal. No declaration is
+    /// needed — `asm` is an LLVM expression, not a called function.
+    fn gen_intrinsic_asm(&mut self, args: &[Expr]) {
+        let template = match &args[0].kind {
+            ExprKind::StrLit(s) => s.as_str(),
+            // sema (check_intrinsic_asm) rejects every non-string-literal form.
+            _ => unreachable!("#asm: sema guarantees a string-literal template"),
+        };
+        let escaped = escape_asm_template(template);
+        self.emit(&format!("call void asm sideeffect \"{escaped}\", \"\"()"));
     }
 
     /// v0.0.12 G-031: `#cpu_relax()` — per-arch spin-loop hint.
@@ -14801,6 +14846,28 @@ mod tests {
             ir.contains("call fastcc i32 @helper("),
             "call site must mirror fastcc, got:\n{ir}"
         );
+    }
+
+    #[test]
+    fn inline_asm_tier1_emits_sideeffect_call() {
+        // v0.0.14 inline-asm Tier 1: a bare template lowers to an operand-free,
+        // side-effecting asm call (`sideeffect` so DCE can't drop it).
+        let ir = gen_src("fn main() -> i32 { unsafe { #asm(\"dmb ish\"); } return 0; }");
+        assert!(
+            ir.contains("call void asm sideeffect \"dmb ish\", \"\"()"),
+            "expected operand-free sideeffect asm call, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn escape_asm_template_handles_specials() {
+        // IR string-constant escaping for quote / backslash / non-printable,
+        // plus the inline-asm `$` -> `$$` operand-sigil doubling.
+        assert_eq!(escape_asm_template("dmb ish"), "dmb ish");
+        assert_eq!(escape_asm_template("a\"b"), "a\\22b");
+        assert_eq!(escape_asm_template("a\\b"), "a\\5Cb");
+        assert_eq!(escape_asm_template("a\tb"), "a\\09b");
+        assert_eq!(escape_asm_template("a$b"), "a$$b");
     }
 
     #[test]

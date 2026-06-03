@@ -434,6 +434,7 @@ Pointer ↔ int casts go through `usize`, never directly to `i32` (E0315).
 | `#env("NAME")` | `str` | Resolved at sema; E0876 if unset |
 | `#zero::[T]()` | `T` | Safe all-zero value |
 | `#cpu_relax()` | `()` | Safe spin-loop hint |
+| `#asm("template")` | `()` | Unsafe; bare-template inline asm, no operands (Tier 1) |
 | `#selector("name")` | `*u8` | ObjC SEL pointer, cached |
 | `#msg_send(recv, "sel", ...) -> RetTy` | RetTy | Typed objc_msgSend call |
 | `#compile_shader("file.metal", "msl")` | `*[u8; N]` | xcrun metal at sema time |
@@ -450,6 +451,10 @@ fn now() -> i64 {
 
 let metallib: *[u8; 2048] = #include_bytes("../shaders/double.metallib");
 let greeting: str = #env("GREETING");
+
+// Inline asm (Tier 1): a string-literal template, no operands, always unsafe.
+// Lowers to a side-effecting `asm sideeffect` call — for fences/barriers/hints.
+unsafe { #asm("dmb ish"); }
 ```
 
 ---
