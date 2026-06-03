@@ -108,9 +108,12 @@ pub struct Edge {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RefKind {
-    /// A call site for the symbol (Phase 4a). Type and value references land
-    /// in a later slice.
+    /// A call site for the symbol (Phase 4a).
     Call,
+    /// A use of a named type — in a signature, field, let annotation, cast, or
+    /// struct literal (Phase 4b). Value references (const/static/fn-as-value)
+    /// land in a later slice.
+    Type,
 }
 
 /// A resolved use site of a symbol, with its precise `file:line:col`. This is
@@ -151,6 +154,9 @@ impl CodeGraph {
         // Function/method bodies to resolve call edges over, collected during
         // the node pass and walked once the node index exists (§ call edges).
         let mut callables: Vec<Callable> = Vec::new();
+        // Type references from signatures / fields, as (short_name, location,
+        // in_context); resolved to ids once the type index exists.
+        let mut sig_type_refs: Vec<(String, Location, String)> = Vec::new();
 
         // One `LineMap` per file id, built once and reused for every span in
         // that file. Spans are file-relative, so each item resolves against the
@@ -217,6 +223,12 @@ impl CodeGraph {
                         to: id.clone(),
                         kind: EdgeKind::Defines,
                     });
+                    for p in &f.params {
+                        push_type_refs(&p.ty, &fid, &id, &resolve, &mut sig_type_refs);
+                    }
+                    if let Some(rt) = &f.return_type {
+                        push_type_refs(rt, &fid, &id, &resolve, &mut sig_type_refs);
+                    }
                     if !f.is_extern {
                         callables.push(Callable {
                             from_id: id,
@@ -258,6 +270,7 @@ impl CodeGraph {
                             to: fid_id,
                             kind: EdgeKind::HasField,
                         });
+                        push_type_refs(&field.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     }
                 }
                 ItemKind::Enum(e) => {
@@ -298,10 +311,13 @@ impl CodeGraph {
                             to: v_id,
                             kind: EdgeKind::HasVariant,
                         });
+                        for pty in &v.payload {
+                            push_type_refs(pty, &fid, &id, &resolve, &mut sig_type_refs);
+                        }
                     }
                 }
                 ItemKind::Impl(b) => {
-                    add_impl_methods(&mut g, &fid, b, &resolve, &mut callables);
+                    add_impl_methods(&mut g, &fid, b, &resolve, &mut callables, &mut sig_type_refs);
                 }
                 ItemKind::Interface(it) => {
                     let name = short_name(&it.name.name).to_string();
@@ -331,6 +347,7 @@ impl CodeGraph {
                         signature: Some(type_to_string(&a.target)),
                         is_pub: a.is_pub,
                     });
+                    push_type_refs(&a.target, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
                         from: fid.clone(),
                         to: id,
@@ -348,6 +365,7 @@ impl CodeGraph {
                         signature: Some(type_to_string(&c.ty)),
                         is_pub: c.is_pub,
                     });
+                    push_type_refs(&c.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
                         from: fid.clone(),
                         to: id,
@@ -365,6 +383,7 @@ impl CodeGraph {
                         signature: Some(type_to_string(&s.ty)),
                         is_pub: s.is_pub,
                     });
+                    push_type_refs(&s.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
                         from: fid.clone(),
                         to: id,
@@ -374,7 +393,7 @@ impl CodeGraph {
             }
         }
 
-        resolve_call_edges(&mut g, &callables, &resolve);
+        resolve_call_edges(&mut g, &callables, &sig_type_refs, &resolve);
         g
     }
 
@@ -666,7 +685,9 @@ fn refs_result_json(target: &str, references: Vec<Reference>) -> String {
     let res = RefsQueryResult {
         kind: "refs".to_string(),
         target: target.to_string(),
-        scope: "call-sites".to_string(),
+        // Coverage: call sites and named-type uses. Value references
+        // (const/static/fn-as-value) are not yet resolved — grep for those.
+        scope: "calls,types".to_string(),
         count: references.len(),
         references,
     };
@@ -688,8 +709,9 @@ fn add_impl_methods<'a>(
     g: &mut CodeGraph,
     fid: &str,
     b: &'a ImplBlock,
-    resolve: &impl Fn(&str, crate::lexer::Span) -> Option<Location>,
+    resolve: &impl Fn(&str, Span) -> Option<Location>,
     callables: &mut Vec<Callable<'a>>,
+    sig_type_refs: &mut Vec<(String, Location, String)>,
 ) {
     let target = short_name(&b.target.name).to_string();
     let type_id = format!("{fid}::{target}");
@@ -709,6 +731,12 @@ fn add_impl_methods<'a>(
             to: id.clone(),
             kind: EdgeKind::HasMethod,
         });
+        for p in &m.params {
+            push_type_refs(&p.ty, fid, &id, resolve, sig_type_refs);
+        }
+        if let Some(rt) = &m.return_type {
+            push_type_refs(rt, fid, &id, resolve, sig_type_refs);
+        }
         callables.push(Callable {
             from_id: id,
             fid: fid.to_string(),
@@ -744,6 +772,61 @@ fn base_type_name(t: &Type) -> Option<String> {
     }
 }
 
+/// Every named-type occurrence inside a type, as `(short_name, span)` — the
+/// base of a `Path`/`Generic` plus the bases of any nested element / argument
+/// / pointee / tuple-member / fn-ptr-param types. Primitives surface here too
+/// (`i32`); they resolve to no node and are dropped at resolution.
+fn collect_type_names(t: &Type, out: &mut Vec<(String, Span)>) {
+    match &t.kind {
+        TypeKind::Path(s) => out.push((short_name(s).to_string(), t.span)),
+        TypeKind::Generic { name, args } => {
+            out.push((short_name(name).to_string(), t.span));
+            for a in args {
+                collect_type_names(a, out);
+            }
+        }
+        TypeKind::Array { elem, .. } => collect_type_names(elem, out),
+        TypeKind::RawPtr(inner) | TypeKind::Slice(inner) => collect_type_names(inner, out),
+        TypeKind::Borrowed { inner, .. } => collect_type_names(inner, out),
+        TypeKind::Tuple(ts) => {
+            for ty in ts {
+                collect_type_names(ty, out);
+            }
+        }
+        TypeKind::FnPtr {
+            params,
+            return_type,
+        } => {
+            for p in params {
+                collect_type_names(p, out);
+            }
+            if let Some(r) = return_type {
+                collect_type_names(r, out);
+            }
+        }
+    }
+}
+
+/// Resolve a type's named occurrences against `fid` and append a `Type`
+/// reference (with location and enclosing context) for each one — left for the
+/// post-pass to map the name to a node id. Collected here as
+/// `(short_name, location, in_context)`.
+fn push_type_refs(
+    ty: &Type,
+    fid: &str,
+    ctx: &str,
+    resolve: &impl Fn(&str, Span) -> Option<Location>,
+    out: &mut Vec<(String, Location, String)>,
+) {
+    let mut names = Vec::new();
+    collect_type_names(ty, &mut names);
+    for (short, span) in names {
+        if let Some(loc) = resolve(fid, span) {
+            out.push((short, loc, ctx.to_string()));
+        }
+    }
+}
+
 /// Pick the single target id from a candidate list, or `None` if there are
 /// zero or more than one (ambiguous → honestly unresolved, never a wrong edge).
 fn unique(ids: Option<&Vec<String>>) -> Option<String> {
@@ -759,10 +842,12 @@ fn unique(ids: Option<&Vec<String>>) -> Option<String> {
 fn resolve_call_edges(
     g: &mut CodeGraph,
     callables: &[Callable],
+    sig_type_refs: &[(String, Location, String)],
     resolve: &impl Fn(&str, Span) -> Option<Location>,
 ) {
     let mut fn_by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut method_idx: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let mut type_by_name: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for n in &g.nodes {
         match n.kind {
             NodeKind::Function | NodeKind::ExternFn => {
@@ -779,7 +864,22 @@ fn resolve_call_edges(
                         .push(n.id.clone());
                 }
             }
+            NodeKind::Struct | NodeKind::Enum | NodeKind::TypeAlias | NodeKind::Interface => {
+                type_by_name.entry(n.name.clone()).or_default().push(n.id.clone());
+            }
             _ => {}
+        }
+    }
+
+    // Signature / field type references (collected during the node pass).
+    for (short, location, ctx) in sig_type_refs {
+        if let Some(id) = unique(type_by_name.get(short)) {
+            g.references.push(Reference {
+                symbol: id,
+                kind: RefKind::Type,
+                location: location.clone(),
+                in_context: Some(ctx.clone()),
+            });
         }
     }
 
@@ -792,6 +892,7 @@ fn resolve_call_edges(
             from_id: &c.from_id,
             edges: Vec::new(),
             refs: Vec::new(),
+            type_refs: Vec::new(),
             unresolved: 0,
         };
         for p in c.params {
@@ -803,6 +904,7 @@ fn resolve_call_edges(
         let Resolver {
             edges,
             refs,
+            type_refs,
             unresolved,
             ..
         } = r;
@@ -812,6 +914,18 @@ fn resolve_call_edges(
                 g.references.push(Reference {
                     symbol: target,
                     kind: RefKind::Call,
+                    location,
+                    in_context: Some(c.from_id.clone()),
+                });
+            }
+        }
+        for (short, span) in type_refs {
+            if let (Some(id), Some(location)) =
+                (unique(type_by_name.get(&short)), resolve(&c.fid, span))
+            {
+                g.references.push(Reference {
+                    symbol: id,
+                    kind: RefKind::Type,
                     location,
                     in_context: Some(c.from_id.clone()),
                 });
@@ -836,6 +950,9 @@ struct Resolver<'a> {
     /// (target id, call-site span) for each resolved call, turned into a
     /// `Reference` with a precise location by the caller.
     refs: Vec<(String, Span)>,
+    /// (short type name, use-site span) for each type use in the body —
+    /// resolved against the type index and located by the caller.
+    type_refs: Vec<(String, Span)>,
     unresolved: u32,
 }
 
@@ -856,6 +973,7 @@ impl<'a> Resolver<'a> {
                     if let Some(bt) = base_type_name(t) {
                         self.env.insert(name.name.clone(), bt);
                     }
+                    self.record_type(t);
                 }
                 if let Some(e) = init {
                     self.walk_expr(e);
@@ -949,7 +1067,10 @@ impl<'a> Resolver<'a> {
                 self.walk_expr(target);
                 self.walk_expr(value);
             }
-            ExprKind::Cast { expr, .. } => self.walk_expr(expr),
+            ExprKind::Cast { expr, ty } => {
+                self.record_type(ty);
+                self.walk_expr(expr);
+            }
             ExprKind::If {
                 cond,
                 then,
@@ -974,12 +1095,38 @@ impl<'a> Resolver<'a> {
                 self.walk_expr(receiver);
                 self.walk_expr(index);
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { name, fields } => {
+                self.type_refs
+                    .push((short_name(&name.name).to_string(), name.span));
                 for f in fields {
                     self.walk_expr(&f.value);
                 }
             }
-            ExprKind::GenericEnumCall { args, .. } => {
+            ExprKind::GenericStructLit {
+                name,
+                type_args,
+                fields,
+            } => {
+                self.type_refs
+                    .push((short_name(&name.name).to_string(), name.span));
+                for t in type_args {
+                    self.record_type(t);
+                }
+                for f in fields {
+                    self.walk_expr(&f.value);
+                }
+            }
+            ExprKind::GenericEnumCall {
+                enum_name,
+                type_args,
+                args,
+                ..
+            } => {
+                self.type_refs
+                    .push((short_name(&enum_name.name).to_string(), enum_name.span));
+                for t in type_args {
+                    self.record_type(t);
+                }
                 for a in args {
                     self.walk_expr(a);
                 }
@@ -1045,6 +1192,13 @@ impl<'a> Resolver<'a> {
             }
         }
         unique(self.fn_by_name.get(&last))
+    }
+
+    /// Record every named-type occurrence in a type for later resolution.
+    fn record_type(&mut self, ty: &Type) {
+        let mut names = Vec::new();
+        collect_type_names(ty, &mut names);
+        self.type_refs.extend(names);
     }
 
     fn receiver_type(&self, recv: &Expr) -> Option<String> {
@@ -1436,9 +1590,40 @@ mod tests {
         let g = CodeGraph::build(&project(src));
         let j = g.refs_json("helper").expect("helper is a known symbol");
         assert!(j.contains("\"scope\""), "refs carries a coverage scope");
-        assert!(j.contains("call-sites"));
+        assert!(j.contains("calls"));
         assert!(j.contains("\"references\""));
         assert!(g.refs_json("nonexistent").is_none());
+    }
+
+    #[test]
+    fn type_uses_become_references() {
+        let src = "struct Widget { x: i32 }\n\
+                   struct Holder { w: Widget }\n\
+                   fn make(w: Widget) -> Widget { let local: Widget = w; return local; }";
+        let g = CodeGraph::build(&project(src));
+        let refs = g.refs("Widget");
+        // Widget is referenced in: Holder's field, make's param, make's return,
+        // and the `let local: Widget` annotation — four type uses.
+        assert!(refs.iter().all(|r| r.kind == RefKind::Type));
+        assert!(
+            refs.len() >= 4,
+            "expected >=4 Widget type refs, got {}",
+            refs.len()
+        );
+        assert!(refs.iter().all(|r| r.in_context.is_some()));
+        // A primitive type produces no reference (no node to point at).
+        assert!(g.refs("i32").is_empty());
+    }
+
+    #[test]
+    fn struct_literal_construction_is_a_type_reference() {
+        let src = "struct P { x: i32 }\n\
+                   fn mk() -> P { return P { x: 1 }; }";
+        let g = CodeGraph::build(&project(src));
+        // `P { x: 1 }` constructs P, plus the `-> P` return type = 2 refs.
+        let refs = g.refs("P");
+        assert!(refs.len() >= 2, "P referenced by ctor + return: {}", refs.len());
+        assert!(refs.iter().any(|r| r.in_context.as_deref() == Some("src::mk")));
     }
 
     #[test]

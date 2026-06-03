@@ -17541,7 +17541,7 @@ fn query_refs_returns_call_sites_with_locations() {
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("\"kind\": \"refs\""));
-    assert!(s.contains("\"scope\": \"call-sites\""), "refs states its coverage: {s}");
+    assert!(s.contains("\"scope\""), "refs states its coverage: {s}");
     assert!(s.contains("\"in_context\""), "a reference carries its enclosing item: {s}");
     assert!(s.contains("\"line\""), "a reference carries a location: {s}");
 
