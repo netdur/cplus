@@ -52,11 +52,12 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
   keeps them as `bl`. Watch for the Q4_K CPU hot path; fix = run LLVM's inliner
   at `--release` or honor `#[inline]`.
 
-### E. Dogfood — continue the llama.cplus port
-The port is the engine that surfaced every gap this cycle. `f16` just unblocked
-pure-C+ fp16↔fp32 (the "zero-`.c`" milestone); next is removing the remaining
-`cplus-shim` bridges and widening CPU-kernel coverage. Let the port lead and
-file gaps as it hits them, pulling ready items (A/B) as needed.
+### E. Dogfood — the llama.cplus port — **DONE**
+The port was the engine that surfaced every gap this cycle. `f16` unblocked
+pure-C+ fp16↔fp32 (the "zero-`.c`" milestone), the remaining `cplus-shim`
+bridges are removed, and CPU-kernel coverage is in. Gaps it found were filed
+and pulled into A/B as they landed. Future language work can still use the port
+as a regression/gap detector, but the port milestone itself is reached.
 
 ### F. Code knowledge graph (agent + LSP navigation) — **SHIPPED**
 Built this cycle; see [plan.graph.md](plan.graph.md) for the phase log. `cpc graph`
@@ -97,11 +98,11 @@ because the hard analyses already exist and are tested.
 **F (code knowledge graph) shipped** as the headline — the agent-loop tooling
 that improves how every future version gets built. Remaining shapes:
 
-- **"FFI polish + keep the port moving"** (B + E): the natural next batch.
-  `c"..."` C-string literals and the `f16` literal suffix are **shipped**;
-  remaining B items — struct-literal statics and const-eval for array lengths —
-  are each small, low-risk, and directly remove port friction. Let the port (E)
-  drive which land next.
+- **"FFI polish"** (B): the natural next batch. `c"..."` C-string literals and
+  the `f16` literal suffix are **shipped**; remaining B items — struct-literal
+  statics and const-eval for array lengths — are each small, low-risk, and were
+  the last port-friction items (the port (E) is now done, so these stand on
+  their own merit: they round out the static-data and array surfaces).
 - **"Finish the ownership model"** (A): highest *conceptual* payoff, now
   re-specced as raw-pointer accountability in [plan.opaque.md](plan.opaque.md)
   (supersedes the `own`-marker framing of [plan.own.md](plan.own.md)). Still a
@@ -113,7 +114,8 @@ that improves how every future version gets built. Remaining shapes:
   [plan.agent.md](plan.agent.md) (in-app + external agent surface, the
   set_agent_id / programmable-auth product bet).
 
-Suggested next shape: **B as the working batch** (cheap, port-driven, low risk),
+Suggested next shape: **B as the working batch** (cheap, low risk, rounds out the
+static-data/array surfaces now that the port milestone (E) is reached),
 **A reserved** for a clean milestone boundary, and the graph's own depth/delivery
 tail (value-refs, sema-retention precision, resident incremental rebuild, LSP
 fold-in) pulled in as the agent loop demands.
