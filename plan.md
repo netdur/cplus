@@ -56,7 +56,18 @@ pure-C+ fp16↔fp32 (the "zero-`.c`" milestone); next is removing the remaining
 `cplus-shim` bridges and widening CPU-kernel coverage. Let the port lead and
 file gaps as it hits them, pulling ready items (A/B) as needed.
 
-### F. Code knowledge graph (agent + LSP navigation)
+### F. Code knowledge graph (agent + LSP navigation) — **SHIPPED**
+Built this cycle; see [plan.graph.md](plan.graph.md) for the phase log. `cpc graph`
+plus the full `cpc query` surface (`def`/`members`/`symbols`/`refs`/`callers`/
+`callees`/`call-hierarchy`/`context`/`type-at`) are live, resolved, JSON, and
+honest about coverage (`unresolved`/`scope` fields); and **`cpc mcp`** is a
+resident stdio MCP server exposing nine agent-facing tools over the warm index.
+Unit + e2e tested throughout. Remaining (depth/delivery, not new queries):
+value references, full `type-at` for inferred expressions and driving the call
+`unresolved` count to zero (both need sema-retention, the one invasive piece),
+incremental rebuild, and folding the index under `cpc lsp`. The original framing
+follows.
+
 Designed in [plan.graph.md](plan.graph.md). A compiler-backed, queryable index —
 resolved `def` / `refs` / `callers` / `call-hierarchy` / `type-at` / `members` /
 `context` — so an agent (and the LSP) navigates C+ by *symbol and type*, not by
@@ -81,21 +92,26 @@ because the hard analyses already exist and are tested.
 
 ## Recommendation
 
-Three coherent shapes:
-- **"Code knowledge graph"** (F): the strongest standalone headline. Additive
-  (no language-semantics change → low risk), self-contained, and high leverage
-  on the agent loop that *builds* C+. Cheap because the analyses already exist;
-  the real work is the data model, JSON surface, the resident mode, and the
-  adoption design. Doesn't touch the language, so it can run in parallel with
-  any of A/B/E.
-- **"Finish the ownership model"** (A): highest *conceptual* payoff, but a
+**F (code knowledge graph) shipped** as the headline — the agent-loop tooling
+that improves how every future version gets built. Remaining shapes:
+
+- **"FFI polish + keep the port moving"** (B + E): the natural next batch.
+  `c"..."` C-string literals (kills the `"...\0"` FFI workaround across JNI /
+  Cocoa / libc), the `f16` literal suffix, struct-literal statics, and
+  const-eval for array lengths are each small, low-risk, and directly remove
+  port friction. Let the port (E) drive which land first.
+- **"Finish the ownership model"** (A): highest *conceptual* payoff, now
+  re-specced as raw-pointer accountability in [plan.opaque.md](plan.opaque.md)
+  (supersedes the `own`-marker framing of [plan.own.md](plan.own.md)). Still a
   global drop-semantics change — do it deliberately at a port-milestone
   boundary, gated by the E0509 audit.
-- **"FFI polish + keep the port moving"** (B + E): `c"..."` and struct-literal
-  statics are small, low-risk, and directly remove port friction; let the port
-  drive the rest.
+- **New design docs opened this cycle, awaiting feedback/implementation:**
+  [plan.opaque.md](plan.opaque.md) (raw-pointer accountability),
+  [plan.appkit.md](plan.appkit.md) (AppKit ObjC-ownership triage), and
+  [plan.agent.md](plan.agent.md) (in-app + external agent surface, the
+  set_agent_id / programmable-auth product bet).
 
-Suggested shape for v0.0.13: **F as the headline** (it improves how every future
-version gets built), **B + E in parallel** (cheap, port-driven), and **A reserved**
-for a clean milestone boundary. F and B/E don't contend — F is tooling, B/E is
-language+port — so they can land together.
+Suggested next shape: **B as the working batch** (cheap, port-driven, low risk),
+**A reserved** for a clean milestone boundary, and the graph's own depth/delivery
+tail (value-refs, sema-retention precision, resident incremental rebuild, LSP
+fold-in) pulled in as the agent loop demands.

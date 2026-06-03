@@ -598,6 +598,9 @@ cpc fmt FILE                   # format in place
 cpc fmt --check DIR            # CI mode
 cpc test                       # run #[test] + doctests
 cpc lsp                        # language server
+cpc graph                      # whole-project code knowledge graph as JSON
+cpc query def|refs|callers|callees|call-hierarchy|members|symbols|context|type-at  # resolved navigation
+cpc mcp                        # resident MCP server over the graph (point an agent's MCP client here)
 cpc --emit-ll FILE             # pre-opt LLVM IR
 cpc --emit-ll-opt FILE         # post-opt LLVM IR
 cpc --emit-asm FILE            # native asm
@@ -606,6 +609,10 @@ cpc --release                  # -O2 (default: debug -O0 with overflow traps)
 ```
 
 > Builds are fast (a small project compiles in well under a second). For the agentic edit→compile loop, prefer `cpc build` as the feedback command for any project with imports; reserve `cpc check FILE` for self-contained snippets.
+
+### Navigating C+ code: query the graph, don't grep
+
+To locate or trace a symbol, use the code graph — it is **resolved and typed**, `grep` is neither (it can't tell the `Point` type from a local `point`, follow `prefix::Item` to its module, or list real callers). `cpc query def|refs|callers|callees|context|type-at …` answer by symbol with clickable `file:line:col`, as JSON, and state their own coverage (`unresolved`/`scope`) so you know when a `grep` fallback is still needed. In an agent loop, run `cpc mcp` once and call the tools (`find_definition`, `find_references`, `find_callers`, `code_context`, `type_at`, …) instead of spawning `cpc query` per lookup. Reach for the graph before reaching for `grep`.
 
 ### Linking against Apple frameworks
 
@@ -644,5 +651,6 @@ Canonical patterns: [cpc/tests/e2e.rs](cpc/tests/e2e.rs) for the compiler; in-pa
 4. **Run `cpc fmt`** — if source doesn't round-trip, something is syntactically off.
 5. **Read the diagnostic** — the compiler is the source of truth; this doc summarises.
 6. **Check §2 (locked principles)** before suggesting a feature.
+7. **Navigate by the graph, not `grep`** (§15) — `cpc query` / `cpc mcp` resolve names text search can't.
 
 Don't guess; check.
