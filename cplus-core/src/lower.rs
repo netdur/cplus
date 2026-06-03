@@ -639,7 +639,7 @@ impl Lower {
                     if !is_static_initializer(&s.value) {
                         self.err(
                             "E0X30",
-                            "static initializer must be a literal, `#zero::[T]()`, or an array literal/fill of such (integer, float, bool, string, unary-negated numeric literal)".to_string(),
+                            "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, or a (non-generic) struct literal of such".to_string(),
                             s.value.span,
                         );
                     }
@@ -727,6 +727,15 @@ fn is_const_initializer(e: &Expr) -> bool {
 /// there is no substitution concern. `const` stays literal-only
 /// (`is_const_initializer`): a const is inlined at every use site, where an
 /// array literal would be both surprising and substitution-heavy.
+///
+/// v0.0.13 (G-043 second half): a `static` may also be a **struct literal**
+/// `T { f0: v0, f1: v1 }` whose field values are themselves static
+/// initializers (recursively — struct-of-struct and array-of-struct compose).
+/// This is the ggml `static const sphere_t scene[10] = {...}` pattern. Codegen
+/// emits the struct as an LLVM constant aggregate in declared field order. The
+/// generic form (`Pair[i32, bool] { ... }`) is intentionally excluded here:
+/// it survives to codegen un-monomorphized (static initializers are not walked
+/// by the mono expr rewriter), so accept only the concrete `StructLit` shape.
 fn is_static_initializer(e: &Expr) -> bool {
     if is_const_initializer(e) {
         return true;
@@ -734,6 +743,9 @@ fn is_static_initializer(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::ArrayLit { elements } => elements.iter().all(is_static_initializer),
         ExprKind::ArrayFill { fill, .. } => is_static_initializer(fill),
+        ExprKind::StructLit { fields, .. } => {
+            fields.iter().all(|f| is_static_initializer(&f.value))
+        }
         _ => false,
     }
 }

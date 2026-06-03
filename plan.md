@@ -32,9 +32,13 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
 - **`f16` literal suffix** (`1.5f16`) — **SHIPPED.** `1.5f16` lexes as an f16
   float (and an unsuffixed literal takes an `f16` annotation); codegen lowers it
   with a single `fptrunc double→half` (no double-rounding). Unit/e2e tested.
-- **Struct-literal statics** (`static S: T = T { ... };`) — the remaining half of
-  G-043 (array-literal statics shipped; struct/aggregate literals still rejected).
-  The ggml `static const sphere_t scene[10] = {...}` pattern.
+- **Struct-literal statics** (`static S: T = T { ... };`) — **SHIPPED.** The
+  remaining half of G-043: a non-generic struct literal whose field values are
+  themselves static initializers is admitted in `static` position and lowered to
+  an LLVM constant aggregate (struct-of-struct and array-of-struct recurse;
+  per-field types drive coercion, incl. correct `half`/`float` constants). The
+  ggml `static const sphere_t scene[10] = {...}` pattern. The generic form stays
+  rejected (it reaches codegen un-monomorphized). Lower→codegen + unit/e2e tested.
 - **Const-eval for array lengths** — `[EXPR; N]` / `[T; N]` still need `N` a
   literal; a small const-evaluator would admit `[T; SOME_CONST]`.
 
@@ -98,11 +102,11 @@ because the hard analyses already exist and are tested.
 **F (code knowledge graph) shipped** as the headline — the agent-loop tooling
 that improves how every future version gets built. Remaining shapes:
 
-- **"FFI polish"** (B): the natural next batch. `c"..."` C-string literals and
-  the `f16` literal suffix are **shipped**; remaining B items — struct-literal
-  statics and const-eval for array lengths — are each small, low-risk, and were
-  the last port-friction items (the port (E) is now done, so these stand on
-  their own merit: they round out the static-data and array surfaces).
+- **"FFI polish"** (B): the natural next batch. `c"..."` C-string literals, the
+  `f16` literal suffix, and **struct-literal statics** are **shipped**; the one
+  remaining B item — const-eval for array lengths — is small and low-risk. These
+  round out the static-data and array surfaces (the port (E) is now done, so
+  they stand on their own merit).
 - **"Finish the ownership model"** (A): highest *conceptual* payoff, now
   re-specced as raw-pointer accountability in [plan.opaque.md](plan.opaque.md)
   (supersedes the `own`-marker framing of [plan.own.md](plan.own.md)). Still a

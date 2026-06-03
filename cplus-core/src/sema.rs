@@ -18076,6 +18076,63 @@ mod tests {
         assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
 
+    // v0.0.13 G-043 (second half): a non-generic struct literal whose fields are
+    // themselves static initializers is accepted in `static` position.
+    #[test]
+    fn struct_literal_in_static_accepted_g043b() {
+        let codes = lowered_errors(
+            "struct P { x: i32, y: f32, ok: bool } \
+             pub static S: P = P { x: 1, y: 2.0f32, ok: true };",
+        );
+        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+    }
+
+    // Struct-of-struct and array-of-struct compose recursively.
+    #[test]
+    fn nested_struct_literal_in_static_accepted_g043b() {
+        let codes = lowered_errors(
+            "struct Inner { a: i32 } \
+             struct Outer { i: Inner, n: i32 } \
+             pub static O: Outer = Outer { i: Inner { a: 5 }, n: 6 }; \
+             pub static A: [Outer; 2] = [ \
+                 Outer { i: Inner { a: 1 }, n: 2 }, \
+                 Outer { i: Inner { a: 3 }, n: 4 } \
+             ];",
+        );
+        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+    }
+
+    // A struct literal with a non-literal field value is still E0X30.
+    #[test]
+    fn struct_literal_with_call_field_rejected_e0x30_g043b() {
+        let codes = lowered_errors(
+            "struct P { x: i32 } \
+             fn f() -> i32 { return 3; } \
+             pub static S: P = P { x: f() };",
+        );
+        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
+    }
+
+    // The generic struct-literal form is excluded (it reaches codegen
+    // un-monomorphized in static position); it stays E0X30.
+    #[test]
+    fn generic_struct_literal_in_static_rejected_e0x30_g043b() {
+        let codes = lowered_errors(
+            "struct Pair[A, B] { first: A, second: B } \
+             pub static G: Pair[i32, bool] = Pair[i32, bool] { first: 1, second: true };",
+        );
+        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
+    }
+
+    // `const` stays literal-only: a struct literal on a `const` is E0X30.
+    #[test]
+    fn struct_literal_in_const_still_rejected_e0x30_g043b() {
+        let codes = lowered_errors(
+            "struct P { x: i32 } pub const C: P = P { x: 1 };",
+        );
+        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
+    }
+
     #[test]
     fn zero_intrinsic_in_static_accepted_g033() {
         // The complementary positive — lower accepts #zero::[T]() as

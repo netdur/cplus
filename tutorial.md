@@ -251,7 +251,7 @@ fn current() -> i32 {
 
 Three rules:
 
-1. **Initialiser must be a literal or `#zero::[T]()`**: integer, float, bool, string, a unary-negated numeric literal, or explicit zero-fill. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error. A **`static`** additionally accepts an array literal or fill (`static T: [i64; 3] = [1, 2, 3];`, `static Z: [u8; 64] = [0u8; 64];`, nested arrays too) — it becomes an LLVM constant aggregate, and bare integer elements coerce to the declared element type. `const` stays literal-only (it is inlined at use sites).
+1. **Initialiser must be a literal or `#zero::[T]()`**: integer, float, bool, string, a unary-negated numeric literal, or explicit zero-fill. Arithmetic (`const N: i32 = 1 + 2;`) is rejected with **E0X30**. Referring to another const or binding from the initialiser is the same error. A **`static`** additionally accepts an array literal or fill (`static T: [i64; 3] = [1, 2, 3];`, `static Z: [u8; 64] = [0u8; 64];`, nested arrays too) **and a (non-generic) struct literal** (`static S: Point = Point { x: 1, y: 2 };`, with struct-of-struct and array-of-struct composing recursively) — it becomes an LLVM constant aggregate, and bare numeric elements coerce to the declared field/element type. `const` stays literal-only (it is inlined at use sites).
 2. **Type annotation is required**; there is no inference. `const FOO = 5;` and `static FOO = 5;` are rejected with **E0X31**.
 3. **`static mut` reads need `unsafe`** (E0X33). Writes need `unsafe` (E0X34). Writing to an immutable `static` is **E0305** ("cannot assign to immutable static").
 
@@ -263,7 +263,7 @@ The choice between `const` and `static`:
 | A module-private *fixed offset table* the program reads at runtime | `static` |
 | A *mutable* counter / RNG state / lazy cache | `static mut` |
 
-The C array-table pattern `static const int blck[42] = {1, 1, 32, ...};` is `static BLCK: [i64; 42] = [1, 1, 32, ...];` today (array literals/fills are admitted as static initialisers; struct-literal statics like `static const sphere_t scene[10] = {...}` are still pending). The C `static uint32_t rng_state` pattern is `static mut RNG_STATE: u32 = ...;` today.
+The C array-table pattern `static const int blck[42] = {1, 1, 32, ...};` is `static BLCK: [i64; 42] = [1, 1, 32, ...];` today, and the C struct-table pattern `static const sphere_t scene[10] = {...};` is `static SCENE: [Sphere; 10] = [ Sphere { ... }, ... ];` (array literals/fills and non-generic struct literals are both admitted as static initialisers). The C `static uint32_t rng_state` pattern is `static mut RNG_STATE: u32 = ...;` today.
 
 ---
 

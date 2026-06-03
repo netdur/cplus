@@ -17733,6 +17733,81 @@ fn f16_literal_compiles_and_runs() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "0.500\n");
 }
 
+// v0.0.13 (G-043 second half): struct-literal statics — the ggml
+// `static const sphere_t scene[10] = {...}` port pattern. A scalar struct
+// static, a struct-of-struct, and an array-of-struct all read back at runtime.
+#[test]
+fn struct_literal_static_compiles_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("scene.cplus");
+    std::fs::write(
+        &src,
+        "struct Vec3 { x: f32, y: f32, z: f32 }\n\
+         struct Sphere { center: Vec3, radius: f32, color: i32, visible: bool }\n\
+         static SUN: Sphere = Sphere {\n\
+             center: Vec3 { x: 0.0f32, y: 0.0f32, z: 0.0f32 },\n\
+             radius: 2.0f32, color: 100, visible: true,\n\
+         };\n\
+         static SCENE: [Sphere; 3] = [\n\
+             Sphere { center: Vec3 { x: 1.0f32, y: 0.0f32, z: 0.0f32 }, radius: 1.0f32, color: 1, visible: true },\n\
+             Sphere { center: Vec3 { x: 0.0f32, y: 2.0f32, z: 0.0f32 }, radius: 3.0f32, color: 2, visible: false },\n\
+             Sphere { center: Vec3 { x: 0.0f32, y: 0.0f32, z: 5.0f32 }, radius: 4.0f32, color: 3, visible: true },\n\
+         ];\n\
+         fn main() -> i32 {\n\
+             // SUN.color(100) + SUN.radius(2) = 102\n\
+             let mut acc: i32 = SUN.color +% (SUN.radius as i32);\n\
+             // sum of radii (1+3+4)=8, sum of colors (1+2+3)=6, z of [2]=5\n\
+             let mut i: i32 = 0;\n\
+             while i < 3 {\n\
+                 acc = acc +% (SCENE[i as usize].radius as i32);\n\
+                 acc = acc +% SCENE[i as usize].color;\n\
+                 i = i +% 1;\n\
+             }\n\
+             acc = acc +% (SCENE[2].center.z as i32);\n\
+             return acc;   // 102 + 8 + 6 + 5 = 121\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("scene");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(compile.success(), "struct-literal-static program must compile");
+    let run = Command::new(&bin).output().expect("run produced binary");
+    assert_eq!(run.status.code(), Some(121), "expected exit 121");
+}
+
+// A struct-literal static with a non-literal field value is rejected (E0X30),
+// and the generic struct-literal form is excluded.
+#[test]
+fn struct_literal_static_non_literal_field_rejected_e0x30() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("bad.cplus");
+    std::fs::write(
+        &src,
+        "struct P { x: i32, y: i32 }\n\
+         fn f() -> i32 { return 3; }\n\
+         static BAD: P = P { x: f(), y: 2 };\n\
+         fn main() -> i32 { return BAD.x; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("bad");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected compile failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0X30"), "expected E0X30, got: {stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

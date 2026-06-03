@@ -4204,28 +4204,31 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             let parts: Vec<String> = (0..*count).map(|_| format!("{elem_ll} {v}")).collect();
             Some(format!("[{}]", parts.join(", ")))
         }
+        // v0.0.13 (G-043 second half): struct literal as a static initializer →
+        // LLVM constant struct `%Name { T0 v0, T1 v1, ... }`. Fields are emitted
+        // in the struct's *declared* order (matching the `%Name = type { ... }`
+        // layout in `write_struct_decls`), so source field order is irrelevant.
+        // Each field value is rendered with its declared field type, so a bare
+        // `255` in an `f32` field and a `0` in a `bool` field coerce correctly,
+        // and nested structs / arrays recurse. The ggml `sphere_t scene[]` case.
+        ExprKind::StructLit { fields, .. } => {
+            let Ty::Struct(id) = ty else { return None; };
+            let info = &types.struct_defs[id.0 as usize];
+            let mut parts: Vec<String> = Vec::with_capacity(info.fields.len());
+            for (fname, fty) in &info.fields {
+                let lit = fields.iter().find(|f| &f.name.name == fname)?;
+                let v = render_static_literal(&lit.value, fty, types)?;
+                let fty_ll = llvm_ty(fty, types);
+                parts.push(format!("{fty_ll} {v}"));
+            }
+            Some(format!("{{ {} }}", parts.join(", ")))
+        }
         ExprKind::IntLit(v, _) => Some(v.to_string()),
         ExprKind::BoolLit(b) => Some(if *b { "true".to_string() } else { "false".to_string() }),
-        ExprKind::FloatLit(v, suf) => {
-            // Same hex-bit-pattern emission as gen_expr — see the
-            // 2026-05-17 raytracer-port fix for why decimal-form
-            // float literals don't round-trip through LLVM.
-            let bits: u64 = match suf {
-                NumSuffix::F32 => (*v as f32 as f64).to_bits(),
-                _ => v.to_bits(),
-            };
-            Some(format!("0x{bits:016X}"))
-        }
+        ExprKind::FloatLit(v, suf) => render_static_float(*v, *suf, ty),
         ExprKind::Unary { op: UnaryOp::Neg, operand } => match &operand.kind {
             ExprKind::IntLit(v, _) => Some(format!("-{v}")),
-            ExprKind::FloatLit(v, suf) => {
-                let neg = -*v;
-                let bits: u64 = match suf {
-                    NumSuffix::F32 => (neg as f32 as f64).to_bits(),
-                    _ => neg.to_bits(),
-                };
-                Some(format!("0x{bits:016X}"))
-            }
+            ExprKind::FloatLit(v, suf) => render_static_float(-*v, *suf, ty),
             _ => None,
         },
         // str-typed statics need a paired data global; v0.0.9 punts.
@@ -4245,6 +4248,96 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             Some("zeroinitializer".to_string())
         }
         _ => None,
+    }
+}
+
+/// Render a float literal as an LLVM constant operand for a static initializer,
+/// choosing the bit width from the *target* type (`ty`) first, then the
+/// literal's own suffix. LLVM writes `float`/`double` constants as a hex form
+/// of the value reinterpreted at `double` width (the 2026-05-17 raytracer fix:
+/// decimal float forms don't round-trip), and `half` constants with the
+/// 16-bit `0xH....` form. Using the field/element type means a bare `1.5` in an
+/// `f32` array or struct field renders as the f32 value, not an f64 one.
+fn render_static_float(v: f64, suf: crate::lexer::NumSuffix, ty: &Ty) -> Option<String> {
+    use crate::lexer::NumSuffix;
+    match ty {
+        Ty::F16 => Some(format!("0xH{:04X}", f64_to_f16_bits(v))),
+        Ty::F32 => Some(format!("0x{:016X}", (v as f32 as f64).to_bits())),
+        Ty::F64 => Some(format!("0x{:016X}", v.to_bits())),
+        // No declared float type to key off (e.g. the literal is the whole
+        // static `static X: f32 = 1.5f32;` and `ty` is the scalar) — fall back
+        // to the literal's suffix, matching the historical behavior.
+        _ => {
+            let bits = match suf {
+                NumSuffix::F32 => (v as f32 as f64).to_bits(),
+                _ => v.to_bits(),
+            };
+            Some(format!("0x{bits:016X}"))
+        }
+    }
+}
+
+/// Convert an `f64` to its IEEE-754 binary16 (`half`) bit pattern with
+/// round-to-nearest-even, for emitting `half 0xH....` constants in static
+/// initializers. Handles zero, subnormals, overflow-to-infinity, and NaN.
+/// Mirrors the value `fptrunc double ... to half` would produce at runtime, so
+/// a `static`-position `1.5f16` matches a runtime one.
+fn f64_to_f16_bits(v: f64) -> u16 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 48) & 0x8000) as u16;
+    let exp = ((bits >> 52) & 0x7ff) as i64; // biased 11-bit exponent
+    let mant = bits & 0x000f_ffff_ffff_ffff; // 52-bit mantissa
+
+    if exp == 0x7ff {
+        // Inf / NaN. Preserve NaN-ness with a non-zero payload.
+        let nan = if mant != 0 { 0x0200 } else { 0 };
+        return sign | 0x7c00 | nan;
+    }
+    // Unbias (1023) and rebias to half (15).
+    let unbiased = exp - 1023;
+    let half_exp = unbiased + 15;
+
+    if half_exp >= 0x1f {
+        // Overflow → infinity.
+        return sign | 0x7c00;
+    }
+    if half_exp <= 0 {
+        // Subnormal or underflow to zero. Build the full significand
+        // (implicit leading 1 for normals) and shift it down into the
+        // subnormal range, rounding to nearest even.
+        // Build the full 53-bit significand (implicit leading 1) and shift it
+        // into the half-subnormal grid, where the stored mantissa M satisfies
+        // value == M * 2^-24. From value == significand * 2^(unbiased-52) and
+        // unbiased == half_exp-15, that gives M == significand >> (43-half_exp).
+        let significand = (1u64 << 52) | mant; // 53-bit, leading 1 explicit
+        let shift = (43 - half_exp) as u32;
+        let half_mant = round_shift(significand, shift);
+        // Rounding can carry M up to 0x400, which is exactly the smallest
+        // normal — `sign | 0x400` encodes that (exp field 1, mantissa 0).
+        return sign | (half_mant as u16);
+    }
+    // Normal: keep the top 10 mantissa bits, round the dropped 42.
+    let half_mant = round_shift(mant, 42);
+    // Rounding the mantissa can carry into the exponent; the +half_mant
+    // overflow naturally bumps the exponent field since they're adjacent.
+    sign | ((half_exp as u16) << 10) | (half_mant as u16)
+}
+
+/// Right-shift `value` by `shift` bits with round-to-nearest, ties-to-even.
+fn round_shift(value: u64, shift: u32) -> u64 {
+    if shift == 0 {
+        return value;
+    }
+    if shift >= 64 {
+        return 0;
+    }
+    let dropped = value & ((1u64 << shift) - 1);
+    let kept = value >> shift;
+    let halfway = 1u64 << (shift - 1);
+    if dropped > halfway || (dropped == halfway && (kept & 1) == 1) {
+        kept + 1
+    } else {
+        kept
     }
 }
 
@@ -18049,5 +18142,79 @@ mod tests {
             ptr_count >= 3,
             "expected at least 3 ptr args (recv + sel + forwarded); got line:\n{call_line}"
         );
+    }
+
+    // ---- v0.0.13 (G-043 second half): struct-literal statics ----
+
+    #[test]
+    fn struct_literal_static_emits_constant_aggregate() {
+        let ir = gen_src_mono(
+            "struct P { x: i32, y: f32, ok: bool }\n\
+             pub static S: P = P { x: 7, y: 1.5f32, ok: true };\n\
+             fn main() -> i32 { return S.x; }",
+        );
+        // The global is a constant struct in declared field order, with the
+        // f32 field rendered as the f32 hex bit pattern and bool as i1.
+        assert!(
+            ir.contains("@S = constant %P { i32 7, float 0x3FF8000000000000, i1 true }"),
+            "expected constant struct aggregate; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn struct_literal_static_renders_fields_in_declared_order() {
+        // Source field order is reversed; output must follow the declared order.
+        let ir = gen_src_mono(
+            "struct P { a: i32, b: i32 }\n\
+             pub static S: P = P { b: 2, a: 1 };\n\
+             fn main() -> i32 { return S.a; }",
+        );
+        assert!(
+            ir.contains("@S = constant %P { i32 1, i32 2 }"),
+            "expected declared-order fields; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn nested_struct_literal_static_recurses() {
+        let ir = gen_src_mono(
+            "struct Inner { a: i32 }\n\
+             struct Outer { i: Inner, n: i32 }\n\
+             pub static O: Outer = Outer { i: Inner { a: 5 }, n: 6 };\n\
+             fn main() -> i32 { return O.n; }",
+        );
+        assert!(
+            ir.contains("@O = constant %Outer { %Inner { i32 5 }, i32 6 }"),
+            "expected nested constant struct; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn f16_struct_field_static_emits_half_constant() {
+        let ir = gen_src_mono(
+            "struct W { a: f16, b: f16 }\n\
+             pub static G: W = W { a: 1.0f16, b: 1.5f16 };\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("@G = constant %W { half 0xH3C00, half 0xH3E00 }"),
+            "expected half constants; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn f64_to_f16_bits_known_values() {
+        assert_eq!(f64_to_f16_bits(0.0), 0x0000); // +0
+        assert_eq!(f64_to_f16_bits(1.0), 0x3C00); // 1.0
+        assert_eq!(f64_to_f16_bits(1.5), 0x3E00); // 1.5
+        assert_eq!(f64_to_f16_bits(2.0), 0x4000); // 2.0
+        assert_eq!(f64_to_f16_bits(-2.0), 0xC000); // sign bit set
+        assert_eq!(f64_to_f16_bits(65504.0), 0x7BFF); // largest finite half
+        assert_eq!(f64_to_f16_bits(65536.0), 0x7C00); // overflow → +inf
+        assert_eq!(f64_to_f16_bits(0.5), 0x3800); // 0.5
+        // Smallest normal half: 2^-14.
+        assert_eq!(f64_to_f16_bits(6.103515625e-05), 0x0400);
+        // A subnormal half: 2^-24 (smallest positive subnormal).
+        assert_eq!(f64_to_f16_bits(5.960464477539063e-08), 0x0001);
     }
 }
