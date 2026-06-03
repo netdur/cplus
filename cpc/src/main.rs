@@ -86,6 +86,10 @@ debug / introspection (single-file):
 
 other:
   --diagnostics=MODE                diagnostics output: human (default) | short | json
+  --realtime-report[=json]          whole-project real-time contract digest (reads
+                                    ./Cplus.toml + [profile.realtime]); prints the profile,
+                                    functions-under-contract count, and E0901/E0906/E0907/
+                                    E0908 violations grouped by contract. Exits non-zero on any.
   -V | --version                    print compiler version
   -h | --help                       show this message
 ";
@@ -268,6 +272,17 @@ fn main() -> ExitCode {
                 };
                 i += 1;
                 continue;
+            }
+            // v0.0.13 (topic C tail): `--realtime-report[=json]` — a whole-project
+            // summary of the real-time contract analysis (reads Cplus.toml,
+            // applies [profile.realtime], runs the front-end, aggregates the
+            // E0901/E0906/E0907/E0908 violations). `cpc check` already gates the
+            // build; this is the machine-readable digest deferred from Phase 8.
+            if s == "--realtime-report" || s == "--realtime-report=human" {
+                return run_realtime_report(false);
+            }
+            if s == "--realtime-report=json" {
+                return run_realtime_report(true);
             }
         }
         match a {
@@ -2093,30 +2108,9 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // Entry resolution mirrors `cpc test` (no-arg): [lib], then a real
-    // [[bin]], then the `src/<package-name>.cplus` fallback for library-only
-    // vendor packages that declare no on-disk target.
-    let (entry_path, is_lib_pkg) = if let Some(lt) = m.lib.as_ref() {
-        (lt.path.clone(), true)
-    } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
-        (m.bins[0].path.clone(), false)
-    } else if m.bins.len() == 1 {
-        let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
-        if !guess.is_file() {
-            eprintln!(
-                "cpc check: bin entry `{}` not found, and no `{}` fallback either",
-                m.bins[0].path.display(),
-                guess.display()
-            );
-            return ExitCode::FAILURE;
-        }
-        (guess, true)
-    } else {
-        eprintln!(
-            "cpc check: project must declare at most one [[bin]]; found {}",
-            m.bins.len()
-        );
-        return ExitCode::FAILURE;
+    let (entry_path, is_lib_pkg) = match resolve_project_entry(&m, "cpc check") {
+        Ok(v) => v,
+        Err(code) => return code,
     };
     if let Err(code) = collect_dep_link_args(&m, diag_mode) {
         return code;
@@ -2132,6 +2126,226 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
     ) {
         Ok(_) => ExitCode::SUCCESS,
         Err(code) => code,
+    }
+}
+
+/// Shared whole-project entry resolution for `cpc check` / `--realtime-report`:
+/// [lib], then a single real [[bin]], then the `src/<package-name>.cplus`
+/// fallback for library-only packages that declare no on-disk target. `ctx` is
+/// the command label used in error messages.
+fn resolve_project_entry(
+    m: &manifest::Manifest,
+    ctx: &str,
+) -> Result<(PathBuf, bool), ExitCode> {
+    if let Some(lt) = m.lib.as_ref() {
+        Ok((lt.path.clone(), true))
+    } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
+        Ok((m.bins[0].path.clone(), false))
+    } else if m.bins.len() == 1 {
+        let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
+        if !guess.is_file() {
+            eprintln!(
+                "{ctx}: bin entry `{}` not found, and no `{}` fallback either",
+                m.bins[0].path.display(),
+                guess.display()
+            );
+            return Err(ExitCode::FAILURE);
+        }
+        Ok((guess, true))
+    } else {
+        eprintln!(
+            "{ctx}: project must declare at most one [[bin]]; found {}",
+            m.bins.len()
+        );
+        Err(ExitCode::FAILURE)
+    }
+}
+
+/// v0.0.13 (topic C tail): `--realtime-report[=json]`. Runs the whole-project
+/// front-end (reads `Cplus.toml`, applies `[profile.realtime]`, lowers, sema-
+/// checks) and prints a digest of the real-time contract analysis: which
+/// functions carry a contract, and every E0901 (`#[no_alloc]`) / E0907
+/// (`#[no_block]`) / E0906 (`#[bounded_recursion]`) / E0908 (`#[max_stack]`)
+/// violation, grouped by contract. `cpc check` already *gates* the build; this
+/// is the machine-readable summary view deferred from real-time Phase 8.
+///
+/// Exits non-zero when any contract violation (or other front-end error) is
+/// present, so CI can use it as a gate that also produces an artifact.
+fn run_realtime_report(json: bool) -> ExitCode {
+    use cplus_core::ast::{Attribute, ItemKind};
+
+    let manifest_path = PathBuf::from("Cplus.toml");
+    let m = match manifest::load(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), DiagMode::Human, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (entry_path, is_lib_pkg) = match resolve_project_entry(&m, "cpc --realtime-report") {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
+    let mut loaded = match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names)) {
+        Ok(l) => l,
+        Err(failure) => {
+            emit_diag(&failure.to_diagnostic(), DiagMode::Human, failure.primary_source().unwrap_or(""));
+            return ExitCode::FAILURE;
+        }
+    };
+    let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
+
+    // Attributes must validate before we can trust the contract markers.
+    let attr_diags = attrs::check_multi(&loaded.program, entry_path.clone(), &entry_src, loaded.files.clone());
+    if attr_diags.iter().any(|d| matches!(d.severity, Severity::Error)) {
+        for d in &attr_diags {
+            emit_diag(d, DiagMode::Human, &entry_src);
+        }
+        return ExitCode::FAILURE;
+    }
+    // Synthesize the profile contracts onto local functions, exactly as the
+    // real build does, so the report reflects the project's actual gate.
+    if let Some(profile) = m.realtime_profile.as_ref() {
+        apply_realtime_profile(&mut loaded.program, &loaded.files, &m.root, profile);
+    }
+    let lower_diags = lower::lower(&mut loaded.program, &entry_path, &entry_src);
+    if lower_diags.iter().any(|d| matches!(d.severity, Severity::Error)) {
+        for d in &lower_diags {
+            emit_diag(d, DiagMode::Human, &entry_src);
+        }
+        return ExitCode::FAILURE;
+    }
+    // Run sema and KEEP the diagnostics (don't early-return on errors — the
+    // whole point is to surface the contract violations).
+    let (diags, _mono) = sema::check_multi_with_mono(&loaded.program, entry_path.clone(), &entry_src, loaded.files.clone());
+
+    // Map a real-time diagnostic code to its contract name.
+    fn contract_of(code: &str) -> Option<&'static str> {
+        match code {
+            "E0901" => Some("no_alloc"),
+            "E0907" => Some("no_block"),
+            "E0906" => Some("bounded_recursion"),
+            "E0908" => Some("max_stack"),
+            _ => None,
+        }
+    }
+    let violations: Vec<_> = diags
+        .iter()
+        .filter(|d| contract_of(d.code.0).is_some())
+        .collect();
+    let other_errors = diags
+        .iter()
+        .filter(|d| matches!(d.severity, Severity::Error) && contract_of(d.code.0).is_none())
+        .count();
+    let count = |c: &str| violations.iter().filter(|d| contract_of(d.code.0) == Some(c)).count();
+
+    // Count functions/methods carrying at least one real-time contract.
+    fn has_rt(attrs: &[Attribute]) -> bool {
+        attrs.iter().any(|a| {
+            matches!(
+                a.path.name.as_str(),
+                "no_alloc" | "no_block" | "bounded_recursion" | "realtime" | "max_stack"
+            )
+        })
+    }
+    let mut covered = 0usize;
+    for item in &loaded.program.items {
+        match &item.kind {
+            ItemKind::Function(f) if has_rt(&f.attributes) => covered += 1,
+            ItemKind::Impl(b) => {
+                for mth in &b.methods {
+                    if has_rt(&mth.attributes) {
+                        covered += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if json {
+        let viol_json: Vec<serde_json::Value> = violations
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "code": d.code.0,
+                    "contract": contract_of(d.code.0).unwrap(),
+                    "message": d.message,
+                    "file": d.primary.file.display().to_string(),
+                    "line": d.primary.start.line,
+                    "col": d.primary.start.col,
+                })
+            })
+            .collect();
+        let profile_json = m.realtime_profile.as_ref().map(|p| {
+            serde_json::json!({
+                "deny_alloc": p.deny_alloc,
+                "deny_block": p.deny_block,
+                "deny_unknown_extern": p.deny_unknown_extern,
+                "stack_limit": p.stack_limit,
+            })
+        });
+        let report = serde_json::json!({
+            "kind": "realtime-report",
+            "profile": profile_json,
+            "functions_under_contract": covered,
+            "summary": {
+                "no_alloc": count("no_alloc"),
+                "no_block": count("no_block"),
+                "bounded_recursion": count("bounded_recursion"),
+                "max_stack": count("max_stack"),
+                "total": violations.len(),
+            },
+            "other_errors": other_errors,
+            "violations": viol_json,
+            "clean": violations.is_empty() && other_errors == 0,
+        });
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else {
+        println!("real-time report — {}", m.package.name);
+        match m.realtime_profile.as_ref() {
+            Some(p) => println!(
+                "  profile: deny_alloc={} deny_block={} deny_unknown_extern={} stack_limit={}",
+                p.deny_alloc,
+                p.deny_block,
+                p.deny_unknown_extern,
+                p.stack_limit.map(|n| n.to_string()).unwrap_or_else(|| "none".to_string())
+            ),
+            None => println!("  profile: (none — per-function contracts only)"),
+        }
+        println!("  functions under contract: {covered}");
+        println!(
+            "  violations: {} (no_alloc={}, no_block={}, bounded_recursion={}, max_stack={})",
+            violations.len(),
+            count("no_alloc"),
+            count("no_block"),
+            count("bounded_recursion"),
+            count("max_stack")
+        );
+        for d in &violations {
+            println!(
+                "    [{}] {} {}:{}:{}: {}",
+                contract_of(d.code.0).unwrap(),
+                d.code.0,
+                d.primary.file.display(),
+                d.primary.start.line,
+                d.primary.start.col,
+                d.message
+            );
+        }
+        if violations.is_empty() && other_errors == 0 {
+            println!("  clean");
+        }
+        if other_errors > 0 {
+            println!("  note: {other_errors} other front-end error(s) — run `cpc check` for details");
+        }
+    }
+
+    if violations.is_empty() && other_errors == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 

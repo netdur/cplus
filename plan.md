@@ -50,8 +50,12 @@ The largest *designed-but-deferred* arc; `plan.own.md` already specs it.
 ### C. Real-time tail (additive; the roadmap's wrapped, these are the long tail)
 - **`rt_linux` / `rt_posix`** siblings of `vendor/rt_darwin` (CLOCK_MONOTONIC=1,
   `sched_setaffinity`, `pthread_setschedparam`).
-- **`--realtime-report`** — the machine-readable summary view deferred from
-  Phase 8 (`cpc check` already gates; this aggregates violations).
+- **`--realtime-report`** — **SHIPPED.** `cpc --realtime-report[=json]` runs the
+  whole-project front-end (applies `[profile.realtime]`, lowers, sema-checks) and
+  prints a digest: the active profile, functions-under-contract count, and every
+  E0901/E0906/E0907/E0908 violation grouped by contract; exits non-zero on any
+  (CI gate + artifact). Shared the `cpc check` entry-resolution into a helper.
+  cpc-side + e2e tested (violation/clean).
 - **`#[no_alloc]` drop-glue** — reject a `Drop` destructor that allocates, run
   implicitly at scope exit (needs ownership analysis; pairs with topic A).
 

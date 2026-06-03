@@ -17913,6 +17913,72 @@ fn inline_always_inlines_at_debug_o0() {
     assert_eq!(run.status.code(), Some(6), "expected exit 6");
 }
 
+// v0.0.13 (topic C tail): `--realtime-report` digest of the contract analysis.
+// A `[profile.realtime]` project with an allocating function reports the E0901 /
+// E0907 violations as JSON and exits non-zero (CI gate + artifact). No deps, so
+// no vendor symlink needed.
+#[test]
+fn realtime_report_json_flags_violations() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"rt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"rt\"\npath = \"src/main.cplus\"\n\
+         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "extern fn malloc(n: usize) -> *u8;\n\
+         fn bad() -> i32 { let p: *u8 = unsafe { malloc(8 as usize) }; if p.is_null() { return 1; } return 0; }\n\
+         fn main() -> i32 { return bad(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--realtime-report=json")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc --realtime-report=json");
+    // Non-zero: violations present (CI gate).
+    assert!(!out.status.success(), "expected non-zero exit on violations");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"kind\": \"realtime-report\""), "stdout:\n{stdout}");
+    assert!(stdout.contains("E0901"), "expected a no_alloc violation; stdout:\n{stdout}");
+    assert!(stdout.contains("\"clean\": false"), "stdout:\n{stdout}");
+    assert!(stdout.contains("\"no_alloc\": 1"), "stdout:\n{stdout}");
+}
+
+#[test]
+fn realtime_report_clean_exits_zero() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"rt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         [[bin]]\nname = \"rt\"\npath = \"src/main.cplus\"\n\
+         [profile.realtime]\ndeny_alloc = true\ndeny_block = true\nstack_limit = 4096\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn good(x: i32) -> i32 { return x +% 1; }\n\
+         fn main() -> i32 { return good(41); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--realtime-report")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc --realtime-report");
+    assert!(out.status.success(), "clean project must exit zero");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("clean"), "stdout:\n{stdout}");
+    assert!(stdout.contains("functions under contract: 2"), "stdout:\n{stdout}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

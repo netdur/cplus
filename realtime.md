@@ -370,8 +370,11 @@ is subsumed by `deny_alloc`/`deny_block` (both already reject unknown externs).
 `cpc check` (no FILE) runs the whole-project front-end (lex → parse → sema →
 borrowck, including the profile gate) and stops before codegen — the fast CI
 gate. `--diagnostics=json` emits one machine-readable diagnostic object per line
-for editor/CI tooling. Remaining for a later pass: a dedicated
-`--realtime-report` summary view and `Send`/`Sync` (Phase 6) violation kinds.
+for editor/CI tooling. `cpc --realtime-report[=json]` (v0.0.13) runs the same
+analysis but prints a **digest** — the active profile, functions-under-contract
+count, and every E0901/E0906/E0907/E0908 violation grouped by contract — exiting
+non-zero on any violation (CI gate + artifact). Remaining for a later pass:
+`Send`/`Sync` (Phase 6) violation kinds in the report.
 
 Compiler commands:
 

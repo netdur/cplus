@@ -1616,6 +1616,13 @@ stack_limit         = 4096
 profile gate, and stops before codegen; it's the fast CI command.
 `--diagnostics=json` emits machine-readable violations.
 
+`cpc --realtime-report` (add `=json` for machine-readable) runs the same
+whole-project analysis but prints a **digest** instead of the raw diagnostics:
+the active profile, how many functions are under a real-time contract, and every
+`#[no_alloc]` (E0901) / `#[no_block]` (E0907) / `#[bounded_recursion]` (E0906) /
+`#[max_stack]` (E0908) violation grouped by contract. It exits non-zero when any
+violation is present, so CI can use it as a gate that also emits an artifact.
+
 `Send` / `Sync` are tightened so the threadsafe contract is real: `Rc[T]` is
 `!Send` + `!Sync` and `MutexGuard[T]` is `!Send`, so passing one to a `Send` /
 `Sync`-bounded generic (e.g. `thread::spawn`) is rejected (**E0502**); `Arc[T]`
@@ -2386,6 +2393,8 @@ cpc FILE.cplus -o BIN          # single-file build
 cpc check FILE                 # parse + sema only — fast feedback (single file)
 cpc check                      # whole-project front-end check (reads Cplus.toml,
                                #   enforces [profile.realtime]); no codegen — CI gate
+cpc --realtime-report[=json]   # whole-project real-time contract digest
+                               #   (profile + per-contract violations); non-zero on any
 cpc fmt FILE                   # canonical format in place
 cpc fmt --check DIR            # CI mode — exits 1 on drift
 cpc test                       # run #[test] functions + doctests
