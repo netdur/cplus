@@ -2201,15 +2201,66 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
             g.members(ty)
         }
         "symbols" => g.symbols(arg0),
-        "refs" | "callers" | "callees" | "call-hierarchy" | "type-at" | "context" => {
+        "callers" | "callees" => {
+            let Some(sym) = arg0 else {
+                eprintln!("cpc query {kind}: expected a FN");
+                return ExitCode::FAILURE;
+            };
+            let out = if kind == "callers" {
+                g.callers_json(sym)
+            } else {
+                g.callees_json(sym)
+            };
+            return match out {
+                Some(j) => {
+                    println!("{j}");
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("cpc query {kind}: `{sym}` is not a known function or method");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        "call-hierarchy" => {
+            let Some(sym) = arg0 else {
+                eprintln!("cpc query call-hierarchy: expected a FN");
+                return ExitCode::FAILURE;
+            };
+            // `--depth N` (default 3) is appended to args by the CLI parser.
+            let mut depth: u32 = 3;
+            let mut it = args.iter();
+            while let Some(a) = it.next() {
+                if a == "--depth" {
+                    if let Some(v) = it.next() {
+                        depth = v.parse().unwrap_or(3);
+                    }
+                }
+            }
+            return match g.call_hierarchy_json(sym, depth) {
+                Some(j) => {
+                    println!("{j}");
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!("cpc query call-hierarchy: `{sym}` is not a known function or method");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        "refs" | "type-at" | "context" => {
             eprintln!(
-                "cpc query {kind}: not available in this build — it ships the Phase 1 index \
-                 (def, members, symbols). Call/reference/type queries land in a later phase."
+                "cpc query {kind}: not available in this build — call edges (callers/callees/\
+                 call-hierarchy) and def/members/symbols are. Reference, type-at, and context \
+                 queries land in a later phase."
             );
             return ExitCode::FAILURE;
         }
         other => {
-            eprintln!("cpc query: unknown query kind `{other}` (expected: def | members | symbols)");
+            eprintln!(
+                "cpc query: unknown query kind `{other}` \
+                 (expected: def | members | symbols | callers | callees | call-hierarchy)"
+            );
             return ExitCode::FAILURE;
         }
     };

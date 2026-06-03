@@ -17488,17 +17488,64 @@ fn query_missing_symbol_exits_nonzero() {
 fn query_unimplemented_kind_reports_and_fails() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = graph_project();
+    // `refs` is still deferred (call edges are now implemented).
     let out = Command::new(cpc)
-        .args(["query", "callers", "Point"])
+        .args(["query", "refs", "Point"])
         .current_dir(&dir)
         .output()
-        .expect("invoke cpc query callers");
+        .expect("invoke cpc query refs");
     assert!(!out.status.success(), "deferred query must exit non-zero");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
         err.contains("not available in this build"),
         "expected a clear deferred-feature message, got: {err}"
     );
+}
+
+#[test]
+fn query_callers_and_callees_resolve_method_calls() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    // graph_project's main: `let p: Point = ...; p.sum()` → main calls Point::sum.
+    let callers = Command::new(cpc)
+        .args(["query", "callers", "sum"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query callers");
+    assert!(callers.status.success());
+    let c = String::from_utf8_lossy(&callers.stdout);
+    assert!(c.contains("\"name\": \"main\""), "main should call sum: {c}");
+    assert!(c.contains("\"unresolved\""), "callers carries unresolved count: {c}");
+
+    let callees = Command::new(cpc)
+        .args(["query", "callees", "main"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query callees");
+    assert!(callees.status.success());
+    let ce = String::from_utf8_lossy(&callees.stdout);
+    assert!(ce.contains("\"name\": \"sum\""), "callees of main include sum: {ce}");
+}
+
+#[test]
+fn query_call_hierarchy_and_unknown_fn() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let h = Command::new(cpc)
+        .args(["query", "call-hierarchy", "main", "--depth", "2"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query call-hierarchy");
+    assert!(h.status.success());
+    assert!(String::from_utf8_lossy(&h.stdout).contains("\"kind\": \"call-hierarchy\""));
+
+    // An unknown function name exits non-zero.
+    let u = Command::new(cpc)
+        .args(["query", "callers", "does_not_exist"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query callers");
+    assert!(!u.status.success(), "unknown fn must exit non-zero");
 }
 
 fn tempdir() -> std::path::PathBuf {

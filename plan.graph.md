@@ -6,8 +6,9 @@ The bet is the same one the GPU and SIMD plans make: `cpc` already computes the 
 
 ## Status (v0.0.13)
 
-- **Phase 1 shipped.** `cplus-core/src/graph.rs` builds the index — nodes for modules, functions, extern fns, methods, structs/enums and their fields/variants, consts, statics, type aliases, interfaces — with stable source-name symbol IDs (`src.uuid::Uuid::new_v4`, never a mangled form) and resolved `file:line:col`, plus the structural edges `defines` / `has_method` / `has_field` / `has_variant`. CLI: `cpc graph` (whole graph as JSON) and `cpc query def | members | symbols` (JSON; exit code signals found/not-found). The remaining query kinds (`refs` / `callers` / `callees` / `call-hierarchy` / `type-at` / `context`) report "not available in this build" and exit non-zero, so nothing reads as done that isn't. Unit + e2e tested.
-- **Phases 3–7 open.** Call edges (Phase 3) are next; the resolution options and the staged decision are recorded in §12.
+- **Phase 1 shipped.** `cplus-core/src/graph.rs` builds the index — nodes for modules, functions, extern fns, methods, structs/enums and their fields/variants, consts, statics, type aliases, interfaces — with stable source-name symbol IDs (`src.uuid::Uuid::new_v4`, never a mangled form) and resolved `file:line:col`, plus the structural edges `defines` / `has_method` / `has_field` / `has_variant`. CLI: `cpc graph` (whole graph as JSON) and `cpc query def | members | symbols`.
+- **Phase 3 shipped (call edges).** `Calls` edges resolved structurally per the §12 decision (option A): free/associated calls by name, method calls by receiver type where it is locally known (`self`, or a typed local/param); ambiguous or non-locally-typed receivers are counted in `unresolved_calls`, never mis-linked. CLI: `cpc query callers | callees | call-hierarchy [--depth N]`, each carrying an explicit `unresolved` count (the honesty signal). Verified on `vendor/uuid`. Unit + e2e tested (16 unit + 6 e2e; full suite green).
+- **Phases 4–7 open.** Reference edges (Phase 4) are next; `cpc query refs | type-at | context` report "not available in this build" and exit non-zero, so nothing reads as done that isn't. The Phase 4 receiver-type precision upgrade (option B, sema-retained resolution) remains the path to driving `unresolved` toward zero (§12).
 
 ---
 
