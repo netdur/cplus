@@ -16443,6 +16443,41 @@ fn main() -> i32 {
     );
 }
 
+#[test]
+fn no_alloc_drop_glue_rejected_at_compile_time() {
+    // A `#[no_alloc]` function with a `string` local: the scope-exit drop
+    // frees the buffer (deallocation), so it must fail to compile (E0901)
+    // even though no `malloc`/`free` call appears in the body.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("na.cplus");
+    std::fs::write(
+        &src,
+        "\
+#[no_alloc]
+fn f(s: str) -> i32 {
+    let owned: string = s.to_string();
+    return 0;
+}
+fn main() -> i32 { return 0; }
+",
+    )
+    .unwrap();
+    let bin = dir.join("na");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected compile failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0901"),
+        "expected E0901 for no_alloc drop glue; stderr:\n{stderr}"
+    );
+}
+
 // ---- v0.0.9 Phase 2: character literals 'a' ----
 
 #[test]

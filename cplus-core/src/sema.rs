@@ -651,6 +651,7 @@ fn check_with_files_inner<'a>(
         interfaces: HashMap::new(),
         interface_impls: std::collections::HashSet::new(),
         marker_overrides: HashMap::new(),
+        no_alloc_drop_types: std::collections::HashSet::new(),
         fns_generic: HashMap::new(),
         fn_instantiations: std::collections::BTreeSet::new(),
         call_monos: HashMap::new(),
@@ -698,6 +699,10 @@ fn check_with_files_inner<'a>(
     cx.collect_consts_and_statics(program);
     cx.check_main_signature(program);
     cx.validate_interface_impls(program);
+    // v0.0.14 `#[no_alloc]` drop-glue: record which types have a
+    // `#[no_alloc]`-marked `drop` before body-checking, so the scope-exit
+    // drop-glue check in `check_stmt` can consult it.
+    cx.collect_no_alloc_drop_types(program);
     cx.lint_generic_fn_bodies(program);
     cx.check_functions(program);
     cx.check_methods(program);
@@ -983,6 +988,14 @@ struct SemaCx<'a> {
     /// Handle {}`). Consulted by `is_send`/`is_sync` to re-enable a type the
     /// structural raw-pointer rule would otherwise reject.
     marker_overrides: HashMap<(String, String), Vec<Vec<String>>>,
+    /// v0.0.14 `#[no_alloc]` drop-glue: leaf names of types whose user `drop`
+    /// method carries `#[no_alloc]`/`#[realtime]` (so its body was verified
+    /// non-allocating by `check_no_alloc`). A drop-carrying local in a
+    /// `#[no_alloc]` fn is rejected unless every destructor its scope-exit
+    /// teardown runs is in this set (or is a pure auto field-drop with no
+    /// heap-freeing leaf). `string`/`Vec`/`Box` are never in it — their drop
+    /// frees.
+    no_alloc_drop_types: std::collections::HashSet<String>,
     /// Slice 7GEN.5a: generic-fn signature table. Indexed by name;
     /// disjoint from `fns` (a fn is in exactly one of the two tables
     /// based on whether `generic_params` is non-empty).
@@ -1770,6 +1783,57 @@ impl SemaCx<'_> {
             }
             Ty::Array(elem, _) => self.ty_carries_drop(elem),
             _ => false,
+        }
+    }
+
+    /// v0.0.14 `#[no_alloc]` drop-glue: record the leaf names of types whose
+    /// `drop` method carries `#[no_alloc]`/`#[realtime]`. Such a `drop` body
+    /// has already been verified non-allocating by `check_no_alloc`, so
+    /// running it implicitly at scope exit is allowed inside a `#[no_alloc]`
+    /// function.
+    fn collect_no_alloc_drop_types(&mut self, p: &Program) {
+        for item in &p.items {
+            let ItemKind::Impl(b) = &item.kind else {
+                continue;
+            };
+            // Inherent impls only carry `drop`; an interface impl never does.
+            if b.interface_name.is_some() {
+                continue;
+            }
+            for m in &b.methods {
+                if m.name.name == "drop" && marks_no_alloc(&m.attributes) {
+                    self.no_alloc_drop_types
+                        .insert(name_leaf(&b.target.name).to_string());
+                }
+            }
+        }
+    }
+
+    /// v0.0.14 `#[no_alloc]` drop-glue: is the scope-exit teardown of `ty`
+    /// non-allocating? `string` (and any `Vec`/`Box`-style type) frees its
+    /// buffer, so it is never safe. A struct with a user `drop` is safe only
+    /// if that `drop` is `#[no_alloc]` (its body verified by `check_no_alloc`);
+    /// then its auto-dropped fields must each be safe too. Enums recurse into
+    /// payloads; arrays into elements. Non-drop types are trivially safe.
+    fn no_alloc_safe_drop(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::String => false,
+            Ty::Struct(id) => {
+                let def = &self.structs[id.0 as usize];
+                if def.is_drop && !self.no_alloc_drop_types.contains(name_leaf(&def.name)) {
+                    return false;
+                }
+                let fields = def.fields.clone();
+                fields.iter().all(|(_, fty, _)| self.no_alloc_safe_drop(fty))
+            }
+            Ty::Enum(id) => {
+                let variants = self.enums[id.0 as usize].variants.clone();
+                variants
+                    .iter()
+                    .all(|v| v.payload.iter().all(|t| self.no_alloc_safe_drop(t)))
+            }
+            Ty::Array(elem, _) => self.no_alloc_safe_drop(elem),
+            _ => true,
         }
     }
 
@@ -4607,6 +4671,22 @@ impl SemaCx<'_> {
                         (final_ty, false)
                     }
                 };
+                // v0.0.14 `#[no_alloc]` drop-glue: a local whose scope-exit
+                // teardown frees heap (a `string`/`Vec`/`Box`) or runs a
+                // `drop` not marked `#[no_alloc]` would allocate/deallocate at
+                // the closing brace — invisible in the body but real. Reject it
+                // in a `#[no_alloc]` function.
+                if self.current_fn_no_alloc && !self.no_alloc_safe_drop(&final_ty) {
+                    self.err(
+                        "E0901",
+                        format!(
+                            "`#[no_alloc]` function: local `{}` of type `{}` runs an allocating destructor at scope exit (its `drop` frees heap or is not marked `#[no_alloc]`)",
+                            name.name,
+                            ty_display(&final_ty),
+                        ),
+                        s.span,
+                    );
+                }
                 let borrow_roots = if matches!(final_ty, Ty::Str | Ty::Slice(_)) {
                     init.as_ref()
                         .map(|e| self.returned_borrow_roots(e))
@@ -19090,6 +19170,100 @@ mod tests {
         // Interpolation allocates but does not block — fine under #[no_block].
         assert_clean(
             "#[no_block] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // ---- v0.0.14: #[no_alloc] drop-glue (implicit scope-exit destructors) ----
+
+    #[test]
+    fn no_alloc_string_local_drops_at_scope_exit_e0901() {
+        // A `string` local frees its buffer at scope exit — invisible in the
+        // body, but the drop glue deallocates. (`malloc`/`to_string` is not
+        // even called here; the local is built from a static literal slice.)
+        let codes = errors(
+            "#[no_alloc] fn f(s: str) -> i32 {\n\
+                 let owned: string = s.to_string();\n\
+                 return 0;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_local_with_freeing_drop_e0901() {
+        // A struct whose `drop` frees (and is not itself #[no_alloc]): the
+        // scope-exit teardown deallocates. Constructed from a passed-in raw
+        // pointer, so no allocating *call* appears in the body — the drop glue
+        // is the sole violation.
+        let codes = errors(
+            "extern fn free(p: *u8);\n\
+             struct Handle { opaque p: *u8 }\n\
+             impl Handle { fn drop(mut self) { unsafe { free(self.p); }; } }\n\
+             #[no_alloc] fn f(raw: *u8) -> i32 {\n\
+                 let h: Handle = Handle { p: raw };\n\
+                 return 0;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_local_with_no_alloc_drop_clean() {
+        // A `#[no_alloc]` drop is verified non-allocating, so running it at
+        // scope exit is allowed.
+        assert_clean(
+            "struct Tracker { opaque p: *u8 }\n\
+             impl Tracker { #[no_alloc] fn drop(mut self) { return; } }\n\
+             #[no_alloc] fn f(raw: *u8) -> i32 {\n\
+                 let t: Tracker = Tracker { p: raw };\n\
+                 return 0;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_field_carries_freeing_drop_e0901() {
+        // The rule reaches through fields: a struct holding a `string` field
+        // auto-drops that field (freeing) at scope exit.
+        let codes = errors(
+            "struct Wrap { name: string, tag: i32 }\n\
+             #[no_alloc] fn f(s: str) -> i32 {\n\
+                 let w: Wrap = Wrap { name: s.to_string(), tag: 1 };\n\
+                 return 0;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_non_drop_local_clean() {
+        // A plain non-drop local (Copy / no owning fields) has no scope-exit
+        // teardown — allowed.
+        assert_clean(
+            "struct Pt { x: i32, y: i32 }\n\
+             #[no_alloc] fn f() -> i32 {\n\
+                 let p: Pt = Pt { x: 1, y: 2 };\n\
+                 return p.x;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_opaque_ptr_local_without_drop_clean() {
+        // A raw-pointer-holding struct with NO `drop` (the pointer is `opaque`,
+        // freed elsewhere) has no scope-exit teardown — allowed.
+        assert_clean(
+            "struct View { opaque p: *u8 }\n\
+             #[no_alloc] fn f(raw: *u8) -> i32 {\n\
+                 let v: View = View { p: raw };\n\
+                 return 0;\n\
+             }\n\
              fn main() -> i32 { return 0; }",
         );
     }
