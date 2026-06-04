@@ -1,0 +1,44 @@
+// Minimal reproducer: codegen discards the value of an `if`-expression
+// whose branches construct a payload-carrying enum variant, when that
+// `if` sits in a value position (here, a `match` arm).
+//
+// Expected: pick(Tag::A, true) builds `Out::Hi(7)`, so main returns 0.
+// Actual:   the `if`'s result is never stored into the match-result slot,
+//           so `r` reads uninitialized memory. main returns 100 + garbage.
+//
+// Build + run:
+//   cpc build && ./target/debug/repro ; echo "exit=$?"
+//   exit 0  -> bug is fixed
+//   exit !=0 -> bug present (the value 7 was lost; some other tag was read)
+
+enum Tag { A, B }
+
+// `Out` variants carry a payload. THIS is the trigger: a payload-carrying
+// enum constructor (`Out::Hi(7)`) is lowered as `Call { callee: Path }`,
+// a shape the if-result type predictor in codegen does not recognize.
+// (Payload-LESS variants — `Out::Hi` — and struct literals both work.)
+enum Out { Hi(i32), Lo(i32) }
+
+fn pick(t: Tag, flag: bool) -> Out {
+    // The `Tag::A` arm's body is an `if`-expression that yields an `Out`.
+    // The `Tag::B` arm yields an `Out` directly. Only the direct arm
+    // gets its value stored into the match-result slot; the `if`-arm's
+    // value is built into a throwaway alloca and dropped on the floor.
+    let r: Out = match t {
+        Tag::A => {
+            if flag { Out::Hi(7) } else { Out::Lo(8) }
+        }
+        Tag::B => Out::Lo(30),
+    };
+    return r;
+}
+
+fn main() -> i32 {
+    let o: Out = pick(Tag::A, true);   // should be Out::Hi(7)
+    let code: i32 = match o {
+        Out::Hi(x) => x,               // expect 7
+        Out::Lo(_) => 99,              // bug: arm reached with garbage
+    };
+    if code != 7 { return 100 +% code; }
+    return 0;
+}

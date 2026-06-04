@@ -16314,6 +16314,64 @@ fn mixed_if_arm_field_tail_compiles_and_runs() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n");
 }
 
+// ---- v0.0.14: if-arm building a payload-carrying enum ctor ----
+
+#[test]
+fn if_arm_payload_enum_ctor_value_not_discarded() {
+    // An `if`-expression whose branches build a payload-carrying enum
+    // constructor (`Out::Hi(7)`, lowered as `Call { callee: Path }`),
+    // sitting in a value position (a `match` arm). Pre-fix,
+    // `expr_value_ty_with_bindings` didn't recognize the `Call{Path}`
+    // enum-ctor shape, so `gen_if` allocated no result slot and the
+    // branch value was silently discarded — the consuming `match` then
+    // read an uninitialized slot. This was the v0.0.14 json `parse()`
+    // miscompile (parsed values read back as Null / spurious Err).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ifarm.cplus");
+    std::fs::write(
+        &src,
+        "\
+enum Tag { A, B }
+enum Out { Hi(i32), Lo(i32) }
+
+fn pick(t: Tag, flag: bool) -> Out {
+    let r: Out = match t {
+        Tag::A => { if flag { Out::Hi(7) } else { Out::Lo(8) } }
+        Tag::B => Out::Lo(30),
+    };
+    return r;
+}
+
+fn main() -> i32 {
+    let o: Out = pick(Tag::A, true);
+    let code: i32 = match o {
+        Out::Hi(x) => x,
+        Out::Lo(_) => 99,
+    };
+    if code != 7 { return 100 +% code; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("ifarm");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for if-arm enum-ctor reproducer");
+    let run = Command::new(&bin).status().expect("run ifarm");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "if-arm enum-ctor value was discarded; expected exit 0, got {:?}",
+        run.code()
+    );
+}
+
 // ---- v0.0.9 Phase 2: character literals 'a' ----
 
 #[test]

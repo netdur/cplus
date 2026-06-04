@@ -7063,13 +7063,23 @@ impl<'a> FnState<'a> {
             // `gen_if` think the if has no value, and the surrounding
             // `let x = if … { call() } else { … };` panics in gen_stmt
             // because `gen_if` returns None.
-            ExprKind::Call { callee, .. } => {
-                if let ExprKind::Ident(name) = &callee.kind {
-                    self.sigs.get(name).map(|sig| sig.return_type.clone())
-                } else {
-                    None
-                }
-            }
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(name) => self.sigs.get(name).map(|sig| sig.return_type.clone()),
+                // v0.0.14: payload-carrying enum constructor (`Out::Hi(7)`) is a
+                // `Call` whose callee is a `Path` naming an enum variant. Without
+                // this arm the predictor returns None, `gen_if` allocates no
+                // result slot, and an if-branch that builds such a value has its
+                // result silently discarded — miscompiling
+                // `match … { A => { if c { E::X(v) } else { E::Y(w) } } … }`
+                // (the json `parse()` shape). Mirrors the payload-less `Path`
+                // arm below.
+                ExprKind::Path { segments } if segments.len() >= 2 => self
+                    .types
+                    .enum_by_name
+                    .get(&segments[0].name)
+                    .map(|&id| Ty::Enum(id)),
+                _ => None,
+            },
             // v0.0.8 bench-gap finding 3: struct-literal expressions
             // produce a `Ty::Struct(id)`. The (generic) variant has
             // been monomorphized by the time codegen sees it, so the
@@ -14168,6 +14178,46 @@ mod tests {
         let ir = gen_src("fn main() -> i32 { return 42; }");
         assert!(ir.contains("i32 @main()"));
         assert!(ir.contains("ret i32 42"));
+    }
+
+    #[test]
+    fn if_arm_payload_enum_ctor_forwards_value_to_match_slot() {
+        // v0.0.14 regression: a match arm whose body is an `if` building a
+        // payload-carrying enum ctor (`Out::Hi(7)`, lowered as Call{Path})
+        // must forward the if's value into the match-result slot. Pre-fix,
+        // `expr_value_ty_with_bindings` didn't recognize the Call{Path} enum
+        // ctor, so `gen_if` allocated no result slot and each if-branch built
+        // its value then dropped it (the if-merge block was a bare `br`) —
+        // the match then read an uninitialized slot. We assert the fix at the
+        // IR level: both if-branches and the direct arm must emit an aggregate
+        // `store %enum` of their value (so the merge sees a written slot on
+        // every path). Pre-fix there were only 2 such stores (direct arm +
+        // the let reload); the fix raises it to >= 4.
+        let ir = gen_src(
+            "enum Tag { A, B }\n\
+             enum Out { Hi(i32), Lo(i32) }\n\
+             fn pick(t: Tag, flag: bool) -> Out {\n\
+                 let r: Out = match t {\n\
+                     Tag::A => { if flag { Out::Hi(7) } else { Out::Lo(8) } }\n\
+                     Tag::B => Out::Lo(30),\n\
+                 };\n\
+                 return r;\n\
+             }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let pick = ir
+            .split("@pick")
+            .nth(1)
+            .expect("pick defined")
+            .split("\n}")
+            .next()
+            .expect("pick body");
+        let agg_stores = pick.matches("store %enum").count();
+        assert!(
+            agg_stores >= 4,
+            "if-arm enum-ctor value dropped: expected >=4 aggregate enum stores \
+             in @pick (both if-branches + merge + direct arm), got {agg_stores}.\n{pick}"
+        );
     }
 
     #[test]
