@@ -429,7 +429,46 @@ impl CodeGraph {
         }
 
         resolve_call_edges(&mut g, &callables, &sig_type_refs, &resolve);
+        g.add_inferred_type_spots(proj, &linemaps);
         g
+    }
+
+    /// v0.0.14 graph value-depth: run sema with type-retention on and add a
+    /// `TypeSpot` for every inferred expression — call results, arithmetic,
+    /// field/index reads, `match`/`if` values — the cases the AST-only passes
+    /// can't see. These coexist with the annotated spots; `type_at` returns the
+    /// narrowest, so an annotated parameter/field still wins at its own span.
+    fn add_inferred_type_spots(&mut self, proj: &LoadedProject, linemaps: &BTreeMap<String, LineMap>) {
+        let Some((entry_path, entry_src)) = proj.files.get(&proj.entry_file_id) else {
+            return;
+        };
+        let (_diags, mono) = crate::sema::check_multi_with_value_types(
+            &proj.program,
+            entry_path.clone(),
+            entry_src,
+            proj.files.clone(),
+        );
+        for (fid_opt, span, ty) in mono.value_types {
+            let fid = fid_opt.unwrap_or_else(|| proj.entry_file_id.clone());
+            let Some((path, src)) = proj.files.get(&fid) else {
+                continue;
+            };
+            let Some(lm) = linemaps.get(&fid) else {
+                continue;
+            };
+            let pos = lm.position(span.start, src);
+            self.type_spots.push(TypeSpot {
+                fid: fid.clone(),
+                span,
+                location: Location {
+                    file: path.display().to_string(),
+                    line: pos.line,
+                    col: pos.col,
+                },
+                ty,
+                what: "expression".to_string(),
+            });
+        }
     }
 
     /// Serialize the whole graph as pretty JSON (`cpc graph`).
@@ -1895,5 +1934,36 @@ mod tests {
 
         // A byte in dead space (e.g. offset 0, the `struct` keyword) has no spot.
         assert!(g.type_at("src", 0).is_none());
+    }
+
+    #[test]
+    fn type_at_resolves_inferred_expressions() {
+        // v0.0.14 value-depth: a `mk()` call result and a `p.x` field read are
+        // inferred (not annotated at the use site), so only sema-retention sees
+        // them. They show up as `expression` spots.
+        let src = "struct Point { x: i32 }\n\
+                   fn mk() -> Point { return Point { x: 7 }; }\n\
+                   fn run() -> i32 { let p: Point = mk(); return p.x; }";
+        let g = CodeGraph::build(&project(src));
+        assert!(
+            g.type_spots
+                .iter()
+                .any(|s| s.what == "expression" && s.ty == "Point"),
+            "expected an inferred Point expression spot (the mk() call)"
+        );
+        assert!(
+            g.type_spots
+                .iter()
+                .any(|s| s.what == "expression" && s.ty == "i32"),
+            "expected an inferred i32 expression spot (the p.x read)"
+        );
+        // type_at at the inferred Point spot's own start byte resolves to it.
+        let mk_call = g
+            .type_spots
+            .iter()
+            .find(|s| s.what == "expression" && s.ty == "Point")
+            .unwrap();
+        let at = g.type_at(&mk_call.fid, mk_call.span.start).unwrap();
+        assert_eq!(at.ty, "Point");
     }
 }

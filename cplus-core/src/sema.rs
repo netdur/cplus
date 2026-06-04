@@ -517,6 +517,10 @@ pub struct MonoInfo {
     /// Keyed by the call expression's span. Codegen emits one private
     /// constant `[N x i8]` global per entry.
     pub shader_blobs: HashMap<ByteSpan, Vec<u8>>,
+    /// v0.0.14 graph value-depth: `(origin_file, expr_span, rendered_type)` for
+    /// every type-checked expression. Empty unless the graph/LSP entry point
+    /// requested it; backs inferred `type-at`.
+    pub value_types: Vec<(Option<String>, ByteSpan, String)>,
 }
 
 /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: one resolved `include_bytes!` or
@@ -567,7 +571,20 @@ pub fn check_multi_with_mono(
     entry_src: &str,
     files: std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> (Vec<Diagnostic>, MonoInfo) {
-    check_with_files_inner(program, entry_file, entry_src, files)
+    check_with_files_inner(program, entry_file, entry_src, files, false)
+}
+
+/// v0.0.14 graph value-depth entry: like `check_multi_with_mono`, but also
+/// records every expression's resolved type into `MonoInfo.value_types` for
+/// the code-knowledge-graph `type-at` index. Used by `cpc graph`/LSP, not the
+/// compile path (which never pays the recording cost).
+pub fn check_multi_with_value_types(
+    program: &Program,
+    entry_file: PathBuf,
+    entry_src: &str,
+    files: std::collections::BTreeMap<String, (PathBuf, String)>,
+) -> (Vec<Diagnostic>, MonoInfo) {
+    check_with_files_inner(program, entry_file, entry_src, files, true)
 }
 
 /// Multi-file entry: as `check`, but with a `files` map providing
@@ -592,7 +609,7 @@ fn check_with_files<'a>(
     src: &'a str,
     files_raw: std::collections::BTreeMap<String, (PathBuf, String)>,
 ) -> Vec<Diagnostic> {
-    check_with_files_inner(program, file, src, files_raw).0
+    check_with_files_inner(program, file, src, files_raw, false).0
 }
 
 fn check_with_files_inner<'a>(
@@ -600,6 +617,7 @@ fn check_with_files_inner<'a>(
     file: PathBuf,
     src: &'a str,
     files_raw: std::collections::BTreeMap<String, (PathBuf, String)>,
+    record_types: bool,
 ) -> (Vec<Diagnostic>, MonoInfo) {
     let lm = LineMap::new(src);
     let mut sink = DiagSink::new();
@@ -652,6 +670,8 @@ fn check_with_files_inner<'a>(
         interface_impls: std::collections::HashSet::new(),
         marker_overrides: HashMap::new(),
         no_alloc_drop_types: std::collections::HashSet::new(),
+        record_value_types: false,
+        value_types: Vec::new(),
         fns_generic: HashMap::new(),
         fn_instantiations: std::collections::BTreeSet::new(),
         call_monos: HashMap::new(),
@@ -669,6 +689,7 @@ fn check_with_files_inner<'a>(
         shader_blobs_table: HashMap::new(),
         msg_send_shapes: std::collections::BTreeSet::new(),
     };
+    cx.record_value_types = record_types;
     cx.register_builtins();
     // Type collection order:
     //   1. names (struct + enum)
@@ -840,6 +861,7 @@ fn check_with_files_inner<'a>(
             .collect(),
         selectors: std::mem::take(&mut cx.selectors_table),
         shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
+        value_types: std::mem::take(&mut cx.value_types),
     };
     (sink.into_vec(), mono)
 }
@@ -997,6 +1019,15 @@ struct SemaCx<'a> {
     /// heap-freeing leaf). `string`/`Vec`/`Box` are never in it — their drop
     /// frees.
     no_alloc_drop_types: std::collections::HashSet<String>,
+    /// v0.0.14 graph value-depth: when set, `check_expr` records each
+    /// expression's resolved type into `value_types` (off for normal compiles,
+    /// so they pay nothing). Populated only by the graph/LSP entry point.
+    record_value_types: bool,
+    /// v0.0.14 graph value-depth: `(origin_file, expr_span, rendered_type)` for
+    /// every type-checked expression, in source order. Backs inferred `type-at`
+    /// (call results, arithmetic, field/index, match/if values) — the cases the
+    /// AST-only graph couldn't see.
+    value_types: Vec<(Option<String>, ByteSpan, String)>,
     /// Slice 7GEN.5a: generic-fn signature table. Indexed by name;
     /// disjoint from `fns` (a fn is in exactly one of the two tables
     /// based on whether `generic_params` is non-empty).
@@ -1583,6 +1614,56 @@ impl SemaCx<'_> {
                 .as_ref()
                 .map(|(tmpl, _)| tmpl.rsplit('.').next().unwrap_or(tmpl)),
             _ => None,
+        }
+    }
+
+    /// v0.0.14 graph value-depth: render a resolved `Ty` to a display string
+    /// with concrete nominal names (`Vec[i32]`, `Point`, `Option[string]`,
+    /// `*u8`) — unlike `ty_display`, which prints `struct`/`enum` for nominals
+    /// because it has no table access.
+    fn render_ty(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::Struct(id) => {
+                let d = &self.structs[id.0 as usize];
+                self.render_nominal(&d.name, &d.generic_origin)
+            }
+            Ty::Enum(id) => {
+                let d = &self.enums[id.0 as usize];
+                self.render_nominal(&d.name, &d.generic_origin)
+            }
+            Ty::Array(elem, n) => format!("[{}; {}]", self.render_ty(elem), n),
+            Ty::RawPtr(inner) => format!("*{}", self.render_ty(inner)),
+            Ty::Slice(inner) => format!("{}[]", self.render_ty(inner)),
+            Ty::FnPtr {
+                params,
+                return_type,
+            } => {
+                let ps = params
+                    .iter()
+                    .map(|p| self.render_ty(p))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if matches!(**return_type, Ty::Unit) {
+                    format!("fn({ps})")
+                } else {
+                    format!("fn({ps}) -> {}", self.render_ty(return_type))
+                }
+            }
+            other => ty_display(other),
+        }
+    }
+
+    fn render_nominal(&self, name: &str, generic_origin: &Option<(String, Vec<Ty>)>) -> String {
+        match generic_origin {
+            Some((tmpl, args)) if !args.is_empty() => {
+                let args_s = args
+                    .iter()
+                    .map(|a| self.render_ty(a))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}[{}]", name_leaf(tmpl), args_s)
+            }
+            _ => name_leaf(name).to_string(),
         }
     }
 
@@ -5023,6 +5104,13 @@ impl SemaCx<'_> {
 
     fn check_expr(&mut self, e: &Expr, expected: Option<Ty>) -> Ty {
         let actual = self.check_expr_kind(e, expected.clone());
+        // v0.0.14 graph value-depth: retain each expression's resolved type
+        // (rendered with concrete names) for `type-at`. Skip error/unit noise.
+        if self.record_value_types && !matches!(actual, Ty::Error | Ty::Unit) {
+            let rendered = self.render_ty(&actual);
+            self.value_types
+                .push((self.current_file.clone(), e.span, rendered));
+        }
         if let Some(exp) = expected {
             if exp != Ty::Error && actual != Ty::Error && exp != actual {
                 self.err(
@@ -20023,6 +20111,64 @@ mod tests {
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0909"), "got {:?}", codes);
+    }
+
+    // ---- v0.0.14 graph value-depth: sema span->Ty retention ----
+
+    fn value_types_of(src: &str) -> Vec<String> {
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let (diags, mono) = check_multi_with_value_types(
+            &prog,
+            PathBuf::from("test.cplus"),
+            src,
+            std::collections::BTreeMap::new(),
+        );
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        mono.value_types.into_iter().map(|(_, _, t)| t).collect()
+    }
+
+    #[test]
+    fn value_types_records_inferred_nominal_and_primitive() {
+        // `mk()` result is `Point`, `p.x` is `i32` — both inferred (not
+        // annotated at the use site), so only value-depth retention sees them.
+        let tys = value_types_of(
+            "struct Point { x: i32, y: i32 }\n\
+             fn mk() -> Point { return Point { x: 1, y: 2 }; }\n\
+             fn main() -> i32 {\n\
+                 let p: Point = mk();\n\
+                 return p.x;\n\
+             }",
+        );
+        assert!(tys.iter().any(|t| t == "Point"), "no Point spot: {tys:?}");
+        assert!(tys.iter().any(|t| t == "i32"), "no i32 spot: {tys:?}");
+    }
+
+    #[test]
+    fn value_types_renders_generic_instantiation() {
+        // A generic struct literal renders with concrete args: `Box[i32]`.
+        let tys = value_types_of(
+            "struct Box[T] { v: T }\n\
+             fn main() -> i32 {\n\
+                 let b: Box[i32] = Box[i32] { v: 5 };\n\
+                 return b.v;\n\
+             }",
+        );
+        assert!(tys.iter().any(|t| t == "Box[i32]"), "no Box[i32] spot: {tys:?}");
+    }
+
+    #[test]
+    fn value_types_empty_without_recording() {
+        // The normal compile path does not record (zero overhead).
+        let toks = tokenize("fn main() -> i32 { let x: i32 = 1; return x; }").expect("lex");
+        let prog = parse(toks).expect("parse");
+        let (_diags, mono) = check_multi_with_mono(
+            &prog,
+            PathBuf::from("test.cplus"),
+            "fn main() -> i32 { let x: i32 = 1; return x; }",
+            std::collections::BTreeMap::new(),
+        );
+        assert!(mono.value_types.is_empty(), "compile path should not record types");
     }
 
     #[test]
