@@ -16372,6 +16372,71 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.14: container element drop — verify (by count, not just crash-free)
+/// that dropping a `Vec[T]` runs each element's `drop` exactly once via the
+/// `__cplus_drop_in_place::[T]` loop, including when the Vec is itself an
+/// owning field auto-dropped through a wrapper struct.
+#[test]
+fn vec_element_drop_runs_per_element_by_count() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vd\"\n\n[[bin]]\nname = \"vd\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    for name in &["vec", "iterator", "option"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         static mut DROPS: i32 = 0;\n\
+         struct Cell { tag: i32 }\n\
+         impl Cell { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         struct Wrap { items: vec::Vec[Cell], name: i32 }\n\
+         fn direct() {\n\
+             let mut v: vec::Vec[Cell] = vec::new::[Cell]();\n\
+             v.push(Cell { tag: 1 });\n\
+             v.push(Cell { tag: 2 });\n\
+             v.push(Cell { tag: 3 });\n\
+             return;\n\
+         }\n\
+         fn nested() {\n\
+             let mut v: vec::Vec[Cell] = vec::new::[Cell]();\n\
+             v.push(Cell { tag: 1 });\n\
+             v.push(Cell { tag: 2 });\n\
+             let w: Wrap = Wrap { items: v, name: 9 };\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             direct();\n\
+             nested();\n\
+             return unsafe { DROPS };\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("vd");
+    let st = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("build")
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for vec element-drop count test");
+    let run = Command::new(dir.join("target/debug/vd")).status().expect("run vd");
+    // 3 (direct) + 2 (nested, auto-dropped through Wrap) = 5 element drops.
+    assert_eq!(run.code(), Some(5), "expected 5 element drops, got {:?}", run.code());
+}
+
 // ---- v0.0.14: broad raw-ptr !Send rule + `unsafe impl Send/Sync` ----
 
 #[test]
