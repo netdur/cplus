@@ -319,10 +319,14 @@ fn parse_string_bytes(mut p: Parser) -> StrParse {
     return StrParse { p: p, ok: false, buf: buf_new() };
 }
 
-struct ValParse { p: Parser, ok: bool, v: Value }
+// v0.0.14: a match-consumable result, not a struct. A struct can't release its
+// owning `Value` field (no partial moves out of a Drop aggregate, E0509); an
+// enum payload is extracted whole by `match` (which consumes the result). The
+// `Parser` (Copy) rides in both variants so callers recover the position.
+enum ValParse { Ok(Value, Parser), Fail(Parser) }
 
 fn fail(p: Parser) -> ValParse {
-    return ValParse { p: p, ok: false, v: Value::Null };
+    return ValParse::Fail(p);
 }
 
 fn is_number_byte(c: u8) -> bool {
@@ -377,7 +381,7 @@ fn parse_number(mut p: Parser) -> ValParse {
             if all_digits && !(neg && acc == (0 as i64)) {
                 if neg { acc = (0 as i64) -% acc; }
                 let val: f64 = acc as f64;
-                return ValParse { p: p, ok: true, v: Value::Number(val) };
+                return ValParse::Ok(Value::Number(val), p);
             }
         }
     }
@@ -405,7 +409,7 @@ fn parse_number(mut p: Parser) -> ValParse {
     let consumed: usize = unsafe { (consumed_end as usize) -% (buf as usize) };
     if !usestack { unsafe { free(buf); } }
     if consumed == (0 as usize) || consumed != n { return fail(p); }
-    return ValParse { p: p, ok: true, v: Value::Number(val) };
+    return ValParse::Ok(Value::Number(val), p);
 }
 
 fn parse_value(mut p: Parser) -> ValParse {
@@ -414,22 +418,22 @@ fn parse_value(mut p: Parser) -> ValParse {
     if c < 0 { return fail(p); }
     let cb: u8 = c as u8;
     if cb == ('n' as u8) {
-        if match_keyword(p, "null") { p.pos = p.pos +% (4 as usize); return ValParse { p: p, ok: true, v: Value::Null }; }
+        if match_keyword(p, "null") { p.pos = p.pos +% (4 as usize); return ValParse::Ok(Value::Null, p); }
         return fail(p);
     }
     if cb == ('t' as u8) {
-        if match_keyword(p, "true") { p.pos = p.pos +% (4 as usize); return ValParse { p: p, ok: true, v: Value::Bool(true) }; }
+        if match_keyword(p, "true") { p.pos = p.pos +% (4 as usize); return ValParse::Ok(Value::Bool(true), p); }
         return fail(p);
     }
     if cb == ('f' as u8) {
-        if match_keyword(p, "false") { p.pos = p.pos +% (5 as usize); return ValParse { p: p, ok: true, v: Value::Bool(false) }; }
+        if match_keyword(p, "false") { p.pos = p.pos +% (5 as usize); return ValParse::Ok(Value::Bool(false), p); }
         return fail(p);
     }
     if cb == ('"' as u8) {
         let sp: StrParse = parse_string_bytes(p);
         if !sp.ok { return fail(sp.p); }
         let s: string = buf_to_string(sp.buf);
-        return ValParse { p: sp.p, ok: true, v: Value::Str(s) };
+        return ValParse::Ok(Value::Str(s), sp.p);
     }
     if cb == ('[' as u8) { return parse_array(p); }
     if cb == ('{' as u8) { return parse_object(p); }
@@ -443,13 +447,14 @@ fn parse_array(mut p: Parser) -> ValParse {
     p = skip_ws(p);
     if peek(p) == (']' as i32) {
         p.pos = p.pos +% (1 as usize);
-        return ValParse { p: p, ok: true, v: Value::Array(elems) };
+        return ValParse::Ok(Value::Array(elems), p);
     }
     loop {
         let r: ValParse = parse_value(p);
-        p = r.p;
-        if !r.ok { return fail(p); }
-        elems.push(r.v);
+        match r {
+            ValParse::Ok(v, rp) => { p = rp; elems.push(v); }
+            ValParse::Fail(rp) => { return fail(rp); }
+        }
         p = skip_ws(p);
         let nc: i32 = peek(p);
         if nc == (',' as i32) {
@@ -459,7 +464,7 @@ fn parse_array(mut p: Parser) -> ValParse {
         }
         if nc == (']' as i32) {
             p.pos = p.pos +% (1 as usize);
-            return ValParse { p: p, ok: true, v: Value::Array(elems) };
+            return ValParse::Ok(Value::Array(elems), p);
         }
         return fail(p);
     }
@@ -472,7 +477,7 @@ fn parse_object(mut p: Parser) -> ValParse {
     p = skip_ws(p);
     if peek(p) == ('}' as i32) {
         p.pos = p.pos +% (1 as usize);
-        return ValParse { p: p, ok: true, v: Value::Object(members) };
+        return ValParse::Ok(Value::Object(members), p);
     }
     loop {
         p = skip_ws(p);
@@ -487,9 +492,10 @@ fn parse_object(mut p: Parser) -> ValParse {
         p.pos = p.pos +% (1 as usize);
 
         let r: ValParse = parse_value(p);
-        p = r.p;
-        if !r.ok { return fail(p); }
-        members.push(Member { key: key, value: r.v });
+        match r {
+            ValParse::Ok(v, rp) => { p = rp; members.push(Member { key: key, value: v }); }
+            ValParse::Fail(rp) => { return fail(rp); }
+        }
 
         p = skip_ws(p);
         let nc: i32 = peek(p);
@@ -499,7 +505,7 @@ fn parse_object(mut p: Parser) -> ValParse {
         }
         if nc == ('}' as i32) {
             p.pos = p.pos +% (1 as usize);
-            return ValParse { p: p, ok: true, v: Value::Object(members) };
+            return ValParse::Ok(Value::Object(members), p);
         }
         return fail(p);
     }
@@ -509,110 +515,135 @@ fn parse_object(mut p: Parser) -> ValParse {
 pub fn parse(s: str) -> result::Result[Value, ParseError] {
     let p0: Parser = parser_new(s);
     let r: ValParse = parse_value(p0);
-    if !r.ok {
-        return result::Result[Value, ParseError]::Err(ParseError { pos: r.p.pos });
-    }
-    let p_end: Parser = skip_ws(r.p);
-    if p_end.pos != p_end.len {
-        return result::Result[Value, ParseError]::Err(ParseError { pos: p_end.pos });
-    }
-    return result::Result[Value, ParseError]::Ok(r.v);
+    let res: result::Result[Value, ParseError] = match r {
+        ValParse::Ok(v, rp) => {
+            let p_end: Parser = skip_ws(rp);
+            if p_end.pos != p_end.len {
+                result::Result[Value, ParseError]::Err(ParseError { pos: p_end.pos })
+            } else {
+                result::Result[Value, ParseError]::Ok(v)
+            }
+        }
+        ValParse::Fail(rp) => {
+            result::Result[Value, ParseError]::Err(ParseError { pos: rp.pos })
+        }
+    };
+    return res;
 }
 
 // ---------------- Accessors -----------------------------------------------
 
-pub fn as_bool(v: Value) -> bool {
-    let b: bool = match v {
+// v0.0.14: deep-clone a Value into an independent owned value. Accessors that
+// return owning data (an inner Value or a string) clone it so the result is
+// owned outright and the borrowed source is left intact. Vec elements are read
+// via inline `arr.get(i)` temporaries — never `let m = arr.get(i)`, which binds
+// an aliasing copy of a non-Copy element that double-frees when dropped.
+pub fn clone_value(borrow v: Value) -> Value {
+    return match v {
+        Value::Null => Value::Null,
+        Value::Bool(b) => Value::Bool(b),
+        Value::Number(n) => Value::Number(n),
+        Value::Str(s) => Value::Str(s.as_str().to_string()),
+        Value::Array(arr) => {
+            let n: usize = arr.len();
+            let mut out: vec::Vec[Value] = vec::new::[Value]();
+            let mut i: usize = 0 as usize;
+            while i < n {
+                out.push(clone_value(arr.get(i)));
+                i = i +% (1 as usize);
+            }
+            Value::Array(out)
+        }
+        Value::Object(arr) => {
+            let n: usize = arr.len();
+            let mut out: vec::Vec[Member] = vec::new::[Member]();
+            let mut i: usize = 0 as usize;
+            while i < n {
+                out.push(Member {
+                    key: arr.get(i).key.as_str().to_string(),
+                    value: clone_value(arr.get(i).value),
+                });
+                i = i +% (1 as usize);
+            }
+            Value::Object(out)
+        }
+    };
+}
+
+pub fn as_bool(borrow v: Value) -> bool {
+    return match v {
         Value::Bool(x) => x,
         _ => false,
     };
-    return b;
 }
 
-pub fn as_number(v: Value) -> f64 {
-    let n: f64 = match v {
+pub fn as_number(borrow v: Value) -> f64 {
+    return match v {
         Value::Number(x) => x,
         _ => 0.0f64,
     };
-    return n;
 }
 
-pub fn as_str(v: Value) -> string {
-    let s: string = match v {
-        Value::Str(x) => x,
+pub fn as_str(borrow v: Value) -> string {
+    return match v {
+        Value::Str(x) => x.as_str().to_string(),
         _ => "".to_string(),
     };
-    return s;
 }
 
-pub fn array_len(v: Value) -> usize {
-    let n: usize = match v {
+pub fn array_len(borrow v: Value) -> usize {
+    return match v {
         Value::Array(arr) => arr.len(),
         _ => 0 as usize,
     };
-    return n;
 }
 
-pub fn array_at(v: Value, i: usize) -> Value {
-    let r: Value = match v {
-        Value::Array(arr) => arr.get(i),
+pub fn array_at(borrow v: Value, i: usize) -> Value {
+    return match v {
+        Value::Array(arr) => clone_value(arr.get(i)),
         _ => Value::Null,
     };
-    return r;
 }
 
-pub fn object_len(v: Value) -> usize {
-    let n: usize = match v {
+pub fn object_len(borrow v: Value) -> usize {
+    return match v {
         Value::Object(arr) => arr.len(),
         _ => 0 as usize,
     };
-    return n;
 }
 
-pub fn object_key_at(v: Value, i: usize) -> string {
-    let s: string = match v {
-        Value::Object(arr) => {
-            let m: Member = arr.get(i);
-            m.key
-        }
+pub fn object_key_at(borrow v: Value, i: usize) -> string {
+    return match v {
+        Value::Object(arr) => arr.get(i).key.as_str().to_string(),
         _ => "".to_string(),
     };
-    return s;
 }
 
-pub fn object_value_at(v: Value, i: usize) -> Value {
-    let r: Value = match v {
-        Value::Object(arr) => {
-            let m: Member = arr.get(i);
-            m.value
-        }
+pub fn object_value_at(borrow v: Value, i: usize) -> Value {
+    return match v {
+        Value::Object(arr) => clone_value(arr.get(i).value),
         _ => Value::Null,
     };
-    return r;
 }
 
-pub fn object_get(v: Value, key: str) -> Value {
-    let r: Value = match v {
+pub fn object_get(borrow v: Value, key: str) -> Value {
+    return match v {
         Value::Object(arr) => {
             let n: usize = arr.len();
             let mut i: usize = 0 as usize;
             let mut found: Value = Value::Null;
-            let mut hit: bool = false;
             while i < n {
-                let m: Member = arr.get(i);
-                if m.key.as_str() == key {
-                    found = m.value;
-                    hit = true;
-                    i = n;   // break
+                if arr.get(i).key.as_str() == key {
+                    found = clone_value(arr.get(i).value);
+                    i = n; // break
                 } else {
                     i = i +% (1 as usize);
                 }
             }
-            if hit { found } else { Value::Null }
+            found
         }
         _ => Value::Null,
     };
-    return r;
 }
 
 // ---------------- Serializer ----------------------------------------------
@@ -761,7 +792,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     return b;
 }
 
-fn encode_value(mut b: Buf, v: Value) -> Buf {
+fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
     let out: Buf = match v {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },
@@ -773,6 +804,7 @@ fn encode_value(mut b: Buf, v: Value) -> Buf {
             let mut i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
+                // inline temp (borrowed by encode_value): never `let e = arr.get(i)`.
                 bb = encode_value(bb, arr.get(i));
                 i = i +% (1 as usize);
             }
@@ -785,10 +817,10 @@ fn encode_value(mut b: Buf, v: Value) -> Buf {
             let mut i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
-                let m: Member = arr.get(i);
-                bb = encode_string(bb, m.key.as_str());
+                // inline `arr.get(i)` temps so no aliasing Member is bound.
+                bb = encode_string(bb, arr.get(i).key.as_str());
                 bb = buf_push(bb, ':' as u8);
-                bb = encode_value(bb, m.value);
+                bb = encode_value(bb, arr.get(i).value);
                 i = i +% (1 as usize);
             }
             bb = buf_push(bb, '}' as u8);
