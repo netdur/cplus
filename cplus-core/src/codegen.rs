@@ -2442,6 +2442,22 @@ fn return_passes_by_sret_widened(ty: &Ty, types: &TypeTable) -> bool {
 /// Returns `None` only for non-codegen types (`Ty::Error`, `Ty::Param`) —
 /// those should never reach codegen anyway. Callers can `.unwrap_or` the
 /// dereferenceable/align attrs away when the layout is unknown.
+/// Byte offset of payload value `pi` within a tagged-enum variant's payload
+/// area `[N x i64]`: the sum of the i64-padded sizes of the values before it
+/// (value 0 is at offset 0). Replaces the old slot-index GEP (`i64 pi`), which
+/// assumed one 8-byte slot per value and corrupted layout when an earlier value
+/// exceeded 8 bytes (a `string`/struct/enum payload before another). For
+/// all-≤8-byte payloads the offset equals `pi * 8`, identical to the old GEP.
+fn enum_payload_byte_offset(payload_tys: &[Ty], pi: usize, types: &TypeTable) -> u64 {
+    let mut off: u64 = 0;
+    for ty in payload_tys.iter().take(pi) {
+        if let Some((sz, _al)) = static_layout(ty, types) {
+            off += (sz + 7) & !7;
+        }
+    }
+    off
+}
+
 fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
     fn align_up(off: u64, al: u64) -> u64 {
         (off + al - 1) & !(al - 1)
@@ -7268,6 +7284,32 @@ impl<'a> FnState<'a> {
     ///     `preserve_nonecc` to match the callee's CC.
     ///   - Anything else → no-op (Copy types and structs without Drop
     ///     don't need teardown).
+    /// Emit a pointer to payload value `pi` of a tagged enum at `enum_ptr`,
+    /// using byte offsets (not slot indices) so multi-payload variants with a
+    /// value larger than 8 bytes lay out correctly. Used by construction, match
+    /// extraction, and enum-variant drop so all three agree on layout.
+    fn payload_slot_ptr(
+        &mut self,
+        llvm_enum: &str,
+        enum_ptr: &str,
+        payload_tys: &[Ty],
+        pi: usize,
+    ) -> String {
+        let off = enum_payload_byte_offset(payload_tys, pi, self.types);
+        let base = self.next_tmp();
+        self.emit(&format!(
+            "{base} = getelementptr inbounds {llvm_enum}, ptr {enum_ptr}, i32 0, i32 1, i64 0"
+        ));
+        if off == 0 {
+            return base;
+        }
+        let slot = self.next_tmp();
+        self.emit(&format!(
+            "{slot} = getelementptr inbounds i8, ptr {base}, i64 {off}"
+        ));
+        slot
+    }
+
     /// v0.0.14 auto field-drop: does a value of this type need teardown?
     /// Mirrors sema's `ty_carries_drop` so codegen registers/emits drops for
     /// exactly the types the front end treats as owning. Recursive and
@@ -7389,12 +7431,10 @@ impl<'a> FnState<'a> {
                         if !self.needs_drop(pty) {
                             continue;
                         }
-                        // Same GEP convention as `gen_match` payload binding:
-                        // value `pi` lives at i64-slot `pi` of the payload area.
-                        let slot_ptr = self.next_tmp();
-                        self.emit(&format!(
-                            "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {p_val}, i32 0, i32 1, i64 {pi}"
-                        ));
+                        // Byte-offset GEP (shared with construct/match) so a
+                        // payload value after a >8-byte one is dropped at its
+                        // real location.
+                        let slot_ptr = self.payload_slot_ptr(&llvm_enum, p_val, payload, pi);
                         self.gen_drop_in_place(pty, &slot_ptr);
                     }
                     self.emit_terminator(&format!("br label %{merge_lbl}"));
@@ -9896,13 +9936,11 @@ impl<'a> FnState<'a> {
             "{tag_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot}, i32 0, i32 0"
         ));
         self.gen_store(&Ty::I32, &tag.to_string(), &tag_ptr);
-        // Store each payload value in its slot.
+        // Store each payload value at its byte offset (shared layout with
+        // match extraction + enum-variant drop).
+        let ptys: Vec<Ty> = args.iter().map(|(_, t)| t.clone()).collect();
         for (i, (val, ty)) in args.iter().enumerate() {
-            // GEP to the i64 payload array, then to slot i.
-            let slot_ptr = self.next_tmp();
-            self.emit(&format!(
-                "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot}, i32 0, i32 1, i64 {i}"
-            ));
+            let slot_ptr = self.payload_slot_ptr(&llvm_enum, &slot, &ptys, i);
             // v0.0.7 Slice 1.2: payload store — primitive payload types
             // pick up their TBAA leaf via gen_store; aggregate payloads
             // (struct/enum/string/etc.) fall through untagged.
@@ -10084,12 +10122,10 @@ impl<'a> FnState<'a> {
                     for (pi, pp) in payload.iter().enumerate() {
                         if let PatternKind::Binding(name) = &pp.kind {
                             let pty = variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
-                            // GEP to the i64 payload slot, load as the
-                            // payload's actual type.
-                            let slot_ptr = self.next_tmp();
-                            self.emit(&format!(
-                                "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {scr_ptr}, i32 0, i32 1, i64 {pi}"
-                            ));
+                            // Byte-offset GEP (shared with construct/drop) so a
+                            // payload after a >8-byte one reads its real bytes.
+                            let slot_ptr =
+                                self.payload_slot_ptr(&llvm_enum, &scr_ptr, &variant_payload_tys, pi);
                             let v = self.next_tmp();
                             // v0.0.7 Slice 1.2: match-arm payload load/store —
                             // primitive payloads pick up their TBAA leaf;

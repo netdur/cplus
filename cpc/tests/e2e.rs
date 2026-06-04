@@ -3605,6 +3605,47 @@ fn main() -> i32 {
 }
 
 #[test]
+fn enum_multi_payload_large_first_value_layout() {
+    // v0.0.14: a tagged-enum variant whose first payload exceeds 8 bytes (a
+    // `string`) must place the second payload *after* it, not overlapping. The
+    // old slot-index GEP read the second value from inside the first's bytes.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+struct P { x: i32 }
+enum R { Both(string, P), None }
+fn mk() -> R { return R::Both(\"hello\".to_string(), P { x: 9 }); }
+fn main() -> i32 {
+    let r: R = mk();
+    let out: i32 = match r {
+        R::Both(s, p) => { let kept: string = s; kept.len() as i32 +% p.x }
+        R::None => { 0 }
+    };
+    return out -% 14;
+}
+",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "multi-payload enum must compile");
+    let run = Command::new(&bin).output().expect("run");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "second payload must read at its real offset, no double-free"
+    );
+}
+
+#[test]
 fn auto_field_drop_no_double_free_runtime() {
     // v0.0.14 auto field-drop, end to end: `Holder` has no `drop` but owns a
     // `Res` (which does). Moving a Holder into `consume` must run Res::drop
