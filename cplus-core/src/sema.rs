@@ -26,7 +26,7 @@
 //! - E0341: pattern type doesn't match scrutinee
 //! - E0342: wrong number of payload patterns / construction args for variant
 //! - E0343: literal pattern not supported in Phase 3
-//! - E0344: tagged-enum variant payload is `Drop` (Phase 3 doesn't synthesize variant drop)
+//! - E0344: (retired v0.0.14) tagged-enum Drop payloads are now supported via synthesized enum-variant drop
 //! - E0345: use of possibly-unassigned binding (definite-assignment failure)
 //! - E0346: uninitialized `let` requires a type annotation
 
@@ -1567,70 +1567,17 @@ impl SemaCx<'_> {
 
     /// Compute `is_copy` for every enum. A plain enum (`is_tagged == false`)
     /// is always Copy — same atomic-int rule as Phase 2A. A tagged enum is
-    /// Copy iff every variant's payload type is Copy.
-    ///
-    /// Also enforces §3.3 of the tagged-unions design note: a tagged enum
-    /// cannot have a Drop type as a payload in Phase 3 (E0344). Users who
-    /// need this write a manual `fn drop(mut self) { match self { ... } }`
-    /// on the tagged enum itself — but Phase-3 `impl` is struct-only, so
-    /// the manual-drop escape hatch is also unavailable, making the rule
-    /// effectively "no Drop payloads, full stop." Acceptable: Phase-3 has
-    /// no heap types yet so Drop payloads aren't a real use case.
-    fn compute_enum_copy_flags(&mut self, p: &Program) {
-        // First pass: enforce the no-Drop-payload rule. Collect diagnostics
-        // and the originating file id into a side list so we don't hold
-        // an immutable borrow on self.enums while emitting and so we can
-        // route each E0344 to the right file's line-map (slice 4C).
-        // `self.enums` while we call `self.err` (which needs `&mut self`).
-        struct DropDiag {
-            enum_name: String,
-            variant_name: String,
-            span: ByteSpan,
-            origin_file: Option<String>,
-        }
-        let mut diags: Vec<DropDiag> = Vec::new();
-        for item in &p.items {
-            let ItemKind::Enum(e) = &item.kind else {
-                continue;
-            };
-            let Some(&id) = self.enum_by_name.get(&e.name.name) else {
-                continue;
-            };
-            let def = &self.enums[id.0 as usize];
-            if !def.is_tagged {
-                continue;
-            }
-            for (vi, vdef) in def.variants.iter().enumerate() {
-                for (pi, pty) in vdef.payload.iter().enumerate() {
-                    if self.ty_carries_drop(pty) {
-                        let span = e
-                            .variants
-                            .get(vi)
-                            .and_then(|sv| sv.payload.get(pi).map(|t| t.span))
-                            .unwrap_or(e.name.span);
-                        diags.push(DropDiag {
-                            enum_name: e.name.name.clone(),
-                            variant_name: vdef.name.clone(),
-                            span,
-                            origin_file: item.origin_file.clone(),
-                        });
-                    }
-                }
-            }
-        }
-        for d in diags {
-            self.current_file = d.origin_file;
-            self.err(
-                "E0344",
-                format!(
-                    "tagged-enum variant `{}::{}` has a `Drop`-typed payload, which Phase 3 does not support (no compiler-synthesized drop for tagged unions yet)",
-                    d.enum_name, d.variant_name
-                ),
-                d.span,
-            );
-        }
-        self.current_file = None;
-        // Second pass: compute Copy flag. Fixpoint, monotone.
+    /// Copy iff every variant's payload type is Copy. (v0.0.14: owning payloads
+    /// are allowed — they make the enum non-Copy and drop-carrying, dropped via
+    /// synthesized enum-variant drop; the old E0344 ban is gone.)
+    fn compute_enum_copy_flags(&mut self, _p: &Program) {
+        // v0.0.14: the former "no Drop payload in a tagged enum" rule (E0344)
+        // is removed — tagged enums with owning payloads are now supported via
+        // synthesized enum-variant drop (codegen switches on the tag and tears
+        // down the active payload). The Copy fixpoint below still makes such an
+        // enum non-Copy, since a non-Copy payload makes the enum non-Copy.
+        //
+        // Compute Copy flag. Fixpoint, monotone.
         loop {
             let mut changed = false;
             for i in 0..self.enums.len() {
@@ -1662,11 +1609,27 @@ impl SemaCx<'_> {
     /// tagged-enum payload rule (§3.3 of the design note).
     fn ty_carries_drop(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Struct(id) => self.structs[id.0 as usize].is_drop,
+            // v0.0.14 auto field-drop: `string` owns a heap buffer.
+            Ty::String => true,
+            // A struct carries drop if it has an explicit `drop` OR any field
+            // is itself drop-carrying (transitive auto field-drop). Cycle-safe:
+            // by-value struct containment is acyclic (infinite-size structs are
+            // rejected), and Vec/Box break recursion via raw-pointer fields.
+            Ty::Struct(id) => {
+                let def = &self.structs[id.0 as usize];
+                def.is_drop || def.fields.iter().any(|f| self.ty_carries_drop(&f.1))
+            }
+            // v0.0.14 enum-variant drop: a tagged enum carries drop if any
+            // variant payload does. Cycle-safe for the same reason as structs.
+            Ty::Enum(id) => {
+                let def = &self.enums[id.0 as usize];
+                def.is_tagged
+                    && def
+                        .variants
+                        .iter()
+                        .any(|v| v.payload.iter().any(|t| self.ty_carries_drop(t)))
+            }
             Ty::Array(elem, _) => self.ty_carries_drop(elem),
-            // Plain/tagged enums never carry Drop in Phase 3 — Drop is
-            // struct-only via `impl` blocks. (Once enum-impl lands this
-            // rule generalizes.)
             _ => false,
         }
     }
@@ -1951,9 +1914,10 @@ impl SemaCx<'_> {
                 );
                 continue;
             }
-            // Reject `drop` on enums for v0.0.5 — the §3.3 design rule
-            // (E0344, no Drop payloads in tagged enums) is still in
-            // force, so an enum has no resources to release on its own.
+            // Reject a *user-written* `drop` on enums (E0338): v0.0.14 tears
+            // down owning enum payloads via compiler-synthesized enum-variant
+            // drop, so a hand-written enum destructor is unnecessary and
+            // unsupported.
             if m.name.name == "drop" {
                 self.err(
                     "E0338",
@@ -15636,14 +15600,15 @@ mod tests {
     }
 
     #[test]
-    fn tagged_enum_with_drop_payload_e0344() {
-        let codes = errors(
+    fn tagged_enum_with_drop_payload_now_allowed() {
+        // v0.0.14: a tagged enum with an owning (Drop) payload used to be
+        // E0344; it is now allowed — codegen synthesizes enum-variant drop.
+        assert_clean(
             "struct R { x: i32 }\n\
              impl R { fn drop(mut self) {} }\n\
              enum E { Hold(R), Empty }\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.contains(&"E0344"), "expected E0344, got: {codes:?}");
     }
 
     #[test]

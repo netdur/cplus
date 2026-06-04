@@ -3548,17 +3548,13 @@ fn main() -> i32 {
 }
 
 #[test]
-fn partial_move_out_of_non_drop_type_allowed() {
-    // Counterpart to E0509: moving a field out of a NON-Drop aggregate is
-    // fine — a struct with no `drop` impl never frees its fields (C+ does not
-    // synthesize per-field drops), so there is no destructor to double-free.
-    // This must keep compiling.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("t.cplus");
-    let bin = dir.join("t");
-    std::fs::write(
-        &src,
+fn field_move_out_of_auto_drop_aggregate_rejected_e0509() {
+    // v0.0.14 auto field-drop: a struct holding `Drop` fields is now itself
+    // drop-carrying, so moving a field out of it is E0509 — otherwise the
+    // struct's synthesized field-drop would free the moved-out field a second
+    // time at scope exit. (Pre-v0.0.14 this compiled, because structs did not
+    // auto-drop their fields.)
+    let (ok, stderr) = try_compile_snippet(
         "\
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -3574,6 +3570,67 @@ fn main() -> i32 {
     return 0;
 }
 ",
+    );
+    assert!(
+        !ok,
+        "moving a field out of an auto-drop aggregate must be rejected"
+    );
+    assert!(stderr.contains("E0509"), "expected E0509, got: {stderr}");
+}
+
+#[test]
+fn field_extract_from_copy_aggregate_allowed() {
+    // A struct whose fields are all Copy is not drop-carrying, so pulling a
+    // field out is a copy (not a move) and stays legal.
+    let (ok, stderr) = try_compile_snippet(
+        "\
+struct Point { x: i32, y: i32 }
+fn main() -> i32 {
+    let p: Point = Point { x: 3, y: 4 };
+    let q: i32 = p.x;
+    return q -% 3;
+}
+",
+    );
+    assert!(
+        ok,
+        "field extract from a Copy aggregate must compile; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn auto_field_drop_no_double_free_runtime() {
+    // v0.0.14 auto field-drop, end to end: `Holder` has no `drop` but owns a
+    // `Res` (which does). Moving a Holder into `consume` must run Res::drop
+    // exactly once per iteration. A double-free would abort the process; 100
+    // iterations exiting 0 proves the field destructor runs once, no more.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+struct Res { p: *u8 }
+impl Res {
+    fn make() -> Res { return Res { p: unsafe { malloc(16 as usize) } }; }
+    fn drop(mut self) { unsafe { free(self.p); } return; }
+}
+struct Holder { r: Res }
+fn consume(move h: Holder) -> i32 { return 0; }
+fn main() -> i32 {
+    let mut i: i32 = 0;
+    let mut acc: i32 = 0;
+    while i < 100 {
+        let h: Holder = Holder { r: Res::make() };
+        acc = acc +% consume(h);
+        i = i +% 1;
+    }
+    return acc;
+}
+",
     )
     .unwrap();
     let compile = Command::new(cpc)
@@ -3584,8 +3641,14 @@ fn main() -> i32 {
         .expect("invoke cpc");
     assert!(
         compile.status.success(),
-        "non-Drop partial move must compile; stderr: {}",
+        "auto field-drop program must compile; stderr: {}",
         String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run");
+    assert!(
+        run.status.success(),
+        "auto field-drop must not double-free (status {:?})",
+        run.status
     );
 }
 

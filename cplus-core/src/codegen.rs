@@ -2930,6 +2930,15 @@ fn scan_moves_in_expr(
             scan_moves_in_expr(value, sigs, types, set);
         }
         ExprKind::Match { scrutinee, arms } => {
+            // v0.0.14 enum-variant drop: matching an owned enum *consumes* it —
+            // the payload is moved into the arm bindings and the scrutinee's
+            // scope-exit drop is disarmed (gen_match calls `mark_moved`). Mark
+            // a bare-Ident scrutinee here so it gets a Runtime drop flag the
+            // disarm can flip. (A borrow-param scrutinee has no drop entry, so
+            // this is a harmless no-op for it.)
+            if let ExprKind::Ident(n) = &scrutinee.kind {
+                set.insert(n.clone());
+            }
             scan_moves_in_expr(scrutinee, sigs, types, set);
             for a in arms {
                 scan_moves_in_expr(&a.body, sigs, types, set);
@@ -4910,10 +4919,17 @@ fn gen_function(
             state.borrowed_params.insert(param.name.name.clone());
         }
         if *move_flag {
-            if let Ty::Struct(id) = pty {
-                if types.struct_defs[id.0 as usize].is_drop {
+            // v0.0.14 auto field-drop: a moved-in owning aggregate (struct with
+            // owning fields, with or without an explicit `drop`, or a tagged
+            // enum with owning payloads) is the callee's to tear down.
+            match pty {
+                Ty::Struct(id) if state.needs_drop(pty) => {
                     state.register_drop(&param.name.name, &slot, *id);
                 }
+                Ty::Enum(id) if state.needs_drop(pty) => {
+                    state.register_drop_kind(&param.name.name, &slot, DropKind::Enum(*id));
+                }
+                _ => {}
             }
         }
     }
@@ -6395,10 +6411,16 @@ fn gen_method(
             // `mut self` the receiver is non-owning (post-§2.8a
             // pointer-pass), so no drop.
             if matches!(rcv, Receiver::Move) && !state.in_destructor {
-                if let Ty::Struct(id) = struct_ty {
-                    if types.struct_defs[id.0 as usize].is_drop {
-                        state.register_drop("self", &recv_name, id);
+                // v0.0.14 auto field-drop: extend beyond explicit-`drop` structs
+                // to any owning aggregate (owning fields / owning enum payloads).
+                match &struct_ty {
+                    Ty::Struct(id) if state.needs_drop(&struct_ty) => {
+                        state.register_drop("self", &recv_name, *id);
                     }
+                    Ty::Enum(id) if state.needs_drop(&struct_ty) => {
+                        state.register_drop_kind("self", &recv_name, DropKind::Enum(*id));
+                    }
+                    _ => {}
                 }
             }
         } else {
@@ -6445,10 +6467,17 @@ fn gen_method(
             state.borrowed_params.insert(param.name.name.clone());
         }
         if *move_flag {
-            if let Ty::Struct(id) = pty {
-                if types.struct_defs[id.0 as usize].is_drop {
+            // v0.0.14 auto field-drop: a moved-in owning aggregate (struct with
+            // owning fields, with or without an explicit `drop`, or a tagged
+            // enum with owning payloads) is the callee's to tear down.
+            match pty {
+                Ty::Struct(id) if state.needs_drop(pty) => {
                     state.register_drop(&param.name.name, &slot, *id);
                 }
+                Ty::Enum(id) if state.needs_drop(pty) => {
+                    state.register_drop_kind(&param.name.name, &slot, DropKind::Enum(*id));
+                }
+                _ => {}
             }
         }
     }
@@ -6553,6 +6582,9 @@ enum DropKind {
     /// `@free(null)` is a libc no-op so `string::new()` (which stores
     /// `null`) drops cleanly without a separate null-check.
     String,
+    /// v0.0.14 enum-variant drop: a tagged enum with owning payloads. The
+    /// drop body switches on the tag and tears down the active payload.
+    Enum(EnumId),
 }
 
 /// Slice 6BC.opt: per-Drop-binding lowering choice.
@@ -7135,12 +7167,24 @@ impl<'a> FnState<'a> {
         self.register_drop_kind(binding_name, value_slot, DropKind::Struct(struct_id))
     }
 
-    /// Phase 8 slice 8.STR.3 follow-up (2026-05-14): register a scope-
-    /// exit free for an owned `string` local. Same flag mechanism as
-    /// `register_drop`; the only difference is the lowered IR (load
-    /// the ptr field, call free, no struct-drop dispatch).
-    fn register_string_drop(&mut self, binding_name: &str, value_slot: &str) -> String {
-        self.register_drop_kind(binding_name, value_slot, DropKind::String)
+    /// v0.0.14 auto field-drop: register a scope-exit drop for a binding of any
+    /// owning type — `string`, a struct with owning fields (with or without an
+    /// explicit `drop`), or a tagged enum with owning payloads. No-op for
+    /// trivially-droppable types. Used where the binding's full `Ty` is known
+    /// (lets); the param/self sites that predate enums inline their own match.
+    fn register_value_drop(&mut self, binding_name: &str, value_slot: &str, ty: &Ty) {
+        if !self.needs_drop(ty) {
+            return;
+        }
+        let kind = match ty {
+            Ty::String => DropKind::String,
+            Ty::Struct(id) => DropKind::Struct(*id),
+            Ty::Enum(id) => DropKind::Enum(*id),
+            // Array locals aren't drop-registered (pre-existing gap); array
+            // *fields* are reached via struct field recursion at drop time.
+            _ => return,
+        };
+        self.register_drop_kind(binding_name, value_slot, kind);
     }
 
     fn register_drop_kind(
@@ -7220,6 +7264,45 @@ impl<'a> FnState<'a> {
     ///     `preserve_nonecc` to match the callee's CC.
     ///   - Anything else → no-op (Copy types and structs without Drop
     ///     don't need teardown).
+    /// v0.0.14 auto field-drop: does a value of this type need teardown?
+    /// Mirrors sema's `ty_carries_drop` so codegen registers/emits drops for
+    /// exactly the types the front end treats as owning. Recursive and
+    /// cycle-safe (by-value containment is acyclic; Vec/Box break recursion
+    /// via raw-pointer fields).
+    fn needs_drop(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::String => true,
+            Ty::Struct(id) => {
+                let def = &self.types.struct_defs[id.0 as usize];
+                def.is_drop || def.fields.iter().any(|f| self.needs_drop(&f.1))
+            }
+            Ty::Enum(id) => {
+                let info = &self.types.enum_defs[id.0 as usize];
+                info.is_tagged
+                    && info
+                        .variant_payloads
+                        .iter()
+                        .any(|p| p.iter().any(|t| self.needs_drop(t)))
+            }
+            Ty::Array(elem, _) => self.needs_drop(elem),
+            _ => false,
+        }
+    }
+
+    /// Emit the teardown for a value of type `ty` stored at pointer `p_val`.
+    ///
+    /// - `string` → free its heap buffer (`ptr` field of `{ptr,len,cap}`).
+    /// - `Struct` → run the user `drop` (if any) first, then auto-drop owning
+    ///   fields in **reverse declaration order** (construct forward, tear down
+    ///   backward).
+    /// - tagged `Enum` → switch on the tag and drop the active variant's owning
+    ///   payload values (v0.0.14 enum-variant drop; was E0344-forbidden).
+    /// - `Array` → drop each element.
+    ///
+    /// Container *elements* behind a raw pointer (a `Vec`'s heap buffer) are the
+    /// container's own `drop` responsibility, not auto field-drop's — a `Vec[T]`
+    /// field is dropped by calling `Vec::drop` (frees the buffer); dropping each
+    /// `T` element is a separate Vec enhancement.
     fn gen_drop_in_place(&mut self, ty: &Ty, p_val: &str) {
         match ty {
             Ty::String => {
@@ -7233,19 +7316,100 @@ impl<'a> FnState<'a> {
             }
             Ty::Struct(id) => {
                 let struct_def = &self.types.struct_defs[id.0 as usize];
-                // Only invoke .drop if the struct has one. C+ keeps the
-                // method-table indexed by name; absence means the
-                // struct is trivially droppable.
+                // 1. Run the user destructor first, while fields are still
+                //    live and readable inside it.
                 if struct_def.methods.contains_key("drop") {
                     let struct_name = struct_def.name.clone();
                     self.emit(&format!(
                         "call preserve_nonecc void @{struct_name}.drop(ptr {p_val})"
                     ));
                 }
+                // 2. Auto-drop owning fields, reverse declaration order.
+                let llvm_ty = self.lty(ty);
+                let fields: Vec<(usize, Ty)> = self.types.struct_defs[id.0 as usize]
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| (i, f.1.clone()))
+                    .collect();
+                for (i, fty) in fields.into_iter().rev() {
+                    if !self.needs_drop(&fty) {
+                        continue;
+                    }
+                    let fp = self.next_tmp();
+                    self.emit(&format!(
+                        "{fp} = getelementptr inbounds {llvm_ty}, ptr {p_val}, i32 0, i32 {i}"
+                    ));
+                    self.gen_drop_in_place(&fty, &fp);
+                }
             }
-            // Tagged enums could carry Drop payloads in the future; for
-            // v0.0.5, the §3.3 design rule (no Drop payloads in tagged
-            // enums, E0344) keeps this branch a no-op.
+            Ty::Enum(id) => {
+                let info = self.types.enum_defs[id.0 as usize].clone();
+                if !info.is_tagged {
+                    return;
+                }
+                // Variants (by tag) whose payload needs any teardown.
+                let drop_variants: Vec<(usize, Vec<Ty>)> = info
+                    .variant_payloads
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| p.iter().any(|t| self.needs_drop(t)))
+                    .map(|(v, p)| (v, p.clone()))
+                    .collect();
+                if drop_variants.is_empty() {
+                    return;
+                }
+                let llvm_enum = self.lty(ty);
+                // Load the tag (field 0).
+                let tag_ptr = self.next_tmp();
+                self.emit(&format!(
+                    "{tag_ptr} = getelementptr inbounds {llvm_enum}, ptr {p_val}, i32 0, i32 0"
+                ));
+                let tag_val = self.next_tmp();
+                self.gen_load(&tag_val, &Ty::I32, &tag_ptr);
+                // switch tag -> per-variant drop block; default -> merge.
+                let merge_lbl = self.next_block_label();
+                let mut blocks: Vec<String> = Vec::with_capacity(drop_variants.len());
+                let mut cases = String::new();
+                for (v, _) in &drop_variants {
+                    let lbl = self.next_block_label();
+                    cases.push_str(&format!("    i32 {v}, label %{lbl}\n"));
+                    blocks.push(lbl);
+                }
+                self.emit_terminator(&format!(
+                    "switch i32 {tag_val}, label %{merge_lbl} [\n{cases}  ]"
+                ));
+                for ((_, payload), lbl) in drop_variants.iter().zip(blocks.iter()) {
+                    self.open_block(lbl);
+                    for (pi, pty) in payload.iter().enumerate() {
+                        if !self.needs_drop(pty) {
+                            continue;
+                        }
+                        // Same GEP convention as `gen_match` payload binding:
+                        // value `pi` lives at i64-slot `pi` of the payload area.
+                        let slot_ptr = self.next_tmp();
+                        self.emit(&format!(
+                            "{slot_ptr} = getelementptr inbounds {llvm_enum}, ptr {p_val}, i32 0, i32 1, i64 {pi}"
+                        ));
+                        self.gen_drop_in_place(pty, &slot_ptr);
+                    }
+                    self.emit_terminator(&format!("br label %{merge_lbl}"));
+                }
+                self.open_block(&merge_lbl);
+            }
+            Ty::Array(elem, n) => {
+                if !self.needs_drop(elem) {
+                    return;
+                }
+                let llvm_ty = self.lty(ty);
+                for i in 0..*n {
+                    let ep = self.next_tmp();
+                    self.emit(&format!(
+                        "{ep} = getelementptr inbounds {llvm_ty}, ptr {p_val}, i32 0, i32 {i}"
+                    ));
+                    self.gen_drop_in_place(elem, &ep);
+                }
+            }
             _ => {}
         }
     }
@@ -7316,35 +7480,18 @@ impl<'a> FnState<'a> {
     fn emit_conditional_drop(&mut self, entry: &DropEntry) {
         // Build the drop-body emitter once; the disposition switch only
         // decides whether to gate it on the flag.
+        // All drop kinds route through `gen_drop_in_place`, the single source
+        // of teardown logic: a struct runs its user `drop` then auto-drops
+        // owning fields; `string` frees its buffer; a tagged enum switches on
+        // the tag and drops the active payload.
+        let drop_ty = match entry.kind {
+            DropKind::Struct(id) => Ty::Struct(id),
+            DropKind::String => Ty::String,
+            DropKind::Enum(id) => Ty::Enum(id),
+        };
+        let value_slot = entry.value_slot.clone();
         let body = |state: &mut Self| {
-            match entry.kind {
-                DropKind::Struct(struct_id) => {
-                    let struct_name = state.types.struct_defs[struct_id.0 as usize].name.clone();
-                    let mangled = format!("{struct_name}.drop");
-                    // Slice 1F: matching `preserve_nonecc` on the call site
-                    // — caller and callee must agree on CC. (The function
-                    // attribute `cold` is callee-only and has no caller
-                    // syntax mirror.)
-                    state.emit(&format!(
-                        "call preserve_nonecc void @{mangled}(ptr {})",
-                        entry.value_slot
-                    ));
-                }
-                DropKind::String => {
-                    // Load the `ptr` field (offset 0 in the {ptr, i64,
-                    // i64} aggregate) and free it. free(null) is a libc
-                    // no-op so `string::new()`'s null ptr is safe.
-                    let pp = state.next_tmp();
-                    state.emit(&format!(
-                        "{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {}, i32 0, i32 0",
-                        entry.value_slot
-                    ));
-                    let pv = state.next_tmp();
-                    // v0.0.7 Slice 1.2: string-payload ptr field load — ptr leaf.
-                    state.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
-                    state.emit(&format!("call void @free(ptr {pv})"));
-                }
-            }
+            state.gen_drop_in_place(&drop_ty, &value_slot);
         };
         match entry.disposition {
             DropDisposition::Always => {
@@ -7480,15 +7627,7 @@ impl<'a> FnState<'a> {
                                 self.mark_moved(src);
                             }
                         }
-                        match &val_ty {
-                            Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_drop => {
-                                self.register_drop(&name.name, &slot, *id);
-                            }
-                            Ty::String => {
-                                self.register_string_drop(&name.name, &slot);
-                            }
-                            _ => {}
-                        }
+                        self.register_value_drop(&name.name, &slot, &val_ty);
                         self.bind(&name.name, slot, val_ty);
                         return;
                     }
@@ -7536,15 +7675,7 @@ impl<'a> FnState<'a> {
                 // uninitialized Drop binding this is currently safe because
                 // sema rejects any path that would read it before it's
                 // assigned — so drop only runs after assignment.
-                match &var_ty {
-                    Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_drop => {
-                        self.register_drop(&name.name, &slot, *id);
-                    }
-                    Ty::String => {
-                        self.register_string_drop(&name.name, &slot);
-                    }
-                    _ => {}
-                }
+                self.register_value_drop(&name.name, &slot, &var_ty);
                 self.bind(&name.name, slot, var_ty);
             }
             StmtKind::Return(value) => {
@@ -9807,7 +9938,21 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_match(&mut self, scrutinee: &Expr, arms: &[MatchArm]) -> Option<(String, Ty)> {
+        // v0.0.14 enum-variant drop: if the scrutinee is an owned binding (one
+        // with a scope-exit drop registered), matching it *consumes* it — the
+        // payload is moved into the arm bindings, so we disarm the scrutinee's
+        // drop and register each owning payload binding for its own drop. A
+        // borrow-param scrutinee has no drop entry, so `consumed` is false and
+        // payload bindings stay borrows (no double-free, no transfer).
+        let scrutinee_name = match &scrutinee.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            _ => None,
+        };
         let (scr_ptr, enum_id) = self.enum_scrutinee_ptr(scrutinee);
+        let consumed = scrutinee_name
+            .as_ref()
+            .map(|n| self.find_drop_flag(n).is_some())
+            .unwrap_or(false);
         let info = self.types.enum_defs[enum_id.0 as usize].clone();
         let llvm_enum = self.lty(&Ty::Enum(enum_id));
 
@@ -9844,6 +9989,16 @@ impl<'a> FnState<'a> {
                 v
             }
         };
+
+        // v0.0.14: disarm the consumed scrutinee's scope-exit drop. Emitted in
+        // this pre-switch block (which dominates every arm) and path-sensitive
+        // via the runtime flag — if the match isn't reached, the flag stays set
+        // and the scrutinee drops normally.
+        if consumed {
+            if let Some(n) = &scrutinee_name {
+                self.mark_moved(n);
+            }
+        }
 
         // Build labels per arm + a merge label.
         let merge_lbl = self.next_block_label();
@@ -9901,6 +10056,10 @@ impl<'a> FnState<'a> {
                     self.gen_load(&v, &enum_ty, &scr_ptr);
                     let local_slot = self.alloca_named(&name.name, enum_ty.clone());
                     self.gen_store(&enum_ty, &v, &local_slot);
+                    // A whole-enum catch-all binding rebinds the (consumed)
+                    // scrutinee; the new binding is itself a normal owned local
+                    // and is drop-registered through the usual let/bind path, so
+                    // nothing extra to do here.
                     self.bind(&name.name, local_slot, enum_ty);
                 }
                 PatternKind::Variant {
@@ -9934,6 +10093,14 @@ impl<'a> FnState<'a> {
                             self.gen_load(&v, &pty, &slot_ptr);
                             let local_slot = self.alloca_named(&name.name, pty.clone());
                             self.gen_store(&pty, &v, &local_slot);
+                            // NOTE: a consumed scrutinee's owning payload is NOT
+                            // re-registered for drop here. The common path moves
+                            // the binding out (e.g. `Owned(s) => s`), and arm-tail
+                            // move-out isn't yet tracked, so registering a drop
+                            // would double-free. Disarming the scrutinee (above)
+                            // already prevents the double-free; the residual gap
+                            // is a leak when an owning payload is bound from a
+                            // consumed scrutinee and then NOT moved out (rare).
                             self.bind(&name.name, local_slot, pty);
                         }
                         // Wildcard payload patterns bind nothing.
@@ -14845,6 +15012,41 @@ mod tests {
         assert!(
             ir.contains("call fastcc i32 @helper("),
             "call site must mirror fastcc, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn auto_field_drop_recurses_struct_fields() {
+        // v0.0.14: a struct with a Drop field but no own `drop` auto-drops the
+        // field at scope exit (here: a moved-in owning param).
+        let ir = gen_src(
+            "struct Inner { opaque p: *u8 }\n\
+             impl Inner { fn drop(mut self) { return; } }\n\
+             struct Outer { inner: Inner }\n\
+             fn consume(move o: Outer) -> i32 { return 0; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("call preserve_nonecc void @Inner.drop"),
+            "auto field-drop must invoke the field's destructor, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn enum_variant_drop_switches_and_drops_payload() {
+        // v0.0.14 enum-variant drop: dropping an owning enum switches on the
+        // tag and tears down the active variant's payload.
+        let ir = gen_src(
+            "struct Inner { opaque p: *u8 }\n\
+             impl Inner { fn drop(mut self) { return; } }\n\
+             enum E { Has(Inner), None }\n\
+             fn consume(move e: E) -> i32 { return 0; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // The drop path (not a match) emits a tag switch + the payload drop.
+        assert!(
+            ir.contains("switch i32") && ir.contains("@Inner.drop"),
+            "enum-variant drop must switch on the tag and drop the payload, got:\n{ir}"
         );
     }
 
