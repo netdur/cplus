@@ -340,7 +340,7 @@ Consequences to know:
 - A struct/enum that owns heap data is **non-Copy** and **move-only** (copying would double-free). Code that previously treated such a value as freely copyable now needs `move`/`borrow`/`.clone()`.
 - You **cannot move an owning field out** of such an aggregate (**E0509**) — the auto-drop would free it twice. Clone it, or `match` to consume the whole value.
 - `match`ing an *owned* enum **consumes** it (its drop is suppressed; the matched-out payload becomes the caller's). `match`ing through a `borrow` does not.
-- Limitations (v0.0.14): a container's heap *elements* behind a raw pointer (a `Vec[T]`'s `T`s) are the container's own `drop` job, not auto field-drop's; and binding an owning payload from a consumed enum and then *not* moving it out can leak.
+- A container's heap *elements* behind a raw pointer (a `Vec[T]`'s `T`s) are dropped by the container's own `drop` (which walks them via `__cplus_drop_in_place::[T]`), not by auto field-drop. Binding an owning payload from a consumed enum and then *not* moving it out drops it at arm exit (no leak).
 
 ### Raw-pointer accountability (`opaque`) — v0.0.13
 Every raw-pointer (`*T`) struct field must be **accounted for**, or it's a compile error (**E0510**) — no silent-leak default. Account for it one of two ways:

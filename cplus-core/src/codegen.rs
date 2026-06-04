@@ -2957,6 +2957,15 @@ fn scan_moves_in_expr(
             }
             scan_moves_in_expr(scrutinee, sigs, types, set);
             for a in arms {
+                // v0.0.14: a bare-`Ident` arm body (`Variant(s) => s`) moves
+                // that binding out as the match value — the same shape as a
+                // block-tail `Ident` (handled in scan_moves_in_block). Mark it
+                // so an owning payload binding gets a Runtime drop flag the
+                // move-out can disarm (else registering its drop would
+                // double-free).
+                if let ExprKind::Ident(n) = &a.body.kind {
+                    set.insert(n.clone());
+                }
                 scan_moves_in_expr(&a.body, sigs, types, set);
             }
         }
@@ -10143,15 +10152,21 @@ impl<'a> FnState<'a> {
                             self.gen_load(&v, &pty, &slot_ptr);
                             let local_slot = self.alloca_named(&name.name, pty.clone());
                             self.gen_store(&pty, &v, &local_slot);
-                            // NOTE: a consumed scrutinee's owning payload is NOT
-                            // re-registered for drop here. The common path moves
-                            // the binding out (e.g. `Owned(s) => s`), and arm-tail
-                            // move-out isn't yet tracked, so registering a drop
-                            // would double-free. Disarming the scrutinee (above)
-                            // already prevents the double-free; the residual gap
-                            // is a leak when an owning payload is bound from a
-                            // consumed scrutinee and then NOT moved out (rare).
-                            self.bind(&name.name, local_slot, pty);
+                            // v0.0.14: a consumed scrutinee's owning payload is
+                            // now re-registered for drop here, closing the leak
+                            // when the binding is bound but NOT moved out
+                            // (`Owned(s) => { ... }`). The scrutinee's whole-enum
+                            // drop is disarmed above, so this binding is the sole
+                            // owner of the payload bytes. If the arm DOES move it
+                            // out (`=> s`, `=> Wrap(s)`, `=> consume(s)`),
+                            // scan_moves marked the name moved → Runtime drop flag
+                            // → the move site disarms it (no double-free). If not
+                            // moved, the flag stays armed → scope-exit drop fires
+                            // (no leak). A non-drop payload registers nothing.
+                            self.bind(&name.name, local_slot.clone(), pty.clone());
+                            if consumed {
+                                self.register_value_drop(&name.name, &local_slot, &pty);
+                            }
                         }
                         // Wildcard payload patterns bind nothing.
                     }
@@ -10168,6 +10183,13 @@ impl<'a> FnState<'a> {
                 let (rs, rt) = result_slot.clone().unwrap();
                 // v0.0.7 Slice 1.2: match arm result store.
                 self.gen_store(&rt, &v, &rs);
+            }
+            // v0.0.14: a bare-`Ident` arm body (`=> s`) moves that binding out
+            // as the match value — its bytes are now in the result slot, so
+            // disarm its scope-exit drop (mirrors gen_block_expr's block-tail
+            // handling). gen_expr on a bare Ident doesn't mark_moved itself.
+            if let ExprKind::Ident(n) = &arm.body.kind {
+                self.mark_moved(n);
             }
             self.pop_scope();
             if !self.terminated {

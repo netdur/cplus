@@ -16437,6 +16437,64 @@ fn vec_element_drop_runs_per_element_by_count() {
     assert_eq!(run.code(), Some(5), "expected 5 element drops, got {:?}", run.code());
 }
 
+/// v0.0.14: consumed-enum payload leak fix. Matching an owned enum consumes
+/// it; an owning payload binding is now drop-registered, so a binding that is
+/// NOT moved out is dropped at arm exit (closing the leak), while every
+/// move-out shape (into a call, a re-wrap ctor, or a bare-`Ident` arm value)
+/// disarms the drop (no double-free). Verified by an exact drop count.
+#[test]
+fn consumed_enum_payload_drops_once_per_arm() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ce.cplus");
+    std::fs::write(
+        &src,
+        "\
+static mut DROPS: i32 = 0;
+struct Res { tag: i32 }
+impl Res { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }
+enum Box1 { Some(Res), None }
+enum Wrap { W(Res), X }
+fn consume(r: Res) -> i32 { return r.tag; }
+fn s_not_moved() {
+    let b: Box1 = Box1::Some(Res { tag: 1 });
+    let _c: i32 = match b { Box1::Some(r) => 1, Box1::None => 0 };
+    return;
+}
+fn s_consumed() {
+    let b: Box1 = Box1::Some(Res { tag: 2 });
+    let _c: i32 = match b { Box1::Some(r) => consume(r), Box1::None => 0 };
+    return;
+}
+fn s_rewrap() {
+    let b: Box1 = Box1::Some(Res { tag: 3 });
+    let w: Wrap = match b { Box1::Some(r) => Wrap::W(r), Box1::None => Wrap::X };
+    return;
+}
+fn s_tail() {
+    let b: Box1 = Box1::Some(Res { tag: 4 });
+    let out: Res = match b { Box1::Some(r) => r, Box1::None => Res { tag: 0 } };
+    return;
+}
+fn main() -> i32 {
+    s_not_moved();
+    s_consumed();
+    s_rewrap();
+    s_tail();
+    return unsafe { DROPS };
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("ce");
+    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for consumed-enum payload test");
+    let run = Command::new(&bin).status().expect("run ce");
+    // Each scenario drops its payload exactly once: leak fixed (s_not_moved)
+    // and no double-free on any move-out path. 4 total.
+    assert_eq!(run.code(), Some(4), "expected 4 drops, got {:?}", run.code());
+}
+
 // ---- v0.0.14: broad raw-ptr !Send rule + `unsafe impl Send/Sync` ----
 
 #[test]
