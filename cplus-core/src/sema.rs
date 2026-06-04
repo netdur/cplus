@@ -6472,7 +6472,13 @@ impl SemaCx<'_> {
                             lit_field.name.span,
                         );
                     }
-                    let _ = self.check_expr(&lit_field.value, Some(t.clone()));
+                    let vty = self.check_expr(&lit_field.value, Some(t.clone()));
+                    // v0.0.14 soundness: the value is moved into the new struct's
+                    // field; moving a non-Copy field/index out of a Drop
+                    // aggregate would double-free (E0509), same as let/return.
+                    if vty != Ty::Error {
+                        self.reject_partial_move_of_drop(&lit_field.value, &vty);
+                    }
                 }
                 None => {
                     self.err(
@@ -10192,7 +10198,16 @@ impl SemaCx<'_> {
         let explicit_move = expected.move_;
         if explicit_move {
             self.consume_arg_place(arg);
-        } else if implicit_move && arg_is_named_binding(arg) {
+        } else if implicit_move && is_addr_of_place(arg) {
+            // v0.0.14 soundness fix: a non-Copy *place* passed by value to a
+            // value param is a move — a whole-binding Ident is consumed, a
+            // Field/Index/Deref projection is a partial move and rejected with
+            // E0337 (`consume_arg_place`). Previously only whole-binding Idents
+            // were consumed, so a non-Copy field/element arg was silently
+            // bit-copied (aliased) — sound only while nothing dropped; under
+            // auto field-drop it double-freed. Rvalues (struct/enum literals,
+            // call results) aren't places, so they fall through untouched —
+            // they own their value outright.
             self.consume_arg_place(arg);
         }
     }
@@ -10917,6 +10932,13 @@ impl SemaCx<'_> {
                 Some(target_ty.clone())
             },
         );
+        // v0.0.14 soundness: a plain `=` moves the RHS into the target. Moving a
+        // non-Copy field/index out of a Drop aggregate is E0509 here too (same
+        // as `let` / `return`) — otherwise the source's destructor double-frees
+        // the moved field. (Compound ops read a Copy numeric, so they're exempt.)
+        if matches!(op, AssignOp::Assign) && value_ty != Ty::Error {
+            self.reject_partial_move_of_drop(value, &value_ty);
+        }
         if !matches!(op, AssignOp::Assign) && target_ty != Ty::Error && value_ty != Ty::Error {
             // Check the op is type-compatible with target_ty. For arithmetic
             // ops (+=, -=, *=, /=, %=) — operand must be a numeric type
@@ -12910,10 +12932,6 @@ fn cast_allowed(from: &Ty, to: &Ty) -> bool {
 /// value, etc.) own their result outright and don't have a caller
 /// binding to mark moved — applying the implicit move to them is a
 /// no-op and would otherwise spuriously fire E0337 on temporaries.
-fn arg_is_named_binding(arg: &Expr) -> bool {
-    matches!(arg.kind, ExprKind::Ident(_))
-}
-
 /// v0.0.12 (returned-borrow checking): the binding a borrow-shaped value
 /// (`str` / `T[]`) is rooted at, tracing through place projections
 /// (field / index / deref) and the canonical view accessors `as_str` /

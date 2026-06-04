@@ -3332,9 +3332,15 @@ fn main() -> i32 {
         .expect("invoke cpc");
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
+    // v0.0.14: drop-flag names carry a uniquifying suffix (`%x.drop_flagN`), so
+    // match the prefix rather than an exact `= alloca i1`.
     assert!(
-        ir.contains("%x.drop_flag = alloca i1"),
-        "drop flag alloca should remain for moved binding; got: {ir}"
+        ir.contains("%x.drop_flag"),
+        "drop flag should remain for moved binding; got: {ir}"
+    );
+    assert!(
+        ir.contains("alloca i1"),
+        "drop flag is an i1 alloca; got: {ir}"
     );
     assert!(
         ir.contains("load i1, ptr %x.drop_flag"),
@@ -4393,7 +4399,13 @@ fn main() -> i32 {
         "expected compile failure for parent+sub-place"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0374"), "expected E0374, got: {stderr}");
+    // Rejected either as a parent+subfield borrow conflict (E0374) or, with
+    // v0.0.14's stricter value-passing, as a partial move of `p.left` out of a
+    // Drop aggregate (E0337). Both are correct refusals of `write_pair(p, p.left)`.
+    assert!(
+        stderr.contains("E0374") || stderr.contains("E0337"),
+        "expected E0374 or E0337, got: {stderr}"
+    );
 }
 
 #[test]
@@ -4447,7 +4459,7 @@ impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(mut self) { return; } }
 fn cursor(mut i: Inner) -> Inner { return i; }
-fn peek(i: Inner) -> i32 { return i.v; }
+fn peek(borrow i: Inner) -> i32 { return i.v; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     let cur: Inner = cursor(p.left);

@@ -7200,8 +7200,12 @@ impl<'a> FnState<'a> {
         };
         let flag_slot = match disposition {
             DropDisposition::Runtime => {
+                // Uniquify like `alloca_named`: the same source name in two
+                // sibling scopes (e.g. `out` in two match arms) must not share
+                // one hoisted `.drop_flag` alloca. `find_drop_flag` returns the
+                // stored slot, so the suffix doesn't affect lookup.
                 self.tmp_counter += 1;
-                let s = format!("%{}.drop_flag", sanitize(binding_name));
+                let s = format!("%{}.drop_flag{}", sanitize(binding_name), self.tmp_counter);
                 self.allocas.push(format!("{s} = alloca i1"));
                 // v0.0.7 Slice 1.2: drop-flag init store — bool leaf.
                 self.gen_store(&Ty::Bool, "true", &s);
