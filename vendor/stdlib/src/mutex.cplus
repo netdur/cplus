@@ -37,6 +37,15 @@ pub struct Mutex[T] {
     ctrl: *u8,
 }
 
+// The mutex serializes all access to `T`, so a `Mutex[T]` is `Send` and `Sync`
+// whenever the payload can be moved between threads (`T: Send`). `T: Sync` is
+// not required — only one thread holds the lock (and thus touches `T`) at a
+// time. The raw `ctrl` pointer makes the structural rule reject it by default;
+// this vouches for the locking discipline. (`MutexGuard[T]` stays `!Send` — it
+// is bound to the acquiring thread — via the builtin name rule.)
+unsafe impl Send for Mutex[T: Send] {}
+unsafe impl Sync for Mutex[T: Send] {}
+
 pub struct MutexGuard[T] {
     // Same pointer the originating Mutex carries; the guard's Drop
     // unlocks via the offset into the pthread mutex slot but does NOT

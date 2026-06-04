@@ -244,6 +244,11 @@ pub struct ImplBlock {
     /// E0504 / E0505) and coherence (E0507). `None` for plain inherent
     /// `impl Type { ... }` blocks.
     pub interface_name: Option<Ident>,
+    /// v0.0.14: `unsafe impl Send for T {}` / `unsafe impl Sync for T {}`.
+    /// `Send`/`Sync` are unsafe assertions (the author vouches for thread
+    /// safety the compiler can't prove), so their impls must carry `unsafe`.
+    /// `false` for every ordinary `impl` / `impl Interface for Type`.
+    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.3: an interface declaration. The body holds method

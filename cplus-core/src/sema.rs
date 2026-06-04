@@ -650,6 +650,7 @@ fn check_with_files_inner<'a>(
         self_type_stack: Vec::new(),
         interfaces: HashMap::new(),
         interface_impls: std::collections::HashSet::new(),
+        marker_overrides: HashMap::new(),
         fns_generic: HashMap::new(),
         fn_instantiations: std::collections::BTreeSet::new(),
         call_monos: HashMap::new(),
@@ -973,6 +974,15 @@ struct SemaCx<'a> {
     /// E0506 (duplicate impl) and by future bound-checking call sites
     /// (E0502 — type does not satisfy interface bound, slice 7GEN.5).
     interface_impls: std::collections::HashSet<(String, String)>,
+    /// v0.0.14: registered `unsafe impl Send/Sync for T {}` overrides, keyed
+    /// by `(marker, type_name)` where `type_name` is the source-written name
+    /// (the template leaf for a generic target, e.g. `"Arc"`). The value is
+    /// the per-type-param bound list from a conditional impl
+    /// (`unsafe impl Send for Arc[T: Send + Sync]` → `[["Send","Sync"]]`);
+    /// an empty Vec means an unconditional override (`unsafe impl Send for
+    /// Handle {}`). Consulted by `is_send`/`is_sync` to re-enable a type the
+    /// structural raw-pointer rule would otherwise reject.
+    marker_overrides: HashMap<(String, String), Vec<Vec<String>>>,
     /// Slice 7GEN.5a: generic-fn signature table. Indexed by name;
     /// disjoint from `fns` (a fn is in exactly one of the two tables
     /// based on whether `generic_params` is non-empty).
@@ -1407,30 +1417,159 @@ impl SemaCx<'_> {
     /// (ObjC bindings, channels, mutexes). Structural propagation through a
     /// struct that *holds* an `Rc` is likewise future work.
     pub fn is_send(&self, ty: &Ty) -> bool {
-        !matches!(
-            self.nominal_template_leaf(ty),
-            Some("Rc") | Some("MutexGuard")
-        )
+        self.type_is_marker(ty, "Send")
     }
 
-    /// Structural Sync membership. `Rc[T]` is `!Sync` (shared `&Rc` across
-    /// threads would race the non-atomic refcount). Everything else is `Sync`
-    /// today; `Cell`/`RefCell` join the `!Sync` set when they land.
+    /// Structural Sync membership. A nominal type that (transitively) hides a
+    /// raw pointer is `!Sync` unless the author opts in via `unsafe impl Sync
+    /// for T {}`; `Rc[T]` is always `!Sync` (shared `&Rc` across threads would
+    /// race the non-atomic refcount).
     pub fn is_sync(&self, ty: &Ty) -> bool {
-        !matches!(self.nominal_template_leaf(ty), Some("Rc"))
+        self.type_is_marker(ty, "Sync")
     }
 
-    /// For an instantiated generic struct, the trailing segment of its
-    /// template name (`stdlib.rc.Rc` → `"Rc"`). `None` for non-struct or
-    /// non-generic types. Used by `is_send`/`is_sync` to recognize the
-    /// stdlib marker types structurally rather than by mangled name.
-    fn nominal_template_leaf(&self, ty: &Ty) -> Option<&str> {
-        if let Ty::Struct(id) = ty {
-            if let Some((tmpl, _)) = &self.structs[id.0 as usize].generic_origin {
-                return Some(tmpl.rsplit('.').next().unwrap_or(tmpl));
+    /// v0.0.14 broad rule: a type satisfies the `Send`/`Sync` marker unless it
+    /// is a nominal type that (transitively) hides a raw pointer with no
+    /// override. A *bare* raw pointer (`*u8` used directly, e.g. as a spawn
+    /// result) stays Send/Sync — it is already visibly unsafe at every use;
+    /// the rule targets struct/enum types that wrap a pointer behind a
+    /// safe-looking API, where the unsafety would otherwise be invisible.
+    fn type_is_marker(&self, ty: &Ty, marker: &str) -> bool {
+        match ty {
+            Ty::RawPtr(_) => true,
+            _ => !self.marker_blocked(ty, marker, &mut Vec::new()),
+        }
+    }
+
+    /// Does `ty` carry something that blocks `marker`? A raw-pointer *field*
+    /// blocks; an `Rc`/`MutexGuard` blocks (by template-leaf name, even with
+    /// no literal pointer field); a sub-aggregate blocks if it does. An
+    /// `unsafe impl` override on a nominal type short-circuits — making it
+    /// (and any container holding it) unblocked, subject to the conditional
+    /// bounds. `visited` breaks struct/enum reference cycles.
+    fn marker_blocked(&self, ty: &Ty, marker: &str, visited: &mut Vec<u32>) -> bool {
+        match ty {
+            Ty::RawPtr(_) => true,
+            Ty::Array(elem, _) => self.marker_blocked(elem, marker, visited),
+            Ty::Struct(id) => {
+                let leaf = self.nominal_template_leaf(ty).map(|s| s.to_string()).unwrap_or_else(
+                    || name_leaf(&self.structs[id.0 as usize].name).to_string(),
+                );
+                if let Some(bounds) =
+                    self.marker_overrides.get(&(marker.to_string(), leaf.clone()))
+                {
+                    return !self.override_satisfied(ty, bounds);
+                }
+                if Self::is_builtin_marker_blocked(&leaf, marker) {
+                    return true;
+                }
+                if visited.contains(&id.0) {
+                    return false;
+                }
+                visited.push(id.0);
+                let fields = self.structs[id.0 as usize].fields.clone();
+                let blocked = fields
+                    .iter()
+                    .any(|(_, fty, _)| self.marker_blocked(fty, marker, visited));
+                visited.pop();
+                blocked
+            }
+            Ty::Enum(id) => {
+                let leaf = self.nominal_template_leaf(ty).map(|s| s.to_string()).unwrap_or_else(
+                    || name_leaf(&self.enums[id.0 as usize].name).to_string(),
+                );
+                if let Some(bounds) =
+                    self.marker_overrides.get(&(marker.to_string(), leaf.clone()))
+                {
+                    return !self.override_satisfied(ty, bounds);
+                }
+                if Self::is_builtin_marker_blocked(&leaf, marker) {
+                    return true;
+                }
+                if visited.contains(&id.0) {
+                    return false;
+                }
+                visited.push(id.0);
+                let payloads: Vec<Ty> = self.enums[id.0 as usize]
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.payload.clone())
+                    .collect();
+                let blocked = payloads
+                    .iter()
+                    .any(|pty| self.marker_blocked(pty, marker, visited));
+                visited.pop();
+                blocked
+            }
+            // Primitives, `str`/`string`/slices (safe abstractions over their
+            // storage), fn pointers, SIMD, unit — never block.
+            _ => false,
+        }
+    }
+
+    /// The stdlib types that block a marker structurally, recognized by
+    /// template-leaf name so a renamed instantiation or a pointer-free
+    /// stand-in still trips the rule. `Rc` is `!Send` and `!Sync`;
+    /// `MutexGuard` is `!Send` (bound to its acquiring thread).
+    fn is_builtin_marker_blocked(leaf: &str, marker: &str) -> bool {
+        match marker {
+            "Send" => matches!(leaf, "Rc" | "MutexGuard"),
+            "Sync" => leaf == "Rc",
+            _ => false,
+        }
+    }
+
+    /// For a conditional override (`unsafe impl Send for Arc[T: Send + Sync]`),
+    /// check the instantiation's type args against the declared per-param
+    /// bounds. Empty bounds = an unconditional override (`unsafe impl Send for
+    /// Handle {}`). A conditional impl on a type with no recoverable args is
+    /// treated as unsatisfied (the impl is malformed).
+    fn override_satisfied(&self, ty: &Ty, bounds: &[Vec<String>]) -> bool {
+        if bounds.is_empty() {
+            return true;
+        }
+        let args: Vec<Ty> = match ty {
+            Ty::Struct(id) => self.structs[id.0 as usize]
+                .generic_origin
+                .as_ref()
+                .map(|(_, a)| a.clone())
+                .unwrap_or_default(),
+            Ty::Enum(id) => self.enums[id.0 as usize]
+                .generic_origin
+                .as_ref()
+                .map(|(_, a)| a.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for (i, param_bounds) in bounds.iter().enumerate() {
+            let Some(arg) = args.get(i) else {
+                return false;
+            };
+            for b in param_bounds {
+                if !self.satisfies_bound(arg, b) {
+                    return false;
+                }
             }
         }
-        None
+        true
+    }
+
+    /// For an instantiated generic struct or enum, the trailing segment of its
+    /// template name (`stdlib.rc.Rc` → `"Rc"`). `None` for non-nominal or
+    /// non-generic types. Used to recognize stdlib marker types and match
+    /// `unsafe impl` overrides structurally rather than by mangled name.
+    fn nominal_template_leaf(&self, ty: &Ty) -> Option<&str> {
+        match ty {
+            Ty::Struct(id) => self.structs[id.0 as usize]
+                .generic_origin
+                .as_ref()
+                .map(|(tmpl, _)| tmpl.rsplit('.').next().unwrap_or(tmpl)),
+            Ty::Enum(id) => self.enums[id.0 as usize]
+                .generic_origin
+                .as_ref()
+                .map(|(tmpl, _)| tmpl.rsplit('.').next().unwrap_or(tmpl)),
+            _ => None,
+        }
     }
 
     /// Slice 7GEN.5e step 4: verify each `(param, arg)` pair against
@@ -2281,6 +2420,65 @@ impl SemaCx<'_> {
                 diags.push(Diag {
                     code: "E0510",
                     msg: "`Copy` cannot be manually implemented; it is structurally inferred from field types".to_string(),
+                    span: iface_name.span,
+                    origin_file: item.origin_file.clone(),
+                });
+                continue;
+            }
+            // v0.0.14: `Send` / `Sync` are unsafe marker overrides. They take
+            // no methods (the body must be empty `{}`) and assert thread
+            // safety the compiler can't prove, so the impl must carry
+            // `unsafe`. A bare `impl Send for T {}` is E0860. The override is
+            // recorded for `is_send`/`is_sync`; a conditional impl
+            // (`unsafe impl Send for Arc[T: Send + Sync]`) records its
+            // per-param bounds so the marker only holds when they're met.
+            if iface_name.name == "Send" || iface_name.name == "Sync" {
+                if !b.is_unsafe {
+                    diags.push(Diag {
+                        code: "E0860",
+                        msg: format!(
+                            "`{}` is an unsafe assertion — write `unsafe impl {} for {} {{}}` to vouch for thread safety the compiler can't verify",
+                            iface_name.name, iface_name.name, b.target.name
+                        ),
+                        span: iface_name.span,
+                        origin_file: item.origin_file.clone(),
+                    });
+                    continue;
+                }
+                if !b.methods.is_empty() {
+                    diags.push(Diag {
+                        code: "E0860",
+                        msg: format!(
+                            "`unsafe impl {} for {}` must have an empty body — `Send`/`Sync` are marker interfaces with no methods",
+                            iface_name.name, b.target.name
+                        ),
+                        span: iface_name.span,
+                        origin_file: item.origin_file.clone(),
+                    });
+                    continue;
+                }
+                let bounds: Vec<Vec<String>> = b
+                    .target_generic_params
+                    .iter()
+                    .map(|gp| gp.bounds.iter().map(|bn| bn.name.clone()).collect())
+                    .collect();
+                // Key on the leaf so a qualified multi-file target name
+                // (`vendor.stdlib.src.arc.Arc`) matches the instantiation's
+                // template leaf (`Arc`) at the use site.
+                self.marker_overrides.insert(
+                    (iface_name.name.clone(), name_leaf(&b.target.name).to_string()),
+                    bounds,
+                );
+                continue;
+            }
+            // `unsafe` is meaningful only on the `Send`/`Sync` markers.
+            if b.is_unsafe {
+                diags.push(Diag {
+                    code: "E0861",
+                    msg: format!(
+                        "`unsafe impl` applies only to the `Send` / `Sync` markers, not `{}`",
+                        iface_name.name
+                    ),
                     span: iface_name.span,
                     origin_file: item.origin_file.clone(),
                 });
@@ -12199,6 +12397,15 @@ fn unify_param_against_concrete(
 /// cases like `Pair[Box[T], i32]`: the outer args list only contains
 /// `Ty::Struct(box_T_unbound_id)` (no top-level Param), but Box[T]'s
 /// origin args do.
+/// The trailing dotted segment of a (possibly module-qualified) type name —
+/// `vendor.stdlib.src.arc.Arc` → `Arc`, `Handle` → `Handle`. Used to match
+/// `unsafe impl Send/Sync` overrides by leaf so registration (which sees the
+/// qualified target name in multi-file builds) and lookup (which sees the
+/// instantiation's template leaf) agree.
+fn name_leaf(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
 fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool {
     match ty {
         Ty::Param(_) => true,
@@ -17382,6 +17589,156 @@ mod tests {
                  return q.v;\n\
              }",
         );
+    }
+
+    // ---- v0.0.14: broad raw-pointer !Send rule + `unsafe impl Send/Sync` ----
+
+    #[test]
+    fn send_rejects_raw_ptr_struct_e0502() {
+        // A struct that hides a raw pointer is !Send by the structural rule.
+        let codes = errors(
+            "struct Handle { opaque p: *u8 }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
+                 let _q: Handle = ship::[Handle](h);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn sync_rejects_raw_ptr_struct_e0502() {
+        let codes = errors(
+            "struct Handle { opaque p: *u8 }\n\
+             fn share[T: Sync](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
+                 let _q: Handle = share::[Handle](h);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn unsafe_impl_send_overrides_raw_ptr_struct() {
+        // `unsafe impl Send for Handle {}` re-enables the marker.
+        assert_clean(
+            "struct Handle { opaque p: *u8 }\n\
+             unsafe impl Send for Handle {}\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
+                 let _q: Handle = ship::[Handle](h);\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn bare_raw_pointer_stays_send() {
+        // A *bare* raw pointer (not wrapped in a nominal type) is still Send —
+        // it is visibly unsafe at every use; the rule targets pointer-hiding
+        // structs. Preserves `thread::spawn::[*u8]`.
+        assert_clean(
+            "fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let p: *u8 = unsafe { 0 as *u8 };\n\
+                 let _q: *u8 = ship::[*u8](p);\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn unsafe_impl_send_conditional_generic_met() {
+        // `unsafe impl Send for Arc[T: Send + Sync]` — Arc[i32] is Send
+        // because i32 is Send + Sync.
+        assert_clean(
+            "struct Arc[T] { opaque ctrl: *u8 }\n\
+             unsafe impl Send for Arc[T: Send + Sync] {}\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let a: Arc[i32] = Arc[i32] { ctrl: unsafe { 0 as *u8 } };\n\
+                 let _q: Arc[i32] = ship::[Arc[i32]](a);\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn unsafe_impl_send_conditional_generic_unmet_e0502() {
+        // Arc[Handle] is !Send: the conditional bound `T: Send` is unmet
+        // because Handle (raw-ptr struct, no override) is itself !Send.
+        let codes = errors(
+            "struct Handle { opaque p: *u8 }\n\
+             struct Arc[T] { opaque ctrl: *u8 }\n\
+             unsafe impl Send for Arc[T: Send + Sync] {}\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let a: Arc[Handle] = Arc[Handle] { ctrl: unsafe { 0 as *u8 } };\n\
+                 let _q: Arc[Handle] = ship::[Arc[Handle]](a);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn struct_holding_overridden_send_field_is_send() {
+        // A struct whose only pointer is reached *through* a Send-overridden
+        // sub-type is itself Send (the recursion stops at the override).
+        assert_clean(
+            "struct Arc[T] { opaque ctrl: *u8 }\n\
+             unsafe impl Send for Arc[T: Send + Sync] {}\n\
+             struct Wrap { inner: Arc[i32], tag: i32 }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let w: Wrap = Wrap { inner: Arc[i32] { ctrl: unsafe { 0 as *u8 } }, tag: 1 };\n\
+                 let _q: Wrap = ship::[Wrap](w);\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn safe_impl_send_rejected_e0860() {
+        // `Send` is an unsafe assertion — a bare `impl Send` is rejected.
+        let codes = errors(
+            "struct Handle { opaque p: *u8 }\n\
+             impl Send for Handle {}\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0860"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn unsafe_impl_on_regular_interface_rejected_e0861() {
+        // `unsafe` applies only to the Send/Sync markers.
+        let codes = errors(
+            "interface Greet { fn hi(self) -> i32; }\n\
+             struct S { x: i32 }\n\
+             unsafe impl Greet for S { fn hi(self) -> i32 { return self.x; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0861"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn enum_with_raw_ptr_payload_is_not_send_e0502() {
+        // The rule reaches through enum payloads too.
+        let codes = errors(
+            "enum Maybe { None, Ptr(*u8) }\n\
+             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn main() -> i32 {\n\
+                 let m: Maybe = Maybe::None;\n\
+                 let _q: Maybe = ship::[Maybe](m);\n\
+                 return 0;\n\
+             }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0502"), "got {:?}", codes);
     }
 
     // ---- v0.0.6 Slice 1A: include_bytes! ----

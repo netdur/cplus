@@ -254,7 +254,30 @@ impl Parser {
                         "item — `impl` blocks don't carry attributes in Phase 5; attach the attribute to individual methods inside instead",
                     ));
                 }
-                self.parse_impl_block()
+                self.parse_impl_block(false)
+            }
+            // v0.0.14: `unsafe impl Send for T {}` — an unsafe marker impl.
+            // `unsafe` at item position only precedes `impl` (Send/Sync
+            // overrides); any other use of `unsafe` is an expression-level
+            // block inside a fn body.
+            TokenKind::Unsafe => {
+                if is_pub {
+                    return Err(self.err_at_peek(
+                        "item — `impl` blocks don't take `pub`; mark individual methods inside the block instead",
+                    ));
+                }
+                if !attributes.is_empty() {
+                    return Err(self.err_at_peek(
+                        "item — `impl` blocks don't carry attributes; attach the attribute to individual methods inside instead",
+                    ));
+                }
+                self.bump(); // `unsafe`
+                if !self.at(&TokenKind::Impl) {
+                    return Err(self.err_at_peek(
+                        "item — `unsafe` at item scope only precedes `impl` (e.g. `unsafe impl Send for T {}`)",
+                    ));
+                }
+                self.parse_impl_block(true)
             }
             // `import` after the file's leading import block is a hard
             // error — call it out by name so the diagnostic explains the
@@ -379,7 +402,42 @@ impl Parser {
         }
     }
 
-    fn parse_impl_block(&mut self) -> Result<Item, ParseError> {
+    /// Parse an optional `[T, U: Bound + Bound2]` generic-param list. Shared
+    /// by inherent-impl targets and `unsafe impl Send for Arc[T: Send + Sync]`
+    /// conditional marker impls. Returns an empty Vec when no `[` follows.
+    fn parse_optional_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
+        if !self.at(&TokenKind::LBracket) {
+            return Ok(Vec::new());
+        }
+        self.bump(); // `[`
+        let mut params = Vec::new();
+        while !self.at(&TokenKind::RBracket) {
+            let pname = self.expect_ident()?;
+            let mut bounds = Vec::new();
+            if self.eat(&TokenKind::Colon) {
+                bounds.push(self.expect_ident()?);
+                while self.eat(&TokenKind::Plus) {
+                    bounds.push(self.expect_ident()?);
+                }
+            }
+            let pspan = pname.span;
+            params.push(GenericParam {
+                name: pname,
+                bounds,
+                span: pspan,
+            });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBracket, "`]`")?;
+        if params.is_empty() {
+            return Err(self.err_at_peek("expected at least one generic param inside `[ ]`"));
+        }
+        Ok(params)
+    }
+
+    fn parse_impl_block(&mut self, is_unsafe: bool) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Impl, "`impl`")?.span;
         let first_ident = self.expect_ident()?;
         // Slice 7GEN.3: `impl Interface for Target { ... }` syntax.
@@ -397,43 +455,17 @@ impl Parser {
         // form for now (generic interface impls deferred).
         let (interface_name, target, target_generic_params) = if self.eat(&TokenKind::For) {
             let target = self.expect_ident()?;
-            (Some(first_ident), target, Vec::new())
+            // v0.0.14: a conditional marker impl carries bounds on the
+            // target's params — `unsafe impl Send for Arc[T: Send + Sync] {}`
+            // means "Arc[X] is Send iff X is Send + Sync". The bracketed
+            // params record that condition; empty for a concrete
+            // `unsafe impl Send for Handle {}`.
+            let params = self.parse_optional_generic_params()?;
+            (Some(first_ident), target, params)
         } else {
             // Optional `[T, U]` after the target ident, declaring
             // impl-level generic params bound for all methods inside.
-            let params = if self.at(&TokenKind::LBracket) {
-                self.bump(); // `[`
-                let mut params = Vec::new();
-                while !self.at(&TokenKind::RBracket) {
-                    let pname = self.expect_ident()?;
-                    // Re-use the same bound-list shape as fn generic params.
-                    let mut bounds = Vec::new();
-                    if self.eat(&TokenKind::Colon) {
-                        bounds.push(self.expect_ident()?);
-                        while self.eat(&TokenKind::Plus) {
-                            bounds.push(self.expect_ident()?);
-                        }
-                    }
-                    let pspan = pname.span;
-                    params.push(GenericParam {
-                        name: pname,
-                        bounds,
-                        span: pspan,
-                    });
-                    if !self.eat(&TokenKind::Comma) {
-                        break;
-                    }
-                }
-                self.expect(&TokenKind::RBracket, "`]`")?;
-                if params.is_empty() {
-                    return Err(
-                        self.err_at_peek("expected at least one generic param inside `[ ]`")
-                    );
-                }
-                params
-            } else {
-                Vec::new()
-            };
+            let params = self.parse_optional_generic_params()?;
             (None, first_ident, params)
         };
         self.expect(&TokenKind::LBrace, "`{`")?;
@@ -448,6 +480,7 @@ impl Parser {
                 target_generic_params,
                 methods,
                 interface_name,
+                is_unsafe,
             }),
             span: start.merge(end),
             origin_file: None,

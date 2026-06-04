@@ -32,6 +32,15 @@ pub struct Arc[T] {
     ctrl: *u8,
 }
 
+// `Arc[T]` hides its control block behind a raw `ctrl` pointer, so the
+// v0.0.14 structural rule marks it `!Send`/`!Sync` by default. The atomic
+// refcount makes cross-thread transfer and sharing sound when the payload
+// itself is thread-safe, so we vouch for it conditionally: `Arc[T]` is
+// `Send`/`Sync` iff `T: Send + Sync` (the value can be touched from another
+// thread, and shared `&Arc` reaches the value).
+unsafe impl Send for Arc[T: Send + Sync] {}
+unsafe impl Sync for Arc[T: Send + Sync] {}
+
 // Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an
 // over-aligned T motivates it).

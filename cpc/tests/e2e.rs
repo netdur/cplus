@@ -16372,6 +16372,77 @@ fn main() -> i32 {
     );
 }
 
+// ---- v0.0.14: broad raw-ptr !Send rule + `unsafe impl Send/Sync` ----
+
+#[test]
+fn unsafe_impl_send_compiles_and_runs_end_to_end() {
+    // A raw-ptr-hiding struct is !Send by the structural rule; `unsafe impl
+    // Send for Handle {}` re-enables it. Verifies the override flows through
+    // parser + sema + codegen and runs (the impl is sema-only — no codegen).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("snd.cplus");
+    std::fs::write(
+        &src,
+        "\
+struct Handle { opaque p: *u8 }
+unsafe impl Send for Handle {}
+fn ship[T: Send](v: T) -> T { return v; }
+fn main() -> i32 {
+    let h: Handle = Handle { p: unsafe { 7 as *u8 } };
+    let q: Handle = ship::[Handle](h);
+    return unsafe { q.p as usize as i32 };
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("snd");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for unsafe impl Send program");
+    let run = Command::new(&bin).status().expect("run snd");
+    assert_eq!(run.code(), Some(7), "expected exit 7, got {:?}", run.code());
+}
+
+#[test]
+fn raw_ptr_struct_without_override_rejected_at_compile_time() {
+    // The same program without the `unsafe impl Send` must fail to compile
+    // with E0502 (Handle does not satisfy the `Send` bound).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("nosend.cplus");
+    std::fs::write(
+        &src,
+        "\
+struct Handle { opaque p: *u8 }
+fn ship[T: Send](v: T) -> T { return v; }
+fn main() -> i32 {
+    let h: Handle = Handle { p: unsafe { 0 as *u8 } };
+    let _q: Handle = ship::[Handle](h);
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("nosend");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected compile failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0502"),
+        "expected E0502 for !Send raw-ptr struct; stderr:\n{stderr}"
+    );
+}
+
 // ---- v0.0.9 Phase 2: character literals 'a' ----
 
 #[test]

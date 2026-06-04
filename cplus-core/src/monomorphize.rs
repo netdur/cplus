@@ -503,6 +503,7 @@ fn synthesize_generic_typed_impls(
             target_generic_params: Vec::new(),
             methods: new_methods,
             interface_name: b.interface_name.clone(),
+            is_unsafe: b.is_unsafe,
         };
         out_items.push(Item {
             kind: ItemKind::Impl(new_impl),
