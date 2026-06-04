@@ -7868,23 +7868,21 @@ impl SemaCx<'_> {
                     );
                     had_err = true;
                 }
-                if param.move_ && !self.is_copy(&expected) && !matches!(actual_before, Ty::Error) {
-                    // Only flag named-binding moves. A non-Ident arg
-                    // (StructLit, enum-variant Path, literal, fresh
-                    // Call result) constructs the value in place —
-                    // there's no source binding to mark moved. The
-                    // strict E0337 in `consume_arg_place` would fire
-                    // here for legitimate code like
-                    // `io_ok::[File](File { fd: fd })`, so we
-                    // sidestep it.
-                    if let ExprKind::Ident(n) = &arg.kind {
-                        for scope in self.scopes.iter_mut().rev() {
-                            if let Some(info) = scope.get_mut(n) {
-                                info.moved = true;
-                                break;
-                            }
-                        }
-                    }
+                // v0.0.14 soundness: consume non-Copy args, matching the
+                // non-generic path. A `move` param OR an implicit-move (bare)
+                // param consumes a *place* arg — a whole-binding Ident moves;
+                // a Field/Index/Deref projection is a partial move and is
+                // rejected (E0337 via consume_arg_place). Rvalues (struct/enum
+                // literals, fresh call results — e.g.
+                // `io_ok::[File](File { fd: fd })`) aren't places, so they own
+                // their value outright and pass through untouched.
+                let implicit_move = !param.mutable && !param.borrow_;
+                if (param.move_ || implicit_move)
+                    && !self.is_copy(&expected)
+                    && !matches!(actual_before, Ty::Error)
+                    && is_addr_of_place(arg)
+                {
+                    self.consume_arg_place(arg);
                 }
             }
             if had_err {
@@ -10069,7 +10067,13 @@ impl SemaCx<'_> {
                 );
             }
             for (a, expected_ty) in args.iter().zip(vdef.payload.iter()) {
-                let _ = self.check_expr(a, Some(expected_ty.clone()));
+                let vty = self.check_expr(a, Some(expected_ty.clone()));
+                // v0.0.14 soundness: the payload value is moved into the new
+                // variant; reject a partial move of a non-Copy field/index out
+                // of a Drop aggregate (E0509), as at every other value site.
+                if vty != Ty::Error {
+                    self.reject_partial_move_of_drop(a, &vty);
+                }
             }
             for a in args.iter().skip(vdef.payload.len()) {
                 let _ = self.check_expr(a, None);
