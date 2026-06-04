@@ -2365,6 +2365,11 @@ impl Analyzer<'_> {
                     self.apply_expr(a, state);
                 }
             }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    self.apply_expr(&op.value, state);
+                }
+            }
 
             ExprKind::InterpStr { parts } => {
                 for p in parts {
@@ -3199,6 +3204,9 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         | ExprKind::EnvVar { .. } => false,
         ExprKind::Intrinsic { args, .. } => {
             args.iter().any(|a| expr_reads_ident(a, name))
+        }
+        ExprKind::Asm { operands, .. } => {
+            operands.iter().any(|op| expr_reads_ident(&op.value, name))
         }
         ExprKind::InterpStr { parts } => parts.iter().any(|p| match p {
             crate::ast::InterpStrPart::Expr(e) => expr_reads_ident(e, name),

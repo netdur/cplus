@@ -833,6 +833,44 @@ pub enum ExprKind {
         args: Vec<Expr>,
         ret_ty: Option<Type>,
     },
+    /// v0.0.14 inline asm Tier 2: `#asm("tmpl {a},{b}", a = in(reg) x,
+    /// b = out(reg) y, clobber("cc"))`. Tier 1 (`#asm("dmb ish")`) is the
+    /// degenerate case with no operands and no clobbers. The `template` is a
+    /// string literal; `{name}` placeholders bind to operands by name.
+    Asm {
+        template: String,
+        operands: Vec<AsmOperand>,
+        clobbers: Vec<String>,
+    },
+}
+
+/// One operand of a Tier 2 `#asm`. `name` is the `{name}` placeholder; `dir`
+/// is the data direction; `reg` is `reg` (compiler-chosen) or an explicit
+/// register/constraint string; `value` is the input expression (for `In`) or
+/// the output place / read-write place (for `Out`/`InOut`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AsmOperand {
+    pub name: String,
+    pub dir: AsmDir,
+    pub reg: AsmReg,
+    pub value: Box<Expr>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AsmDir {
+    In,
+    Out,
+    InOut,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AsmReg {
+    /// `reg` — any general register the compiler picks.
+    Any,
+    /// An explicit LLVM constraint register token, e.g. `"x0"` (the `{...}` /
+    /// `=`/`+` decoration is added by codegen from `dir`).
+    Explicit(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

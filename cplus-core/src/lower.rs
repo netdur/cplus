@@ -249,6 +249,11 @@ impl Lower {
                     self.lower_expr(a);
                 }
             }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    self.lower_expr(&mut op.value);
+                }
+            }
             ExprKind::InterpStr { parts } => {
                 for p in parts {
                     if let crate::ast::InterpStrPart::Expr(e) = p {
@@ -1195,6 +1200,11 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
         ExprKind::Intrinsic { args, .. } => {
             for a in args {
                 subst_expr(a, consts);
+            }
+        }
+        ExprKind::Asm { operands, .. } => {
+            for op in operands {
+                subst_expr(&mut op.value, consts);
             }
         }
         ExprKind::InterpStr { parts } => {

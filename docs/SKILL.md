@@ -451,7 +451,7 @@ Pointer ↔ int casts go through `usize`, never directly to `i32` (E0315).
 | `#env("NAME")` | `str` | Resolved at sema; E0876 if unset |
 | `#zero::[T]()` | `T` | Safe all-zero value |
 | `#cpu_relax()` | `()` | Safe spin-loop hint |
-| `#asm("template")` | `()` | Unsafe; bare-template inline asm, no operands (Tier 1) |
+| `#asm("tmpl", name = dir(reg) expr, clobber("r"))` | `()` | Unsafe inline asm; Tier 1 = bare template, Tier 2 = `in`/`out`/`inout` operands + clobbers |
 | `#selector("name")` | `*u8` | ObjC SEL pointer, cached |
 | `#msg_send(recv, "sel", ...) -> RetTy` | RetTy | Typed objc_msgSend call |
 | `#compile_shader("file.metal", "msl")` | `*[u8; N]` | xcrun metal at sema time |
@@ -469,9 +469,17 @@ fn now() -> i64 {
 let metallib: *[u8; 2048] = #include_bytes("../shaders/double.metallib");
 let greeting: str = #env("GREETING");
 
-// Inline asm (Tier 1): a string-literal template, no operands, always unsafe.
-// Lowers to a side-effecting `asm sideeffect` call — for fences/barriers/hints.
+// Inline asm — always `unsafe`. Tier 1: bare template (fences/barriers/hints):
 unsafe { #asm("dmb ish"); }
+// Tier 2: named operands + clobbers. `{name}` placeholders bind to operands;
+// `in`/`out`/`inout` set direction; `reg` lets the compiler pick a register
+// (then you MUST use `{name}`), or `"x0"` pins one. `out`/`inout` targets must
+// be `mut` variables. Operands are integer/pointer/bool (register-sized).
+let mut sum: i64 = 0;
+unsafe { #asm("add {s}, {a}, {b}", s = out(reg) sum, a = in(reg) a, b = in(reg) b); }
+let mut v: i64 = x;
+unsafe { #asm("add {v}, {v}, #1", v = inout(reg) v); }       // read-modify-write
+unsafe { #asm("mov x16, #20", p = out("x0") pid, clobber("x16")); }  // pinned reg + clobber
 ```
 
 ---

@@ -1982,6 +1982,11 @@ fn rewrite_expr(
                 rewrite_expr(a, ctx, scope)?;
             }
         }
+        ExprKind::Asm { operands, .. } => {
+            for op in operands {
+                rewrite_expr(&mut op.value, ctx, scope)?;
+            }
+        }
         ExprKind::InterpStr { parts } => {
             for p in parts {
                 if let crate::ast::InterpStrPart::Expr(inner) = p {

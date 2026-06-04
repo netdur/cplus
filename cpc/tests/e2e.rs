@@ -488,6 +488,47 @@ fn inline_asm_tier1_runtime() {
 }
 
 #[test]
+#[cfg(target_arch = "aarch64")]
+fn inline_asm_tier2_operands_run_aarch64() {
+    // v0.0.14 inline-asm Tier 2: `in`/`out`/`inout` operands compile, link, and
+    // produce correct results on arm64. add(40,2)=42, inc(7)=8, sum=50.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("asm2.cplus");
+    std::fs::write(
+        &src,
+        "fn add(a: i64, b: i64) -> i64 {\n\
+             let mut s: i64 = 0;\n\
+             unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
+             return s;\n\
+         }\n\
+         fn inc(x: i64) -> i64 {\n\
+             let mut v: i64 = x;\n\
+             unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
+             return v;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let s: i64 = add(40 as i64, 2 as i64);\n\
+             let t: i64 = inc(7 as i64);\n\
+             if s != (42 as i64) { return 1; }\n\
+             if t != (8 as i64) { return 2; }\n\
+             return (s +% t) as i32;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("asm2");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#asm Tier 2 must compile");
+    let run = Command::new(&bin).status().expect("run asm2");
+    assert_eq!(run.code(), Some(50), "expected 50, got {:?}", run.code());
+}
+
+#[test]
 fn inline_asm_outside_unsafe_rejected_e0801() {
     // Negative: `#asm` is unsafe; using it outside an `unsafe` block fails.
     let cpc = env!("CARGO_BIN_EXE_cpc");

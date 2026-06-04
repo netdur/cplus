@@ -5108,6 +5108,11 @@ impl SemaCx<'_> {
                 args,
                 ret_ty,
             } => self.check_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span),
+            ExprKind::Asm {
+                template,
+                operands,
+                clobbers,
+            } => self.check_asm(template, operands, clobbers, e.span),
         }
     }
 
@@ -5160,11 +5165,8 @@ impl SemaCx<'_> {
             // terminate; with it CPUs throttle pipeline + reduce power.
             // Safe — pure hint, no memory access.
             "cpu_relax" => self.check_intrinsic_cpu_relax(type_args, args, ret_ty, span),
-            // v0.0.14 inline-asm Tier 1: `#asm("dmb ish")` — a bare template
-            // string with no operands, lowered to `call void asm sideeffect`.
-            // Unsafe-gated; useful for fences / barriers / hints. Operands and
-            // clobbers are a later tier (an explicit operand-syntax design).
-            "asm" => self.check_intrinsic_asm(type_args, args, ret_ty, span),
+            // `#asm(...)` never reaches here: the parser routes it to
+            // `ExprKind::Asm` (Tier 1 + Tier 2), checked by `check_asm`.
             _ => {
                 self.err(
                     "E0905",
@@ -5844,58 +5846,108 @@ impl SemaCx<'_> {
     //   - **E0308**: not exactly one argument.
     //   - **E0871**: the argument is not a string literal.
     //   - **E0801**: used outside an `unsafe` block.
-    fn check_intrinsic_asm(
+    /// v0.0.14 inline asm Tier 2. `#asm("tmpl {a},{b}", a = in(reg) x,
+    /// b = out(reg) y, clobber("cc"))`. Tier 1 (`#asm("dmb ish")`) is the
+    /// no-operand case. `#asm` is unsafe (E0801). Each operand: must have a
+    /// matching `{name}` placeholder (E0893), no duplicate names (E0890), a
+    /// register-sized scalar type (E0892); an `out`/`inout` operand must be a
+    /// writable variable (E0895 otherwise; E0305 if not `mut`). The expression
+    /// itself is `()` — outputs flow through the bound places, not the value.
+    fn check_asm(
         &mut self,
-        type_args: &[Type],
-        args: &[Expr],
-        ret_ty: Option<&Type>,
+        template: &str,
+        operands: &[AsmOperand],
+        _clobbers: &[String],
         span: ByteSpan,
     ) -> Ty {
-        if !type_args.is_empty() {
-            self.err(
-                "E0501",
-                format!("`#asm` takes no type arguments, got {}", type_args.len()),
-                span,
-            );
-        }
-        if ret_ty.is_some() {
-            self.err(
-                "E0903",
-                "`#asm` does not accept a `-> T` return-type ascription; Tier 1 \
-                 inline asm has no outputs"
-                    .to_string(),
-                span,
-            );
-        }
-        if args.len() != 1 {
-            self.err(
-                "E0308",
-                format!(
-                    "`#asm` takes exactly 1 string-literal template, got {}",
-                    args.len()
-                ),
-                span,
-            );
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            return Ty::Unit;
-        }
-        if !matches!(args[0].kind, ExprKind::StrLit(_)) {
-            self.err(
-                "E0871",
-                "`#asm` template must be a string literal".to_string(),
-                args[0].span,
-            );
-            let _ = self.check_expr(&args[0], None);
-            return Ty::Unit;
-        }
         if self.unsafe_depth == 0 {
             self.err(
                 "E0801",
                 "`#asm` is unsafe; wrap it in `unsafe { ... }`".to_string(),
                 span,
             );
+        }
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for op in operands {
+            if !seen.insert(op.name.as_str()) {
+                self.err(
+                    "E0890",
+                    format!("duplicate `#asm` operand name `{}`", op.name),
+                    op.span,
+                );
+            }
+            // A `reg` (compiler-chosen) operand must be referenced by `{name}`
+            // so the template can name the register the compiler picked. An
+            // explicit-register operand (`out("x0")`) may instead use the
+            // register name directly in the template, so its placeholder is
+            // optional.
+            if matches!(op.reg, AsmReg::Any) {
+                let placeholder = format!("{{{}}}", op.name);
+                if !template.contains(&placeholder) {
+                    self.err(
+                        "E0893",
+                        format!(
+                            "`#asm` operand `{}` uses `reg` but has no `{{{}}}` placeholder in the template",
+                            op.name, op.name
+                        ),
+                        op.span,
+                    );
+                }
+            }
+            let vty = match op.dir {
+                AsmDir::In => self.check_expr(&op.value, None),
+                AsmDir::Out | AsmDir::InOut => {
+                    if let ExprKind::Ident(name) = &op.value.kind {
+                        if let Some(info) = self.lookup_local(name).cloned() {
+                            // Writing a previously-assigned binding requires
+                            // `mut`; the first write to a `let x: T;` initializes
+                            // it (allowed, like assignment). `inout` always reads
+                            // first, so it needs an assigned, mutable binding.
+                            if info.assigned && !info.mutable {
+                                self.err(
+                                    "E0305",
+                                    format!(
+                                        "`#asm` writes operand `{}` but `{}` is not declared `mut`",
+                                        op.name, name
+                                    ),
+                                    op.span,
+                                );
+                            }
+                            for scope in self.scopes.iter_mut().rev() {
+                                if let Some(i) = scope.get_mut(name) {
+                                    i.assigned = true;
+                                    break;
+                                }
+                            }
+                            info.ty
+                        } else {
+                            // Unknown name — let the normal resolver surface it.
+                            self.check_expr(&op.value, None)
+                        }
+                    } else {
+                        self.err(
+                            "E0895",
+                            format!(
+                                "`#asm` `out`/`inout` operand `{}` must be a variable; general places (field/index) are not yet supported",
+                                op.name
+                            ),
+                            op.span,
+                        );
+                        Ty::Error
+                    }
+                }
+            };
+            if !matches!(vty, Ty::Error) && !is_asm_scalar(&vty) {
+                self.err(
+                    "E0892",
+                    format!(
+                        "`#asm` operand `{}` has type `{}`; only integer, pointer, and `bool` operands fit a register",
+                        op.name,
+                        ty_display(&vty)
+                    ),
+                    op.span,
+                );
+            }
         }
         Ty::Unit
     }
@@ -12486,6 +12538,27 @@ fn name_leaf(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
 
+/// v0.0.14 inline asm Tier 2: a type that fits in a single general register —
+/// the only operand types supported today. Floats (which need an `f`-class
+/// constraint) and aggregates are rejected (E0892).
+fn is_asm_scalar(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::Isize
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::Usize
+            | Ty::Bool
+            | Ty::RawPtr(_)
+    )
+}
+
 fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool {
     match ty {
         Ty::Param(_) => true,
@@ -13911,6 +13984,13 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
             // no user-fn callee — but nested calls inside args still count.
             for a in args {
                 collect_effects_expr(a, out);
+            }
+        }
+        ExprKind::Asm { operands, .. } => {
+            // `#asm` itself is not a call; operand value-exprs still might
+            // contain one.
+            for op in operands {
+                collect_effects_expr(&op.value, out);
             }
         }
         ExprKind::IntLit(_, _)
@@ -19671,49 +19751,161 @@ mod tests {
         );
     }
 
+    // v0.0.14 inline asm Tier 2 changed `#asm`'s grammar: a non-string
+    // template, a turbofish, a `-> T` ascription, and a non-operand second
+    // argument are now rejected by the dedicated `parse_asm_intrinsic` grammar
+    // (parse errors) rather than by sema. They are still rejected — these
+    // tests pin that.
+    fn parse_fails_src(src: &str) -> bool {
+        match tokenize(src) {
+            Ok(toks) => parse(toks).is_err(),
+            Err(_) => true,
+        }
+    }
+
     #[test]
-    fn intrinsic_asm_non_string_template_e0871() {
-        let codes = errors(
+    fn asm_non_string_template_rejected() {
+        assert!(parse_fails_src(
             "fn main() -> i32 {\n\
                  let x: i32 = 1;\n\
                  unsafe { #asm(x); }\n\
                  return 0;\n\
              }",
-        );
-        assert!(codes.iter().any(|c| *c == "E0871"), "got {:?}", codes);
+        ));
     }
 
     #[test]
-    fn intrinsic_asm_type_args_e0501() {
-        let codes = errors(
+    fn asm_type_args_rejected() {
+        assert!(parse_fails_src(
             "fn main() -> i32 {\n\
                  unsafe { #asm::[i32](\"nop\"); }\n\
                  return 0;\n\
              }",
-        );
-        assert!(codes.iter().any(|c| *c == "E0501"), "got {:?}", codes);
+        ));
     }
 
     #[test]
-    fn intrinsic_asm_ret_ascription_e0903() {
-        let codes = errors(
+    fn asm_ret_ascription_rejected() {
+        assert!(parse_fails_src(
             "fn main() -> i32 {\n\
                  unsafe { let _x: i32 = #asm(\"nop\") -> i32; }\n\
                  return 0;\n\
              }",
-        );
-        assert!(codes.iter().any(|c| *c == "E0903"), "got {:?}", codes);
+        ));
     }
 
     #[test]
-    fn intrinsic_asm_wrong_arg_count_e0308() {
-        let codes = errors(
+    fn asm_second_arg_must_be_operand_rejected() {
+        assert!(parse_fails_src(
             "fn main() -> i32 {\n\
                  unsafe { #asm(\"a\", \"b\"); }\n\
                  return 0;\n\
              }",
+        ));
+    }
+
+    // ---- v0.0.14 inline asm Tier 2: operands + clobbers ----
+
+    #[test]
+    fn asm_tier1_no_operands_still_clean() {
+        assert_clean(
+            "fn f() { unsafe { #asm(\"dmb ish\"); } return; }\n\
+             fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0308"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn asm_tier2_in_out_clean() {
+        assert_clean(
+            "fn add(a: i64, b: i64) -> i64 {\n\
+                 let mut s: i64 = 0;\n\
+                 unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
+                 return s;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn asm_tier2_inout_clean() {
+        assert_clean(
+            "fn inc(x: i64) -> i64 {\n\
+                 let mut v: i64 = x;\n\
+                 unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
+                 return v;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn asm_tier2_explicit_reg_and_clobber_clean() {
+        // Explicit-register operand needs no `{name}` placeholder.
+        assert_clean(
+            "fn getpid() -> i64 {\n\
+                 let mut p: i64 = 0;\n\
+                 unsafe { #asm(\"mov x16, #20\", p = out(\"x0\") p, clobber(\"x16\")); }\n\
+                 return p;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn asm_tier2_outside_unsafe_e0801() {
+        let codes = errors(
+            "fn f(a: i64) -> i64 {\n\
+                 let mut s: i64 = 0;\n\
+                 #asm(\"mov {s}, {a}\", s = out(reg) s, a = in(reg) a);\n\
+                 return s;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0801"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn asm_tier2_out_needs_mut_e0305() {
+        let codes = errors(
+            "fn f(a: i64) -> i64 {\n\
+                 let s: i64 = 0;\n\
+                 unsafe { #asm(\"mov {s}, {a}\", s = out(reg) s, a = in(reg) a); }\n\
+                 return s;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0305"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn asm_tier2_non_scalar_operand_e0892() {
+        let codes = errors(
+            "fn f(a: string) { unsafe { #asm(\"nop {a}\", a = in(reg) a); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0892"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn asm_tier2_reg_missing_placeholder_e0893() {
+        let codes = errors(
+            "fn f(a: i64) { unsafe { #asm(\"nop\", a = in(reg) a); } return; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0893"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn asm_tier2_out_must_be_variable_e0895() {
+        let codes = errors(
+            "struct P { x: i64 }\n\
+             fn f(mut p: P, a: i64) {\n\
+                 unsafe { #asm(\"mov {o}, {a}\", o = out(reg) p.x, a = in(reg) a); }\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0895"), "got {:?}", codes);
     }
 
     #[test]

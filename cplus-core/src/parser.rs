@@ -437,6 +437,99 @@ impl Parser {
         Ok(params)
     }
 
+    /// v0.0.14 inline asm Tier 2 operand grammar. Cursor is just past `asm`.
+    ///   `#asm(TEMPLATE [, NAME = DIR(REG) EXPR]* [, clobber("r", ...)]*)`
+    /// where DIR is `in`/`out`/`inout` and REG is `reg` or `"x0"`.
+    fn parse_asm_intrinsic(&mut self, pound_span: Span) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::LParen, "`(` after `#asm`")?;
+        let template = match self.peek().kind.clone() {
+            TokenKind::Str(s) => {
+                self.bump();
+                s
+            }
+            _ => return Err(self.err_at_peek("`#asm` template string literal")),
+        };
+        let mut operands: Vec<AsmOperand> = Vec::new();
+        let mut clobbers: Vec<String> = Vec::new();
+        while self.eat(&TokenKind::Comma) {
+            if self.at(&TokenKind::RParen) {
+                break; // trailing comma
+            }
+            // `clobber("cc", "memory")`
+            if matches!(&self.peek().kind, TokenKind::Ident(s) if s == "clobber") {
+                self.bump();
+                self.expect(&TokenKind::LParen, "`(` after `clobber`")?;
+                loop {
+                    match self.peek().kind.clone() {
+                        TokenKind::Str(s) => {
+                            self.bump();
+                            clobbers.push(s);
+                        }
+                        _ => return Err(self.err_at_peek("clobber register string literal")),
+                    }
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&TokenKind::RParen, "`)` after clobber list")?;
+                continue;
+            }
+            // `NAME = DIR(REG) EXPR`
+            let opname = self.expect_ident()?;
+            self.expect(&TokenKind::Eq, "`=` in asm operand `name = dir(reg) expr`")?;
+            let dir = match &self.peek().kind {
+                TokenKind::In => {
+                    self.bump();
+                    AsmDir::In
+                }
+                TokenKind::Ident(s) if s == "out" => {
+                    self.bump();
+                    AsmDir::Out
+                }
+                TokenKind::Ident(s) if s == "inout" => {
+                    self.bump();
+                    AsmDir::InOut
+                }
+                _ => return Err(self.err_at_peek("asm operand direction `in`, `out`, or `inout`")),
+            };
+            self.expect(&TokenKind::LParen, "`(` after asm operand direction")?;
+            let reg = match self.peek().kind.clone() {
+                TokenKind::Ident(s) if s == "reg" => {
+                    self.bump();
+                    AsmReg::Any
+                }
+                TokenKind::Str(s) => {
+                    self.bump();
+                    AsmReg::Explicit(s)
+                }
+                _ => {
+                    return Err(
+                        self.err_at_peek("`reg` or an explicit register string in asm operand")
+                    )
+                }
+            };
+            self.expect(&TokenKind::RParen, "`)` after asm register spec")?;
+            let value = self.parse_expr()?;
+            let span = opname.span;
+            operands.push(AsmOperand {
+                name: opname.name,
+                dir,
+                reg,
+                value: Box::new(value),
+                span,
+            });
+        }
+        let close = self.expect(&TokenKind::RParen, "`)` to close `#asm(...)`")?.span;
+        Ok(Expr {
+            kind: ExprKind::Asm {
+                template,
+                operands,
+                clobbers,
+            },
+            span: pound_span.merge(close),
+        })
+    }
+
     fn parse_impl_block(&mut self, is_unsafe: bool) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Impl, "`impl`")?.span;
         let first_ident = self.expect_ident()?;
@@ -2516,6 +2609,12 @@ impl Parser {
                         });
                     }
                 };
+                // v0.0.14 inline asm Tier 2: `#asm(...)` parses operands with
+                // a dedicated grammar (`name = in/out/inout(reg|"x0") expr`,
+                // `clobber("...")`), not the generic expression-arg loop.
+                if name == "asm" {
+                    return self.parse_asm_intrinsic(pound_span);
+                }
                 // Optional turbofish `::[T1, T2]` after the name.
                 let mut type_args: Vec<Type> = Vec::new();
                 if matches!(self.peek_kind(), TokenKind::ColonColon)

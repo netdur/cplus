@@ -3880,6 +3880,11 @@ fn collect_address_taken_fns(
                     visit_expr(a, sigs, taken);
                 }
             }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    visit_expr(&op.value, sigs, taken);
+                }
+            }
         }
     }
     fn visit_block(b: &Block, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
@@ -8686,6 +8691,10 @@ impl<'a> FnState<'a> {
             ExprKind::Intrinsic { name, type_args, args, ret_ty } => {
                 self.gen_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span)
             }
+            ExprKind::Asm { template, operands, clobbers } => {
+                self.gen_asm(template, operands, clobbers);
+                None
+            }
         }
     }
 
@@ -8966,12 +8975,8 @@ impl<'a> FnState<'a> {
                 self.gen_intrinsic_cpu_relax();
                 None
             }
-            // v0.0.14 inline-asm Tier 1: emit the side-effecting asm call.
-            // Returns no value (the call is `void`).
-            "asm" => {
-                self.gen_intrinsic_asm(args);
-                None
-            }
+            // `#asm(...)` never reaches here: the parser routes it to
+            // `ExprKind::Asm`, lowered by `gen_asm`.
             _ => panic!(
                 "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
             ),
@@ -9098,21 +9103,136 @@ impl<'a> FnState<'a> {
         (v, t)
     }
 
-    /// v0.0.14 inline-asm Tier 1: `#asm("template")` — emit a side-effecting,
-    /// operand-free inline-asm call: `call void asm sideeffect "<t>", ""()`.
+    /// v0.0.14 inline asm (Tier 1 + Tier 2): emit a side-effecting `call asm`.
     ///
-    /// `sideeffect` is mandatory: with no outputs the call is otherwise dead and
-    /// LLVM would delete it, defeating the point (fences/barriers/hints). The
-    /// template is sema-guaranteed to be a string literal. No declaration is
-    /// needed — `asm` is an LLVM expression, not a called function.
-    fn gen_intrinsic_asm(&mut self, args: &[Expr]) {
-        let template = match &args[0].kind {
-            ExprKind::StrLit(s) => s.as_str(),
-            // sema (check_intrinsic_asm) rejects every non-string-literal form.
-            _ => unreachable!("#asm: sema guarantees a string-literal template"),
+    /// Lowering, following LLVM's inline-asm operand model:
+    ///   - operand `$N` numbering: outputs (`out`/`inout`) first in declaration
+    ///     order, then pure inputs (`in`); `{name}` in the template is rewritten
+    ///     to `$N`.
+    ///   - constraint string: `=r`/`={reg}` per output, `r`/`{reg}` per input,
+    ///     a tied-input number per `inout` (its output index), then `~{reg}` per
+    ///     clobber.
+    ///   - return type: void (0 outputs), the scalar type (1), or an anonymous
+    ///     struct unpacked with `extractvalue` (N>1). Each output's result is
+    ///     stored back into its place.
+    /// `sideeffect` is always set so a side-effecting, output-free asm (a fence)
+    /// isn't deleted. Tier 1 (`#asm("dmb ish")`) is the no-operand degenerate
+    /// case → `call void asm sideeffect "dmb ish", ""()`.
+    fn gen_asm(&mut self, template: &str, operands: &[AsmOperand], clobbers: &[String]) {
+        let outs: Vec<&AsmOperand> = operands
+            .iter()
+            .filter(|o| matches!(o.dir, AsmDir::Out | AsmDir::InOut))
+            .collect();
+        let ins: Vec<&AsmOperand> = operands
+            .iter()
+            .filter(|o| matches!(o.dir, AsmDir::In))
+            .collect();
+
+        // `$N` index per operand name: outputs first, then pure inputs.
+        let mut index_of: HashMap<&str, usize> = HashMap::new();
+        for (k, op) in outs.iter().enumerate() {
+            index_of.insert(op.name.as_str(), k);
+        }
+        for (j, op) in ins.iter().enumerate() {
+            index_of.insert(op.name.as_str(), outs.len() + j);
+        }
+
+        // Template: escape literal specials, then `{name}` -> `$N`.
+        let mut tmpl = escape_asm_template(template);
+        for op in operands {
+            let n = index_of[op.name.as_str()];
+            tmpl = tmpl.replace(&format!("{{{}}}", op.name), &format!("${n}"));
+        }
+
+        // Constraint string.
+        let mut cons: Vec<String> = Vec::new();
+        for op in &outs {
+            cons.push(match &op.reg {
+                AsmReg::Any => "=r".to_string(),
+                AsmReg::Explicit(r) => format!("={{{r}}}"),
+            });
+        }
+        for op in &ins {
+            cons.push(match &op.reg {
+                AsmReg::Any => "r".to_string(),
+                AsmReg::Explicit(r) => format!("{{{r}}}"),
+            });
+        }
+        for (k, op) in outs.iter().enumerate() {
+            if op.dir == AsmDir::InOut {
+                cons.push(k.to_string()); // tied input -> output index
+            }
+        }
+        for c in clobbers {
+            cons.push(format!("~{{{c}}}"));
+        }
+        let constraints = cons.join(",");
+
+        // Argument values: pure inputs, then each inout's current value.
+        let mut args: Vec<(String, String)> = Vec::new();
+        for op in &ins {
+            let (v, ty) = self
+                .gen_expr(&op.value)
+                .expect("asm `in` operand has a value");
+            args.push((llvm_ty(&ty, self.types), v));
+        }
+        for op in &outs {
+            if op.dir == AsmDir::InOut {
+                let (v, ty) = self
+                    .gen_expr(&op.value)
+                    .expect("asm `inout` operand reads its place");
+                args.push((llvm_ty(&ty, self.types), v));
+            }
+        }
+
+        // Output places (slot + llvm type) to store results back into.
+        let out_slots: Vec<(String, String)> = outs
+            .iter()
+            .map(|op| {
+                let (slot, ty) = self.gen_place(&op.value);
+                (slot, llvm_ty(&ty, self.types))
+            })
+            .collect();
+
+        let args_str = args
+            .iter()
+            .map(|(t, v)| format!("{t} {v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if out_slots.is_empty() {
+            self.emit(&format!(
+                "call void asm sideeffect \"{tmpl}\", \"{constraints}\"({args_str})"
+            ));
+            return;
+        }
+
+        let ret_ty_str = if out_slots.len() == 1 {
+            out_slots[0].1.clone()
+        } else {
+            format!(
+                "{{ {} }}",
+                out_slots
+                    .iter()
+                    .map(|(_, t)| t.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         };
-        let escaped = escape_asm_template(template);
-        self.emit(&format!("call void asm sideeffect \"{escaped}\", \"\"()"));
+        let res = self.next_tmp();
+        self.emit(&format!(
+            "{res} = call {ret_ty_str} asm sideeffect \"{tmpl}\", \"{constraints}\"({args_str})"
+        ));
+        if out_slots.len() == 1 {
+            let (slot, ty) = &out_slots[0];
+            self.emit(&format!("store {ty} {res}, ptr {slot}"));
+        } else {
+            for (k, (slot, ty)) in out_slots.iter().enumerate() {
+                let ev = self.next_tmp();
+                self.emit(&format!("{ev} = extractvalue {ret_ty_str} {res}, {k}"));
+                self.emit(&format!("store {ty} {ev}, ptr {slot}"));
+            }
+        }
     }
 
     /// v0.0.12 G-031: `#cpu_relax()` — per-arch spin-loop hint.
@@ -15170,6 +15290,46 @@ mod tests {
         assert!(
             ir.contains("call void asm sideeffect \"dmb ish\", \"\"()"),
             "expected operand-free sideeffect asm call, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn inline_asm_tier2_emits_operands_and_constraints() {
+        // `out(reg) s, in(reg) a, in(reg) b` -> output `=r`, two inputs `r`,
+        // `{name}` placeholders rewritten to `$0/$1/$2`, result stored back.
+        let ir = gen_src(
+            "fn add(a: i64, b: i64) -> i64 {\n\
+                 let mut s: i64 = 0;\n\
+                 unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
+                 return s;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("asm sideeffect \"add $0, $1, $2\", \"=r,r,r\""),
+            "expected operand-numbered template + constraints, got:\n{ir}"
+        );
+        // Single output returns the scalar and is stored back.
+        assert!(
+            ir.contains("= call i64 asm sideeffect"),
+            "expected i64-returning asm call, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn inline_asm_tier2_inout_ties_input_to_output() {
+        // `inout(reg) v` -> one output `=r` plus a tied input `0`.
+        let ir = gen_src(
+            "fn inc(x: i64) -> i64 {\n\
+                 let mut v: i64 = x;\n\
+                 unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
+                 return v;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("asm sideeffect \"add $0, $0, #1\", \"=r,0\""),
+            "expected tied inout constraint `=r,0`, got:\n{ir}"
         );
     }
 

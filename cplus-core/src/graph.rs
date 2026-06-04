@@ -1288,6 +1288,11 @@ impl<'a> Resolver<'a> {
                     self.walk_expr(a);
                 }
             }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    self.walk_expr(&op.value);
+                }
+            }
             ExprKind::InterpStr { parts } => {
                 for p in parts {
                     if let InterpStrPart::Expr(e) = p {
