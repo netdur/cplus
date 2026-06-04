@@ -529,6 +529,52 @@ fn inline_asm_tier2_operands_run_aarch64() {
 }
 
 #[test]
+#[cfg(target_arch = "aarch64")]
+fn inline_asm_tier3_naked_fn_runs_aarch64() {
+    // v0.0.14 inline-asm Tier 3: a `#[naked]` function — no prologue/epilogue,
+    // body is inline asm reading args from ABI registers (x0/x1) and returning
+    // via x0. raw_add(40, 2) = 42.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("naked.cplus");
+    std::fs::write(
+        &src,
+        "#[naked]\n\
+         fn raw_add(a: i64, b: i64) -> i64 {\n\
+             unsafe { #asm(\"add x0, x0, x1\\nret\"); }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let r: i64 = raw_add(40 as i64, 2 as i64);\n\
+             return r as i32;\n\
+         }",
+    )
+    .unwrap();
+    let bin = dir.join("naked");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#[naked] must compile");
+    let run = Command::new(&bin).status().expect("run naked");
+    assert_eq!(run.code(), Some(42), "expected 42, got {:?}", run.code());
+
+    // IR: the function carries `naked noinline`, no param prologue, ends in
+    // `unreachable` (the asm performs the return).
+    let ll = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("emit-ll");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    assert!(
+        ir.contains("@raw_add") && ir.contains("naked noinline"),
+        "expected naked attribute on raw_add, got:\n{ir}"
+    );
+}
+
+#[test]
 fn inline_asm_outside_unsafe_rejected_e0801() {
     // Negative: `#asm` is unsafe; using it outside an `unsafe` block fails.
     let cpc = env!("CARGO_BIN_EXE_cpc");

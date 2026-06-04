@@ -4552,6 +4552,13 @@ fn inline_fn_attr(attrs: &[Attribute]) -> &'static str {
     ""
 }
 
+/// v0.0.14 inline asm Tier 3: a `#[naked]` function emits no prologue/epilogue —
+/// its body is inline asm that handles the ABI and the return itself. The LLVM
+/// `naked` attribute suppresses frame setup; `noinline` keeps the body intact.
+fn has_naked_attr(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| a.path.name == "naked")
+}
+
 fn gen_function(
     out: &mut String,
     f: &Function,
@@ -4845,6 +4852,10 @@ fn gen_function(
     }
     out.push_str(")");
     out.push_str(inline_fn_attr(&f.attributes));
+    let is_naked = has_naked_attr(&f.attributes);
+    if is_naked {
+        out.push_str(" naked noinline");
+    }
     out.push_str(" {\n");
     out.push_str("entry:\n");
 
@@ -4893,8 +4904,15 @@ fn gen_function(
     //     field GEPs use the original-type's offsets and read valid bytes.
     //   - Indirect: the SSA arg IS a pointer to the C caller's slot.
     //     Bind directly; gen_field GEPs off it like any other place.
-    for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in
-        f.params.iter().zip(sig.params.iter()).enumerate()
+    // A `#[naked]` function materializes no params: the body is inline asm
+    // that reads arguments straight from their ABI registers. Skipping the
+    // prologue is the whole point (the SSA args stay unused, which is legal).
+    for (i, (param, (pty, move_flag, mut_flag, restrict_flag))) in f
+        .params
+        .iter()
+        .zip(sig.params.iter())
+        .enumerate()
+        .filter(|_| !is_naked)
     {
         let llvm_idx = i as u32 + sret_param_offset;
         // C-ABI coerced param: alloca with coerced size, store the coerced
@@ -4965,15 +4983,26 @@ fn gen_function(
     }
 
     // Emit body
-    state.gen_body_block(&f.body);
+    if is_naked {
+        state.gen_naked_body(&f.body);
+    } else {
+        state.gen_body_block(&f.body);
+    }
 
     // Ensure final terminator
     if !state.terminated {
-        match &return_ty {
-            Ty::Unit => state.emit_terminator("ret void"),
-            // Sema guarantees a value; this is unreachable, but emit
-            // `unreachable` so the IR validates if we slip through.
-            _ => state.emit_terminator("unreachable"),
+        if is_naked {
+            // The body's asm performs the real return; control never falls
+            // through to here. `unreachable` is the valid IR terminator (a
+            // `ret` would emit a stray epilogue-less return after the asm).
+            state.emit_terminator("unreachable");
+        } else {
+            match &return_ty {
+                Ty::Unit => state.emit_terminator("ret void"),
+                // Sema guarantees a value; this is unreachable, but emit
+                // `unreachable` so the IR validates if we slip through.
+                _ => state.emit_terminator("unreachable"),
+            }
         }
     }
 
@@ -7610,6 +7639,26 @@ impl<'a> FnState<'a> {
     }
 
     // ---- function body ----
+
+    /// v0.0.14 inline asm Tier 3: emit a `#[naked]` body — just the inline-asm
+    /// statements (and an optional asm tail), with no implicit `ret`. The asm
+    /// performs the real return; `gen_function` caps the block with
+    /// `unreachable`. Sema (`check_naked`) has verified the body is asm-only.
+    fn gen_naked_body(&mut self, b: &Block) {
+        self.push_scope();
+        for s in &b.stmts {
+            if self.terminated {
+                break;
+            }
+            self.gen_stmt(s);
+        }
+        if !self.terminated {
+            if let Some(t) = &b.tail {
+                let _ = self.gen_expr(t);
+            }
+        }
+        self.pop_scope();
+    }
 
     fn gen_body_block(&mut self, b: &Block) {
         self.push_scope();

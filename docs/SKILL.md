@@ -480,6 +480,10 @@ unsafe { #asm("add {s}, {a}, {b}", s = out(reg) sum, a = in(reg) a, b = in(reg) 
 let mut v: i64 = x;
 unsafe { #asm("add {v}, {v}, #1", v = inout(reg) v); }       // read-modify-write
 unsafe { #asm("mov x16, #20", p = out("x0") pid, clobber("x16")); }  // pinned reg + clobber
+// Tier 3: `#[naked]` — no prologue/epilogue; body is asm-only and returns
+// itself (args arrive in ABI registers). For trampolines / entry stubs.
+#[naked]
+fn raw_add(a: i64, b: i64) -> i64 { unsafe { #asm("add x0, x0, x1\nret"); } }
 ```
 
 ---

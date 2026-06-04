@@ -714,6 +714,7 @@ fn check_with_files_inner<'a>(
     // call sites have already been type-checked (we trust the AST shape).
     // v0.0.10 Phase 3: `#[bounded_recursion]` rides the same walker.
     cx.check_no_alloc(program);
+    cx.check_naked(program);
     cx.check_no_block(program);
     cx.check_bounded_recursion(program);
     cx.check_max_stack(program);
@@ -2802,6 +2803,7 @@ impl SemaCx<'_> {
             m.body.span,
             marks_no_alloc(&m.attributes),
             marks_no_block(&m.attributes),
+            has_attr_named(&m.attributes, "naked"),
         );
         self.scopes.pop();
         self.current_fn_is_gen = prev_gen;
@@ -2908,6 +2910,7 @@ impl SemaCx<'_> {
             m.body.span,
             marks_no_alloc(&m.attributes),
             marks_no_block(&m.attributes),
+            has_attr_named(&m.attributes, "naked"),
         );
         self.scopes.pop();
         self.current_fn_is_gen = prev_gen;
@@ -3594,6 +3597,51 @@ impl SemaCx<'_> {
                 span,
             );
         }
+    }
+
+    /// v0.0.14 inline asm Tier 3: a `#[naked]` function emits no
+    /// prologue/epilogue, so its body must be inline asm only — anything else
+    /// would read/write a stack frame that doesn't exist. Each statement must
+    /// be `#asm(...)` (optionally wrapped in `unsafe { ... }`); a non-asm
+    /// statement or a value tail is **E0906**.
+    fn check_naked(&mut self, p: &Program) {
+        for item in &p.items {
+            self.current_file = item.origin_file.clone();
+            let ItemKind::Function(f) = &item.kind else {
+                continue;
+            };
+            if !has_attr_named(&f.attributes, "naked") {
+                continue;
+            }
+            if f.is_extern {
+                continue;
+            }
+            for s in &f.body.stmts {
+                if !stmt_is_asm_only(s) {
+                    self.err(
+                        "E0909",
+                        format!(
+                            "`#[naked]` function `{}` may contain only inline `#asm(...)` statements (no prologue/epilogue is emitted); move any other code into a normal function the asm calls",
+                            f.name.name
+                        ),
+                        s.span,
+                    );
+                }
+            }
+            if let Some(tail) = &f.body.tail {
+                if !expr_is_asm_only(tail) {
+                    self.err(
+                        "E0909",
+                        format!(
+                            "`#[naked]` function `{}` cannot end with a value expression — the asm must perform the return itself",
+                            f.name.name
+                        ),
+                        tail.span,
+                    );
+                }
+            }
+        }
+        self.current_file = None;
     }
 
     fn check_no_alloc(&mut self, p: &Program) {
@@ -4427,6 +4475,7 @@ impl SemaCx<'_> {
             f.body.span,
             marks_no_alloc(&f.attributes),
             marks_no_block(&f.attributes),
+            has_attr_named(&f.attributes, "naked"),
         );
         self.scopes.pop();
         self.current_fn_is_async = prev_async;
@@ -4587,6 +4636,7 @@ impl SemaCx<'_> {
         body_span: ByteSpan,
         no_alloc: bool,
         no_block: bool,
+        is_naked: bool,
     ) {
         // v0.0.12 realtime Phase 1: record the enclosing function's contract
         // so `check_method_call` can enforce it on method-dispatch sites. Reset
@@ -4611,18 +4661,31 @@ impl SemaCx<'_> {
             // shape), the right fix is `;` after the closing brace, not
             // `return ...;`. The previous one-size message led writers to
             // append `return;` which compiles but reads worse than `};`.
-            let tail_ty = self.check_expr(tail, Some(expected.clone()));
-            let msg = if expected == Ty::Unit && tail_ty == Ty::Unit {
-                "function body cannot end with an implicit tail expression; \
-                 add `;` after the closing `}` (or `return;` if you prefer the explicit form)"
-                    .to_string()
+            // A `#[naked]` body is inline asm that returns on its own; an asm
+            // tail is its normal shape, so don't type it against the declared
+            // return (it is `()`), and skip the implicit-tail rules.
+            let tail_ty = if is_naked {
+                self.check_expr(tail, None)
             } else {
-                "function body cannot end with an implicit tail expression; \
-                 use `return ...;` instead"
-                    .to_string()
+                self.check_expr(tail, Some(expected.clone()))
             };
-            self.err("E0333", msg, tail.span);
-        } else if expected != Ty::Unit && expected != Ty::Error && !body_ends_with_return(body) {
+            if !is_naked {
+                let msg = if expected == Ty::Unit && tail_ty == Ty::Unit {
+                    "function body cannot end with an implicit tail expression; \
+                     add `;` after the closing `}` (or `return;` if you prefer the explicit form)"
+                        .to_string()
+                } else {
+                    "function body cannot end with an implicit tail expression; \
+                     use `return ...;` instead"
+                        .to_string()
+                };
+                self.err("E0333", msg, tail.span);
+            }
+        } else if !is_naked
+            && expected != Ty::Unit
+            && expected != Ty::Error
+            && !body_ends_with_return(body)
+        {
             self.err(
                 "E0306",
                 format!(
@@ -12559,6 +12622,27 @@ fn is_asm_scalar(ty: &Ty) -> bool {
     )
 }
 
+/// v0.0.14 inline asm Tier 3: is this expression nothing but inline asm? `#asm`,
+/// or an `unsafe { ... }` / block wrapping asm-only statements. Used to verify a
+/// `#[naked]` body.
+fn expr_is_asm_only(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Asm { .. } => true,
+        ExprKind::Unsafe(b) | ExprKind::Block(b) => {
+            b.stmts.iter().all(stmt_is_asm_only)
+                && b.tail.as_deref().map(expr_is_asm_only).unwrap_or(true)
+        }
+        _ => false,
+    }
+}
+
+fn stmt_is_asm_only(s: &Stmt) -> bool {
+    match &s.kind {
+        StmtKind::Expr(e) => expr_is_asm_only(e),
+        _ => false,
+    }
+}
+
 fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool {
     match ty {
         Ty::Param(_) => true,
@@ -19906,6 +19990,39 @@ mod tests {
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0895"), "got {:?}", codes);
+    }
+
+    // ---- v0.0.14 inline asm Tier 3: #[naked] ----
+
+    #[test]
+    fn naked_asm_only_body_clean() {
+        assert_clean(
+            "#[naked]\n\
+             fn raw_add(a: i64, b: i64) -> i64 {\n\
+                 unsafe { #asm(\"add x0, x0, x1\\nret\"); }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn naked_non_asm_statement_e0909() {
+        let codes = errors(
+            "#[naked]\n\
+             fn bad() -> i64 { let x: i64 = 1; return x; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0909"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn naked_value_tail_e0909() {
+        let codes = errors(
+            "#[naked]\n\
+             fn bad(a: i64) -> i64 { a }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0909"), "got {:?}", codes);
     }
 
     #[test]

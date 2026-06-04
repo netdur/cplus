@@ -167,6 +167,16 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_FN | TARGET_METHOD,
         allow_duplicate: false,
     },
+    // v0.0.14 inline asm Tier 3: `#[naked]` — emit the function with no
+    // prologue/epilogue (LLVM `naked`). Its body must be inline `#asm(...)`
+    // that handles the ABI and returns itself (sema's `check_naked` enforces
+    // this, E0909). For trampolines, interrupt/entry stubs, custom-ABI shims.
+    AttrSpec {
+        name: "naked",
+        args: ArgsSpec::None,
+        targets: TARGET_FN | TARGET_METHOD,
+        allow_duplicate: false,
+    },
     // v0.0.7 Slice 1.3: `#[unroll(N)]` on a loop statement. Codegen
     // attaches `!{!"llvm.loop.unroll.count", i32 N}` to the back-edge
     // branch's `!llvm.loop` group. Sema validates N ∈ [1, 256] (E0510).
