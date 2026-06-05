@@ -968,6 +968,13 @@ fn collect_dep_link_args(
         // Bundled artifacts go in as full paths (not `-l<name>` — they're
         // not on the linker's search path).
         if let Some(ls) = &vm.link {
+            // `-L<dir>` must precede the `-l<name>` it resolves; emit search
+            // paths first. `-rpath` bakes the same dir into the binary so the
+            // loader finds the .so at runtime (no LD_LIBRARY_PATH needed).
+            for dir in &ls.search_paths {
+                link_args.push(format!("-L{dir}"));
+                link_args.push(format!("-Wl,-rpath,{dir}"));
+            }
             for fw in &ls.frameworks {
                 link_args.push("-framework".to_string());
                 link_args.push(fw.clone());
@@ -1133,6 +1140,14 @@ fn build_project(
     // `frameworks` is macOS/iOS-specific (no-op elsewhere because clang's
     // `-framework` flag is platform-gated), `-l` is cross-platform.
     let mut link_args: Vec<String> = Vec::with_capacity(bin.frameworks.len() * 2 + bin.libs.len());
+    // The consumer's own `[link] search-paths` go first so `-L<dir>`
+    // precedes any `-l<name>` (its own `[[bin]] libs` below, or a dep's).
+    if let Some(ls) = m.link.as_ref() {
+        for dir in &ls.search_paths {
+            link_args.push(format!("-L{dir}"));
+            link_args.push(format!("-Wl,-rpath,{dir}"));
+        }
+    }
     for fw in &bin.frameworks {
         link_args.push("-framework".to_string());
         link_args.push(fw.clone());

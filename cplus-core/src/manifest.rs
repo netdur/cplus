@@ -110,6 +110,13 @@ pub struct LinkSpec {
     /// validates each entry exists at link time and fails with
     /// E0864 if any is missing.
     pub extra_objects: Vec<PathBuf>,
+    /// Library search directories. Each becomes both `-L<dir>` (so the
+    /// linker resolves `libs` that live outside the default search path,
+    /// e.g. `/usr/local/cuda/lib64`) and `-Wl,-rpath,<dir>` (so the
+    /// dynamic loader finds the same `.so` at runtime without the user
+    /// setting `LD_LIBRARY_PATH`). Relative entries resolve against the
+    /// manifest directory; absolute system paths pass through unchanged.
+    pub search_paths: Vec<String>,
 }
 
 /// Phase 2 (v0.0.2) — one entry in `[dependencies]`. Today carries
@@ -393,6 +400,8 @@ struct RawLinkSpec {
     /// matching the rest of the manifest's multi-word field naming.
     #[serde(default, rename = "extra-objects")]
     extra_objects: Vec<String>,
+    #[serde(default, rename = "search-paths")]
+    search_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -551,12 +560,22 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             // (E0864) so the diagnostic carries the full link context.
             let extra_objects: Vec<PathBuf> =
                 rl.extra_objects.into_iter().map(|p| root.join(p)).collect();
+            // Resolve each search path against the manifest dir. `join` is
+            // a no-op for absolute inputs (the common case — system SDK
+            // dirs like /usr/local/cuda/lib64), so this only rewrites
+            // relative entries.
+            let search_paths: Vec<String> = rl
+                .search_paths
+                .into_iter()
+                .map(|p| root.join(p).to_string_lossy().into_owned())
+                .collect();
             Some(LinkSpec {
                 frameworks: rl.frameworks,
                 libs: rl.libs,
                 bundled: rl.bundled,
                 triples: rl.triples,
                 extra_objects,
+                search_paths,
             })
         }
     };
@@ -1032,6 +1051,31 @@ mod tests {
         assert_eq!(link.bundled, vec!["curl.a".to_string()]);
         assert_eq!(link.triples.len(), 2);
         assert_eq!(link.libs, vec!["z".to_string()]);
+    }
+
+    #[test]
+    fn link_search_paths_parse() {
+        // `search-paths` carries library dirs (-> -L / -rpath). Absolute
+        // entries pass through unchanged; relative ones resolve against the
+        // manifest dir.
+        let root = std::env::temp_dir();
+        let text = r#"
+            [package]
+            name = "cuda"
+
+            [link]
+            libs         = ["cudart", "cublas"]
+            search-paths = ["/usr/local/cuda/lib64", "vendored/lib"]
+        "#;
+        let m = parse_in(&root, text).unwrap();
+        let link = m.link.expect("expected [link]");
+        assert_eq!(link.libs, vec!["cudart".to_string(), "cublas".to_string()]);
+        assert_eq!(link.search_paths.len(), 2);
+        assert_eq!(link.search_paths[0], "/usr/local/cuda/lib64");
+        assert_eq!(
+            link.search_paths[1],
+            root.join("vendored/lib").to_string_lossy()
+        );
     }
 
     #[test]

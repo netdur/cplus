@@ -1,0 +1,66 @@
+// vendor/cuda/src/buffer.cplus — owned device-memory handle.
+//
+// `DeviceBuffer` owns a `cudaMalloc`'d allocation; Drop calls `cudaFree`
+// at scope exit. Byte-oriented (like vendor/metal's Buffer); typed copies
+// go through the raw pointer + a byte count. `dptr` is a *device* address —
+// never dereference it on the host; hand it to kernels / cuBLAS.
+
+import "./runtime" as runtime;
+import "stdlib/result" as result;
+
+extern fn cudaMalloc(dev_ptr: **u8, size: usize) -> i32;
+extern fn cudaFree(dev_ptr: *u8) -> i32;
+extern fn cudaMemcpy(dst: *u8, src: *u8, count: usize, kind: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+pub struct DeviceBuffer {
+    pub dptr: *u8,   // device pointer (opaque on host)
+    pub size: usize, // bytes
+}
+
+// Void wrapper around `cudaFree` so `drop` releases the field as a bare
+// statement passing `self.dptr` directly — the form the raw-pointer
+// accountability check recognizes as a provable release. `cudaFree(NULL)`
+// is a documented no-op, so this is safe on a moved-from buffer.
+fn device_free(p: *u8) {
+    let _rc: i32 = unsafe { cudaFree(p) };
+    return;
+}
+
+// Allocate `size` bytes of device memory.
+pub fn alloc(size: usize) -> result::Result[DeviceBuffer, runtime::CudaError] {
+    // cudaMalloc writes the device pointer into a `void**`; stage it in a
+    // host slot, then read it back (C+ has no address-of-local).
+    let slot: *u8 = unsafe { malloc(8 as usize) };
+    let pp: **u8 = unsafe { slot as **u8 };
+    let rc: i32 = unsafe { cudaMalloc(pp, size) };
+    let dptr: *u8 = unsafe { *pp };
+    unsafe { free(slot); }
+    if rc != (0 as i32) {
+        return result::Result[DeviceBuffer, runtime::CudaError]::Err(runtime::CudaError::Runtime(rc));
+    }
+    return result::Result[DeviceBuffer, runtime::CudaError]::Ok(DeviceBuffer { dptr: dptr, size: size });
+}
+
+impl DeviceBuffer {
+    // Copy up to `min(bytes, self.size)` bytes from host `src` into this
+    // device buffer. Returns the raw cudaError_t (0 = success).
+    pub fn copy_from_host(self, src: *u8, bytes: usize) -> i32 {
+        let n: usize = if bytes < self.size { bytes } else { self.size };
+        return unsafe { cudaMemcpy(self.dptr, src, n, runtime::memcpy_host_to_device()) };
+    }
+
+    // Copy up to `min(bytes, self.size)` bytes from this device buffer into
+    // host `dst`. Returns the raw cudaError_t (0 = success).
+    pub fn copy_to_host(self, dst: *u8, bytes: usize) -> i32 {
+        let n: usize = if bytes < self.size { bytes } else { self.size };
+        return unsafe { cudaMemcpy(dst, self.dptr, n, runtime::memcpy_device_to_host()) };
+    }
+
+    fn drop(mut self) {
+        device_free(self.dptr);
+        self.dptr = unsafe { 0 as *u8 };
+        return;
+    }
+}
