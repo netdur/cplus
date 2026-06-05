@@ -1,0 +1,12 @@
+[package]
+name    = "appkit_list_detail"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "appkit_list_detail"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
+appkit = "*"

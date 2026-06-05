@@ -16774,6 +16774,33 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit master/detail milestone app (plan.appkit.md §5): the
+/// `appkit_list_detail` recipe ties the binding surface together (table data
+/// source + selection delegate, menu, controls, app delegate). It's a GUI app
+/// (`app.run()` blocks), so this is compile + link validation only — it builds
+/// the real recipe source against the in-tree vendor packages.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_list_detail_recipe_builds() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let recipe = root.join("docs/examples/recipes/appkit_list_detail");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::copy(recipe.join("Cplus.toml"), dir.join("Cplus.toml")).unwrap();
+    std::fs::copy(recipe.join("src/main.cplus"), dir.join("src/main.cplus")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
+
+    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    assert!(status.success(), "appkit_list_detail recipe failed to build");
+    assert!(
+        dir.join("target/debug/appkit_list_detail").is_file(),
+        "expected the list_detail binary"
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
