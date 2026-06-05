@@ -1240,6 +1240,13 @@ fn generate_inner(
             // in a dedicated pre-pass (`emit_statics`) just below.
             // Skip here so we don't double-emit.
             ItemKind::Static(_) => {}
+            // v0.0.15: module-scope `#asm("...");` → LLVM `module asm "..."`.
+            // A top-level entity, valid interspersed among the `define`s.
+            // The template is emitted verbatim (escaped for the LLVM string
+            // grammar); module asm has no operands, so `$` is not special.
+            ItemKind::ModuleAsm(ma) => {
+                out.push_str(&format!("module asm \"{}\"\n", escape_llvm_str(&ma.template)));
+            }
         }
     }
     if let Some(cfg) = test_cfg {
@@ -1920,7 +1927,8 @@ fn collect_types(p: &Program) -> TypeTable {
             | ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Const(_)
-            | ItemKind::Static(_) => {}
+            | ItemKind::Static(_)
+            | ItemKind::ModuleAsm(_) => {}
         }
     }
     // Second pass: resolve struct field types.
@@ -2052,10 +2060,21 @@ fn collect_types(p: &Program) -> TypeTable {
             if !m.generic_params.is_empty() {
                 continue;
             }
+            // v0.0.15: apply the move-by-default rule (`effective_move`) to
+            // struct-method params, matching free functions (collect_sigs) and
+            // enum methods above. Previously this site used the raw `p.move_`
+            // flag, so a bare non-Copy aggregate param of a *struct method*
+            // (notably `Vec[T]::push(x: T)`) was treated as a borrow: the caller
+            // never `mark_moved` it, so a heap-owning argument was double-freed
+            // (the vendor/json `elems.push(v)` use-after-free).
             let params: Vec<(Ty, bool, bool, bool)> = m
                 .params
                 .iter()
-                .map(|p| (ty_from(&p.ty, &t), p.move_, p.mutable, p.restrict))
+                .map(|p| {
+                    let ty = ty_from(&p.ty, &t);
+                    let mv = effective_move(p, &ty, &t);
+                    (ty, mv, p.mutable, p.restrict)
+                })
                 .collect();
             let declared_ret = match &m.return_type {
                 Some(ty) => ty_from(ty, &t),
@@ -2223,9 +2242,16 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> b
 /// and `borrow x` (shared borrow) do not consume, so they keep their
 /// by-pointer borrow ABI.
 ///
-/// Scoped to `Ty::Struct`: that matches `param_passes_by_ptr`'s domain and the
-/// `register_drop` callee path. `Ty::String` / `Vec[T]` value params already
-/// dodge the double-free via the auto-clone-on-return safety net
+/// Covers `Ty::Struct` and `Ty::Enum` (v0.0.15): both are non-Copy aggregates
+/// whose value-pass is a bitwise copy aliasing the caller's heap, so both need
+/// the move lowering. Excluding `Ty::Enum` was the v0.0.14 vendor/json
+/// double-free: a heap-owning enum (`Value::Array(Vec[Value])`) passed by
+/// bare-ident (`elems.push(v)`, `Result::Ok(v)`) was borrow-copied without
+/// `mark_moved`, so the caller's scope-exit drop freed heap the callee had
+/// already stored — a use-after-free on the next read. The callee `register_drop`
+/// path already handles `Ty::Enum` move params, so this routes enums through the
+/// identical, sound machinery as structs. `Ty::String` / `Vec[T]` value params
+/// still dodge the double-free via the auto-clone-on-return safety net
 /// (`borrowed_params`), so they are left untouched here.
 fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
     if p.move_ {
@@ -2234,7 +2260,7 @@ fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
     if p.mutable || p.borrow_ {
         return false;
     }
-    matches!(ty, Ty::Struct(_)) && !is_copy_ty(ty, t)
+    matches!(ty, Ty::Struct(_) | Ty::Enum(_)) && !is_copy_ty(ty, t)
 }
 
 /// Slice 1A: full parameter attribute set (v0.0.2 LLVM information dividend).
@@ -4394,6 +4420,23 @@ fn escape_asm_template(s: &str) -> String {
     for byte in s.bytes() {
         match byte {
             b'$' => out.push_str("$$"),
+            b'"' | b'\\' => out.push_str(&format!("\\{byte:02X}")),
+            0x20..=0x7E => out.push(byte as char),
+            _ => out.push_str(&format!("\\{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// v0.0.15: escape a string for an LLVM module-level `module asm "..."`
+/// directive. LLVM IR string literals escape `"`, `\`, and every
+/// non-printable byte as `\NN` (two hex digits); other ASCII is verbatim.
+/// Unlike `escape_asm_template`, `$` is *not* doubled — module asm performs
+/// no operand substitution, so `$` is an ordinary character.
+fn escape_llvm_str(s: &str) -> String {
+    let mut out = String::new();
+    for byte in s.bytes() {
+        match byte {
             b'"' | b'\\' => out.push_str(&format!("\\{byte:02X}")),
             0x20..=0x7E => out.push(byte as char),
             _ => out.push_str(&format!("\\{byte:02X}")),
@@ -7081,134 +7124,6 @@ impl<'a> FnState<'a> {
             }
         }
         None
-    }
-
-    /// v0.0.4 bug fix (raytracer port surfaced 2026-05-17): the free
-    /// `expr_value_ty` doesn't know about bindings, so `let r: Struct =
-    /// if cond { a } else { b };` where `a`/`b` are `Ident`s returned
-    /// None and the if produced no value (panicking the let's
-    /// `expect`). This binding-aware variant looks up locals and
-    /// transparently recurses through block / if tails.
-    fn expr_value_ty_with_bindings(&self, e: &Expr) -> Option<Ty> {
-        match &e.kind {
-            ExprKind::Ident(name) => self.lookup(name).map(|(_, ty)| ty.clone()),
-            ExprKind::Block(b) => b
-                .tail
-                .as_deref()
-                .and_then(|t| self.expr_value_ty_with_bindings(t)),
-            ExprKind::If { then, .. } => then
-                .tail
-                .as_deref()
-                .and_then(|t| self.expr_value_ty_with_bindings(t)),
-            // v0.0.8 bench-gap finding 3: call expressions return the
-            // callee's declared return type. Without this, an if-expr
-            // arm ending in a call (e.g. `v_make(3.0, 4.0)`) makes
-            // `gen_if` think the if has no value, and the surrounding
-            // `let x = if … { call() } else { … };` panics in gen_stmt
-            // because `gen_if` returns None.
-            ExprKind::Call { callee, .. } => match &callee.kind {
-                ExprKind::Ident(name) => self.sigs.get(name).map(|sig| sig.return_type.clone()),
-                // v0.0.14: payload-carrying enum constructor (`Out::Hi(7)`) is a
-                // `Call` whose callee is a `Path` naming an enum variant. Without
-                // this arm the predictor returns None, `gen_if` allocates no
-                // result slot, and an if-branch that builds such a value has its
-                // result silently discarded — miscompiling
-                // `match … { A => { if c { E::X(v) } else { E::Y(w) } } … }`
-                // (the json `parse()` shape). Mirrors the payload-less `Path`
-                // arm below.
-                ExprKind::Path { segments } if segments.len() >= 2 => self
-                    .types
-                    .enum_by_name
-                    .get(&segments[0].name)
-                    .map(|&id| Ty::Enum(id)),
-                _ => None,
-            },
-            // v0.0.8 bench-gap finding 3: struct-literal expressions
-            // produce a `Ty::Struct(id)`. The (generic) variant has
-            // been monomorphized by the time codegen sees it, so the
-            // `name` is the mangled concrete name — direct lookup.
-            ExprKind::StructLit { name, .. }
-            | ExprKind::GenericStructLit { name, .. } => self
-                .types
-                .struct_by_name
-                .get(&name.name)
-                .map(|&id| Ty::Struct(id)),
-            // v0.0.8 bench-gap finding 3: enum path expressions like
-            // `Color::Red` (no payload) — sema's `Path` lowering tags
-            // each enum's variants by parent enum, so we resolve the
-            // enum from the first segment.
-            ExprKind::Path { segments } if segments.len() >= 2 => self
-                .types
-                .enum_by_name
-                .get(&segments[0].name)
-                .map(|&id| Ty::Enum(id)),
-            // v0.0.9 Phase 3 — extend the helper to cover the remaining
-            // shapes that `gen_if` was leaking through. Each one panics
-            // `let init produces a value` if the if-expr's tail
-            // expression takes one of these shapes and the helper
-            // returns None.
-            //
-            // `Field { receiver, name }`: recursively type the receiver,
-            // then look up the named field on its struct definition.
-            // The (place, .field) chain is the most common shape (the
-            // raytracer's `hit.point` was the original repro).
-            ExprKind::Field { receiver, name } => {
-                let recv_ty = self.expr_value_ty_with_bindings(receiver)?;
-                let Ty::Struct(id) = recv_ty else {
-                    return None;
-                };
-                let info = self.types.struct_defs.get(id.0 as usize)?;
-                let idx = info
-                    .fields
-                    .iter()
-                    .position(|(fname, _)| fname == &name.name)?;
-                Some(info.fields[idx].1.clone())
-            }
-            // `Index { receiver, .. }`: indexing produces the element
-            // type. Covers fixed-size arrays (`[T; N]`), slices (`T[]`),
-            // and raw pointers (`*T`); each carries its element type
-            // directly.
-            ExprKind::Index { receiver, .. } => {
-                let recv_ty = self.expr_value_ty_with_bindings(receiver)?;
-                match recv_ty {
-                    Ty::Array(elem, _) => Some(*elem),
-                    Ty::Slice(elem) => Some(*elem),
-                    Ty::RawPtr(elem) => Some(*elem),
-                    _ => None,
-                }
-            }
-            // `Unsafe(block)`: the `unsafe { ... }` marker is sema-only;
-            // codegen sees it as a regular block. Its value type is the
-            // tail-expression's type. Without this arm, `let p: *u8 =
-            // if cond { unsafe { malloc(8) } } else { ... }` panics.
-            ExprKind::Unsafe(b) => self.block_value_ty_with_bindings(b),
-            // `Match { arms, .. }`: every arm has been sema-checked to
-            // produce the same type; pick the first arm's body type.
-            ExprKind::Match { arms, .. } => arms
-                .first()
-                .and_then(|a| self.expr_value_ty_with_bindings(&a.body)),
-            // `Cast { ty, .. }`: the cast's target type IS the result
-            // type — no need to inspect the operand.
-            ExprKind::Cast { ty, .. } => Some(ty_from(ty, self.types)),
-            // `GenericEnumCall { enum_name, .. }`: monomorphize has
-            // already rewritten generic enum constructors to a regular
-            // `Call` or `Path` shape in most positions; this branch
-            // catches any residual instance the rewrite missed (or
-            // generic-enum constructors in template bodies that reach
-            // codegen unmonomorphized — rare but possible).
-            ExprKind::GenericEnumCall { enum_name, .. } => self
-                .types
-                .enum_by_name
-                .get(&enum_name.name)
-                .map(|&id| Ty::Enum(id)),
-            _ => expr_value_ty(e),
-        }
-    }
-
-    fn block_value_ty_with_bindings(&self, b: &Block) -> Option<Ty> {
-        b.tail
-            .as_deref()
-            .and_then(|t| self.expr_value_ty_with_bindings(t))
     }
 
     // ---- Drop registration + emission ----
@@ -12383,13 +12298,13 @@ impl<'a> FnState<'a> {
         else_branch: Option<&Expr>,
     ) -> Option<(String, Ty)> {
         let (cond_v, _) = self.gen_expr(cond).expect("if cond is bool");
-        let result_ty = self
-            .block_value_ty_with_bindings(then)
-            .or_else(|| else_branch.and_then(|e| self.expr_value_ty_with_bindings(e)));
-        let result_slot = match result_ty {
-            Some(ty) if ty != Ty::Unit => Some((self.alloca_anon(ty.clone()), ty)),
-            _ => None,
-        };
+        // v0.0.15: no predictor. The result slot is allocated lazily from the
+        // `Ty` `gen_expr` actually returns for whichever branch first yields a
+        // value (mirrors `gen_match`), killing the drift between a hand-kept
+        // type predictor and real codegen. `alloca_anon` pushes to the entry
+        // alloca block, so a slot first created inside `then`/`else` still
+        // dominates the `merge` load.
+        let mut result_slot: Option<(String, Ty)> = None;
 
         let then_lbl = self.next_block_label();
         let else_lbl = self.next_block_label();
@@ -12399,18 +12314,18 @@ impl<'a> FnState<'a> {
         ));
 
         self.open_block(&then_lbl);
-        self.gen_block_into_slot(then, result_slot.as_ref(), &merge_lbl);
+        self.gen_block_into_slot(then, &mut result_slot, &merge_lbl);
 
         self.open_block(&else_lbl);
         match else_branch {
             Some(eb) => match &eb.kind {
-                ExprKind::Block(b) => self.gen_block_into_slot(b, result_slot.as_ref(), &merge_lbl),
+                ExprKind::Block(b) => self.gen_block_into_slot(b, &mut result_slot, &merge_lbl),
                 ExprKind::If { .. } => {
                     let v = self.gen_expr(eb);
                     if !self.terminated {
-                        if let (Some((slot, ty)), Some((rv, _))) = (&result_slot, &v) {
+                        if let Some((rv, rt)) = &v {
                             // v0.0.7 Slice 1.2: if-else-if chain result store.
-                            self.gen_store(ty, rv, slot);
+                            self.store_into_result_slot(&mut result_slot, rv, rt);
                         }
                         self.emit_terminator(&format!("br label %{merge_lbl}"));
                     }
@@ -12434,7 +12349,12 @@ impl<'a> FnState<'a> {
         }
     }
 
-    fn gen_block_into_slot(&mut self, b: &Block, slot: Option<&(String, Ty)>, merge_lbl: &str) {
+    fn gen_block_into_slot(
+        &mut self,
+        b: &Block,
+        result_slot: &mut Option<(String, Ty)>,
+        merge_lbl: &str,
+    ) {
         self.push_scope();
         for s in &b.stmts {
             if self.terminated {
@@ -12445,14 +12365,51 @@ impl<'a> FnState<'a> {
         if !self.terminated {
             if let Some(tail) = &b.tail {
                 let v = self.gen_expr(tail);
-                if let (Some((s, ty)), Some((rv, _))) = (slot, v) {
+                if let Some((rv, rt)) = &v {
                     // v0.0.7 Slice 1.2: block-tail value store.
-                    self.gen_store(ty, &rv, s);
+                    self.store_into_result_slot(result_slot, rv, rt);
+                    // v0.0.15 double-free fix: a bare-`Ident` block tail used as
+                    // an `if`/`else` branch value moves that binding into the
+                    // shared result slot (the same move `gen_block_expr` already
+                    // disarms for standalone blocks). Flip its drop flag so the
+                    // moved-out value isn't freed again at scope exit. `mark_moved`
+                    // emits the flag store inside THIS branch's basic block, so it
+                    // is runtime-correct for a conditional move: the binding still
+                    // drops on the branch that does not move it. Without this, a
+                    // `match … { Ok(v) => if c { … } else { v } }` (the vendor/json
+                    // `parse` shape) double-freed `v`'s nested heap.
+                    if !is_copy_ty(rt, self.types) {
+                        if let ExprKind::Ident(name) = &tail.kind {
+                            self.mark_moved(name);
+                        }
+                    }
                 }
             }
             self.emit_terminator(&format!("br label %{merge_lbl}"));
         }
         self.pop_scope();
+    }
+
+    /// v0.0.15: lazily allocate the shared if/else result slot from the actual
+    /// `Ty` a branch produced (the type `gen_expr` returned), then store the
+    /// branch value into it. The first value-producing branch fixes the slot
+    /// type; sema has already proven both branches agree, so a later branch
+    /// reuses the same slot. A `Unit`-typed branch value contributes no slot
+    /// (an if-expr used only for effect has no result to merge).
+    fn store_into_result_slot(
+        &mut self,
+        result_slot: &mut Option<(String, Ty)>,
+        val: &str,
+        ty: &Ty,
+    ) {
+        if *ty == Ty::Unit {
+            return;
+        }
+        if result_slot.is_none() {
+            *result_slot = Some((self.alloca_anon(ty.clone()), ty.clone()));
+        }
+        let (slot, slot_ty) = result_slot.clone().unwrap();
+        self.gen_store(&slot_ty, val, &slot);
     }
 
     fn gen_block_expr(&mut self, b: &Block) -> Option<(String, Ty)> {
@@ -14153,114 +14110,6 @@ fn cmp_op_for_type(op: BinOp, ty: &Ty) -> &'static str {
     }
 }
 
-/// Try to figure out the type of an expression structurally. Used to size the
-/// alloca slot for `if` results when sema didn't hand us a side table.
-/// Returns None if the type can't be determined cheaply (e.g. function call
-/// without resolved sig). For Phase 1, this is enough; in Phase 2+ a typed-AST
-/// side table is the right fix.
-fn expr_value_ty(e: &Expr) -> Option<Ty> {
-    use crate::lexer::NumSuffix;
-    match &e.kind {
-        ExprKind::IntLit(_, suf) => Some(match suf {
-            NumSuffix::I8 => Ty::I8,
-            NumSuffix::I16 => Ty::I16,
-            NumSuffix::I32 => Ty::I32,
-            NumSuffix::I64 => Ty::I64,
-            NumSuffix::U8 => Ty::U8,
-            NumSuffix::U16 => Ty::U16,
-            NumSuffix::U32 => Ty::U32,
-            NumSuffix::U64 => Ty::U64,
-            NumSuffix::Isize => Ty::Isize,
-            NumSuffix::Usize => Ty::Usize,
-            _ => Ty::I32, // unsuffixed default
-        }),
-        ExprKind::FloatLit(_, suf) => Some(match suf {
-            NumSuffix::F32 => Ty::F32,
-            _ => Ty::F64,
-        }),
-        ExprKind::BoolLit(_) => Some(Ty::Bool),
-        // String literals are `str`; `${…}` interpolation lowers to an owned
-        // `string`. Without these, `let v: str = if c { "a" } else { "b" };`
-        // (and the `string` interpolation form) makes `gen_if` see no result
-        // type, allocate no slot, return None, and panic in `gen_stmt`'s
-        // let-init with "let init produces a value".
-        ExprKind::StrLit(_) => Some(Ty::Str),
-        ExprKind::InterpStr { .. } => Some(Ty::String),
-        ExprKind::Block(b) => block_value_ty(b),
-        ExprKind::If { then, .. } => block_value_ty(then),
-        ExprKind::Binary { op, lhs, .. } => match op {
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Mod
-            | BinOp::AddWrap
-            | BinOp::SubWrap
-            | BinOp::MulWrap
-            | BinOp::BitAnd
-            | BinOp::BitOr
-            | BinOp::BitXor
-            | BinOp::Shl
-            | BinOp::Shr => expr_value_ty(lhs),
-            _ => Some(Ty::Bool),
-        },
-        ExprKind::Unary { op, operand } => match op {
-            UnaryOp::Neg | UnaryOp::BitNot => expr_value_ty(operand),
-            UnaryOp::Not => Some(Ty::Bool),
-            _ => None,
-        },
-        // Path always names an enum variant, and every enum lowers to `i32`.
-        // The exact `EnumId` matters for sema but not for codegen's slot
-        // allocation, so we report `i32` here. (Sema has already verified
-        // both arms of any `if` agree on the actual enum type.)
-        ExprKind::Path { .. } => Some(Ty::I32),
-        // Cast: target type is directly visible. Resolve primitives by
-        // name (we don't have the TypeTable here, so aggregates return
-        // None and the result-slot machinery falls back). This unblocks
-        // if-expressions whose arms are `... as usize` / `... as *T` /
-        // etc. — previously returned None and the if produced no value.
-        ExprKind::Cast { ty, .. } => match &ty.kind {
-            crate::ast::TypeKind::Path(name) => match name.as_str() {
-                "i8" => Some(Ty::I8),
-                "i16" => Some(Ty::I16),
-                "i32" => Some(Ty::I32),
-                "i64" => Some(Ty::I64),
-                "u8" => Some(Ty::U8),
-                "u16" => Some(Ty::U16),
-                "u32" => Some(Ty::U32),
-                "u64" => Some(Ty::U64),
-                "isize" => Some(Ty::Isize),
-                "usize" => Some(Ty::Usize),
-                "f32" => Some(Ty::F32),
-                "f64" => Some(Ty::F64),
-                "bool" => Some(Ty::Bool),
-                _ => None,
-            },
-            crate::ast::TypeKind::RawPtr(inner) => {
-                // Recover the pointee for `Ty::RawPtr` so two `as *T` casts
-                // produce the same Ty key for slot allocation.
-                expr_value_ty(&Expr {
-                    kind: ExprKind::Cast {
-                        expr: Box::new(Expr {
-                            kind: ExprKind::BoolLit(false),
-                            span: e.span,
-                        }),
-                        ty: (**inner).clone(),
-                    },
-                    span: e.span,
-                })
-                .map(|t| Ty::RawPtr(Box::new(t)))
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn block_value_ty(b: &Block) -> Option<Ty> {
-    b.tail.as_deref().and_then(expr_value_ty)
-}
-
 fn sanitize(s: &str) -> String {
     // LLVM names accept a wide set; identifiers from C+ (ASCII alnum + _) are fine.
     s.to_string()
@@ -15391,6 +15240,31 @@ mod tests {
         assert_eq!(escape_asm_template("a\\b"), "a\\5Cb");
         assert_eq!(escape_asm_template("a\tb"), "a\\09b");
         assert_eq!(escape_asm_template("a$b"), "a$$b");
+    }
+
+    // v0.0.15: module-scope `#asm("...")` -> LLVM `module asm "..."`.
+    #[test]
+    fn module_asm_emits_module_asm_directive() {
+        let ir = gen_src(
+            "#asm(\".globl cplus_marker\");\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("module asm \".globl cplus_marker\""),
+            "expected a module-level asm directive, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn escape_llvm_str_handles_specials_without_dollar_doubling() {
+        // Same IR string escaping as inline asm for quote / backslash /
+        // non-printable, but `$` is *not* doubled: module asm has no operand
+        // substitution, so `$` is an ordinary character.
+        assert_eq!(escape_llvm_str(".text"), ".text");
+        assert_eq!(escape_llvm_str("a\"b"), "a\\22b");
+        assert_eq!(escape_llvm_str("a\\b"), "a\\5Cb");
+        assert_eq!(escape_llvm_str("a\tb"), "a\\09b");
+        assert_eq!(escape_llvm_str("a$b"), "a$b");
     }
 
     #[test]

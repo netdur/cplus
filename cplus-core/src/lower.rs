@@ -104,6 +104,9 @@ impl Lower {
             // runs in `substitute_consts` (see end of `lower`), after
             // every item's body has been lowered.
             ItemKind::Const(_) | ItemKind::Static(_) => {}
+            // v0.0.15: module-scope `#asm("...")` has no body or expressions
+            // to lower — raw assembly text passes through untouched.
+            ItemKind::ModuleAsm(_) => {}
         }
     }
 
@@ -685,7 +688,8 @@ impl Lower {
                 | ItemKind::Interface(_)
                 | ItemKind::TypeAlias(_)
                 | ItemKind::Const(_)
-                | ItemKind::Static(_) => {}
+                | ItemKind::Static(_)
+                | ItemKind::ModuleAsm(_) => {}
             }
         }
     }
@@ -756,6 +760,9 @@ impl Lower {
                     self.resolve_lens_in_type(&mut s.ty, consts);
                     self.resolve_lens_in_expr(&mut s.value, consts);
                 }
+                // v0.0.15: module-scope `#asm("...")` has no types or
+                // expressions carrying `const`-length lenses — nothing to do.
+                ItemKind::ModuleAsm(_) => {}
             }
         }
     }

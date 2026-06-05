@@ -253,7 +253,9 @@ pub fn check_multi(
             // v0.0.9 Phase 4: const/static admit no attributes in the
             // first cut. The parser rejects them at the surface; this
             // arm is a defense-in-depth no-op.
-            ItemKind::Const(_) | ItemKind::Static(_) => {}
+            // v0.0.15: module-scope `#asm("...")` carries no attributes
+            // either (the parser rejects them); nothing to validate.
+            ItemKind::Const(_) | ItemKind::Static(_) | ItemKind::ModuleAsm(_) => {}
         }
     }
     ctx.diags

@@ -113,6 +113,23 @@ pub enum ItemKind {
     /// (E0X33 / E0X34) — the borrow checker can't prove absence of
     /// data races for module-scope mutable state.
     Static(StaticDecl),
+    /// v0.0.15: module-scope `#asm("...");` → LLVM `module asm "..."`. Raw
+    /// assembly emitted at module top level, outside any function — the
+    /// item-scope counterpart of the function-body `#asm(...)` intrinsic
+    /// (`ExprKind::Asm`). No operands or clobbers: those bind to SSA values,
+    /// which don't exist at module scope. The template is emitted verbatim
+    /// (used for raw module-level symbols/data, e.g. a hand-written global
+    /// symbol or a `.section` directive). Carried through every pass inert —
+    /// no name resolution, no type-check, no monomorphization.
+    ModuleAsm(ModuleAsm),
+}
+
+/// v0.0.15: module-scope `#asm("...");` declaration. See [`ItemKind::ModuleAsm`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleAsm {
+    /// The raw assembly template, verbatim from the string literal.
+    pub template: String,
+    pub span: Span,
 }
 
 /// v0.0.9 Phase 4: module-scope `const NAME: Ty = LIT;` declaration.
