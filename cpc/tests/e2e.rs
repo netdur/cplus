@@ -16490,6 +16490,52 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit delegate/data-source synthesis (plan.appkit.md §3):
+/// `data::create_table_data_source` builds an `NSTableViewDataSource` from two
+/// C+ method implementations. We invoke the synthesized methods directly
+/// (`numberOfRowsInTableView:` and `tableView:objectValueForTableColumn:row:`)
+/// and assert the C+-computed return values — no real table or run loop needed.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_table_data_source_synthesis() {
+    appkit_run_program(
+        "ak_ds",
+        r#"
+import "appkit/application" as application;
+import "appkit/data" as data;
+import "appkit/runtime" as rt;
+import "appkit/convert" as conv;
+
+fn ds_row_count(self_obj: *u8, _cmd: *u8, table: *u8) -> i64 {
+    return 3 as i64;
+}
+
+fn ds_value(self_obj: *u8, _cmd: *u8, table: *u8, column: *u8, row: i64) -> *u8 {
+    if row == (0 as i64) { return rt::ns_string(str_ptr("row-0\0")); }
+    if row == (1 as i64) { return rt::ns_string(str_ptr("row-1\0")); }
+    return rt::ns_string(str_ptr("row-2\0"));
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let ds: *u8 = data::create_table_data_source(ds_row_count, ds_value);
+
+    let n: i64 = rt::msg_i64_id(ds, rt::sel(str_ptr("numberOfRowsInTableView:\0")), unsafe { 0 as *u8 });
+    if n != (3 as i64) { return 1; }
+
+    let nil: *u8 = unsafe { 0 as *u8 };
+    let sel_v: *u8 = rt::sel(str_ptr("tableView:objectValueForTableColumn:row:\0"));
+    if conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() != "row-0" { return 2; }
+    if conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() != "row-2" { return 3; }
+
+    rt::release(ds);
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {

@@ -1,5 +1,47 @@
 import "./runtime" as rt;
 
+// Synthesize an `NSTableViewDataSource` object from two C+ implementations and
+// return a `+1`-owned handle (alloc/new). This is the documented delegate
+// pattern (plan.appkit.md §3): the app writes the Objective-C method bodies
+// directly — same shape as `create_app_delegate` — and the runtime registers
+// them on a fresh `CTableDataSource` class.
+//
+//   row_count_imp: `(self, _cmd, tableView) -> NSInteger`
+//                  implements `-numberOfRowsInTableView:`.
+//   value_imp:     `(self, _cmd, tableView, column, row) -> id`
+//                  implements `-tableView:objectValueForTableColumn:row:`
+//                  (return an `NSString*`, e.g. via `rt::ns_string`).
+//
+// Callbacks are closure-free (locked principle #2): reach app state through a
+// `static mut`, an associated object on the table, or a global. Wrap the
+// returned handle in an owner that releases it, or keep it alive for the
+// table's lifetime; the data source is not retained by the table.
+pub fn create_table_data_source(
+    row_count_imp: fn(*u8, *u8, *u8) -> i64,
+    value_imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8,
+) -> *u8 {
+    let existing: *u8 = rt::get_class(str_ptr("CTableDataSource\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let nsobject: *u8 = rt::get_class(str_ptr("NSObject\0"));
+        cls = rt::allocate_class_pair(nsobject, str_ptr("CTableDataSource\0"), 0 as usize);
+        let _a: i8 = rt::add_method_i64_id(
+            cls,
+            rt::sel(str_ptr("numberOfRowsInTableView:\0")),
+            row_count_imp,
+            str_ptr("q@:@\0"),
+        );
+        let _b: i8 = rt::add_method_id_table_value(
+            cls,
+            rt::sel(str_ptr("tableView:objectValueForTableColumn:row:\0")),
+            value_imp,
+            str_ptr("@@:@@q\0"),
+        );
+        rt::register_class_pair(cls);
+    }
+    return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
+}
+
 pub struct TableView {
     pub opaque obj: *u8,
 }
