@@ -14347,6 +14347,18 @@ mod tests {
         );
     }
 
+    /// `let _ = expr;` is a discard binding: it parses, type-checks, and lowers
+    /// (evaluating — and dropping — its initializer). Multiple `let _` in one
+    /// scope must not collide (each gets a unique synthesized name).
+    #[test]
+    fn let_underscore_is_a_discard_binding() {
+        let ir = gen_src(
+            "fn f() -> i32 { return 7; }\n\
+             fn main() -> i32 { let _ = f(); let _ = f(); return 0; }",
+        );
+        assert!(ir.contains("define i32 @main"), "expected main in IR:\n{ir}");
+    }
+
     /// v0.0.3 Phase 5 Slice 5B: gen_src + monomorphize. Required for
     /// codegen IR tests of intrinsics whose return type is a generic
     /// struct (e.g. `__cplus_thread_spawn` returning `JoinHandle[O]`).

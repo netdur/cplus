@@ -1777,7 +1777,20 @@ impl Parser {
     fn parse_let_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::Let, "`let`")?.span;
         let mutable = self.eat(&TokenKind::Mut);
-        let name = self.expect_ident()?;
+        // `let _ = expr;` — a discard binding: evaluate `expr` (for its effect /
+        // to consume a must-use result) and drop it at scope exit. Synthesize a
+        // unique, `_`-prefixed name (so sibling `let _`s don't collide and it
+        // doesn't trip unused-binding diagnostics). Note it *consumes* its
+        // initializer, unlike Rust's non-binding `_`.
+        let name = if self.at(&TokenKind::Underscore) {
+            let tok = self.expect(&TokenKind::Underscore, "`_`")?;
+            Ident {
+                name: format!("_discard{}", tok.span.start),
+                span: tok.span,
+            }
+        } else {
+            self.expect_ident()?
+        };
         let ty = if self.eat(&TokenKind::Colon) {
             Some(self.parse_type()?)
         } else {
