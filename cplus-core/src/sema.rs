@@ -709,6 +709,7 @@ fn check_with_files_inner<'a>(
     cx.collect_enum_payloads(program);
     cx.collect_methods(program);
     cx.collect_method_contracts(program);
+    cx.reconcile_drop_from_methods();
     cx.compute_struct_copy_flags();
     cx.compute_enum_copy_flags(program);
     cx.collect_functions(program);
@@ -1409,6 +1410,27 @@ impl SemaCx<'_> {
     /// is monotone.
     ///
     /// See `docs/design/phase3-copy-derivation.md`.
+    /// v0.0.15: reconcile each struct's `is_drop` flag with its method table
+    /// before the Copy/Drop fixpoints run. A `struct`/`impl` with a `drop`
+    /// method sets `is_drop` at collection time, but a *generic instantiation*
+    /// (e.g. `Vec[i32]`) can be created while resolving an enum payload / struct
+    /// field *before* its template's `impl … { fn drop }` is collected, so it
+    /// carries the `drop` method in its table yet never had `is_drop` set. Left
+    /// unreconciled, the Copy fixpoint sees no Drop and all-Copy fields
+    /// (ptr/len/cap) and flips the instantiation to Copy — which then makes any
+    /// enum/struct using it as a payload/field Copy too, silently dropping the
+    /// use-after-move diagnostic (the `enum W { A(Vec[i32]) }` / recursive
+    /// `Node { Branch(Vec[Node]) }` / json `Value::Array(Vec[Value])` gap).
+    /// Running after `collect_methods` (method tables fully populated) and before
+    /// the fixpoints fixes the classification for every instantiation path.
+    fn reconcile_drop_from_methods(&mut self) {
+        for s in self.structs.iter_mut() {
+            if !s.is_drop && s.methods.contains_key("drop") {
+                s.is_drop = true;
+            }
+        }
+    }
+
     fn compute_struct_copy_flags(&mut self) {
         loop {
             let mut changed = false;
@@ -6634,8 +6656,16 @@ impl SemaCx<'_> {
         // state, run each arm from that state, intersect post-arm states.
         let pre_match = self.snapshot_assigned();
         let mut merged_post: Option<Vec<Vec<(String, bool, BTreeSet<String>)>>> = None;
+        // v0.0.15 flow-sensitive moves: arms are mutually exclusive, so a move
+        // in one arm must not poison a binding for a sibling arm; and a move in
+        // a *diverging* arm (the `guard let` else, an early `return`) must not
+        // reach the code after the `match`. Snapshot the pre-match moved-state,
+        // run each arm from it, and fold in only the fall-through arms' moves.
+        let moved_pre = self.snapshot_moved();
+        let mut nondiverging_arm_moves: Vec<Vec<Vec<(String, bool)>>> = Vec::new();
 
         for arm in arms {
+            self.restore_moved(&moved_pre);
             self.scopes.push(HashMap::new());
             // Check the pattern: validate against the scrutinee's enum,
             // bind any payload names. Returns false if the pattern is
@@ -6684,6 +6714,12 @@ impl SemaCx<'_> {
                 None => after_arm,
                 Some(prev) => self.intersect_assigned(&prev, &after_arm),
             });
+            // v0.0.15: remember a fall-through arm's moves to fold in after the
+            // match; a diverging arm's moves are dropped (they never reach past
+            // the match). `arm_diverges` was computed above.
+            if !arm_diverges {
+                nondiverging_arm_moves.push(self.snapshot_moved());
+            }
             self.restore_assigned(&pre_match);
         }
 
@@ -6713,6 +6749,12 @@ impl SemaCx<'_> {
         // arms (degenerate), keep pre-match state.
         if let Some(merged) = merged_post {
             self.restore_assigned(&merged);
+        }
+        // v0.0.15: apply the merged post-match moved-state — pre-match moves
+        // plus every fall-through arm's moves (diverging arms excluded).
+        self.restore_moved(&moved_pre);
+        for snap in &nondiverging_arm_moves {
+            self.union_moved(snap);
         }
 
         result_ty.unwrap_or(Ty::Unit)
@@ -7292,9 +7334,13 @@ impl SemaCx<'_> {
         // assigned post-if iff it was assigned in BOTH arms (or was
         // already assigned before the if).
         let pre_if = self.snapshot_assigned();
+        let moved_pre = self.snapshot_moved();
         let then_ty = self.check_block_as_expr(then);
         let after_then = self.snapshot_assigned();
+        let moved_after_then = self.snapshot_moved();
+        let then_diverges = block_diverges(then);
         self.restore_assigned(&pre_if);
+        self.restore_moved(&moved_pre);
         let else_ty = match else_branch {
             Some(e) => match &e.kind {
                 ExprKind::Block(b) => self.check_block_as_expr(b),
@@ -7304,8 +7350,23 @@ impl SemaCx<'_> {
             None => Ty::Unit,
         };
         let after_else = self.snapshot_assigned();
+        let moved_after_else = self.snapshot_moved();
+        let else_diverges = else_branch.is_some_and(expr_diverges);
         let merged = self.intersect_assigned(&after_then, &after_else);
         self.restore_assigned(&merged);
+        // v0.0.15 flow-sensitive moves: a binding is moved after the `if` iff it
+        // was moved before, or moved by a branch that *falls through*. Moves in a
+        // diverging branch (it `return`s / `break`s / `continue`s, so the code
+        // after the `if` only runs when that branch was NOT taken) are dropped —
+        // this is what stops the linear E0335 check firing on
+        // `if done { return consume(x); } use(x);`.
+        self.restore_moved(&moved_pre);
+        if !then_diverges {
+            self.union_moved(&moved_after_then);
+        }
+        if !else_diverges {
+            self.union_moved(&moved_after_else);
+        }
         if then_ty == Ty::Error || else_ty == Ty::Error {
             return Ty::Error;
         }
@@ -7373,6 +7434,46 @@ impl SemaCx<'_> {
                     .collect()
             })
             .collect()
+    }
+
+    /// v0.0.15 flow-sensitive moves: snapshot each binding's `moved` flag,
+    /// parallel to `snapshot_assigned`. Used to discard moves made in a
+    /// diverging branch (one that ends in `return`/`break`/`continue`), so the
+    /// linear E0335 check stops false-positiving on the common
+    /// `if done { return consume(x); } use(x);` shape (e.g. the stdlib
+    /// read loops that build a `Vec` and return it on EOF).
+    fn snapshot_moved(&self) -> Vec<Vec<(String, bool)>> {
+        self.scopes
+            .iter()
+            .map(|scope| scope.iter().map(|(k, v)| (k.clone(), v.moved)).collect())
+            .collect()
+    }
+
+    /// Restore each binding's `moved` flag from a snapshot (scope shape must
+    /// match — same names per frame, as for `restore_assigned`).
+    fn restore_moved(&mut self, snap: &[Vec<(String, bool)>]) {
+        for (frame, snap_frame) in self.scopes.iter_mut().zip(snap.iter()) {
+            for (name, was_moved) in snap_frame {
+                if let Some(info) = frame.get_mut(name) {
+                    info.moved = *was_moved;
+                }
+            }
+        }
+    }
+
+    /// OR the moves recorded in `snap` into the current state (set a binding
+    /// `moved` if it is moved in `snap`). Used to fold a fall-through branch's
+    /// moves into the post-`if`/post-`match` state.
+    fn union_moved(&mut self, snap: &[Vec<(String, bool)>]) {
+        for (frame, snap_frame) in self.scopes.iter_mut().zip(snap.iter()) {
+            for (name, was_moved) in snap_frame {
+                if *was_moved {
+                    if let Some(info) = frame.get_mut(name) {
+                        info.moved = true;
+                    }
+                }
+            }
+        }
     }
 
     fn check_call(
@@ -14339,6 +14440,37 @@ fn body_ends_with_return(b: &Block) -> bool {
         .is_some_and(|s| matches!(s.kind, StmtKind::Return(_)))
 }
 
+/// v0.0.15 flow-sensitive moves: does this block *diverge* — i.e. never fall
+/// through to the code after it? True when its last statement is a
+/// `return`/`break`/`continue` (or its tail is a diverging `if`/`match`). Used
+/// so moves performed only on a diverging branch don't poison the binding for
+/// the code that runs when the branch is *not* taken.
+fn block_diverges(b: &Block) -> bool {
+    if let Some(t) = &b.tail {
+        return expr_diverges(t);
+    }
+    b.stmts.last().is_some_and(|s| {
+        matches!(
+            s.kind,
+            StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue
+        )
+    })
+}
+
+/// Companion to `block_diverges` for an expression in branch position. A bare
+/// `if`/`else` diverges only if *both* arms do; a block defers to
+/// `block_diverges`. Anything else is treated as falling through (conservative
+/// for moves: its moves are kept).
+fn expr_diverges(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => block_diverges(b),
+        ExprKind::If {
+            then, else_branch, ..
+        } => block_diverges(then) && else_branch.as_deref().is_some_and(expr_diverges),
+        _ => false,
+    }
+}
+
 /// v0.0.12 G-025: a "place" for `#addr_of` is anything codegen's
 /// `gen_place` can produce a pointer for — bare bindings, field
 /// accesses, indexed loads, and dereferences (and chains thereof).
@@ -15995,6 +16127,81 @@ mod tests {
              fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); let r: i32 = take(p); return 0; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    // ---- v0.0.15: generic-instantiation Copy classification + flow-sensitive
+    // moves. A generic struct instantiation (`Held[i32]`) inherits its
+    // template's Drop, so an enum/struct using it as a payload/field is non-Copy
+    // and a use-after-move is caught — but only the *linear* (non-diverging)
+    // moves count, so the common `if done { return consume(x); } use(x);` shape
+    // is not a false positive.
+
+    #[test]
+    fn generic_payload_enum_use_after_move_e0335() {
+        // `Held[i32]` has a Drop (from `impl Held[T]`), so `W` is non-Copy;
+        // using `w` after it's moved into a call must be caught. Pre-fix, the
+        // instantiation was misclassified Copy → no move tracking → undetected.
+        let codes = errors(
+            "struct Held[T] { v: T }\n\
+             impl Held[T] { fn drop(mut self) { return; } }\n\
+             enum W { A(Held[i32]), B }\n\
+             fn sink(w: W) -> i32 { return 0; }\n\
+             fn main() -> i32 { let w: W = W::B; let a: i32 = sink(w); let b: i32 = sink(w); return a +% b; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn recursive_generic_payload_enum_use_after_move_e0335() {
+        // The recursive `Node { Branch(Vec[Node]) }` shape, modeled with a
+        // self-contained generic Drop struct.
+        let codes = errors(
+            "struct Held[T] { v: T }\n\
+             impl Held[T] { fn drop(mut self) { return; } }\n\
+             enum Node { Leaf(i32), Branch(Held[Node]) }\n\
+             fn sink(n: Node) -> i32 { return 0; }\n\
+             fn main() -> i32 { let n: Node = Node::Leaf(1); let a: i32 = sink(n); let b: i32 = sink(n); return a +% b; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn move_in_returning_branch_not_flagged_clean() {
+        // `h` is moved only on branches that `return`, so the code reached when
+        // those branches are NOT taken still sees `h` live. Flow-sensitive move
+        // tracking must not report a use-after-move here. (Pre-fix this was a
+        // false positive once `Held[i32]` became correctly non-Copy — it broke
+        // the stdlib read loops.)
+        assert_clean(
+            "struct Held[T] { v: T }\n\
+             impl Held[T] { fn drop(mut self) { return; } }\n\
+             fn consume(h: Held[i32]) -> i32 { return 0; }\n\
+             fn pick(flag: bool) -> i32 {\n\
+                 let h: Held[i32] = Held[i32] { v: 1 };\n\
+                 if flag { return consume(h); }\n\
+                 return consume(h);\n\
+             }\n\
+             fn main() -> i32 { return pick(false); }",
+        );
+    }
+
+    #[test]
+    fn move_across_exclusive_match_arms_not_flagged_clean() {
+        // Both arms move `x`, but arms are mutually exclusive: a move in one arm
+        // must not poison `x` for the other. Flow-sensitive per-arm reset keeps
+        // this clean.
+        assert_clean(
+            "struct Held[T] { v: T }\n\
+             impl Held[T] { fn drop(mut self) { return; } }\n\
+             enum Opt { Some(i32), None }\n\
+             fn consume(h: Held[i32]) -> i32 { return 0; }\n\
+             fn f(o: Opt) -> i32 {\n\
+                 let x: Held[i32] = Held[i32] { v: 1 };\n\
+                 let r: i32 = match o { Opt::Some(n) => consume(x), Opt::None => consume(x) };\n\
+                 return r;\n\
+             }\n\
+             fn main() -> i32 { return f(Opt::None); }",
+        );
     }
 
     #[test]
