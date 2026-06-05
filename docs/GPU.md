@@ -177,9 +177,9 @@ Total: roughly one cycle of compiler work. After this, **the language is done wi
 |---|---|---|
 | `vendor/metal` | exists since v0.0.9 | MTLDevice, Buffer, Library, Function, Pipeline, CommandQueue, CommandBuffer, ComputeCommandEncoder. |
 | `vendor/metal/mps` | fast follow-up to v0.0.10 | Apple's Metal Performance Shaders: MPSMatrix, MPSMatrixMultiplication, MPSMatrixVectorMultiplication, MPSGraph. The "I have large numbers to crush" answer on Apple Silicon. |
-| `vendor/cuda` | v0.0.11 anchor | CUDA Driver API + Runtime API + cuBLAS + cuFFT + cuSPARSE + cuDNN. Plain C FFI — simpler than ObjC. |
+| `vendor/cuda` | exists | CUDA Runtime API + cuBLAS (sgemm/sgemv), DeviceBuffer with Drop. Plain C FFI. (Driver API + cuFFT/cuSPARSE/cuDNN can extend it.) |
 | `vendor/accelerate` | v0.0.11 | Apple's Accelerate framework — BLAS, LAPACK, vDSP, BNNS. Host-CPU SIMD numerics. The fallback when no GPU. |
-| `vendor/cblas` | later | Reference BLAS bindings. CPU fallback on systems without Accelerate. |
+| `vendor/cblas` | exists | Reference CBLAS bindings (OpenBLAS / Netlib / MKL). The cross-platform CPU fallback on systems without Accelerate. Self-tested on CPU. |
 
 Each is pure `extern fn` declarations + thin typed wrappers + Drop impls. **No compiler work**.
 
