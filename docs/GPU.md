@@ -10,7 +10,7 @@ A context document. Captures where the GPU discussion landed in v0.0.10 and why,
 
 What this means concretely:
 - The only language-level GPU work we ever ship is the v0.0.10 binding-layer wedge (`#selector`, `#msg_send`, `#compile_shader`) — and those are justified by ObjC FFI broadly, not GPU specifically.
-- Everything else is **package work forever**: `vendor/metal` + MPS, `vendor/cuda` + cuBLAS, `vendor/accelerate`, `vendor/vulkan`.
+- Everything else is **package work forever**: `vendor/metal` + MPS, `vendor/cuda` + cuBLAS, `vendor/accelerate`.
 - The maximalist vision from [plan.gpu.md](../plan.gpu.md) — `#[kernel]` attribute, NVPTX/AMDGPU/SPIR-V codegen, address spaces, GPU intrinsics — is **dropped, not deferred**. Wrong shape for this position.
 
 The "user with large numbers to crush" answer: write the host orchestration in C+, dispatch the heavy work to `cublas::sgemv` / `mps::MatrixMultiplication` / `accelerate::cblas_sgemm`. Same shape FAISS uses.
@@ -179,11 +179,20 @@ Total: roughly one cycle of compiler work. After this, **the language is done wi
 | `vendor/metal/mps` | fast follow-up to v0.0.10 | Apple's Metal Performance Shaders: MPSMatrix, MPSMatrixMultiplication, MPSMatrixVectorMultiplication, MPSGraph. The "I have large numbers to crush" answer on Apple Silicon. |
 | `vendor/cuda` | v0.0.11 anchor | CUDA Driver API + Runtime API + cuBLAS + cuFFT + cuSPARSE + cuDNN. Plain C FFI — simpler than ObjC. |
 | `vendor/accelerate` | v0.0.11 | Apple's Accelerate framework — BLAS, LAPACK, vDSP, BNNS. Host-CPU SIMD numerics. The fallback when no GPU. |
-| `vendor/vulkan` | later | Cross-vendor GPU compute (Linux, Android, NVIDIA, AMD, Intel). Lower priority than CUDA + Metal. |
 | `vendor/cblas` | later | Reference BLAS bindings. CPU fallback on systems without Accelerate. |
-| `vendor/opencl` | only if asked | Mostly legacy. Skip unless a workload requires it. |
 
 Each is pure `extern fn` declarations + thin typed wrappers + Drop impls. **No compiler work**.
+
+**Dropped from the roadmap (not the language — these are packages):**
+`vendor/vulkan` and `vendor/opencl`. CUDA + Metal already cover the GPU
+targets that matter (NVIDIA + Apple Silicon), and `vendor/accelerate` /
+`vendor/cblas` cover the CPU fallback; Vulkan-compute's surface is large
+and its multi-backend portability is a *runtime* concern we don't need to
+bind ahead of a concrete workload, and OpenCL is legacy. Neither is
+"never" — the SDK-consumer model would welcome them — but they're off the
+plan until a real consumer needs one. (Vulkan still appears below as the
+sharpest *illustration* of the "are we Mojo?" discriminator; that's
+reasoning, not a commitment to ship it.)
 
 ### Explicitly dropped (never going to ship)
 
@@ -203,7 +212,7 @@ Each is pure `extern fn` declarations + thin typed wrappers + Drop impls. **No c
 
 ## The Mojo question (subtle but important)
 
-A natural follow-up: if we ship `vendor/vulkan`, doesn't that effectively make C+ into Mojo? Vulkan abstracts over multiple GPU backends — NVIDIA, AMD, Intel, Apple-via-MoltenVK, Android. One SPIR-V kernel runs everywhere. Isn't that the Mojo promise?
+A natural follow-up (Vulkan is off the roadmap — see above — but it's the cleanest case to reason through): if we *were* to ship a `vendor/vulkan`, wouldn't that effectively make C+ into Mojo? Vulkan abstracts over multiple GPU backends — NVIDIA, AMD, Intel, Apple-via-MoltenVK, Android. One SPIR-V kernel runs everywhere. Isn't that the Mojo promise?
 
 **No, and the discriminator is sharp: where does the kernel source live?**
 
@@ -216,7 +225,7 @@ The cleanest test: **if you find yourself writing the kernel in `cplus` source, 
 
 ### The real failure mode to watch for
 
-The risk isn't `vendor/vulkan` itself. The risk is a future hypothetical `vendor/tensor` package that wraps cuBLAS + MPS + Vulkan compute behind a single `Tensor[T]::matmul(other)` API. From the user's perspective, that would look like "C+ has cross-vendor GPU compute built in." Under the hood it's still calling vendor SDKs, but the abstraction would hide which one.
+The risk isn't a multi-backend binding itself. The risk is a future hypothetical `vendor/tensor` package that wraps cuBLAS + MPS (+ any future backend) behind a single `Tensor[T]::matmul(other)` API. From the user's perspective, that would look like "C+ has cross-vendor GPU compute built in." Under the hood it's still calling vendor SDKs, but the abstraction would hide which one.
 
 The honest read: at the **package** level, yes, you can build something Mojo-shaped on top of C+'s vendor bindings. Python is in this same situation — Python isn't Mojo even though PyTorch / NumPy / JAX exist. The language stays uncommitted; specific compute stories are libraries.
 
@@ -235,7 +244,7 @@ The maximalist plan.gpu.md sketch put `#[kernel]` + multi-target codegen as the 
 3. **`vendor/accelerate`** — Apple's CPU-SIMD numerics for the no-GPU fallback.
 4. **`proves/vector_search_server/`** — a real consumer that benchmarks against FAISS on the same data. The proof that the position works in practice.
 
-`vendor/vulkan` slips to v0.0.12+. Tensor / GEMM / FFT libraries can land as third-party packages whenever someone needs them.
+Tensor / GEMM / FFT libraries can land as third-party packages whenever someone needs them.
 
 ---
 
