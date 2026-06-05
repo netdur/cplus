@@ -1,16 +1,3 @@
-// Ownership audit (plan.appkit.md §2):
-//   - `SavePanel`/`OpenPanel`/`PageLayout`/`PrintPanel` are built by factory
-//     methods (`savePanel`, `openPanel`, …) that return +0 *autoreleased*
-//     objects: the autorelease pool reclaims them, so they don't leak and the
-//     wrapper stays `opaque` (the "managed elsewhere" case) — a `drop` that
-//     released would over-release.
-//   - `Panel::new` is alloc/init (+1, owned) but a top-level window object, like
-//     `Window`: nothing else necessarily retains it, so releasing it in `drop`
-//     while it's still on screen would crash. Left `opaque` pending the
-//     app-driven audit (see plan.appkit.md §2/§5). Contrast `Alert`, which is a
-//     +1 transient that is *not* shown as a persistent window and so safely
-//     releases in `drop`.
-
 import "./runtime" as rt;
 
 pub struct Panel {
