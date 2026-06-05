@@ -10065,7 +10065,15 @@ impl<'a> FnState<'a> {
                 return (format!("-{v}"), Ty::I32);
             }
             if let ExprKind::FloatLit(v, crate::lexer::NumSuffix::None) = &operand.kind {
-                return (format!("-{v}"), Ty::F64);
+                // Emit the negated value as an LLVM hex-float constant.
+                // `format!("-{v}")` would print e.g. `-5` (Rust's `Display`
+                // drops the `.0` for a whole f64), and LLVM rejects `double -5`
+                // with "integer constant must have integer type". The positive
+                // `FloatLit` path emits hex for exactly this reason; mirror it
+                // here (via `render_static_float`).
+                if let Some(s) = render_static_float(-*v, crate::lexer::NumSuffix::None, &Ty::F64) {
+                    return (s, Ty::F64);
+                }
             }
         }
         let (v, ty) = self.gen_expr(operand).expect("unary operand has value");
@@ -14317,6 +14325,26 @@ mod tests {
 
         // Restore the default for any other test that generates async IR.
         set_coro_end_returns_void(true);
+    }
+
+    /// Regression: a negative float literal (`-5.0`) was const-folded to the
+    /// textual `-5` (Rust `Display` drops the `.0` for whole f64s), which LLVM
+    /// rejects for `double` ("integer constant must have integer type"). It must
+    /// emit the hex-float form, like the positive literal path. -5.0's bit
+    /// pattern is 0xC014000000000000.
+    #[test]
+    fn negative_float_literal_emits_hex_not_int_constant() {
+        let ir = gen_src(
+            "fn main() -> i32 { let n: f64 = -5.0; if n < 0.0 { return 1; } return 0; }",
+        );
+        assert!(
+            !ir.contains("double -5"),
+            "negative float literal emitted as an integer-form constant:\n{ir}"
+        );
+        assert!(
+            ir.contains("0xC014000000000000"),
+            "expected the hex-float form of -5.0:\n{ir}"
+        );
     }
 
     /// v0.0.3 Phase 5 Slice 5B: gen_src + monomorphize. Required for
