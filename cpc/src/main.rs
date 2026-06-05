@@ -716,6 +716,53 @@ fn clang_major(prog: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// Probe whether the resolved clang's `llvm.coro.end` intrinsic returns `void`
+/// (LLVM ~22+) or `i1` (older LLVM, and Apple clang 21). The two forms are
+/// mutually incompatible — each version's verifier rejects the other with
+/// "Intrinsic has incorrect return type!" — and the correct one depends on the
+/// *target toolchain*, not the host `cpc` was built on. (Apple-clang version
+/// numbers don't map to LLVM versions, so a capability probe is more reliable
+/// than parsing `--version`.)
+///
+/// We compile a tiny IR that *calls* the `void` form: if the verifier rejects
+/// the signature, the toolchain wants `i1`. Any other outcome (it links, or it
+/// fails later for an unrelated reason like an unlowered intrinsic) means the
+/// `void` signature was accepted. Cached for the process; defaults to `void`
+/// if clang can't be run.
+fn coro_end_returns_void() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let dir = env::temp_dir();
+        let pid = std::process::id();
+        let probe = dir.join(format!("cpc_coro_probe_{pid}.ll"));
+        let obj = dir.join(format!("cpc_coro_probe_{pid}.o"));
+        let ir = "define void @__cpc_coro_probe() {\n\
+                  \x20 call void @llvm.coro.end(ptr null, i1 false, token none)\n\
+                  \x20 ret void\n\
+                  }\n\
+                  declare void @llvm.coro.end(ptr, i1, token)\n";
+        if std::fs::write(&probe, ir).is_err() {
+            return true;
+        }
+        let output = Command::new(clang_program())
+            .arg("-x").arg("ir").arg(&probe)
+            .arg("-c").arg("-o").arg(&obj)
+            .output();
+        let _ = std::fs::remove_file(&probe);
+        let _ = std::fs::remove_file(&obj);
+        match output {
+            Ok(o) => !String::from_utf8_lossy(&o.stderr).contains("incorrect return type"),
+            Err(_) => true,
+        }
+    })
+}
+
+/// Install the probed `llvm.coro.end` form into codegen. Idempotent and cheap
+/// (the probe is cached); call before any `codegen::generate*`.
+fn ensure_coro_end_probed() {
+    cplus_core::codegen::set_coro_end_returns_void(coro_end_returns_void());
+}
+
 /// Phase 2 Slice 2C: detect the host triple via `clang -print-target-triple`.
 /// Used by the dep walker to look up bundled binary paths in each vendor
 /// package's `src/lib/<triple>/`. Each build calls this once.
@@ -1111,6 +1158,7 @@ fn build_project(
     // linked without `-fsanitize=...`), which meant every e2e ASan
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
+    ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono);
 
@@ -1272,6 +1320,7 @@ fn build_lib_project(
         }
     }
 
+    ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono);
 
@@ -1456,6 +1505,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
             Ok(p) => p,
             Err(code) => return code,
         };
+    ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], false, &mono);
     print!("{ir}");
@@ -2031,6 +2081,7 @@ fn run_test(
         }
         return ExitCode::SUCCESS;
     }
+    ensure_coro_end_probed();
     let ir = codegen::generate_test_binary(&program, build_mode, &tests, opts.json, &mono);
     let tmp_handle = match make_temp_file("cpc-test-", ".ll", ir.as_bytes()) {
         Ok(h) => h,
@@ -3037,6 +3088,7 @@ fn build_ir(
     }
     let post_mono = run_monomorphize(prog, &mono, &files_map);
     let dbg_path = if debug_info { Some(file) } else { None };
+    ensure_coro_end_probed();
     Ok(codegen::generate_with_mono(
         &post_mono, build_mode, fp_contract, dbg_path, sanitizers, false, &mono,
     ))
