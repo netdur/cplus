@@ -26,6 +26,11 @@ extern fn class_addMethod_id_table_value(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *
 #[link_name = "class_addMethod"]
 extern fn class_addMethod_draw_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8;
 
+// `(self, _cmd, obj, n) -> NSInteger` — e.g. NSDraggingSource's
+// `draggingSession:sourceOperationMaskForDraggingContext:`.
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_i64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8;
+
 #[link_name = "objc_setAssociatedObject"]
 extern fn objc_setAssociatedObject(object: *u8, key: *u8, value: *u8, policy: usize);
 
@@ -161,6 +166,9 @@ extern fn objc_msg_i64_id(recv: *u8, sel: *u8, a: *u8) -> i64;
 extern fn objc_msg_id_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i64) -> *u8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> i64;
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
 
 // NSPoint is two CGFloats; on arm64/x86_64 a 2×f64 struct returns in
@@ -245,6 +253,12 @@ pub fn add_method_id_table_value(
 // (e.g. `-drawRect:`). `types` e.g. `"v@:{CGRect={CGPoint=dd}{CGSize=dd}}"`.
 pub fn add_method_draw_rect(cls: *u8, selector: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8 {
     return unsafe { class_addMethod_draw_rect(cls, selector, imp, types) };
+}
+
+// Add a `(self, _cmd, obj, n) -> NSInteger` method (e.g. a drag source's
+// operation-mask-for-context). `types` e.g. `"Q@:@q"`.
+pub fn add_method_i64_id_i64(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8 {
+    return unsafe { class_addMethod_i64_id_i64(cls, selector, imp, types) };
 }
 
 pub fn set_associated_object(object: *u8, key: *u8, value: *u8, policy: usize) {
@@ -397,6 +411,10 @@ pub fn msg_i64_id(recv: *u8, selector: *u8, a: *u8) -> i64 {
 
 pub fn msg_id_id_id_i64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i64) -> *u8 {
     return unsafe { objc_msg_id_id_id_i64(recv, selector, a, b, c) };
+}
+
+pub fn msg_i64_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) -> i64 {
+    return unsafe { objc_msg_i64_id_i64(recv, selector, a, b) };
 }
 
 pub fn msg_u64(recv: *u8, selector: *u8) -> u64 {

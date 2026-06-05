@@ -16739,6 +16739,41 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit drag source (plan.appkit.md §4):
+/// `drag::create_drag_source_view` synthesizes an NSView that is an
+/// NSDraggingSource. We invoke its
+/// `draggingSession:sourceOperationMaskForDraggingContext:` directly and assert
+/// it returns the C+ operation mask. (Initiating a live drag needs an NSEvent;
+/// not exercised headlessly.)
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_drag_source() {
+    appkit_run_program(
+        "ak_dsrc",
+        r#"
+import "appkit/application" as application;
+import "appkit/drag" as drag;
+import "appkit/runtime" as rt;
+
+fn src_mask(self_obj: *u8, _cmd: *u8, session: *u8, context: i64) -> i64 {
+    return drag::drag_op_copy();
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
+    let v: *u8 = drag::create_drag_source_view(f, src_mask);
+    let nil: *u8 = unsafe { 0 as *u8 };
+    let m: i64 = rt::msg_i64_id_i64(v, rt::sel(str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), nil, 0 as i64);
+    if m != drag::drag_op_copy() { return 1; }
+    rt::release(v);
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
