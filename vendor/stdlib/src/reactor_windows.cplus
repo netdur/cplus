@@ -1,0 +1,371 @@
+// stdlib/reactor_windows.cplus — async event loop, Windows backend.
+//
+// Windows counterpart to reactor.cplus (kqueue/macOS) and
+// reactor_linux.cplus (epoll/Linux). The resolver loads this file in place
+// of reactor.cplus when the compiler targets Windows (the `_windows`
+// platform-override convention — see resolver::platform_override). It exports
+// the identical public surface:
+//
+//   - the `stdlib_reactor_*_v1` C-ABI symbols codegen emits calls to, and
+//   - `pub fn poll_one_event` / `waiter_count`, which executor.cplus uses.
+//
+// so async lowering, executor::block_on, time::sleep and the cooperative
+// primitives (yield_now / spawn_local / await chains) all work unchanged.
+//
+// **Scope.** The pending-task queue and the awaiter table are pure
+// bookkeeping (malloc/realloc + parallel arrays) and are copied from the
+// other backends verbatim — they drive yield_now, spawn_local and await.
+// Timers are implemented against the Win32 clock (`GetTickCount64` +
+// `Sleep`) rather than a kernel event object, which is sufficient for
+// `time::sleep` on the single-threaded executor. **Socket/file readiness
+// (register_read/register_write) is not yet wired to IOCP**: the fd is
+// recorded so `waiter_count` stays correct, but `poll_one_event` cannot
+// wake it. Real async I/O on Windows is a follow-up (an IOCP-backed
+// readiness source); the synchronous async surface the test-suite exercises
+// (block_on of computed futures, yield_now, await) needs none of it.
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// Win32 timing primitives (kernel32, linked by default on windows-msvc).
+extern fn Sleep(ms: u32);
+extern fn GetTickCount64() -> u64;
+
+// LLVM coroutine intrinsics — surfaced via stable wrapper symbols emitted
+// by codegen, so stdlib can call them as plain extern fns.
+extern fn __cplus_coro_resume(hdl: *u8);
+extern fn __cplus_coro_done(hdl: *u8) -> i32;
+
+// Reactor-state-slot accessors emitted in the codegen preamble.
+extern fn __cplus_reactor_get_state() -> *u8;
+extern fn __cplus_reactor_set_state(p: *u8);
+
+// Heap-block layout (Windows-private; only this module reads these offsets).
+// Eight i32 counters, then eight pointers to the parallel arrays.
+fn header_bytes() -> usize { return 96 as usize; }
+
+fn off_n_waiters() -> usize { return 0 as usize; }
+fn off_cap_waiters() -> usize { return 4 as usize; }
+fn off_n_pending() -> usize { return 8 as usize; }
+fn off_cap_pending() -> usize { return 12 as usize; }
+fn off_n_timers() -> usize { return 16 as usize; }
+fn off_cap_timers() -> usize { return 20 as usize; }
+fn off_n_awaiters() -> usize { return 24 as usize; }
+fn off_cap_awaiters() -> usize { return 28 as usize; }
+fn off_waiter_fds() -> usize { return 32 as usize; }
+fn off_waiter_hdls() -> usize { return 40 as usize; }
+fn off_pending_hdls() -> usize { return 48 as usize; }
+fn off_timer_deadlines() -> usize { return 56 as usize; }
+fn off_timer_hdls() -> usize { return 64 as usize; }
+fn off_awaitee_hdls() -> usize { return 72 as usize; }
+fn off_awaiter_hdls() -> usize { return 80 as usize; }
+
+fn ptr_is_null(p: *u8) -> bool {
+    let null_p: *u8 = unsafe { 0 as *u8 };
+    return p == null_p;
+}
+
+// Lazily allocate + init the reactor on first use. Idempotent.
+pub fn ensure() -> *u8 {
+    let cur: *u8 = unsafe { __cplus_reactor_get_state() };
+    if !ptr_is_null(cur) { return cur; }
+    let state: *u8 = unsafe { malloc(header_bytes()) };
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    unsafe { *nw_slot = 0 as i32; }
+    let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
+    unsafe { *cw_slot = 8 as i32; }
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    unsafe { *np_slot = 0 as i32; }
+    let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
+    unsafe { *cp_slot = 8 as i32; }
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    unsafe { *nt_slot = 0 as i32; }
+    let ct_slot: *i32 = unsafe { (state + off_cap_timers()) as *i32 };
+    unsafe { *ct_slot = 8 as i32; }
+    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
+    unsafe { *na_slot = 0 as i32; }
+    let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
+    unsafe { *ca_slot = 8 as i32; }
+    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
+    unsafe { *wf_slot = malloc((8 *% 4) as usize); }
+    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    unsafe { *wh_slot = malloc((8 *% 8) as usize); }
+    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
+    unsafe { *ph_slot = malloc((8 *% 8) as usize); }
+    let td_slot: **u8 = unsafe { (state + off_timer_deadlines()) as **u8 };
+    unsafe { *td_slot = malloc((8 *% 8) as usize); }
+    let th_slot: **u8 = unsafe { (state + off_timer_hdls()) as **u8 };
+    unsafe { *th_slot = malloc((8 *% 8) as usize); }
+    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
+    unsafe { *ae_slot = malloc((8 *% 8) as usize); }
+    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
+    unsafe { *ar_slot = malloc((8 *% 8) as usize); }
+    unsafe { __cplus_reactor_set_state(state); }
+    return state;
+}
+
+pub extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
+    register_read(fd, hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
+    register_write(fd, hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
+    register_timer(ms, hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
+    register_awaiter(awaitee, awaiter);
+    return;
+}
+
+pub extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
+    notify_completed(awaitee);
+    return;
+}
+
+pub extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
+    enqueue_pending(hdl);
+    return;
+}
+
+pub extern fn stdlib_reactor_drain_pending_v1() -> i32 {
+    return drain_pending();
+}
+
+pub extern fn stdlib_reactor_waiter_count_v1() -> i32 {
+    return waiter_count();
+}
+
+pub extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
+    if poll_one_event() {
+        return 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// Record an fd for read-readiness. Not wired to IOCP yet (see header): the
+// fd is parked so `waiter_count` is accurate, but it is never woken.
+pub fn register_read(fd: i32, hdl: *u8) {
+    register_fd(fd, hdl);
+    return;
+}
+
+pub fn register_write(fd: i32, hdl: *u8) {
+    register_fd(fd, hdl);
+    return;
+}
+
+fn register_fd(fd: i32, hdl: *u8) {
+    let state: *u8 = ensure();
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
+    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
+    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *nw_slot };
+    let mut cap: i32 = unsafe { *cw_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_fds: *u8 = unsafe { realloc(*wf_slot, (cap *% 4) as usize) };
+        let new_hdls: *u8 = unsafe { realloc(*wh_slot, (cap *% 8) as usize) };
+        unsafe { *wf_slot = new_fds; }
+        unsafe { *wh_slot = new_hdls; }
+        unsafe { *cw_slot = cap; }
+    }
+    let fds: *i32 = unsafe { *wf_slot as *i32 };
+    let hdls: **u8 = unsafe { *wh_slot as **u8 };
+    unsafe { *(fds + (n as usize)) = fd; }
+    unsafe { *(hdls + (n as usize)) = hdl; }
+    unsafe { *nw_slot = n +% (1 as i32); }
+    return;
+}
+
+// Register a one-shot timer that fires `ms` milliseconds from now and
+// resumes `hdl`. Stored as an absolute Win32 tick deadline; poll_one_event
+// sleeps to the earliest deadline and resumes its handle.
+pub fn register_timer(ms: u64, hdl: *u8) {
+    let state: *u8 = ensure();
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    let ct_slot: *i32 = unsafe { (state + off_cap_timers()) as *i32 };
+    let td_slot: **u8 = unsafe { (state + off_timer_deadlines()) as **u8 };
+    let th_slot: **u8 = unsafe { (state + off_timer_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *nt_slot };
+    let mut cap: i32 = unsafe { *ct_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_d: *u8 = unsafe { realloc(*td_slot, (cap *% 8) as usize) };
+        let new_h: *u8 = unsafe { realloc(*th_slot, (cap *% 8) as usize) };
+        unsafe { *td_slot = new_d; }
+        unsafe { *th_slot = new_h; }
+        unsafe { *ct_slot = cap; }
+    }
+    let now: u64 = unsafe { GetTickCount64() };
+    let deadline: u64 = now +% ms;
+    let deadlines: *u64 = unsafe { *td_slot as *u64 };
+    let hdls: **u8 = unsafe { *th_slot as **u8 };
+    unsafe { *(deadlines + (n as usize)) = deadline; }
+    unsafe { *(hdls + (n as usize)) = hdl; }
+    unsafe { *nt_slot = n +% (1 as i32); }
+    return;
+}
+
+// Wait for one event. The only wakeable source on Windows today is a timer:
+// pick the earliest deadline, sleep until it, resume its handle, and
+// swap-remove it. Returns true if a coroutine was resumed.
+pub fn poll_one_event() -> bool {
+    let state: *u8 = ensure();
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    let n: i32 = unsafe { *nt_slot };
+    if n == (0 as i32) { return false; }
+    let td_slot: **u8 = unsafe { (state + off_timer_deadlines()) as **u8 };
+    let th_slot: **u8 = unsafe { (state + off_timer_hdls()) as **u8 };
+    let deadlines: *u64 = unsafe { *td_slot as *u64 };
+    let hdls: **u8 = unsafe { *th_slot as **u8 };
+    // Find the earliest deadline.
+    let mut best: i32 = 0;
+    let mut best_dl: u64 = unsafe { *(deadlines + (0 as usize)) };
+    let mut i: i32 = 1;
+    while i < n {
+        let dl: u64 = unsafe { *(deadlines + (i as usize)) };
+        if dl < best_dl {
+            best_dl = dl;
+            best = i;
+        }
+        i = i +% (1 as i32);
+    }
+    let now: u64 = unsafe { GetTickCount64() };
+    if best_dl > now {
+        unsafe { Sleep((best_dl -% now) as u32); }
+    }
+    let hdl: *u8 = unsafe { *(hdls + (best as usize)) };
+    // Swap-remove the fired timer.
+    let last_i: i32 = n -% (1 as i32);
+    if best != last_i {
+        let last_dl: u64 = unsafe { *(deadlines + (last_i as usize)) };
+        let last_hdl: *u8 = unsafe { *(hdls + (last_i as usize)) };
+        unsafe { *(deadlines + (best as usize)) = last_dl; }
+        unsafe { *(hdls + (best as usize)) = last_hdl; }
+    }
+    unsafe { *nt_slot = last_i; }
+    unsafe { __cplus_coro_resume(hdl); }
+    return true;
+}
+
+// Drain the spawn_local / yield task queue: resume each handle once.
+pub fn drain_pending() -> i32 {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    let n: i32 = unsafe { *np_slot };
+    if n == (0 as i32) { return 0; }
+    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
+    let hdls: **u8 = unsafe { *ph_slot as **u8 };
+    unsafe { *np_slot = 0 as i32; }
+    let mut i: i32 = 0;
+    while i < n {
+        let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
+        let done: i32 = unsafe { __cplus_coro_done(hdl) };
+        if done == (0 as i32) {
+            unsafe { __cplus_coro_resume(hdl); }
+        }
+        i = i +% (1 as i32);
+    }
+    return n;
+}
+
+// Push a coroutine handle to the pending queue.
+pub fn enqueue_pending(hdl: *u8) {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
+    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *np_slot };
+    let mut cap: i32 = unsafe { *cp_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_p: *u8 = unsafe { realloc(*ph_slot, (cap *% 8) as usize) };
+        unsafe { *ph_slot = new_p; }
+        unsafe { *cp_slot = cap; }
+    }
+    let hdls: **u8 = unsafe { *ph_slot as **u8 };
+    unsafe { *(hdls + (n as usize)) = hdl; }
+    unsafe { *np_slot = n +% (1 as i32); }
+    return;
+}
+
+// Snapshot of pending event-side work — fd waiters plus active timers.
+pub fn waiter_count() -> i32 {
+    let state: *u8 = ensure();
+    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
+    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
+    return unsafe { *nw_slot } +% unsafe { *nt_slot };
+}
+
+pub fn pending_count() -> i32 {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
+    return unsafe { *np_slot };
+}
+
+// Register `awaiter` as waiting on `awaitee`. Append-only; removed by
+// `notify_completed` (swap-remove).
+pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
+    let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
+    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
+    let mut n: i32 = unsafe { *na_slot };
+    let mut cap: i32 = unsafe { *ca_slot };
+    if n == cap {
+        cap = cap *% (2 as i32);
+        let new_ae: *u8 = unsafe { realloc(*ae_slot, (cap *% 8) as usize) };
+        let new_ar: *u8 = unsafe { realloc(*ar_slot, (cap *% 8) as usize) };
+        unsafe { *ae_slot = new_ae; }
+        unsafe { *ar_slot = new_ar; }
+        unsafe { *ca_slot = cap; }
+    }
+    let aes: **u8 = unsafe { *ae_slot as **u8 };
+    let ars: **u8 = unsafe { *ar_slot as **u8 };
+    unsafe { *(aes + (n as usize)) = awaitee; }
+    unsafe { *(ars + (n as usize)) = awaiter; }
+    unsafe { *na_slot = n +% (1 as i32); }
+    return;
+}
+
+// Linear scan for an awaiter registered on `awaitee`; if found, swap-remove
+// and enqueue the awaiter for resumption.
+pub fn notify_completed(awaitee: *u8) {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
+    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
+    let n: i32 = unsafe { *na_slot };
+    if n == (0 as i32) { return; }
+    let aes: **u8 = unsafe { *ae_slot as **u8 };
+    let ars: **u8 = unsafe { *ar_slot as **u8 };
+    let mut i: i32 = 0;
+    while i < n {
+        let cur_ae: *u8 = unsafe { *(aes + (i as usize)) };
+        if cur_ae == awaitee {
+            let awaiter: *u8 = unsafe { *(ars + (i as usize)) };
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_ae: *u8 = unsafe { *(aes + (last_i as usize)) };
+                let last_ar: *u8 = unsafe { *(ars + (last_i as usize)) };
+                unsafe { *(aes + (i as usize)) = last_ae; }
+                unsafe { *(ars + (i as usize)) = last_ar; }
+            }
+            unsafe { *na_slot = last_i; }
+            enqueue_pending(awaiter);
+            return;
+        }
+        i = i +% (1 as i32);
+    }
+    return;
+}

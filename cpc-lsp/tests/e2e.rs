@@ -9,6 +9,21 @@ use std::time::{Duration, Instant};
 
 const CPC_LSP: &str = env!("CARGO_BIN_EXE_cpc-lsp");
 
+/// Build an RFC 8089 `file://` URI from a filesystem path, matching what the
+/// server emits via `Url::from_file_path`. On Windows a path is
+/// `C:\dir\file` — the URI must use forward slashes and a leading slash before
+/// the drive letter (`file:///C:/dir/file`); naive `format!("file://{}", p)`
+/// would emit `file://C:\dir\file`, which no LSP client accepts. (Temp paths
+/// here contain no characters that require percent-encoding.)
+fn file_uri(p: &std::path::Path) -> String {
+    let s = p.display().to_string().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
+}
+
 fn frame(payload: &serde_json::Value) -> Vec<u8> {
     let body = payload.to_string();
     let mut out = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
@@ -160,7 +175,7 @@ fn did_open_publishes_diagnostics_on_bad_source() {
     let dir = tempdir();
     let file = dir.join("bug.cplus");
     std::fs::write(&file, "fn main() -> i32 { return zzz; }\n").unwrap();
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
 
     let run = drive(
         &[
@@ -202,7 +217,7 @@ fn did_open_publishes_empty_diagnostics_on_clean_source() {
     let file = dir.join("ok.cplus");
     let src = "fn main() -> i32 { return 0; }\n";
     std::fs::write(&file, src).unwrap();
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
 
     let run = drive(
         &[
@@ -287,7 +302,7 @@ fn formatting_returns_text_edit() {
     let dir = tempdir();
     let file = dir.join("ugly.cplus");
     let ugly = "fn  main()->i32{return 0;}\n";
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
 
     let run = drive(
         &[
@@ -316,7 +331,7 @@ fn formatting_returns_no_edits_for_canonical_source() {
     let dir = tempdir();
     let file = dir.join("clean.cplus");
     let clean = "fn main() -> i32 { return 0; }\n";
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
 
     let run = drive(
         &[
@@ -347,14 +362,14 @@ fn code_action_offers_quickfix_for_manifest_edition_error() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let entry = dir.join("src/main.cplus");
     std::fs::write(&entry, "fn main() -> i32 { return 0; }\n").unwrap();
-    let entry_uri = format!("file://{}", entry.display());
+    let entry_uri = file_uri(&entry);
 
     // Open the entry. The manifest error fires; its primary span is on
     // the manifest file. The code-action handler only emits quick-fixes
     // for diagnostics whose suggestions land in the *currently-asked*
     // URI. To pick up E0406's suggestion via this path we ask for
     // code-actions on the manifest URI directly.
-    let manifest_uri = format!("file://{}/Cplus.toml", dir.display());
+    let manifest_uri = file_uri(&dir.join("Cplus.toml"));
     let run = drive(
         &[
             init_request(),
@@ -391,7 +406,7 @@ fn code_action_offers_quickfix_for_manifest_edition_error() {
 fn code_action_empty_when_no_diagnostics_overlap() {
     let dir = tempdir();
     let file = dir.join("clean.cplus");
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
     std::fs::write(&file, "fn main() -> i32 { return 0; }\n").unwrap();
 
     let run = drive(
@@ -443,7 +458,7 @@ fn definition_single_file_jumps_to_fn_declaration() {
     //   line 1: fn main() -> i32 { return helper(); }<- call site, col 26..32 = "helper"
     let src = "fn helper() -> i32 { return 7; }\nfn main() -> i32 { return helper(); }\n";
     std::fs::write(&file, src).unwrap();
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
 
     let run = drive(
         &[
@@ -493,8 +508,8 @@ fn definition_project_mode_jumps_across_files() {
     std::fs::write(&math, "pub fn square(n: i32) -> i32 { return n * n; }\n").unwrap();
     let main_src = "import \"math.cplus\" as math;\nfn main() -> i32 { return math::square(7); }\n";
     std::fs::write(&main_p, main_src).unwrap();
-    let main_uri = format!("file://{}", main_p.display());
-    let math_uri = format!("file://{}", math.display());
+    let main_uri = file_uri(&main_p);
+    let math_uri = file_uri(&math);
 
     // Cursor at `square` in `math::square` on line 1. After "return math::"
     // (line 1, characters 0..32), `square` starts at character 32.
@@ -538,7 +553,7 @@ fn definition_on_keyword_returns_empty() {
     let file = dir.join("main.cplus");
     let src = "fn main() -> i32 { return 0; }\n";
     std::fs::write(&file, src).unwrap();
-    let uri = format!("file://{}", file.display());
+    let uri = file_uri(&file);
 
     let run = drive(
         &[
@@ -599,7 +614,7 @@ fn mini_project(main_src: &str) -> (std::path::PathBuf, std::path::PathBuf, Stri
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let entry = dir.join("src/main.cplus");
     std::fs::write(&entry, main_src).unwrap();
-    let uri = format!("file://{}", entry.display());
+    let uri = file_uri(&entry);
     (dir, entry, uri)
 }
 

@@ -1347,7 +1347,13 @@ fn build_lib_project(
         // `r` replace + `c` create-if-missing + `s` index. ar quietly
         // overwrites a previous archive of the same name.
         let _ = fs::remove_file(&a_path); // ar refuses to add a duplicate entry across runs
-        let ar_status = Command::new("ar")
+        // Windows/MSVC has no `ar`; LLVM ships `llvm-ar`, which speaks the
+        // same `rcs` interface. `$CPC_AR` overrides for either host.
+        let ar_prog = env::var("CPC_AR")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| if cfg!(windows) { "llvm-ar" } else { "ar" }.to_string());
+        let ar_status = Command::new(&ar_prog)
             .arg("rcs")
             .arg(&a_path)
             .arg(&obj_path)
@@ -1359,7 +1365,7 @@ fn build_lib_project(
                 return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
             }
             Err(e) => {
-                eprintln!("cpc: failed to invoke ar: {e}");
+                eprintln!("cpc: failed to invoke {ar_prog}: {e}");
                 return ExitCode::FAILURE;
             }
         }
@@ -2816,7 +2822,11 @@ fn find_cpc_lsp() -> Option<PathBuf> {
 }
 
 fn phase0_hello(out: PathBuf) -> ExitCode {
-    let tmp_handle = match make_temp_file("cpc-", ".ll", HELLO_LL.as_bytes()) {
+    // The frozen hello.ll is platform-neutral; on Windows append the binary-
+    // mode constructor so the demo prints LF, not "\r\n" (matching the real
+    // codegen path). `windows_binary_mode_ctor_ir()` is empty off Windows.
+    let hello_ir = format!("{HELLO_LL}{}", cplus_core::codegen::windows_binary_mode_ctor_ir());
+    let tmp_handle = match make_temp_file("cpc-", ".ll", hello_ir.as_bytes()) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("cpc: writing IR to temp file: {e}");
@@ -3061,6 +3071,15 @@ fn run_clang(
     };
     let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module");
+    // f16 lowering on x86_64 emits libcalls to the half-precision conversion
+    // builtins (`__extendhfsf2`, `__truncsfhf2`). On Linux/macOS these live in
+    // the default runtime clang links; on windows-msvc clang links the MSVC
+    // runtime, which lacks them, so the link fails with "undefined symbol:
+    // __extendhfsf2". `-rtlib=compiler-rt` pulls in clang's builtins archive
+    // (just the helpers — the C runtime stays MSVC's) to resolve them.
+    if cfg!(windows) {
+        cmd.arg("-rtlib=compiler-rt");
+    }
     // Phase 11 polish: `-g` keeps the DWARF metadata cpc emitted in the
     // IR through to the final binary. Without it clang silently strips
     // the .debug_info section.
@@ -3094,11 +3113,13 @@ fn run_clang(
     // On Linux, libm is a separate library: math symbols like `fma`,
     // `fmaf`, `sqrt` (emitted by SIMD/float lowering) are NOT resolved
     // unless we pass `-lm`. macOS rolls libm into libSystem, which clang
-    // links by default, so this flag is unnecessary — and harmless — there,
-    // but we scope it to non-macOS to keep the macOS link line unchanged.
+    // links by default, so this flag is unnecessary — and harmless — there.
+    // Windows (MSVC) has no `m.lib` at all — the math functions live in the
+    // UCRT, which clang links by default; passing `-lm` makes lld-link fail
+    // with "could not open 'm.lib'". So scope this to non-macOS *Unix*.
     // Last on the line so it satisfies math refs from the object and any
     // bundled archive ahead of it.
-    if !cfg!(target_os = "macos") {
+    if cfg!(all(unix, not(target_os = "macos"))) {
         cmd.arg("-lm");
     }
     let status = cmd.arg("-o").arg(out).status();

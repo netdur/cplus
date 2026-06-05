@@ -2401,6 +2401,28 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     if size == 0 {
         return CAbiClass::Direct;
     }
+    // Microsoft x64 (windows-msvc) ABI: an aggregate is passed/returned in a
+    // single register only when its size is exactly 1, 2, 4, or 8 bytes;
+    // every other size (3/5/6/7 and anything > 8) is passed indirectly via a
+    // pointer to a caller-allocated copy. This is unlike x86_64-SysV (which
+    // packs up to 16 bytes into two integer registers, `{ i64, i64 }`) and
+    // AArch64-Darwin (`[2 x i64]`). Getting this wrong makes a 16-byte struct
+    // arrive in two registers where the callee expects a pointer — an
+    // immediate access violation on the first field read.
+    if cfg!(all(target_arch = "x86_64", windows)) {
+        let coerce = |ty: &str, n: u64| CAbiClass::Coerce {
+            llvm_ty: ty.to_string(),
+            size: n,
+            align: n,
+        };
+        return match size {
+            1 => coerce("i8", 1),
+            2 => coerce("i16", 2),
+            4 => coerce("i32", 4),
+            8 => coerce("i64", 8),
+            _ => CAbiClass::Indirect,
+        };
+    }
     // v0.0.3 Slice 3F: pick the per-platform coercion shape for 9..16-byte
     // aggregates. aarch64-darwin's AAPCS uses `[2 x i64]` (HFA-aware but
     // we treat all as integer-class). x86_64-sysv uses `{i64, i64}` —
@@ -3272,9 +3294,35 @@ fn ty_bit_width(ty: &Ty) -> u32 {
     }
 }
 
+/// LLVM IR for a Windows global constructor that switches stdout/stderr to
+/// binary mode, so a printed '\n' stays a single LF byte instead of being
+/// expanded to "\r\n" by the MSVC C runtime's text-mode translation. C+
+/// follows the Rust/Go convention that '\n' is LF on every platform.
+/// `_setmode(fd, _O_BINARY)` lives in the UCRT (`_O_BINARY` == 0x8000); fd 1
+/// is stdout, fd 2 is stderr. The ctor is `internal` and `@llvm.global_ctors`
+/// is `appending`, so emitting it in every module is safe (LLVM merges them)
+/// and idempotent. Returns `""` on non-Windows hosts. Emitted by
+/// `write_preamble` and injected into the frozen `hello.ll` demo so the
+/// behavior is uniform across both codegen paths.
+pub fn windows_binary_mode_ctor_ir() -> &'static str {
+    if cfg!(windows) {
+        "declare i32 @_setmode(i32, i32)\n\
+         define internal void @__cpc_set_binary_mode() {\n\
+         \x20 %1 = call i32 @_setmode(i32 1, i32 32768)\n\
+         \x20 %2 = call i32 @_setmode(i32 2, i32 32768)\n\
+         \x20 ret void\n\
+         }\n\
+         @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] \
+         [{ i32, ptr, ptr } { i32 65535, ptr @__cpc_set_binary_mode, ptr null }]\n"
+    } else {
+        ""
+    }
+}
+
 fn write_preamble(out: &mut String) {
     out.push_str("; C+ Phase 1 codegen output\n");
     out.push_str("\n");
+    out.push_str(windows_binary_mode_ctor_ir());
     // Format string used by `println(i32)`. Module-private constant.
     out.push_str(
         "@.fmt_int_nl = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n",
@@ -3527,7 +3575,10 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare ptr @llvm.coro.begin(token, ptr)\n");
     out.push_str("declare i64 @llvm.coro.size.i64()\n");
     out.push_str("declare i8 @llvm.coro.suspend(token, i1)\n");
-    out.push_str("declare i1 @llvm.coro.end(ptr, i1, token)\n");
+    // LLVM 19+ changed `llvm.coro.end` to return void (it returned `i1`
+    // in older LLVM); clang's verifier rejects the i1 form with
+    // "Intrinsic has incorrect return type!". The result was never used.
+    out.push_str("declare void @llvm.coro.end(ptr, i1, token)\n");
     out.push_str("declare ptr @llvm.coro.free(token, ptr)\n");
     out.push_str("declare i1 @llvm.coro.done(ptr)\n");
     out.push_str("declare void @llvm.coro.resume(ptr)\n");
@@ -5358,7 +5409,7 @@ fn gen_async_method(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
     );
     state.body.push_str(&format!(
         "  %.coro.future0 = insertvalue {future_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -5570,7 +5621,7 @@ fn gen_gen_method(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
     );
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -5711,7 +5762,7 @@ fn gen_gen_function(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
     );
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -5909,7 +5960,7 @@ fn gen_async_function(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
     );
     // Wrap the handle in Future[T].
     state.body.push_str(&format!(
@@ -6272,7 +6323,7 @@ fn gen_gen_enum_method(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
     );
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -17240,6 +17291,19 @@ mod tests {
                  return 0;\n\
              }",
         );
+        // Windows (Microsoft x64) passes a 16-byte aggregate indirectly (bare
+        // `ptr`), not coerced into a register pair like SysV/aarch64-darwin.
+        if cfg!(all(target_arch = "x86_64", windows)) {
+            assert!(
+                ir.contains("declare i64 @take_s16(ptr)"),
+                "16B struct param must declare as ptr (indirect) on Win64, got:\n{ir}"
+            );
+            assert!(
+                ir.contains("= call i64 @take_s16(ptr "),
+                "16B struct call site must pass ptr (indirect) on Win64, got:\n{ir}"
+            );
+            return;
+        }
         let coerced = if cfg!(target_arch = "x86_64") {
             "{ i64, i64 }"
         } else {
@@ -17941,6 +18005,11 @@ mod tests {
         // A 16-byte two-eightbyte aggregate coerces to the target's
         // register-pair type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }`
         // on x86_64-sysv (see the `cfg!(target_arch)` split in classify_c_abi).
+        // On Windows (Microsoft x64) a 16-byte aggregate is passed indirectly.
+        if cfg!(all(target_arch = "x86_64", windows)) {
+            assert_eq!(classify_c_abi(&Ty::Struct(id), &types), CAbiClass::Indirect);
+            return;
+        }
         let expected = if cfg!(target_arch = "x86_64") {
             "{ i64, i64 }"
         } else {
@@ -18009,7 +18078,10 @@ mod tests {
         );
         // 16-byte two-eightbyte param coerces to the target's register-pair
         // type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }` on x86_64-sysv.
-        let expected = if cfg!(target_arch = "x86_64") {
+        // On Windows (Microsoft x64) it is passed indirectly (`ptr` byval).
+        let expected = if cfg!(all(target_arch = "x86_64", windows)) {
+            "define i64 @sum(ptr"
+        } else if cfg!(target_arch = "x86_64") {
             "define i64 @sum({ i64, i64 }"
         } else {
             "define i64 @sum([2 x i64]"

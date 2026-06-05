@@ -1111,6 +1111,8 @@ fn classify_import_path(
 fn platform_override(p: PathBuf) -> PathBuf {
     let os_suffix = if cfg!(target_os = "linux") {
         "_linux"
+    } else if cfg!(target_os = "windows") {
+        "_windows"
     } else {
         return p;
     };
