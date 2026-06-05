@@ -113,6 +113,13 @@ extern fn objc_msg_void_u64(recv: *u8, sel: *u8, arg: u64);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_f64(recv: *u8, sel: *u8, arg: f64);
 
+// 32-bit float variants — e.g. NSLayoutPriority (`float`) on setPriority:/priority.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f32(recv: *u8, sel: *u8, arg: f32);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f32(recv: *u8, sel: *u8) -> f32;
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_rect(recv: *u8, sel: *u8, frame: Rect);
 
@@ -338,6 +345,14 @@ pub fn msg_void_u64(recv: *u8, selector: *u8, arg: u64) {
 
 pub fn msg_void_f64(recv: *u8, selector: *u8, arg: f64) {
     unsafe { objc_msg_void_f64(recv, selector, arg); };
+}
+
+pub fn msg_void_f32(recv: *u8, selector: *u8, arg: f32) {
+    unsafe { objc_msg_void_f32(recv, selector, arg); };
+}
+
+pub fn msg_f32(recv: *u8, selector: *u8) -> f32 {
+    return unsafe { objc_msg_f32(recv, selector) };
 }
 
 pub fn msg_void_rect(recv: *u8, selector: *u8, frame: Rect) {

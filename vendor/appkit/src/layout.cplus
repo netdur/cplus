@@ -128,3 +128,29 @@ pub fn deactivate(constraint: *u8) -> *u8 {
 pub fn is_active(constraint: *u8) -> i8 {
     return rt::msg_i64(constraint, rt::sel(str_ptr("isActive\0"))) as i8;
 }
+
+// ---- Priority (NSLayoutPriority, a `float`) ----
+//
+// Set before activation. The well-known levels:
+pub fn priority_required() -> f32 { return 1000.0 as f32; }
+pub fn priority_high() -> f32 { return 750.0 as f32; }
+pub fn priority_low() -> f32 { return 250.0 as f32; }
+
+pub fn set_priority(constraint: *u8, priority: f32) -> *u8 {
+    rt::msg_void_f32(constraint, rt::sel(str_ptr("setPriority:\0")), priority);
+    return constraint;
+}
+
+pub fn priority(constraint: *u8) -> f32 {
+    return rt::msg_f32(constraint, rt::sel(str_ptr("priority\0")));
+}
+
+// ---- Layout guides (invisible spacers; constrain against them like a view) ----
+
+// Create an `NSLayoutGuide`, add it to `view` (which owns it), and return it.
+// Use the same anchor getters (`leading`/`top`/`width`/…) on the returned guide.
+pub fn add_guide(view: *u8) -> *u8 {
+    let guide: *u8 = rt::alloc_init(str_ptr("NSLayoutGuide\0"));
+    rt::msg_void_id(view, rt::sel(str_ptr("addLayoutGuide:\0")), guide);
+    return guide;
+}

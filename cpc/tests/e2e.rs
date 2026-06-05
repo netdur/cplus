@@ -16658,6 +16658,46 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit Auto Layout depth (plan.appkit.md §4): constraint priorities
+/// (NSLayoutPriority `float`) and NSLayoutGuide. Our wrapper sets/reads a
+/// priority and constrains against a layout guide. Constraints/guides are data
+/// objects — no run loop needed.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_layout_priority_and_guide() {
+    appkit_run_program(
+        "ak_lp",
+        r#"
+import "appkit/application" as application;
+import "appkit/view" as view;
+import "appkit/layout" as layout;
+import "appkit/runtime" as rt;
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 400.0, height: 400.0 } };
+    let parent: view::View = view::View::new(f);
+    let child: view::View = view::View::new(f);
+    parent.add_subview(child.obj);
+    layout::use_constraints(child.obj);
+
+    let c: *u8 = layout::equal_const(layout::width(child.obj), 50.0);
+    let _p: *u8 = layout::set_priority(c, layout::priority_high());
+    if layout::priority(c) != (750.0 as f32) { return 1; }
+    let _a: *u8 = layout::activate(c);
+    if layout::is_active(c) != (1 as i8) { return 2; }
+
+    let guide: *u8 = layout::add_guide(parent.obj);
+    let c2: *u8 = layout::activate(layout::equal(layout::leading(child.obj), layout::leading(guide)));
+    if layout::is_active(c2) != (1 as i8) { return 3; }
+
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
