@@ -3,6 +3,50 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.15 — 2026-06-05
+
+Language hardening, a P0 ownership fix, and the first Linux port.
+
+### Language
+- **Module-level global asm:** `#asm("...")` at item scope lowers to LLVM
+  `module asm`, for raw module-level symbols or directives. The function-body
+  `#asm(...)` inline-asm form is unchanged.
+- **`#[no_alloc]` drop glue:** the check now also rejects owned drop-carrying
+  parameters (`move x`, a move-by-default non-Copy struct, `move self`) and
+  discarded drop-carrying temporaries, not just `let` locals.
+- **`if`/`else` value typing:** an if-expression sizes its result from the type
+  codegen actually produces, so any value-producing arm shape (including a
+  method call) is accepted; the previous hand-kept type predictor is removed.
+
+### Graph / LSP
+- **value-refs precise scoping:** uses resolve to the innermost in-scope
+  definition (shadowing is handled correctly); `match`-arm payload bindings and
+  `for` loop variables are first-class definitions; and a binding returned from
+  a function records the caller-side bindings its value flows into.
+
+### Fixes
+- **Ownership (P0):** a heap-owning enum passed by value as a call or method
+  argument (e.g. `vec.push(v)` where `v` owns a nested `Vec`) is now moved
+  rather than borrow-copied. Previously the caller's scope-exit drop could free
+  memory the callee had already stored, a use-after-free (surfaced by a
+  `vendor/json` parse + stringify round-trip).
+- **Borrow checker:** a bare non-Copy concrete struct/enum argument used while
+  its place is borrowed now reports E0372 (move while borrowed) instead of
+  E0383 (read while borrowed), matching the move semantics.
+- **Codegen:** string interpolation frees its per-segment conversion buffers
+  (previously leaked).
+
+### Platform
+- **Linux/x86-64:** first Linux bring-up of the toolchain (requires
+  clang/LLVM 19+). `cpc` discovers a clang ≥ 19 on its own, links via GNU ld
+  with `-lm`, selects `*_linux.cplus` stdlib overrides (epoll reactor), and
+  ships a `.deb`. All changes are platform-conditional; macOS output is
+  unchanged.
+
+### Tooling
+- Linux CI runs `cargo test --workspace` and builds the `.deb` on release tags.
+- CI actions bumped to `actions/checkout@v5` and `upload-artifact@v5`.
+
 ## v0.0.14 — 2026-06-05
 
 Language track. The headline themes are the completed ownership/Drop model, inline
