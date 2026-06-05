@@ -1,5 +1,43 @@
 import "./runtime" as rt;
 
+// Synthesize an `NSWindowDelegate` from two C+ method bodies and return a
+// `+1`-owned handle (the documented delegate pattern, plan.appkit.md §3 —
+// same shape as `create_app_delegate` / `create_table_data_source`). Wire it
+// with `window.set_delegate(...)`.
+//
+//   should_close_imp: `(self, _cmd, sender) -> BOOL` implements
+//                     `-windowShouldClose:` (return 1 to allow the close).
+//   will_close_imp:   `(self, _cmd, notification)` implements
+//                     `-windowWillClose:` (teardown hook; no return).
+//
+// Callbacks are closure-free — reach app state through a `static mut`, an
+// associated object, or a global.
+pub fn create_window_delegate(
+    should_close_imp: fn(*u8, *u8, *u8) -> i8,
+    will_close_imp: fn(*u8, *u8, *u8),
+) -> *u8 {
+    let existing: *u8 = rt::get_class(str_ptr("CWindowDelegate\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let nsobject: *u8 = rt::get_class(str_ptr("NSObject\0"));
+        cls = rt::allocate_class_pair(nsobject, str_ptr("CWindowDelegate\0"), 0 as usize);
+        let _a: i8 = rt::add_terminate_method(
+            cls,
+            rt::sel(str_ptr("windowShouldClose:\0")),
+            should_close_imp,
+            str_ptr("c@:@\0"),
+        );
+        let _b: i8 = rt::add_action_method(
+            cls,
+            rt::sel(str_ptr("windowWillClose:\0")),
+            will_close_imp,
+            str_ptr("v@:@\0"),
+        );
+        rt::register_class_pair(cls);
+    }
+    return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
+}
+
 pub struct Window {
     pub opaque obj: *u8,
 }

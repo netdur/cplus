@@ -16536,6 +16536,56 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit window + table-selection delegate synthesis (plan.appkit.md
+/// §3): `window::create_window_delegate` and `data::create_table_delegate` build
+/// delegate objects from C+ method bodies. We invoke the synthesized methods
+/// directly — `windowShouldClose:` returns the C+ value, `windowWillClose:` and
+/// `tableViewSelectionDidChange:` fire their handlers — and check
+/// `TableView::selected_row()` reads -1 on a fresh table. No run loop needed.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_window_and_table_delegates() {
+    appkit_run_program(
+        "ak_deleg",
+        r#"
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/data" as data;
+import "appkit/runtime" as rt;
+
+static mut WILL_CLOSE: i32 = 0;
+static mut SEL_CHANGED: i32 = 0;
+
+fn should_close(self_obj: *u8, _cmd: *u8, sender: *u8) -> i8 { return 1 as i8; }
+fn will_close(self_obj: *u8, _cmd: *u8, note: *u8) { unsafe { WILL_CLOSE = 1 as i32; }; return; }
+fn sel_changed(self_obj: *u8, _cmd: *u8, note: *u8) { unsafe { SEL_CHANGED = 1 as i32; }; return; }
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let nil: *u8 = unsafe { 0 as *u8 };
+
+    let wd: *u8 = window::create_window_delegate(should_close, will_close);
+    if rt::msg_i8_id(wd, rt::sel(str_ptr("windowShouldClose:\0")), nil) != (1 as i8) { return 1; }
+    rt::msg_void_id(wd, rt::sel(str_ptr("windowWillClose:\0")), nil);
+    if unsafe { WILL_CLOSE } != (1 as i32) { return 2; }
+
+    let td: *u8 = data::create_table_delegate(sel_changed);
+    rt::msg_void_id(td, rt::sel(str_ptr("tableViewSelectionDidChange:\0")), nil);
+    if unsafe { SEL_CHANGED } != (1 as i32) { return 3; }
+
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 10.0, height: 10.0 } };
+    let table: data::TableView = data::TableView::new(f);
+    if table.selected_row() != (0 as i64) -% (1 as i64) { return 4; }
+
+    rt::release(wd);
+    rt::release(td);
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {

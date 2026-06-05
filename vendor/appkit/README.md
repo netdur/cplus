@@ -44,12 +44,12 @@ import "appkit/notifications" as notifications;
 
 - `runtime`: geometry types, NSString helper, ObjC runtime/message helpers, and the ownership primitives (`retain`/`release`/`autorelease`/`retain_count`)
 - `application`: `AutoreleasePool`, `Application`, app delegate helper
-- `window`: `Window`
+- `window`: `Window`. Also `create_window_delegate(should_close_imp, will_close_imp)` — synthesizes an `NSWindowDelegate` (`windowShouldClose:` / `windowWillClose:`).
 - `view`: `View`, `StackView`, `ScrollView`, `Box`, `Scroller`, `BackgroundExtensionView`
 - `controls`: `TextField`, `Button`, `Slider`, `ProgressIndicator`, `PopUpButton`, `Stepper`, `Switch`, `SegmentedControl`, `ComboButton`, `DatePicker`, `ColorWell`, `LevelIndicator`, `PathControl`
 - `text`: `TextView`, `SecureTextField`, `SearchField`, `TokenField`, `ComboBox`, `Form`
 - `containers`: `SplitView`, `TabView`, `TabViewItem`, `VisualEffectView`, `GridView`, `Browser`, `Matrix`, `ClipView`, `RulerView`, `Popover`
-- `data`: `TableView`, `TableColumn`, `OutlineView`, `TableCellView`, `TableRowView`, `CollectionView`, `CollectionViewItem`, `CollectionViewFlowLayout`, `CollectionViewGridLayout`, `RuleEditor`, `PredicateEditor`. Also `create_table_data_source(row_count_imp, value_imp)` — synthesizes an `NSTableViewDataSource` from two C+ method bodies (the documented delegate pattern; same shape as `create_app_delegate`).
+- `data`: `TableView`, `TableColumn`, `OutlineView`, `TableCellView`, `TableRowView`, `CollectionView`, `CollectionViewItem`, `CollectionViewFlowLayout`, `CollectionViewGridLayout`, `RuleEditor`, `PredicateEditor`. Also `create_table_data_source(row_count_imp, value_imp)` (synthesizes an `NSTableViewDataSource`), `create_table_delegate(selection_changed_imp)` (selection via `tableViewSelectionDidChange:`), and `TableView::selected_row()`. The synthesis helpers are the documented delegate pattern (same shape as `create_app_delegate`).
 - `graphics`: `ImageView`, `Image`, `Font`, `Color`
 - `menu`: `Menu`, `MenuItem`
 - `dialogs`: `Alert`

@@ -42,6 +42,30 @@ pub fn create_table_data_source(
     return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
 }
 
+// Synthesize an `NSTableViewDelegate` for selection handling and return a
+// `+1`-owned handle. Wire it with `table.set_delegate(...)`.
+//
+//   selection_changed_imp: `(self, _cmd, notification)` implements
+//   `-tableViewSelectionDidChange:`. Read the new selection inside it with
+//   `TableView::selected_row()` (reach the table via a `static mut`, an
+//   associated object, or `[notification object]`).
+pub fn create_table_delegate(selection_changed_imp: fn(*u8, *u8, *u8)) -> *u8 {
+    let existing: *u8 = rt::get_class(str_ptr("CTableDelegate\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let nsobject: *u8 = rt::get_class(str_ptr("NSObject\0"));
+        cls = rt::allocate_class_pair(nsobject, str_ptr("CTableDelegate\0"), 0 as usize);
+        let _a: i8 = rt::add_action_method(
+            cls,
+            rt::sel(str_ptr("tableViewSelectionDidChange:\0")),
+            selection_changed_imp,
+            str_ptr("v@:@\0"),
+        );
+        rt::register_class_pair(cls);
+    }
+    return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
+}
+
 pub struct TableView {
     pub opaque obj: *u8,
 }
@@ -61,6 +85,12 @@ impl TableView {
 
     pub fn reload_data(self) {
         rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+    }
+
+    // The index of the selected row, or -1 if none. Read this from a selection
+    // delegate (see `create_table_delegate`) to drive a master/detail UI.
+    pub fn selected_row(self) -> i64 {
+        return rt::msg_i64(self.obj, rt::sel(str_ptr("selectedRow\0")));
     }
 
     pub fn set_delegate(self, delegate: *u8) {
