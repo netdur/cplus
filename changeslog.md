@@ -35,6 +35,28 @@ Language hardening, a P0 ownership fix, and the first Linux port.
   E0383 (read while borrowed), matching the move semantics.
 - **Codegen:** string interpolation frees its per-segment conversion buffers
   (previously leaked).
+- **Use-after-move on generic-payload types:** an enum or struct whose
+  Copy-ness depends on a generic payload/field (e.g. `enum W { A(Vec[i32]) }`,
+  a recursive `Node { Branch(Vec[Node]) }`, the `vendor/json`
+  `Value::Array(Vec[Value])` shape) is now correctly treated as non-Copy, so a
+  use-after-move on it is reported (E0335). The move check is also now
+  flow-sensitive: a move that happens only on a branch that `return`s/`break`s/
+  `continue`s no longer falsely poisons the value on the path where that branch
+  is not taken.
+
+### Numerics / GPU
+- **`vendor/cuda`:** CUDA Runtime + cuBLAS bindings (NVIDIA GPU) — device
+  management, `DeviceBuffer` (Drop = `cudaFree`), a cuBLAS `Handle`
+  (Drop = `cublasDestroy`) with `sgemm`/`sgemv` (column-major). Plain C FFI, no
+  kernel language; C+ stays a consumer of GPU SDKs.
+- **`vendor/cblas`:** reference CBLAS bindings (OpenBLAS / Netlib / MKL) — the
+  cross-platform CPU path. Level 1/2/3 (`sdot`/`saxpy`/`sscal`/`snrm2`/`sasum`,
+  `sgemv`, `sgemm`, plus d-variants).
+- **`[link] search-paths`:** a manifest `[link]` table may now list library
+  search directories; each becomes both `-L<dir>` (link time) and
+  `-Wl,-rpath,<dir>` (run time), so a library outside the default path
+  (e.g. CUDA's `lib64`) resolves without `LD_LIBRARY_PATH`. Relative entries
+  resolve against the manifest directory.
 
 ### Platform
 - **Linux/x86-64:** first Linux bring-up of the toolchain (requires
