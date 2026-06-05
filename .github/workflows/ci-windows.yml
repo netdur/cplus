@@ -1,8 +1,9 @@
 name: Windows CI
 
-# Builds + tests the toolchain on Windows (x86_64-pc-windows-msvc) on every
-# push and PR. Unlike ci-linux.yml / release.yml (which gate on a vX.Y.Z tag),
-# this runs on every push so cross-platform regressions surface early.
+# Builds, tests, and packages the toolchain on Windows (x86_64-pc-windows-msvc)
+# on a vX.Y.Z release tag (matching ci-linux.yml / release.yml), plus manual
+# dispatch. On a tag it runs the full suite, builds release binaries, smoke-
+# tests cpc, and attaches a binaries .zip to the GitHub Release.
 #
 # cpc emits LLVM IR and shells out to clang to assemble/link, so the runner
 # needs clang >= 19 (for the `preserve_nonecc` calling convention cpc emits) on
@@ -13,11 +14,12 @@ name: Windows CI
 
 on:
   push:
-  pull_request:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # create the Release and upload assets
 
 jobs:
   build-test:
@@ -79,7 +81,7 @@ jobs:
           # it so the Actions pwsh wrapper doesn't fail the step on it.
           exit 0
 
-      - name: Upload Windows binaries
+      - name: Upload Windows binaries (workflow artifact)
         uses: actions/upload-artifact@v5
         with:
           name: cplus-x86_64-pc-windows-msvc
@@ -88,3 +90,19 @@ jobs:
             target/release/cpc-lsp.exe
             target/release/cpc-bindgen.exe
           if-no-files-found: error
+
+      - name: Attach binaries to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $asset = "cplus-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Force -DestinationPath $asset -Path `
+            target\release\cpc.exe, target\release\cpc-lsp.exe, target\release\cpc-bindgen.exe
+          # Idempotent across the parallel release jobs (macOS/Linux/Windows all
+          # fire on the same tag): create if absent, then clobber-upload.
+          gh release create $tag --title $tag --notes "Prebuilt binaries for $tag." 2>$null
+          gh release upload $tag $asset --clobber
+          if ($LASTEXITCODE -ne 0) { throw "release upload failed" }

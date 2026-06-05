@@ -64,9 +64,22 @@ Language hardening, a P0 ownership fix, and the first Linux port.
   with `-lm`, selects `*_linux.cplus` stdlib overrides (epoll reactor), and
   ships a `.deb`. All changes are platform-conditional; macOS output is
   unchanged.
+- **Windows/x86-64 (MSVC):** the toolchain builds, tests, and runs on
+  `x86_64-pc-windows-msvc`. `cpc` selects `llvm-ar`, links math from the UCRT
+  (no `m.lib`), pulls f16 helpers from `compiler-rt`, applies the Microsoft x64
+  struct ABI (indirect for non-1/2/4/8 aggregates), sets stdout/stderr to
+  binary mode so `\n` stays a single LF (not `\r\n`), and provides a Win32
+  `reactor_windows` async backend (timers + cooperative scheduling; socket/file
+  IOCP is a follow-up). All changes are platform-conditional.
+- **Coroutine codegen portability:** `llvm.coro.end` is emitted in the
+  return-type form the target clang expects (`i1` on older LLVM / Apple
+  clang 21, `void` on LLVM 22+), probed at build time. Previously a fixed form
+  failed to verify on the other toolchain.
 
 ### Tooling
-- Linux CI runs `cargo test --workspace` and builds the `.deb` on release tags.
+- Linux and Windows CI run `cargo test --workspace` on release tags and attach
+  the prebuilt binaries (`.deb`; Windows `.zip`) to the GitHub Release,
+  alongside the macOS tarball from the release workflow.
 - CI actions bumped to `actions/checkout@v5` and `upload-artifact@v5`.
 
 ## v0.0.14 — 2026-06-05

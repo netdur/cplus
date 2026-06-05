@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # create the Release and upload the .deb asset
 
 jobs:
   test:
@@ -103,6 +103,18 @@ jobs:
           name: ${{ steps.deb.outputs.pkg }}
           path: dist/*.deb
           if-no-files-found: error
+
+      - name: Attach the .deb to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          # Idempotent across the parallel release jobs (macOS/Linux/Windows all
+          # fire on the same tag): create if absent, then clobber-upload.
+          gh release create "$TAG" --title "$TAG" --notes "Prebuilt binaries for $TAG." || true
+          gh release upload "$TAG" dist/*.deb --clobber
 
       - name: Install the .deb via apt (resolves Depends, incl. clang-19)
         run: |
