@@ -1337,6 +1337,9 @@ fn merge(
                         pubs.insert(s.name.name.clone());
                     }
                 }
+                // v0.0.15: module-scope `#asm("...")` declares no name —
+                // nothing to record in the local/pub symbol tables.
+                ItemKind::ModuleAsm(_) => {}
             }
         }
         local_items.insert(fid.clone(), all);
@@ -1758,6 +1761,9 @@ fn rewrite_item(item: &Item, ctx: &RewriteCtx) -> Result<Item, ResolveError> {
             rewrite_expr(&mut s.value, ctx, &mut scope)?;
             ItemKind::Static(s)
         }
+        // v0.0.15: module-scope `#asm("...")` is raw assembly with no names or
+        // types — cross-file resolution has nothing to qualify; pass it through.
+        ItemKind::ModuleAsm(ma) => ItemKind::ModuleAsm(ma.clone()),
     };
     Ok(Item {
         kind,

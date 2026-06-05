@@ -243,6 +243,22 @@ impl Parser {
             TokenKind::Const => self.parse_const_decl(is_pub, attributes),
             // v0.0.9 Phase 4: module-scope `static mut? NAME: Ty = LIT;`.
             TokenKind::Static => self.parse_static_decl(is_pub, attributes),
+            // v0.0.15: module-scope `#asm("...");` global asm item. The
+            // `parse_attributes` loop above already declined to treat this
+            // `#` as an attribute (it isn't followed by `[`).
+            TokenKind::Pound => {
+                if is_pub {
+                    return Err(self.err_at_peek(
+                        "item — `#asm(...)` module-level asm doesn't take `pub`",
+                    ));
+                }
+                if !attributes.is_empty() {
+                    return Err(self.err_at_peek(
+                        "item — `#asm(...)` module-level asm doesn't carry attributes",
+                    ));
+                }
+                self.parse_module_asm()
+            }
             TokenKind::Impl => {
                 if is_pub {
                     return Err(self.err_at_peek(
@@ -294,7 +310,12 @@ impl Parser {
     /// order. Slice 5ATTR.1.
     fn parse_attributes(&mut self) -> Result<Vec<Attribute>, ParseError> {
         let mut attrs = Vec::new();
-        while matches!(self.peek_kind(), TokenKind::Pound) {
+        // Only `#[...]` opens an attribute. A bare `#name(...)` (e.g. the
+        // module-scope `#asm("...")` item, v0.0.15) also starts with `#` but
+        // is not an attribute — stop the loop so the item dispatch can claim it.
+        while matches!(self.peek_kind(), TokenKind::Pound)
+            && self.peek_kind_n(1) == &TokenKind::LBracket
+        {
             attrs.push(self.parse_one_attribute()?);
         }
         Ok(attrs)
@@ -924,6 +945,47 @@ impl Parser {
                 is_mut,
                 is_pub,
                 attributes,
+            }),
+            span: start.merge(end),
+            origin_file: None,
+        })
+    }
+
+    /// v0.0.15: module-scope `#asm("...");` — global asm item lowering to LLVM
+    /// `module asm "..."`. Unlike the function-body `#asm(...)` intrinsic, the
+    /// module form takes exactly one string-literal template and no operands or
+    /// clobbers (there are no SSA values to bind at module scope). Terminated by
+    /// `;` like the other declaration-style items (`extern`, `const`, `static`).
+    fn parse_module_asm(&mut self) -> Result<Item, ParseError> {
+        let start = self.expect(&TokenKind::Pound, "`#`")?.span;
+        let name = self.expect_ident()?;
+        if name.name != "asm" {
+            return Err(self.err_at_peek(
+                "item — only `#asm(\"...\")` is valid at module scope (other `#name(...)` intrinsics are expression-level)",
+            ));
+        }
+        self.expect(&TokenKind::LParen, "`(` after `#asm`")?;
+        let tmpl_tok = self.peek().clone();
+        let template = match tmpl_tok.kind {
+            TokenKind::Str(s) => {
+                self.bump();
+                s
+            }
+            _ => {
+                return Err(
+                    self.err_at_peek("string literal template inside `#asm(\"...\")` at module scope")
+                )
+            }
+        };
+        self.expect(
+            &TokenKind::RParen,
+            "`)` — module-scope `#asm` takes only a string template (no operands or clobbers)",
+        )?;
+        let end = self.expect(&TokenKind::Semi, "`;` after module-scope `#asm(...)`")?.span;
+        Ok(Item {
+            kind: ItemKind::ModuleAsm(ModuleAsm {
+                template,
+                span: start.merge(end),
             }),
             span: start.merge(end),
             origin_file: None,
@@ -4857,6 +4919,78 @@ mod tests {
         assert_eq!(s.name.name, "GLOBAL_TICK");
         assert!(s.is_mut);
         assert!(s.is_pub);
+    }
+
+    // v0.0.15: module-scope `#asm("...");` global asm item.
+    #[test]
+    fn module_asm_item_parses() {
+        let p = parse_src("#asm(\".globl my_sym\");").unwrap();
+        assert_eq!(p.items.len(), 1);
+        let ItemKind::ModuleAsm(ma) = &p.items[0].kind else {
+            panic!("expected ItemKind::ModuleAsm, got {:?}", p.items[0].kind);
+        };
+        assert_eq!(ma.template, ".globl my_sym");
+    }
+
+    #[test]
+    fn module_asm_coexists_with_other_items() {
+        // The `#` of `#asm` must not be swallowed by the attribute loop, and
+        // it must not interfere with adjacent items.
+        let p = parse_src("fn a() -> i32 { 0 }\n#asm(\".p2align 2\");\nfn b() -> i32 { 1 }").unwrap();
+        assert_eq!(p.items.len(), 3);
+        assert!(matches!(p.items[0].kind, ItemKind::Function(_)));
+        let ItemKind::ModuleAsm(ma) = &p.items[1].kind else {
+            panic!("expected ModuleAsm in the middle, got {:?}", p.items[1].kind);
+        };
+        assert_eq!(ma.template, ".p2align 2");
+        assert!(matches!(p.items[2].kind, ItemKind::Function(_)));
+    }
+
+    #[test]
+    fn attribute_still_parses_after_module_asm_disambiguation() {
+        // Guard against the `peek_kind_n(1) == LBracket` change breaking the
+        // normal `#[...]` attribute path.
+        let p = parse_src("#[inline]\nfn a() -> i32 { 0 }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("expected fn");
+        };
+        assert_eq!(f.attributes.len(), 1);
+        assert_eq!(f.attributes[0].path.name, "inline");
+    }
+
+    #[test]
+    fn module_asm_missing_semicolon_rejected() {
+        let err = parse_src("#asm(\".text\")").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::Unexpected { .. } | ParseErrorKind::UnexpectedEof { .. }
+        ));
+    }
+
+    #[test]
+    fn module_asm_with_operands_rejected() {
+        // Module scope has no SSA values to bind, so operands are a parse error
+        // (the `,` after the template hits the `)` expectation).
+        let err = parse_src("#asm(\"mov {a}, 1\", a = in(reg) x);").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn module_asm_non_string_template_rejected() {
+        let err = parse_src("#asm(123);").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn pub_module_asm_rejected() {
+        let err = parse_src("pub #asm(\".text\");").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn attributed_module_asm_rejected() {
+        let err = parse_src("#[inline]\n#asm(\".text\");").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
     #[test]

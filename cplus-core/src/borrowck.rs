@@ -1909,7 +1909,8 @@ fn collect_e0384_diagnostics(
             | ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Const(_)
-            | ItemKind::Static(_) => {}
+            | ItemKind::Static(_)
+            | ItemKind::ModuleAsm(_) => {}
         }
     }
 }
@@ -2130,7 +2131,8 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<RawDiag>) {
             | ItemKind::Interface(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Const(_)
-            | ItemKind::Static(_) => {}
+            | ItemKind::Static(_)
+            | ItemKind::ModuleAsm(_) => {}
         }
     }
     (analysis, all_diags)

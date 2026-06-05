@@ -1342,7 +1342,9 @@ impl SemaCx<'_> {
                 // *type* — they register a *value name* in a separate
                 // pass (`collect_consts_and_statics`) after type names
                 // are known. Nothing to do here.
-                ItemKind::Const(_) | ItemKind::Static(_) => {}
+                // v0.0.15: module-scope `#asm("...")` is inert in sema —
+                // raw assembly, no name, no type to register or check.
+                ItemKind::Const(_) | ItemKind::Static(_) | ItemKind::ModuleAsm(_) => {}
             }
         }
         self.current_file = None;
@@ -1916,6 +1918,52 @@ impl SemaCx<'_> {
             }
             Ty::Array(elem, _) => self.no_alloc_safe_drop(elem),
             _ => true,
+        }
+    }
+
+    /// v0.0.15 `#[no_alloc]` drop-glue, parameter arm: does an owned parameter
+    /// of this `(marker, ty)` run a destructor in *this* function at scope exit?
+    /// Mirrors codegen's callee-side drop rule (`effective_move` + the
+    /// Struct/Enum `register_drop` path in `gen_function`):
+    ///   - **Owned** means `move x: T`, or a bare `x: T` whose non-Copy struct
+    ///     type is move-by-default (the v0.0.10 rule). `borrow x` / `mut x` are
+    ///     caller-owned — no callee teardown.
+    ///   - Of the owned params, codegen only emits a callee drop for a
+    ///     `Struct`/`Enum` aggregate. A `string`/`Vec[T]` *value* param is
+    ///     caller-dropped via the auto-clone-on-return safety net
+    ///     (`borrowed_params`), so the callee frees nothing — `Ty::String`
+    ///     therefore returns `false` here even under `move`.
+    /// Returning `true` means this parameter's implicit teardown is the
+    /// callee's, so a `#[no_alloc]` function must reject it when that teardown
+    /// allocates (`!no_alloc_safe_drop`).
+    fn no_alloc_param_drops_here(&self, param: &Param, ty: &Ty) -> bool {
+        let owned = param.move_
+            || (!param.mutable
+                && !param.borrow_
+                && matches!(ty, Ty::Struct(_))
+                && !self.is_copy(ty));
+        owned && matches!(ty, Ty::Struct(_) | Ty::Enum(_))
+    }
+
+    /// v0.0.15 `#[no_alloc]` drop-glue, temporary arm: does this expression
+    /// denote *existing* storage (a place) rather than producing a fresh owned
+    /// temporary? A place — a binding, a field/index projection of a place, or
+    /// a pointer deref — is owned by something else and isn't torn down when its
+    /// value is discarded. Anything else (a call, constructor, struct literal,
+    /// arithmetic, …) materializes a new value, so discarding it as an
+    /// expression statement drops that temporary at statement end. The receiver
+    /// chain is followed so `make_struct().field` (a field of a *call* result)
+    /// is correctly classified as a temporary, while `obj.field` is a place.
+    fn expr_is_place(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(_) => true,
+            ExprKind::Field { receiver, .. } => self.expr_is_place(receiver),
+            ExprKind::Index { receiver, .. } => self.expr_is_place(receiver),
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                ..
+            } => true,
+            _ => false,
         }
     }
 
@@ -2936,7 +2984,29 @@ impl SemaCx<'_> {
         };
         let prev_async = self.current_fn_is_async;
         self.current_fn_is_async = m.is_async;
+        let fn_no_alloc = marks_no_alloc(&m.attributes);
         self.scopes.push(HashMap::new());
+
+        // v0.0.15 `#[no_alloc]` drop-glue, receiver arm: a `move self` receiver
+        // is consumed by the method, so codegen registers a scope-exit drop for
+        // it (mirrors `gen_function`'s self path) — unless this *is* the
+        // destructor, where self is being torn down already. An allocating
+        // teardown of an owned `self` violates `#[no_alloc]`.
+        if fn_no_alloc {
+            if let Some(Receiver::Move) = sig.receiver {
+                let self_ty = Ty::Struct(struct_id);
+                if m.name.name != "drop" && !self.no_alloc_safe_drop(&self_ty) {
+                    self.err(
+                        "E0901",
+                        format!(
+                            "`#[no_alloc]` method: `move self` receiver of type `{}` runs an allocating destructor at scope exit (its `drop` frees heap or is not marked `#[no_alloc]`)",
+                            ty_display(&self_ty),
+                        ),
+                        m.name.span,
+                    );
+                }
+            }
+        }
 
         // Register `self` if there's a receiver. `mut self` makes self
         // a mutable binding (enables `self.x = ...`); other forms don't.
@@ -2957,6 +3027,23 @@ impl SemaCx<'_> {
         }
         // Register non-receiver params.
         for (param, psig) in m.params.iter().zip(sig.params.iter()) {
+            // v0.0.15 `#[no_alloc]` drop-glue, parameter arm (see
+            // `check_function` for the rationale and `no_alloc_param_drops_here`
+            // for the ownership rule).
+            if fn_no_alloc
+                && self.no_alloc_param_drops_here(param, &psig.ty)
+                && !self.no_alloc_safe_drop(&psig.ty)
+            {
+                self.err(
+                    "E0901",
+                    format!(
+                        "`#[no_alloc]` method: owned parameter `{}` of type `{}` runs an allocating destructor at scope exit (its `drop` frees heap or is not marked `#[no_alloc]`)",
+                        param.name.name,
+                        ty_display(&psig.ty),
+                    ),
+                    param.span,
+                );
+            }
             // E0334: `mut` and `move` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err(
@@ -4456,8 +4543,27 @@ impl SemaCx<'_> {
         } else {
             None
         };
+        let fn_no_alloc = marks_no_alloc(&f.attributes);
         self.scopes.push(HashMap::new());
         for (param, psig) in f.params.iter().zip(sig.params.iter()) {
+            // v0.0.15 `#[no_alloc]` drop-glue, parameter arm: an owned
+            // drop-carrying parameter whose teardown the callee runs (see
+            // `no_alloc_param_drops_here`) frees heap at scope exit — invisible
+            // in the body but real. Reject it, mirroring the `let`-local rule.
+            if fn_no_alloc
+                && self.no_alloc_param_drops_here(param, &psig.ty)
+                && !self.no_alloc_safe_drop(&psig.ty)
+            {
+                self.err(
+                    "E0901",
+                    format!(
+                        "`#[no_alloc]` function: owned parameter `{}` of type `{}` runs an allocating destructor at scope exit (its `drop` frees heap or is not marked `#[no_alloc]`)",
+                        param.name.name,
+                        ty_display(&psig.ty),
+                    ),
+                    param.span,
+                );
+            }
             // E0334: `mut` and `move` are mutually exclusive ownership markers.
             if param.mutable && param.move_ {
                 self.err(
@@ -4899,7 +5005,27 @@ impl SemaCx<'_> {
                 self.loop_depth -= 1;
             }
             StmtKind::Expr(e) => {
-                let _ = self.check_expr(e, None);
+                let ty = self.check_expr(e, None);
+                // v0.0.15 `#[no_alloc]` drop-glue, temporary arm: a discarded
+                // expression statement that materializes a fresh owned value
+                // (a call, constructor, …) drops that unnamed temporary at
+                // statement end. If the teardown allocates, reject it — the same
+                // implicit-drop rule the `let`-local and parameter arms enforce.
+                // Place expressions (`x;`, `obj.field;`) name existing storage
+                // dropped at its own scope exit, so they are exempt.
+                if self.current_fn_no_alloc
+                    && !self.expr_is_place(e)
+                    && !self.no_alloc_safe_drop(&ty)
+                {
+                    self.err(
+                        "E0901",
+                        format!(
+                            "`#[no_alloc]` function: discarded temporary of type `{}` runs an allocating destructor at statement end (its `drop` frees heap or is not marked `#[no_alloc]`)",
+                            ty_display(&ty),
+                        ),
+                        e.span,
+                    );
+                }
             }
             StmtKind::Defer(e) => {
                 // The deferred expression's value is discarded; sema just
@@ -19516,6 +19642,110 @@ mod tests {
                  let v: View = View { p: raw };\n\
                  return 0;\n\
              }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // ---- v0.0.15: #[no_alloc] drop-glue — owned parameters + temporaries ----
+
+    #[test]
+    fn no_alloc_move_param_freeing_drop_e0901() {
+        // A `move` parameter is the callee's to tear down. A freeing `drop`
+        // therefore deallocates at scope exit — invisible in the body.
+        let codes = errors(
+            "extern fn free(p: *u8);\n\
+             struct Handle { opaque p: *u8 }\n\
+             impl Handle { fn drop(mut self) { unsafe { free(self.p); }; } }\n\
+             #[no_alloc] fn f(move h: Handle) -> i32 { return 0; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_bare_nonpcopy_param_carries_freeing_drop_e0901() {
+        // A bare `w: Wrap` non-Copy struct param is move-by-default (v0.0.10),
+        // so the callee drops it — and the auto-dropped `string` field frees.
+        let codes = errors(
+            "struct Wrap { name: string, tag: i32 }\n\
+             #[no_alloc] fn f(w: Wrap) -> i32 { return w.tag; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_borrow_param_drop_type_clean() {
+        // `borrow` is a shared by-value parameter: the caller keeps ownership,
+        // so there's no callee-side teardown to allocate.
+        assert_clean(
+            "struct Wrap { name: string, tag: i32 }\n\
+             #[no_alloc] fn f(borrow w: Wrap) -> i32 { return w.tag; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_mut_param_drop_type_clean() {
+        // `mut` is an exclusive borrow (pointer-passed): caller-owned, no
+        // callee drop.
+        assert_clean(
+            "struct Wrap { name: string, tag: i32 }\n\
+             #[no_alloc] fn f(mut w: Wrap) -> i32 { return w.tag; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_move_param_no_alloc_drop_clean() {
+        // A `move` param whose `drop` is itself `#[no_alloc]` is verified
+        // non-allocating, so running it at scope exit is allowed.
+        assert_clean(
+            "struct Tracker { opaque p: *u8 }\n\
+             impl Tracker { #[no_alloc] fn drop(mut self) { return; } }\n\
+             #[no_alloc] fn f(move t: Tracker) -> i32 { return 0; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn no_alloc_move_self_freeing_drop_e0901() {
+        // A `move self` receiver is consumed by the method, so codegen drops it
+        // at scope exit. A freeing `drop` deallocates there.
+        let codes = errors(
+            "extern fn free(p: *u8);\n\
+             struct Handle { opaque p: *u8 }\n\
+             impl Handle {\n\
+                 fn drop(mut self) { unsafe { free(self.p); }; }\n\
+                 #[no_alloc] fn consume(move self) -> i32 { return 0; }\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_discarded_drop_temporary_e0901() {
+        // A discarded struct-literal temporary carrying a freeing `drop` is torn
+        // down at statement end. The literal itself allocates nothing — the drop
+        // glue is the sole violation.
+        let codes = errors(
+            "extern fn free(p: *u8);\n\
+             struct Handle { opaque p: *u8 }\n\
+             impl Handle { fn drop(mut self) { unsafe { free(self.p); }; } }\n\
+             #[no_alloc] fn f(raw: *u8) -> i32 { Handle { p: raw }; return 0; }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn no_alloc_discarded_non_drop_temporary_clean() {
+        // A discarded temporary with no destructor has no teardown — allowed.
+        // (Exercises the `no_alloc_safe_drop` gate on the temporary arm.)
+        assert_clean(
+            "struct Pt { x: i32, y: i32 }\n\
+             #[no_alloc] fn f() -> i32 { Pt { x: 1, y: 2 }; return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
     }

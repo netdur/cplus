@@ -16628,6 +16628,106 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.15: retiring the if-result predictor. An `if`-expression whose arms
+/// are *method calls* returning a struct (`p.shift()` / `p.keep()`, lowered as
+/// `Call { callee: Field { .. } }`) in value position. The old
+/// `expr_value_ty_with_bindings` predictor only typed `Call` callees shaped as
+/// `Ident` or `Path`; a `Field` callee fell through to `None`, so `gen_if`
+/// allocated no result slot and the branch value was silently discarded —
+/// exactly the drift-prone gap the refactor closes. `gen_if` now sizes the
+/// slot from the `Ty` `gen_expr` actually returns, so any value-producing
+/// arm shape works without the predictor having to enumerate it.
+#[test]
+fn if_arm_method_call_struct_value_not_discarded() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ifmeth.cplus");
+    std::fs::write(
+        &src,
+        "\
+struct P { x: i32, y: i32 }
+
+impl P {
+    fn shift(self) -> P { return P { x: self.x +% 1, y: self.y +% 1 }; }
+    fn keep(self) -> P { return P { x: self.x, y: self.y }; }
+}
+
+fn choose(p: P, flag: bool) -> P {
+    let r: P = if flag { p.shift() } else { p.keep() };
+    return r;
+}
+
+fn main() -> i32 {
+    let base: P = P { x: 10, y: 20 };
+    let out: P = choose(base, true);
+    if out.x != 11 { return 1; }
+    if out.y != 21 { return 2; }
+    return 0;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("ifmeth");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for if-arm method-call reproducer");
+    let run = Command::new(&bin).status().expect("run ifmeth");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "if-arm method-call struct value was discarded; expected exit 0, got {:?}",
+        run.code()
+    );
+}
+
+/// v0.0.15: module-scope `#asm("...");` → LLVM `module asm "..."`. End-to-end:
+/// the directive must survive through codegen, assemble via the integrated
+/// assembler, link, and the program still run. A bare `.text` section switch is
+/// the most portable benign directive (valid on every target's assembler) and
+/// has no runtime effect, so `main` returning 0 proves the whole pipeline.
+#[test]
+fn module_asm_item_compiles_links_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("modasm.cplus");
+    std::fs::write(
+        &src,
+        "#asm(\".text\");\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+
+    // The emitted IR carries the module-level directive verbatim. (`--emit-ll`
+    // compiles the given FILE; `--emit-ir` is the frozen Phase-0 demo that
+    // ignores its input.)
+    let ir = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc --emit-ll");
+    assert!(ir.status.success(), "cpc --emit-ll failed: {:?}", ir);
+    let ir_text = String::from_utf8_lossy(&ir.stdout);
+    assert!(
+        ir_text.contains("module asm \".text\""),
+        "expected `module asm` directive in IR, got:\n{ir_text}"
+    );
+
+    // And it assembles, links, and runs.
+    let bin = dir.join("modasm");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for module-asm program");
+    let run = Command::new(&bin).status().expect("run modasm");
+    assert_eq!(run.code(), Some(0), "module-asm program exit code");
+}
+
 /// v0.0.14: container element drop — verify (by count, not just crash-free)
 /// that dropping a `Vec[T]` runs each element's `drop` exactly once via the
 /// `__cplus_drop_in_place::[T]` loop, including when the Vec is itself an
@@ -16749,6 +16849,172 @@ fn main() -> i32 {
     // Each scenario drops its payload exactly once: leak fixed (s_not_moved)
     // and no double-free on any move-out path. 4 total.
     assert_eq!(run.code(), Some(4), "expected 4 drops, got {:?}", run.code());
+}
+
+/// v0.0.15 double-free fix (vendor/json segfault): a heap-owning ENUM moved by
+/// bare-ident into a method-call argument (`elems.push(v)`, where `v` is a
+/// `match`-arm payload owning a nested `Vec`). Pre-fix, `effective_move` only
+/// covered `Ty::Struct` and the struct-method `MethodInfo` used the raw
+/// `move_` flag, so the enum was borrow-copied without `mark_moved`: the
+/// caller's scope-exit drop freed heap the callee had already stored into the
+/// vector — a use-after-free / double-free on the next read. An exact drop
+/// count catches the extra teardown (a buggy build double-runs the leaves'
+/// `drop` or crashes outright).
+#[test]
+fn enum_move_into_method_arg_no_double_free() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"df\"\n\n[[bin]]\nname = \"df\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    for name in &["vec", "iterator", "option"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         static mut DROPS: i32 = 0;\n\
+         static mut SUM: i32 = 0;\n\
+         struct Leaf { tag: i32 }\n\
+         impl Leaf { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
+         enum Parse { Ok(Node, i32), Fail(i32) }\n\
+         fn make_inner() -> Parse {\n\
+             let mut kids: vec::Vec[Node] = vec::new::[Node]();\n\
+             kids.push(Node::One(Leaf { tag: 1 }));\n\
+             kids.push(Node::One(Leaf { tag: 2 }));\n\
+             return Parse::Ok(Node::Many(kids), 0);\n\
+         }\n\
+         fn build() -> Node {\n\
+             let mut elems: vec::Vec[Node] = vec::new::[Node]();\n\
+             let r: Parse = make_inner();\n\
+             match r {\n\
+                 Parse::Ok(v, rp) => { let _p: i32 = rp; elems.push(v); }\n\
+                 Parse::Fail(rp) => { return Node::One(Leaf { tag: rp }); }\n\
+             }\n\
+             return Node::Many(elems);\n\
+         }\n\
+         fn count(borrow n: Node) -> i32 {\n\
+             return match n {\n\
+                 Node::One(l) => l.tag,\n\
+                 Node::Many(kids) => {\n\
+                     let mut total: i32 = 0;\n\
+                     let mut i: usize = 0 as usize;\n\
+                     while i < kids.len() { total = total +% count(kids.get(i)); i = i +% (1 as usize); }\n\
+                     total\n\
+                 }\n\
+             };\n\
+         }\n\
+         fn run_once() {\n\
+             let n: Node = build();\n\
+             unsafe { SUM = SUM +% count(n); }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let mut iter: i32 = 0;\n\
+             while iter < 8 { run_once(); iter = iter +% 1; }\n\
+             if unsafe { SUM } != 24 { return 100; }\n\
+             return unsafe { DROPS };\n\
+         }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc).current_dir(&dir).arg("build").status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for enum-move double-free test");
+    let run = Command::new(dir.join("target/debug/df")).status().expect("run df");
+    // 2 leaves per iter × 8 iters = 16 drops, each exactly once. A double-free
+    // (the bug) crashes or yields a different count.
+    assert_eq!(run.code(), Some(16), "expected 16 leaf drops (no double-free), got {:?}", run.code());
+}
+
+/// v0.0.15 double-free fix (companion): a heap-owning enum payload moved out of
+/// a `match` arm via an `if`/`else` branch *tail* (a bare `Ident`), the
+/// vendor/json `parse` shape `match r { Ok(v) => if c { … } else { v } }`.
+/// `gen_block_into_slot` (the if-branch lowering) did not disarm the bare-ident
+/// tail move the way `gen_block_expr` does, so the moved-out value was
+/// double-freed. The runtime drop-flag store lands inside the branch block, so
+/// the binding still drops correctly on the branch that doesn't move it.
+#[test]
+fn enum_conditional_branch_tail_move_no_double_free() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cb\"\n\n[[bin]]\nname = \"cb\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    for name in &["vec", "iterator", "option"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         static mut DROPS: i32 = 0;\n\
+         static mut SUM: i32 = 0;\n\
+         struct Leaf { tag: i32 }\n\
+         impl Leaf { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
+         enum Parse { Ok(Node), Fail }\n\
+         fn make() -> Parse {\n\
+             let mut kids: vec::Vec[Node] = vec::new::[Node]();\n\
+             kids.push(Node::One(Leaf { tag: 1 }));\n\
+             kids.push(Node::One(Leaf { tag: 2 }));\n\
+             return Parse::Ok(Node::Many(kids));\n\
+         }\n\
+         fn unwrap_or(flag: bool) -> Node {\n\
+             let r: Parse = make();\n\
+             return match r {\n\
+                 Parse::Ok(v) => { if flag { Node::One(Leaf { tag: 9 }) } else { v } }\n\
+                 Parse::Fail => Node::One(Leaf { tag: 0 }),\n\
+             };\n\
+         }\n\
+         fn count(borrow n: Node) -> i32 {\n\
+             return match n {\n\
+                 Node::One(l) => l.tag,\n\
+                 Node::Many(kids) => {\n\
+                     let mut total: i32 = 0;\n\
+                     let mut i: usize = 0 as usize;\n\
+                     while i < kids.len() { total = total +% count(kids.get(i)); i = i +% (1 as usize); }\n\
+                     total\n\
+                 }\n\
+             };\n\
+         }\n\
+         fn run_once() {\n\
+             let n: Node = unwrap_or(false);\n\
+             unsafe { SUM = SUM +% count(n); }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let mut iter: i32 = 0;\n\
+             while iter < 8 { run_once(); iter = iter +% 1; }\n\
+             if unsafe { SUM } != 24 { return 100; }\n\
+             return unsafe { DROPS };\n\
+         }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc).current_dir(&dir).arg("build").status().expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for conditional-branch-tail move test");
+    let run = Command::new(dir.join("target/debug/cb")).status().expect("run cb");
+    assert_eq!(run.code(), Some(16), "expected 16 leaf drops (no double-free), got {:?}", run.code());
 }
 
 // ---- v0.0.14: broad raw-ptr !Send rule + `unsafe impl Send/Sync` ----

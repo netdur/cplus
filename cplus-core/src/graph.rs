@@ -22,7 +22,7 @@
 
 use crate::ast::{
     Block, Expr, ExprKind, ForLoop, Function, ImplBlock, InterpStrPart, ItemKind, Method, Param,
-    Receiver, Stmt, StmtKind, Type, TypeKind,
+    Pattern, PatternKind, Receiver, Stmt, StmtKind, Type, TypeKind,
 };
 use crate::diagnostics::LineMap;
 use crate::lexer::Span;
@@ -211,6 +211,24 @@ pub struct ValueFlow {
     #[serde(skip)]
     pub def_span: Span,
     pub uses: Vec<ValueUse>,
+    /// v0.0.15 inter-procedural flow: if this binding's value escapes via the
+    /// enclosing free function's `return`, the call-site destinations the
+    /// returned value lands in (`let y = f(...)` in a caller → `y`). Best-effort
+    /// and name-matched: free-function calls whose result is bound by a `let`.
+    /// Empty for bindings that don't escape or whose callers can't be resolved.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub returns_into: Vec<ReturnDest>,
+}
+
+/// v0.0.15 inter-procedural flow: one downstream destination a returned value
+/// reaches in a caller — the binding it is `let`-bound to at the call site.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ReturnDest {
+    /// The caller-side binding that receives the call result.
+    pub binding: String,
+    pub location: Location,
+    #[serde(skip)]
+    pub span: Span,
 }
 
 impl CodeGraph {
@@ -475,6 +493,9 @@ impl CodeGraph {
                         kind: EdgeKind::Defines,
                     });
                 }
+                // v0.0.15: module-scope `#asm("...")` defines no named symbol
+                // the graph can reference (raw assembly text) — no node, no edge.
+                ItemKind::ModuleAsm(_) => {}
             }
         }
 
@@ -512,22 +533,105 @@ impl CodeGraph {
         proj: &LoadedProject,
         linemaps: &BTreeMap<String, LineMap>,
     ) {
+        // v0.0.15 inter-procedural flow: free-function name -> indices into
+        // `value_flows` of the bindings that escape via that function's
+        // `return`. Filled as each free function's flows are built, then
+        // consumed by `link_return_flows` to connect callers.
+        let mut returning_fns: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for item in &program.items {
             let fid = item
                 .origin_file
                 .clone()
                 .unwrap_or_else(|| proj.entry_file_id.clone());
-            let bodies: Vec<(&[Param], &Block)> = match &item.kind {
-                ItemKind::Function(f) if !f.is_extern => vec![(f.params.as_slice(), &f.body)],
-                ItemKind::Impl(b) => b
-                    .methods
-                    .iter()
-                    .map(|m| (m.params.as_slice(), &m.body))
-                    .collect(),
+            match &item.kind {
+                ItemKind::Function(f) if !f.is_extern => {
+                    let start = self.value_flows.len();
+                    self.flows_for_body(&f.params, &f.body, &fid, proj, linemaps);
+                    // A binding escapes this function if it flows to a `return`.
+                    let returned: Vec<usize> = (start..self.value_flows.len())
+                        .filter(|&i| {
+                            self.value_flows[i]
+                                .uses
+                                .iter()
+                                .any(|u| u.flow == FlowKind::Return)
+                        })
+                        .collect();
+                    if !returned.is_empty() {
+                        returning_fns
+                            .entry(f.name.name.clone())
+                            .or_default()
+                            .extend(returned);
+                    }
+                }
+                ItemKind::Impl(b) => {
+                    for m in &b.methods {
+                        self.flows_for_body(&m.params, &m.body, &fid, proj, linemaps);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.link_return_flows(program, proj, linemaps, &returning_fns);
+    }
+
+    /// v0.0.15 inter-procedural flow: for every `let y = f(...)` whose callee
+    /// `f` is a free function some of whose bindings escape via `return`, record
+    /// the caller-side destination `y` on each of those returned bindings'
+    /// flows. Best-effort and name-matched (exact resolved-name match on a
+    /// free-function `Ident` callee); methods and indirectly-bound results are
+    /// out of scope. This answers "where does the returned value go" one hop
+    /// into the caller.
+    fn link_return_flows(
+        &mut self,
+        program: &crate::ast::Program,
+        proj: &LoadedProject,
+        linemaps: &BTreeMap<String, LineMap>,
+        returning_fns: &BTreeMap<String, Vec<usize>>,
+    ) {
+        if returning_fns.is_empty() {
+            return;
+        }
+        for item in &program.items {
+            let fid = item
+                .origin_file
+                .clone()
+                .unwrap_or_else(|| proj.entry_file_id.clone());
+            let bodies: Vec<&Block> = match &item.kind {
+                ItemKind::Function(f) if !f.is_extern => vec![&f.body],
+                ItemKind::Impl(b) => b.methods.iter().map(|m| &m.body).collect(),
                 _ => Vec::new(),
             };
-            for (params, body) in bodies {
-                self.flows_for_body(params, body, &fid, proj, linemaps);
+            if bodies.is_empty() {
+                continue;
+            }
+            let resolve = |span: Span| -> Option<Location> {
+                let (path, src) = proj.files.get(&fid)?;
+                let lm = linemaps.get(&fid)?;
+                let pos = lm.position(span.start, src);
+                Some(Location {
+                    file: path.display().to_string(),
+                    line: pos.line,
+                    col: pos.col,
+                })
+            };
+            for body in bodies {
+                let mut dests: Vec<(String, String, Span)> = Vec::new();
+                collect_let_call_dests(body, &mut dests);
+                for (callee, binding, span) in dests {
+                    let Some(indices) = returning_fns.get(&callee) else {
+                        continue;
+                    };
+                    let Some(location) = resolve(span) else {
+                        continue;
+                    };
+                    for &idx in indices {
+                        self.value_flows[idx].returns_into.push(ReturnDest {
+                            binding: binding.clone(),
+                            location: location.clone(),
+                            span,
+                        });
+                    }
+                }
             }
         }
     }
@@ -551,26 +655,24 @@ impl CodeGraph {
             })
         };
 
-        // Binding definitions: parameters + every `let` in the body.
-        let mut defs: Vec<(String, Span, &'static str)> = Vec::new();
+        // v0.0.15 precise scoping: a single scope-tracking walk resolves every
+        // use to the innermost in-scope definition, so shadowed names and
+        // match-arm bindings attribute correctly (replacing the old
+        // collect-defs + flat-uses + match-by-name approach).
+        let mut sf = ScopedFlows::new();
+        sf.push_scope(); // parameter scope
         for p in params {
-            defs.push((p.name.name.clone(), p.name.span, "parameter"));
+            sf.define(&p.name.name, p.name.span, "parameter");
         }
-        collect_let_defs(body, &mut defs);
+        sf.walk_block(body, FlowKind::Read);
+        sf.pop_scope();
 
-        // Classified Ident uses across the whole body.
-        let mut uses: Vec<(String, Span, FlowKind)> = Vec::new();
-        flow_idents_in_block(body, FlowKind::Read, &mut uses);
-
-        for (binding, def_span, def_kind) in defs {
-            let Some(def_location) = resolve(def_span) else {
+        for def in sf.defs {
+            let Some(def_location) = resolve(def.span) else {
                 continue;
             };
             let mut flow_uses: Vec<ValueUse> = Vec::new();
-            for (n, span, flow) in &uses {
-                if *n != binding || *span == def_span {
-                    continue;
-                }
+            for (span, flow) in &def.uses {
                 if let Some(location) = resolve(*span) {
                     flow_uses.push(ValueUse {
                         location,
@@ -581,11 +683,12 @@ impl CodeGraph {
             }
             self.value_flows.push(ValueFlow {
                 fid: fid.to_string(),
-                binding,
-                def_kind: def_kind.to_string(),
+                binding: def.name,
+                def_kind: def.kind.to_string(),
                 def_location,
-                def_span,
+                def_span: def.span,
                 uses: flow_uses,
+                returns_into: Vec::new(),
             });
         }
     }
@@ -1676,205 +1779,328 @@ fn short_name(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
 
-// ---- v0.0.14 graph value-depth: value-flow walks ----
+// ---- v0.0.15 graph value-depth: scope-aware value-flow walk ----
 
-/// Collect every `let` binding (name + name-span) reachable in `b`, including
-/// those nested inside blocks / `if` / `match` arms. `def_kind` is always
-/// `"local"` here; parameters are added by the caller.
-fn collect_let_defs(b: &Block, out: &mut Vec<(String, Span, &'static str)>) {
-    for s in &b.stmts {
-        collect_let_defs_stmt(s, out);
+/// One accumulating binding definition: its name, definition span, kind
+/// (`parameter` / `local` / `match binding` / `loop variable`), and the
+/// classified uses resolved to it.
+struct DefAccum {
+    name: String,
+    span: Span,
+    kind: &'static str,
+    uses: Vec<(Span, FlowKind)>,
+}
+
+/// v0.0.15 precise scoping: a single scope-tracking walk over a function body.
+/// Every binding use resolves to the *innermost* in-scope definition, so a
+/// shadowed name (`let x = a; { let x = b; use(x) }`) attributes each use to the
+/// right definition, and `match`-arm bindings / `for`-range loop variables are
+/// first-class definitions. Replaces the previous order-blind, name-grouped
+/// matching that conflated all same-named bindings in a function.
+struct ScopedFlows {
+    /// Every definition seen, in source order. Records are never removed —
+    /// popping a scope ends a name's *visibility*, not its accumulated flow.
+    defs: Vec<DefAccum>,
+    /// Visibility stack: name -> index into `defs`. Inner scopes shadow outer.
+    scopes: Vec<BTreeMap<String, usize>>,
+}
+
+impl ScopedFlows {
+    fn new() -> Self {
+        ScopedFlows {
+            defs: Vec::new(),
+            scopes: Vec::new(),
+        }
     }
-    if let Some(t) = &b.tail {
-        collect_let_defs_expr(t, out);
+
+    fn push_scope(&mut self) {
+        self.scopes.push(BTreeMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn define(&mut self, name: &str, span: Span, kind: &'static str) {
+        let idx = self.defs.len();
+        self.defs.push(DefAccum {
+            name: name.to_string(),
+            span,
+            kind,
+            uses: Vec::new(),
+        });
+        if let Some(top) = self.scopes.last_mut() {
+            top.insert(name.to_string(), idx);
+        }
+    }
+
+    fn resolve(&self, name: &str) -> Option<usize> {
+        self.scopes.iter().rev().find_map(|s| s.get(name).copied())
+    }
+
+    fn record_use(&mut self, name: &str, span: Span, flow: FlowKind) {
+        if let Some(idx) = self.resolve(name) {
+            self.defs[idx].uses.push((span, flow));
+        }
+    }
+
+    fn walk_block(&mut self, b: &Block, tail_ctx: FlowKind) {
+        self.push_scope();
+        for s in &b.stmts {
+            self.walk_stmt(s);
+        }
+        if let Some(t) = &b.tail {
+            self.walk_expr(t, tail_ctx);
+        }
+        self.pop_scope();
+    }
+
+    fn walk_stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            // The initializer is evaluated *before* the new binding enters
+            // scope, so walk it first (this is what makes `let x = x;` resolve
+            // the RHS to the outer `x`), then define the name.
+            StmtKind::Let { name, init, .. } => {
+                if let Some(e) = init {
+                    self.walk_expr(e, FlowKind::Assign);
+                }
+                self.define(&name.name, name.span, "local");
+            }
+            StmtKind::Return(Some(e)) => self.walk_expr(e, FlowKind::Return),
+            StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+                self.walk_expr(e, FlowKind::Read)
+            }
+            StmtKind::While { cond, body, .. } => {
+                self.walk_expr(cond, FlowKind::Read);
+                self.walk_block(body, FlowKind::Read);
+            }
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    // The C-style header binding (`for (let i = 0; ...)`) is
+                    // visible to cond/update/body but not after the loop, so it
+                    // lives in its own scope.
+                    self.push_scope();
+                    if let Some(init_stmt) = init {
+                        self.walk_stmt(init_stmt);
+                    }
+                    if let Some(c) = cond {
+                        self.walk_expr(c, FlowKind::Read);
+                    }
+                    for u in update {
+                        self.walk_expr(u, FlowKind::Read);
+                    }
+                    self.walk_block(body, FlowKind::Read);
+                    self.pop_scope();
+                }
+                ForLoop::Range { var, iter, body } => {
+                    self.walk_expr(iter, FlowKind::Read);
+                    self.push_scope();
+                    self.define(&var.name, var.span, "loop variable");
+                    self.walk_block(body, FlowKind::Read);
+                    self.pop_scope();
+                }
+            },
+            StmtKind::Loop(b, _) => self.walk_block(b, FlowKind::Read),
+            _ => {}
+        }
+    }
+
+    fn walk_expr(&mut self, e: &Expr, ctx: FlowKind) {
+        match &e.kind {
+            ExprKind::Ident(n) => self.record_use(n, e.span, ctx),
+            ExprKind::Call { callee, args, .. } => {
+                // Enum/assoc constructor (`E::V(x)`) vs a real call: a Path
+                // callee is a constructor, so its args are a "re-wrap"; an
+                // Ident/Field callee is a function/method call.
+                let arg_ctx = if matches!(callee.kind, ExprKind::Path { .. }) {
+                    FlowKind::Construct
+                } else {
+                    FlowKind::Call
+                };
+                // A method receiver (`x.m(...)`) reads x; a bare fn name is not
+                // a local value, so don't descend into an Ident/Path callee.
+                if let ExprKind::Field { receiver, .. } = &callee.kind {
+                    self.walk_expr(receiver, FlowKind::Read);
+                }
+                for a in args {
+                    self.walk_expr(a, arg_ctx);
+                }
+            }
+            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    self.walk_expr(&f.value, FlowKind::Construct);
+                }
+            }
+            ExprKind::GenericEnumCall { args, .. } => {
+                for a in args {
+                    self.walk_expr(a, FlowKind::Construct);
+                }
+            }
+            ExprKind::ArrayLit { elements } => {
+                for el in elements {
+                    self.walk_expr(el, FlowKind::Construct);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, FlowKind::Match);
+                for a in arms {
+                    // Each arm is its own scope: the pattern's bindings (whole-
+                    // scrutinee `Binding` and one-level `Variant` payloads) are
+                    // definitions visible only inside that arm's body.
+                    self.push_scope();
+                    self.define_pattern(&a.pattern);
+                    self.walk_expr(&a.body, FlowKind::Read);
+                    self.pop_scope();
+                }
+            }
+            ExprKind::Field { receiver, .. } => self.walk_expr(receiver, FlowKind::Read),
+            ExprKind::Index { receiver, index } => {
+                self.walk_expr(receiver, FlowKind::Read);
+                self.walk_expr(index, FlowKind::Read);
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.walk_expr(lhs, FlowKind::Read);
+                self.walk_expr(rhs, FlowKind::Read);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, FlowKind::Read),
+            ExprKind::Cast { expr, .. } => self.walk_expr(expr, ctx),
+            ExprKind::Assign { target, value, .. } => {
+                // The assignee place (target) is a write, not a value read of
+                // the binding; record only the RHS value flow.
+                let _ = target;
+                self.walk_expr(value, FlowKind::Assign);
+            }
+            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.walk_block(b, ctx),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                self.walk_expr(cond, FlowKind::Read);
+                self.walk_block(then, ctx);
+                if let Some(eb) = else_branch {
+                    self.walk_expr(eb, ctx);
+                }
+            }
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => {
+                self.walk_expr(inner, FlowKind::Read)
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    self.walk_expr(s, FlowKind::Read);
+                }
+                if let Some(en) = end {
+                    self.walk_expr(en, FlowKind::Read);
+                }
+            }
+            ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    self.walk_expr(a, FlowKind::Call);
+                }
+            }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    self.walk_expr(&op.value, FlowKind::Call);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Define every binding a `match` arm pattern introduces. Phase-3I patterns
+    /// are one nesting level, so payloads are `Wildcard` or `Binding`.
+    fn define_pattern(&mut self, p: &Pattern) {
+        match &p.kind {
+            PatternKind::Binding(name) => self.define(&name.name, name.span, "match binding"),
+            PatternKind::Variant { payload, .. } => {
+                for pp in payload {
+                    if let PatternKind::Binding(name) = &pp.kind {
+                        self.define(&name.name, name.span, "match binding");
+                    }
+                }
+            }
+            PatternKind::Wildcard => {}
+        }
     }
 }
 
-fn collect_let_defs_stmt(s: &Stmt, out: &mut Vec<(String, Span, &'static str)>) {
+/// v0.0.15 inter-procedural flow: collect every `let BINDING = f(...)` in `b`
+/// (including nested blocks / `if` / `match` arms / loops), as
+/// `(callee_fn_name, binding_name, binding_name_span)`. Only direct
+/// free-function `Ident` callees are reported (optionally through a trailing
+/// `as` cast); method calls and block-wrapped results are skipped.
+fn collect_let_call_dests(b: &Block, out: &mut Vec<(String, String, Span)>) {
+    for s in &b.stmts {
+        collect_let_call_dests_stmt(s, out);
+    }
+    if let Some(t) = &b.tail {
+        collect_let_call_dests_expr(t, out);
+    }
+}
+
+fn collect_let_call_dests_stmt(s: &Stmt, out: &mut Vec<(String, String, Span)>) {
     match &s.kind {
-        StmtKind::Let { name, init, .. } => {
-            out.push((name.name.clone(), name.span, "local"));
-            if let Some(e) = init {
-                collect_let_defs_expr(e, out);
+        StmtKind::Let {
+            name,
+            init: Some(e),
+            ..
+        } => {
+            if let Some(callee) = callee_fn_name(e) {
+                out.push((callee, name.name.clone(), name.span));
             }
+            collect_let_call_dests_expr(e, out);
         }
         StmtKind::Return(Some(e))
         | StmtKind::Expr(e)
         | StmtKind::Defer(e)
-        | StmtKind::Assert(e) => collect_let_defs_expr(e, out),
-        StmtKind::While { cond, body, .. } => {
-            collect_let_defs_expr(cond, out);
-            collect_let_defs(body, out);
-        }
+        | StmtKind::Assert(e) => collect_let_call_dests_expr(e, out),
+        StmtKind::While { body, .. } => collect_let_call_dests(body, out),
         StmtKind::For(fl, _) => match fl {
             ForLoop::CStyle { body, .. } | ForLoop::Range { body, .. } => {
-                collect_let_defs(body, out)
+                collect_let_call_dests(body, out)
             }
         },
-        StmtKind::Loop(b, _) => collect_let_defs(b, out),
+        StmtKind::Loop(b, _) => collect_let_call_dests(b, out),
         _ => {}
     }
 }
 
-fn collect_let_defs_expr(e: &Expr, out: &mut Vec<(String, Span, &'static str)>) {
+fn collect_let_call_dests_expr(e: &Expr, out: &mut Vec<(String, String, Span)>) {
     match &e.kind {
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_let_defs(b, out),
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_let_call_dests(b, out),
         ExprKind::If {
             then, else_branch, ..
         } => {
-            collect_let_defs(then, out);
+            collect_let_call_dests(then, out);
             if let Some(eb) = else_branch {
-                collect_let_defs_expr(eb, out);
+                collect_let_call_dests_expr(eb, out);
             }
         }
         ExprKind::Match { arms, .. } => {
             for a in arms {
-                collect_let_defs_expr(&a.body, out);
+                collect_let_call_dests_expr(&a.body, out);
             }
         }
         _ => {}
     }
 }
 
-/// Walk `b`, recording each bare-`Ident` use with how its value flows there.
-/// `ctx` is the flow class implied by the position the block sits in.
-fn flow_idents_in_block(b: &Block, ctx: FlowKind, out: &mut Vec<(String, Span, FlowKind)>) {
-    for s in &b.stmts {
-        flow_idents_in_stmt(s, out);
-    }
-    if let Some(t) = &b.tail {
-        flow_idents_in_expr(t, ctx, out);
-    }
-}
-
-fn flow_idents_in_stmt(s: &Stmt, out: &mut Vec<(String, Span, FlowKind)>) {
-    match &s.kind {
-        // `let y = x;` moves/copies x into y.
-        StmtKind::Let { init: Some(e), .. } => flow_idents_in_expr(e, FlowKind::Assign, out),
-        StmtKind::Let { init: None, .. } => {}
-        StmtKind::Return(Some(e)) => flow_idents_in_expr(e, FlowKind::Return, out),
-        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
-            flow_idents_in_expr(e, FlowKind::Read, out)
-        }
-        StmtKind::While { cond, body, .. } => {
-            flow_idents_in_expr(cond, FlowKind::Read, out);
-            flow_idents_in_block(body, FlowKind::Read, out);
-        }
-        StmtKind::For(fl, _) => match fl {
-            ForLoop::CStyle {
-                cond, update, body, ..
-            } => {
-                if let Some(c) = cond {
-                    flow_idents_in_expr(c, FlowKind::Read, out);
-                }
-                for u in update {
-                    flow_idents_in_expr(u, FlowKind::Read, out);
-                }
-                flow_idents_in_block(body, FlowKind::Read, out);
-            }
-            ForLoop::Range { iter, body, .. } => {
-                flow_idents_in_expr(iter, FlowKind::Read, out);
-                flow_idents_in_block(body, FlowKind::Read, out);
-            }
-        },
-        StmtKind::Loop(b, _) => flow_idents_in_block(b, FlowKind::Read, out),
-        _ => {}
-    }
-}
-
-fn flow_idents_in_expr(e: &Expr, ctx: FlowKind, out: &mut Vec<(String, Span, FlowKind)>) {
+/// The called free-function name if `e` is a direct `f(...)` call (an `Ident`
+/// callee), seen through a trailing `as` cast. `None` for method calls,
+/// constructors (`Path` callees), and non-call expressions.
+fn callee_fn_name(e: &Expr) -> Option<String> {
     match &e.kind {
-        ExprKind::Ident(n) => out.push((n.clone(), e.span, ctx)),
-        ExprKind::Call { callee, args, .. } => {
-            // Enum/assoc constructor (`E::V(x)`) vs a real call: a Path callee
-            // is a constructor, so its args are a "re-wrap"; an Ident/Field
-            // callee is a function/method call.
-            let arg_ctx = if matches!(callee.kind, ExprKind::Path { .. }) {
-                FlowKind::Construct
-            } else {
-                FlowKind::Call
-            };
-            // A method receiver (`x.m(...)`) reads x; a bare fn name is not a
-            // local value, so don't descend into an Ident/Path callee.
-            if let ExprKind::Field { receiver, .. } = &callee.kind {
-                flow_idents_in_expr(receiver, FlowKind::Read, out);
-            }
-            for a in args {
-                flow_idents_in_expr(a, arg_ctx, out);
-            }
-        }
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
-            for f in fields {
-                flow_idents_in_expr(&f.value, FlowKind::Construct, out);
-            }
-        }
-        ExprKind::GenericEnumCall { args, .. } => {
-            for a in args {
-                flow_idents_in_expr(a, FlowKind::Construct, out);
-            }
-        }
-        ExprKind::ArrayLit { elements } => {
-            for el in elements {
-                flow_idents_in_expr(el, FlowKind::Construct, out);
-            }
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            flow_idents_in_expr(scrutinee, FlowKind::Match, out);
-            for a in arms {
-                flow_idents_in_expr(&a.body, FlowKind::Read, out);
-            }
-        }
-        ExprKind::Field { receiver, .. } => flow_idents_in_expr(receiver, FlowKind::Read, out),
-        ExprKind::Index { receiver, index } => {
-            flow_idents_in_expr(receiver, FlowKind::Read, out);
-            flow_idents_in_expr(index, FlowKind::Read, out);
-        }
-        ExprKind::Binary { lhs, rhs, .. } => {
-            flow_idents_in_expr(lhs, FlowKind::Read, out);
-            flow_idents_in_expr(rhs, FlowKind::Read, out);
-        }
-        ExprKind::Unary { operand, .. } => flow_idents_in_expr(operand, FlowKind::Read, out),
-        ExprKind::Cast { expr, .. } => flow_idents_in_expr(expr, ctx, out),
-        ExprKind::Assign { target, value, .. } => {
-            // The assignee place (target) is a write, not a value read of the
-            // binding; record only the RHS value flow.
-            let _ = target;
-            flow_idents_in_expr(value, FlowKind::Assign, out);
-        }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => flow_idents_in_block(b, ctx, out),
-        ExprKind::If {
-            cond,
-            then,
-            else_branch,
-        } => {
-            flow_idents_in_expr(cond, FlowKind::Read, out);
-            flow_idents_in_block(then, ctx, out);
-            if let Some(eb) = else_branch {
-                flow_idents_in_expr(eb, ctx, out);
-            }
-        }
-        ExprKind::Await(inner) | ExprKind::Yield(inner) => {
-            flow_idents_in_expr(inner, FlowKind::Read, out)
-        }
-        ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start {
-                flow_idents_in_expr(s, FlowKind::Read, out);
-            }
-            if let Some(en) = end {
-                flow_idents_in_expr(en, FlowKind::Read, out);
-            }
-        }
-        ExprKind::Intrinsic { args, .. } => {
-            for a in args {
-                flow_idents_in_expr(a, FlowKind::Call, out);
-            }
-        }
-        ExprKind::Asm { operands, .. } => {
-            for op in operands {
-                flow_idents_in_expr(&op.value, FlowKind::Call, out);
-            }
-        }
-        _ => {}
+        ExprKind::Call { callee, .. } => match &callee.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            _ => None,
+        },
+        ExprKind::Cast { expr, .. } => callee_fn_name(expr),
+        _ => None,
     }
 }
 
@@ -2389,8 +2615,7 @@ mod tests {
             o.uses
         );
 
-        // `b` (match-arm payload) flows into `consume(b)` → Call. (Payload
-        // bindings aren't collected as defs yet, but `consume`'s `b` param is.)
+        // `consume`'s parameter `b` is read (`b.v`).
         let b = g
             .value_flows
             .iter()
@@ -2402,8 +2627,158 @@ mod tests {
             b.uses
         );
 
+        // v0.0.15: the match-arm payload binding `b` in `run` is now its own
+        // definition, flowing into `consume(b)` → Call.
+        let arm_b = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "b" && vf.def_kind == "match binding")
+            .expect("b match binding");
+        assert!(
+            arm_b.uses.iter().any(|u| u.flow == FlowKind::Call),
+            "match-arm b should flow as Call into consume(b), got {:?}",
+            arm_b.uses
+        );
+
         // value_refs at p's definition returns p's flow.
         let vf = g.value_refs(&p.fid, p.def_span.start).expect("value-refs at p");
         assert_eq!(vf.binding, "p");
+    }
+
+    // ---- v0.0.15: value-refs precise scoping ----
+
+    #[test]
+    fn value_refs_shadowed_name_resolves_to_innermost_def() {
+        // Two `let x` bindings shadow each other; each use must attribute to the
+        // right definition, not all `x` defs (the old shadow-naive behavior).
+        let src = "fn f(p: i32) -> i32 {\n\
+                       let x: i32 = p;\n\
+                       let outer: i32 = x;\n\
+                       let x: i32 = outer;\n\
+                       let inner: i32 = x;\n\
+                       return inner;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let xs: Vec<&ValueFlow> = g
+            .value_flows
+            .iter()
+            .filter(|vf| vf.binding == "x")
+            .collect();
+        assert_eq!(xs.len(), 2, "expected two distinct `x` definitions");
+        // Each `x` definition has exactly one use (the `let` that reads it),
+        // never both — proof the uses aren't conflated across shadows.
+        for x in &xs {
+            assert_eq!(
+                x.uses.len(),
+                1,
+                "each shadowed `x` should own exactly its in-scope use, got {:?}",
+                x.uses
+            );
+        }
+        // The first `x` is read by `let outer = x`; resolving value-refs at the
+        // `outer` initializer's `x` use lands on the first `x`, not the second.
+        let first_x = xs.iter().min_by_key(|vf| vf.def_span.start).unwrap();
+        let use_span = first_x.uses[0].span;
+        let vf = g.value_refs(&first_x.fid, use_span.start).expect("value-refs");
+        assert_eq!(vf.def_span, first_x.def_span, "use resolved to wrong def");
+    }
+
+    #[test]
+    fn value_refs_match_binding_is_a_definition() {
+        // A match-arm payload binding is a first-class definition with its own
+        // classified uses.
+        let src = "struct Box { v: i32 }\n\
+                   enum Opt { Some(Box), None }\n\
+                   fn use_it(b: Box) -> i32 { return b.v; }\n\
+                   fn run(o: Opt) -> i32 {\n\
+                       let code: i32 = match o { Opt::Some(inner) => use_it(inner), Opt::None => 0 };\n\
+                       return code;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let inner = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "inner" && vf.def_kind == "match binding")
+            .expect("inner match binding");
+        assert!(
+            inner.uses.iter().any(|u| u.flow == FlowKind::Call),
+            "match binding `inner` should flow as Call, got {:?}",
+            inner.uses
+        );
+    }
+
+    #[test]
+    fn value_refs_for_range_loop_var_is_a_definition() {
+        // A `for x in ...` loop variable is a definition scoped to the loop.
+        let src = "fn sum(n: i32) -> i32 {\n\
+                       let mut total: i32 = 0;\n\
+                       for v in 0..n {\n\
+                           total = total +% v;\n\
+                       }\n\
+                       return total;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let v = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "v" && vf.def_kind == "loop variable")
+            .expect("loop variable v");
+        // `v` is read as an operand of `total +% v`.
+        assert!(
+            v.uses.iter().any(|u| u.flow == FlowKind::Read),
+            "loop var v should be read in `total +% v`, got {:?}",
+            v.uses
+        );
+    }
+
+    #[test]
+    fn value_refs_interprocedural_return_dest() {
+        // A binding returned from `make` flows, in the caller, into the `let`
+        // that captures `make(...)`'s result.
+        let src = "fn make(seed: i32) -> i32 {\n\
+                       let r: i32 = seed;\n\
+                       return r;\n\
+                   }\n\
+                   fn caller() -> i32 {\n\
+                       let got: i32 = make(7);\n\
+                       return got;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        // `r` in `make` escapes via return; its value lands in `got` in caller.
+        let r = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "r")
+            .expect("r binding");
+        assert!(
+            r.returns_into.iter().any(|d| d.binding == "got"),
+            "r should return into caller binding `got`, got {:?}",
+            r.returns_into
+        );
+    }
+
+    #[test]
+    fn value_refs_no_return_dest_when_result_discarded() {
+        // No `let` captures the call result, so there is no inter-procedural
+        // destination to record.
+        let src = "fn make(seed: i32) -> i32 {\n\
+                       let r: i32 = seed;\n\
+                       return r;\n\
+                   }\n\
+                   fn caller() -> i32 {\n\
+                       make(7);\n\
+                       return 0;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let r = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "r")
+            .expect("r binding");
+        assert!(
+            r.returns_into.is_empty(),
+            "discarded result should record no destination, got {:?}",
+            r.returns_into
+        );
     }
 }

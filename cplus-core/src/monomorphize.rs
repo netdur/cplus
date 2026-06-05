@@ -2588,6 +2588,9 @@ fn rewrite_aliases_in_program(
             ItemKind::Static(s) => {
                 rewrite_alias_type(&mut s.ty, aliases);
             }
+            // v0.0.15: module-scope `#asm("...")` carries no types — no alias
+            // rewriting needed; the item passes through monomorphization inert.
+            ItemKind::ModuleAsm(_) => {}
         }
     }
     program

@@ -718,6 +718,8 @@ fn item_name_and_span(item: &cplus_core::ast::Item) -> Option<(&str, cplus_core:
         // goto-definition jumps to the declaration.
         ItemKind::Const(c) => Some((c.name.name.as_str(), c.name.span)),
         ItemKind::Static(s) => Some((s.name.name.as_str(), s.name.span)),
+        // v0.0.15: module-scope `#asm("...")` declares no symbol name.
+        ItemKind::ModuleAsm(_) => None,
     }
 }
 
