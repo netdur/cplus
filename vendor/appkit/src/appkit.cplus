@@ -12,6 +12,7 @@ import "./dialogs" as dialogs;
 import "./panels" as panels;
 import "./toolbar" as toolbar;
 import "./controllers" as controllers;
+import "./pasteboard" as pasteboard;
 
 pub type Point = runtime::Point;
 pub type Size = runtime::Size;
@@ -83,6 +84,8 @@ pub type Menu = menu::Menu;
 pub type MenuItem = menu::MenuItem;
 
 pub type Alert = dialogs::Alert;
+
+pub type Pasteboard = pasteboard::Pasteboard;
 
 pub type Panel = panels::Panel;
 pub type SavePanel = panels::SavePanel;

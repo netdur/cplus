@@ -34,11 +34,14 @@ import "appkit/dialogs" as dialogs;
 import "appkit/panels" as panels;
 import "appkit/toolbar" as toolbar;
 import "appkit/controllers" as controllers;
+import "appkit/pasteboard" as pasteboard;
+import "appkit/layout" as layout;
+import "appkit/events" as events;
 ```
 
 ## Modules
 
-- `runtime`: geometry types, NSString helper, and ObjC runtime/message helpers
+- `runtime`: geometry types, NSString helper, ObjC runtime/message helpers, and the ownership primitives (`retain`/`release`/`autorelease`/`retain_count`)
 - `application`: `AutoreleasePool`, `Application`, app delegate helper
 - `window`: `Window`
 - `view`: `View`, `StackView`, `ScrollView`, `Box`, `Scroller`, `BackgroundExtensionView`
@@ -52,7 +55,28 @@ import "appkit/controllers" as controllers;
 - `panels`: `Panel`, `SavePanel`, `OpenPanel`, `PageLayout`, `PrintPanel`
 - `toolbar`: `Toolbar`, `ToolbarItem`, `ToolbarItemGroup`, `StatusBar`, `StatusItem`, `StatusBarButton`, `TouchBar`, `TouchBarItem`
 - `controllers`: `ViewController`, `WindowController`, `TabViewController`, `SplitViewController`, `ArrayController`, `ObjectController`
+- `pasteboard`: `Pasteboard` — the system clipboard (general pasteboard string read/write). Re-exported from the facade.
+- `layout`: Auto Layout. Anchor getters (`leading`/`trailing`/`top`/`bottom`/`width`/`height`/`center_x`/`center_y`/…), constraint builders (`equal`/`equal_offset`/`ge`/`le`, `equal_const`/`ge_const`/`le_const`), and `activate`/`deactivate`/`is_active`. Operates on raw view/anchor/constraint handles; import directly.
+- `events`: `NSEvent` introspection. `NSEventType` and `NSEventModifierFlags` constants, `has_modifier`, and accessors (`event_type`, `modifier_flags`, `key_code`, `location_in_window`, `characters_ns`, …). Import directly.
 - `convert`: C+ ↔ Cocoa data bridges. `cplus_{str,string}_to_nsstring` / `nsstring_to_cplus_{string,str_unsafe}`; `nsarray_count` / `nsarray_obj_at` / `nsarray_to_vec_{i32,i64,f32,f64}`; `nsdata_to_vec_u8` / `vec_u8_to_nsdata` / `vec_u8_to_nsdata_view`. Import directly via `import "appkit/convert" as bridge;` — there is no facade re-export.
+
+## Ownership
+
+ObjC objects are reference-counted. A wrapper that **owns** its object holds one
+strong reference and releases it once in `fn drop` ("+1 normal form"):
+
+- `alloc`/`init`, `new`, `copy` already return +1 — hold it, release in `drop`.
+- convenience constructors return an autoreleased +0 object — `rt::retain` it on
+  capture to reach +1, then release in `drop`.
+- a handle the wrapper does **not** own (a shared singleton like the general
+  `Pasteboard`, or a child view its parent retains) stays `opaque` and has no
+  `drop` — releasing it would over-release.
+
+`self`/`mut self` method receivers are borrows (they do not consume), so builder
+chaining works on owned wrappers. Keep an owned wrapper alive as long as the UI
+needs its object; do not drop a top-level object that nothing else retains while
+it is still on screen. `Alert` is the worked example (a transient that releases
+in `drop`); the per-wrapper audit across the rest of the bindings is in progress.
 
 ## Example
 

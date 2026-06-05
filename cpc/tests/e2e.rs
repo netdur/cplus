@@ -16315,6 +16315,140 @@ fn main() -> i32 {
     assert!(run.success(), "bridge_rt exited non-zero: {run}");
 }
 
+/// Helper for the AppKit runtime round-trip tests below: stand up a tempdir
+/// project that depends on the in-tree `vendor/{stdlib,appkit}` (via symlink so
+/// edits are picked up), build it, run it, and assert exit 0. The program is
+/// expected to use distinct non-zero return codes per failed assertion.
+#[cfg(target_os = "macos")]
+fn appkit_run_program(pkg: &str, program: &str) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!("[package]\nname = \"{pkg}\"\n\n[[bin]]\nname = \"{pkg}\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nappkit = \"*\"\n"),
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), program).unwrap();
+
+    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    assert!(status.success(), "cpc build for {pkg} failed: {status}");
+    let bin = dir.join(format!("target/debug/{pkg}"));
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+    let run = Command::new(bin).status().expect("run program");
+    assert!(run.success(), "{pkg} exited non-zero: {run}");
+}
+
+/// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
+/// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
+/// (`Alert`, created `new` = +1) releases its object in `drop` — so building
+/// many in a loop neither leaks nor over-releases (a crash). Foundation-only,
+/// so it needs no window server.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_ownership_round_trip() {
+    appkit_run_program(
+        "ak_own",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/dialogs" as dialogs;
+
+fn main() -> i32 {
+    let cls: *u8 = rt::get_class(str_ptr("NSObject\0"));
+    let obj: *u8 = rt::msg_id(cls, rt::sel(str_ptr("new\0")));   // +1
+    if rt::retain_count(obj) != (1 as i64) { return 1; }
+    let _r: *u8 = rt::retain(obj);                                // +2
+    if rt::retain_count(obj) != (2 as i64) { return 2; }
+    rt::release(obj);                                             // +1
+    if rt::retain_count(obj) != (1 as i64) { return 3; }
+    rt::release(obj);                                             // 0 -> dealloc
+
+    // Owned wrapper: each Alert drops (releases) at end of iteration.
+    let mut i: i32 = 0;
+    loop {
+        if i >= (500 as i32) { break; }
+        let a: dialogs::Alert = dialogs::Alert::new();
+        a.set_message_text(str_ptr("hi\0"));
+        i = i +% (1 as i32);
+    }
+    return 0;
+}
+"#,
+    );
+}
+
+/// v0.0.16 AppKit `pasteboard.cplus` (plan.appkit.md §4): the system clipboard
+/// round-trips a string (write -> read -> compare), twice, proving clear/
+/// set_string/string_ns and the `opaque` (non-owned singleton) handling.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_pasteboard_round_trip() {
+    appkit_run_program(
+        "ak_pb",
+        r#"
+import "appkit/application" as application;
+import "appkit/pasteboard" as pb;
+import "appkit/convert" as conv;
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let board: pb::Pasteboard = pb::Pasteboard::general();
+    let _cc: i64 = board.clear();
+    if board.set_string(str_ptr("clip-test-123\0")) != (1 as i8) { return 1; }
+    let got_ns: *u8 = board.string_ns();
+    if got_ns == unsafe { 0 as *u8 } { return 2; }
+    if conv::nsstring_to_cplus_string(got_ns).as_str() != "clip-test-123" { return 3; }
+    let _cc2: i64 = board.clear();
+    let _ok2: i8 = board.set_string(str_ptr("second\0"));
+    if conv::nsstring_to_cplus_string(board.string_ns()).as_str() != "second" { return 4; }
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
+/// v0.0.16 AppKit `layout.cplus` (plan.appkit.md §4, Auto Layout): anchor
+/// constraints build, activate, read their constant back, and deactivate.
+/// NSView + constraints need no run loop, so this is headless-safe.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_autolayout_constraints() {
+    appkit_run_program(
+        "ak_layout",
+        r#"
+import "appkit/application" as application;
+import "appkit/view" as view;
+import "appkit/layout" as layout;
+import "appkit/runtime" as rt;
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let pf = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 400.0, height: 400.0 } };
+    let cf = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 10.0, height: 10.0 } };
+    let parent: view::View = view::View::new(pf);
+    let child: view::View = view::View::new(cf);
+    parent.add_subview(child.obj);
+    layout::use_constraints(child.obj);
+    let c1: *u8 = layout::activate(layout::equal(layout::leading(child.obj), layout::leading(parent.obj)));
+    let c2: *u8 = layout::activate(layout::equal_const(layout::width(child.obj), 200.0));
+    if layout::is_active(c1) != (1 as i8) { return 1; }
+    if layout::is_active(c2) != (1 as i8) { return 2; }
+    let w: f64 = rt::msg_f64(c2, rt::sel(str_ptr("constant\0")));
+    if w < 199.5 { return 3; }
+    if w > 200.5 { return 4; }
+    let _d: *u8 = layout::deactivate(c2);
+    if layout::is_active(c2) != (0 as i8) { return 5; }
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {

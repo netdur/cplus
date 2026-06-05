@@ -1,0 +1,76 @@
+// NSPasteboard — the system clipboard (plan.appkit.md §4).
+//
+// `Pasteboard` wraps a shared `NSPasteboard`. The general pasteboard is a
+// process-wide singleton owned by AppKit, so the wrapper is `opaque` (a
+// borrowed handle) and has no `drop` — releasing it would over-release a
+// system object (plan.appkit.md §2, the non-owned case).
+//
+// The string API uses the UTI for `NSPasteboardTypeString`
+// (`public.utf8-plain-text`). The clipboard is writer-clears-then-writes:
+// `clear` returns a change count, and every `set_*` must follow a `clear`.
+
+import "./runtime" as rt;
+
+pub struct Pasteboard {
+    pub opaque obj: *u8,
+}
+
+// NSPasteboardTypeString, as an NSString. Built per call (autoreleased, +0);
+// the active autorelease pool reclaims it.
+fn type_string() -> *u8 {
+    return rt::ns_string(str_ptr("public.utf8-plain-text\0"));
+}
+
+impl Pasteboard {
+    // The shared system clipboard.
+    pub fn general() -> Pasteboard {
+        let cls: *u8 = rt::get_class(str_ptr("NSPasteboard\0"));
+        let pb: *u8 = rt::msg_id(cls, rt::sel(str_ptr("generalPasteboard\0")));
+        return Pasteboard { obj: pb };
+    }
+
+    // Remove the current contents and declare ownership; returns the new
+    // change count. Call before any `set_*`.
+    pub fn clear(self) -> i64 {
+        return rt::msg_i64(self.obj, rt::sel(str_ptr("clearContents\0")));
+    }
+
+    // Write a UTF-8 C string as plain text. Returns 1 on success, 0 on
+    // failure. The caller is responsible for a preceding `clear`.
+    pub fn set_string(self, text: *u8) -> i8 {
+        return rt::msg_i8_id_id(
+            self.obj,
+            rt::sel(str_ptr("setString:forType:\0")),
+            rt::ns_string(text),
+            type_string(),
+        );
+    }
+
+    // Write a pre-built `NSString*` (e.g. from `convert::cplus_string_to_nsstring`).
+    pub fn set_string_ns(self, text_ns: *u8) -> i8 {
+        return rt::msg_i8_id_id(
+            self.obj,
+            rt::sel(str_ptr("setString:forType:\0")),
+            text_ns,
+            type_string(),
+        );
+    }
+
+    // Read the plain-text contents as an `NSString*`, or null if the
+    // clipboard holds no string of that type. Pair with
+    // `convert::nsstring_to_cplus_string` to get a C+ `string`.
+    pub fn string_ns(self) -> *u8 {
+        return rt::msg_id_id(self.obj, rt::sel(str_ptr("stringForType:\0")), type_string());
+    }
+
+    // Convenience: read the contents as a NUL-terminated UTF-8 C string
+    // (`-[NSString UTF8String]`), or null if absent. The returned buffer is
+    // owned by the autorelease pool — copy it before the pool drains.
+    pub fn string_utf8(self) -> *u8 {
+        let ns: *u8 = self.string_ns();
+        if ns == unsafe { 0 as *u8 } {
+            return unsafe { 0 as *u8 };
+        }
+        return rt::msg_id(ns, rt::sel(str_ptr("UTF8String\0")));
+    }
+}
