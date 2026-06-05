@@ -50,7 +50,7 @@ import "appkit/notifications" as notifications;
 - `text`: `TextView`, `SecureTextField`, `SearchField`, `TokenField`, `ComboBox`, `Form`
 - `containers`: `SplitView`, `TabView`, `TabViewItem`, `VisualEffectView`, `GridView`, `Browser`, `Matrix`, `ClipView`, `RulerView`, `Popover`
 - `data`: `TableView`, `TableColumn`, `OutlineView`, `TableCellView`, `TableRowView`, `CollectionView`, `CollectionViewItem`, `CollectionViewFlowLayout`, `CollectionViewGridLayout`, `RuleEditor`, `PredicateEditor`. Also `create_table_data_source(row_count_imp, value_imp)` (synthesizes an `NSTableViewDataSource`), `create_table_delegate(selection_changed_imp)` (selection via `tableViewSelectionDidChange:`), and `TableView::selected_row()`. The synthesis helpers are the documented delegate pattern (same shape as `create_app_delegate`).
-- `graphics`: `ImageView`, `Image`, `Font`, `Color`
+- `graphics`: `ImageView`, `Image`, `Font`, `Color`, `BezierPath` (move/line/close, append rect/oval, line width, `element_count`, stroke/fill — the path primitive for custom drawing)
 - `menu`: `Menu`, `MenuItem`
 - `dialogs`: `Alert`
 - `panels`: `Panel`, `SavePanel`, `OpenPanel`, `PageLayout`, `PrintPanel`

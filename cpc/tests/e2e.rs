@@ -16586,6 +16586,39 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit `BezierPath` (plan.appkit.md §4, custom drawing): our wrapper
+/// marshals the NSPoint args for moveToPoint:/lineToPoint: and reads elementCount
+/// back. A path is a data object, so this needs no drawing context.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_bezier_path_build() {
+    appkit_run_program(
+        "ak_path",
+        r#"
+import "appkit/application" as application;
+import "appkit/graphics" as graphics;
+import "appkit/runtime" as rt;
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let path: graphics::BezierPath = graphics::BezierPath::new();
+    path.move_to(0.0, 0.0);
+    path.line_to(10.0, 10.0);
+    path.line_to(20.0, 0.0);
+    if path.element_count() != (3 as i64) { return 1; }
+    path.set_line_width(2.0);
+    path.close();
+    let r = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 5.0, height: 5.0 } };
+    let path2: graphics::BezierPath = graphics::BezierPath::new();
+    path2.append_rect(r);
+    if path2.element_count() < (4 as i64) { return 2; }
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {

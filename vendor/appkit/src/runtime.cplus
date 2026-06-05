@@ -115,6 +115,9 @@ extern fn objc_msg_void_rect(recv: *u8, sel: *u8, frame: Rect);
 extern fn objc_msg_void_size(recv: *u8, sel: *u8, size: Size);
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_point(recv: *u8, sel: *u8, point: Point);
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_init_window(
     recv: *u8,
     sel: *u8,
@@ -332,6 +335,10 @@ pub fn msg_void_rect(recv: *u8, selector: *u8, frame: Rect) {
 
 pub fn msg_void_size(recv: *u8, selector: *u8, size: Size) {
     unsafe { objc_msg_void_size(recv, selector, size); };
+}
+
+pub fn msg_void_point(recv: *u8, selector: *u8, point: Point) {
+    unsafe { objc_msg_void_point(recv, selector, point); };
 }
 
 pub fn msg_init_window(recv: *u8, selector: *u8, frame: Rect, style_mask: u64, backing: u64, defer_flag: i8) -> *u8 {

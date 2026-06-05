@@ -80,6 +80,7 @@ pub type ImageView = graphics::ImageView;
 pub type Image = graphics::Image;
 pub type Font = graphics::Font;
 pub type Color = graphics::Color;
+pub type BezierPath = graphics::BezierPath;
 
 pub type Menu = menu::Menu;
 pub type MenuItem = menu::MenuItem;
