@@ -1,7 +1,7 @@
 # C+ changelog
 
-User-facing changes per release, newest first. Each version's full roadmap and
-resolved log is archived alongside it during development.
+User-facing changes per release, newest first. The changelog starts at v0.0.14;
+earlier history lives in each version's archived plan.
 
 ## v0.0.14 — 2026-06-05
 
@@ -61,35 +61,3 @@ assembly, and code-knowledge-graph value depth.
 Deferred to v0.0.15 (additive): module-level global asm, the if-result predictor
 refactor, value-refs precise scoping (shadowing), and the package side
 (AppKit → agent).
-
-## v0.0.13 — 2026-06-03
-
-Publish/release version. Headline: the **code knowledge graph** (structure +
-call edges + references + `type-at` for annotated positions; `cpc graph` / `cpc
-query` / `cpc mcp` / LSP). Raw-pointer accountability via `opaque`. Inline-asm
-Tier 1 (`#asm("dmb ish")`).
-
-## v0.0.12 — 2026-06-01
-
-Real-time roadmap: `#[no_alloc]` / `#[no_block]` / `#[bounded_recursion]` /
-`#[realtime]` / `#[max_stack]`, the `vendor-rt` SPSC + pool, `rt_darwin`,
-`[profile.realtime]` + `cpc check`. `Rc` / `MutexGuard` are `!Send`.
-
-## v0.0.11 — 2026-05
-
-Vendor bindings cycle. Position locked: C+ is a consumer of GPU backend SDKs,
-not a provider of a unified compute abstraction.
-
-## v0.0.10 — 2026-05
-
-Real-time positioning + the GPU binding-layer wedge (`#selector`, `#msg_send`,
-`#compile_shader`).
-
-## v0.0.1 – v0.0.9 — 2026-05-14 … 2026-05-22
-
-The foundational language build-out: lexer/parser/AST, the type system and
-checker, ownership and borrow checking, `Drop`/`Copy` derivation, generics +
-monomorphization, tagged enums + pattern matching, traits-as-interfaces, SIMD
-types, C FFI (`extern fn`), strings, the standard library, multi-file projects +
-the vendor model, async/coroutines, and the `cpc` toolchain. Per-version detail
-is kept in each version's archived plan.
