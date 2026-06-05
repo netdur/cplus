@@ -1072,9 +1072,13 @@ mod tests {
         assert_eq!(link.libs, vec!["cudart".to_string(), "cublas".to_string()]);
         assert_eq!(link.search_paths.len(), 2);
         assert_eq!(link.search_paths[0], "/usr/local/cuda/lib64");
+        // Compare against the manifest's own canonicalized `root` (not the
+        // raw `temp_dir()`): `parse` canonicalizes the manifest dir, and on
+        // macOS `/tmp` is a symlink to `/private/tmp`, so the raw temp path
+        // would not match the resolved one.
         assert_eq!(
             link.search_paths[1],
-            root.join("vendored/lib").to_string_lossy()
+            m.root.join("vendored/lib").to_string_lossy()
         );
     }
 
