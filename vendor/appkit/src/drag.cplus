@@ -1,0 +1,77 @@
+// Drag-and-drop, destination side (plan.appkit.md §4) — a view that *accepts*
+// drops. Built on the delegate-synthesis pattern + the pasteboard types: a view
+// registers the drag types it accepts, then AppKit calls the
+// `NSDraggingDestination` methods during a drag.
+//
+// A drag destination is a custom `NSView` subclass; the app supplies the two
+// load-bearing handlers as C+ functions (closure-free — reach app state via a
+// `static mut` / associated object), and reads the dragged data from the
+// dragging info's pasteboard inside `perform_imp`.
+
+import "./runtime" as rt;
+
+// NSDragOperation bitmask values (return from `entered_imp` to say what drop
+// you'll accept; return `drag_op_none` to reject).
+pub fn drag_op_none() -> i64 { return 0 as i64; }
+pub fn drag_op_copy() -> i64 { return 1 as i64; }
+pub fn drag_op_link() -> i64 { return 2 as i64; }
+pub fn drag_op_generic() -> i64 { return 4 as i64; }
+pub fn drag_op_move() -> i64 { return 16 as i64; }
+
+// Synthesize an `NSView` subclass that is a drag destination, and return a
+// `+1`-owned handle (alloc/initWithFrame:). Add it to a parent and call
+// `register_for_string_drops` on it.
+//
+//   entered_imp: `(self, _cmd, draggingInfo) -> NSDragOperation` implements
+//                `-draggingEntered:` (return e.g. `drag_op_copy()`).
+//   perform_imp: `(self, _cmd, draggingInfo) -> BOOL` implements
+//                `-performDragOperation:` (read the drop, return 1 on success).
+pub fn create_drag_destination_view(
+    frame: rt::Rect,
+    entered_imp: fn(*u8, *u8, *u8) -> i64,
+    perform_imp: fn(*u8, *u8, *u8) -> i8,
+) -> *u8 {
+    let existing: *u8 = rt::get_class(str_ptr("CDragDestView\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let nsview: *u8 = rt::get_class(str_ptr("NSView\0"));
+        cls = rt::allocate_class_pair(nsview, str_ptr("CDragDestView\0"), 0 as usize);
+        let _a: i8 = rt::add_method_i64_id(
+            cls,
+            rt::sel(str_ptr("draggingEntered:\0")),
+            entered_imp,
+            str_ptr("Q@:@\0"),
+        );
+        let _b: i8 = rt::add_terminate_method(
+            cls,
+            rt::sel(str_ptr("performDragOperation:\0")),
+            perform_imp,
+            str_ptr("c@:@\0"),
+        );
+        rt::register_class_pair(cls);
+    }
+    let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
+    return rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+}
+
+// Register a view to accept plain-text (`public.utf8-plain-text`) drops.
+pub fn register_for_string_drops(view: *u8) {
+    let type_str: *u8 = rt::ns_string(str_ptr("public.utf8-plain-text\0"));
+    let types: *u8 = rt::msg_id_id(
+        rt::get_class(str_ptr("NSArray\0")),
+        rt::sel(str_ptr("arrayWithObject:\0")),
+        type_str,
+    );
+    rt::msg_void_id(view, rt::sel(str_ptr("registerForDraggedTypes:\0")), types);
+}
+
+// Read the dragged plain text from a dragging-info object, as an `NSString*`
+// (null if absent). Call inside `perform_imp` with its `draggingInfo` argument.
+pub fn dragged_string_ns(dragging_info: *u8) -> *u8 {
+    let pb: *u8 = rt::msg_id(dragging_info, rt::sel(str_ptr("draggingPasteboard\0")));
+    if pb == unsafe { 0 as *u8 } {
+        return unsafe { 0 as *u8 };
+    }
+    let type_str: *u8 = rt::ns_string(str_ptr("public.utf8-plain-text\0"));
+    return rt::msg_id_id(pb, rt::sel(str_ptr("stringForType:\0")), type_str);
+}

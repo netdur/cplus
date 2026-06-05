@@ -16698,6 +16698,47 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit drag-and-drop destination (plan.appkit.md §4):
+/// `drag::create_drag_destination_view` synthesizes an NSView that accepts
+/// drops. We register it and invoke the synthesized `NSDraggingDestination`
+/// methods directly — `draggingEntered:` returns the accepted operation,
+/// `performDragOperation:` returns success and fires its handler. The live drag
+/// session (NSDraggingInfo) isn't exercised headlessly; this verifies our
+/// synthesis + return marshaling.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_drag_destination() {
+    appkit_run_program(
+        "ak_drag",
+        r#"
+import "appkit/application" as application;
+import "appkit/drag" as drag;
+import "appkit/runtime" as rt;
+
+static mut DROPPED: i32 = 0;
+
+fn on_entered(self_obj: *u8, _cmd: *u8, info: *u8) -> i64 { return drag::drag_op_copy(); }
+fn on_perform(self_obj: *u8, _cmd: *u8, info: *u8) -> i8 { unsafe { DROPPED = 1 as i32; }; return 1 as i8; }
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
+    let v: *u8 = drag::create_drag_destination_view(f, on_entered, on_perform);
+    drag::register_for_string_drops(v);
+
+    let nil: *u8 = unsafe { 0 as *u8 };
+    if rt::msg_i64_id(v, rt::sel(str_ptr("draggingEntered:\0")), nil) != drag::drag_op_copy() { return 1; }
+    if rt::msg_i8_id(v, rt::sel(str_ptr("performDragOperation:\0")), nil) != (1 as i8) { return 2; }
+    if unsafe { DROPPED } != (1 as i32) { return 3; }
+
+    rt::release(v);
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
