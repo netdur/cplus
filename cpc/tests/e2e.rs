@@ -16449,6 +16449,47 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit `notifications.cplus` (plan.appkit.md §3): NSNotificationCenter
+/// subscribe -> post (callback fires) -> drop the Observer (unsubscribe) -> post
+/// (callback no longer fires). Exercises the synthesized observer class, the
+/// associated-object callback dispatch, and the Observer's removeObserver+release
+/// drop. Foundation-only, so no window server needed.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_notification_subscribe_and_unsubscribe() {
+    appkit_run_program(
+        "ak_notify",
+        r#"
+import "appkit/application" as application;
+import "appkit/notifications" as notify;
+
+static mut COUNT: i32 = 0;
+
+fn on_note(note: *u8) {
+    unsafe { COUNT = COUNT +% (1 as i32); };
+    return;
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let center: notify::NotificationCenter = notify::NotificationCenter::default();
+    {
+        let obs: notify::Observer = center.add_observer(str_ptr("CPlusTestNote\0"), on_note);
+        center.post(str_ptr("CPlusTestNote\0"));
+        center.post(str_ptr("CPlusTestNote\0"));
+    }
+    // Two posts while subscribed.
+    if unsafe { COUNT } != (2 as i32) { return 1; }
+    // Observer dropped above -> unsubscribed; this post must not fire.
+    center.post(str_ptr("CPlusTestNote\0"));
+    if unsafe { COUNT } != (2 as i32) { return 2; }
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {

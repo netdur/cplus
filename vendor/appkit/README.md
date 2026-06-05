@@ -37,6 +37,7 @@ import "appkit/controllers" as controllers;
 import "appkit/pasteboard" as pasteboard;
 import "appkit/layout" as layout;
 import "appkit/events" as events;
+import "appkit/notifications" as notifications;
 ```
 
 ## Modules
@@ -58,6 +59,7 @@ import "appkit/events" as events;
 - `pasteboard`: `Pasteboard` — the system clipboard (general pasteboard string read/write). Re-exported from the facade.
 - `layout`: Auto Layout. Anchor getters (`leading`/`trailing`/`top`/`bottom`/`width`/`height`/`center_x`/`center_y`/…), constraint builders (`equal`/`equal_offset`/`ge`/`le`, `equal_const`/`ge_const`/`le_const`), and `activate`/`deactivate`/`is_active`. Operates on raw view/anchor/constraint handles; import directly.
 - `events`: `NSEvent` introspection. `NSEventType` and `NSEventModifierFlags` constants, `has_modifier`, and accessors (`event_type`, `modifier_flags`, `key_code`, `location_in_window`, `characters_ns`, …). Import directly.
+- `notifications`: `NotificationCenter` (post + `add_observer`) and `Observer`. `add_observer` returns an `Observer` that owns the subscription — keep it alive; dropping it unsubscribes (`removeObserver:`) and releases. Re-exported from the facade.
 - `convert`: C+ ↔ Cocoa data bridges. `cplus_{str,string}_to_nsstring` / `nsstring_to_cplus_{string,str_unsafe}`; `nsarray_count` / `nsarray_obj_at` / `nsarray_to_vec_{i32,i64,f32,f64}`; `nsdata_to_vec_u8` / `vec_u8_to_nsdata` / `vec_u8_to_nsdata_view`. Import directly via `import "appkit/convert" as bridge;` — there is no facade re-export.
 
 ## Ownership

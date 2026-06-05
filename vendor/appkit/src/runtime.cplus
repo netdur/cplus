@@ -57,6 +57,9 @@ extern fn objc_msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
 extern fn objc_msg_i8_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> i8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8);
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64);
 
 #[link_name = "objc_msgSend"]
@@ -229,6 +232,10 @@ pub fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
 
 pub fn msg_i8_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i8 {
     return unsafe { objc_msg_i8_id_id(recv, selector, a, b) };
+}
+
+pub fn msg_void_id_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: *u8) {
+    unsafe { objc_msg_void_id_id_id_id(recv, selector, a, b, c, d); };
 }
 
 pub fn msg_void_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) {
