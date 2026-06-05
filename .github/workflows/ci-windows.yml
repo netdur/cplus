@@ -75,6 +75,9 @@ jobs:
           Write-Host "exit code: $code"
           if ($code -ne 42) { throw "smoke test failed: expected 42, got $code" }
           Write-Host "OK: cpc compiled, linked, and ran a native binary."
+          # The program intentionally exits 42, leaving $LASTEXITCODE=42; reset
+          # it so the Actions pwsh wrapper doesn't fail the step on it.
+          exit 0
 
       - name: Upload Windows binaries
         uses: actions/upload-artifact@v5
