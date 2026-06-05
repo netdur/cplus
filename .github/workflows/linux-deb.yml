@@ -4,11 +4,11 @@ name: Linux .deb
 # as a workflow artifact, then install it via apt (so the `Depends:` line is
 # actually exercised) and smoke-test the installed `cpc` on the clean runner.
 #
-# NOTE: cpc currently invokes the linker as the bare command `clang`. The
-# `clang-19` dependency installs /usr/bin/clang-19 but does NOT take over the
-# `clang` name (Ubuntu 24.04's unversioned `clang` is still 18), so the smoke
-# step points `clang` -> clang-19 via update-alternatives until cpc learns to
-# discover a versioned clang itself.
+# The smoke test deliberately does NOT touch update-alternatives: cpc
+# discovers a clang >= 19 on its own (it probes clang / clang-21 / clang-20 /
+# clang-19, honoring $CPC_CLANG), so an apt install of this .deb — which
+# pulls in clang-19 via Depends — works out of the box even though Ubuntu
+# 24.04's bare `clang` is still 18.
 
 on:
   push:
@@ -84,11 +84,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y "./dist/${{ steps.deb.outputs.pkg }}.deb"
-          # cpc calls bare `clang`; on 24.04 that's 18. Point it at 19 until
-          # cpc discovers a versioned clang on its own.
-          sudo update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-19   100
-          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
-          clang --version
+          # Intentionally NOT setting update-alternatives: prove cpc finds
+          # clang-19 itself even though the bare `clang` here is 18.
+          echo "bare clang: $(clang --version | head -1)"
           command -v cpc cpc-lsp cpc-bindgen
 
       - name: Smoke-test the installed cpc on a clean runner
