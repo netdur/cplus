@@ -1,0 +1,27 @@
+# Normalize line endings. The toolchain (cpc fmt, the lexer, the codegen
+# golden files) treats '\n' as the canonical line terminator, so source must
+# be checked out with LF on every platform — otherwise Windows' core.autocrlf
+# rewrites it to CRLF and `cpc fmt --check` reports spurious drift.
+* text=auto eol=lf
+
+# C+ sources and the file types the test suite reads byte-for-byte.
+*.cplus  text eol=lf
+*.rs     text eol=lf
+*.toml   text eol=lf
+*.md     text eol=lf
+*.ll     text eol=lf
+*.c      text eol=lf
+*.h      text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.sh     text eol=lf
+
+# Bundled native artifacts (vendor [link].bundled) must never be munged.
+*.a      binary
+*.o      binary
+*.so     binary
+*.dylib  binary
+*.dll    binary
+*.lib    binary
+*.wasm   binary
+*.png    binary

@@ -312,11 +312,13 @@ fn zero_initialized_static_aggregate_cross_lang_g033() {
     .unwrap();
     std::fs::write(
         &c_src,
+        // C+ `i64` is `int64_t` (`long long`), not `long`: `long` is 32-bit on
+        // Windows (LLP64), which would mismatch the C+ field layout + ABI.
         "#include <stdint.h>\n\
          extern int32_t MUT_I32_TABLE[16];\n\
-         extern struct S { int a; long b; void* c; } MUT_STRUCT;\n\
+         extern struct S { int a; int64_t b; void* c; } MUT_STRUCT;\n\
          void c_set_table(int idx, int val) { MUT_I32_TABLE[idx] = val; }\n\
-         void c_set_struct(int a, long b) { MUT_STRUCT.a = a; MUT_STRUCT.b = b; }\n",
+         void c_set_struct(int a, int64_t b) { MUT_STRUCT.a = a; MUT_STRUCT.b = b; }\n",
     )
     .unwrap();
     let clang_c = Command::new("clang")
@@ -367,7 +369,7 @@ fn atomic_thread_fence_runtime_g030() {
         .unwrap()
         .join("vendor")
         .join("stdlib");
-    std::os::unix::fs::symlink(&stdlib, dir.join("vendor").join("stdlib")).unwrap();
+    symlink_dir(&stdlib, &dir.join("vendor").join("stdlib"));
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
@@ -674,7 +676,7 @@ fn emit_obj_auto_detects_cplus_toml_g029() {
         .unwrap()
         .join("vendor")
         .join("stdlib");
-    std::os::unix::fs::symlink(&stdlib, dir.join("vendor").join("stdlib")).unwrap();
+    symlink_dir(&stdlib, &dir.join("vendor").join("stdlib"));
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"g029\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
@@ -815,8 +817,11 @@ fn extern_struct_return_sret_cross_language_g027() {
     let bin = dir.join("g027");
     std::fs::write(
         &c_src,
-        "typedef struct { long a; long b; long c; } Big24;\n\
-         Big24 make_big(long x) {\n\
+        // NB: C+ `i64` is `long long`/`int64_t`, NOT `long` — `long` is only
+        // 64-bit on LP64 (macOS/Linux); on Windows (LLP64) it is 32-bit, so a
+        // `long`-based struct would mismatch the C+ `i64` layout and ABI.
+        "typedef struct { long long a; long long b; long long c; } Big24;\n\
+         Big24 make_big(long long x) {\n\
              Big24 r = { x + 1, x + 2, x + 3 };\n\
              return r;\n\
          }\n",
@@ -998,7 +1003,7 @@ fn parse_error_in_entry_file_has_real_span_g026() {
         .unwrap()
         .join("vendor")
         .join("stdlib");
-    std::os::unix::fs::symlink(&stdlib, dir.join("vendor").join("stdlib")).unwrap();
+    symlink_dir(&stdlib, &dir.join("vendor").join("stdlib"));
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"sp\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
@@ -8331,9 +8336,12 @@ fn host_triple_for_test() -> String {
 
 #[test]
 fn dep_link_table_libs_flow_through_to_linker() {
-    // Vendor declares `[link] libs = ["m"]`; consumer's binary should link
-    // against libm via the dep walk. Use a pure-source vendor package so
-    // we don't need a bundled artifact.
+    // Vendor declares `[link] libs = [...]`; the consumer's binary should link
+    // against that lib via the dep walk. Use a pure-source vendor package so
+    // we don't need a bundled artifact. The example lib must actually exist on
+    // the host linker's search path: libm (`m`) on Unix, but Windows has no
+    // separate `m.lib` (math is in the UCRT), so use `kernel32` there.
+    let lib_name = if cfg!(windows) { "kernel32" } else { "m" };
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -8344,7 +8352,7 @@ fn dep_link_table_libs_flow_through_to_linker() {
     std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
     std::fs::write(
         dir.join("vendor/mathy/Cplus.toml"),
-        "[package]\nname = \"mathy\"\n\n[link]\nlibs = [\"m\"]\n",
+        format!("[package]\nname = \"mathy\"\n\n[link]\nlibs = [\"{lib_name}\"]\n"),
     )
     .unwrap();
     std::fs::write(
@@ -8394,7 +8402,7 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
         .expect("invoke clang -c");
     assert!(cc.success(), "clang -c on tiny.c failed");
     let archive = lib_dir.join("libtiny.a");
-    let ar = Command::new("ar")
+    let ar = Command::new(ar_prog())
         .arg("rcs")
         .arg(&archive)
         .arg(&obj)
@@ -8756,7 +8764,7 @@ fn cpc_bindgen_round_trips_via_c_library() {
         .expect("invoke clang");
     assert!(st.success(), "clang -c failed");
     let lib = dir.join("libtiny.a");
-    let st = Command::new("ar")
+    let st = Command::new(ar_prog())
         .arg("rcs")
         .arg(&lib)
         .arg(&c_obj)
@@ -9707,6 +9715,14 @@ fn async_fn_returning_string_through_block_on() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(
@@ -9897,6 +9913,14 @@ fn generic_async_fn_multi_instantiation_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor_linux.cplus"),
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
@@ -10526,6 +10550,14 @@ fn stdlib_executor_yield_now_round_trips() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/executor\" as executor;\n\
@@ -10586,6 +10618,14 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor_linux.cplus"),
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
     )
     .unwrap();
     std::fs::write(
@@ -10703,6 +10743,14 @@ fn stdlib_fs_file_lines_round_trip() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     // Each test gets its own temp file to avoid cross-test interference.
     let test_file = dir.join("input.txt");
     std::fs::write(&test_file, "alpha\nbeta beta\ngamma").unwrap();
@@ -10802,6 +10850,14 @@ fn stdlib_fs_file_read_async_compiles() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor_linux.cplus"),
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
@@ -10962,6 +11018,14 @@ fn phase4f_concurrent_n_sleeps_stress() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/time.cplus"), time_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -11075,6 +11139,14 @@ fn async_method_on_user_struct_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor_linux.cplus"),
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
@@ -11200,6 +11272,14 @@ fn stdlib_time_sleep_round_trip() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/time.cplus"), time_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -11290,6 +11370,14 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor_linux.cplus"),
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
@@ -12787,6 +12875,14 @@ fn phase1d_async_runs_clean_under_asan() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/future\" as future;\n\
@@ -14111,7 +14207,7 @@ fn lib_target_exposes_pub_symbols_unmangled() {
         .status()
         .expect("invoke cpc");
     assert!(st.success());
-    let nm = Command::new("nm")
+    let nm = Command::new(nm_prog())
         .arg("-g")
         .arg(dir.join("target/debug/libmathlib.a"))
         .output()
@@ -14277,14 +14373,17 @@ fn emit_obj_produces_relocatable_object() {
         .expect("invoke cpc");
     assert!(st.success(), "cpc --emit-obj failed: {st}");
     assert!(out.is_file(), "expected {}", out.display());
-    // File magic: 0xfeedfacf on Mach-O 64, ELF starts with 0x7f 'E' 'L' 'F'.
+    // File magic: 0xfeedfacf on Mach-O 64, ELF starts with 0x7f 'E' 'L' 'F',
+    // a Windows COFF object starts with the 2-byte machine type
+    // (0x8664 little-endian -> 0x64 0x86 for x86_64, 0xaa64 for arm64).
     let bytes = std::fs::read(&out).unwrap();
     let is_macho = bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
         || bytes.starts_with(&[0xce, 0xfa, 0xed, 0xfe]);
     let is_elf = bytes.starts_with(&[0x7f, b'E', b'L', b'F']);
+    let is_coff = bytes.starts_with(&[0x64, 0x86]) || bytes.starts_with(&[0x64, 0xaa]);
     assert!(
-        is_macho || is_elf,
-        "expected Mach-O or ELF object; first bytes: {:?}",
+        is_macho || is_elf || is_coff,
+        "expected Mach-O, ELF, or COFF object; first bytes: {:?}",
         &bytes[..4.min(bytes.len())]
     );
 }
@@ -14317,7 +14416,7 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
         .status()
         .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
-    let nm = Command::new("nm")
+    let nm = Command::new(nm_prog())
         .arg("-g")
         .arg(dir.join("target/release/liblinkage.a"))
         .output()
@@ -14365,7 +14464,7 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
         .status()
         .expect("invoke cpc");
     assert!(st.success(), "cpc build failed");
-    let nm = Command::new("nm")
+    let nm = Command::new(nm_prog())
         .arg("-g")
         .arg(dir.join("target/release/libmeth.a"))
         .output()
@@ -15770,6 +15869,14 @@ fn recipe_async_fetch_runs() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
     // net.cplus imports stdlib/netsys for platform syscall constants; the
     // resolver loads netsys_linux.cplus on Linux. Stage both so the fixture
@@ -15852,6 +15959,14 @@ fn recipe_async_yield_demo_runs() {
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
+    )
+    .unwrap();
     let st = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
@@ -15894,6 +16009,14 @@ fn recipe_async_compute_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor_linux.cplus"),
         include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
+    // On Windows the resolver loads reactor_windows.cplus (Win32 timer +
+    // pending/awaiter queues) in place of reactor.cplus (kqueue); stage it
+    // alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_windows.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_windows.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
@@ -17210,8 +17333,7 @@ fn hash_map_combos_project_runs() {
         .parent()
         .unwrap()
         .join("vendor/stdlib");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&stdlib_target, dir.join("vendor/stdlib")).unwrap();
+    symlink_dir(&stdlib_target, &dir.join("vendor/stdlib"));
 
     let status = Command::new(cpc)
         .arg("build")
@@ -17880,8 +18002,7 @@ fn g023_struct_literal_field_init_does_not_double_drop() {
         .parent()
         .unwrap()
         .join("vendor/stdlib");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&stdlib_target, dir.join("vendor/stdlib")).unwrap();
+    symlink_dir(&stdlib_target, &dir.join("vendor/stdlib"));
 
     let status = Command::new(cpc)
         .arg("build")
@@ -17960,8 +18081,7 @@ fn g023_raw_pointer_store_does_not_double_drop() {
         .parent()
         .unwrap()
         .join("vendor/stdlib");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&stdlib_target, dir.join("vendor/stdlib")).unwrap();
+    symlink_dir(&stdlib_target, &dir.join("vendor/stdlib"));
 
     let status = Command::new(cpc)
         .arg("build")
@@ -19121,4 +19241,55 @@ fn tempdir() -> std::path::PathBuf {
     // OS cleans /tmp on reboot; tests use distinct paths so no collisions.
     let leaked: &'static tempfile::TempDir = Box::leak(Box::new(dir));
     leaked.path().to_path_buf()
+}
+
+/// Binutils program names differ on Windows, where the GNU `ar`/`nm` are
+/// absent but LLVM ships `llvm-ar`/`llvm-nm` (same CLI surface). These let
+/// the archive/symbol-inspection tests run unprivileged against the LLVM
+/// toolchain on every host.
+#[allow(dead_code)]
+fn ar_prog() -> &'static str {
+    if cfg!(windows) { "llvm-ar" } else { "ar" }
+}
+#[allow(dead_code)]
+fn nm_prog() -> &'static str {
+    if cfg!(windows) { "llvm-nm" } else { "nm" }
+}
+
+/// Make `link` a directory alias for the existing directory `target`.
+///
+/// Tests stage a tempdir project whose `vendor/stdlib` points at the
+/// in-tree `vendor/stdlib` so the build picks up the current sources.
+/// Unix uses a plain symlink. Windows uses a *directory junction*
+/// (`mklink /J`) rather than a symlink: junctions need no Developer Mode
+/// or admin privilege, so the suite runs unprivileged in CI. `target`
+/// must be an existing directory and `link` must not already exist.
+#[allow(dead_code)]
+fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).expect("create dir symlink");
+    }
+    #[cfg(windows)]
+    {
+        // `mklink` is a cmd builtin and parses `/x` tokens as switches, so a
+        // path containing a forward slash (e.g. `vendor/stdlib`, which
+        // `Path::join` does NOT normalize) makes it choke with
+        // "Invalid switch". Normalize separators to backslashes first.
+        let link = link.to_string_lossy().replace('/', "\\");
+        let target = target.to_string_lossy().replace('/', "\\");
+        let out = Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .expect("invoke mklink");
+        assert!(
+            out.status.success(),
+            "mklink /J {link} {target} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }

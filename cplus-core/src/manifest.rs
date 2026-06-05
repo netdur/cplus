@@ -1059,19 +1059,30 @@ mod tests {
         // entries pass through unchanged; relative ones resolve against the
         // manifest dir.
         let root = std::env::temp_dir();
-        let text = r#"
+        // An absolute path passes through unchanged. "Absolute" is
+        // platform-specific: a Unix path like `/usr/local/cuda/lib64` has no
+        // drive and is NOT absolute on Windows (it would be resolved relative
+        // to the manifest dir), so use a drive-qualified path there.
+        let abs = if cfg!(windows) {
+            "C:/cuda/lib64"
+        } else {
+            "/usr/local/cuda/lib64"
+        };
+        let text = format!(
+            "
             [package]
-            name = "cuda"
+            name = \"cuda\"
 
             [link]
-            libs         = ["cudart", "cublas"]
-            search-paths = ["/usr/local/cuda/lib64", "vendored/lib"]
-        "#;
-        let m = parse_in(&root, text).unwrap();
+            libs         = [\"cudart\", \"cublas\"]
+            search-paths = [\"{abs}\", \"vendored/lib\"]
+        "
+        );
+        let m = parse_in(&root, &text).unwrap();
         let link = m.link.expect("expected [link]");
         assert_eq!(link.libs, vec!["cudart".to_string(), "cublas".to_string()]);
         assert_eq!(link.search_paths.len(), 2);
-        assert_eq!(link.search_paths[0], "/usr/local/cuda/lib64");
+        assert_eq!(link.search_paths[0], abs);
         // Compare against the manifest's own canonicalized `root` (not the
         // raw `temp_dir()`): `parse` canonicalizes the manifest dir, and on
         // macOS `/tmp` is a symlink to `/private/tmp`, so the raw temp path

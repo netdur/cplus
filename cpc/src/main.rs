@@ -716,6 +716,53 @@ fn clang_major(prog: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// Probe whether the resolved clang's `llvm.coro.end` intrinsic returns `void`
+/// (LLVM ~22+) or `i1` (older LLVM, and Apple clang 21). The two forms are
+/// mutually incompatible — each version's verifier rejects the other with
+/// "Intrinsic has incorrect return type!" — and the correct one depends on the
+/// *target toolchain*, not the host `cpc` was built on. (Apple-clang version
+/// numbers don't map to LLVM versions, so a capability probe is more reliable
+/// than parsing `--version`.)
+///
+/// We compile a tiny IR that *calls* the `void` form: if the verifier rejects
+/// the signature, the toolchain wants `i1`. Any other outcome (it links, or it
+/// fails later for an unrelated reason like an unlowered intrinsic) means the
+/// `void` signature was accepted. Cached for the process; defaults to `void`
+/// if clang can't be run.
+fn coro_end_returns_void() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let dir = env::temp_dir();
+        let pid = std::process::id();
+        let probe = dir.join(format!("cpc_coro_probe_{pid}.ll"));
+        let obj = dir.join(format!("cpc_coro_probe_{pid}.o"));
+        let ir = "define void @__cpc_coro_probe() {\n\
+                  \x20 call void @llvm.coro.end(ptr null, i1 false, token none)\n\
+                  \x20 ret void\n\
+                  }\n\
+                  declare void @llvm.coro.end(ptr, i1, token)\n";
+        if std::fs::write(&probe, ir).is_err() {
+            return true;
+        }
+        let output = Command::new(clang_program())
+            .arg("-x").arg("ir").arg(&probe)
+            .arg("-c").arg("-o").arg(&obj)
+            .output();
+        let _ = std::fs::remove_file(&probe);
+        let _ = std::fs::remove_file(&obj);
+        match output {
+            Ok(o) => !String::from_utf8_lossy(&o.stderr).contains("incorrect return type"),
+            Err(_) => true,
+        }
+    })
+}
+
+/// Install the probed `llvm.coro.end` form into codegen. Idempotent and cheap
+/// (the probe is cached); call before any `codegen::generate*`.
+fn ensure_coro_end_probed() {
+    cplus_core::codegen::set_coro_end_returns_void(coro_end_returns_void());
+}
+
 /// Phase 2 Slice 2C: detect the host triple via `clang -print-target-triple`.
 /// Used by the dep walker to look up bundled binary paths in each vendor
 /// package's `src/lib/<triple>/`. Each build calls this once.
@@ -1111,6 +1158,7 @@ fn build_project(
     // linked without `-fsanitize=...`), which meant every e2e ASan
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
+    ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono);
 
@@ -1272,6 +1320,7 @@ fn build_lib_project(
         }
     }
 
+    ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono);
 
@@ -1347,7 +1396,13 @@ fn build_lib_project(
         // `r` replace + `c` create-if-missing + `s` index. ar quietly
         // overwrites a previous archive of the same name.
         let _ = fs::remove_file(&a_path); // ar refuses to add a duplicate entry across runs
-        let ar_status = Command::new("ar")
+        // Windows/MSVC has no `ar`; LLVM ships `llvm-ar`, which speaks the
+        // same `rcs` interface. `$CPC_AR` overrides for either host.
+        let ar_prog = env::var("CPC_AR")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| if cfg!(windows) { "llvm-ar" } else { "ar" }.to_string());
+        let ar_status = Command::new(&ar_prog)
             .arg("rcs")
             .arg(&a_path)
             .arg(&obj_path)
@@ -1359,7 +1414,7 @@ fn build_lib_project(
                 return ExitCode::from(s.code().unwrap_or(1).clamp(1, 255) as u8);
             }
             Err(e) => {
-                eprintln!("cpc: failed to invoke ar: {e}");
+                eprintln!("cpc: failed to invoke {ar_prog}: {e}");
                 return ExitCode::FAILURE;
             }
         }
@@ -1450,6 +1505,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
             Ok(p) => p,
             Err(code) => return code,
         };
+    ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], false, &mono);
     print!("{ir}");
@@ -2025,6 +2081,7 @@ fn run_test(
         }
         return ExitCode::SUCCESS;
     }
+    ensure_coro_end_probed();
     let ir = codegen::generate_test_binary(&program, build_mode, &tests, opts.json, &mono);
     let tmp_handle = match make_temp_file("cpc-test-", ".ll", ir.as_bytes()) {
         Ok(h) => h,
@@ -2816,7 +2873,11 @@ fn find_cpc_lsp() -> Option<PathBuf> {
 }
 
 fn phase0_hello(out: PathBuf) -> ExitCode {
-    let tmp_handle = match make_temp_file("cpc-", ".ll", HELLO_LL.as_bytes()) {
+    // The frozen hello.ll is platform-neutral; on Windows append the binary-
+    // mode constructor so the demo prints LF, not "\r\n" (matching the real
+    // codegen path). `windows_binary_mode_ctor_ir()` is empty off Windows.
+    let hello_ir = format!("{HELLO_LL}{}", cplus_core::codegen::windows_binary_mode_ctor_ir());
+    let tmp_handle = match make_temp_file("cpc-", ".ll", hello_ir.as_bytes()) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("cpc: writing IR to temp file: {e}");
@@ -3027,6 +3088,7 @@ fn build_ir(
     }
     let post_mono = run_monomorphize(prog, &mono, &files_map);
     let dbg_path = if debug_info { Some(file) } else { None };
+    ensure_coro_end_probed();
     Ok(codegen::generate_with_mono(
         &post_mono, build_mode, fp_contract, dbg_path, sanitizers, false, &mono,
     ))
@@ -3061,6 +3123,15 @@ fn run_clang(
     };
     let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module");
+    // f16 lowering on x86_64 emits libcalls to the half-precision conversion
+    // builtins (`__extendhfsf2`, `__truncsfhf2`). On Linux/macOS these live in
+    // the default runtime clang links; on windows-msvc clang links the MSVC
+    // runtime, which lacks them, so the link fails with "undefined symbol:
+    // __extendhfsf2". `-rtlib=compiler-rt` pulls in clang's builtins archive
+    // (just the helpers — the C runtime stays MSVC's) to resolve them.
+    if cfg!(windows) {
+        cmd.arg("-rtlib=compiler-rt");
+    }
     // Phase 11 polish: `-g` keeps the DWARF metadata cpc emitted in the
     // IR through to the final binary. Without it clang silently strips
     // the .debug_info section.
@@ -3094,11 +3165,13 @@ fn run_clang(
     // On Linux, libm is a separate library: math symbols like `fma`,
     // `fmaf`, `sqrt` (emitted by SIMD/float lowering) are NOT resolved
     // unless we pass `-lm`. macOS rolls libm into libSystem, which clang
-    // links by default, so this flag is unnecessary — and harmless — there,
-    // but we scope it to non-macOS to keep the macOS link line unchanged.
+    // links by default, so this flag is unnecessary — and harmless — there.
+    // Windows (MSVC) has no `m.lib` at all — the math functions live in the
+    // UCRT, which clang links by default; passing `-lm` makes lld-link fail
+    // with "could not open 'm.lib'". So scope this to non-macOS *Unix*.
     // Last on the line so it satisfies math refs from the object and any
     // bundled archive ahead of it.
-    if !cfg!(target_os = "macos") {
+    if cfg!(all(unix, not(target_os = "macos"))) {
         cmd.arg("-lm");
     }
     let status = cmd.arg("-o").arg(out).status();

@@ -2401,6 +2401,28 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     if size == 0 {
         return CAbiClass::Direct;
     }
+    // Microsoft x64 (windows-msvc) ABI: an aggregate is passed/returned in a
+    // single register only when its size is exactly 1, 2, 4, or 8 bytes;
+    // every other size (3/5/6/7 and anything > 8) is passed indirectly via a
+    // pointer to a caller-allocated copy. This is unlike x86_64-SysV (which
+    // packs up to 16 bytes into two integer registers, `{ i64, i64 }`) and
+    // AArch64-Darwin (`[2 x i64]`). Getting this wrong makes a 16-byte struct
+    // arrive in two registers where the callee expects a pointer — an
+    // immediate access violation on the first field read.
+    if cfg!(all(target_arch = "x86_64", windows)) {
+        let coerce = |ty: &str, n: u64| CAbiClass::Coerce {
+            llvm_ty: ty.to_string(),
+            size: n,
+            align: n,
+        };
+        return match size {
+            1 => coerce("i8", 1),
+            2 => coerce("i16", 2),
+            4 => coerce("i32", 4),
+            8 => coerce("i64", 8),
+            _ => CAbiClass::Indirect,
+        };
+    }
     // v0.0.3 Slice 3F: pick the per-platform coercion shape for 9..16-byte
     // aggregates. aarch64-darwin's AAPCS uses `[2 x i64]` (HFA-aware but
     // we treat all as integer-class). x86_64-sysv uses `{i64, i64}` —
@@ -3272,9 +3294,78 @@ fn ty_bit_width(ty: &Ty) -> u32 {
     }
 }
 
+/// LLVM IR for a Windows global constructor that switches stdout/stderr to
+/// binary mode, so a printed '\n' stays a single LF byte instead of being
+/// expanded to "\r\n" by the MSVC C runtime's text-mode translation. C+
+/// follows the Rust/Go convention that '\n' is LF on every platform.
+/// `_setmode(fd, _O_BINARY)` lives in the UCRT (`_O_BINARY` == 0x8000); fd 1
+/// is stdout, fd 2 is stderr. The ctor is `internal` and `@llvm.global_ctors`
+/// is `appending`, so emitting it in every module is safe (LLVM merges them)
+/// and idempotent. Returns `""` on non-Windows hosts. Emitted by
+/// `write_preamble` and injected into the frozen `hello.ll` demo so the
+/// behavior is uniform across both codegen paths.
+pub fn windows_binary_mode_ctor_ir() -> &'static str {
+    if cfg!(windows) {
+        "declare i32 @_setmode(i32, i32)\n\
+         define internal void @__cpc_set_binary_mode() {\n\
+         \x20 %1 = call i32 @_setmode(i32 1, i32 32768)\n\
+         \x20 %2 = call i32 @_setmode(i32 2, i32 32768)\n\
+         \x20 ret void\n\
+         }\n\
+         @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] \
+         [{ i32, ptr, ptr } { i32 65535, ptr @__cpc_set_binary_mode, ptr null }]\n"
+    } else {
+        ""
+    }
+}
+
+/// Whether `llvm.coro.end` returns `void` (LLVM ~22+) versus the older `i1`
+/// (older LLVM, and Apple clang 21). The correct form depends on the *target
+/// toolchain's* LLVM version — not the host `cpc` runs on — so `cpc` probes the
+/// discovered clang once at build time and installs the answer here via
+/// `set_coro_end_returns_void` before generating IR.
+///
+/// Defaults to `void` (the modern form). The `cpc` driver always sets the
+/// probed value before codegen, and the IR-only unit tests never link, so the
+/// default does not affect them.
+static CORO_END_RETURNS_VOID: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Install the probed `llvm.coro.end` return-type form (see
+/// `CORO_END_RETURNS_VOID`). Called by the driver before codegen.
+pub fn set_coro_end_returns_void(returns_void: bool) {
+    CORO_END_RETURNS_VOID.store(returns_void, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn coro_end_returns_void() -> bool {
+    CORO_END_RETURNS_VOID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The `declare` for `llvm.coro.end`, in whichever return-type form the target
+/// toolchain expects.
+fn coro_end_decl_ir() -> String {
+    if coro_end_returns_void() {
+        "declare void @llvm.coro.end(ptr, i1, token)\n".to_string()
+    } else {
+        "declare i1 @llvm.coro.end(ptr, i1, token)\n".to_string()
+    }
+}
+
+/// A `call` to `llvm.coro.end` on `%.coro.hdl`, matching the declared form. The
+/// `i1` form binds (and discards) a result SSA value; the `void` form does not.
+fn coro_end_call_ir() -> String {
+    if coro_end_returns_void() {
+        "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n".to_string()
+    } else {
+        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n"
+            .to_string()
+    }
+}
+
 fn write_preamble(out: &mut String) {
     out.push_str("; C+ Phase 1 codegen output\n");
     out.push_str("\n");
+    out.push_str(windows_binary_mode_ctor_ir());
     // Format string used by `println(i32)`. Module-private constant.
     out.push_str(
         "@.fmt_int_nl = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n",
@@ -3527,7 +3618,13 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare ptr @llvm.coro.begin(token, ptr)\n");
     out.push_str("declare i64 @llvm.coro.size.i64()\n");
     out.push_str("declare i8 @llvm.coro.suspend(token, i1)\n");
-    out.push_str("declare i1 @llvm.coro.end(ptr, i1, token)\n");
+    // `llvm.coro.end`'s return type differs by LLVM version: older LLVM (and
+    // Apple clang 21) declare it returning `i1`; LLVM ~22+ changed it to
+    // `void`, and each version's verifier rejects the other with "Intrinsic
+    // has incorrect return type!". `cpc` probes the target clang and installs
+    // the right form via `set_coro_end_returns_void` before codegen runs (see
+    // `coro_end_call_ir`). The result value is never used either way.
+    out.push_str(&coro_end_decl_ir());
     out.push_str("declare ptr @llvm.coro.free(token, ptr)\n");
     out.push_str("declare i1 @llvm.coro.done(ptr)\n");
     out.push_str("declare void @llvm.coro.resume(ptr)\n");
@@ -5358,7 +5455,7 @@ fn gen_async_method(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        &coro_end_call_ir(),
     );
     state.body.push_str(&format!(
         "  %.coro.future0 = insertvalue {future_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -5570,7 +5667,7 @@ fn gen_gen_method(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        &coro_end_call_ir(),
     );
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -5711,7 +5808,7 @@ fn gen_gen_function(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        &coro_end_call_ir(),
     );
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -5909,7 +6006,7 @@ fn gen_async_function(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        &coro_end_call_ir(),
     );
     // Wrap the handle in Future[T].
     state.body.push_str(&format!(
@@ -6272,7 +6369,7 @@ fn gen_gen_enum_method(
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
     state.body.push_str(
-        "  %.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n",
+        &coro_end_call_ir(),
     );
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -14185,6 +14282,43 @@ mod tests {
         generate(&prog, mode)
     }
 
+    /// The `llvm.coro.end` declare + calls follow the probed return-type form
+    /// (`i1` for older LLVM / Apple clang 21, `void` for LLVM ~22+). A
+    /// regression guard for the Windows-port fix: emitting one form
+    /// unconditionally broke the other toolchain ("Intrinsic has incorrect
+    /// return type!"). The driver probes the real clang; here we drive the flag
+    /// directly. Both forms must be internally consistent (declare matches call).
+    #[test]
+    fn coro_end_emit_follows_probed_return_type() {
+        // i1 form (older LLVM / Apple clang 21): declare + call both i1, and the
+        // call binds a (discarded) result SSA value.
+        set_coro_end_returns_void(false);
+        assert_eq!(
+            coro_end_decl_ir(),
+            "declare i1 @llvm.coro.end(ptr, i1, token)\n"
+        );
+        assert!(
+            coro_end_call_ir()
+                .contains("%.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)"),
+            "i1 mode call: {}",
+            coro_end_call_ir()
+        );
+
+        // void form (LLVM ~22+): declare + call both void, no result value.
+        set_coro_end_returns_void(true);
+        assert_eq!(
+            coro_end_decl_ir(),
+            "declare void @llvm.coro.end(ptr, i1, token)\n"
+        );
+        assert_eq!(
+            coro_end_call_ir(),
+            "  call void @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)\n"
+        );
+
+        // Restore the default for any other test that generates async IR.
+        set_coro_end_returns_void(true);
+    }
+
     /// v0.0.3 Phase 5 Slice 5B: gen_src + monomorphize. Required for
     /// codegen IR tests of intrinsics whose return type is a generic
     /// struct (e.g. `__cplus_thread_spawn` returning `JoinHandle[O]`).
@@ -17240,6 +17374,19 @@ mod tests {
                  return 0;\n\
              }",
         );
+        // Windows (Microsoft x64) passes a 16-byte aggregate indirectly (bare
+        // `ptr`), not coerced into a register pair like SysV/aarch64-darwin.
+        if cfg!(all(target_arch = "x86_64", windows)) {
+            assert!(
+                ir.contains("declare i64 @take_s16(ptr)"),
+                "16B struct param must declare as ptr (indirect) on Win64, got:\n{ir}"
+            );
+            assert!(
+                ir.contains("= call i64 @take_s16(ptr "),
+                "16B struct call site must pass ptr (indirect) on Win64, got:\n{ir}"
+            );
+            return;
+        }
         let coerced = if cfg!(target_arch = "x86_64") {
             "{ i64, i64 }"
         } else {
@@ -17941,6 +18088,11 @@ mod tests {
         // A 16-byte two-eightbyte aggregate coerces to the target's
         // register-pair type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }`
         // on x86_64-sysv (see the `cfg!(target_arch)` split in classify_c_abi).
+        // On Windows (Microsoft x64) a 16-byte aggregate is passed indirectly.
+        if cfg!(all(target_arch = "x86_64", windows)) {
+            assert_eq!(classify_c_abi(&Ty::Struct(id), &types), CAbiClass::Indirect);
+            return;
+        }
         let expected = if cfg!(target_arch = "x86_64") {
             "{ i64, i64 }"
         } else {
@@ -18009,7 +18161,10 @@ mod tests {
         );
         // 16-byte two-eightbyte param coerces to the target's register-pair
         // type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }` on x86_64-sysv.
-        let expected = if cfg!(target_arch = "x86_64") {
+        // On Windows (Microsoft x64) it is passed indirectly (`ptr` byval).
+        let expected = if cfg!(all(target_arch = "x86_64", windows)) {
+            "define i64 @sum(ptr"
+        } else if cfg!(target_arch = "x86_64") {
             "define i64 @sum({ i64, i64 }"
         } else {
             "define i64 @sum([2 x i64]"

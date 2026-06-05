@@ -1,0 +1,90 @@
+name: Windows CI
+
+# Builds + tests the toolchain on Windows (x86_64-pc-windows-msvc) on every
+# push and PR. Unlike ci-linux.yml / release.yml (which gate on a vX.Y.Z tag),
+# this runs on every push so cross-platform regressions surface early.
+#
+# cpc emits LLVM IR and shells out to clang to assemble/link, so the runner
+# needs clang >= 19 (for the `preserve_nonecc` calling convention cpc emits) on
+# PATH. The MSVC linker comes from the runner's preinstalled Visual Studio
+# (Rust's *-windows-msvc toolchain locates it automatically — no setup). The
+# clang ASan runtime dir is also put on PATH so the `--asan` e2e tests can load
+# clang_rt.asan_dynamic at run time.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: cargo test + build (Windows, clang)
+    runs-on: windows-latest # currently windows-2022 (x86_64)
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install LLVM/clang (>= 19)
+        run: choco upgrade llvm -y --no-progress
+
+      - name: Put clang + ASan runtime on PATH
+        shell: pwsh
+        run: |
+          $bin = "C:\Program Files\LLVM\bin"
+          if (-not (Test-Path "$bin\clang.exe")) { throw "clang not found at $bin" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          # The `--asan` e2e tests load clang_rt.asan_dynamic-x86_64.dll at run
+          # time; its directory is not on PATH by default.
+          $asan = Get-ChildItem "C:\Program Files\LLVM\lib\clang\*\lib\windows\clang_rt.asan_dynamic-x86_64.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($asan) { Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $asan.FullName) }
+
+      - name: Versions
+        run: |
+          clang --version
+          rustc --version
+
+      - name: Run the workspace test suite
+        run: cargo test --workspace --release --no-fail-fast
+
+      - name: Build release binaries
+        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+
+      - name: Smoke-test the built cpc on a clean program
+        shell: pwsh
+        run: |
+          $tmp = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP "smoke")
+          $src = Join-Path $tmp "hello.cplus"
+          @'
+          extern fn printf(fmt: *u8, ...) -> i32;
+          fn main() -> i32 {
+              let msg: str = "hello from C+ on Windows\n";
+              unsafe { printf(str_ptr(msg)); }
+              return 42;
+          }
+          '@ | Set-Content -Encoding ascii $src
+          & "target\release\cpc.exe" $src -o (Join-Path $tmp "hello.exe")
+          if ($LASTEXITCODE -ne 0) { throw "cpc failed to compile the program" }
+          & (Join-Path $tmp "hello.exe")
+          $code = $LASTEXITCODE
+          Write-Host "exit code: $code"
+          if ($code -ne 42) { throw "smoke test failed: expected 42, got $code" }
+          Write-Host "OK: cpc compiled, linked, and ran a native binary."
+          # The program intentionally exits 42, leaving $LASTEXITCODE=42; reset
+          # it so the Actions pwsh wrapper doesn't fail the step on it.
+          exit 0
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v5
+        with:
+          name: cplus-x86_64-pc-windows-msvc
+          path: |
+            target/release/cpc.exe
+            target/release/cpc-lsp.exe
+            target/release/cpc-bindgen.exe
+          if-no-files-found: error
