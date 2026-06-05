@@ -9030,7 +9030,7 @@ fn stdlib_net_tcp_round_trip() {
     // the async I/O wrappers; its async fns also implicitly need
     // stdlib/future for the `Future[T]` shape. Stage both alongside net.
     for name in &[
-        "result", "vec", "net", "io", "reactor", "future", "iterator", "option",
+        "result", "vec", "net", "netsys", "io", "reactor", "future", "iterator", "option",
     ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9040,6 +9040,19 @@ fn stdlib_net_tcp_round_trip() {
         )
         .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    // On Linux the resolver loads the `*_linux.cplus` overrides (epoll reactor,
+    // Linux syscall constants) in place of their base files; stage them so the
+    // fixture links on Linux too. macOS uses the base files copied above.
+    for over in &["netsys_linux", "reactor_linux"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{over}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{over}.cplus")), src).unwrap();
     }
     // Pick a port that's almost certainly unused on the test runner.
     // Using a per-test-pid offset keeps parallel test runs from colliding.
@@ -9210,7 +9223,7 @@ fn stdlib_fs_round_trip() {
     // v0.0.5 Phase 4 Slice 4C: fs.cplus now imports net + reactor +
     // future (for File::read_async). Stage them too.
     for name in &[
-        "result", "vec", "fs", "io", "iterator", "option", "net", "reactor", "future",
+        "result", "vec", "fs", "io", "iterator", "option", "net", "netsys", "reactor", "future",
     ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9220,6 +9233,18 @@ fn stdlib_fs_round_trip() {
         )
         .unwrap();
         std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    // On Linux the resolver loads the `*_linux.cplus` overrides in place of
+    // their base files; stage them so the fixture links on Linux too.
+    for over in &["netsys_linux", "reactor_linux"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{over}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{over}.cplus")), src).unwrap();
     }
     let tmp_file = dir.join("fsrt.txt");
     let tmp_path = tmp_file.to_string_lossy().to_string();

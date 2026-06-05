@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest # currently Ubuntu 24.04 (amd64)
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -73,7 +73,7 @@ jobs:
           dpkg-deb --contents "dist/${PKG}.deb"
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.deb.outputs.pkg }}
           path: dist/*.deb
