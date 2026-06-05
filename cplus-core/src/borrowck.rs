@@ -543,6 +543,30 @@ struct SigTable {
     methods: HashMap<String, FnEntry>,
 }
 
+/// v0.0.15: the borrowck mirror of codegen's `effective_move` — does passing
+/// this parameter by value *consume* the argument (move-by-default)? A bare
+/// non-Copy aggregate is a move: `move x` always, an explicit `mut`/`borrow`
+/// never, and otherwise a bare `x: T` whose type is a **concrete** non-Copy
+/// struct/enum the oracle can resolve.
+///
+/// Restricted to `TypeKind::Path` on purpose: borrowck runs *before*
+/// monomorphization, so a generic instantiation (`Vec[T]`, `Pair[A, B]`) or a
+/// bare generic param (`T`) is unresolved here — `definitely_non_copy` returns
+/// false for those. Treating them as non-moves keeps the analysis conservative
+/// (no false use-after-move); codegen still moves them correctly post-mono. So
+/// this catches the concrete cases (`fn f(x: SomeEnum)`, `m(x: SomeStruct)`)
+/// that previously slipped through as leniency, while the generic residual
+/// stays sound-but-undetected pending a post-mono borrowck pass.
+fn param_is_effective_move(p: &crate::ast::Param, oracle: &CopyOracle) -> bool {
+    if p.move_ {
+        return true;
+    }
+    if p.mutable || p.borrow_ {
+        return false;
+    }
+    matches!(&p.ty.kind, TypeKind::Path(_)) && oracle.definitely_non_copy(&p.ty)
+}
+
 impl SigTable {
     fn collect(prog: &Program, oracle: &CopyOracle) -> Self {
         let mut t = SigTable::default();
@@ -554,7 +578,11 @@ impl SigTable {
                     t.fns.insert(
                         f.name.name.clone(),
                         FnEntry {
-                            param_moves: f.params.iter().map(|p| p.move_).collect(),
+                            param_moves: f
+                                .params
+                                .iter()
+                                .map(|p| param_is_effective_move(p, oracle))
+                                .collect(),
                             param_muts: f.params.iter().map(|p| p.mutable).collect(),
                             return_borrow,
                             return_borrow_flavor,
@@ -569,7 +597,11 @@ impl SigTable {
                         t.methods.insert(
                             key,
                             FnEntry {
-                                param_moves: m.params.iter().map(|p| p.move_).collect(),
+                                param_moves: m
+                                    .params
+                                    .iter()
+                                    .map(|p| param_is_effective_move(p, oracle))
+                                    .collect(),
                                 param_muts: m.params.iter().map(|p| p.mutable).collect(),
                                 return_borrow,
                                 return_borrow_flavor,
@@ -3588,7 +3620,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn drain(move b: B, n: i32) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   drain(y, peek(y));
@@ -3615,6 +3647,53 @@ fn caller() {
         assert!(
             !codes.iter().any(|c| c == "E0370"),
             "E0370 should not fire on Copy bindings; got {codes:?}"
+        );
+    }
+
+    // v0.0.15: a bare (implicit-move) non-Copy *concrete* struct/enum call
+    // argument is now classified as a MOVE (matching codegen's `effective_move`
+    // and sema's E0335), not a shared read. Passing such an arg while its place
+    // is exclusively borrowed therefore fires E0372 (move-while-borrowed), not
+    // E0383 (read-while-borrowed). Pre-fix, `param_moves` used the raw `move_`
+    // keyword, so the bare arg was treated as a read and mis-reported E0383.
+    #[test]
+    fn bare_noncopy_struct_arg_while_borrowed_is_move_e0372() {
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(mut self) { return; } }
+fn cursor(mut b: B) -> B { return b; }
+fn take(b: B) -> i32 { return 0; }
+fn caller() {
+  let v: B = B { x: 1 };
+  let cur: B = cursor(v);
+  let n: i32 = take(v);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "bare non-Copy struct arg while borrowed should move (E0372), got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn bare_noncopy_enum_arg_while_borrowed_is_move_e0372() {
+        let src = "\
+struct Leaf { tag: i32 }
+impl Leaf { fn drop(mut self) { return; } }
+enum E { A(Leaf), B }
+fn cursor(mut e: E) -> E { return e; }
+fn take(e: E) -> i32 { return 0; }
+fn caller() {
+  let v: E = E::B;
+  let cur: E = cursor(v);
+  let n: i32 = take(v);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "bare non-Copy enum arg while borrowed should move (E0372), got {codes:?}"
         );
     }
 
@@ -3650,7 +3729,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn drain(move b: B, n: i32) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y = B { x: 1 };
   drain(y, peek(y));
@@ -4450,7 +4529,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn drain(move b: B, n: i32) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   drain(y, peek(y));
@@ -4537,7 +4616,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn write_thing(mut a: B, n: i32) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   write_thing(y, peek(y));
@@ -4765,7 +4844,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -4787,7 +4866,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   if true {
@@ -4813,7 +4892,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -5047,7 +5126,7 @@ impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(mut self) { return; } }
 fn cursor(mut i: Inner) -> Inner { return i; }
-fn peek_pair(p: Pair) -> i32 { return 0; }
+fn peek_pair(borrow p: Pair) -> i32 { return 0; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   let cur: Inner = cursor(p.left);
@@ -5431,7 +5510,7 @@ struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
 fn drain(move c: B) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);

@@ -33,7 +33,7 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Check out source at the tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ steps.meta.outputs.tag }}
 
@@ -69,10 +69,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source (for the formula template)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check out the tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: netdur/homebrew-cplus
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

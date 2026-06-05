@@ -1470,7 +1470,7 @@ fn move_and_borrow_in_same_call_rejected() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn drain(n: i32, move b: B) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
     drain(peek(y), y);
@@ -3132,7 +3132,7 @@ fn e0381_mut_and_shared_borrow_in_same_call_rejected() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn write_thing(mut a: B, n: i32) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
     write_thing(y, peek(y));
@@ -4216,7 +4216,7 @@ fn borrow_region_with_mut_marker_is_exclusive() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut buf: borrow A B) -> borrow A B { return buf; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -4549,7 +4549,7 @@ impl Inner { fn drop(mut self) { return; } }
 struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(mut self) { return; } }
 fn cursor(mut i: Inner) -> Inner { return i; }
-fn peek_pair(p: Pair) -> i32 { return 0; }
+fn peek_pair(borrow p: Pair) -> i32 { return 0; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     let cur: Inner = cursor(p.left);
@@ -4624,7 +4624,7 @@ fn e0383_read_of_exclusively_borrowed_place_rejected() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -4661,7 +4661,7 @@ struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
 fn drain(move c: B) { return; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -4744,7 +4744,7 @@ impl B {
     fn drop(mut self) { return; }
     fn cursor(mut self) -> B { return self; }
 }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let mut v: B = B { x: 1 };
     let cur: B = v.cursor();
@@ -4781,7 +4781,7 @@ fn reading_the_exclusive_borrower_itself_accepted() {
 struct B { x: i32 }
 impl B { fn drop(mut self) { return; } }
 fn cursor(mut b: B) -> B { return b; }
-fn peek(b: B) -> i32 { return b.x; }
+fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
