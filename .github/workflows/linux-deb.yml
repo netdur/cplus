@@ -1,0 +1,111 @@
+name: Linux .deb
+
+# Build the C+ toolchain on Ubuntu, package it as a .deb, upload the package
+# as a workflow artifact, then install it via apt (so the `Depends:` line is
+# actually exercised) and smoke-test the installed `cpc` on the clean runner.
+#
+# The smoke test deliberately does NOT touch update-alternatives: cpc
+# discovers a clang >= 19 on its own (it probes clang / clang-21 / clang-20 /
+# clang-19, honoring $CPC_CLANG), so an apt install of this .deb — which
+# pulls in clang-19 via Depends — works out of the box even though Ubuntu
+# 24.04's bare `clang` is still 18.
+
+on:
+  push:
+    branches: [linux-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest # currently Ubuntu 24.04 (amd64)
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release -p cpc -p cpc-lsp -p cpc-bindgen
+
+      - name: Stage and build the .deb
+        id: deb
+        run: |
+          set -euo pipefail
+          # Upstream version from the cpc crate; append a git short SHA so dev
+          # builds from a branch get unique, sortable versions.
+          UPSTREAM="$(sed -n 's/^version *= *"\(.*\)"/\1/p' cpc/Cargo.toml | head -1)"
+          SHA="$(git rev-parse --short=7 HEAD)"
+          VER="${UPSTREAM}~git${SHA}-1"
+          PKG="cplus_${VER}_amd64"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "pkg=$PKG"     >> "$GITHUB_OUTPUT"
+
+          # Lay out the package tree.
+          ROOT="dist/${PKG}"
+          install -d "$ROOT/DEBIAN" "$ROOT/usr/bin"
+          for b in cpc cpc-lsp cpc-bindgen; do
+            install -m0755 "target/release/$b" "$ROOT/usr/bin/$b"
+            strip "$ROOT/usr/bin/$b" || true
+          done
+
+          cat > "$ROOT/DEBIAN/control" <<EOF
+          Package: cplus
+          Version: ${VER}
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Depends: clang-19, binutils
+          Maintainer: netdur <netdur@gmail.com>
+          Homepage: https://cplus-lang.dev
+          Description: C+ programming language toolchain
+           The C+ compiler (cpc), language server (cpc-lsp), and FFI binding
+           generator (cpc-bindgen). cpc emits LLVM IR and links via clang;
+           requires clang/LLVM 19 or newer.
+          EOF
+
+          dpkg-deb --root-owner-group --build "$ROOT"
+          ls -l dist/*.deb
+          dpkg-deb --info "dist/${PKG}.deb"
+          dpkg-deb --contents "dist/${PKG}.deb"
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.deb.outputs.pkg }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: Install the .deb via apt (resolves Depends, incl. clang-19)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y "./dist/${{ steps.deb.outputs.pkg }}.deb"
+          # Intentionally NOT setting update-alternatives: prove cpc finds
+          # clang-19 itself even though the bare `clang` here is 18.
+          echo "bare clang: $(clang --version | head -1)"
+          command -v cpc cpc-lsp cpc-bindgen
+
+      - name: Smoke-test the installed cpc on a clean runner
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cat > "$tmp/hello.cplus" <<'EOF'
+          extern fn printf(fmt: *u8, ...) -> i32;
+          fn main() -> i32 {
+              let msg: str = "hello from C+ on Linux\n";
+              unsafe { printf(str_ptr(msg)); }
+              return 42;
+          }
+          EOF
+          cpc "$tmp/hello.cplus" -o "$tmp/hello"
+          set +e
+          "$tmp/hello"
+          code=$?
+          set -e
+          echo "exit code: $code"
+          test "$code" -eq 42
+          echo "OK: installed cpc compiled, linked, and ran a native binary."

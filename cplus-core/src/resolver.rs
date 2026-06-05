@@ -1017,7 +1017,9 @@ fn classify_import_path(
         if p.extension().is_none() {
             p.set_extension("cplus");
         }
-        return Ok(p);
+        // Relative imports reach the reactor too (executor/time/net do
+        // `import "./reactor"`), so platform selection must apply here.
+        return Ok(platform_override(p));
     }
 
     if !project_mode {
@@ -1027,7 +1029,7 @@ fn classify_import_path(
         if p.extension().is_none() {
             p.set_extension("cplus");
         }
-        return Ok(p);
+        return Ok(platform_override(p));
     }
 
     let mut segments = extensionless.split('/');
@@ -1091,11 +1093,40 @@ fn classify_import_path(
             }
             alt.set_extension("cplus");
             if alt.is_file() {
-                return Ok(alt);
+                return Ok(platform_override(alt));
             }
         }
     }
-    Ok(p)
+    Ok(platform_override(p))
+}
+
+/// Platform-specific source override. Some stdlib modules have an
+/// OS-specific implementation that can't share one source file (e.g. the
+/// async reactor: kqueue on macOS, epoll on Linux, and C+ has no in-source
+/// `cfg`). Convention: a sibling `<name>_<os>.cplus` next to `<name>.cplus`
+/// shadows the base file on that OS. When present for the current target,
+/// it is loaded in place of the base — transparently, since these modules
+/// export the same public symbols. Today only Linux uses this (`_linux`),
+/// but the mechanism generalizes to any `cfg!(target_os)`.
+fn platform_override(p: PathBuf) -> PathBuf {
+    let os_suffix = if cfg!(target_os = "linux") {
+        "_linux"
+    } else {
+        return p;
+    };
+    // Only base `.cplus` files participate; never double-suffix.
+    let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+        return p;
+    };
+    if stem.ends_with(os_suffix) {
+        return p;
+    }
+    let candidate = p.with_file_name(format!("{stem}{os_suffix}.cplus"));
+    if candidate.is_file() {
+        candidate
+    } else {
+        p
+    }
 }
 
 fn derive_file_id(canonical: &Path, manifest_root: &Path) -> String {

@@ -6756,7 +6756,10 @@ fn phase11_vec_generic_demo_runs() {
     // (return-type substitution + Type[args]::assoc_fn).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    let src = "/Users/adel/Workspace/C+/docs/examples/phase11_vec_generic.cplus";
+    let src = format!(
+        "{}/../docs/examples/phase11_vec_generic.cplus",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let bin = dir.join("vec_generic");
     let out = Command::new(cpc)
         .arg(src)
@@ -7150,7 +7153,10 @@ fn phase8_interp_non_tostring_type_rejected_e0612() {
 fn phase8_interp_demo_sample_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    let src = "/Users/adel/Workspace/C+/docs/examples/phase8_interpolation.cplus";
+    let src = format!(
+        "{}/../docs/examples/phase8_interpolation.cplus",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let bin = dir.join("interp_demo");
     let out = Command::new(cpc)
         .arg(src)
@@ -9669,6 +9675,13 @@ fn async_fn_returning_string_through_block_on() {
         __reactor_for_executor,
     )
     .unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(
@@ -9852,6 +9865,13 @@ fn generic_async_fn_multi_instantiation_round_trip() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor.cplus"),
         __reactor_for_executor,
+    )
+    .unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
@@ -10474,6 +10494,13 @@ fn stdlib_executor_yield_now_round_trips() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/executor\" as executor;\n\
@@ -10529,6 +10556,13 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/executor\" as executor;\n\
@@ -10618,12 +10652,32 @@ fn stdlib_fs_file_lines_round_trip() {
     let reactor_src = include_str!("../../vendor/stdlib/src/reactor.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/fs.cplus"), fs_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    // net.cplus imports stdlib/netsys for platform syscall constants; the
+    // resolver loads netsys_linux.cplus on Linux. Stage both so the fixture
+    // resolves on either OS.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     // Each test gets its own temp file to avoid cross-test interference.
     let test_file = dir.join("input.txt");
     std::fs::write(&test_file, "alpha\nbeta beta\ngamma").unwrap();
@@ -10699,12 +10753,32 @@ fn stdlib_fs_file_read_async_compiles() {
     let executor_src = include_str!("../../vendor/stdlib/src/executor.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/fs.cplus"), fs_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    // net.cplus imports stdlib/netsys for platform syscall constants; the
+    // resolver loads netsys_linux.cplus on Linux. Stage both so the fixture
+    // resolves on either OS.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     let test_file = dir.join("input.txt");
     std::fs::write(&test_file, "x").unwrap();
@@ -10856,6 +10930,13 @@ fn phase4f_concurrent_n_sleeps_stress() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/time.cplus"), time_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -10964,7 +11045,27 @@ fn async_method_on_user_struct_round_trip() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    // net.cplus imports stdlib/netsys for platform syscall constants; the
+    // resolver loads netsys_linux.cplus on Linux. Stage both so the fixture
+    // resolves on either OS.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
@@ -11067,6 +11168,13 @@ fn stdlib_time_sleep_round_trip() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/time.cplus"), time_src).unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -11152,7 +11260,27 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    // net.cplus imports stdlib/netsys for platform syscall constants; the
+    // resolver loads netsys_linux.cplus on Linux. Stage both so the fixture
+    // resolves on either OS.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
@@ -12627,6 +12755,13 @@ fn phase1d_async_runs_clean_under_asan() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/future\" as future;\n\
@@ -15603,7 +15738,27 @@ fn recipe_async_fetch_runs() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/net.cplus"), net_src).unwrap();
+    // net.cplus imports stdlib/netsys for platform syscall constants; the
+    // resolver loads netsys_linux.cplus on Linux. Stage both so the fixture
+    // resolves on either OS.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/netsys_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/netsys_linux.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/result.cplus"), result_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
@@ -15665,6 +15820,13 @@ fn recipe_async_yield_demo_runs() {
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
+    )
+    .unwrap();
     let st = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
@@ -15700,6 +15862,13 @@ fn recipe_async_compute_runs() {
     std::fs::write(
         dir.join("vendor/stdlib/src/reactor.cplus"),
         __reactor_for_executor,
+    )
+    .unwrap();
+    // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
+    // reactor.cplus (kqueue); stage it alongside so the fixture links.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/reactor_linux.cplus"),
+        include_str!("../../vendor/stdlib/src/reactor_linux.cplus"),
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();

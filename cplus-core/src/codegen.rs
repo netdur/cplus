@@ -7759,11 +7759,40 @@ impl<'a> FnState<'a> {
                                         let callee_is_fastcc = self.md.is_fastcc(name);
                                         let cc_matches = callee_is_fastcc
                                             == self.enclosing_is_fastcc;
+                                        // Target guard: x86-64 cannot guarantee
+                                        // a tail call that returns a by-value
+                                        // aggregate wider than the 16-byte
+                                        // System V register-return window — the
+                                        // value comes back in memory and LLVM's
+                                        // backend aborts with "failed to perform
+                                        // tail call elimination on a call site
+                                        // marked musttail". (sret returns go
+                                        // through a separate void-return path and
+                                        // are unaffected.) arm64/AArch64 — the
+                                        // macOS target — has no such limit, so we
+                                        // only relax `musttail` on x86-64 and
+                                        // leave the macOS code path byte-for-byte
+                                        // identical. `musttail` is a TCO
+                                        // optimization here, never a correctness
+                                        // requirement, so falling back to a plain
+                                        // `call` is always safe.
+                                        let tail_return_ok = if cfg!(target_arch = "x86_64")
+                                            && !return_passes_by_sret_widened(
+                                                &self.return_ty,
+                                                self.types,
+                                            ) {
+                                            static_layout(&self.return_ty, self.types)
+                                                .map(|(sz, _)| sz <= 16)
+                                                .unwrap_or(true)
+                                        } else {
+                                            true
+                                        };
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
                                             && callee_params == enclosing
                                             && name != "println"
                                             && cc_matches
+                                            && tail_return_ok
                                         {
                                             self.pending_musttail = true;
                                         }
@@ -12634,6 +12663,14 @@ impl<'a> FnState<'a> {
         // First pass: produce a (ptr, len) pair per part.
         let mut piece_ptrs: Vec<String> = Vec::with_capacity(parts.len());
         let mut piece_lens: Vec<String> = Vec::with_capacity(parts.len());
+        // Per-segment conversion buffers (int/float/bool/str → string) are
+        // freshly malloc'd just to be copied into the output buffer below.
+        // Collect them so we can free them once the copy is done — otherwise
+        // each `${non_string}` segment leaks its scratch buffer. A
+        // `Ty::String` operand is excluded: that value is owned by its
+        // binding (dropped at scope exit), so freeing it here would
+        // double-free.
+        let mut temps_to_free: Vec<String> = Vec::new();
         for p in parts {
             match p {
                 InterpStrPart::Lit(s) => {
@@ -12647,14 +12684,19 @@ impl<'a> FnState<'a> {
                 }
                 InterpStrPart::Expr(e) => {
                     let (v, t) = self.gen_expr(e).expect("interp expr has value");
-                    // Convert to a string aggregate.
-                    let (sv, _) = match t {
-                        Ty::String => (v, Ty::String),
-                        Ty::Str => self.gen_to_string_str(&v),
-                        Ty::Bool => self.gen_to_string_bool(&v),
-                        Ty::F32 | Ty::F64 => self.gen_to_string_float(&v, &t),
-                        ref rt if rt.is_signed_int() => self.gen_to_string_signed(&v, rt),
-                        ref rt if rt.is_unsigned_int() => self.gen_to_string_unsigned(&v, rt),
+                    // Convert to a string aggregate. Every arm except the
+                    // `Ty::String` passthrough allocates a fresh buffer.
+                    let (sv, is_temp) = match t {
+                        Ty::String => (v, false),
+                        Ty::Str => (self.gen_to_string_str(&v).0, true),
+                        Ty::Bool => (self.gen_to_string_bool(&v).0, true),
+                        Ty::F32 | Ty::F64 => (self.gen_to_string_float(&v, &t).0, true),
+                        ref rt if rt.is_signed_int() => {
+                            (self.gen_to_string_signed(&v, rt).0, true)
+                        }
+                        ref rt if rt.is_unsigned_int() => {
+                            (self.gen_to_string_unsigned(&v, rt).0, true)
+                        }
                         _ => unreachable!("sema validated interp expr type"),
                     };
                     // Extract ptr+len.
@@ -12662,6 +12704,9 @@ impl<'a> FnState<'a> {
                     self.emit(&format!("{pp} = extractvalue {{ ptr, i64, i64 }} {sv}, 0"));
                     let lp = self.next_tmp();
                     self.emit(&format!("{lp} = extractvalue {{ ptr, i64, i64 }} {sv}, 1"));
+                    if is_temp {
+                        temps_to_free.push(pp.clone());
+                    }
                     piece_ptrs.push(pp);
                     piece_lens.push(lp);
                 }
@@ -12691,6 +12736,11 @@ impl<'a> FnState<'a> {
             let next_off = self.next_tmp();
             self.emit(&format!("{next_off} = add i64 {offset}, {len}"));
             offset = next_off;
+        }
+        // All segment bytes are now copied into `buf`; release the scratch
+        // conversion buffers (String operands were never collected here).
+        for tmp in &temps_to_free {
+            self.emit(&format!("call void @free(ptr {tmp})"));
         }
         let v = self.string_aggregate(&buf, &total, &total);
         (v, Ty::String)
@@ -17888,12 +17938,20 @@ mod tests {
         assert!(diags.is_empty());
         let types = collect_types(&prog);
         let id = types.struct_by_name["Pair"];
+        // A 16-byte two-eightbyte aggregate coerces to the target's
+        // register-pair type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }`
+        // on x86_64-sysv (see the `cfg!(target_arch)` split in classify_c_abi).
+        let expected = if cfg!(target_arch = "x86_64") {
+            "{ i64, i64 }"
+        } else {
+            "[2 x i64]"
+        };
         match classify_c_abi(&Ty::Struct(id), &types) {
             CAbiClass::Coerce { llvm_ty, size, .. } => {
-                assert_eq!(llvm_ty, "[2 x i64]");
+                assert_eq!(llvm_ty, expected);
                 assert_eq!(size, 16);
             }
-            other => panic!("expected Coerce([2 x i64]), got {other:?}"),
+            other => panic!("expected Coerce({expected}), got {other:?}"),
         }
     }
 
@@ -17949,9 +18007,16 @@ mod tests {
             "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
              pub extern fn sum(p: Pair) -> i64 { return p.a + p.b; }",
         );
+        // 16-byte two-eightbyte param coerces to the target's register-pair
+        // type: `[2 x i64]` on aarch64-darwin, `{ i64, i64 }` on x86_64-sysv.
+        let expected = if cfg!(target_arch = "x86_64") {
+            "define i64 @sum({ i64, i64 }"
+        } else {
+            "define i64 @sum([2 x i64]"
+        };
         assert!(
-            ir.contains("define i64 @sum([2 x i64]"),
-            "expected `define i64 @sum([2 x i64] ...)`, got:\n{ir}"
+            ir.contains(expected),
+            "expected `{expected} ...)`, got:\n{ir}"
         );
     }
 

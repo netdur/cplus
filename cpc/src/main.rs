@@ -10,6 +10,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::OnceLock;
 use tempfile::NamedTempFile;
 
 mod mcp;
@@ -663,11 +664,63 @@ struct TestOpts {
     json: bool,
 }
 
+/// The clang executable cpc shells out to for assembling and linking.
+///
+/// cpc emits the `preserve_nonecc` calling convention on drop glue, which
+/// LLVM only understands from **version 19**. Distros routinely ship an
+/// older `clang` as the default with newer `clang-NN` installed alongside
+/// (e.g. Ubuntu 24.04: `clang` is 18, `clang-19` is a separate package that
+/// does NOT take over the `clang` name). So rather than hardcode `clang`,
+/// resolve the program once per process:
+///   1. `$CPC_CLANG` if set — an explicit user/operator override, trusted
+///      verbatim (lets packagers or CI point at any toolchain).
+///   2. bare `clang` if it already reports LLVM >= 19 — honors the user's
+///      PATH / `update-alternatives` choice.
+///   3. `clang-21`, `clang-20`, `clang-19` in descending order — the
+///      side-by-side versioned binaries.
+/// If nothing qualifies, fall back to bare `clang` so the existing failure
+/// path (clang rejecting the IR) still surfaces a clear compiler error.
+fn clang_program() -> &'static str {
+    static RESOLVED: OnceLock<String> = OnceLock::new();
+    RESOLVED
+        .get_or_init(|| {
+            if let Ok(p) = env::var("CPC_CLANG") {
+                if !p.is_empty() {
+                    return p;
+                }
+            }
+            if clang_major("clang").is_some_and(|m| m >= 19) {
+                return "clang".to_string();
+            }
+            for cand in ["clang-21", "clang-20", "clang-19"] {
+                if clang_major(cand).is_some_and(|m| m >= 19) {
+                    return cand.to_string();
+                }
+            }
+            "clang".to_string()
+        })
+        .as_str()
+}
+
+/// Major LLVM version reported by `<prog> --version`, or `None` if the
+/// program can't be run or its output can't be parsed. The first line looks
+/// like `Ubuntu clang version 19.1.1` or `clang version 19.1.1`.
+fn clang_major(prog: &str) -> Option<u32> {
+    let out = Command::new(prog).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let after = text.split("clang version ").nth(1)?;
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
 /// Phase 2 Slice 2C: detect the host triple via `clang -print-target-triple`.
 /// Used by the dep walker to look up bundled binary paths in each vendor
 /// package's `src/lib/<triple>/`. Each build calls this once.
 fn detect_host_triple() -> Result<String, ExitCode> {
-    let output = match Command::new("clang").arg("-print-target-triple").output() {
+    let output = match Command::new(clang_program()).arg("-print-target-triple").output() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("cpc: invoking `clang -print-target-triple`: {e}");
@@ -1244,7 +1297,7 @@ fn build_lib_project(
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let obj_status = Command::new("clang")
+    let obj_status = Command::new(clang_program())
         .arg(opt)
         .arg("-Wno-override-module")
         .arg("-c")
@@ -1307,7 +1360,7 @@ fn build_lib_project(
             "so"
         };
         let dylib_path = target_dir.join(format!("lib{}.{}", lib.name, dylib_ext));
-        let mut cmd = Command::new("clang");
+        let mut cmd = Command::new(clang_program());
         cmd.arg("-shared").arg(opt).arg("-Wno-override-module");
         for fw in &lib.frameworks {
             cmd.arg("-framework").arg(fw);
@@ -1966,29 +2019,34 @@ fn run_test(
         }
     };
     let tmp = tmp_handle.path().to_path_buf();
-    let bin_out_handle = match tempfile::Builder::new()
+    // `into_temp_path()` keeps the unique path (and delete-on-drop) but
+    // CLOSES the writable file descriptor. On Linux, exec'ing a file that
+    // any process still holds open for writing fails with ETXTBSY ("Text
+    // file busy"); macOS does not enforce this. clang reopens this path to
+    // write the executable, then we exec it — so we must not be holding a
+    // writable handle to it across the exec below.
+    let bin_path = match tempfile::Builder::new()
         .prefix("cpc-test-")
         .suffix(".bin")
         .tempfile()
     {
-        Ok(h) => h,
+        Ok(h) => h.into_temp_path(),
         Err(e) => {
             eprintln!("cpc test: creating temp binary path: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let bin_out = bin_out_handle.path().to_path_buf();
+    let bin_out = bin_path.to_path_buf();
     let clang_status = run_clang(&tmp, &bin_out, build_mode, false, &[], &link_args);
     drop(tmp_handle);
     if !matches!(clang_status, ExitCode::SUCCESS) {
-        drop(bin_out_handle);
         return clang_status;
     }
     // Run the test binary. Its stdout is what `cpc test` prints; its exit
     // code equals the number of failing tests (clamped into [0, 255] so the
     // process-exit-code-as-u8 convention still fits).
     let status = Command::new(&bin_out).status();
-    drop(bin_out_handle);
+    drop(bin_path);
     match status {
         Ok(s) => {
             // The driver `main` returns the failure count. Map any non-zero
@@ -2986,7 +3044,7 @@ fn run_clang(
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let mut cmd = Command::new("clang");
+    let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module");
     // Phase 11 polish: `-g` keeps the DWARF metadata cpc emitted in the
     // IR through to the final binary. Without it clang silently strips
@@ -3002,14 +3060,33 @@ fn run_clang(
         // Better stack traces in sanitizer reports.
         cmd.arg("-fno-omit-frame-pointer");
     }
+    // The program object goes FIRST, before any libraries. GNU `ld`
+    // resolves left-to-right in a single pass and pulls a static-archive
+    // member only to satisfy a reference it has ALREADY seen. So a bundled
+    // `lib*.a` listed before the object that calls into it contributes
+    // nothing and its symbols come up undefined (macOS's ld64 does a full
+    // resolution and is order-insensitive, which is why this only bites on
+    // Linux). Emit `input_ll`, then the manifest link args, then `-lm`.
+    cmd.arg(input_ll);
     // v0.0.2 (AppKit-via-Cplus.toml): manifest-driven linker args. Each
     // entry was generated by `build_project` from `[[bin]] frameworks`
-    // (`-framework X`) and `libs` (`-lX`). Empty for everything except
-    // project builds whose manifest declares them.
+    // (`-framework X`), `libs` (`-lX`), and bundled `[link]` archives.
+    // Empty for everything except project builds whose manifest declares
+    // them.
     for arg in link_args {
         cmd.arg(arg);
     }
-    let status = cmd.arg(input_ll).arg("-o").arg(out).status();
+    // On Linux, libm is a separate library: math symbols like `fma`,
+    // `fmaf`, `sqrt` (emitted by SIMD/float lowering) are NOT resolved
+    // unless we pass `-lm`. macOS rolls libm into libSystem, which clang
+    // links by default, so this flag is unnecessary — and harmless — there,
+    // but we scope it to non-macOS to keep the macOS link line unchanged.
+    // Last on the line so it satisfies math refs from the object and any
+    // bundled archive ahead of it.
+    if !cfg!(target_os = "macos") {
+        cmd.arg("-lm");
+    }
+    let status = cmd.arg("-o").arg(out).status();
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(s) => {
@@ -3419,7 +3496,7 @@ fn dump_obj(
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let status = Command::new("clang")
+    let status = Command::new(clang_program())
         .arg(opt)
         .arg("-Wno-override-module")
         .arg("-c")
@@ -3489,7 +3566,7 @@ fn run_clang_to_stdout(input_ll: &Path, mode: BuildMode, kind: ClangOutputKind) 
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let mut cmd = Command::new("clang");
+    let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module").arg("-S");
     if matches!(kind, ClangOutputKind::LlvmIr) {
         cmd.arg("-emit-llvm");
