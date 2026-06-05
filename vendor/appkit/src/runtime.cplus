@@ -23,6 +23,18 @@ extern fn objc_setAssociatedObject_cb(object: *u8, key: *u8, value: fn(*u8), pol
 #[link_name = "objc_getAssociatedObject"]
 extern fn objc_getAssociatedObject_cb(object: *u8, key: *u8) -> fn(*u8);
 
+// ARC primitives (libobjc). `objc_retain` / `objc_release` are the same
+// reference-counting calls ARC emits; we call them by hand. `objc_release`
+// returns void.
+#[link_name = "objc_retain"]
+extern fn objc_retain(obj: *u8) -> *u8;
+
+#[link_name = "objc_release"]
+extern fn objc_release(obj: *u8);
+
+#[link_name = "objc_autorelease"]
+extern fn objc_autorelease(obj: *u8) -> *u8;
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
 
@@ -33,10 +45,16 @@ extern fn objc_msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
 extern fn objc_msg_id_f64_f64(recv: *u8, sel: *u8, a: f64, b: f64) -> *u8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_f64(recv: *u8, sel: *u8, a: *u8, b: f64) -> *u8;
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id(recv: *u8, sel: *u8, arg: *u8);
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> i8;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64);
@@ -104,6 +122,14 @@ extern fn objc_msg_void_edge_insets(recv: *u8, sel: *u8, insets: EdgeInsets);
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
+
+// NSPoint is two CGFloats; on arm64/x86_64 a 2×f64 struct returns in
+// registers, so the plain `objc_msgSend` (not `_stret`) is correct.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_point(recv: *u8, sel: *u8) -> Point;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_f64(recv: *u8, sel: *u8) -> f64;
@@ -189,12 +215,20 @@ pub fn msg_id_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64) -> *u8 {
     return unsafe { objc_msg_id_f64_f64(recv, selector, a, b) };
 }
 
+pub fn msg_id_id_f64(recv: *u8, selector: *u8, a: *u8, b: f64) -> *u8 {
+    return unsafe { objc_msg_id_id_f64(recv, selector, a, b) };
+}
+
 pub fn msg_void_id(recv: *u8, selector: *u8, arg: *u8) {
     unsafe { objc_msg_void_id(recv, selector, arg); };
 }
 
 pub fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
     unsafe { objc_msg_void_id_id(recv, selector, a, b); };
+}
+
+pub fn msg_i8_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i8 {
+    return unsafe { objc_msg_i8_id_id(recv, selector, a, b) };
 }
 
 pub fn msg_void_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) {
@@ -277,6 +311,14 @@ pub fn msg_i64(recv: *u8, selector: *u8) -> i64 {
     return unsafe { objc_msg_i64(recv, selector) };
 }
 
+pub fn msg_u64(recv: *u8, selector: *u8) -> u64 {
+    return unsafe { objc_msg_u64(recv, selector) };
+}
+
+pub fn msg_point(recv: *u8, selector: *u8) -> Point {
+    return unsafe { objc_msg_point(recv, selector) };
+}
+
 pub fn msg_f64(recv: *u8, selector: *u8) -> f64 {
     return unsafe { objc_msg_f64(recv, selector) };
 }
@@ -289,6 +331,50 @@ pub fn ns_string(utf8: *u8) -> *u8 {
     let cls: *u8 = get_class(str_ptr("NSString\0"));
     let selector: *u8 = sel(str_ptr("stringWithUTF8String:\0"));
     return msg_id_id(cls, selector, utf8);
+}
+
+// ---------------------------------------------------------------------------
+// Ownership / Drop model (plan.appkit.md §2)
+// ---------------------------------------------------------------------------
+//
+// ObjC objects are reference-counted. A C+ wrapper that *owns* its `obj`
+// holds exactly one strong reference and releases it once in `fn drop`. The
+// rule is "+1 normal form": whatever the construction path, the wrapper ends
+// up holding +1, and `drop` balances it.
+//
+//   - alloc/init, new, copy, mutableCopy  -> already +1; hold it, release in drop.
+//   - convenience constructors (e.g. `stringWith…`, `colorWith…`, factory
+//     getters) return an autoreleased +0 object; `retain` it on capture to
+//     reach +1, then release in drop.
+//   - a handle the wrapper does NOT own (a shared singleton like
+//     `generalPasteboard`, or a child view whose parent retains it) is left
+//     `opaque` and has no drop — releasing it would over-release.
+//
+// Adding `fn drop` makes a wrapper non-Copy; `self`/`mut self` method
+// receivers are borrows (they do not consume), so builder chaining is
+// unaffected. The owner must keep the wrapper alive as long as the UI needs
+// the object (store it in a long-lived value); a top-level object that nothing
+// else retains must not be dropped while still on screen.
+//
+// `retain` returns its argument so call sites can write `self.obj =
+// rt::retain(x)` in one line.
+
+pub fn retain(obj: *u8) -> *u8 {
+    return unsafe { objc_retain(obj) };
+}
+
+pub fn release(obj: *u8) {
+    unsafe { objc_release(obj); };
+}
+
+pub fn autorelease(obj: *u8) -> *u8 {
+    return unsafe { objc_autorelease(obj) };
+}
+
+// The object's current strong reference count. Mainly a test/debug aid —
+// production ownership should follow the +1 rule above, not inspect counts.
+pub fn retain_count(obj: *u8) -> i64 {
+    return msg_i64(obj, sel(str_ptr("retainCount\0")));
 }
 
 pub fn alloc_init(class_name: *u8) -> *u8 {

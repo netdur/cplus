@@ -1,7 +1,11 @@
 import "./runtime" as rt;
 
+// Owned wrapper (plan.appkit.md §2): `NSAlert` is created with `new` (+1) and
+// is the canonical transient — built, shown with `run_modal`, then dropped. It
+// is not added to a view hierarchy, so nothing else retains it; without a
+// `drop` it leaks (one per dialog). `drop` releases the +1.
 pub struct Alert {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Alert {
@@ -9,6 +13,10 @@ impl Alert {
         let cls = rt::get_class(str_ptr("NSAlert\0"));
         let alert = rt::msg_id(cls, rt::sel(str_ptr("new\0")));
         return Alert { obj: alert };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn set_message_text(self, text: *u8) {
