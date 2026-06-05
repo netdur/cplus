@@ -5,7 +5,8 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.15 — 2026-06-05
 
-Language hardening, a P0 ownership fix, and the first Linux port.
+Language hardening, a P0 ownership fix, the first Linux and Windows ports, and
+GPU/CPU BLAS bindings.
 
 ### Language
 - **Module-level global asm:** `#asm("...")` at item scope lowers to LLVM
