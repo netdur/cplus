@@ -45,7 +45,7 @@ import "appkit/notifications" as notifications;
 - `runtime`: geometry types, NSString helper, ObjC runtime/message helpers, and the ownership primitives (`retain`/`release`/`autorelease`/`retain_count`)
 - `application`: `AutoreleasePool`, `Application`, app delegate helper
 - `window`: `Window`. Also `create_window_delegate(should_close_imp, will_close_imp)` — synthesizes an `NSWindowDelegate` (`windowShouldClose:` / `windowWillClose:`).
-- `view`: `View`, `StackView`, `ScrollView`, `Box`, `Scroller`, `BackgroundExtensionView`
+- `view`: `View`, `StackView`, `ScrollView`, `Box`, `Scroller`, `BackgroundExtensionView`. Also `create_custom_view(frame, draw_imp)` — synthesizes an `NSView` subclass whose `drawRect:` is a C+ function (custom drawing).
 - `controls`: `TextField`, `Button`, `Slider`, `ProgressIndicator`, `PopUpButton`, `Stepper`, `Switch`, `SegmentedControl`, `ComboButton`, `DatePicker`, `ColorWell`, `LevelIndicator`, `PathControl`
 - `text`: `TextView`, `SecureTextField`, `SearchField`, `TokenField`, `ComboBox`, `Form`
 - `containers`: `SplitView`, `TabView`, `TabViewItem`, `VisualEffectView`, `GridView`, `Browser`, `Matrix`, `ClipView`, `RulerView`, `Popover`

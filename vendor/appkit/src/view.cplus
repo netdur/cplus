@@ -1,5 +1,32 @@
 import "./runtime" as rt;
 
+// Synthesize a custom `NSView` subclass whose `drawRect:` is a C+ function, and
+// return it as a `View` (added to a parent, which retains it — the non-owned
+// case, so no `drop`). This is the custom-drawing entry point (plan.appkit.md
+// §4): inside `draw_imp`, draw with `graphics::BezierPath` / `Color`.
+//
+//   draw_imp: `(self, _cmd, dirtyRect)` implements `-drawRect:`. The dirty
+//   `NSRect` is passed by value. Closure-free — reach app state through a
+//   `static mut`, an associated object, or a global.
+pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
+    let existing: *u8 = rt::get_class(str_ptr("CCustomView\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let nsview: *u8 = rt::get_class(str_ptr("NSView\0"));
+        cls = rt::allocate_class_pair(nsview, str_ptr("CCustomView\0"), 0 as usize);
+        let _a: i8 = rt::add_method_draw_rect(
+            cls,
+            rt::sel(str_ptr("drawRect:\0")),
+            draw_imp,
+            str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"),
+        );
+        rt::register_class_pair(cls);
+    }
+    let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
+    let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+    return View { obj: view };
+}
+
 pub struct View {
     pub opaque obj: *u8,
 }

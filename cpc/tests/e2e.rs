@@ -16619,6 +16619,45 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit custom view (plan.appkit.md §4, custom drawing):
+/// `view::create_custom_view` synthesizes an NSView subclass whose `drawRect:`
+/// is a C+ function. We invoke `drawRect:` directly with a known NSRect and
+/// assert it round-trips by value into the IMP (the hard part — a struct arg in
+/// a synthesized method). No display/run loop needed.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_custom_view_draw_rect() {
+    appkit_run_program(
+        "ak_draw",
+        r#"
+import "appkit/application" as application;
+import "appkit/view" as view;
+import "appkit/runtime" as rt;
+
+static mut DREW: i32 = 0;
+static mut DRAW_W: f64 = 0.0;
+
+fn my_draw(self_obj: *u8, _cmd: *u8, dirty: rt::Rect) {
+    unsafe { DREW = 1 as i32; };
+    unsafe { DRAW_W = dirty.size.width; };
+    return;
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
+    let v: view::View = view::create_custom_view(f, my_draw);
+    let dirty = rt::Rect { origin: rt::Point { x: 1.0, y: 2.0 }, size: rt::Size { width: 42.0, height: 7.0 } };
+    rt::msg_void_rect(v.obj, rt::sel(str_ptr("drawRect:\0")), dirty);
+    if unsafe { DREW } != (1 as i32) { return 1; }
+    if unsafe { DRAW_W } != 42.0 { return 2; }
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {

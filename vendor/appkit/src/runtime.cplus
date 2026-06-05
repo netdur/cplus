@@ -21,6 +21,11 @@ extern fn class_addMethod_i64_id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> i
 #[link_name = "class_addMethod"]
 extern fn class_addMethod_id_table_value(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8, types: *u8) -> i8;
 
+// `(self, _cmd, dirtyRect) -> void` with the rect passed by value — e.g. an
+// NSView subclass's `drawRect:`.
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_draw_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8;
+
 #[link_name = "objc_setAssociatedObject"]
 extern fn objc_setAssociatedObject(object: *u8, key: *u8, value: *u8, policy: usize);
 
@@ -227,6 +232,12 @@ pub fn add_method_id_table_value(
     types: *u8,
 ) -> i8 {
     return unsafe { class_addMethod_id_table_value(cls, selector, imp, types) };
+}
+
+// Add a `(self, _cmd, dirtyRect) -> void` method whose rect is passed by value
+// (e.g. `-drawRect:`). `types` e.g. `"v@:{CGRect={CGPoint=dd}{CGSize=dd}}"`.
+pub fn add_method_draw_rect(cls: *u8, selector: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8 {
+    return unsafe { class_addMethod_draw_rect(cls, selector, imp, types) };
 }
 
 pub fn set_associated_object(object: *u8, key: *u8, value: *u8, policy: usize) {
