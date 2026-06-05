@@ -149,6 +149,11 @@ pub struct CodeGraph {
     /// `cpc graph` JSON surface); a sparse map, not every expression.
     #[serde(skip)]
     pub type_spots: Vec<TypeSpot>,
+    /// v0.0.14 graph value-depth: per-binding value-flow within each function,
+    /// backing the `value-refs` query. Internal (queried, not part of the
+    /// `cpc graph` JSON surface).
+    #[serde(skip)]
+    pub value_flows: Vec<ValueFlow>,
 }
 
 /// A source span with a locally-known type, for `type-at`. `what` names the
@@ -161,6 +166,51 @@ pub struct TypeSpot {
     pub location: Location,
     pub ty: String,
     pub what: String,
+}
+
+/// v0.0.14 graph value-depth: how a binding's value flows at a use site —
+/// the classification that makes value-references more than "find name uses".
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowKind {
+    /// Read in place (field/method/index receiver, operand, condition).
+    Read,
+    /// Moved/passed into a function or method call argument.
+    Call,
+    /// Moved into a struct or enum constructor (a "re-wrap").
+    Construct,
+    /// Returned from the enclosing function.
+    Return,
+    /// Used as a `match` scrutinee.
+    Match,
+    /// Moved into another binding or assigned to a place (`let y = x;`, `p = x;`).
+    Assign,
+}
+
+/// v0.0.14 graph value-depth: one use site of a local binding, with how its
+/// value flows there.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ValueUse {
+    pub location: Location,
+    #[serde(skip)]
+    pub span: Span,
+    pub flow: FlowKind,
+}
+
+/// v0.0.14 graph value-depth: the value-flow of one local binding (a parameter
+/// or `let`) within its function — its definition site plus every classified
+/// use. Backs the `value-refs` query ("where does this value go").
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ValueFlow {
+    #[serde(skip)]
+    pub fid: String,
+    pub binding: String,
+    /// The kind of definition: `parameter` or `local`.
+    pub def_kind: String,
+    pub def_location: Location,
+    #[serde(skip)]
+    pub def_span: Span,
+    pub uses: Vec<ValueUse>,
 }
 
 impl CodeGraph {
@@ -429,27 +479,132 @@ impl CodeGraph {
         }
 
         resolve_call_edges(&mut g, &callables, &sig_type_refs, &resolve);
-        g.add_inferred_type_spots(proj, &linemaps);
+
+        // v0.0.14 value-depth: the type-at and value-refs analyses both need a
+        // LOWERED program (sema rejects un-lowered if-let/guard-let/while-let).
+        // Lower a clone once and reuse it for both. Lowering preserves byte
+        // spans for unchanged expressions, so spots/flows still align with the
+        // original source.
+        if let Some((entry_path, entry_src)) = proj.files.get(&proj.entry_file_id) {
+            let mut lowered = proj.program.clone();
+            let _ = crate::lower::lower(&mut lowered, entry_path, entry_src);
+            let (_diags, mono) = crate::sema::check_multi_with_value_types(
+                &lowered,
+                entry_path.clone(),
+                entry_src,
+                proj.files.clone(),
+            );
+            g.add_inferred_type_spots(&mono.value_types, proj, &linemaps);
+            g.collect_value_flows(&lowered, proj, &linemaps);
+        }
         g
     }
 
-    /// v0.0.14 graph value-depth: run sema with type-retention on and add a
-    /// `TypeSpot` for every inferred expression — call results, arithmetic,
-    /// field/index reads, `match`/`if` values — the cases the AST-only passes
-    /// can't see. These coexist with the annotated spots; `type_at` returns the
-    /// narrowest, so an annotated parameter/field still wins at its own span.
-    fn add_inferred_type_spots(&mut self, proj: &LoadedProject, linemaps: &BTreeMap<String, LineMap>) {
-        let Some((entry_path, entry_src)) = proj.files.get(&proj.entry_file_id) else {
-            return;
+    /// v0.0.14 graph value-depth: build per-binding value-flow for every
+    /// function/method. For each parameter and `let`, record its definition and
+    /// every classified use (read / call / construct / return / match / assign)
+    /// within the body. Intra-procedural and shadow-naive (uses are grouped by
+    /// name within one function), which covers the common "where does this value
+    /// go" question backing the `value-refs` query.
+    fn collect_value_flows(
+        &mut self,
+        program: &crate::ast::Program,
+        proj: &LoadedProject,
+        linemaps: &BTreeMap<String, LineMap>,
+    ) {
+        for item in &program.items {
+            let fid = item
+                .origin_file
+                .clone()
+                .unwrap_or_else(|| proj.entry_file_id.clone());
+            let bodies: Vec<(&[Param], &Block)> = match &item.kind {
+                ItemKind::Function(f) if !f.is_extern => vec![(f.params.as_slice(), &f.body)],
+                ItemKind::Impl(b) => b
+                    .methods
+                    .iter()
+                    .map(|m| (m.params.as_slice(), &m.body))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for (params, body) in bodies {
+                self.flows_for_body(params, body, &fid, proj, linemaps);
+            }
+        }
+    }
+
+    fn flows_for_body(
+        &mut self,
+        params: &[Param],
+        body: &Block,
+        fid: &str,
+        proj: &LoadedProject,
+        linemaps: &BTreeMap<String, LineMap>,
+    ) {
+        let resolve = |span: Span| -> Option<Location> {
+            let (path, src) = proj.files.get(fid)?;
+            let lm = linemaps.get(fid)?;
+            let pos = lm.position(span.start, src);
+            Some(Location {
+                file: path.display().to_string(),
+                line: pos.line,
+                col: pos.col,
+            })
         };
-        let (_diags, mono) = crate::sema::check_multi_with_value_types(
-            &proj.program,
-            entry_path.clone(),
-            entry_src,
-            proj.files.clone(),
-        );
-        for (fid_opt, span, ty) in mono.value_types {
-            let fid = fid_opt.unwrap_or_else(|| proj.entry_file_id.clone());
+
+        // Binding definitions: parameters + every `let` in the body.
+        let mut defs: Vec<(String, Span, &'static str)> = Vec::new();
+        for p in params {
+            defs.push((p.name.name.clone(), p.name.span, "parameter"));
+        }
+        collect_let_defs(body, &mut defs);
+
+        // Classified Ident uses across the whole body.
+        let mut uses: Vec<(String, Span, FlowKind)> = Vec::new();
+        flow_idents_in_block(body, FlowKind::Read, &mut uses);
+
+        for (binding, def_span, def_kind) in defs {
+            let Some(def_location) = resolve(def_span) else {
+                continue;
+            };
+            let mut flow_uses: Vec<ValueUse> = Vec::new();
+            for (n, span, flow) in &uses {
+                if *n != binding || *span == def_span {
+                    continue;
+                }
+                if let Some(location) = resolve(*span) {
+                    flow_uses.push(ValueUse {
+                        location,
+                        span: *span,
+                        flow: *flow,
+                    });
+                }
+            }
+            self.value_flows.push(ValueFlow {
+                fid: fid.to_string(),
+                binding,
+                def_kind: def_kind.to_string(),
+                def_location,
+                def_span,
+                uses: flow_uses,
+            });
+        }
+    }
+
+    /// v0.0.14 graph value-depth: add a `TypeSpot` for every inferred
+    /// expression sema recorded — call results, arithmetic, field/index reads,
+    /// `match`/`if` values — the cases the AST-only passes can't see. These
+    /// coexist with the annotated spots; `type_at` returns the narrowest, so an
+    /// annotated parameter/field still wins at its own span.
+    fn add_inferred_type_spots(
+        &mut self,
+        value_types: &[(Option<String>, Span, String)],
+        proj: &LoadedProject,
+        linemaps: &BTreeMap<String, LineMap>,
+    ) {
+        for (fid_opt, span, ty) in value_types {
+            let fid = fid_opt
+                .clone()
+                .unwrap_or_else(|| proj.entry_file_id.clone());
             let Some((path, src)) = proj.files.get(&fid) else {
                 continue;
             };
@@ -459,13 +614,13 @@ impl CodeGraph {
             let pos = lm.position(span.start, src);
             self.type_spots.push(TypeSpot {
                 fid: fid.clone(),
-                span,
+                span: *span,
                 location: Location {
                     file: path.display().to_string(),
                     line: pos.line,
                     col: pos.col,
                 },
-                ty,
+                ty: ty.clone(),
                 what: "expression".to_string(),
             });
         }
@@ -754,6 +909,30 @@ impl CodeGraph {
             location: spot.location.clone(),
         };
         Some(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
+    }
+
+    /// v0.0.14 value-refs: the value-flow of the binding at a byte offset —
+    /// its definition plus every classified use. Prefers a binding whose
+    /// *definition* covers the cursor (you clicked the `let`/param), else one
+    /// whose *use* covers it (you clicked a use site).
+    pub fn value_refs(&self, fid: &str, byte: u32) -> Option<&ValueFlow> {
+        let in_span = |s: &Span| byte >= s.start && byte < s.end;
+        self.value_flows
+            .iter()
+            .filter(|vf| vf.fid == fid)
+            .find(|vf| in_span(&vf.def_span))
+            .or_else(|| {
+                self.value_flows
+                    .iter()
+                    .filter(|vf| vf.fid == fid)
+                    .find(|vf| vf.uses.iter().any(|u| in_span(&u.span)))
+            })
+    }
+
+    /// `cpc query value-refs` — JSON for the binding's value-flow at a position.
+    pub fn value_refs_json(&self, fid: &str, byte: u32) -> Option<String> {
+        let vf = self.value_refs(fid, byte)?;
+        Some(serde_json::to_string_pretty(vf).unwrap_or_else(|_| "{}".to_string()))
     }
 }
 
@@ -1497,6 +1676,208 @@ fn short_name(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }
 
+// ---- v0.0.14 graph value-depth: value-flow walks ----
+
+/// Collect every `let` binding (name + name-span) reachable in `b`, including
+/// those nested inside blocks / `if` / `match` arms. `def_kind` is always
+/// `"local"` here; parameters are added by the caller.
+fn collect_let_defs(b: &Block, out: &mut Vec<(String, Span, &'static str)>) {
+    for s in &b.stmts {
+        collect_let_defs_stmt(s, out);
+    }
+    if let Some(t) = &b.tail {
+        collect_let_defs_expr(t, out);
+    }
+}
+
+fn collect_let_defs_stmt(s: &Stmt, out: &mut Vec<(String, Span, &'static str)>) {
+    match &s.kind {
+        StmtKind::Let { name, init, .. } => {
+            out.push((name.name.clone(), name.span, "local"));
+            if let Some(e) = init {
+                collect_let_defs_expr(e, out);
+            }
+        }
+        StmtKind::Return(Some(e))
+        | StmtKind::Expr(e)
+        | StmtKind::Defer(e)
+        | StmtKind::Assert(e) => collect_let_defs_expr(e, out),
+        StmtKind::While { cond, body, .. } => {
+            collect_let_defs_expr(cond, out);
+            collect_let_defs(body, out);
+        }
+        StmtKind::For(fl, _) => match fl {
+            ForLoop::CStyle { body, .. } | ForLoop::Range { body, .. } => {
+                collect_let_defs(body, out)
+            }
+        },
+        StmtKind::Loop(b, _) => collect_let_defs(b, out),
+        _ => {}
+    }
+}
+
+fn collect_let_defs_expr(e: &Expr, out: &mut Vec<(String, Span, &'static str)>) {
+    match &e.kind {
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_let_defs(b, out),
+        ExprKind::If {
+            then, else_branch, ..
+        } => {
+            collect_let_defs(then, out);
+            if let Some(eb) = else_branch {
+                collect_let_defs_expr(eb, out);
+            }
+        }
+        ExprKind::Match { arms, .. } => {
+            for a in arms {
+                collect_let_defs_expr(&a.body, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk `b`, recording each bare-`Ident` use with how its value flows there.
+/// `ctx` is the flow class implied by the position the block sits in.
+fn flow_idents_in_block(b: &Block, ctx: FlowKind, out: &mut Vec<(String, Span, FlowKind)>) {
+    for s in &b.stmts {
+        flow_idents_in_stmt(s, out);
+    }
+    if let Some(t) = &b.tail {
+        flow_idents_in_expr(t, ctx, out);
+    }
+}
+
+fn flow_idents_in_stmt(s: &Stmt, out: &mut Vec<(String, Span, FlowKind)>) {
+    match &s.kind {
+        // `let y = x;` moves/copies x into y.
+        StmtKind::Let { init: Some(e), .. } => flow_idents_in_expr(e, FlowKind::Assign, out),
+        StmtKind::Let { init: None, .. } => {}
+        StmtKind::Return(Some(e)) => flow_idents_in_expr(e, FlowKind::Return, out),
+        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
+            flow_idents_in_expr(e, FlowKind::Read, out)
+        }
+        StmtKind::While { cond, body, .. } => {
+            flow_idents_in_expr(cond, FlowKind::Read, out);
+            flow_idents_in_block(body, FlowKind::Read, out);
+        }
+        StmtKind::For(fl, _) => match fl {
+            ForLoop::CStyle {
+                cond, update, body, ..
+            } => {
+                if let Some(c) = cond {
+                    flow_idents_in_expr(c, FlowKind::Read, out);
+                }
+                for u in update {
+                    flow_idents_in_expr(u, FlowKind::Read, out);
+                }
+                flow_idents_in_block(body, FlowKind::Read, out);
+            }
+            ForLoop::Range { iter, body, .. } => {
+                flow_idents_in_expr(iter, FlowKind::Read, out);
+                flow_idents_in_block(body, FlowKind::Read, out);
+            }
+        },
+        StmtKind::Loop(b, _) => flow_idents_in_block(b, FlowKind::Read, out),
+        _ => {}
+    }
+}
+
+fn flow_idents_in_expr(e: &Expr, ctx: FlowKind, out: &mut Vec<(String, Span, FlowKind)>) {
+    match &e.kind {
+        ExprKind::Ident(n) => out.push((n.clone(), e.span, ctx)),
+        ExprKind::Call { callee, args, .. } => {
+            // Enum/assoc constructor (`E::V(x)`) vs a real call: a Path callee
+            // is a constructor, so its args are a "re-wrap"; an Ident/Field
+            // callee is a function/method call.
+            let arg_ctx = if matches!(callee.kind, ExprKind::Path { .. }) {
+                FlowKind::Construct
+            } else {
+                FlowKind::Call
+            };
+            // A method receiver (`x.m(...)`) reads x; a bare fn name is not a
+            // local value, so don't descend into an Ident/Path callee.
+            if let ExprKind::Field { receiver, .. } = &callee.kind {
+                flow_idents_in_expr(receiver, FlowKind::Read, out);
+            }
+            for a in args {
+                flow_idents_in_expr(a, arg_ctx, out);
+            }
+        }
+        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            for f in fields {
+                flow_idents_in_expr(&f.value, FlowKind::Construct, out);
+            }
+        }
+        ExprKind::GenericEnumCall { args, .. } => {
+            for a in args {
+                flow_idents_in_expr(a, FlowKind::Construct, out);
+            }
+        }
+        ExprKind::ArrayLit { elements } => {
+            for el in elements {
+                flow_idents_in_expr(el, FlowKind::Construct, out);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            flow_idents_in_expr(scrutinee, FlowKind::Match, out);
+            for a in arms {
+                flow_idents_in_expr(&a.body, FlowKind::Read, out);
+            }
+        }
+        ExprKind::Field { receiver, .. } => flow_idents_in_expr(receiver, FlowKind::Read, out),
+        ExprKind::Index { receiver, index } => {
+            flow_idents_in_expr(receiver, FlowKind::Read, out);
+            flow_idents_in_expr(index, FlowKind::Read, out);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            flow_idents_in_expr(lhs, FlowKind::Read, out);
+            flow_idents_in_expr(rhs, FlowKind::Read, out);
+        }
+        ExprKind::Unary { operand, .. } => flow_idents_in_expr(operand, FlowKind::Read, out),
+        ExprKind::Cast { expr, .. } => flow_idents_in_expr(expr, ctx, out),
+        ExprKind::Assign { target, value, .. } => {
+            // The assignee place (target) is a write, not a value read of the
+            // binding; record only the RHS value flow.
+            let _ = target;
+            flow_idents_in_expr(value, FlowKind::Assign, out);
+        }
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => flow_idents_in_block(b, ctx, out),
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
+            flow_idents_in_expr(cond, FlowKind::Read, out);
+            flow_idents_in_block(then, ctx, out);
+            if let Some(eb) = else_branch {
+                flow_idents_in_expr(eb, ctx, out);
+            }
+        }
+        ExprKind::Await(inner) | ExprKind::Yield(inner) => {
+            flow_idents_in_expr(inner, FlowKind::Read, out)
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                flow_idents_in_expr(s, FlowKind::Read, out);
+            }
+            if let Some(en) = end {
+                flow_idents_in_expr(en, FlowKind::Read, out);
+            }
+        }
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                flow_idents_in_expr(a, FlowKind::Call, out);
+            }
+        }
+        ExprKind::Asm { operands, .. } => {
+            for op in operands {
+                flow_idents_in_expr(&op.value, FlowKind::Call, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Render an AST type back to its source spelling. Uses source names, never a
 /// monomorphized form.
 pub fn type_to_string(t: &Type) -> String {
@@ -1965,5 +2346,64 @@ mod tests {
             .unwrap();
         let at = g.type_at(&mk_call.fid, mk_call.span.start).unwrap();
         assert_eq!(at.ty, "Point");
+    }
+
+    #[test]
+    fn value_refs_classifies_binding_flow() {
+        let src = "struct Box { v: i32 }\n\
+                   enum Opt { Some(Box), None }\n\
+                   fn consume(b: Box) -> i32 { return b.v; }\n\
+                   fn run(p: Box) -> i32 {\n\
+                       let q: Box = p;\n\
+                       let o: Opt = Opt::Some(q);\n\
+                       let code: i32 = match o { Opt::Some(b) => consume(b), Opt::None => 0 };\n\
+                       return code;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+
+        // `p` (param) flows into `q` via the `let` initializer → Assign.
+        let p = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "p" && vf.def_kind == "parameter")
+            .expect("p binding");
+        assert!(
+            p.uses.iter().any(|u| u.flow == FlowKind::Assign),
+            "p should flow as Assign, got {:?}",
+            p.uses
+        );
+
+        // `q` is re-wrapped into `Opt::Some(q)` → Construct.
+        let q = g.value_flows.iter().find(|vf| vf.binding == "q").expect("q");
+        assert!(
+            q.uses.iter().any(|u| u.flow == FlowKind::Construct),
+            "q should flow as Construct, got {:?}",
+            q.uses
+        );
+
+        // `o` is the scrutinee of a `match` → Match.
+        let o = g.value_flows.iter().find(|vf| vf.binding == "o").expect("o");
+        assert!(
+            o.uses.iter().any(|u| u.flow == FlowKind::Match),
+            "o should flow as Match, got {:?}",
+            o.uses
+        );
+
+        // `b` (match-arm payload) flows into `consume(b)` → Call. (Payload
+        // bindings aren't collected as defs yet, but `consume`'s `b` param is.)
+        let b = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "b" && vf.def_kind == "parameter")
+            .expect("b param");
+        assert!(
+            b.uses.iter().any(|u| u.flow == FlowKind::Read),
+            "b param should be read (b.v), got {:?}",
+            b.uses
+        );
+
+        // value_refs at p's definition returns p's flow.
+        let vf = g.value_refs(&p.fid, p.def_span.start).expect("value-refs at p");
+        assert_eq!(vf.binding, "p");
     }
 }

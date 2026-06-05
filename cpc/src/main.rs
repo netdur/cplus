@@ -190,7 +190,8 @@ cpc query <kind> [args...]
 
 Answer one code-graph query as JSON. Kinds: `def SYMBOL`, `members TYPE`,
 `symbols [FILE]`, `refs SYMBOL`, `callers FN`, `callees FN`,
-`call-hierarchy FN [--depth N]`, `context FN`, `type-at FILE:LINE:COL`.
+`call-hierarchy FN [--depth N]`, `context FN`, `type-at FILE:LINE:COL`,
+`value-refs FILE:LINE:COL`.
 Reads ./Cplus.toml; exit code signals found / not-found.
 "
         }
@@ -2563,9 +2564,50 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                 }
                 None => {
                     eprintln!(
-                        "cpc query type-at: no locally-typed node at {file}:{line}:{col} \
-                         (type-at resolves params, fields, typed locals, and their uses; \
-                         inferred expressions are not yet typed)"
+                        "cpc query type-at: no typed node at {file}:{line}:{col} \
+                         (type-at resolves params, fields, locals, `self`, and inferred \
+                         expressions — call results, field/index reads, match/if values)"
+                    );
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        "value-refs" => {
+            let Some(pos) = arg0 else {
+                eprintln!("cpc query value-refs: expected FILE:LINE:COL");
+                return ExitCode::FAILURE;
+            };
+            let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
+            if parts.len() != 3 {
+                eprintln!("cpc query value-refs: expected FILE:LINE:COL (got `{pos}`)");
+                return ExitCode::FAILURE;
+            }
+            let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
+                eprintln!("cpc query value-refs: LINE and COL must be numbers");
+                return ExitCode::FAILURE;
+            };
+            let file = parts[2];
+            let Some((fid, (_, src))) = loaded
+                .files
+                .iter()
+                .find(|(_, (path, _))| path.ends_with(file) || path.to_string_lossy() == *file)
+            else {
+                eprintln!("cpc query value-refs: no source file matching `{file}`");
+                return ExitCode::FAILURE;
+            };
+            let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
+                eprintln!("cpc query value-refs: position {line}:{col} is out of range");
+                return ExitCode::FAILURE;
+            };
+            return match g.value_refs_json(fid, byte) {
+                Some(j) => {
+                    println!("{j}");
+                    ExitCode::SUCCESS
+                }
+                None => {
+                    eprintln!(
+                        "cpc query value-refs: no local binding at {file}:{line}:{col} \
+                         (value-refs resolves a parameter or `let`, then its classified uses)"
                     );
                     ExitCode::FAILURE
                 }
@@ -2574,7 +2616,7 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
         other => {
             eprintln!(
                 "cpc query: unknown query kind `{other}` (expected: def | members | symbols | \
-                 refs | callers | callees | call-hierarchy | context | type-at)"
+                 refs | callers | callees | call-hierarchy | context | type-at | value-refs)"
             );
             return ExitCode::FAILURE;
         }
