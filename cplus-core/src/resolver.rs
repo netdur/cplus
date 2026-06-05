@@ -307,7 +307,19 @@ pub fn load_project_with_mode(
     is_lib: bool,
 ) -> Result<LoadedProject, LoadFailure> {
     // Pre-2B compat: `None` → single-file mode (file-relative imports).
-    load_project_full(entry_path, manifest_root, is_lib, None)
+    load_project_full(entry_path, manifest_root, is_lib, None, BTreeMap::new())
+}
+
+/// v0.0.14 LSP dirty-buffer overlay: like `load_project`, but `overlays`
+/// (canonical-path → unsaved buffer text) replace the on-disk contents of those
+/// files. Lets the LSP serve graph/type-at/value-refs/goto-def from in-editor
+/// edits before save. Mirrors `load_project`'s dep/mode handling otherwise.
+pub fn load_project_with_overlays(
+    entry_path: &Path,
+    manifest_root: &Path,
+    overlays: BTreeMap<PathBuf, String>,
+) -> Result<LoadedProject, LoadFailure> {
+    load_project_full(entry_path, manifest_root, false, None, overlays)
 }
 
 /// Phase 2 Slice 2B: full-fledged entry point taking the consumer's
@@ -322,6 +334,7 @@ pub fn load_project_full(
     manifest_root: &Path,
     is_lib: bool,
     deps: Option<&[String]>,
+    overlays: BTreeMap<PathBuf, String>,
 ) -> Result<LoadedProject, LoadFailure> {
     // `None` = legacy single-file mode (no manifest); bare imports fall
     // through to file-relative for backward compat. `Some([])` = project
@@ -334,6 +347,7 @@ pub fn load_project_full(
     let loader_deps_snapshot = dep_set.clone();
     let mut loader = Loader::with_deps(manifest_root.to_path_buf(), dep_set);
     loader.project_mode = project_mode;
+    loader.overlays = overlays;
     let entry_file_id = match loader.load_recursive(entry_path, None, None) {
         Ok(id) => id,
         Err(e) => return Err(LoadFailure::new(e, &loader)),
@@ -809,6 +823,11 @@ struct Loader {
     /// E0853 instead of falling through to file-relative resolution.
     /// `false` for single-file mode (`cpc FILE.cplus -o BIN`).
     project_mode: bool,
+    /// v0.0.14 LSP dirty-buffer overlay: canonical-path → unsaved buffer text.
+    /// When a file being loaded has an entry here, its in-editor (unsaved)
+    /// contents are used instead of the on-disk bytes, so graph/type-at/
+    /// value-refs reflect edits before save. Empty for the compile path.
+    overlays: BTreeMap<PathBuf, String>,
 }
 
 struct LoaderState {
@@ -830,6 +849,7 @@ impl Loader {
             edges: BTreeMap::new(),
             deps,
             project_mode: false,
+            overlays: BTreeMap::new(),
         }
     }
 
@@ -873,10 +893,15 @@ impl Loader {
             return Ok(file_id.clone());
         }
 
-        let raw_source = std::fs::read_to_string(&canonical).map_err(|e| ResolveError::Io {
-            path: canonical.clone(),
-            source: e,
-        })?;
+        // v0.0.14 LSP dirty-buffer overlay: prefer unsaved in-editor contents
+        // for this file when the caller supplied them; else read from disk.
+        let raw_source = match self.overlays.get(&canonical) {
+            Some(text) => text.clone(),
+            None => std::fs::read_to_string(&canonical).map_err(|e| ResolveError::Io {
+                path: canonical.clone(),
+                source: e,
+            })?,
+        };
         // Slice 5DOC: doctest extraction runs per-file before lexing so
         // synthesized `#[test]` functions become part of the loaded unit
         // and participate in `attrs::discover_tests` later. Files without
@@ -2352,6 +2377,39 @@ mod tests {
             })
             .collect();
         assert!(names.contains(&"main".to_string()));
+    }
+
+    #[test]
+    fn overlay_replaces_on_disk_source() {
+        // v0.0.14 LSP dirty-buffer overlay: an overlay entry for a file's
+        // canonical path supplies its (unsaved) contents instead of disk.
+        let dir = tmpdir();
+        fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let main = dir.join("src/main.cplus");
+        fs::write(&main, "fn main() -> i32 { return 1; }").unwrap();
+        let canon = std::fs::canonicalize(&main).unwrap();
+
+        let mut overlays = BTreeMap::new();
+        overlays.insert(canon, "fn main() -> i32 { return 2; }".to_string());
+        let p = load_project_with_overlays(&main, &dir, overlays).unwrap();
+        let src = p
+            .files
+            .values()
+            .find(|(path, _)| path.ends_with("main.cplus"))
+            .map(|(_, s)| s.clone())
+            .unwrap();
+        assert!(src.contains("return 2"), "overlay source not used: {src}");
+
+        // Without an overlay, the on-disk content is used.
+        let p2 = load_project(&main, &dir).unwrap();
+        let src2 = p2
+            .files
+            .values()
+            .find(|(path, _)| path.ends_with("main.cplus"))
+            .map(|(_, s)| s.clone())
+            .unwrap();
+        assert!(src2.contains("return 1"), "disk source expected: {src2}");
     }
 
     #[test]

@@ -394,7 +394,7 @@ fn handle_definition(state: &ServerState, params: &GotoDefinitionParams) -> Hand
     // v0.0.13 (graph fold-in): in project mode, resolve via the code graph —
     // the same resolved index `cpc query` uses. Definition nodes carry a
     // precise `file:line:col`. Single-file mode keeps the name-based fallback.
-    let locations = match build_project_graph(&open_path) {
+    let locations = match build_project_graph(state, &open_path) {
         Some((g, _loaded)) => g
             .def(&ident_name)
             .iter()
@@ -429,7 +429,7 @@ fn handle_references(state: &ServerState, params: &ReferenceParams) -> HandlerRe
     let Some(snap) = state.docs.get(uri) else { return null(); };
     let Ok(open_path) = uri.to_file_path() else { return null(); };
     let Some(ident) = identifier_at_position(&snap.text, pos) else { return null(); };
-    let Some((g, _loaded)) = build_project_graph(&open_path) else { return null(); };
+    let Some((g, _loaded)) = build_project_graph(state, &open_path) else { return null(); };
 
     let mut locs: Vec<Location> = Vec::new();
     if params.context.include_declaration {
@@ -459,7 +459,7 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
     let null = || HandlerResult::Ok(serde_json::Value::Null);
     let Some(_snap) = state.docs.get(uri) else { return null(); };
     let Ok(open_path) = uri.to_file_path() else { return null(); };
-    let Some((g, loaded)) = build_project_graph(&open_path) else { return null(); };
+    let Some((g, loaded)) = build_project_graph(state, &open_path) else { return null(); };
     let Some(fid) = fid_for_path(&loaded, &open_path) else { return null(); };
     let Some((_, src)) = loaded.files.get(&fid) else { return null(); };
     // The graph's spans are over the on-disk source; map the cursor (1-based)
@@ -490,11 +490,11 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
 
 /// `textDocument/documentSymbol`: the file's outline from the graph's
 /// `symbols` query (top-level items defined in this file). Project mode only.
-fn handle_document_symbol(_state: &ServerState, params: &DocumentSymbolParams) -> HandlerResult {
+fn handle_document_symbol(state: &ServerState, params: &DocumentSymbolParams) -> HandlerResult {
     let uri = &params.text_document.uri;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
     let Ok(open_path) = uri.to_file_path() else { return null(); };
-    let Some((g, loaded)) = build_project_graph(&open_path) else { return null(); };
+    let Some((g, loaded)) = build_project_graph(state, &open_path) else { return null(); };
     let Some(fid) = fid_for_path(&loaded, &open_path) else { return null(); };
 
     #[allow(deprecated)] // `DocumentSymbol.deprecated` field — required by the struct.
@@ -533,12 +533,27 @@ fn handle_document_symbol(_state: &ServerState, params: &DocumentSymbolParams) -
 
 /// Load + resolve the enclosing project and build the code graph. `None` in
 /// single-file mode (no reachable `Cplus.toml` with a real bin entry) or when
-/// the project fails to resolve. Built from the on-disk sources — matching the
-/// goto-definition behavior since 4E.3; a dirty-buffer overlay is a follow-up.
-fn build_project_graph(open_path: &Path) -> Option<(graph::CodeGraph, resolver::LoadedProject)> {
+/// the project fails to resolve. v0.0.14: open editor buffers are overlaid onto
+/// their on-disk files (keyed by canonical path), so hover/type-at/value-refs/
+/// goto-def reflect unsaved edits.
+fn build_project_graph(
+    state: &ServerState,
+    open_path: &Path,
+) -> Option<(graph::CodeGraph, resolver::LoadedProject)> {
+    let overlays: BTreeMap<PathBuf, String> = state
+        .docs
+        .iter()
+        .filter_map(|(uri, snap)| {
+            let p = uri.to_file_path().ok()?;
+            let canon = std::fs::canonicalize(&p).unwrap_or(p);
+            Some((canon, snap.text.clone()))
+        })
+        .collect();
     match find_manifest(open_path) {
         ManifestProbe::Loaded { manifest, .. } if manifest.bins[0].path.is_file() => {
-            let loaded = resolver::load_project(&manifest.bins[0].path, &manifest.root).ok()?;
+            let loaded =
+                resolver::load_project_with_overlays(&manifest.bins[0].path, &manifest.root, overlays)
+                    .ok()?;
             let g = graph::CodeGraph::build(&loaded);
             Some((g, loaded))
         }

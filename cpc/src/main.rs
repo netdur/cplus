@@ -1500,7 +1500,7 @@ fn load_and_check_project_full(
     deps: Option<&[String]>,
     rt_profile: Option<&cplus_core::manifest::RealtimeProfile>,
 ) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
-    let mut loaded = match resolver::load_project_full(entry, root, is_lib, deps) {
+    let mut loaded = match resolver::load_project_full(entry, root, is_lib, deps, Default::default()) {
         Ok(l) => l,
         Err(failure) => {
             // Slice 4C tail: render the resolver error as a structured
@@ -2188,7 +2188,7 @@ fn run_realtime_report(json: bool) -> ExitCode {
         Err(code) => return code,
     };
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let mut loaded = match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names)) {
+    let mut loaded = match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names), Default::default()) {
         Ok(l) => l,
         Err(failure) => {
             emit_diag(&failure.to_diagnostic(), DiagMode::Human, failure.primary_source().unwrap_or(""));
@@ -2385,7 +2385,7 @@ fn load_project_for_graph(diag_mode: DiagMode) -> Result<resolver::LoadedProject
         return Err(ExitCode::FAILURE);
     };
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names)) {
+    match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names), Default::default()) {
         Ok(loaded) => Ok(loaded),
         Err(e) => {
             emit_diag(&e.to_diagnostic(), diag_mode, "");
@@ -2871,7 +2871,7 @@ fn build_ir(
             },
             None => (start_dir, Vec::new()),
         };
-        let loaded = match resolver::load_project_full(file, &manifest_root, false, Some(&dep_names)) {
+        let loaded = match resolver::load_project_full(file, &manifest_root, false, Some(&dep_names), Default::default()) {
             Ok(l) => l,
             Err(failure) => {
                 let d = failure.to_diagnostic();
