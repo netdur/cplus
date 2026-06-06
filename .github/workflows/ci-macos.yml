@@ -1,0 +1,40 @@
+name: macOS CI
+
+# Runs the full `cargo test --workspace` suite on macOS / Apple Silicon. Unlike
+# ci-linux.yml / ci-windows.yml (tag-only), this fires on push-to-main and on
+# PRs — that's the point of it: catch the macOS regressions *during* development
+# that a tag-only CI would only surface at release. (The Linux and Windows ports
+# each regressed a macOS fixture that only a local run caught.)
+#
+# macOS is the primary dev target, so no toolchain setup is needed: the runner's
+# preinstalled Apple clang assembles/links cpc's output. The suite includes the
+# macOS-gated vendor/appkit binding tests; GitHub's macos runners provide the
+# window/pasteboard server those few tests need.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: cargo test --workspace (macOS, Apple clang)
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Versions
+        run: |
+          clang --version | head -1
+          rustc --version
+
+      - name: Run the workspace test suite
+        run: cargo test --workspace --no-fail-fast
