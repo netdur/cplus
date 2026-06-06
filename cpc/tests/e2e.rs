@@ -37,6 +37,50 @@ fn emit_ir_prints_module() {
     assert!(s.contains("hello, world"), "missing greeting: {s}");
 }
 
+/// v0.0.16: owned locals declared in a loop body are dropped at the end of each
+/// iteration (and on break/continue) — previously they leaked, because the
+/// back-edge branch was emitted before the scope-exit drop hooks. A Drop counts
+/// into a static; with a fresh owned value per iteration the total must equal the
+/// iteration count across while / for / loop-with-break.
+#[test]
+fn loop_body_locals_drop_each_iteration() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("loopdrop.cplus");
+    std::fs::write(
+        &src,
+        "static mut FREES: i32 = 0;\n\
+         struct B { opaque data: *u8 }\n\
+         impl B { fn drop(mut self) { unsafe { FREES = FREES + 1; } return; } }\n\
+         fn work() {\n\
+             let mut i: i32 = 0;\n\
+             while i < 3 { let b: B = B { data: unsafe { 0 as *u8 } }; i = i + 1; }\n\
+             for j in 0..2 { let c: B = B { data: unsafe { 0 as *u8 } }; }\n\
+             let mut k: i32 = 0;\n\
+             loop { let d: B = B { data: unsafe { 0 as *u8 } }; if k == 1 { break; } k = k + 1; }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 { work(); return unsafe { FREES }; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("loopdrop");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "loop-drop program must compile");
+    let run = Command::new(&bin).status().expect("run loopdrop");
+    // while: 3, for: 2, loop (break on k==1 → k=0,1): 2  ⇒ 7 drops total.
+    assert_eq!(
+        run.code(),
+        Some(7),
+        "loop-body locals must drop each iteration; got {:?}",
+        run.code()
+    );
+}
+
 #[test]
 fn diagnostics_json_emits_ndjson() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

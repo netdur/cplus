@@ -6944,6 +6944,11 @@ struct FnState<'a> {
     /// to `continue_label` (the loop's back-edge / cond-check / increment
     /// trampoline). Pushed when entering a loop body, popped on exit.
     loop_labels: Vec<(String, String)>,
+    /// v0.0.16: scope_exits frame index of each enclosing loop's *body* scope,
+    /// pushed/popped alongside `loop_labels`. `break`/`continue` unwind (run Drop
+    /// hooks for) every frame from the innermost down to this one before jumping,
+    /// so owned locals in the current iteration are dropped, not leaked.
+    loop_scope_depth: Vec<usize>,
     /// Slice 1E (v0.0.2): single-use hint set by `StmtKind::Return` when the
     /// statement is `return foo(args);` and the call qualifies for
     /// `musttail` (return type matches enclosing fn; no Drop/defer entries
@@ -7050,6 +7055,7 @@ impl<'a> FnState<'a> {
             in_destructor: false,
             test_mode,
             loop_labels: Vec::new(),
+            loop_scope_depth: Vec::new(),
             pending_musttail: false,
             enclosing_params: Vec::new(),
             tail_call_eligible: false,
@@ -7721,6 +7727,25 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// v0.0.16: emit scope-exit hooks for frames from the innermost down to (and
+    /// including) `frame_index`, WITHOUT popping them. Used by `break`/`continue`
+    /// to drop the loop body's (and any inner) owned locals before the jump; the
+    /// frames stay on the stack, and the later `pop_scope` sees `terminated` and
+    /// skips re-emitting (so no double-drop).
+    fn emit_scope_exits_to(&mut self, frame_index: usize) {
+        let mut idx = self.scope_exits.len();
+        while idx > frame_index {
+            idx -= 1;
+            let frame = self.scope_exits.get(idx).cloned().unwrap_or_default();
+            for entry in frame.iter().rev() {
+                if self.terminated {
+                    return;
+                }
+                self.emit_scope_exit(entry);
+            }
+        }
+    }
+
     // ---- function body ----
 
     /// v0.0.14 inline asm Tier 3: emit a `#[naked]` body — just the inline-asm
@@ -8159,6 +8184,10 @@ impl<'a> FnState<'a> {
                     .last()
                     .expect("sema rejects `break` outside a loop (E0353)")
                     .clone();
+                // Drop the current iteration's owned locals before leaving.
+                if let Some(&depth) = self.loop_scope_depth.last() {
+                    self.emit_scope_exits_to(depth);
+                }
                 self.emit_terminator(&format!("br label %{break_lbl}"));
             }
             StmtKind::Continue => {
@@ -8167,6 +8196,10 @@ impl<'a> FnState<'a> {
                     .last()
                     .expect("sema rejects `continue` outside a loop (E0353)")
                     .clone();
+                // Drop the current iteration's owned locals before re-iterating.
+                if let Some(&depth) = self.loop_scope_depth.last() {
+                    self.emit_scope_exits_to(depth);
+                }
                 self.emit_terminator(&format!("br label %{cont_lbl}"));
             }
             StmtKind::Loop(body, attributes) => self.gen_loop(body, attributes),
@@ -8214,6 +8247,7 @@ impl<'a> FnState<'a> {
         self.open_block(&head);
         // `continue` in a `loop` jumps back to `head`; `break` jumps to `exit`.
         self.loop_labels.push((head.clone(), exit.clone()));
+        self.loop_scope_depth.push(self.scope_exits.len());
         self.push_scope();
         for s in &body.stmts {
             if self.terminated {
@@ -8225,13 +8259,22 @@ impl<'a> FnState<'a> {
             if let Some(tail) = &body.tail {
                 let _ = self.gen_expr(tail);
             }
+        }
+        // v0.0.16: emit this iteration's scope-exit drops (+ lifetime.end) BEFORE
+        // the back-edge. `pop_scope` skips its hooks once the block is
+        // `terminated`, so the back-edge branch must come AFTER the drops — else
+        // loop-body owned locals are never dropped (leak every iteration). On a
+        // body that already terminated (break/return) the hooks are correctly
+        // skipped; those paths run their own drops.
+        self.pop_scope();
+        if !self.terminated {
             // v0.0.7 Slice 1.3: attach `!llvm.loop` metadata to the
             // back-edge branch if loop-hint attributes are present.
             let md = self.loop_metadata_for(attributes);
             self.emit_terminator(&format!("br label %{head}{md}"));
         }
-        self.pop_scope();
         self.loop_labels.pop();
+        self.loop_scope_depth.pop();
         self.open_block(&exit);
     }
 
@@ -8251,6 +8294,7 @@ impl<'a> FnState<'a> {
         // `continue` re-evaluates the cond → branches to `head`. `break`
         // exits to `exit`. Slice 4-end.
         self.loop_labels.push((head.clone(), exit.clone()));
+        self.loop_scope_depth.push(self.scope_exits.len());
         self.push_scope();
         for s in &body.stmts {
             if self.terminated {
@@ -8263,12 +8307,17 @@ impl<'a> FnState<'a> {
                 // value discarded
                 let _ = self.gen_expr(tail);
             }
+        }
+        // v0.0.16: drops before the back-edge — see gen_loop for the rationale
+        // (pop_scope skips hooks once terminated, so the back-edge must follow).
+        self.pop_scope();
+        if !self.terminated {
             // v0.0.7 Slice 1.3: `!llvm.loop` on the back-edge branch.
             let md = self.loop_metadata_for(attributes);
             self.emit_terminator(&format!("br label %{head}{md}"));
         }
-        self.pop_scope();
         self.loop_labels.pop();
+        self.loop_scope_depth.pop();
 
         self.open_block(&exit);
     }
@@ -8383,6 +8432,7 @@ impl<'a> FnState<'a> {
 
         // `continue` should jump back to head; `break` to exit.
         self.loop_labels.push((head.clone(), exit.clone()));
+        self.loop_scope_depth.push(self.scope_exits.len());
         self.push_scope();
         for s in &body.stmts {
             if self.terminated {
@@ -8394,10 +8444,15 @@ impl<'a> FnState<'a> {
             if let Some(tail) = &body.tail {
                 let _ = self.gen_expr(tail);
             }
+        }
+        // v0.0.16: drops before the back-edge (pop_scope skips hooks once
+        // terminated) — else loop-body owned locals leak each iteration.
+        self.pop_scope();
+        if !self.terminated {
             self.emit_terminator(&format!("br label %{head}"));
         }
-        self.pop_scope();
         self.loop_labels.pop();
+        self.loop_scope_depth.pop();
 
         self.open_block(&exit);
         // Destroy the iterator's frame so the malloc'd coroutine state
@@ -8455,6 +8510,7 @@ impl<'a> FnState<'a> {
                 // `continue` in a for-range loop must run the increment;
                 // route it through `step`, not back to `head`. Slice 4-end.
                 self.loop_labels.push((step.clone(), exit.clone()));
+                self.loop_scope_depth.push(self.scope_exits.len());
                 self.push_scope();
                 for s in &body.stmts {
                     if self.terminated {
@@ -8466,10 +8522,15 @@ impl<'a> FnState<'a> {
                     if let Some(tail) = &body.tail {
                         let _ = self.gen_expr(tail);
                     }
+                }
+                // v0.0.16: drops before the back-edge (to `step`) — else
+                // loop-body owned locals leak each iteration.
+                self.pop_scope();
+                if !self.terminated {
                     self.emit_terminator(&format!("br label %{step}"));
                 }
-                self.pop_scope();
                 self.loop_labels.pop();
+                self.loop_scope_depth.pop();
 
                 // Step block: increment then back to head.
                 self.open_block(&step);
@@ -8513,6 +8574,7 @@ impl<'a> FnState<'a> {
                 // `continue` in a C-style for must run the update list;
                 // route through `step`. Slice 4-end.
                 self.loop_labels.push((step.clone(), exit.clone()));
+                self.loop_scope_depth.push(self.scope_exits.len());
                 self.push_scope();
                 for s in &body.stmts {
                     if self.terminated {
@@ -8524,10 +8586,15 @@ impl<'a> FnState<'a> {
                     if let Some(tail) = &body.tail {
                         let _ = self.gen_expr(tail);
                     }
+                }
+                // v0.0.16: drops before the back-edge (to `step`) — else
+                // loop-body owned locals leak each iteration.
+                self.pop_scope();
+                if !self.terminated {
                     self.emit_terminator(&format!("br label %{step}"));
                 }
-                self.pop_scope();
                 self.loop_labels.pop();
+                self.loop_scope_depth.pop();
 
                 // Step block: run update list, branch back to head.
                 self.open_block(&step);

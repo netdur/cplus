@@ -4927,6 +4927,23 @@ impl SemaCx<'_> {
                         // E0509: `let q = drop_typed.field;` moves a field out
                         // from under a live destructor — double-free. Reject.
                         self.reject_partial_move_of_drop(init_expr, &final_ty);
+                        // v0.0.16: `let y = x;` where `x` is a non-Copy whole
+                        // binding *moves* it — consume the source so a later use
+                        // is E0335 (matching codegen's drop-flag transfer; an
+                        // un-consumed `let`-move was a use-after-move / double-free
+                        // hole, e.g. re-moving the same binding each loop
+                        // iteration). Field/index projections stay with
+                        // reject_partial_move_of_drop above.
+                        if !self.is_copy(&final_ty) {
+                            if let ExprKind::Ident(src) = &init_expr.kind {
+                                for scope in self.scopes.iter_mut().rev() {
+                                    if let Some(info) = scope.get_mut(src) {
+                                        info.moved = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         (final_ty, true)
                     }
                     None => {
@@ -5016,7 +5033,7 @@ impl SemaCx<'_> {
                 let _ = self.check_cond(cond);
                 self.scopes.push(HashMap::new());
                 self.loop_depth += 1;
-                self.check_block_as_stmt(body);
+                self.check_loop_body(body);
                 self.loop_depth -= 1;
                 self.scopes.pop();
             }
@@ -5099,12 +5116,7 @@ impl SemaCx<'_> {
                 self.check_loop_attrs(attributes);
                 self.loop_depth += 1;
                 self.scopes.push(HashMap::new());
-                for stmt in &body.stmts {
-                    self.check_stmt(stmt);
-                }
-                if let Some(tail) = &body.tail {
-                    let _ = self.check_expr(tail, None);
-                }
+                self.check_loop_body(body);
                 self.scopes.pop();
                 self.loop_depth -= 1;
             }
@@ -5162,7 +5174,7 @@ impl SemaCx<'_> {
                             borrow_roots: BTreeSet::new(),
                         },
                     );
-                    self.check_block_as_stmt(body);
+                    self.check_loop_body(body);
                     self.scopes.pop();
                     return;
                 }
@@ -5198,7 +5210,7 @@ impl SemaCx<'_> {
                         borrow_roots: BTreeSet::new(),
                     },
                 );
-                self.check_block_as_stmt(body);
+                self.check_loop_body(body);
                 self.scopes.pop();
             }
             ForLoop::CStyle {
@@ -5217,8 +5229,54 @@ impl SemaCx<'_> {
                 for u in update {
                     let _ = self.check_expr(u, None);
                 }
-                self.check_block_as_stmt(body);
+                self.check_loop_body(body);
                 self.scopes.pop();
+            }
+        }
+    }
+
+    /// v0.0.16: check a loop body with move-across-iterations detection. A
+    /// non-Copy binding declared OUTSIDE the loop that is moved in the body — and
+    /// not re-initialized first — is a use-of-moved-value on the *next* iteration
+    /// (Rust rejects the same as "use of moved value"). With loop bodies now
+    /// dropping their owned locals per iteration (codegen), missing this would be
+    /// a double-free, not just a leak.
+    ///
+    /// Strategy: a throwaway pre-pass discovers which outer bindings the body
+    /// moves (its diagnostics are discarded and all binding flags restored), then
+    /// the real pass runs with those bindings seeded `moved` — so a use without a
+    /// preceding re-init errors, while a re-init in the body clears the seed (no
+    /// false positive). The caller has already pushed the loop's own scope; the
+    /// loop variable (innermost frame) is rebound each iteration, so it's exempt.
+    fn check_loop_body(&mut self, b: &Block) {
+        let saved = self.scopes.clone();
+        let mark = self.sink.len();
+        self.check_block_as_stmt(b); // silent pre-pass
+        self.sink.truncate(mark);
+        let mut looped: Vec<String> = Vec::new();
+        let n = self.scopes.len();
+        for (i, (now, before)) in self.scopes.iter().zip(saved.iter()).enumerate() {
+            if i + 1 >= n {
+                break; // skip the loop's own scope frame (loop var rebinds each iter)
+            }
+            for (name, info) in now {
+                if info.moved && before.get(name).is_some_and(|b| !b.moved) {
+                    looped.push(name.clone());
+                }
+            }
+        }
+        self.scopes = saved; // restore every binding flag (moved/assigned/borrows)
+        for name in &looped {
+            self.set_moved_by_name(name);
+        }
+        self.check_block_as_stmt(b); // real pass (emits diagnostics)
+    }
+
+    fn set_moved_by_name(&mut self, name: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(name) {
+                info.moved = true;
+                return;
             }
         }
     }
@@ -11634,6 +11692,22 @@ impl SemaCx<'_> {
         if !self.target_is_writable_place(target) {
             let _ = self.check_expr(value, None);
             return Ty::Error;
+        }
+        // v0.0.16: a plain `=` to a whole binding re-initializes it. Clear the
+        // `moved` flag BEFORE reading the target, so writing to a previously-moved
+        // binding (e.g. `let x = b;` then `b = ...;`, or reassign-in-a-loop) is
+        // the re-init it is — not a use-of-moved (E0335). Compound assigns read
+        // the target's old value, so they are NOT cleared here (a `+=` on a moved
+        // binding stays an error).
+        if matches!(op, AssignOp::Assign) {
+            if let ExprKind::Ident(name) = &target.kind {
+                for scope in self.scopes.iter_mut().rev() {
+                    if let Some(info) = scope.get_mut(name) {
+                        info.moved = false;
+                        break;
+                    }
+                }
+            }
         }
         let target_ty = self.check_expr(target, None);
         // v0.0.3 Slice 3A: compound assigns (`+=`, `-=`, `*=`, `/=`, `%=`,
@@ -20473,6 +20547,62 @@ mod tests {
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0306"), "got {:?}", codes);
+    }
+
+    // v0.0.16 move tracking: `let y = x;` on a non-Copy whole binding *moves* it.
+    const MOVE_HDR: &str = "struct B { opaque data: *u8 }\n\
+         impl B { fn drop(mut self) { return; } }\n\
+         fn nb() -> B { return B { data: unsafe { 0 as *u8 } }; }\n";
+
+    #[test]
+    fn let_move_then_use_is_e0335() {
+        let src = format!(
+            "{MOVE_HDR}fn t() -> i32 {{ let b: B = nb(); let x: B = b; let y: B = b; return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        );
+        let codes = errors(&src);
+        assert!(codes.iter().any(|c| *c == "E0335"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn move_of_outer_binding_in_loop_is_e0335() {
+        // Re-moving a value declared outside the loop on every iteration is a
+        // use-after-move on iteration 2 (and a double-free now that loop bodies
+        // drop their locals). Must be rejected.
+        let src = format!(
+            "{MOVE_HDR}fn t() -> i32 {{ let mut b: B = nb(); let mut i: i32 = 0; while i < 2 {{ let x: B = b; i = i + 1; }} return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        );
+        let codes = errors(&src);
+        assert!(codes.iter().any(|c| *c == "E0335"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn reinit_then_move_in_loop_is_clean() {
+        // Re-assigning the binding before the move each iteration is valid — the
+        // move-in-loop check must NOT false-positive here.
+        assert_clean(&format!(
+            "{MOVE_HDR}fn t() -> i32 {{ let mut b: B = nb(); let mut i: i32 = 0; while i < 2 {{ b = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+    }
+
+    #[test]
+    fn move_of_loop_local_each_iteration_is_clean() {
+        // A binding declared *inside* the loop is fresh each iteration — moving
+        // it is fine.
+        assert_clean(&format!(
+            "{MOVE_HDR}fn t() -> i32 {{ let mut i: i32 = 0; while i < 2 {{ let b: B = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
+    }
+
+    #[test]
+    fn reassign_after_move_clears_moved() {
+        assert_clean(&format!(
+            "{MOVE_HDR}fn t() -> i32 {{ let mut b: B = nb(); let x: B = b; b = nb(); let y: B = b; return 0; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
     }
 
     #[test]

@@ -184,6 +184,13 @@ pub struct DiagSink {
 impl DiagSink {
     pub fn new() -> Self { Self::default() }
     pub fn emit(&mut self, d: Diagnostic) { self.diags.push(d); }
+    /// Number of diagnostics emitted so far. Paired with `truncate` to run a
+    /// throwaway analysis pass whose diagnostics are discarded (sema's loop
+    /// move-check pre-pass).
+    pub fn len(&self) -> usize { self.diags.len() }
+    pub fn is_empty(&self) -> bool { self.diags.is_empty() }
+    /// Drop diagnostics back to a previous `len()` mark.
+    pub fn truncate(&mut self, mark: usize) { self.diags.truncate(mark); }
     pub fn diagnostics(&self) -> &[Diagnostic] { &self.diags }
     pub fn into_vec(self) -> Vec<Diagnostic> { self.diags }
     pub fn has_errors(&self) -> bool {
