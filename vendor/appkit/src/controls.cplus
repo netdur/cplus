@@ -148,12 +148,16 @@ impl Slider {
         return Slider { obj: slider };
     }
 
-    pub fn set_float_value(self, val: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setFloatValue:\0")), val);
+    // NSControl's value is a `double` (`doubleValue`/`setDoubleValue:`); use the
+    // double ABI to match `setMinValue:`/`setMaxValue:` below (and the other
+    // value controls). The legacy `floatValue` returns a 32-bit `float` and must
+    // NOT be read through the f64 msgSend — that's an ABI mismatch.
+    pub fn set_double_value(self, val: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setDoubleValue:\0")), val);
     }
 
-    pub fn float_value(self) -> f64 {
-        return rt::msg_f64(self.obj, rt::sel(#str_ptr("floatValue\0")));
+    pub fn double_value(self) -> f64 {
+        return rt::msg_f64(self.obj, rt::sel(#str_ptr("doubleValue\0")));
     }
 
     pub fn set_min_value(self, val: f64) {

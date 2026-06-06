@@ -16843,6 +16843,92 @@ fn appkit_list_detail_recipe_builds() {
     );
 }
 
+/// vendor/appkit `controls` coverage: construct + configure every control type
+/// and read back the value-bearing ones. AppKit object construction + property
+/// setters are headless-safe (no window server), so this exercises the wrapper
+/// msgSends end to end (incl. the owned TextField/Button Drop path and one
+/// `attach_callback`). Scope is the vendor wrappers, not Apple's widget behavior.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_controls_construct_and_configure() {
+    appkit_run_program(
+        "ak_controls",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/controls" as controls;
+
+fn on_action(sender: *u8) { return; }
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 120.0, height: 24.0 } };
+
+    let label = controls::TextField::new_label(f);
+    label.set_string_value(#str_ptr("hello\0"));
+    label.set_bezeled(0 as i8);
+    label.set_editable(0 as i8);
+
+    let field = controls::TextField::new_input_field(f);
+    field.set_placeholder_string(#str_ptr("name\0"));
+    field.set_string_value(#str_ptr("abc\0"));
+
+    let btn = controls::Button::new(f);
+    btn.set_title(#str_ptr("OK\0"));
+    btn.set_enabled(1 as i8);
+    btn.set_state(1 as i64);
+    if btn.state() != (1 as i64) { return 1; }
+    btn.set_on_click(on_action);
+
+    let slider = controls::Slider::new(f);
+    slider.set_min_value(0.0);
+    slider.set_max_value(10.0);
+    slider.set_double_value(5.0);
+    if slider.double_value() < (4.0) { return 2; }
+
+    let pi = controls::ProgressIndicator::new(f);
+    pi.set_indeterminate(0 as i8);
+    pi.set_double_value(0.5);
+
+    let popup = controls::PopUpButton::new(f, 0 as i8);
+    popup.add_item(#str_ptr("A\0"));
+    popup.add_item(#str_ptr("B\0"));
+    popup.select_item_at_index(1 as i64);
+    if popup.index_of_selected_item() != (1 as i64) { return 3; }
+
+    let stepper = controls::Stepper::new(f);
+    stepper.set_min_value(0.0);
+    stepper.set_max_value(9.0);
+    stepper.set_double_value(2.0);
+    if stepper.double_value() < (1.0) { return 4; }
+
+    let sw = controls::Switch::new(f);
+    sw.set_state(1 as i64);
+    if sw.state() != (1 as i64) { return 5; }
+
+    let seg = controls::SegmentedControl::new(f);
+    seg.set_segment_count(2 as i64);
+    seg.set_label_for_segment(#str_ptr("L\0"), 0 as i64);
+    seg.set_selected_for_segment(1 as i8, 0 as i64);
+
+    let dp = controls::DatePicker::new(f);
+    dp.set_date_picker_style(0 as i64);
+
+    let cw = controls::ColorWell::new(f);
+    cw.deactivate();
+
+    let li = controls::LevelIndicator::new(f);
+    li.set_max_value(5.0);
+    li.set_double_value(3.0);
+    if li.double_value() < (2.0) { return 6; }
+
+    let pc = controls::PathControl::new(f);
+    pc.set_path_style(0 as i64);
+
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
