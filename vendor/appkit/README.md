@@ -78,8 +78,19 @@ strong reference and releases it once in `fn drop` ("+1 normal form"):
 `self`/`mut self` method receivers are borrows (they do not consume), so builder
 chaining works on owned wrappers. Keep an owned wrapper alive as long as the UI
 needs its object; do not drop a top-level object that nothing else retains while
-it is still on screen. `Alert` is the worked example (a transient that releases
-in `drop`); the per-wrapper audit across the rest of the bindings is in progress.
+it is still on screen, and don't pass `Widget::new().obj` inline (the temporary
+wrapper would drop and dangle the pointer) — hold it in a local across the
+`addSubview:`.
+
+**Owned (release in `drop`):** `Alert`, `Button`, `TextField`, `ScrollView`,
+`TableView`, `TableColumn`, `Menu`, `MenuItem`, `BezierPath`, `Observer`.
+
+**`opaque` (not owned — managed elsewhere):** top-level windows
+(`Window`/`Panel`), shared/factory/pool singletons (`Application`,
+`AutoreleasePool`, `NotificationCenter`, `Pasteboard`, the `*Panel` factories),
+and the `Color`/`Font`/`Image` namespaces. The remaining child-widget wrappers
+are still `opaque`; they follow the same `+1` pattern and gain a `drop` as apps
+need them.
 
 ## Example
 
