@@ -6,10 +6,12 @@ name: macOS CI
 # that a tag-only CI would only surface at release. (The Linux and Windows ports
 # each regressed a macOS fixture that only a local run caught.)
 #
-# macOS is the primary dev target, so no toolchain setup is needed: the runner's
-# preinstalled Apple clang assembles/links cpc's output. The suite includes the
-# macOS-gated vendor/appkit binding tests; GitHub's macos runners provide the
-# window/pasteboard server those few tests need.
+# cpc emits IR that needs clang/LLVM >= 19 (e.g. the `preserve_nonecc` calling
+# convention + newer struct-ABI IR). The macos-14 runner's *default* Apple clang
+# is 15, which rejects that IR ("expected ')'"), so — exactly like Linux
+# (clang-19) and Windows (choco llvm) — we install a recent LLVM via Homebrew and
+# point cpc at it through `$CPC_CLANG`. `SDKROOT` lets the Homebrew clang find the
+# macOS SDK when it links.
 
 on:
   push:
@@ -22,7 +24,7 @@ permissions:
 
 jobs:
   test:
-    name: cargo test --workspace (macOS, Apple clang)
+    name: cargo test --workspace (macOS, Homebrew clang)
     runs-on: macos-14 # Apple Silicon (arm64)
     steps:
       - name: Check out source
@@ -31,10 +33,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install LLVM (>= 19) via Homebrew
+        run: |
+          set -euo pipefail
+          brew install llvm@19
+          PFX="$(brew --prefix llvm@19)"
+          echo "CPC_CLANG=$PFX/bin/clang" >> "$GITHUB_ENV"
+          # Homebrew clang links via the system ld64 but needs the SDK path.
+          echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
       - name: Versions
         run: |
-          clang --version | head -1
+          "$CPC_CLANG" --version | head -1
           rustc --version
+          echo "SDKROOT=$SDKROOT"
 
       - name: Run the workspace test suite
         run: cargo test --workspace --no-fail-fast
