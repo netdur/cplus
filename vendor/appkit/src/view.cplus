@@ -1,9 +1,10 @@
 import "./runtime" as rt;
 
 // Synthesize a custom `NSView` subclass whose `drawRect:` is a C+ function, and
-// return it as a `View` (added to a parent, which retains it — the non-owned
-// case, so no `drop`). This is the custom-drawing entry point (plan.appkit.md
-// §4): inside `draw_imp`, draw with `graphics::BezierPath` / `Color`.
+// return it as an owned `View` (+1 via alloc/init; `drop` releases this
+// wrapper's +1, and a parent retains it on add — the +1 normal form). This is
+// the custom-drawing entry point (plan.appkit.md §4): inside `draw_imp`, draw
+// with `graphics::BezierPath` / `Color`.
 //
 //   draw_imp: `(self, _cmd, dirtyRect)` implements `-drawRect:`. The dirty
 //   `NSRect` is passed by value. Closure-free — reach app state through a
@@ -28,10 +29,14 @@ pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> 
 }
 
 pub struct View {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl View {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> View {
         let nsview_cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
         let view_alloc: *u8 = rt::msg_id(nsview_cls, rt::sel(#str_ptr("alloc\0")));
@@ -65,10 +70,14 @@ impl View {
 }
 
 pub struct StackView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl StackView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> StackView {
         let cls: *u8 = rt::get_class(#str_ptr("NSStackView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -143,10 +152,14 @@ impl ScrollView {
 }
 
 pub struct Box {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Box {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Box {
         let cls: *u8 = rt::get_class(#str_ptr("NSBox\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -168,10 +181,14 @@ impl Box {
 }
 
 pub struct Scroller {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Scroller {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Scroller {
         return Scroller { obj: rt::alloc_init_with_frame(#str_ptr("NSScroller\0"), frame) };
     }
@@ -186,10 +203,14 @@ impl Scroller {
 }
 
 pub struct BackgroundExtensionView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl BackgroundExtensionView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> BackgroundExtensionView {
         return BackgroundExtensionView { obj: rt::alloc_init_with_frame(#str_ptr("NSBackgroundExtensionView\0"), frame) };
     }

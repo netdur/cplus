@@ -16971,6 +16971,44 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16: the base views (View, StackView, Box, Scroller) are now owned (+1
+/// normal form), like the controls. Same balance check: build+drop 200 in a loop
+/// (no double-free/leak), and a child added to a parent survives the wrapper's
+/// drop (subview count stays 1).
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_owned_views_drop_balanced() {
+    appkit_run_program(
+        "ak_view_drop",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/view" as view;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 50.0, height: 50.0 } };
+
+    let mut i: i32 = 0;
+    while i < 200 {
+        let v = view::View::new(f);
+        let sv = view::StackView::new(f);
+        let bx = view::Box::new(f);
+        i = i + 1;
+    }
+
+    let parent: *u8 = rt::alloc_init_with_frame(#str_ptr("NSView\0"), f);
+    {
+        let child = view::View::new(f);
+        rt::msg_void_id(parent, rt::sel(#str_ptr("addSubview:\0")), child.obj);
+    }
+    let subs: *u8 = rt::msg_id(parent, rt::sel(#str_ptr("subviews\0")));
+    if rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) != (1 as u64) { return 1; }
+
+    return 0;
+}
+"#,
+    );
+}
+
 /// vendor/appkit `text` coverage: construct + configure the text-entry widgets
 /// (TextView, SecureTextField, SearchField, TokenField, ComboBox, Form) and read
 /// back string/selection state. Headless-safe object construction + setters.
