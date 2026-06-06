@@ -2378,6 +2378,60 @@ enum CAbiClass {
     Indirect,
 }
 
+/// AArch64 AAPCS64 §6.8.2: a Homogeneous Floating-point Aggregate (HFA) — an
+/// aggregate whose fundamental members are all the *same* floating-point type
+/// (`f32` or `f64`), four or fewer — is passed/returned in consecutive FP
+/// registers (s0–s3 / d0–d3), NOT coerced to integer class or passed indirectly.
+/// `NSPoint`/`NSSize` (2×f64) and `NSRect`/`NSEdgeInsets` (4×f64) are HFAs;
+/// classifying them by raw byte size sends every geometry value to integer/
+/// memory instead of the FP registers the callee reads (garbage coordinates).
+/// Returns `Some((elem_llvm_ty, member_count))` for an HFA, else `None`.
+fn hfa_members(ty: &Ty, types: &TypeTable) -> Option<(&'static str, u64)> {
+    fn walk(ty: &Ty, types: &TypeTable, elem: &mut Option<&'static str>, count: &mut u64) -> bool {
+        let this: &'static str = match ty {
+            Ty::F32 => "float",
+            Ty::F64 => "double",
+            Ty::Struct(id) => {
+                let info = &types.struct_defs[id.0 as usize];
+                if info.fields.is_empty() {
+                    return false;
+                }
+                for (_, fty) in &info.fields {
+                    if !walk(fty, types, elem, count) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            Ty::Array(inner, n) => {
+                for _ in 0..*n {
+                    if !walk(inner, types, elem, count) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            _ => return false,
+        };
+        match *elem {
+            None => *elem = Some(this),
+            Some(prev) => {
+                if prev != this {
+                    return false;
+                }
+            }
+        }
+        *count += 1;
+        *count <= 4
+    }
+    let mut elem: Option<&'static str> = None;
+    let mut count: u64 = 0;
+    if walk(ty, types, &mut elem, &mut count) && count >= 1 {
+        return Some((elem.unwrap(), count));
+    }
+    None
+}
+
 fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     // Aggregates only need ABI coercion. Everything else is a single
     // register class and passes through cleanly.
@@ -2400,6 +2454,23 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     };
     if size == 0 {
         return CAbiClass::Direct;
+    }
+    // AArch64 AAPCS64: HFAs (≤4 same-type floats/doubles) pass in FP registers
+    // (d0–d3 / s0–s3), not integer-class or indirect. Coerce to `[N x <fp>]`,
+    // which the AArch64 backend assigns to FP regs — without this, NSPoint/NSSize
+    // (2×f64) coerce to `[2 x i64]` and NSRect (4×f64) goes indirect, landing
+    // every geometry argument in the wrong registers (garbage coordinates, plus
+    // a crash when a following pointer arg reads the spilled struct pointer).
+    // Gated to aarch64 — the target AppKit's float-struct args run on; other
+    // targets keep the size-based classification their tests exercise.
+    if cfg!(target_arch = "aarch64") {
+        if let Some((elem, n)) = hfa_members(ty, types) {
+            return CAbiClass::Coerce {
+                llvm_ty: format!("[{n} x {elem}]"),
+                size,
+                align: _align,
+            };
+        }
     }
     // Microsoft x64 (windows-msvc) ABI: an aggregate is passed/returned in a
     // single register only when its size is exactly 1, 2, 4, or 8 bytes;

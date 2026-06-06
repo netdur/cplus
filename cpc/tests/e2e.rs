@@ -17404,6 +17404,52 @@ fn main() -> i32 {
     );
 }
 
+/// Regression for the struct-by-value `objc_msgSend` argument ABI: NSPoint
+/// (2×f64) and NSRect (4×f64) are Homogeneous Floating-point Aggregates and must
+/// be passed in FP registers (d0–d3) per AAPCS64. cpc previously coerced them to
+/// integer class / passed NSRect indirectly, so the value never reached the
+/// method (garbage geometry). This round-trips both through NSValue: the arg is
+/// the HFA (the fixed path), the return reads it back. Pre-fix this returned
+/// garbage / (0,0); post-fix the coordinates survive.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_struct_arg_abi_hfa_roundtrip() {
+    appkit_run_program(
+        "ak_hfa",
+        r#"
+import "appkit/runtime" as rt;
+
+#[link_name = "objc_msgSend"]
+extern fn value_with_point(cls: *u8, sel: *u8, p: rt::Point) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn value_with_rect(cls: *u8, sel: *u8, r: rt::Rect) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn rect_value(v: *u8, sel: *u8) -> rt::Rect;
+
+fn main() -> i32 {
+    let nsvalue: *u8 = rt::get_class(#str_ptr("NSValue\0"));
+
+    // 2×f64 HFA (NSPoint) argument.
+    let p: rt::Point = rt::Point { x: 12.0, y: 34.0 };
+    let vp: *u8 = unsafe { value_with_point(nsvalue, rt::sel(#str_ptr("valueWithPoint:\0")), p) };
+    let gp: rt::Point = rt::msg_point(vp, rt::sel(#str_ptr("pointValue\0")));
+    if gp.x < 11.0 { return 1; }
+    if gp.y < 33.0 { return 2; }
+
+    // 4×f64 HFA (NSRect) argument — passed Indirect before the fix.
+    let r: rt::Rect = rt::Rect { origin: rt::Point { x: 5.0, y: 6.0 }, size: rt::Size { width: 7.0, height: 8.0 } };
+    let vr: *u8 = unsafe { value_with_rect(nsvalue, rt::sel(#str_ptr("valueWithRect:\0")), r) };
+    let gr: rt::Rect = unsafe { rect_value(vr, rt::sel(#str_ptr("rectValue\0"))) };
+    if gr.origin.x < 4.0 { return 3; }
+    if gr.size.width < 6.0 { return 4; }
+    if gr.size.height < 7.0 { return 5; }
+
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
