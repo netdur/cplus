@@ -8,10 +8,14 @@ name: macOS CI
 #
 # cpc emits IR that needs clang/LLVM >= 19 (e.g. the `preserve_nonecc` calling
 # convention + newer struct-ABI IR). The macos-14 runner's *default* Apple clang
-# is 15, which rejects that IR ("expected ')'"), so — exactly like Linux
-# (clang-19) and Windows (choco llvm) — we install a recent LLVM via Homebrew and
-# point cpc at it through `$CPC_CLANG`. `SDKROOT` lets the Homebrew clang find the
-# macOS SDK when it links.
+# is 15, which rejects that IR, so — exactly like Linux (clang-19) and Windows
+# (choco llvm) — we install a recent LLVM via Homebrew and point cpc at it through
+# `$CPC_CLANG`. `SDKROOT` lets the Homebrew clang find the macOS SDK when it links.
+#
+# We use Homebrew `llvm` (latest), NOT `llvm@19`: the pinned `llvm@19` (19.1.7)
+# anomalously rejects the `writable` sret parameter attribute cpc emits, even
+# though that attribute is valid at our LLVM-19 minimum (Linux clang-19 and the
+# Windows toolchain both accept it). The latest formula parses it correctly.
 
 on:
   push:
@@ -33,11 +37,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install LLVM (>= 19) via Homebrew
+      - name: Install LLVM (latest, >= 19) via Homebrew
         run: |
           set -euo pipefail
-          brew install llvm@19
-          PFX="$(brew --prefix llvm@19)"
+          brew install llvm
+          PFX="$(brew --prefix llvm)"
           echo "CPC_CLANG=$PFX/bin/clang" >> "$GITHUB_ENV"
           # Homebrew clang links via the system ld64 but needs the SDK path.
           echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
