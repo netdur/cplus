@@ -1,10 +1,14 @@
 import "./runtime" as rt;
 
 pub struct SplitView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl SplitView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> SplitView {
         return SplitView { obj: rt::alloc_init_with_frame(#str_ptr("NSSplitView\0"), frame) };
     }
@@ -27,10 +31,14 @@ impl SplitView {
 }
 
 pub struct TabView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TabView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> TabView {
         return TabView { obj: rt::alloc_init_with_frame(#str_ptr("NSTabView\0"), frame) };
     }
@@ -49,10 +57,14 @@ impl TabView {
 }
 
 pub struct TabViewItem {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TabViewItem {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(identifier: *u8) -> TabViewItem {
         return TabViewItem { obj: rt::alloc_init_with_identifier(#str_ptr("NSTabViewItem\0"), identifier) };
     }
@@ -76,10 +88,14 @@ impl TabViewItem {
 }
 
 pub struct VisualEffectView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl VisualEffectView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> VisualEffectView {
         return VisualEffectView { obj: rt::alloc_init_with_frame(#str_ptr("NSVisualEffectView\0"), frame) };
     }
@@ -98,10 +114,14 @@ impl VisualEffectView {
 }
 
 pub struct GridView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl GridView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> GridView {
         return GridView { obj: rt::alloc_init_with_frame(#str_ptr("NSGridView\0"), frame) };
     }
@@ -120,10 +140,14 @@ impl GridView {
 }
 
 pub struct Browser {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Browser {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Browser {
         return Browser { obj: rt::alloc_init_with_frame(#str_ptr("NSBrowser\0"), frame) };
     }
@@ -142,10 +166,14 @@ impl Browser {
 }
 
 pub struct Matrix {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Matrix {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Matrix {
         return Matrix { obj: rt::alloc_init_with_frame(#str_ptr("NSMatrix\0"), frame) };
     }
@@ -160,10 +188,14 @@ impl Matrix {
 }
 
 pub struct ClipView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ClipView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> ClipView {
         return ClipView { obj: rt::alloc_init_with_frame(#str_ptr("NSClipView\0"), frame) };
     }
@@ -174,10 +206,14 @@ impl ClipView {
 }
 
 pub struct RulerView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl RulerView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> RulerView {
         return RulerView { obj: rt::alloc_init_with_frame(#str_ptr("NSRulerView\0"), frame) };
     }
@@ -188,10 +224,14 @@ impl RulerView {
 }
 
 pub struct Popover {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Popover {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> Popover {
         return Popover { obj: rt::alloc_init(#str_ptr("NSPopover\0")) };
     }

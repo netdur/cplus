@@ -1,10 +1,14 @@
 import "./runtime" as rt;
 
 pub struct TextView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TextView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> TextView {
         return TextView { obj: rt::alloc_init_with_frame(#str_ptr("NSTextView\0"), frame) };
     }
@@ -49,10 +53,14 @@ impl TextView {
 }
 
 pub struct SecureTextField {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl SecureTextField {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> SecureTextField {
         return SecureTextField { obj: rt::alloc_init_with_frame(#str_ptr("NSSecureTextField\0"), frame) };
     }
@@ -80,10 +88,14 @@ impl SecureTextField {
 }
 
 pub struct SearchField {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl SearchField {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> SearchField {
         return SearchField { obj: rt::alloc_init_with_frame(#str_ptr("NSSearchField\0"), frame) };
     }
@@ -119,10 +131,14 @@ impl SearchField {
 }
 
 pub struct TokenField {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TokenField {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> TokenField {
         return TokenField { obj: rt::alloc_init_with_frame(#str_ptr("NSTokenField\0"), frame) };
     }
@@ -146,10 +162,14 @@ impl TokenField {
 }
 
 pub struct ComboBox {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ComboBox {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> ComboBox {
         return ComboBox { obj: rt::alloc_init_with_frame(#str_ptr("NSComboBox\0"), frame) };
     }
@@ -181,10 +201,14 @@ impl ComboBox {
 }
 
 pub struct Form {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Form {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Form {
         return Form { obj: rt::alloc_init_with_frame(#str_ptr("NSForm\0"), frame) };
     }

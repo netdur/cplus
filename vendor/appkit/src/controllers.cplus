@@ -1,10 +1,14 @@
 import "./runtime" as rt;
 
 pub struct ViewController {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ViewController {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> ViewController {
         return ViewController { obj: rt::alloc_init(#str_ptr("NSViewController\0")) };
     }
@@ -19,10 +23,14 @@ impl ViewController {
 }
 
 pub struct WindowController {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl WindowController {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> WindowController {
         return WindowController { obj: rt::alloc_init(#str_ptr("NSWindowController\0")) };
     }
@@ -41,10 +49,14 @@ impl WindowController {
 }
 
 pub struct TabViewController {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TabViewController {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> TabViewController {
         return TabViewController { obj: rt::alloc_init(#str_ptr("NSTabViewController\0")) };
     }
@@ -55,10 +67,14 @@ impl TabViewController {
 }
 
 pub struct SplitViewController {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl SplitViewController {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> SplitViewController {
         return SplitViewController { obj: rt::alloc_init(#str_ptr("NSSplitViewController\0")) };
     }
@@ -69,10 +85,14 @@ impl SplitViewController {
 }
 
 pub struct ArrayController {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ArrayController {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> ArrayController {
         return ArrayController { obj: rt::alloc_init(#str_ptr("NSArrayController\0")) };
     }
@@ -83,10 +103,14 @@ impl ArrayController {
 }
 
 pub struct ObjectController {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ObjectController {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> ObjectController {
         return ObjectController { obj: rt::alloc_init(#str_ptr("NSObjectController\0")) };
     }
