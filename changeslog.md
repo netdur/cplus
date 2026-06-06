@@ -3,6 +3,59 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.16 — 2026-06-07
+
+The AppKit surface: full binding coverage, a leak-free ownership model, and
+event-driven drag-and-drop — plus a P0 calling-convention fix behind all macOS
+geometry, and a loop Drop/move soundness fix.
+
+### Language
+- **`#` sigil for compiler builtins:** the FFI/raw and byte-swap builtins
+  (`str_ptr`, `slice_ptr`, `slice_len`, `str_from_raw_parts`, `bswap32`,
+  `htons`, …) and `println` now require the `#name(...)` form, like the existing
+  `#size_of`/`#addr_of`. A bare call is a fix-it error. This makes a
+  compiler-known builtin self-evident at the call site (the library `io::println`
+  is unchanged).
+- **Infinite `loop` diverges:** a function whose body ends in an infinite `loop`
+  (no `break` can exit it) no longer needs a dead trailing `return`.
+- **`let _ = expr;`** is now a discard binding (evaluates and drops the value).
+
+### AppKit (vendor/appkit)
+- **Event-driven drag-and-drop:** a drag *source* can now start a drag from a
+  `mouseDragged:` gesture (`create_drag_source_view` + `begin_string_drag` /
+  `DraggingItem` / `begin_dragging_session`), alongside the existing drop
+  destination. See the `appkit_drag_drop` recipe.
+- **Leak-free ownership:** every `alloc/init` widget wrapper now follows the
+  "+1 normal form" (owns its object, releases once in `drop`) — controls, text,
+  containers, toolbar items, panels, controllers, data views, and the base
+  views. Factory/shared/top-level objects (windows, the app, status bar,
+  shared panels, colors/fonts) correctly stay non-owned.
+- **Full module coverage:** every vendor/appkit module now has tests.
+- **`TextField::new_label`** is a real static label (non-editable, non-bezeled);
+  it no longer behaves like an input field or accepts dropped text.
+
+### Fixes
+- **Struct-by-value ABI (P0):** `NSPoint`/`NSSize`/`NSRect` and other
+  homogeneous float aggregates passed by value to `objc_msgSend` now go in FP
+  registers per AAPCS64. Previously they were integer-coerced / passed
+  indirectly, so every geometry argument (`setFrame:`, `initWithContentRect:`,
+  `moveToPoint:`, …) silently received garbage coordinates on Apple Silicon.
+- **Loop-body Drop:** an owned value created inside a `while`/`for`/`loop` body
+  is now dropped at the end of each iteration (and on `break`/`continue`).
+  Previously it leaked every iteration.
+- **Move across loop iterations:** `let y = x;` on a non-Copy value now moves
+  the source, and re-moving a binding declared outside a loop on each iteration
+  is rejected (E0335) — previously an un-tracked move that, with the loop-Drop
+  fix, would double-free. Re-initializing the binding before the move stays
+  valid.
+- **Negative float literals** no longer emit invalid IR (`double -5`).
+- **`Slider`** value get/set used the wrong (float vs double) ABI; fixed to
+  `doubleValue`/`setDoubleValue:`.
+
+### Infra
+- **macOS CI:** a `cargo test --workspace` job now runs on Apple Silicon
+  (push-to-main + PRs), alongside the tag-triggered Linux and Windows CI.
+
 ## v0.0.15 — 2026-06-05
 
 Language hardening, a P0 ownership fix, the first Linux and Windows ports, and
