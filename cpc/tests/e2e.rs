@@ -16929,6 +16929,115 @@ fn main() -> i32 {
     );
 }
 
+/// vendor/appkit `text` coverage: construct + configure the text-entry widgets
+/// (TextView, SecureTextField, SearchField, TokenField, ComboBox, Form) and read
+/// back string/selection state. Headless-safe object construction + setters.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_text_widgets_construct_and_configure() {
+    appkit_run_program(
+        "ak_text",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/text" as text;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 200.0, height: 40.0 } };
+
+    let tv = text::TextView::new(f);
+    tv.set_string(#str_ptr("hello world\0"));
+    tv.set_editable(1 as i8);
+    tv.set_rich_text(0 as i8);
+    if tv.string() == unsafe { 0 as *u8 } { return 1; }
+
+    let secure = text::SecureTextField::new(f);
+    secure.set_placeholder_string(#str_ptr("password\0"));
+    secure.set_string_value(#str_ptr("pw\0"));
+    if secure.string_value() == unsafe { 0 as *u8 } { return 2; }
+
+    let search = text::SearchField::new(f);
+    search.set_placeholder_string(#str_ptr("search\0"));
+    search.set_string_value(#str_ptr("q\0"));
+
+    let tokens = text::TokenField::new(f);
+    tokens.set_string_value(#str_ptr("a,b\0"));
+    if tokens.string_value() == unsafe { 0 as *u8 } { return 3; }
+
+    let combo = text::ComboBox::new(f);
+    combo.add_item(#str_ptr("one\0"));
+    combo.add_item(#str_ptr("two\0"));
+    combo.select_item_at_index(1 as i64);
+    if combo.index_of_selected_item() != (1 as i64) { return 4; }
+
+    let form = text::Form::new(f);
+    let _entry: *u8 = form.add_entry(#str_ptr("Name\0"));
+    form.set_interline_spacing(4.0);
+
+    return 0;
+}
+"#,
+    );
+}
+
+/// vendor/appkit `containers` coverage: construct + configure the layout
+/// container views (SplitView, TabView + TabViewItem, VisualEffectView, GridView,
+/// Browser, Matrix, ClipView, RulerView, Popover), including the cross-object
+/// wiring (add an arranged subview, a tab item, a document view). Headless-safe.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_containers_construct_and_configure() {
+    appkit_run_program(
+        "ak_containers",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/containers" as containers;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 200.0, height: 200.0 } };
+    let v: *u8 = rt::alloc_init_with_frame(#str_ptr("NSView\0"), f);
+
+    let split = containers::SplitView::new(f);
+    split.set_vertical(1 as i8);
+    split.set_divider_style(1 as i64);
+    split.add_arranged_subview(v);
+
+    let tab = containers::TabView::new(f);
+    let item = containers::TabViewItem::new(#str_ptr("id1\0"));
+    item.set_label(#str_ptr("Tab 1\0"));
+    item.set_view(v);
+    tab.add_tab_view_item(item.obj);
+    tab.select_tab_view_item_at_index(0 as i64);
+
+    let vfx = containers::VisualEffectView::new(f);
+    vfx.set_material(0 as i64);
+    vfx.set_blending_mode(0 as i64);
+    vfx.set_state(1 as i64);
+
+    let grid = containers::GridView::new(f);
+    grid.set_row_spacing(4.0);
+    grid.set_column_spacing(6.0);
+
+    let browser = containers::Browser::new(f);
+    browser.reload_column(0 as i64);
+
+    let matrix = containers::Matrix::new(f);
+    matrix.set_mode(0 as i64);
+
+    let clip = containers::ClipView::new(f);
+    clip.set_document_view(v);
+
+    let ruler = containers::RulerView::new(f);
+    ruler.set_orientation(0 as i64);
+
+    let pop = containers::Popover::new();
+    pop.set_behavior(1 as i64);
+
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
