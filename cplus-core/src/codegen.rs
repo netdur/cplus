@@ -558,7 +558,7 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable) {
         out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
         out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
         out.push_str(&format!(
-            "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef dereferenceable({sz}) align {al} %slot)\n"
+            "  call void %f(ptr sret({llvm_t}) noalias nonnull noundef writable dereferenceable({sz}) align {al} %slot)\n"
         ));
     } else {
         out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
@@ -4808,7 +4808,7 @@ fn gen_function(
                 .expect("extern sret return type must have a known layout");
             write!(
                 out,
-                "ptr sret({}) noalias nonnull noundef dereferenceable({}) align {}",
+                "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {}",
                 ret_inner, sz, al
             )
             .unwrap();
@@ -4931,7 +4931,7 @@ fn gen_function(
             static_layout(&return_ty, types).expect("sret return type must have a known layout");
         write!(
             out,
-            "ptr sret({}) noalias nonnull noundef dereferenceable({}) align {} %0",
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %0",
             ret_ty_str, sz, al
         )
         .unwrap();
@@ -6105,7 +6105,7 @@ fn gen_enum_method(
         let ret_ty_inner = llvm_ty(&return_ty, types);
         write!(
             out,
-            "ptr sret({}) noalias nonnull noundef dereferenceable({}) align {} %{}",
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
             ret_ty_inner, sz, al, llvm_idx
         )
         .unwrap();
@@ -6490,7 +6490,7 @@ fn gen_method(
         let ret_ty_inner = llvm_ty(&return_ty, types);
         write!(
             out,
-            "ptr sret({}) noalias nonnull noundef dereferenceable({}) align {} %{}",
+            "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} %{}",
             ret_ty_inner, sz, al, llvm_idx
         )
         .unwrap();
@@ -11072,7 +11072,7 @@ impl<'a> FnState<'a> {
                         static_layout(&ret, self.types).expect("sret return type has layout");
                     let sret_inner = self.lty(&ret);
                     let sret_attrs = format!(
-                        "ptr sret({}) noalias nonnull noundef dereferenceable({}) align {} {}",
+                        "ptr sret({}) noalias nonnull noundef writable dereferenceable({}) align {} {}",
                         sret_inner, sret_sz, sret_al, caller_slot
                     );
                     let mut head = sret_attrs;
@@ -17323,7 +17323,7 @@ mod tests {
         );
         // The function returns void and takes a sret pointer as %0.
         assert!(
-            ir.contains("void @greet(ptr sret({ ptr, i64, i64 }) noalias nonnull noundef dereferenceable(24) align 8 %0)"),
+            ir.contains("void @greet(ptr sret({ ptr, i64, i64 }) noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
             "expected sret definition, got:\n{ir}"
         );
         // The body stores into %0 then returns void.
@@ -17522,7 +17522,7 @@ mod tests {
         assert!(
             c_body.contains("musttail call fastcc void @helper(ptr sret(")
                 && c_body
-                    .contains(") noalias nonnull noundef dereferenceable(24) align 8 %0)"),
+                    .contains(") noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
             "expected musttail call forwarding caller's sret slot with sret attrs, got:\n{c_body}"
         );
     }
