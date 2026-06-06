@@ -17164,6 +17164,67 @@ fn main() -> i32 {
     );
 }
 
+/// vendor/appkit `menu` coverage: the owned Menu + MenuItem wrappers and their
+/// Drop interplay — a menu retains items on `add_item`, an item retains its
+/// submenu, and a separator factory item is added. Building + dropping the whole
+/// tree must neither leak nor over-release.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_menu_build_tree() {
+    appkit_run_program(
+        "ak_menu",
+        r#"
+import "appkit/menu" as menu;
+
+fn main() -> i32 {
+    let m = menu::Menu::new(#str_ptr("App\0"));
+    m.set_autoenables_items(0 as i8);
+
+    let quit = menu::MenuItem::new(#str_ptr("Quit\0"), #str_ptr("terminate:\0"), #str_ptr("q\0"));
+    quit.set_enabled(1 as i8);
+    quit.set_key_equivalent_modifier_mask(1048576 as u64);
+    m.add_item(quit.obj);
+
+    let sep: *u8 = menu::MenuItem::separator();
+    m.add_item(sep);
+
+    let submenu = menu::Menu::new(#str_ptr("More\0"));
+    let parent = menu::MenuItem::new(#str_ptr("More\0"), unsafe { 0 as *u8 }, #str_ptr("\0"));
+    parent.set_submenu(submenu.obj);
+    m.add_item(parent.obj);
+
+    return 0;
+}
+"#,
+    );
+}
+
+/// vendor/appkit `events` coverage: the pure NSEvent helpers — the
+/// `has_modifier` bitmask predicate and the type/modifier constants. (The
+/// `NSEvent*` field accessors need a live AppKit-dispatched event and are
+/// exercised only in real handlers, not here.)
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_event_modifier_helpers() {
+    appkit_run_program(
+        "ak_events",
+        r#"
+import "appkit/events" as events;
+
+fn main() -> i32 {
+    let combo: u64 = events::mod_command() | events::mod_shift();
+    if events::has_modifier(combo, events::mod_command()) != (1 as i8) { return 1; }
+    if events::has_modifier(combo, events::mod_shift()) != (1 as i8) { return 2; }
+    if events::has_modifier(combo, events::mod_control()) != (0 as i8) { return 3; }
+    if events::mod_command() != (1048576 as u64) { return 4; }
+    if events::type_key_down() != (10 as i64) { return 5; }
+    if events::type_left_mouse_down() != (1 as i64) { return 6; }
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
