@@ -17276,6 +17276,54 @@ fn main() -> i32 {
     );
 }
 
+/// vendor/appkit `graphics` coverage: Color (rgba + named factories), Font
+/// (system/bold/label), Image (by_name), ImageView, and BezierPath's data-only
+/// accessors (element_count, set_line_width). Font/Color factories are headless-
+/// safe; a system image may be nil without an app bundle, so set_image is guarded.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_graphics_factories_and_views() {
+    appkit_run_program(
+        "ak_graphics",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/graphics" as graphics;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 64.0, height: 64.0 } };
+
+    if graphics::Color::red() == unsafe { 0 as *u8 } { return 1; }
+    if graphics::Color::rgba(0.5, 0.25, 0.75, 1.0) == unsafe { 0 as *u8 } { return 2; }
+    let _b = graphics::Color::black();
+    let _w = graphics::Color::white();
+    let _c = graphics::Color::clear();
+    let _g = graphics::Color::gray();
+    let _y = graphics::Color::yellow();
+    let _gn = graphics::Color::green();
+    let _bl = graphics::Color::blue();
+
+    if graphics::Font::system_font_of_size(13.0) == unsafe { 0 as *u8 } { return 3; }
+    let _bold = graphics::Font::bold_system_font_of_size(13.0);
+    let _label = graphics::Font::label_font_of_size(11.0);
+
+    let named: *u8 = graphics::Image::by_name(#str_ptr("NSApplicationIcon\0"));
+
+    let iv = graphics::ImageView::new(f);
+    iv.set_scaling(0 as i64);
+    if named != unsafe { 0 as *u8 } { iv.set_image(named); }
+
+    let path = graphics::BezierPath::new();
+    path.move_to(0.0, 0.0);
+    path.line_to(10.0, 10.0);
+    path.set_line_width(2.0);
+    if path.element_count() < (2 as i64) { return 4; }
+
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
