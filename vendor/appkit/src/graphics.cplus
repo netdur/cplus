@@ -1,10 +1,14 @@
 import "./runtime" as rt;
 
 pub struct ImageView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ImageView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> ImageView {
         let cls: *u8 = rt::get_class(#str_ptr("NSImageView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

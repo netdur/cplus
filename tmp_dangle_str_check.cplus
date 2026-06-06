@@ -1,0 +1,9 @@
+fn main() -> i32 {
+    let mut view: str;
+    {
+        let owned: string = "hello".to_string();
+        view = owned.as_str();
+    }
+    #println(view);
+    return 0;
+}

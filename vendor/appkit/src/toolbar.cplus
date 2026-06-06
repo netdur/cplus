@@ -1,10 +1,14 @@
 import "./runtime" as rt;
 
 pub struct Toolbar {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Toolbar {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(identifier: *u8) -> Toolbar {
         return Toolbar { obj: rt::alloc_init_with_identifier(#str_ptr("NSToolbar\0"), identifier) };
     }
@@ -23,10 +27,14 @@ impl Toolbar {
 }
 
 pub struct ToolbarItem {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ToolbarItem {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(identifier: *u8) -> ToolbarItem {
         let cls = rt::get_class(#str_ptr("NSToolbarItem\0"));
         let alloced = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -64,10 +72,14 @@ impl ToolbarItem {
 }
 
 pub struct ToolbarItemGroup {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ToolbarItemGroup {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(identifier: *u8) -> ToolbarItemGroup {
         let cls = rt::get_class(#str_ptr("NSToolbarItemGroup\0"));
         let alloced = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -139,10 +151,14 @@ impl StatusBarButton {
 }
 
 pub struct TouchBar {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TouchBar {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> TouchBar {
         return TouchBar { obj: rt::alloc_init(#str_ptr("NSTouchBar\0")) };
     }
@@ -153,10 +169,14 @@ impl TouchBar {
 }
 
 pub struct TouchBarItem {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TouchBarItem {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(identifier: *u8) -> TouchBarItem {
         return TouchBarItem { obj: rt::alloc_init_with_identifier(#str_ptr("NSTouchBarItem\0"), identifier) };
     }
