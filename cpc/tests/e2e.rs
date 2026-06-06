@@ -16862,6 +16862,32 @@ fn appkit_list_detail_recipe_builds() {
     );
 }
 
+/// The `appkit_drag_drop` recipe — a runnable drag SOURCE (mouseDragged: ->
+/// begin_string_drag) + DESTINATION (performDragOperation:) demo. GUI app
+/// (`app.run()` blocks), so compile + link validation only; the live drag
+/// gesture is a manual test.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_drag_drop_recipe_builds() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let recipe = root.join("docs/examples/recipes/appkit_drag_drop");
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::copy(recipe.join("Cplus.toml"), dir.join("Cplus.toml")).unwrap();
+    std::fs::copy(recipe.join("src/main.cplus"), dir.join("src/main.cplus")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
+
+    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    assert!(status.success(), "appkit_drag_drop recipe failed to build");
+    assert!(
+        dir.join("target/debug/appkit_drag_drop").is_file(),
+        "expected the drag_drop binary"
+    );
+}
+
 /// vendor/appkit `controls` coverage: construct + configure every control type
 /// and read back the value-bearing ones. AppKit object construction + property
 /// setters are headless-safe (no window server), so this exercises the wrapper

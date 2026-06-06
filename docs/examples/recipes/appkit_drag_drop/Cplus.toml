@@ -1,0 +1,12 @@
+[package]
+name    = "appkit_drag_drop"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "appkit_drag_drop"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
+appkit = "*"
