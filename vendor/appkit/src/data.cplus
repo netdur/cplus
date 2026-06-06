@@ -146,10 +146,14 @@ impl TableColumn {
 }
 
 pub struct OutlineView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl OutlineView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> OutlineView {
         return OutlineView { obj: rt::alloc_init_with_frame(#str_ptr("NSOutlineView\0"), frame) };
     }
@@ -180,10 +184,14 @@ impl OutlineView {
 }
 
 pub struct TableCellView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TableCellView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> TableCellView {
         return TableCellView { obj: rt::alloc_init_with_frame(#str_ptr("NSTableCellView\0"), frame) };
     }
@@ -198,20 +206,28 @@ impl TableCellView {
 }
 
 pub struct TableRowView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TableRowView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> TableRowView {
         return TableRowView { obj: rt::alloc_init_with_frame(#str_ptr("NSTableRowView\0"), frame) };
     }
 }
 
 pub struct CollectionView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl CollectionView {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> CollectionView {
         return CollectionView { obj: rt::alloc_init_with_frame(#str_ptr("NSCollectionView\0"), frame) };
     }
@@ -234,10 +250,14 @@ impl CollectionView {
 }
 
 pub struct CollectionViewItem {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl CollectionViewItem {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> CollectionViewItem {
         return CollectionViewItem { obj: rt::alloc_init(#str_ptr("NSCollectionViewItem\0")) };
     }
@@ -248,10 +268,14 @@ impl CollectionViewItem {
 }
 
 pub struct CollectionViewFlowLayout {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl CollectionViewFlowLayout {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> CollectionViewFlowLayout {
         return CollectionViewFlowLayout { obj: rt::alloc_init(#str_ptr("NSCollectionViewFlowLayout\0")) };
     }
@@ -270,10 +294,14 @@ impl CollectionViewFlowLayout {
 }
 
 pub struct CollectionViewGridLayout {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl CollectionViewGridLayout {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new() -> CollectionViewGridLayout {
         return CollectionViewGridLayout { obj: rt::alloc_init(#str_ptr("NSCollectionViewGridLayout\0")) };
     }
@@ -288,10 +316,14 @@ impl CollectionViewGridLayout {
 }
 
 pub struct RuleEditor {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl RuleEditor {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> RuleEditor {
         return RuleEditor { obj: rt::alloc_init_with_frame(#str_ptr("NSRuleEditor\0"), frame) };
     }
@@ -306,10 +338,14 @@ impl RuleEditor {
 }
 
 pub struct PredicateEditor {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl PredicateEditor {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> PredicateEditor {
         return PredicateEditor { obj: rt::alloc_init_with_frame(#str_ptr("NSPredicateEditor\0"), frame) };
     }
