@@ -17225,6 +17225,57 @@ fn main() -> i32 {
     );
 }
 
+/// vendor/appkit `convert` coverage: the C+/ObjC data bridge, verified by real
+/// round-trips — str↔NSString (content equality), Vec[u8]↔NSData (byte values),
+/// and NSArray→Vec[f64] (built from NSNumbers). This is the most checkable
+/// module; the assertions confirm bytes/chars survive the boundary, not just
+/// that the calls run.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_convert_roundtrips() {
+    appkit_run_program(
+        "ak_convert",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/convert" as convert;
+import "stdlib/vec" as vec;
+
+fn main() -> i32 {
+    // str -> NSString -> string, content preserved.
+    let ns: *u8 = convert::cplus_str_to_nsstring("hello world");
+    let back: string = convert::nsstring_to_cplus_string(ns);
+    if back.as_str() != "hello world" { return 1; }
+
+    // Vec[u8] -> NSData -> Vec[u8], bytes preserved.
+    let mut v: vec::Vec[u8] = vec::Vec[u8]::new();
+    v.push(10 as u8);
+    v.push(20 as u8);
+    v.push(30 as u8);
+    let data: *u8 = convert::vec_u8_to_nsdata(v);
+    let bytes: vec::Vec[u8] = convert::nsdata_to_vec_u8(data);
+    if bytes.len() != (3 as usize) { return 2; }
+    if bytes.get(0 as usize) != (10 as u8) { return 3; }
+    if bytes.get(2 as usize) != (30 as u8) { return 4; }
+
+    // NSArray of NSNumbers -> Vec[f64].
+    let marr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
+    let num_cls: *u8 = rt::get_class(#str_ptr("NSNumber\0"));
+    let n1: *u8 = rt::msg_id_f64(num_cls, rt::sel(#str_ptr("numberWithDouble:\0")), 1.5);
+    let n2: *u8 = rt::msg_id_f64(num_cls, rt::sel(#str_ptr("numberWithDouble:\0")), 2.5);
+    rt::msg_void_id(marr, rt::sel(#str_ptr("addObject:\0")), n1);
+    rt::msg_void_id(marr, rt::sel(#str_ptr("addObject:\0")), n2);
+    if convert::nsarray_count(marr) != (2 as usize) { return 5; }
+    let nums: vec::Vec[f64] = convert::nsarray_to_vec_f64(marr);
+    if nums.len() != (2 as usize) { return 6; }
+    if nums.get(0 as usize) < (1.0) { return 7; }
+    if nums.get(1 as usize) < (2.0) { return 8; }
+
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
