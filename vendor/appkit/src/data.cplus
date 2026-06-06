@@ -66,13 +66,19 @@ pub fn create_table_delegate(selection_changed_imp: fn(*u8, *u8, *u8)) -> *u8 {
     return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
 }
 
+// Owned (+1 via alloc/initWithFrame:); a scroll view (its document view) or a
+// parent retains it. `drop` releases this wrapper's +1 (plan.appkit.md §2).
 pub struct TableView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TableView {
     pub fn new(frame: rt::Rect) -> TableView {
         return TableView { obj: rt::alloc_init_with_frame(str_ptr("NSTableView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn add_table_column(self, column: *u8) {
@@ -106,13 +112,19 @@ impl TableView {
     }
 }
 
+// Owned (+1 via alloc/initWithIdentifier:); the table retains it on
+// `addTableColumn:`. `drop` releases this wrapper's +1 (plan.appkit.md §2).
 pub struct TableColumn {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TableColumn {
     pub fn new(identifier: *u8) -> TableColumn {
         return TableColumn { obj: rt::alloc_init_with_identifier(str_ptr("NSTableColumn\0"), identifier) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn set_title(self, title: *u8) {

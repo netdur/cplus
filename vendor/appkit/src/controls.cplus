@@ -1,7 +1,10 @@
 import "./runtime" as rt;
 
+// Owned (+1 via alloc/initWithFrame:); a parent view retains it on add. `drop`
+// releases this wrapper's +1 (plan.appkit.md §2). Hold the wrapper until after
+// `addSubview:`.
 pub struct TextField {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl TextField {
@@ -10,6 +13,10 @@ impl TextField {
         let label_alloc: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
         let label: *u8 = rt::msg_init_with_frame(label_alloc, rt::sel(str_ptr("initWithFrame:\0")), frame);
         return TextField { obj: label };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn new_input_field(frame: rt::Rect) -> TextField {
@@ -74,8 +81,13 @@ impl TextField {
     }
 }
 
+// Owned (+1 via alloc/initWithFrame:). Added to a parent view, which retains it;
+// `drop` releases this wrapper's +1, so the control lives as long as the parent
+// and is freed once the parent is (plan.appkit.md §2, "+1 normal form"). Hold
+// the wrapper until after `addSubview:` — don't pass `Button::new(...).obj`
+// inline.
 pub struct Button {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Button {
@@ -84,6 +96,10 @@ impl Button {
         let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
         let btn: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
         return Button { obj: btn };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn set_title(self, title: *u8) {

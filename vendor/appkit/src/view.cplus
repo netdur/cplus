@@ -106,8 +106,11 @@ impl StackView {
     }
 }
 
+// Owned (+1 via alloc/initWithFrame:); a parent retains it on add, and it
+// retains its document view. `drop` releases this wrapper's +1
+// (plan.appkit.md §2).
 pub struct ScrollView {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ScrollView {
@@ -116,6 +119,10 @@ impl ScrollView {
         let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
         let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
         return ScrollView { obj: view };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn set_document_view(self, view: *u8) {

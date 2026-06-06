@@ -16380,6 +16380,48 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16 AppKit "+1 normal form" ownership (plan.appkit.md §2): an owned
+/// widget wrapper (`Button`, +1) added to a parent survives its wrapper's `drop`
+/// — the parent retained it, and `drop` releases only the wrapper's +1. We add a
+/// button inside a helper (so its wrapper drops on return), then confirm the
+/// content view still holds exactly one live subview (messaging it doesn't trap).
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_owned_widget_survives_wrapper_drop() {
+    appkit_run_program(
+        "ak_own2",
+        r#"
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "appkit/runtime" as rt;
+
+fn add_button(content: *u8) {
+    let b: controls::Button = controls::Button::new(
+        rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 80.0, height: 24.0 } });
+    b.set_title(str_ptr("Hi\0"));
+    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), b.obj);
+    return;   // b drops here -> release; content retained it, so it survives
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 200.0, height: 200.0 } };
+    let win = window::Window::new(f, 15 as u64, 2 as u64, 0 as i8);
+    let content: *u8 = win.content_view();
+    add_button(content);
+
+    let subs: *u8 = rt::msg_id(content, rt::sel(str_ptr("subviews\0")));
+    if rt::msg_i64(subs, rt::sel(str_ptr("count\0"))) != (1 as i64) { return 1; }
+    let btn: *u8 = rt::msg_id(subs, rt::sel(str_ptr("firstObject\0")));
+    let _tag: i64 = rt::msg_i64(btn, rt::sel(str_ptr("tag\0")));   // traps if freed
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 /// v0.0.16 AppKit `pasteboard.cplus` (plan.appkit.md §4): the system clipboard
 /// round-trips a string (write -> read -> compare), twice, proving clear/
 /// set_string/string_ns and the `opaque` (non-owned singleton) handling.

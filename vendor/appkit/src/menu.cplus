@@ -1,7 +1,10 @@
 import "./runtime" as rt;
 
+// Owned (+1 via alloc/initWithTitle:); the app (setMainMenu:) or a parent menu
+// item (setSubmenu:) retains it. `drop` releases this wrapper's +1
+// (plan.appkit.md §2).
 pub struct Menu {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Menu {
@@ -11,6 +14,10 @@ impl Menu {
         let menu_alloc = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
         let menu = rt::msg_id_id(menu_alloc, rt::sel(str_ptr("initWithTitle:\0")), ns_title);
         return Menu { obj: menu };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 
     pub fn add_item(self, item: *u8) {
@@ -26,11 +33,19 @@ impl Menu {
     }
 }
 
+// Owned (+1 via alloc/initWithTitle:action:keyEquivalent:); the menu retains it
+// on `addItem:`. `drop` releases this wrapper's +1 (plan.appkit.md §2). Note
+// `separator()` is a separate +0 autoreleased factory that returns a raw `*u8`,
+// not a `MenuItem` — so it is not affected.
 pub struct MenuItem {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl MenuItem {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(title: *u8, action: *u8, key_equiv: *u8) -> MenuItem {
         let ns_title = rt::ns_string(title);
         let mut act_sel: *u8 = unsafe { 0 as *u8 };
