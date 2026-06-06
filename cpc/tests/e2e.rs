@@ -16929,6 +16929,48 @@ fn main() -> i32 {
     );
 }
 
+/// v0.0.16: the value controls (Slider, Stepper, …) are now owned (+1 normal
+/// form) — `new` is `alloc/init` (+1), `drop` releases once. This stresses that:
+/// (1) building+dropping 200 in a loop neither leaks nor double-frees (a double
+/// release would trap on a reused address), and (2) after a wrapper is added to
+/// a parent (which retains) and then dropped, the control survives via the
+/// parent (subview count stays 1) — the +1 normal form, not an over-release.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_owned_controls_drop_balanced() {
+    appkit_run_program(
+        "ak_ctl_drop",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/controls" as controls;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 80.0, height: 20.0 } };
+
+    let mut i: i32 = 0;
+    while i < 200 {
+        let s = controls::Slider::new(f);
+        s.set_double_value(1.0);
+        let st = controls::Stepper::new(f);
+        st.set_max_value(5.0);
+        i = i + 1;
+    }
+
+    let parent: *u8 = rt::alloc_init_with_frame(#str_ptr("NSView\0"), f);
+    {
+        let s = controls::Slider::new(f);
+        s.set_double_value(7.0);
+        rt::msg_void_id(parent, rt::sel(#str_ptr("addSubview:\0")), s.obj);
+    }
+    let subs: *u8 = rt::msg_id(parent, rt::sel(#str_ptr("subviews\0")));
+    if rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) != (1 as u64) { return 1; }
+
+    return 0;
+}
+"#,
+    );
+}
+
 /// vendor/appkit `text` coverage: construct + configure the text-entry widgets
 /// (TextView, SecureTextField, SearchField, TokenField, ComboBox, Form) and read
 /// back string/selection state. Headless-safe object construction + setters.

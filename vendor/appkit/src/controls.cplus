@@ -137,10 +137,14 @@ impl Button {
 }
 
 pub struct Slider {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Slider {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Slider {
         let cls: *u8 = rt::get_class(#str_ptr("NSSlider\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -174,10 +178,14 @@ impl Slider {
 }
 
 pub struct ProgressIndicator {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ProgressIndicator {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> ProgressIndicator {
         let cls: *u8 = rt::get_class(#str_ptr("NSProgressIndicator\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -207,10 +215,14 @@ impl ProgressIndicator {
 }
 
 pub struct PopUpButton {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl PopUpButton {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect, pulls_down: i8) -> PopUpButton {
         let cls = rt::get_class(#str_ptr("NSPopUpButton\0"));
         let btn_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -245,10 +257,14 @@ impl PopUpButton {
 }
 
 pub struct Stepper {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Stepper {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Stepper {
         return Stepper { obj: rt::alloc_init_with_frame(#str_ptr("NSStepper\0"), frame) };
     }
@@ -279,10 +295,14 @@ impl Stepper {
 }
 
 pub struct Switch {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl Switch {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> Switch {
         return Switch { obj: rt::alloc_init_with_frame(#str_ptr("NSSwitch\0"), frame) };
     }
@@ -301,10 +321,14 @@ impl Switch {
 }
 
 pub struct SegmentedControl {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl SegmentedControl {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> SegmentedControl {
         return SegmentedControl { obj: rt::alloc_init_with_frame(#str_ptr("NSSegmentedControl\0"), frame) };
     }
@@ -336,10 +360,14 @@ impl SegmentedControl {
 }
 
 pub struct ComboButton {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ComboButton {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> ComboButton {
         return ComboButton { obj: rt::alloc_init_with_frame(#str_ptr("NSComboButton\0"), frame) };
     }
@@ -363,10 +391,14 @@ impl ComboButton {
 }
 
 pub struct DatePicker {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl DatePicker {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> DatePicker {
         return DatePicker { obj: rt::alloc_init_with_frame(#str_ptr("NSDatePicker\0"), frame) };
     }
@@ -393,10 +425,14 @@ impl DatePicker {
 }
 
 pub struct ColorWell {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl ColorWell {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> ColorWell {
         return ColorWell { obj: rt::alloc_init_with_frame(#str_ptr("NSColorWell\0"), frame) };
     }
@@ -419,10 +455,14 @@ impl ColorWell {
 }
 
 pub struct LevelIndicator {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl LevelIndicator {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> LevelIndicator {
         return LevelIndicator { obj: rt::alloc_init_with_frame(#str_ptr("NSLevelIndicator\0"), frame) };
     }
@@ -445,10 +485,14 @@ impl LevelIndicator {
 }
 
 pub struct PathControl {
-    pub opaque obj: *u8,
+    pub obj: *u8,
 }
 
 impl PathControl {
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
     pub fn new(frame: rt::Rect) -> PathControl {
         return PathControl { obj: rt::alloc_init_with_frame(#str_ptr("NSPathControl\0"), frame) };
     }
