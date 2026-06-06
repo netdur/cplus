@@ -4893,7 +4893,7 @@ impl SemaCx<'_> {
         } else if !is_naked
             && expected != Ty::Unit
             && expected != Ty::Error
-            && !body_ends_with_return(body)
+            && !body_returns_or_diverges(body)
         {
             self.err(
                 "E0306",
@@ -14463,10 +14463,112 @@ fn is_ffi_builtin_name(name: &str) -> bool {
     )
 }
 
-fn body_ends_with_return(b: &Block) -> bool {
-    b.stmts
-        .last()
-        .is_some_and(|s| matches!(s.kind, StmtKind::Return(_)))
+/// v0.0.16: for the E0306 "function body must end with `return`" check — does
+/// this body guarantee it never falls off the end without a value? True when the
+/// last statement/tail `return`s or *diverges*: an infinite `loop` (no `break`
+/// can exit it), or a trailing `if`/`else` or `match` whose every arm does. This
+/// is what lets `fn f() -> i32 { loop { if done() { return x; } step(); } }`
+/// compile without a dead trailing `return` (an infinite loop never falls
+/// through). A loop that *can* `break` is NOT diverging — it still needs a
+/// return after it.
+fn body_returns_or_diverges(b: &Block) -> bool {
+    if let Some(t) = &b.tail {
+        return expr_returns_or_diverges(t);
+    }
+    match b.stmts.last() {
+        Some(s) => match &s.kind {
+            StmtKind::Return(_) => true,
+            StmtKind::Loop(body, _) => !loop_can_break(body),
+            StmtKind::Expr(e) => expr_returns_or_diverges(e),
+            _ => false,
+        },
+        None => false,
+    }
+}
+
+fn expr_returns_or_diverges(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => body_returns_or_diverges(b),
+        ExprKind::If { then, else_branch, .. } => {
+            body_returns_or_diverges(then)
+                && else_branch.as_deref().is_some_and(expr_returns_or_diverges)
+        }
+        ExprKind::Match { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|a| expr_returns_or_diverges(&a.body))
+        }
+        _ => false,
+    }
+}
+
+/// Can a `break` exit *this* loop? Used to decide whether a `loop` diverges.
+/// **Conservative**: returns `true` (might break) for any construct not fully
+/// analyzed, so a loop is treated as infinite only when we're certain it has no
+/// exit — a missed `break` then keeps the (safe) trailing-`return` requirement
+/// rather than miscompiling a fall-through into `unreachable`. A nested
+/// loop/while/for captures its own `break`s, so we do not descend into them.
+fn loop_can_break(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_can_break) || b.tail.as_deref().is_some_and(expr_can_break)
+}
+
+fn stmt_can_break(s: &Stmt) -> bool {
+    match &s.kind {
+        StmtKind::Break => true,
+        StmtKind::Continue | StmtKind::Return(_) => false,
+        // Nested loops own their `break`/`continue`.
+        StmtKind::While { .. } | StmtKind::Loop(..) | StmtKind::For(..) | StmtKind::WhileLet { .. } => {
+            false
+        }
+        StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => expr_can_break(e),
+        StmtKind::Let { init, .. } => init.as_ref().is_some_and(expr_can_break),
+        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            expr_can_break(scrutinee)
+                || loop_can_break(body)
+                || else_body.as_ref().is_some_and(loop_can_break)
+        }
+        StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            expr_can_break(scrutinee) || loop_can_break(else_body)
+        }
+    }
+}
+
+fn expr_can_break(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => loop_can_break(b),
+        ExprKind::If { cond, then, else_branch } => {
+            expr_can_break(cond)
+                || loop_can_break(then)
+                || else_branch.as_deref().is_some_and(expr_can_break)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_can_break(scrutinee) || arms.iter().any(|a| expr_can_break(&a.body))
+        }
+        ExprKind::Call { callee, args, .. } => {
+            expr_can_break(callee) || args.iter().any(expr_can_break)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => expr_can_break(lhs) || expr_can_break(rhs),
+        ExprKind::Unary { operand, .. } => expr_can_break(operand),
+        ExprKind::Cast { expr, .. } => expr_can_break(expr),
+        ExprKind::Field { receiver, .. } => expr_can_break(receiver),
+        ExprKind::Index { receiver, index } => expr_can_break(receiver) || expr_can_break(index),
+        ExprKind::Assign { target, value, .. } => expr_can_break(target) || expr_can_break(value),
+        ExprKind::Await(x) | ExprKind::Yield(x) => expr_can_break(x),
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().is_some_and(|e| expr_can_break(e))
+                || end.as_ref().is_some_and(|e| expr_can_break(e))
+        }
+        // Leaves — cannot contain a statement-level `break`.
+        ExprKind::IntLit(..)
+        | ExprKind::FloatLit(..)
+        | ExprKind::BoolLit(..)
+        | ExprKind::StrLit(..)
+        | ExprKind::CStrLit(..)
+        | ExprKind::Ident(..)
+        | ExprKind::Path { .. } => false,
+        // Aggregate literals / interpolation / intrinsics: a `break` buried in a
+        // sub-expression is possible in theory but vanishingly rare — stay
+        // conservative (treat the loop as breakable, i.e. require the return).
+        _ => true,
+    }
 }
 
 /// v0.0.15 flow-sensitive moves: does this block *diverge* — i.e. never fall
@@ -20342,6 +20444,35 @@ mod tests {
     #[test]
     fn hash_println_clean() {
         assert_clean("fn main() -> i32 { #println(\"x\"); return 0; }");
+    }
+
+    // v0.0.16: an infinite `loop` (no `break` can exit it) diverges, so a
+    // function body ending in one needs no dead trailing `return` (E0306).
+    #[test]
+    fn infinite_loop_diverges_no_e0306() {
+        assert_clean(
+            "fn g() -> bool { return true; }\n\
+             fn step() { return; }\n\
+             fn f() -> i32 { loop { if g() { return 1; } step(); } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn pure_infinite_loop_diverges_no_e0306() {
+        assert_clean("fn f() -> i32 { loop {} }\nfn main() -> i32 { return 0; }");
+    }
+
+    // A loop that *can* `break` is not diverging — falling through after it with
+    // no `return` must still be E0306 (else codegen turns it into a trap).
+    #[test]
+    fn loop_with_break_still_needs_return_e0306() {
+        let codes = errors(
+            "fn g() -> bool { return true; }\n\
+             fn f() -> i32 { loop { if g() { break; } } }\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.iter().any(|c| *c == "E0306"), "got {:?}", codes);
     }
 
     #[test]
