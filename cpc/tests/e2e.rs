@@ -16783,10 +16783,12 @@ fn main() -> i32 {
 
 /// v0.0.16 AppKit drag source (plan.appkit.md §4):
 /// `drag::create_drag_source_view` synthesizes an NSView that is an
-/// NSDraggingSource. We invoke its
+/// NSDraggingSource + drag initiation. We invoke the source view's
 /// `draggingSession:sourceOperationMaskForDraggingContext:` directly and assert
-/// it returns the C+ operation mask. (Initiating a live drag needs an NSEvent;
-/// not exercised headlessly.)
+/// the C+ op mask, build a DraggingItem with a real frame + image (the
+/// setDraggingFrame:contents: rect+id call — exercises the HFA struct-arg ABI),
+/// and register a `mouseDragged:` handler that calls begin_string_drag (the live
+/// drag itself needs a real NSEvent — confirmed by hand, see the recipe).
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_drag_source() {
@@ -16801,13 +16803,30 @@ fn src_mask(self_obj: *u8, _cmd: *u8, session: *u8, context: i64) -> i64 {
     return drag::drag_op_copy();
 }
 
+// -mouseDragged: — fired by AppKit on a real drag gesture (not headless). The
+// live NSEvent flows straight into begin_string_drag; registering this links the
+// whole initiation path.
+fn src_dragged(self_obj: *u8, _cmd: *u8, event: *u8) {
+    let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 60.0, height: 20.0 } };
+    drag::begin_string_drag(self_obj, event, #str_ptr("payload\0"), f, unsafe { 0 as *u8 });
+    return;
+}
+
 fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
-    let v: *u8 = drag::create_drag_source_view(f, src_mask);
+    let v: *u8 = drag::create_drag_source_view(f, src_mask, src_dragged);
     let nil: *u8 = unsafe { 0 as *u8 };
     let m: i64 = rt::msg_i64_id_i64(v, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), nil, 0 as i64);
     if m != drag::drag_op_copy() { return 1; }
+
+    // DraggingItem + setDraggingFrame:contents: (rect+id) — headless-safe now
+    // that struct args pass correctly. Use a real NSImage as contents.
+    let img: *u8 = rt::alloc_init(#str_ptr("NSImage\0"));
+    let item = drag::DraggingItem::from_string(#str_ptr("hi\0"));
+    item.set_dragging_frame_contents(f, img);
+    if item.obj == nil { return 2; }
+
     rt::release(v);
     pool.drain();
     return 0;
