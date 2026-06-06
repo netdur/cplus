@@ -17038,6 +17038,132 @@ fn main() -> i32 {
     );
 }
 
+/// vendor/appkit `toolbar` coverage: Toolbar, ToolbarItem, ToolbarItemGroup,
+/// TouchBar/TouchBarItem, and the status-bar trio (StatusBar -> StatusItem ->
+/// StatusBarButton). The system status bar + a status item are real (the item
+/// flow is guarded on a non-null button). Headless-safe.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_toolbar_construct_and_configure() {
+    appkit_run_program(
+        "ak_toolbar",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/toolbar" as toolbar;
+
+fn main() -> i32 {
+    let tb = toolbar::Toolbar::new(#str_ptr("main\0"));
+    tb.set_display_mode(1 as i64);
+    tb.set_allows_user_customization(1 as i8);
+
+    let ti = toolbar::ToolbarItem::new(#str_ptr("item1\0"));
+    ti.set_label(#str_ptr("Item\0"));
+    ti.set_palette_label(#str_ptr("Item\0"));
+    ti.set_tool_tip(#str_ptr("tip\0"));
+
+    let tg = toolbar::ToolbarItemGroup::new(#str_ptr("group1\0"));
+
+    let bar = toolbar::StatusBar::system();
+    let item_obj: *u8 = bar.status_item_with_length(-1.0);
+    if item_obj == unsafe { 0 as *u8 } { return 1; }
+    let si = toolbar::StatusItem::from_obj(item_obj);
+    si.set_length(24.0);
+    let btn_obj: *u8 = si.button();
+    if btn_obj != unsafe { 0 as *u8 } {
+        let sbb = toolbar::StatusBarButton::from_obj(btn_obj);
+        sbb.set_title(#str_ptr("S\0"));
+    }
+
+    let touch = toolbar::TouchBar::new();
+    let touch_item = toolbar::TouchBarItem::new(#str_ptr("ti1\0"));
+
+    return 0;
+}
+"#,
+    );
+}
+
+/// vendor/appkit `panels` coverage: NSPanel + the shared file/print panels
+/// (SavePanel, OpenPanel, PageLayout, PrintPanel) — construct + configure.
+/// `run_modal()` / `make_key_and_order_front:` are intentionally NOT called:
+/// they block on a modal dialog and would hang a headless run.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_panels_construct_and_configure() {
+    appkit_run_program(
+        "ak_panels",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/panels" as panels;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 300.0, height: 200.0 } };
+
+    let p = panels::Panel::new(f, 1 as u64, 2 as u64, 0 as i8);
+    p.set_title(#str_ptr("Panel\0"));
+
+    let save = panels::SavePanel::shared();
+    save.set_title(#str_ptr("Save\0"));
+    save.set_prompt(#str_ptr("Save\0"));
+    save.set_message(#str_ptr("Choose a location\0"));
+    save.set_name_field_string_value(#str_ptr("file.txt\0"));
+
+    let open = panels::OpenPanel::shared();
+    open.set_can_choose_files(1 as i8);
+    open.set_can_choose_directories(0 as i8);
+    open.set_allows_multiple_selection(1 as i8);
+
+    let pl = panels::PageLayout::shared();
+    let pp = panels::PrintPanel::shared();
+
+    return 0;
+}
+"#,
+    );
+}
+
+/// vendor/appkit `controllers` coverage: ViewController, WindowController,
+/// TabViewController, SplitViewController, ArrayController, ObjectController —
+/// construct + the headless-safe setters/getters (a view controller's view round
+/// trips; the array/object controllers take content). `show_window:` is skipped
+/// (it presents UI).
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_controllers_construct_and_configure() {
+    appkit_run_program(
+        "ak_controllers",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/controllers" as controllers;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
+    let v: *u8 = rt::alloc_init_with_frame(#str_ptr("NSView\0"), f);
+
+    let vc = controllers::ViewController::new();
+    vc.set_view(v);
+    if vc.view() == unsafe { 0 as *u8 } { return 1; }
+
+    let wc = controllers::WindowController::new();
+    let _w: *u8 = wc.window();
+
+    let tvc = controllers::TabViewController::new();
+    let svc = controllers::SplitViewController::new();
+
+    let arr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSArray\0")), rt::sel(#str_ptr("array\0")));
+    let ac = controllers::ArrayController::new();
+    ac.set_content(arr);
+
+    let obj: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSObject\0")), rt::sel(#str_ptr("new\0")));
+    let oc = controllers::ObjectController::new();
+    oc.set_content(obj);
+
+    return 0;
+}
+"#,
+    );
+}
+
 #[test]
 #[cfg(target_os = "macos")]
 fn appkit_vendor_package_smoke() {
