@@ -16892,6 +16892,34 @@ fn appkit_drag_drop_recipe_builds() {
 /// and read back the value-bearing ones. AppKit object construction + property
 /// setters are headless-safe (no window server), so this exercises the wrapper
 /// msgSends end to end (incl. the owned TextField/Button Drop path and one
+/// `TextField::new_label` must produce a *static* label — non-editable,
+/// non-bezeled — not the default editable NSTextField (which renders as an input
+/// box and silently accepts dropped/typed text). Regression for the drag-drop
+/// demo where instruction "labels" were swallowing the dragged payload.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_new_label_is_static() {
+    appkit_run_program(
+        "ak_label",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/controls" as controls;
+
+fn main() -> i32 {
+    let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 120.0, height: 24.0 } };
+    let label = controls::TextField::new_label(f);
+    if rt::msg_i8(label.obj, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8) { return 1; }
+    if rt::msg_i8(label.obj, rt::sel(#str_ptr("isBezeled\0"))) != (0 as i8) { return 2; }
+    if rt::msg_i8(label.obj, rt::sel(#str_ptr("isSelectable\0"))) != (0 as i8) { return 3; }
+    // An input field stays editable (the contrast case).
+    let field = controls::TextField::new_input_field(f);
+    if rt::msg_i8(field.obj, rt::sel(#str_ptr("isEditable\0"))) != (1 as i8) { return 4; }
+    return 0;
+}
+"#,
+    );
+}
+
 /// `attach_callback`). Scope is the vendor wrappers, not Apple's widget behavior.
 #[test]
 #[cfg(target_os = "macos")]

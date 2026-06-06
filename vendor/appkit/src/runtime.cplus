@@ -159,6 +159,10 @@ extern fn objc_msg_void_edge_insets(recv: *u8, sel: *u8, insets: EdgeInsets);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
 
+// No-arg `BOOL` getter (e.g. `isEditable`, `isHidden`).
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8(recv: *u8, sel: *u8) -> i8;
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i64_id(recv: *u8, sel: *u8, a: *u8) -> i64;
 
@@ -417,6 +421,10 @@ pub fn msg_void_edge_insets(recv: *u8, selector: *u8, insets: EdgeInsets) {
 
 pub fn msg_i64(recv: *u8, selector: *u8) -> i64 {
     return unsafe { objc_msg_i64(recv, selector) };
+}
+
+pub fn msg_i8(recv: *u8, selector: *u8) -> i8 {
+    return unsafe { objc_msg_i8(recv, selector) };
 }
 
 pub fn msg_i64_id(recv: *u8, selector: *u8, a: *u8) -> i64 {

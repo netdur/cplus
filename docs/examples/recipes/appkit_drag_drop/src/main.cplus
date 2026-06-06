@@ -77,20 +77,20 @@ fn main() -> i32 {
 
     let src_label = label_at(
         rt::Rect { origin: rt::Point { x: 20.0, y: 284.0 }, size: rt::Size { width: 420.0, height: 22.0 } },
-        #str_ptr("Drag OUT of the blue box  ->  into TextEdit\0"),
+        #str_ptr("TOP (blue) box: drag OUT  ->  into TextEdit\0"),
     );
     let src_frame = rt::Rect { origin: rt::Point { x: 20.0, y: 186.0 }, size: rt::Size { width: 420.0, height: 92.0 } };
     let src: *u8 = drag::create_drag_source_view(src_frame, src_mask, src_dragged);
-    set_bg(src, graphics::Color::rgba(0.6, 0.78, 1.0, 1.0));
+    set_bg(src, graphics::Color::rgba(0.15, 0.40, 0.95, 1.0));
 
     let dst_label = label_at(
         rt::Rect { origin: rt::Point { x: 20.0, y: 156.0 }, size: rt::Size { width: 420.0, height: 22.0 } },
-        #str_ptr("Drop text from any app  ->  onto the green box\0"),
+        #str_ptr("BOTTOM (orange) box: drop text onto it\0"),
     );
     let dst_frame = rt::Rect { origin: rt::Point { x: 20.0, y: 66.0 }, size: rt::Size { width: 420.0, height: 84.0 } };
     let dst: *u8 = drag::create_drag_destination_view(dst_frame, dest_entered, dest_perform);
     drag::register_for_string_drops(dst);
-    set_bg(dst, graphics::Color::rgba(0.7, 1.0, 0.7, 1.0));
+    set_bg(dst, graphics::Color::rgba(1.0, 0.55, 0.0, 1.0));
 
     let res = label_at(
         rt::Rect { origin: rt::Point { x: 20.0, y: 22.0 }, size: rt::Size { width: 300.0, height: 28.0 } },

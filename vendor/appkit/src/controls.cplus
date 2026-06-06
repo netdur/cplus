@@ -12,6 +12,15 @@ impl TextField {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextField\0"));
         let label_alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         let label: *u8 = rt::msg_init_with_frame(label_alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+        // Configure as a static label (like `+[NSTextField labelWithString:]`):
+        // non-editable, non-selectable, no bezel, no drawn background — so it
+        // renders as plain text and does NOT accept edits or dropped text. A
+        // default NSTextField is editable + bezeled, which makes a "label"
+        // behave like an input field (and silently accept drag-drops).
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setEditable:\0")), 0 as i8);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setSelectable:\0")), 0 as i8);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setBezeled:\0")), 0 as i8);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setDrawsBackground:\0")), 0 as i8);
         return TextField { obj: label };
     }
 
