@@ -6,18 +6,18 @@ pub struct ImageView {
 
 impl ImageView {
     pub fn new(frame: rt::Rect) -> ImageView {
-        let cls: *u8 = rt::get_class(str_ptr("NSImageView\0"));
-        let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let iv: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+        let cls: *u8 = rt::get_class(#str_ptr("NSImageView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let iv: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return ImageView { obj: iv };
     }
 
     pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setImage:\0")), image);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
     pub fn set_scaling(self, scaling: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setImageScaling:\0")), scaling);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
     }
 }
 
@@ -28,15 +28,15 @@ pub struct Image {
 impl Image {
     pub fn by_name(name: *u8) -> *u8 {
         let ns_name = rt::ns_string(name);
-        let cls = rt::get_class(str_ptr("NSImage\0"));
-        return rt::msg_id_id(cls, rt::sel(str_ptr("imageNamed:\0")), ns_name);
+        let cls = rt::get_class(#str_ptr("NSImage\0"));
+        return rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")), ns_name);
     }
 
     pub fn init_with_file(path: *u8) -> *u8 {
         let ns_path = rt::ns_string(path);
-        let cls = rt::get_class(str_ptr("NSImage\0"));
-        let img_alloc = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        return rt::msg_id_id(img_alloc, rt::sel(str_ptr("initWithContentsOfFile:\0")), ns_path);
+        let cls = rt::get_class(#str_ptr("NSImage\0"));
+        let img_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        return rt::msg_id_id(img_alloc, rt::sel(#str_ptr("initWithContentsOfFile:\0")), ns_path);
     }
 }
 
@@ -50,7 +50,7 @@ pub struct BezierPath {
 
 impl BezierPath {
     pub fn new() -> BezierPath {
-        return BezierPath { obj: rt::alloc_init(str_ptr("NSBezierPath\0")) };
+        return BezierPath { obj: rt::alloc_init(#str_ptr("NSBezierPath\0")) };
     }
 
     fn drop(mut self) {
@@ -59,44 +59,44 @@ impl BezierPath {
 
     pub fn move_to(self, x: f64, y: f64) {
         let p = rt::Point { x: x, y: y };
-        rt::msg_void_point(self.obj, rt::sel(str_ptr("moveToPoint:\0")), p);
+        rt::msg_void_point(self.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
     }
 
     pub fn line_to(self, x: f64, y: f64) {
         let p = rt::Point { x: x, y: y };
-        rt::msg_void_point(self.obj, rt::sel(str_ptr("lineToPoint:\0")), p);
+        rt::msg_void_point(self.obj, rt::sel(#str_ptr("lineToPoint:\0")), p);
     }
 
     pub fn close(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("closePath\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("closePath\0")));
     }
 
     pub fn append_rect(self, rect: rt::Rect) {
-        rt::msg_void_rect(self.obj, rt::sel(str_ptr("appendBezierPathWithRect:\0")), rect);
+        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
     }
 
     pub fn append_oval_in_rect(self, rect: rt::Rect) {
-        rt::msg_void_rect(self.obj, rt::sel(str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
+        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
     }
 
     pub fn set_line_width(self, width: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setLineWidth:\0")), width);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
     }
 
     // Number of path elements (move/line/curve/close). A data property — no
     // drawing context required.
     pub fn element_count(self) -> i64 {
-        return rt::msg_i64(self.obj, rt::sel(str_ptr("elementCount\0")));
+        return rt::msg_i64(self.obj, rt::sel(#str_ptr("elementCount\0")));
     }
 
     // Stroke / fill the path into the current graphics context (call from a
     // view's draw method).
     pub fn stroke(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("stroke\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("stroke\0")));
     }
 
     pub fn fill(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("fill\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("fill\0")));
     }
 }
 
@@ -106,18 +106,18 @@ pub struct Font {
 
 impl Font {
     pub fn system_font_of_size(size: f64) -> *u8 {
-        let cls: *u8 = rt::get_class(str_ptr("NSFont\0"));
-        return rt::msg_id_f64(cls, rt::sel(str_ptr("systemFontOfSize:\0")), size);
+        let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(#str_ptr("systemFontOfSize:\0")), size);
     }
 
     pub fn bold_system_font_of_size(size: f64) -> *u8 {
-        let cls: *u8 = rt::get_class(str_ptr("NSFont\0"));
-        return rt::msg_id_f64(cls, rt::sel(str_ptr("boldSystemFontOfSize:\0")), size);
+        let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(#str_ptr("boldSystemFontOfSize:\0")), size);
     }
 
     pub fn label_font_of_size(size: f64) -> *u8 {
-        let cls: *u8 = rt::get_class(str_ptr("NSFont\0"));
-        return rt::msg_id_f64(cls, rt::sel(str_ptr("labelFontOfSize:\0")), size);
+        let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
+        return rt::msg_id_f64(cls, rt::sel(#str_ptr("labelFontOfSize:\0")), size);
     }
 }
 
@@ -127,39 +127,39 @@ pub struct Color {
 
 impl Color {
     pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> *u8 {
-        let cls: *u8 = rt::get_class(str_ptr("NSColor\0"));
-        return rt::msg_id_rgba(cls, rt::sel(str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), r, g, b, a);
+        let cls: *u8 = rt::get_class(#str_ptr("NSColor\0"));
+        return rt::msg_id_rgba(cls, rt::sel(#str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), r, g, b, a);
     }
 
     pub fn red() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("redColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("redColor\0")));
     }
 
     pub fn green() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("greenColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("greenColor\0")));
     }
 
     pub fn blue() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("blueColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("blueColor\0")));
     }
 
     pub fn black() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("blackColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("blackColor\0")));
     }
 
     pub fn white() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("whiteColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("whiteColor\0")));
     }
 
     pub fn clear() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("clearColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("clearColor\0")));
     }
 
     pub fn gray() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("grayColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("grayColor\0")));
     }
 
     pub fn yellow() -> *u8 {
-        return rt::msg_id(rt::get_class(str_ptr("NSColor\0")), rt::sel(str_ptr("yellowColor\0")));
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("yellowColor\0")));
     }
 }

@@ -31,7 +31,7 @@ fn main() -> i32 {
         sum: unsafe { (p[0] + p[1] + p[2]) as i32 },
         count: 3,
     };
-    unsafe { printf(str_ptr("sum=%d count=%d\n"), m.sum, m.count); }
+    unsafe { printf(#str_ptr("sum=%d count=%d\n"), m.sum, m.count); }
     unsafe { free(p); }
     return m.sum;   // 42
 }

@@ -71,9 +71,9 @@ fn ns_utf8() -> u64 { return 4 as u64; }
 // ===========================================================================
 
 pub fn cplus_str_to_nsstring(s: str) -> *u8 {
-    let cls: *u8 = rt::get_class(str_ptr("NSString\0"));
-    let selector: *u8 = rt::sel(str_ptr("stringWithBytes:length:encoding:\0"));
-    return unsafe { objc_msg_id_ptr_len_enc(cls, selector, str_ptr(s), str_len(s), ns_utf8()) };
+    let cls: *u8 = rt::get_class(#str_ptr("NSString\0"));
+    let selector: *u8 = rt::sel(#str_ptr("stringWithBytes:length:encoding:\0"));
+    return unsafe { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
 }
 
 pub fn cplus_string_to_nsstring(s: string) -> *u8 {
@@ -81,10 +81,10 @@ pub fn cplus_string_to_nsstring(s: string) -> *u8 {
 }
 
 pub fn nsstring_to_cplus_string(ns: *u8) -> string {
-    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(str_ptr("UTF8String\0")));
-    let len_sel: *u8 = rt::sel(str_ptr("lengthOfBytesUsingEncoding:\0"));
+    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
+    let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
     let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
-    let view: str = unsafe { str_from_raw_parts(utf8_ptr, len as usize) };
+    let view: str = unsafe { #str_from_raw_parts(utf8_ptr, len as usize) };
     return view.to_string();
 }
 
@@ -92,10 +92,10 @@ pub fn nsstring_to_cplus_string(ns: *u8) -> string {
 // the view's lifetime is the autorelease pool's, NOT the caller's
 // scope. Use the owned `nsstring_to_cplus_string` when in doubt.
 pub fn nsstring_to_cplus_str_unsafe(ns: *u8) -> str {
-    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(str_ptr("UTF8String\0")));
-    let len_sel: *u8 = rt::sel(str_ptr("lengthOfBytesUsingEncoding:\0"));
+    let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
+    let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
     let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
-    return unsafe { str_from_raw_parts(utf8_ptr, len as usize) };
+    return unsafe { #str_from_raw_parts(utf8_ptr, len as usize) };
 }
 
 // ===========================================================================
@@ -105,13 +105,13 @@ pub fn nsstring_to_cplus_str_unsafe(ns: *u8) -> str {
 // ===========================================================================
 
 pub fn nsarray_count(arr: *u8) -> usize {
-    let n: u64 = unsafe { objc_msg_u64(arr, rt::sel(str_ptr("count\0"))) };
+    let n: u64 = unsafe { objc_msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
     return n as usize;
 }
 
 pub fn nsarray_obj_at(arr: *u8, idx: usize) -> *u8 {
     return unsafe {
-        objc_msg_id_u64(arr, rt::sel(str_ptr("objectAtIndex:\0")), idx as u64)
+        objc_msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), idx as u64)
     };
 }
 
@@ -119,7 +119,7 @@ pub fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
     let n: usize = nsarray_count(arr);
     let mut out: vec::Vec[i32] = vec::Vec[i32]::with_capacity(n);
     let mut i: usize = 0 as usize;
-    let int_sel: *u8 = rt::sel(str_ptr("intValue\0"));
+    let int_sel: *u8 = rt::sel(#str_ptr("intValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         let v: i32 = unsafe { objc_msg_i32(num, int_sel) };
@@ -136,7 +136,7 @@ pub fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
     // NSInteger == long long on 64-bit Apple; `longLongValue` is the
     // exact width. `integerValue` returns NSInteger which is also
     // 8 bytes on 64-bit but its formal contract is "platform-sized".
-    let v_sel: *u8 = rt::sel(str_ptr("longLongValue\0"));
+    let v_sel: *u8 = rt::sel(#str_ptr("longLongValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         let v: i64 = unsafe { rt::msg_i64(num, v_sel) };
@@ -150,7 +150,7 @@ pub fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
     let n: usize = nsarray_count(arr);
     let mut out: vec::Vec[f32] = vec::Vec[f32]::with_capacity(n);
     let mut i: usize = 0 as usize;
-    let v_sel: *u8 = rt::sel(str_ptr("floatValue\0"));
+    let v_sel: *u8 = rt::sel(#str_ptr("floatValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         // No msg_f32 in runtime.cplus today; the double round-trip is
@@ -167,7 +167,7 @@ pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
     let n: usize = nsarray_count(arr);
     let mut out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n);
     let mut i: usize = 0 as usize;
-    let v_sel: *u8 = rt::sel(str_ptr("doubleValue\0"));
+    let v_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
         let v: f64 = unsafe { rt::msg_f64(num, v_sel) };
@@ -193,18 +193,18 @@ pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
 // ===========================================================================
 
 pub fn nsdata_to_vec_u8(d: *u8) -> vec::Vec[u8] {
-    let len: u64 = unsafe { objc_msg_u64(d, rt::sel(str_ptr("length\0"))) };
-    let ptr: *u8 = rt::msg_id(d, rt::sel(str_ptr("bytes\0")));
+    let len: u64 = unsafe { objc_msg_u64(d, rt::sel(#str_ptr("length\0"))) };
+    let ptr: *u8 = rt::msg_id(d, rt::sel(#str_ptr("bytes\0")));
     let mut out: vec::Vec[u8] = vec::Vec[u8]::with_capacity(len as usize);
     unsafe { out.extend_from_raw(ptr, len as usize); }
     return out;
 }
 
 pub fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
-    let cls: *u8 = rt::get_class(str_ptr("NSData\0"));
-    let selector: *u8 = rt::sel(str_ptr("dataWithBytes:length:\0"));
+    let cls: *u8 = rt::get_class(#str_ptr("NSData\0"));
+    let selector: *u8 = rt::sel(#str_ptr("dataWithBytes:length:\0"));
     let slice: u8[] = v.as_slice();
-    let p: *u8 = unsafe { slice_ptr(slice) };
+    let p: *u8 = unsafe { #slice_ptr(slice) };
     let n: usize = v.len();
     return unsafe { objc_msg_id_ptr_len(cls, selector, p, n) };
 }
@@ -214,10 +214,10 @@ pub fn vec_u8_to_nsdata(v: vec::Vec[u8]) -> *u8 {
 // Marked `unsafe`-shape via the `_view` suffix; sema can't yet express
 // the lifetime obligation as a typing constraint.
 pub fn vec_u8_to_nsdata_view(v: vec::Vec[u8]) -> *u8 {
-    let cls: *u8 = rt::get_class(str_ptr("NSData\0"));
-    let selector: *u8 = rt::sel(str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
+    let cls: *u8 = rt::get_class(#str_ptr("NSData\0"));
+    let selector: *u8 = rt::sel(#str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
     let slice: u8[] = v.as_slice();
-    let p: *u8 = unsafe { slice_ptr(slice) };
+    let p: *u8 = unsafe { #slice_ptr(slice) };
     let n: usize = v.len();
     return unsafe { objc_msg_id_ptr_len_free(cls, selector, p, n, 0 as i8) };
 }

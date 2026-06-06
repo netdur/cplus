@@ -5415,6 +5415,136 @@ impl SemaCx<'_> {
         }
     }
 
+    /// v0.0.16: type-check the `#`-sigil FFI/raw + byte-swap builtin intrinsics
+    /// — `#str_ptr`, `#str_len`, `#str_from_raw_parts`, `#slice_ptr`,
+    /// `#slice_len`, `#slice_from_raw_parts`, and `#bswap{16,32,64}` /
+    /// `#htons` / `#htonl` / `#ntohs` / `#ntohl`. Returns `Some(result_ty)` when
+    /// `name` is one of them (else `None`). `*_from_raw_parts` require an
+    /// enclosing `unsafe` block. The single source for both the `#name`
+    /// dispatch (`check_intrinsic`) and the bare-call path during migration.
+    fn ffi_builtin_ty(&mut self, name: &str, args: &[Expr], span: ByteSpan) -> Option<Ty> {
+        if name == "str_ptr" && args.len() == 1 {
+            let arg_ty = self.check_expr(&args[0], Some(Ty::Str));
+            if !matches!(arg_ty, Ty::Str | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`str_ptr` requires a `str` argument, got `{}`", ty_display(&arg_ty)),
+                    args[0].span,
+                );
+            }
+            return Some(Ty::RawPtr(Box::new(Ty::U8)));
+        }
+        if name == "str_len" && args.len() == 1 {
+            let arg_ty = self.check_expr(&args[0], Some(Ty::Str));
+            if !matches!(arg_ty, Ty::Str | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`str_len` requires a `str` argument, got `{}`", ty_display(&arg_ty)),
+                    args[0].span,
+                );
+            }
+            return Some(Ty::Usize);
+        }
+        if name == "str_from_raw_parts" && args.len() == 2 {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    "`str_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                    span,
+                );
+            }
+            let p_ty = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(Ty::U8))));
+            let _ = self.check_expr(&args[1], Some(Ty::Usize));
+            if !matches!(p_ty, Ty::RawPtr(_) | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`str_from_raw_parts` first arg must be `*u8`, got `{}`", ty_display(&p_ty)),
+                    args[0].span,
+                );
+            }
+            return Some(Ty::Str);
+        }
+        if name == "slice_ptr" && args.len() == 1 {
+            let arg_ty = self.check_expr(&args[0], None);
+            if let Ty::Slice(elem) = &arg_ty {
+                return Some(Ty::RawPtr(elem.clone()));
+            }
+            if !matches!(arg_ty, Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!(
+                        "`slice_ptr` requires a slice argument (e.g. `i32[]`), got `{}`",
+                        ty_display(&arg_ty)
+                    ),
+                    args[0].span,
+                );
+            }
+            return Some(Ty::Error);
+        }
+        if name == "slice_len" && args.len() == 1 {
+            let arg_ty = self.check_expr(&args[0], None);
+            if !matches!(arg_ty, Ty::Slice(_) | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!(
+                        "`slice_len` requires a slice argument (e.g. `i32[]`), got `{}`",
+                        ty_display(&arg_ty)
+                    ),
+                    args[0].span,
+                );
+            }
+            return Some(Ty::Usize);
+        }
+        if name == "slice_from_raw_parts" && args.len() == 2 {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    "`slice_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                    span,
+                );
+            }
+            let p_ty = self.check_expr(&args[0], None);
+            let _ = self.check_expr(&args[1], Some(Ty::Usize));
+            let elem = match &p_ty {
+                Ty::RawPtr(inner) => (**inner).clone(),
+                Ty::Error => return Some(Ty::Error),
+                _ => {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "`slice_from_raw_parts` first arg must be a raw pointer `*T`, got `{}`",
+                            ty_display(&p_ty)
+                        ),
+                        args[0].span,
+                    );
+                    return Some(Ty::Error);
+                }
+            };
+            return Some(Ty::Slice(Box::new(elem)));
+        }
+        if let Some(bswap_ty) = match name {
+            "bswap16" | "htons" | "ntohs" => Some(Ty::U16),
+            "bswap32" | "htonl" | "ntohl" => Some(Ty::U32),
+            "bswap64" => Some(Ty::U64),
+            _ => None,
+        } {
+            if args.len() != 1 {
+                self.err(
+                    "E0501",
+                    format!("`{name}` takes exactly 1 argument, got {}", args.len()),
+                    span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::Error);
+            }
+            let _ = self.check_expr(&args[0], Some(bswap_ty.clone()));
+            return Some(bswap_ty);
+        }
+        None
+    }
+
     /// v0.0.10 Phase 4: dispatch `#name(...)` intrinsics. Names are looked
     /// up in a hardcoded table; unknown names fire E0905. Each intrinsic
     /// implements its own arg-shape validation, then returns the result
@@ -5467,6 +5597,12 @@ impl SemaCx<'_> {
             // `#asm(...)` never reaches here: the parser routes it to
             // `ExprKind::Asm` (Tier 1 + Tier 2), checked by `check_asm`.
             _ => {
+                // FFI/raw + byte-swap builtins (`#str_ptr`, `#slice_ptr`,
+                // `#bswap32`, …) share one handler with the (transitional)
+                // bare-call path.
+                if let Some(ty) = self.ffi_builtin_ty(name, args, span) {
+                    return ty;
+                }
                 self.err(
                     "E0905",
                     format!("unknown compiler intrinsic `#{}`", name),
@@ -7738,156 +7874,20 @@ impl SemaCx<'_> {
             }
             return Ty::Unit;
         }
-        // Slice 10.FFI.2: `str_ptr(s)` and `str_len(s)` extract the
-        // internal fields of a `str` fat-pointer. Bridge for users who
-        // want to interop `str` with raw-pointer FFI (e.g. pass a
-        // string literal's bytes to a C function expecting `*u8`).
-        // The intrinsic shape matches `println` — compiler-known names,
-        // not user-overloadable; rejected if arg is not `str`.
-        if name == "str_ptr" && args.len() == 1 {
-            let arg_ty = self.check_expr(&args[0], Some(Ty::Str));
-            if !matches!(arg_ty, Ty::Str | Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`str_ptr` requires a `str` argument, got `{}`",
-                        ty_display(&arg_ty)
-                    ),
-                    args[0].span,
-                );
-            }
-            return Ty::RawPtr(Box::new(Ty::U8));
-        }
-        if name == "str_len" && args.len() == 1 {
-            let arg_ty = self.check_expr(&args[0], Some(Ty::Str));
-            if !matches!(arg_ty, Ty::Str | Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`str_len` requires a `str` argument, got `{}`",
-                        ty_display(&arg_ty)
-                    ),
-                    args[0].span,
-                );
-            }
-            return Ty::Usize;
-        }
-        // Slice 10.FFI.2: `str_from_raw_parts(p, n)` composes a `str`
-        // from its components. The inverse of `str_ptr` + `str_len`.
-        // Unsafe — caller is responsible for `p` pointing to `n`
-        // valid UTF-8 bytes that live long enough.
-        // Slice 10.FFI.3: requires `unsafe` block.
-        if name == "str_from_raw_parts" && args.len() == 2 {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`str_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    call_span,
-                );
-            }
-            let p_ty = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(Ty::U8))));
-            let _ = self.check_expr(&args[1], Some(Ty::Usize));
-            if !matches!(p_ty, Ty::RawPtr(_) | Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`str_from_raw_parts` first arg must be `*u8`, got `{}`",
-                        ty_display(&p_ty)
-                    ),
-                    args[0].span,
-                );
-            }
-            return Ty::Str;
-        }
-        // Phase 11 polish (2026-05-14): slice intrinsics. Same shape as
-        // the str intrinsics but generic over the slice's element type.
-        // `slice_ptr(s: T[]) -> *T` — extract ptr.
-        // `slice_len(s: T[]) -> usize` — extract len.
-        // `slice_from_raw_parts(p: *T, n: usize) -> T[]` — unsafe, build
-        // a slice from a raw pointer + length. Element type inferred
-        // from the pointer's pointee type.
-        if name == "slice_ptr" && args.len() == 1 {
-            let arg_ty = self.check_expr(&args[0], None);
-            if let Ty::Slice(elem) = &arg_ty {
-                return Ty::RawPtr(elem.clone());
-            }
-            if !matches!(arg_ty, Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`slice_ptr` requires a slice argument (e.g. `i32[]`), got `{}`",
-                        ty_display(&arg_ty)
-                    ),
-                    args[0].span,
-                );
+        // v0.0.16: the FFI/raw + byte-swap builtins are `#name(...)` intrinsics
+        // now (one sigil for every compiler-known builtin). A bare call is a
+        // migration error with a fix-it; `#name(...)` is type-checked by
+        // `check_intrinsic` -> `ffi_builtin_ty`.
+        if is_ffi_builtin_name(name) {
+            self.err(
+                "E0905",
+                format!("`{name}` is a compiler intrinsic — spell it `#{name}(...)`"),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
             }
             return Ty::Error;
-        }
-        // Phase 3A: byte-swap intrinsics. Built-in for network byte order
-        // and other endian-flipping needs. `bswapN(x: uN) -> uN` for
-        // N ∈ {16, 32, 64}; htons/htonl/ntohs/ntohl are aliases that
-        // expand to bswap on little-endian targets (every C+ target today
-        // is LE — x86_64, arm64-darwin, arm64-linux).
-        if let Some(bswap_ty) = match name.as_str() {
-            "bswap16" | "htons" | "ntohs" => Some(Ty::U16),
-            "bswap32" | "htonl" | "ntohl" => Some(Ty::U32),
-            "bswap64" => Some(Ty::U64),
-            _ => None,
-        } {
-            if args.len() != 1 {
-                self.err(
-                    "E0501",
-                    format!("`{name}` takes exactly 1 argument, got {}", args.len()),
-                    call_span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return Ty::Error;
-            }
-            let _ = self.check_expr(&args[0], Some(bswap_ty.clone()));
-            return bswap_ty;
-        }
-        if name == "slice_len" && args.len() == 1 {
-            let arg_ty = self.check_expr(&args[0], None);
-            if !matches!(arg_ty, Ty::Slice(_) | Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`slice_len` requires a slice argument (e.g. `i32[]`), got `{}`",
-                        ty_display(&arg_ty)
-                    ),
-                    args[0].span,
-                );
-            }
-            return Ty::Usize;
-        }
-        if name == "slice_from_raw_parts" && args.len() == 2 {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`slice_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    call_span,
-                );
-            }
-            let p_ty = self.check_expr(&args[0], None);
-            let _ = self.check_expr(&args[1], Some(Ty::Usize));
-            let elem = match &p_ty {
-                Ty::RawPtr(inner) => (**inner).clone(),
-                Ty::Error => return Ty::Error,
-                _ => {
-                    self.err(
-                        "E0302",
-                        format!(
-                            "`slice_from_raw_parts` first arg must be a raw pointer `*T`, got `{}`",
-                            ty_display(&p_ty)
-                        ),
-                        args[0].span,
-                    );
-                    return Ty::Error;
-                }
-            };
-            return Ty::Slice(Box::new(elem));
         }
         // v0.0.3 Phase 5 Slice 5A: atomic intrinsics. Names match the
         // pattern `__cplus_atomic_<op>_<ty>_<ord>`. See the
@@ -14434,6 +14434,28 @@ fn extract_call_name(callee: &Expr) -> Option<String> {
 // End shared #[no_alloc] / #[bounded_recursion] support
 // ============================================================================
 
+/// v0.0.16: the FFI/raw + byte-swap builtins that are now spelled `#name(...)`.
+/// Used to give a bare call a migration fix-it instead of a generic
+/// "unknown function".
+fn is_ffi_builtin_name(name: &str) -> bool {
+    matches!(
+        name,
+        "str_ptr"
+            | "str_len"
+            | "str_from_raw_parts"
+            | "slice_ptr"
+            | "slice_len"
+            | "slice_from_raw_parts"
+            | "bswap16"
+            | "bswap32"
+            | "bswap64"
+            | "htons"
+            | "htonl"
+            | "ntohs"
+            | "ntohl"
+    )
+}
+
 fn body_ends_with_return(b: &Block) -> bool {
     b.stmts
         .last()
@@ -17095,7 +17117,7 @@ mod tests {
         assert_clean(
             "extern fn printf(fmt: *u8, ...) -> i32; \
              fn main() -> i32 { \
-                 return unsafe { printf(str_ptr(\"hi %d\\n\"), 7) }; \
+                 return unsafe { printf(#str_ptr(\"hi %d\\n\"), 7) }; \
              }",
         );
     }
@@ -20289,6 +20311,19 @@ mod tests {
              }",
         );
         assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+    }
+
+    // v0.0.16: FFI/raw builtins are `#name(...)` intrinsics. A bare call is a
+    // migration error; the `#` form type-checks.
+    #[test]
+    fn ffi_builtin_bare_call_is_migration_error_e0905() {
+        let codes = errors("fn main() -> i32 { let p: *u8 = str_ptr(\"x\"); return 0; }");
+        assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn ffi_builtin_hash_form_clean() {
+        assert_clean("fn main() -> i32 { let p: *u8 = #str_ptr(\"x\"); return 0; }");
     }
 
     #[test]

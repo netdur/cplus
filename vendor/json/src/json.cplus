@@ -139,7 +139,7 @@ fn buf_free(b: Buf) {
 }
 
 fn buf_to_string(b: Buf) -> string {
-    let view: str = unsafe { str_from_raw_parts(b.ptr, b.len) };
+    let view: str = unsafe { #str_from_raw_parts(b.ptr, b.len) };
     let out: string = view.to_string();
     buf_free(b);
     return out;
@@ -185,8 +185,8 @@ struct Parser {
 
 fn parser_new(s: str) -> Parser {
     return Parser {
-        src: str_ptr(s),
-        len: str_len(s),
+        src: #str_ptr(s),
+        len: #str_len(s),
         pos: 0 as usize,
     };
 }
@@ -211,11 +211,11 @@ fn skip_ws(mut p: Parser) -> Parser {
 }
 
 fn match_keyword(p: Parser, kw: str) -> bool {
-    let n: usize = str_len(kw);
+    let n: usize = #str_len(kw);
     if p.pos +% n > p.len { return false; }
     let mut i: usize = 0 as usize;
     while i < n {
-        let kq: *u8 = unsafe { str_ptr(kw) + i };
+        let kq: *u8 = unsafe { #str_ptr(kw) + i };
         let sq: *u8 = unsafe { p.src + (p.pos +% i) };
         if unsafe { *kq } != unsafe { *sq } { return false; }
         i = i +% (1 as usize);
@@ -649,8 +649,8 @@ pub fn object_get(borrow v: Value, key: str) -> Value {
 // ---------------- Serializer ----------------------------------------------
 
 fn buf_push_str(mut b: Buf, s: str) -> Buf {
-    let n: usize = str_len(s);
-    let p: *u8 = str_ptr(s);
+    let n: usize = #str_len(s);
+    let p: *u8 = #str_ptr(s);
     let mut i: usize = 0 as usize;
     while i < n {
         let q: *u8 = unsafe { p + i };
@@ -672,8 +672,8 @@ fn buf_push_bytes(mut b: Buf, p: *u8, n: usize) -> Buf {
 
 fn encode_string(mut b: Buf, s: str) -> Buf {
     b = buf_push(b, '"' as u8);
-    let p: *u8 = str_ptr(s);
-    let n: usize = str_len(s);
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
     let mut i: usize = 0 as usize;
     while i < n {
         let q: *u8 = unsafe { p + i };
@@ -687,7 +687,7 @@ fn encode_string(mut b: Buf, s: str) -> Buf {
         else if c == (9 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 't' as u8); }
         else if c < (32 as u8) {
             let hex: *u8 = unsafe { malloc(7 as usize) };
-            unsafe { snprintf(hex, 7 as usize, str_ptr("\\u%04x\0"), c as i32); }
+            unsafe { snprintf(hex, 7 as usize, #str_ptr("\\u%04x\0"), c as i32); }
             b = buf_push_bytes(b, hex, 6 as usize);
             unsafe { free(hex); }
         }
@@ -751,7 +751,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     // simple decimals ("0.1", "3.14"), etc.
     let mut p: i32 = 0;
     while p <= 17 {
-        let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, str_ptr("%%.%df\0"), p) };
+        let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%df\0"), p) };
         if fmt_n <= 0 { p = p +% 1; continue; }
         let w: i32 = unsafe { snprintf(buf, 64 as usize, fmt_buf, n) };
         if w > 0 && w < 64 {
@@ -769,7 +769,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     if chosen_len == 0 {
         let mut q: i32 = 1;
         while q <= 17 {
-            let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, str_ptr("%%.%dg\0"), q) };
+            let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%dg\0"), q) };
             if fmt_n <= 0 { q = q +% 1; continue; }
             let w: i32 = unsafe { snprintf(buf, 64 as usize, fmt_buf, n) };
             if w > 0 && w < 64 {
@@ -784,7 +784,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     }
 
     if chosen_len == 0 {
-        chosen_len = unsafe { snprintf(buf, 64 as usize, str_ptr("%.17g\0"), n) };
+        chosen_len = unsafe { snprintf(buf, 64 as usize, #str_ptr("%.17g\0"), n) };
     }
     if chosen_len > 0 {
         b = buf_push_bytes(b, buf, chosen_len as usize);
@@ -904,7 +904,7 @@ fn test_parse_string_simple() {
     let v: Value = parse_ok("\"hello\"");
     assert v.is_string();
     let s: string = as_str(v);
-    assert str_len(s.as_str()) == (5 as usize);
+    assert #str_len(s.as_str()) == (5 as usize);
 }
 
 #[test]
@@ -912,7 +912,7 @@ fn test_parse_string_with_escapes() {
     let v: Value = parse_ok("\"a\\nb\\t\\\\\"");
     let s: string = as_str(v);
     // decoded: 'a', '\n', 'b', '\t', '\\' = 5 bytes
-    assert str_len(s.as_str()) == (5 as usize);
+    assert #str_len(s.as_str()) == (5 as usize);
 }
 
 #[test]
@@ -1024,8 +1024,8 @@ fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
     // emitted as 4 UTF-8 bytes: F0 9F 98 80.
     let v: Value = parse_ok("\"\\uD83D\\uDE00\"");
     let s: string = as_str(v);
-    assert str_len(s.as_str()) == (4 as usize);
-    let p: *u8 = str_ptr(s.as_str());
+    assert #str_len(s.as_str()) == (4 as usize);
+    let p: *u8 = #str_ptr(s.as_str());
     assert unsafe { *p } == (0xF0 as u8);
     assert unsafe { *(p + 1) } == (0x9F as u8);
     assert unsafe { *(p + 2) } == (0x98 as u8);
@@ -1037,8 +1037,8 @@ fn test_parse_bmp_unicode_escape_still_works() {
     // U+00E9 = é. Two-byte UTF-8 sequence: C3 A9.
     let v: Value = parse_ok("\"\\u00e9\"");
     let s: string = as_str(v);
-    assert str_len(s.as_str()) == (2 as usize);
-    let p: *u8 = str_ptr(s.as_str());
+    assert #str_len(s.as_str()) == (2 as usize);
+    let p: *u8 = #str_ptr(s.as_str());
     assert unsafe { *p } == (0xC3 as u8);
     assert unsafe { *(p + 1) } == (0xA9 as u8);
 }

@@ -7,7 +7,7 @@
 // write the word `null` in C+ source).
 //
 // String literals are NUL-terminated in their underlying buffer, so
-// `str_ptr(s)` is safe to pass anywhere C wants a `const char *`.
+// `#str_ptr(s)` is safe to pass anywhere C wants a `const char *`.
 
 extern fn getenv(name: *u8) -> *u8;
 extern fn strlen(s: *u8) -> usize;
@@ -26,13 +26,13 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 }
 
 fn write_str(fd: i32, s: str) {
-    write_all(fd, str_ptr(s), str_len(s));
+    write_all(fd, #str_ptr(s), #str_len(s));
     return;
 }
 
 fn main() -> i32 {
     let name: str = "HOME";
-    let val: *u8 = unsafe { getenv(str_ptr(name)) };
+    let val: *u8 = unsafe { getenv(#str_ptr(name)) };
     let null: *u8 = unsafe { 0 as *u8 };
     write_str(1 as i32, name);
     write_str(1 as i32, "=");

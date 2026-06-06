@@ -434,8 +434,8 @@ pub fn msg_id_rgba(recv: *u8, selector: *u8, r: f64, g: f64, b: f64, a: f64) -> 
 }
 
 pub fn ns_string(utf8: *u8) -> *u8 {
-    let cls: *u8 = get_class(str_ptr("NSString\0"));
-    let selector: *u8 = sel(str_ptr("stringWithUTF8String:\0"));
+    let cls: *u8 = get_class(#str_ptr("NSString\0"));
+    let selector: *u8 = sel(#str_ptr("stringWithUTF8String:\0"));
     return msg_id_id(cls, selector, utf8);
 }
 
@@ -480,67 +480,67 @@ pub fn autorelease(obj: *u8) -> *u8 {
 // The object's current strong reference count. Mainly a test/debug aid —
 // production ownership should follow the +1 rule above, not inspect counts.
 pub fn retain_count(obj: *u8) -> i64 {
-    return msg_i64(obj, sel(str_ptr("retainCount\0")));
+    return msg_i64(obj, sel(#str_ptr("retainCount\0")));
 }
 
 pub fn alloc_init(class_name: *u8) -> *u8 {
     let cls: *u8 = get_class(class_name);
-    let alloced: *u8 = msg_id(cls, sel(str_ptr("alloc\0")));
-    return msg_id(alloced, sel(str_ptr("init\0")));
+    let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
+    return msg_id(alloced, sel(#str_ptr("init\0")));
 }
 
 pub fn new_object(class_name: *u8) -> *u8 {
-    return msg_id(get_class(class_name), sel(str_ptr("new\0")));
+    return msg_id(get_class(class_name), sel(#str_ptr("new\0")));
 }
 
 pub fn alloc_init_with_frame(class_name: *u8, frame: Rect) -> *u8 {
     let cls: *u8 = get_class(class_name);
-    let alloced: *u8 = msg_id(cls, sel(str_ptr("alloc\0")));
-    return msg_init_with_frame(alloced, sel(str_ptr("initWithFrame:\0")), frame);
+    let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
+    return msg_init_with_frame(alloced, sel(#str_ptr("initWithFrame:\0")), frame);
 }
 
 pub fn alloc_init_with_identifier(class_name: *u8, identifier: *u8) -> *u8 {
     let cls: *u8 = get_class(class_name);
-    let alloced: *u8 = msg_id(cls, sel(str_ptr("alloc\0")));
-    return msg_id_id(alloced, sel(str_ptr("initWithIdentifier:\0")), ns_string(identifier));
+    let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
+    return msg_id_id(alloced, sel(#str_ptr("initWithIdentifier:\0")), ns_string(identifier));
 }
 
 pub fn set_target_action(obj: *u8, target: *u8, action: *u8) {
-    msg_void_id(obj, sel(str_ptr("setTarget:\0")), target);
-    msg_void_id(obj, sel(str_ptr("setAction:\0")), action);
+    msg_void_id(obj, sel(#str_ptr("setTarget:\0")), target);
+    msg_void_id(obj, sel(#str_ptr("setAction:\0")), action);
 }
 
 pub fn attach_callback(obj: *u8, cb: fn(*u8)) {
     let target = get_action_target();
-    set_target_action(obj, target, sel(str_ptr("handleAction:\0")));
-    set_associated_callback(obj, str_ptr("cb_key\0"), cb, 0 as usize);
+    set_target_action(obj, target, sel(#str_ptr("handleAction:\0")));
+    set_associated_callback(obj, #str_ptr("cb_key\0"), cb, 0 as usize);
 }
 
 fn handle_action_callback(self_obj: *u8, _cmd: *u8, sender: *u8) {
-    let cb: fn(*u8) = get_associated_callback(sender, str_ptr("cb_key\0"));
+    let cb: fn(*u8) = get_associated_callback(sender, #str_ptr("cb_key\0"));
     cb(sender);
 }
 
 pub fn get_action_target() -> *u8 {
-    let target_cls: *u8 = get_class(str_ptr("CActionTarget\0"));
+    let target_cls: *u8 = get_class(#str_ptr("CActionTarget\0"));
     if target_cls != unsafe { 0 as *u8 } {
-        let app: *u8 = msg_id(get_class(str_ptr("NSApplication\0")), sel(str_ptr("sharedApplication\0")));
-        return get_associated_object(app, str_ptr("action_target_inst\0"));
+        let app: *u8 = msg_id(get_class(#str_ptr("NSApplication\0")), sel(#str_ptr("sharedApplication\0")));
+        return get_associated_object(app, #str_ptr("action_target_inst\0"));
     }
 
-    let nsobject_cls: *u8 = get_class(str_ptr("NSObject\0"));
-    let new_cls: *u8 = allocate_class_pair(nsobject_cls, str_ptr("CActionTarget\0"), 0 as usize);
-    let handle_action_sel: *u8 = sel(str_ptr("handleAction:\0"));
+    let nsobject_cls: *u8 = get_class(#str_ptr("NSObject\0"));
+    let new_cls: *u8 = allocate_class_pair(nsobject_cls, #str_ptr("CActionTarget\0"), 0 as usize);
+    let handle_action_sel: *u8 = sel(#str_ptr("handleAction:\0"));
     let _added: i8 = add_action_method(
         new_cls,
         handle_action_sel,
         handle_action_callback,
-        str_ptr("v@:@\0"),
+        #str_ptr("v@:@\0"),
     );
     register_class_pair(new_cls);
 
-    let inst: *u8 = msg_id(new_cls, sel(str_ptr("new\0")));
-    let app: *u8 = msg_id(get_class(str_ptr("NSApplication\0")), sel(str_ptr("sharedApplication\0")));
-    set_associated_object(app, str_ptr("action_target_inst\0"), inst, 1 as usize);
+    let inst: *u8 = msg_id(new_cls, sel(#str_ptr("new\0")));
+    let app: *u8 = msg_id(get_class(#str_ptr("NSApplication\0")), sel(#str_ptr("sharedApplication\0")));
+    set_associated_object(app, #str_ptr("action_target_inst\0"), inst, 1 as usize);
     return inst;
 }

@@ -20,6 +20,6 @@ fn main() -> i32 {
     let p3: *i32 = a.alloc::[i32](99 as i32);
 
     let sum: i32 = unsafe { *p1 +% * p2 +% * p3 };
-    unsafe { printf(str_ptr("sum=%d\n\0"), sum); }
+    unsafe { printf(#str_ptr("sum=%d\n\0"), sum); }
     return 0;
 }

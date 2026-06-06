@@ -241,8 +241,8 @@ Always write source-level type args (`Option[i32]::Some(v)`). Mangled names like
 ```cplus
 let a: str = "hello";                             // literal — always str
 let b: string = "hello".to_string();              // copies to heap
-str_ptr(s); str_len(s);                           // safe accessors
-unsafe { str_from_raw_parts(p, n) };              // unsafe constructor
+#str_ptr(s); #str_len(s);                           // safe accessors
+unsafe { #str_from_raw_parts(p, n) };              // unsafe constructor
 b.len(); b.is_empty(); b.as_str(); b.clone();     // string methods
 ```
 

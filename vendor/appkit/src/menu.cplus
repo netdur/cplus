@@ -10,9 +10,9 @@ pub struct Menu {
 impl Menu {
     pub fn new(title: *u8) -> Menu {
         let ns_title = rt::ns_string(title);
-        let cls = rt::get_class(str_ptr("NSMenu\0"));
-        let menu_alloc = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let menu = rt::msg_id_id(menu_alloc, rt::sel(str_ptr("initWithTitle:\0")), ns_title);
+        let cls = rt::get_class(#str_ptr("NSMenu\0"));
+        let menu_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let menu = rt::msg_id_id(menu_alloc, rt::sel(#str_ptr("initWithTitle:\0")), ns_title);
         return Menu { obj: menu };
     }
 
@@ -21,15 +21,15 @@ impl Menu {
     }
 
     pub fn add_item(self, item: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("addItem:\0")), item);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addItem:\0")), item);
     }
 
     pub fn remove_all_items(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("removeAllItems\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
     pub fn set_autoenables_items(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setAutoenablesItems:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setAutoenablesItems:\0")), flag);
     }
 }
 
@@ -53,34 +53,34 @@ impl MenuItem {
             act_sel = rt::sel(action);
         }
         let ns_key = rt::ns_string(key_equiv);
-        let cls = rt::get_class(str_ptr("NSMenuItem\0"));
-        let item_alloc = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let item = rt::msg_init_menu_item(item_alloc, rt::sel(str_ptr("initWithTitle:action:keyEquivalent:\0")), ns_title, act_sel, ns_key);
+        let cls = rt::get_class(#str_ptr("NSMenuItem\0"));
+        let item_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let item = rt::msg_init_menu_item(item_alloc, rt::sel(#str_ptr("initWithTitle:action:keyEquivalent:\0")), ns_title, act_sel, ns_key);
         return MenuItem { obj: item };
     }
 
     pub fn separator() -> *u8 {
-        let cls = rt::get_class(str_ptr("NSMenuItem\0"));
-        return rt::msg_id(cls, rt::sel(str_ptr("separatorItem\0")));
+        let cls = rt::get_class(#str_ptr("NSMenuItem\0"));
+        return rt::msg_id(cls, rt::sel(#str_ptr("separatorItem\0")));
     }
 
     pub fn set_submenu(self, submenu: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setSubmenu:\0")), submenu);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setSubmenu:\0")), submenu);
     }
 
     pub fn set_enabled(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setEnabled:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
     }
 
     pub fn set_target(self, target: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTarget:\0")), target);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
     pub fn set_action(self, action: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setAction:\0")), action);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setAction:\0")), action);
     }
 
     pub fn set_key_equivalent_modifier_mask(self, mask: u64) {
-        rt::msg_void_u64(self.obj, rt::sel(str_ptr("setKeyEquivalentModifierMask:\0")), mask);
+        rt::msg_void_u64(self.obj, rt::sel(#str_ptr("setKeyEquivalentModifierMask:\0")), mask);
     }
 }

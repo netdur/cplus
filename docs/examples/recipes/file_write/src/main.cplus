@@ -32,7 +32,7 @@ fn main() -> i32 {
     let argc: i32 = unsafe { *_NSGetArgc() };
     if argc < (3 as i32) {
         let usage: str = "usage: file_write <path> <text>\n";
-        write_all(2 as i32, str_ptr(usage), str_len(usage));
+        write_all(2 as i32, #str_ptr(usage), #str_len(usage));
         return 1;
     }
     let argv: **u8 = unsafe { *_NSGetArgv() };
@@ -48,7 +48,7 @@ fn main() -> i32 {
     let fd: i32 = unsafe { open(path, flags, mode) };
     if fd < (0 as i32) {
         let err: str = "open failed\n";
-        write_all(2 as i32, str_ptr(err), str_len(err));
+        write_all(2 as i32, #str_ptr(err), #str_len(err));
         return 2;
     }
 
@@ -56,7 +56,7 @@ fn main() -> i32 {
     unsafe { close(fd); }
     if !ok {
         let err: str = "write failed\n";
-        write_all(2 as i32, str_ptr(err), str_len(err));
+        write_all(2 as i32, #str_ptr(err), #str_len(err));
         return 3;
     }
     return 0;

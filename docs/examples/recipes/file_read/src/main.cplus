@@ -31,7 +31,7 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 fn main() -> i32 {
     let argc: i32 = unsafe { *_NSGetArgc() };
     if argc < (2 as i32) {
-        write_all(2 as i32, str_ptr("usage: file_read <path>\n"), str_len("usage: file_read <path>\n"));
+        write_all(2 as i32, #str_ptr("usage: file_read <path>\n"), #str_len("usage: file_read <path>\n"));
         return 1;
     }
     let argv: **u8 = unsafe { *_NSGetArgv() };
@@ -41,7 +41,7 @@ fn main() -> i32 {
     // O_RDONLY = 0. `open` is variadic; for read-only no mode is needed.
     let fd: i32 = unsafe { open(path, 0 as i32) };
     if fd < (0 as i32) {
-        write_all(2 as i32, str_ptr("open failed\n"), str_len("open failed\n"));
+        write_all(2 as i32, #str_ptr("open failed\n"), #str_len("open failed\n"));
         return 2;
     }
 

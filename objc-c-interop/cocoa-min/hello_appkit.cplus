@@ -119,8 +119,8 @@ fn should_terminate_after_last_window_closed(
 // ===========================================================================
 
 fn ns_string(utf8: *u8) -> *u8 {
-    let cls: *u8 = unsafe { objc_getClass(str_ptr("NSString\0")) };
-    let sel: *u8 = unsafe { sel_registerName(str_ptr("stringWithUTF8String:\0")) };
+    let cls: *u8 = unsafe { objc_getClass(#str_ptr("NSString\0")) };
+    let sel: *u8 = unsafe { sel_registerName(#str_ptr("stringWithUTF8String:\0")) };
     return unsafe { msg_id_id(cls, sel, utf8) };
 }
 
@@ -130,28 +130,28 @@ fn ns_string(utf8: *u8) -> *u8 {
 
 fn main() -> i32 {
     // ---- Autorelease pool ----
-    let pool_cls: *u8 = unsafe { objc_getClass(str_ptr("NSAutoreleasePool\0")) };
-    let alloc_sel: *u8 = unsafe { sel_registerName(str_ptr("alloc\0")) };
-    let init_sel: *u8 = unsafe { sel_registerName(str_ptr("init\0")) };
+    let pool_cls: *u8 = unsafe { objc_getClass(#str_ptr("NSAutoreleasePool\0")) };
+    let alloc_sel: *u8 = unsafe { sel_registerName(#str_ptr("alloc\0")) };
+    let init_sel: *u8 = unsafe { sel_registerName(#str_ptr("init\0")) };
     let pool_alloc: *u8 = unsafe { msg_id(pool_cls, alloc_sel) };
     let pool: *u8 = unsafe { msg_id(pool_alloc, init_sel) };
 
     // ---- NSApplication.sharedApplication ----
-    let nsapp_cls: *u8 = unsafe { objc_getClass(str_ptr("NSApplication\0")) };
-    let shared_sel: *u8 = unsafe { sel_registerName(str_ptr("sharedApplication\0")) };
+    let nsapp_cls: *u8 = unsafe { objc_getClass(#str_ptr("NSApplication\0")) };
+    let shared_sel: *u8 = unsafe { sel_registerName(#str_ptr("sharedApplication\0")) };
     let app: *u8 = unsafe { msg_id(nsapp_cls, shared_sel) };
 
     // app.setActivationPolicy(Regular = 0)
-    let set_policy_sel: *u8 = unsafe { sel_registerName(str_ptr("setActivationPolicy:\0")) };
+    let set_policy_sel: *u8 = unsafe { sel_registerName(#str_ptr("setActivationPolicy:\0")) };
     unsafe { msg_void_i64(app, set_policy_sel, 0 as i64); }
 
     // ---- Build CAppDelegate at runtime ----
-    let nsobject_cls: *u8 = unsafe { objc_getClass(str_ptr("NSObject\0")) };
+    let nsobject_cls: *u8 = unsafe { objc_getClass(#str_ptr("NSObject\0")) };
     let delegate_cls: *u8 = unsafe {
-        objc_allocateClassPair(nsobject_cls, str_ptr("CAppDelegate\0"), 0 as usize)
+        objc_allocateClassPair(nsobject_cls, #str_ptr("CAppDelegate\0"), 0 as usize)
     };
     let should_terminate_sel: *u8 = unsafe {
-        sel_registerName(str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0"))
+        sel_registerName(#str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0"))
     };
     // The third `class_addMethod` arg is an IMP — a fn pointer. Phase 11.FN_PTR
     // type-directed coercion converts the named C+ fn to the right type.
@@ -160,13 +160,13 @@ fn main() -> i32 {
             delegate_cls,
             should_terminate_sel,
             should_terminate_after_last_window_closed,
-            str_ptr("c@:@\0"),
+            #str_ptr("c@:@\0"),
         )
     };
     unsafe { objc_registerClassPair(delegate_cls); }
-    let new_sel: *u8 = unsafe { sel_registerName(str_ptr("new\0")) };
+    let new_sel: *u8 = unsafe { sel_registerName(#str_ptr("new\0")) };
     let delegate: *u8 = unsafe { msg_id(delegate_cls, new_sel) };
-    let set_delegate_sel: *u8 = unsafe { sel_registerName(str_ptr("setDelegate:\0")) };
+    let set_delegate_sel: *u8 = unsafe { sel_registerName(#str_ptr("setDelegate:\0")) };
     unsafe { msg_void_id(app, set_delegate_sel, delegate); }
 
     // ---- Window ----
@@ -177,68 +177,68 @@ fn main() -> i32 {
         origin: NSPoint { x: 0.0, y: 0.0 },
         size: NSSize { width: 800.0, height: 500.0 },
     };
-    let nswindow_cls: *u8 = unsafe { objc_getClass(str_ptr("NSWindow\0")) };
+    let nswindow_cls: *u8 = unsafe { objc_getClass(#str_ptr("NSWindow\0")) };
     let window_alloc: *u8 = unsafe { msg_id(nswindow_cls, alloc_sel) };
     let init_window_sel: *u8 = unsafe {
-        sel_registerName(str_ptr("initWithContentRect:styleMask:backing:defer:\0"))
+        sel_registerName(#str_ptr("initWithContentRect:styleMask:backing:defer:\0"))
     };
     let window: *u8 = unsafe {
         msg_init_window(window_alloc, init_window_sel, frame, style, backing, 0 as i8)
     };
-    let set_title_sel: *u8 = unsafe { sel_registerName(str_ptr("setTitle:\0")) };
-    let title: *u8 = ns_string(str_ptr("Hello from C+\0"));
+    let set_title_sel: *u8 = unsafe { sel_registerName(#str_ptr("setTitle:\0")) };
+    let title: *u8 = ns_string(#str_ptr("Hello from C+\0"));
     unsafe { msg_void_id(window, set_title_sel, title); }
-    let center_sel: *u8 = unsafe { sel_registerName(str_ptr("center\0")) };
+    let center_sel: *u8 = unsafe { sel_registerName(#str_ptr("center\0")) };
     unsafe { msg_void(window, center_sel); }
 
     // ---- Label (NSTextField) ----
-    let nstextfield_cls: *u8 = unsafe { objc_getClass(str_ptr("NSTextField\0")) };
+    let nstextfield_cls: *u8 = unsafe { objc_getClass(#str_ptr("NSTextField\0")) };
     let label_alloc: *u8 = unsafe { msg_id(nstextfield_cls, alloc_sel) };
-    let init_with_frame_sel: *u8 = unsafe { sel_registerName(str_ptr("initWithFrame:\0")) };
+    let init_with_frame_sel: *u8 = unsafe { sel_registerName(#str_ptr("initWithFrame:\0")) };
     let label: *u8 = unsafe { msg_init_with_frame(label_alloc, init_with_frame_sel, frame) };
-    let set_string_value_sel: *u8 = unsafe { sel_registerName(str_ptr("setStringValue:\0")) };
-    let label_text: *u8 = ns_string(str_ptr("Hello world\0"));
+    let set_string_value_sel: *u8 = unsafe { sel_registerName(#str_ptr("setStringValue:\0")) };
+    let label_text: *u8 = ns_string(#str_ptr("Hello world\0"));
     unsafe { msg_void_id(label, set_string_value_sel, label_text); }
-    let set_alignment_sel: *u8 = unsafe { sel_registerName(str_ptr("setAlignment:\0")) };
+    let set_alignment_sel: *u8 = unsafe { sel_registerName(#str_ptr("setAlignment:\0")) };
     unsafe { msg_void_i64(label, set_alignment_sel, 2 as i64); }  // center
-    let set_bezeled_sel: *u8 = unsafe { sel_registerName(str_ptr("setBezeled:\0")) };
+    let set_bezeled_sel: *u8 = unsafe { sel_registerName(#str_ptr("setBezeled:\0")) };
     unsafe { msg_void_i8(label, set_bezeled_sel, 0 as i8); }
-    let set_draws_bg_sel: *u8 = unsafe { sel_registerName(str_ptr("setDrawsBackground:\0")) };
+    let set_draws_bg_sel: *u8 = unsafe { sel_registerName(#str_ptr("setDrawsBackground:\0")) };
     unsafe { msg_void_i8(label, set_draws_bg_sel, 0 as i8); }
-    let set_editable_sel: *u8 = unsafe { sel_registerName(str_ptr("setEditable:\0")) };
+    let set_editable_sel: *u8 = unsafe { sel_registerName(#str_ptr("setEditable:\0")) };
     unsafe { msg_void_i8(label, set_editable_sel, 0 as i8); }
-    let set_selectable_sel: *u8 = unsafe { sel_registerName(str_ptr("setSelectable:\0")) };
+    let set_selectable_sel: *u8 = unsafe { sel_registerName(#str_ptr("setSelectable:\0")) };
     unsafe { msg_void_i8(label, set_selectable_sel, 0 as i8); }
 
     // Bigger font
-    let nsfont_cls: *u8 = unsafe { objc_getClass(str_ptr("NSFont\0")) };
-    let bold_system_sel: *u8 = unsafe { sel_registerName(str_ptr("boldSystemFontOfSize:\0")) };
+    let nsfont_cls: *u8 = unsafe { objc_getClass(#str_ptr("NSFont\0")) };
+    let bold_system_sel: *u8 = unsafe { sel_registerName(#str_ptr("boldSystemFontOfSize:\0")) };
     let font: *u8 = unsafe { msg_id_f64(nsfont_cls, bold_system_sel, 36.0) };
-    let set_font_sel: *u8 = unsafe { sel_registerName(str_ptr("setFont:\0")) };
+    let set_font_sel: *u8 = unsafe { sel_registerName(#str_ptr("setFont:\0")) };
     unsafe { msg_void_id(label, set_font_sel, font); }
 
     // Resize with window: NSViewWidthSizable=2 + NSViewHeightSizable=16
-    let set_autoresizing_sel: *u8 = unsafe { sel_registerName(str_ptr("setAutoresizingMask:\0")) };
+    let set_autoresizing_sel: *u8 = unsafe { sel_registerName(#str_ptr("setAutoresizingMask:\0")) };
     unsafe { msg_void_u64(label, set_autoresizing_sel, 18 as u64); }
 
     // Add label to window contentView
-    let content_view_sel: *u8 = unsafe { sel_registerName(str_ptr("contentView\0")) };
+    let content_view_sel: *u8 = unsafe { sel_registerName(#str_ptr("contentView\0")) };
     let content_view: *u8 = unsafe { msg_id(window, content_view_sel) };
-    let add_subview_sel: *u8 = unsafe { sel_registerName(str_ptr("addSubview:\0")) };
+    let add_subview_sel: *u8 = unsafe { sel_registerName(#str_ptr("addSubview:\0")) };
     unsafe { msg_void_id(content_view, add_subview_sel, label); }
 
     // ---- Show window + run app ----
-    let make_key_sel: *u8 = unsafe { sel_registerName(str_ptr("makeKeyAndOrderFront:\0")) };
+    let make_key_sel: *u8 = unsafe { sel_registerName(#str_ptr("makeKeyAndOrderFront:\0")) };
     unsafe { msg_void_id(window, make_key_sel, 0 as *u8); }   // sender = nil
 
-    let activate_sel: *u8 = unsafe { sel_registerName(str_ptr("activateIgnoringOtherApps:\0")) };
+    let activate_sel: *u8 = unsafe { sel_registerName(#str_ptr("activateIgnoringOtherApps:\0")) };
     unsafe { msg_void_i8(app, activate_sel, 1 as i8); }
 
-    let run_sel: *u8 = unsafe { sel_registerName(str_ptr("run\0")) };
+    let run_sel: *u8 = unsafe { sel_registerName(#str_ptr("run\0")) };
     unsafe { msg_void(app, run_sel); }
 
     // ---- Drain pool ----
-    let drain_sel: *u8 = unsafe { sel_registerName(str_ptr("drain\0")) };
+    let drain_sel: *u8 = unsafe { sel_registerName(#str_ptr("drain\0")) };
     unsafe { msg_void(pool, drain_sel); }
 
     return 0;

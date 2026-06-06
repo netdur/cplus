@@ -1886,7 +1886,7 @@ fn manifest_libs_links_libobjc() {
         "extern fn objc_getClass(name: *u8) -> *u8;\n\
          fn main() -> i32 {\n\
            let cstr: str = \"NSObject\";\n\
-           let p: *u8 = unsafe { str_ptr(cstr) };\n\
+           let p: *u8 = unsafe { #str_ptr(cstr) };\n\
            let cls: *u8 = unsafe { objc_getClass(p) };\n\
            return 0;\n\
          }\n",
@@ -3812,7 +3812,7 @@ fn return_region_undeclared_rejected_e0511() {
     // reject it rather than silently accept (was the deferred "future polish").
     let (ok, stderr) = try_compile_snippet(
         "fn f(a: borrow A str) -> borrow Z str { return a; }\n\
-         fn main() -> i32 { return str_len(f(\"x\")) as i32; }\n",
+         fn main() -> i32 { return #str_len(f(\"x\")) as i32; }\n",
     );
     assert!(!ok, "expected E0511 rejection, compiled instead");
     assert!(stderr.contains("E0511"), "expected E0511, got: {stderr}");
@@ -3824,7 +3824,7 @@ fn return_region_mismatch_rejected_e0512() {
     // signature declares is rejected — regions are now meaningful.
     let (ok, stderr) = try_compile_snippet(
         "fn weird(a: borrow A str, b: borrow B str) -> borrow A str { return b; }\n\
-         fn main() -> i32 { return str_len(weird(\"x\", \"y\")) as i32; }\n",
+         fn main() -> i32 { return #str_len(weird(\"x\", \"y\")) as i32; }\n",
     );
     assert!(!ok, "expected E0512 rejection, compiled instead");
     assert!(stderr.contains("E0512"), "expected E0512, got: {stderr}");
@@ -3836,10 +3836,10 @@ fn return_region_matching_compiles() {
     // same-region parameter is valid and must keep compiling.
     let (ok, stderr) = try_compile_snippet(
         "fn pick(a: borrow A str, b: borrow A str) -> borrow A str {\n\
-             if str_len(a) > str_len(b) { return a; }\n\
+             if #str_len(a) > #str_len(b) { return a; }\n\
              return b;\n\
          }\n\
-         fn main() -> i32 { return str_len(pick(\"hello\", \"worldlong\")) as i32; }\n",
+         fn main() -> i32 { return #str_len(pick(\"hello\", \"worldlong\")) as i32; }\n",
     );
     assert!(ok, "valid same-region return must compile; stderr: {stderr}");
 }
@@ -3853,7 +3853,7 @@ fn return_borrow_of_local_owned_rejected_e0513() {
              let s: string = \"heap\".to_string();\n\
              return s.as_str();\n\
          }\n\
-         fn main() -> i32 { return str_len(bad()) as i32; }\n",
+         fn main() -> i32 { return #str_len(bad()) as i32; }\n",
     );
     assert!(!ok, "expected E0513 rejection, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
@@ -3869,7 +3869,7 @@ fn return_borrow_alias_of_local_owned_rejected_e0513() {
              let view: str = s.as_str();\n\
              return view;\n\
          }\n\
-         fn main() -> i32 { return str_len(bad()) as i32; }\n",
+         fn main() -> i32 { return #str_len(bad()) as i32; }\n",
     );
     assert!(!ok, "expected E0513 rejection, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
@@ -3886,7 +3886,7 @@ fn return_borrow_branch_alias_of_local_owned_rejected_e0513() {
              if flag { view = s.as_str(); } else { view = \"static\"; }\n\
              return view;\n\
          }\n\
-         fn main() -> i32 { return str_len(bad(true)) as i32; }\n",
+         fn main() -> i32 { return #str_len(bad(true)) as i32; }\n",
     );
     assert!(!ok, "expected E0513 rejection, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
@@ -3898,7 +3898,7 @@ fn return_literal_str_view_compiles() {
     // returning it is sound and must keep compiling (no false positive).
     let (ok, stderr) = try_compile_snippet(
         "fn ok() -> str { let s: str = \"literal\"; return s; }\n\
-         fn main() -> i32 { return str_len(ok()) as i32; }\n",
+         fn main() -> i32 { return #str_len(ok()) as i32; }\n",
     );
     assert!(ok, "returning a literal-backed str must compile; stderr: {stderr}");
 }
@@ -3909,7 +3909,7 @@ fn return_slice_of_param_compiles() {
     // caller-tied and sound — must not be flagged as a dangling local.
     let (ok, stderr) = try_compile_snippet(
         "fn first(borrow s: str) -> str { return s; }\n\
-         fn main() -> i32 { return str_len(first(\"x\")) as i32; }\n",
+         fn main() -> i32 { return #str_len(first(\"x\")) as i32; }\n",
     );
     assert!(ok, "returning a borrow of a parameter must compile; stderr: {stderr}");
 }
@@ -3976,7 +3976,7 @@ fn pick(c: bool) -> str {
     let v: str = if c { \"aaa\" } else { \"bb\" };
     return v;
 }
-fn main() -> i32 { return str_len(pick(true)) as i32; }
+fn main() -> i32 { return #str_len(pick(true)) as i32; }
 ",
     )
     .unwrap();
@@ -3992,7 +3992,7 @@ fn main() -> i32 { return str_len(pick(true)) as i32; }
         String::from_utf8_lossy(&compile.stderr)
     );
     let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(3), "expected str_len(\"aaa\") == 3");
+    assert_eq!(run.status.code(), Some(3), "expected #str_len(\"aaa\") == 3");
 }
 
 #[test]
@@ -5495,7 +5495,7 @@ fn phase10_varargs_printf_runs() {
         "extern fn printf(fmt: *u8, ...) -> i32;\n\
          fn main() -> i32 {\n\
              let fmt: str = \"answer = %d\\n\";\n\
-             return unsafe { printf(str_ptr(fmt), 42) };\n\
+             return unsafe { printf(#str_ptr(fmt), 42) };\n\
          }\n",
     )
     .unwrap();
@@ -7784,8 +7784,8 @@ fn phase11_slice_type_parse_and_use_runs() {
 extern fn malloc(n: usize) -> *u8;
 
 fn sum_i32(xs: i32[]) -> i32 {
-    let n: usize = slice_len(xs);
-    let p: *i32 = slice_ptr(xs);
+    let n: usize = #slice_len(xs);
+    let p: *i32 = #slice_ptr(xs);
     let mut acc: i32 = 0;
     let mut i: usize = 0 as usize;
     while i < n {
@@ -7803,7 +7803,7 @@ fn main() -> i32 {
         *(p + 1 as usize) = 20;
         *(p + 2 as usize) = 12;
     }
-    let xs: i32[] = unsafe { slice_from_raw_parts(p, 3 as usize) };
+    let xs: i32[] = unsafe { #slice_from_raw_parts(p, 3 as usize) };
     return sum_i32(xs);
 }
 ",
@@ -7835,8 +7835,8 @@ fn phase11_slice_from_raw_parts_outside_unsafe_rejected() {
         "\
 fn main() -> i32 {
     let p: *i32 = unsafe { 0 as *i32 };
-    let xs: i32[] = slice_from_raw_parts(p, 0 as usize);
-    return slice_len(xs) as i32;
+    let xs: i32[] = #slice_from_raw_parts(p, 0 as usize);
+    return #slice_len(xs) as i32;
 }
 ",
     )
@@ -7867,7 +7867,7 @@ fn phase11_slice_ptr_on_non_slice_rejected() {
         "\
 fn main() -> i32 {
     let n: i32 = 42;
-    let p: *i32 = slice_ptr(n);
+    let p: *i32 = #slice_ptr(n);
     return 0;
 }
 ",
@@ -7900,10 +7900,10 @@ fn phase11_slice_type_distinct_element_types() {
     std::fs::write(
         &src,
         "\
-fn takes_i32_slice(xs: i32[]) -> i32 { return slice_len(xs) as i32; }
+fn takes_i32_slice(xs: i32[]) -> i32 { return #slice_len(xs) as i32; }
 fn main() -> i32 {
     let p: *u8 = unsafe { 0 as *u8 };
-    let bytes: u8[] = unsafe { slice_from_raw_parts(p, 0 as usize) };
+    let bytes: u8[] = unsafe { #slice_from_raw_parts(p, 0 as usize) };
     return takes_i32_slice(bytes);
 }
 ",
@@ -8794,7 +8794,7 @@ fn cpc_bindgen_round_trips_via_c_library() {
         "{bindings}\n\
          fn main() -> i32 {{\n\
              let s: str = \"hello\\0\";\n\
-             let n: i64 = unsafe {{ count_bytes(str_ptr(s) as *i8) }};\n\
+             let n: i64 = unsafe {{ count_bytes(#str_ptr(s) as *i8) }};\n\
              if n != (5 as i64) {{ return 1; }}\n\
              let sum: i32 = unsafe {{ add_ints(20 as i32, 22 as i32) }};\n\
              if sum != (42 as i32) {{ return 2; }}\n\
@@ -12537,8 +12537,8 @@ fn include_str_embeds_utf8_file_and_reads_back() {
         "\
 fn main() -> i32 {
     let s: str = #include_str(\"greet.txt\");
-    if str_len(s) != (3 as usize) { return 1 as i32; }
-    let p: *u8 = str_ptr(s);
+    if #str_len(s) != (3 as usize) { return 1 as i32; }
+    let p: *u8 = #str_ptr(s);
     let b0: u8 = unsafe { p[0 as usize] };
     let b1: u8 = unsafe { p[1 as usize] };
     let b2: u8 = unsafe { p[2 as usize] };
@@ -12616,7 +12616,7 @@ fn include_str_and_include_bytes_share_global() {
 fn main() -> i32 {
     let s: str = #include_str(\"shared.txt\");
     let b: *[u8; 3] = #include_bytes(\"shared.txt\");
-    if str_len(s) != (3 as usize) { return 1 as i32; }
+    if #str_len(s) != (3 as usize) { return 1 as i32; }
     return 0 as i32;
 }
 ",
@@ -15279,7 +15279,7 @@ fn bitshifts_and_bitwise_run_correctly() {
 
 #[test]
 fn htons_round_trips_to_bswap() {
-    // htons(0x1234) on LE → 0x3412. Verify the binary's runtime answer.
+    // #htons(0x1234) on LE → 0x3412. Verify the binary's runtime answer.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("hs.cplus");
@@ -15287,10 +15287,10 @@ fn htons_round_trips_to_bswap() {
         &src,
         "fn main() -> i32 {\n\
            let p: u16 = 0x1234 as u16;\n\
-           let s: u16 = htons(p);\n\
+           let s: u16 = #htons(p);\n\
            if s != (0x3412 as u16) { return 1; }\n\
-           // round-trip: htons(htons(x)) == x.\n\
-           let r: u16 = htons(s);\n\
+           // round-trip: #htons(#htons(x)) == x.\n\
+           let r: u16 = #htons(s);\n\
            if r != p { return 2; }\n\
            return 0;\n\
          }\n",
@@ -15317,7 +15317,7 @@ fn bswap32_byte_reverses_correctly() {
         &src,
         "fn main() -> i32 {\n\
            let p: u32 = 0x12345678 as u32;\n\
-           let s: u32 = bswap32(p);\n\
+           let s: u32 = #bswap32(p);\n\
            if s != (0x78563412 as u32) { return 1; }\n\
            return 0;\n\
          }\n",
@@ -16357,8 +16357,8 @@ import "appkit/runtime" as rt;
 import "appkit/dialogs" as dialogs;
 
 fn main() -> i32 {
-    let cls: *u8 = rt::get_class(str_ptr("NSObject\0"));
-    let obj: *u8 = rt::msg_id(cls, rt::sel(str_ptr("new\0")));   // +1
+    let cls: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    let obj: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("new\0")));   // +1
     if rt::retain_count(obj) != (1 as i64) { return 1; }
     let _r: *u8 = rt::retain(obj);                                // +2
     if rt::retain_count(obj) != (2 as i64) { return 2; }
@@ -16371,7 +16371,7 @@ fn main() -> i32 {
     loop {
         if i >= (500 as i32) { break; }
         let a: dialogs::Alert = dialogs::Alert::new();
-        a.set_message_text(str_ptr("hi\0"));
+        a.set_message_text(#str_ptr("hi\0"));
         i = i +% (1 as i32);
     }
     return 0;
@@ -16399,8 +16399,8 @@ import "appkit/runtime" as rt;
 fn add_button(content: *u8) {
     let b: controls::Button = controls::Button::new(
         rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 80.0, height: 24.0 } });
-    b.set_title(str_ptr("Hi\0"));
-    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), b.obj);
+    b.set_title(#str_ptr("Hi\0"));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), b.obj);
     return;   // b drops here -> release; content retained it, so it survives
 }
 
@@ -16411,10 +16411,10 @@ fn main() -> i32 {
     let content: *u8 = win.content_view();
     add_button(content);
 
-    let subs: *u8 = rt::msg_id(content, rt::sel(str_ptr("subviews\0")));
-    if rt::msg_i64(subs, rt::sel(str_ptr("count\0"))) != (1 as i64) { return 1; }
-    let btn: *u8 = rt::msg_id(subs, rt::sel(str_ptr("firstObject\0")));
-    let _tag: i64 = rt::msg_i64(btn, rt::sel(str_ptr("tag\0")));   // traps if freed
+    let subs: *u8 = rt::msg_id(content, rt::sel(#str_ptr("subviews\0")));
+    if rt::msg_i64(subs, rt::sel(#str_ptr("count\0"))) != (1 as i64) { return 1; }
+    let btn: *u8 = rt::msg_id(subs, rt::sel(#str_ptr("firstObject\0")));
+    let _tag: i64 = rt::msg_i64(btn, rt::sel(#str_ptr("tag\0")));   // traps if freed
     pool.drain();
     return 0;
 }
@@ -16439,12 +16439,12 @@ fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
     let board: pb::Pasteboard = pb::Pasteboard::general();
     let _cc: i64 = board.clear();
-    if board.set_string(str_ptr("clip-test-123\0")) != (1 as i8) { return 1; }
+    if board.set_string(#str_ptr("clip-test-123\0")) != (1 as i8) { return 1; }
     let got_ns: *u8 = board.string_ns();
     if got_ns == unsafe { 0 as *u8 } { return 2; }
     if conv::nsstring_to_cplus_string(got_ns).as_str() != "clip-test-123" { return 3; }
     let _cc2: i64 = board.clear();
-    let _ok2: i8 = board.set_string(str_ptr("second\0"));
+    let _ok2: i8 = board.set_string(#str_ptr("second\0"));
     if conv::nsstring_to_cplus_string(board.string_ns()).as_str() != "second" { return 4; }
     pool.drain();
     return 0;
@@ -16479,7 +16479,7 @@ fn main() -> i32 {
     let c2: *u8 = layout::activate(layout::equal_const(layout::width(child.obj), 200.0));
     if layout::is_active(c1) != (1 as i8) { return 1; }
     if layout::is_active(c2) != (1 as i8) { return 2; }
-    let w: f64 = rt::msg_f64(c2, rt::sel(str_ptr("constant\0")));
+    let w: f64 = rt::msg_f64(c2, rt::sel(#str_ptr("constant\0")));
     if w < 199.5 { return 3; }
     if w > 200.5 { return 4; }
     let _d: *u8 = layout::deactivate(c2);
@@ -16516,14 +16516,14 @@ fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
     let center: notify::NotificationCenter = notify::NotificationCenter::default();
     {
-        let obs: notify::Observer = center.add_observer(str_ptr("CPlusTestNote\0"), on_note);
-        center.post(str_ptr("CPlusTestNote\0"));
-        center.post(str_ptr("CPlusTestNote\0"));
+        let obs: notify::Observer = center.add_observer(#str_ptr("CPlusTestNote\0"), on_note);
+        center.post(#str_ptr("CPlusTestNote\0"));
+        center.post(#str_ptr("CPlusTestNote\0"));
     }
     // Two posts while subscribed.
     if unsafe { COUNT } != (2 as i32) { return 1; }
     // Observer dropped above -> unsubscribed; this post must not fire.
-    center.post(str_ptr("CPlusTestNote\0"));
+    center.post(#str_ptr("CPlusTestNote\0"));
     if unsafe { COUNT } != (2 as i32) { return 2; }
     pool.drain();
     return 0;
@@ -16553,20 +16553,20 @@ fn ds_row_count(self_obj: *u8, _cmd: *u8, table: *u8) -> i64 {
 }
 
 fn ds_value(self_obj: *u8, _cmd: *u8, table: *u8, column: *u8, row: i64) -> *u8 {
-    if row == (0 as i64) { return rt::ns_string(str_ptr("row-0\0")); }
-    if row == (1 as i64) { return rt::ns_string(str_ptr("row-1\0")); }
-    return rt::ns_string(str_ptr("row-2\0"));
+    if row == (0 as i64) { return rt::ns_string(#str_ptr("row-0\0")); }
+    if row == (1 as i64) { return rt::ns_string(#str_ptr("row-1\0")); }
+    return rt::ns_string(#str_ptr("row-2\0"));
 }
 
 fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
     let ds: *u8 = data::create_table_data_source(ds_row_count, ds_value);
 
-    let n: i64 = rt::msg_i64_id(ds, rt::sel(str_ptr("numberOfRowsInTableView:\0")), unsafe { 0 as *u8 });
+    let n: i64 = rt::msg_i64_id(ds, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), unsafe { 0 as *u8 });
     if n != (3 as i64) { return 1; }
 
     let nil: *u8 = unsafe { 0 as *u8 };
-    let sel_v: *u8 = rt::sel(str_ptr("tableView:objectValueForTableColumn:row:\0"));
+    let sel_v: *u8 = rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0"));
     if conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() != "row-0" { return 2; }
     if conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() != "row-2" { return 3; }
 
@@ -16607,12 +16607,12 @@ fn main() -> i32 {
     let nil: *u8 = unsafe { 0 as *u8 };
 
     let wd: *u8 = window::create_window_delegate(should_close, will_close);
-    if rt::msg_i8_id(wd, rt::sel(str_ptr("windowShouldClose:\0")), nil) != (1 as i8) { return 1; }
-    rt::msg_void_id(wd, rt::sel(str_ptr("windowWillClose:\0")), nil);
+    if rt::msg_i8_id(wd, rt::sel(#str_ptr("windowShouldClose:\0")), nil) != (1 as i8) { return 1; }
+    rt::msg_void_id(wd, rt::sel(#str_ptr("windowWillClose:\0")), nil);
     if unsafe { WILL_CLOSE } != (1 as i32) { return 2; }
 
     let td: *u8 = data::create_table_delegate(sel_changed);
-    rt::msg_void_id(td, rt::sel(str_ptr("tableViewSelectionDidChange:\0")), nil);
+    rt::msg_void_id(td, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), nil);
     if unsafe { SEL_CHANGED } != (1 as i32) { return 3; }
 
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 10.0, height: 10.0 } };
@@ -16690,7 +16690,7 @@ fn main() -> i32 {
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
     let v: view::View = view::create_custom_view(f, my_draw);
     let dirty = rt::Rect { origin: rt::Point { x: 1.0, y: 2.0 }, size: rt::Size { width: 42.0, height: 7.0 } };
-    rt::msg_void_rect(v.obj, rt::sel(str_ptr("drawRect:\0")), dirty);
+    rt::msg_void_rect(v.obj, rt::sel(#str_ptr("drawRect:\0")), dirty);
     if unsafe { DREW } != (1 as i32) { return 1; }
     if unsafe { DRAW_W } != 42.0 { return 2; }
     pool.drain();
@@ -16769,8 +16769,8 @@ fn main() -> i32 {
     drag::register_for_string_drops(v);
 
     let nil: *u8 = unsafe { 0 as *u8 };
-    if rt::msg_i64_id(v, rt::sel(str_ptr("draggingEntered:\0")), nil) != drag::drag_op_copy() { return 1; }
-    if rt::msg_i8_id(v, rt::sel(str_ptr("performDragOperation:\0")), nil) != (1 as i8) { return 2; }
+    if rt::msg_i64_id(v, rt::sel(#str_ptr("draggingEntered:\0")), nil) != drag::drag_op_copy() { return 1; }
+    if rt::msg_i8_id(v, rt::sel(#str_ptr("performDragOperation:\0")), nil) != (1 as i8) { return 2; }
     if unsafe { DROPPED } != (1 as i32) { return 3; }
 
     rt::release(v);
@@ -16806,7 +16806,7 @@ fn main() -> i32 {
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
     let v: *u8 = drag::create_drag_source_view(f, src_mask);
     let nil: *u8 = unsafe { 0 as *u8 };
-    let m: i64 = rt::msg_i64_id_i64(v, rt::sel(str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), nil, 0 as i64);
+    let m: i64 = rt::msg_i64_id_i64(v, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), nil, 0 as i64);
     if m != drag::drag_op_copy() { return 1; }
     rt::release(v);
     pool.drain();
@@ -16899,20 +16899,20 @@ fn main() -> i32 {
     let color = appkit::Color::rgba(1.0, 0.0, 0.0, 1.0);
     let font = appkit::Font::system_font_of_size(12.0);
     let alert = appkit::Alert::new();
-    alert.set_message_text(str_ptr("Smoke\0"));
-    alert.add_button(str_ptr("OK\0"));
+    alert.set_message_text(#str_ptr("Smoke\0"));
+    alert.add_button(#str_ptr("OK\0"));
 
     let secure = appkit::SecureTextField::new(frame);
-    secure.set_placeholder_string(str_ptr("Password\0"));
+    secure.set_placeholder_string(#str_ptr("Password\0"));
     let search = appkit::SearchField::new(frame);
-    search.set_placeholder_string(str_ptr("Search\0"));
+    search.set_placeholder_string(#str_ptr("Search\0"));
     search.set_on_search(on_click);
     let tokens = appkit::TokenField::new(frame);
-    tokens.set_string_value(str_ptr("one,two\0"));
+    tokens.set_string_value(#str_ptr("one,two\0"));
     let combo = appkit::ComboBox::new(frame);
-    combo.add_item(str_ptr("A\0"));
+    combo.add_item(#str_ptr("A\0"));
     let text_view = appkit::TextView::new(frame);
-    text_view.set_string(str_ptr("Body\0"));
+    text_view.set_string(#str_ptr("Body\0"));
 
     let stepper = appkit::Stepper::new(frame);
     stepper.set_increment(1.0);
@@ -16920,7 +16920,7 @@ fn main() -> i32 {
     sw.set_state(1 as i64);
     let segments = appkit::SegmentedControl::new(frame);
     segments.set_segment_count(2 as i64);
-    segments.set_label_for_segment(str_ptr("One\0"), 0 as i64);
+    segments.set_label_for_segment(#str_ptr("One\0"), 0 as i64);
     let date_picker = appkit::DatePicker::new(frame);
     date_picker.set_date_picker_style(0 as i64);
     let color_well = appkit::ColorWell::new(frame);
@@ -16933,8 +16933,8 @@ fn main() -> i32 {
     let split = appkit::SplitView::new(frame);
     split.set_vertical(1 as i8);
     let tab_view = appkit::TabView::new(frame);
-    let tab_item = appkit::TabViewItem::new(str_ptr("main\0"));
-    tab_item.set_label(str_ptr("Main\0"));
+    let tab_item = appkit::TabViewItem::new(#str_ptr("main\0"));
+    tab_item.set_label(#str_ptr("Main\0"));
     tab_view.add_tab_view_item(tab_item.obj);
     let visual = appkit::VisualEffectView::new(frame);
     visual.set_material(0 as i64);
@@ -16952,8 +16952,8 @@ fn main() -> i32 {
     popover.set_behavior(1 as i64);
 
     let table = appkit::TableView::new(frame);
-    let col = appkit::TableColumn::new(str_ptr("name\0"));
-    col.set_title(str_ptr("Name\0"));
+    let col = appkit::TableColumn::new(#str_ptr("name\0"));
+    col.set_title(#str_ptr("Name\0"));
     table.add_table_column(col.obj);
     table.reload_data();
     let outline = appkit::OutlineView::new(frame);
@@ -16972,17 +16972,17 @@ fn main() -> i32 {
     let pred = appkit::PredicateEditor::new(frame);
     pred.reload_criteria();
 
-    let toolbar = appkit::Toolbar::new(str_ptr("main-toolbar\0"));
+    let toolbar = appkit::Toolbar::new(#str_ptr("main-toolbar\0"));
     toolbar.set_display_mode(1 as i64);
-    let toolbar_item = appkit::ToolbarItem::new(str_ptr("item\0"));
-    toolbar_item.set_label(str_ptr("Item\0"));
+    let toolbar_item = appkit::ToolbarItem::new(#str_ptr("item\0"));
+    toolbar_item.set_label(#str_ptr("Item\0"));
     let status_bar = appkit::StatusBar::system();
     let status_item_raw = status_bar.status_item_with_length(24.0);
     let status_item = appkit::StatusItem::from_obj(status_item_raw);
     let status_button = appkit::StatusBarButton::from_obj(status_item.button());
-    status_button.set_title(str_ptr("S\0"));
+    status_button.set_title(#str_ptr("S\0"));
     let touch_bar = appkit::TouchBar::new();
-    let touch_item = appkit::TouchBarItem::new(str_ptr("touch\0"));
+    let touch_item = appkit::TouchBarItem::new(#str_ptr("touch\0"));
 
     let vc = appkit::ViewController::new();
     vc.set_view(text_view.obj);
@@ -16992,8 +16992,8 @@ fn main() -> i32 {
     // one already attached to another tab parent) and (b) the item
     // having a non-nil viewController. The original smoke had neither —
     // it reused tab_item.obj from `tab_view` above. Fix both.
-    let tab_item2 = appkit::TabViewItem::new(str_ptr("controllers\0"));
-    tab_item2.set_label(str_ptr("Controllers\0"));
+    let tab_item2 = appkit::TabViewItem::new(#str_ptr("controllers\0"));
+    tab_item2.set_label(#str_ptr("Controllers\0"));
     let tab_vc = appkit::ViewController::new();
     tab_vc.set_view(visual.obj);
     tab_item2.set_view_controller(tab_vc.obj);
@@ -17151,7 +17151,7 @@ fn env_macro_round_trip_runs() {
              let g: str = #env(\"CPC_E2E_GREETING\");\n\
              // Exit code = length of the env-var value (14 chars for\n\
              // `hello-from-env`). Confirms the str's len field was wired up.\n\
-             return str_len(g) as i32;\n\
+             return #str_len(g) as i32;\n\
          }\n",
     )
     .unwrap();
@@ -18268,8 +18268,8 @@ fn static_str_immutable_runs() {
          extern fn write(fd: i32, p: *u8, n: usize) -> isize;\n\
          \n\
          fn main() -> i32 {\n\
-             let n: usize = str_len(GREETING);\n\
-             let p: *u8 = str_ptr(GREETING);\n\
+             let n: usize = #str_len(GREETING);\n\
+             let p: *u8 = #str_ptr(GREETING);\n\
              let _w: isize = unsafe { write(1 as i32, p, n) };\n\
              if n != (13 as usize) { return 1; }\n\
              return 0;\n\
@@ -18301,8 +18301,8 @@ fn static_str_with_hex_escape_runs() {
         "static RESET: str = \"\\x1b[0m\";\n\
          fn main() -> i32 {\n\
              // 4 bytes: ESC, '[', '0', 'm'\n\
-             if str_len(RESET) != (4 as usize) { return 1; }\n\
-             let p: *u8 = str_ptr(RESET);\n\
+             if #str_len(RESET) != (4 as usize) { return 1; }\n\
+             let p: *u8 = #str_ptr(RESET);\n\
              if unsafe { *p } != (27 as u8) { return 2; }\n\
              return 0;\n\
          }\n",
@@ -18351,7 +18351,7 @@ fn simd_mask_compare_select_runs() {
              let l1: f32 = r.lane(1 as u32);\n\
              let l2: f32 = r.lane(2 as u32);\n\
              let l3: f32 = r.lane(3 as u32);\n\
-             unsafe { printf(str_ptr(\"%g %g %g %g\\n\\0\"), l0 as f64, l1 as f64, l2 as f64, l3 as f64); }\n\
+             unsafe { printf(#str_ptr(\"%g %g %g %g\\n\\0\"), l0 as f64, l1 as f64, l2 as f64, l3 as f64); }\n\
              // Round-trip: any() should be true (at least lanes 0,1 set);\n\
              // all() should be false (lanes 2,3 not set).\n\
              if !m.any() { return 1; }\n\

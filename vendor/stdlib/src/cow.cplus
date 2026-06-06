@@ -60,7 +60,7 @@ pub fn is_owned(borrow c: CowStr) -> bool {
 // Length in bytes (works for both variants).
 pub fn len(borrow c: CowStr) -> usize {
     return match c {
-        CowStr::View(s) => str_len(s),
+        CowStr::View(s) => #str_len(s),
         CowStr::Owned(s) => s.len(),
     };
 }

@@ -12,9 +12,9 @@
 // sits on top.
 //
 // The three str-side intrinsics used here are compiler-known:
-//   - `str_ptr(s)` extracts the internal `*u8` field of a `str` (safe)
-//   - `str_len(s)` extracts the internal `usize` length (safe)
-//   - `str_from_raw_parts(p, n)` builds a `str` from raw parts (unsafe)
+//   - `#str_ptr(s)` extracts the internal `*u8` field of a `str` (safe)
+//   - `#str_len(s)` extracts the internal `usize` length (safe)
+//   - `#str_from_raw_parts(p, n)` builds a `str` from raw parts (unsafe)
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -39,8 +39,8 @@ impl OwnedString {
         // str_ptr / str_len are safe — they only read the fat-pointer
         // fields, no UB possible. The memcpy and pointer arithmetic
         // are unsafe and must be wrapped.
-        let src: *u8 = str_ptr(s);
-        let n: usize = str_len(s);
+        let src: *u8 = #str_ptr(s);
+        let n: usize = #str_len(s);
         unsafe {
             let dest: *u8 = self.ptr + self.len;
             memcpy(dest, src, n);
@@ -49,7 +49,7 @@ impl OwnedString {
     }
 
     fn as_str(self) -> str {
-        return unsafe { str_from_raw_parts(self.ptr, self.len) };
+        return unsafe { #str_from_raw_parts(self.ptr, self.len) };
     }
 
     fn drop(mut self) {

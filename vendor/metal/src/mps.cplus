@@ -78,7 +78,7 @@ pub struct MatrixDescriptor {
 
 impl MatrixDescriptor {
     pub fn new(rows: usize, columns: usize, row_bytes: usize, dtype: DataType) -> MatrixDescriptor {
-        let cls: *u8 = unsafe { objc_getClass(str_ptr("MPSMatrixDescriptor\0")) };
+        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixDescriptor\0")) };
         let dt: u32 = dtype_to_raw(dtype);
         let raw: *u8 = unsafe {
             #msg_send(
@@ -125,7 +125,7 @@ impl Matrix {
     // released independently at scope exit (callers' Drops + MPSMatrix's
     // Drop when this wrapper goes out of scope).
     pub fn new(borrow buf: buffer::Buffer, borrow desc: MatrixDescriptor) -> Matrix {
-        let cls: *u8 = unsafe { objc_getClass(str_ptr("MPSMatrix\0")) };
+        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrix\0")) };
         let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
         let initialized: *u8 = unsafe {
             #msg_send(alloc_obj, "initWithBuffer:descriptor:", buf.raw, desc.raw) -> *u8
@@ -164,7 +164,7 @@ impl MatrixMultiplication {
         alpha: f64,
         beta: f64,
     ) -> result::Result[MatrixMultiplication, runtime::MetalError] {
-        let cls: *u8 = unsafe { objc_getClass(str_ptr("MPSMatrixMultiplication\0")) };
+        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixMultiplication\0")) };
         let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
         // BOOL is 1 byte on aarch64-darwin; pass as i8.
         let tl: i8 = if transpose_left { 1 as i8 } else { 0 as i8 };
@@ -245,7 +245,7 @@ impl MatrixVectorMultiplication {
         alpha: f64,
         beta: f64,
     ) -> result::Result[MatrixVectorMultiplication, runtime::MetalError] {
-        let cls: *u8 = unsafe { objc_getClass(str_ptr("MPSMatrixVectorMultiplication\0")) };
+        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixVectorMultiplication\0")) };
         let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
         let t: i8 = if transpose { 1 as i8 } else { 0 as i8 };
         let initialized: *u8 = unsafe {
@@ -356,10 +356,10 @@ fn test_2x2_matmul_identity_correctness() {
     let i_data: [f32; 4] = [1.0f32, 0.0f32, 0.0f32, 1.0f32];
 
     let buf_a: buffer::Buffer = dev.new_buffer_from_slice(
-        unsafe { slice_from_raw_parts(#addr_of(a_data) as *u8, 16 as usize) },
+        unsafe { #slice_from_raw_parts(#addr_of(a_data) as *u8, 16 as usize) },
     );
     let buf_i: buffer::Buffer = dev.new_buffer_from_slice(
-        unsafe { slice_from_raw_parts(#addr_of(i_data) as *u8, 16 as usize) },
+        unsafe { #slice_from_raw_parts(#addr_of(i_data) as *u8, 16 as usize) },
     );
     let buf_c: buffer::Buffer = dev.new_buffer(16 as usize);
 
@@ -393,7 +393,7 @@ fn test_2x2_matmul_identity_correctness() {
     // Read back. The result must equal A bit-for-bit.
     let mut out: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let _copied: usize = buf_c.copy_to_slice(
-        unsafe { slice_from_raw_parts(#addr_of(out) as *u8, 16 as usize) },
+        unsafe { #slice_from_raw_parts(#addr_of(out) as *u8, 16 as usize) },
     );
     assert out[0] == 1.0f32;
     assert out[1] == 2.0f32;

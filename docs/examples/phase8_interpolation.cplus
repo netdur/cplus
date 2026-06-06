@@ -29,9 +29,9 @@ fn main() -> i32 {
     let s3: string = "doubled: ${n *% 2}, plus_one: ${n +% 1}";
     println(s3.as_str());
 
-    // Function call inside `${...}` — `str_len(s)` is the Phase-8
+    // Function call inside `${...}` — `#str_len(s)` is the Phase-8
     // intrinsic for the length of a `str` view.
-    let s4: string = "len of name: ${str_len(name)}";
+    let s4: string = "len of name: ${#str_len(name)}";
     println(s4.as_str());
 
     // `$$` for a literal `$`.

@@ -113,11 +113,11 @@ fn main() -> i32 {
     };
     
     let window = appkit::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-    window.set_title(str_ptr("C+ App\0"));
+    window.set_title(#str_ptr("C+ App\0"));
     window.center();
     
     let btn = appkit::Button::new(frame);
-    btn.set_title(str_ptr("Click Me\0"));
+    btn.set_title(#str_ptr("Click Me\0"));
     btn.set_on_click(on_button_click);
     
     let content = window.content_view();

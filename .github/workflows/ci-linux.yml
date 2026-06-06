@@ -134,7 +134,7 @@ jobs:
           extern fn printf(fmt: *u8, ...) -> i32;
           fn main() -> i32 {
               let msg: str = "hello from C+ on Linux\n";
-              unsafe { printf(str_ptr(msg)); }
+              unsafe { printf(#str_ptr(msg)); }
               return 42;
           }
           EOF

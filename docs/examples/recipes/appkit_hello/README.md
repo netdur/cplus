@@ -53,6 +53,6 @@ appkit_hello/
   path — AppKit terminates the process before that line executes.
   This matches `proves/benchmark/programs/03-hello-appkit`'s shape.
 - The label's text is set via the bridge to demonstrate the dynamic
-  string case. For purely literal labels, `set_string_value(str_ptr("hi\0"))`
+  string case. For purely literal labels, `set_string_value(#str_ptr("hi\0"))`
   is the simpler path — the binding package wraps the literal via
   `rt::ns_string()` internally.

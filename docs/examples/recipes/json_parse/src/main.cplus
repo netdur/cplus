@@ -43,13 +43,13 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 }
 
 fn print_str(s: str) {
-    write_all(1 as i32, str_ptr(s), str_len(s));
+    write_all(1 as i32, #str_ptr(s), #str_len(s));
     return;
 }
 
 fn err_at(p: Parser) {
     let m: str = "parse error\n";
-    write_all(2 as i32, str_ptr(m), str_len(m));
+    write_all(2 as i32, #str_ptr(m), #str_len(m));
     return;
 }
 
@@ -91,8 +91,8 @@ fn skip_ws(p: Parser) -> Parser {
 // Match a fixed ASCII keyword starting at p.pos. Returns advanced parser
 // on match, original on no-match.
 fn match_kw(p: Parser, kw: str) -> Parser {
-    let kl: usize = str_len(kw);
-    let kp: *u8 = str_ptr(kw);
+    let kl: usize = #str_len(kw);
+    let kp: *u8 = #str_ptr(kw);
     if p.pos +% kl > p.len { return p; }
     let mut i: usize = 0 as usize;
     while i < kl {
@@ -108,7 +108,7 @@ fn match_kw(p: Parser, kw: str) -> Parser {
 fn emit_str_char(c: u8) -> bool {
     // Returns true if c was an opening byte for an escape that needs the
     // caller to skip an extra byte. (We handle escapes inline here.)
-    write_all(1 as i32, str_ptr(" "), 1 as usize);  // placeholder, never called
+    write_all(1 as i32, #str_ptr(" "), 1 as usize);  // placeholder, never called
     return false;
 }
 
@@ -145,7 +145,7 @@ fn parse_string(p: Parser, label: str) -> Parser {
         else if e == (34 as u8) { out = 34 as u8; }   // \"
         // Any other escape is passed through verbatim — good enough
         // for the recipe.
-        write_all(1 as i32, str_ptr("X"), 0 as usize); // no-op anchor
+        write_all(1 as i32, #str_ptr("X"), 0 as usize); // no-op anchor
         let buf: *u8 = unsafe { malloc(1 as usize) };
         unsafe { buf[0 as usize] = out; }
         write_all(1 as i32, buf, 1 as usize);

@@ -139,8 +139,8 @@ impl Vec[T] {
     // + count. Safer in practice — slice length comes from the producer, not
     // from a user-side `count` that can drift.
     pub fn extend_from_slice(mut self, s: T[]) {
-        let p: *T = unsafe { slice_ptr(s) };
-        let n: usize = slice_len(s);
+        let p: *T = unsafe { #slice_ptr(s) };
+        let n: usize = #slice_len(s);
         self.extend_from_raw(p, n);
         return;
     }
@@ -176,7 +176,7 @@ impl Vec[T] {
 
     // Borrow the live region as a slice.
     pub fn as_slice(self) -> T[] {
-        return unsafe { slice_from_raw_parts(self.ptr, self.len) };
+        return unsafe { #slice_from_raw_parts(self.ptr, self.len) };
     }
 
     // v0.0.5 Phase 3 Slice 3A: iterator-style traversal. Yields each

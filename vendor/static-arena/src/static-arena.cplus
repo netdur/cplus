@@ -69,13 +69,13 @@ impl StaticArena16K {
     }
 
     pub fn alloc_str(mut self, s: str) -> option::Option[str] {
-        let n: usize = str_len(s);
+        let n: usize = #str_len(s);
         let opt: option::Option[*u8] = self.alloc_bytes(n);
         guard let option::Option[*u8]::Some(p) = opt else {
             return option::Option[str]::None;
         };
-        unsafe { memcpy(p, str_ptr(s), n); }
-        return option::Option[str]::Some(unsafe { str_from_raw_parts(p, n) });
+        unsafe { memcpy(p, #str_ptr(s), n); }
+        return option::Option[str]::Some(unsafe { #str_from_raw_parts(p, n) });
     }
 }
 
@@ -179,8 +179,8 @@ fn test_16k_alloc_str_round_trip() {
         assert false;
         return;
     };
-    assert str_len(s) == (5 as usize);
-    let p: *u8 = str_ptr(s);
+    assert #str_len(s) == (5 as usize);
+    let p: *u8 = #str_ptr(s);
     assert unsafe { *p } == ('h' as u8);
     assert unsafe { *(p + 4) } == ('o' as u8);
 }

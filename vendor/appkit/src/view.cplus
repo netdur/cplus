@@ -9,21 +9,21 @@ import "./runtime" as rt;
 //   `NSRect` is passed by value. Closure-free — reach app state through a
 //   `static mut`, an associated object, or a global.
 pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
-    let existing: *u8 = rt::get_class(str_ptr("CCustomView\0"));
+    let existing: *u8 = rt::get_class(#str_ptr("CCustomView\0"));
     let mut cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
-        let nsview: *u8 = rt::get_class(str_ptr("NSView\0"));
-        cls = rt::allocate_class_pair(nsview, str_ptr("CCustomView\0"), 0 as usize);
+        let nsview: *u8 = rt::get_class(#str_ptr("NSView\0"));
+        cls = rt::allocate_class_pair(nsview, #str_ptr("CCustomView\0"), 0 as usize);
         let _a: i8 = rt::add_method_draw_rect(
             cls,
-            rt::sel(str_ptr("drawRect:\0")),
+            rt::sel(#str_ptr("drawRect:\0")),
             draw_imp,
-            str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"),
+            #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"),
         );
         rt::register_class_pair(cls);
     }
-    let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-    let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+    let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
     return View { obj: view };
 }
 
@@ -33,34 +33,34 @@ pub struct View {
 
 impl View {
     pub fn new(frame: rt::Rect) -> View {
-        let nsview_cls: *u8 = rt::get_class(str_ptr("NSView\0"));
-        let view_alloc: *u8 = rt::msg_id(nsview_cls, rt::sel(str_ptr("alloc\0")));
-        let view: *u8 = rt::msg_init_with_frame(view_alloc, rt::sel(str_ptr("initWithFrame:\0")), frame);
+        let nsview_cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
+        let view_alloc: *u8 = rt::msg_id(nsview_cls, rt::sel(#str_ptr("alloc\0")));
+        let view: *u8 = rt::msg_init_with_frame(view_alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return View { obj: view };
     }
 
     pub fn add_subview(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("addSubview:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), view);
     }
 
     pub fn set_frame(self, frame: rt::Rect) {
-        rt::msg_void_rect(self.obj, rt::sel(str_ptr("setFrame:\0")), frame);
+        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("setFrame:\0")), frame);
     }
 
     pub fn set_autoresizing_mask(self, mask: u64) {
-        rt::msg_void_u64(self.obj, rt::sel(str_ptr("setAutoresizingMask:\0")), mask);
+        rt::msg_void_u64(self.obj, rt::sel(#str_ptr("setAutoresizingMask:\0")), mask);
     }
 
     pub fn set_hidden(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setHidden:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setHidden:\0")), flag);
     }
 
     pub fn set_wants_layer(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setWantsLayer:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setWantsLayer:\0")), flag);
     }
 
     pub fn set_needs_display(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setNeedsDisplay:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setNeedsDisplay:\0")), flag);
     }
 }
 
@@ -70,39 +70,39 @@ pub struct StackView {
 
 impl StackView {
     pub fn new(frame: rt::Rect) -> StackView {
-        let cls: *u8 = rt::get_class(str_ptr("NSStackView\0"));
-        let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+        let cls: *u8 = rt::get_class(#str_ptr("NSStackView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return StackView { obj: view };
     }
 
     pub fn add_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("addArrangedSubview:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
     }
 
     pub fn remove_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("removeArrangedSubview:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view);
     }
 
     pub fn set_orientation(self, orientation: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setOrientation:\0")), orientation);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setOrientation:\0")), orientation);
     }
 
     pub fn set_spacing(self, spacing: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setSpacing:\0")), spacing);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setSpacing:\0")), spacing);
     }
 
     pub fn set_edge_insets(self, top: f64, left: f64, bottom: f64, right: f64) {
         let insets = rt::EdgeInsets { top: top, left: left, bottom: bottom, right: right };
-        rt::msg_void_edge_insets(self.obj, rt::sel(str_ptr("setEdgeInsets:\0")), insets);
+        rt::msg_void_edge_insets(self.obj, rt::sel(#str_ptr("setEdgeInsets:\0")), insets);
     }
 
     pub fn set_alignment(self, align: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setAlignment:\0")), align);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setAlignment:\0")), align);
     }
 
     pub fn set_distribution(self, dist: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setDistribution:\0")), dist);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setDistribution:\0")), dist);
     }
 }
 
@@ -115,9 +115,9 @@ pub struct ScrollView {
 
 impl ScrollView {
     pub fn new(frame: rt::Rect) -> ScrollView {
-        let cls: *u8 = rt::get_class(str_ptr("NSScrollView\0"));
-        let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+        let cls: *u8 = rt::get_class(#str_ptr("NSScrollView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return ScrollView { obj: view };
     }
 
@@ -126,19 +126,19 @@ impl ScrollView {
     }
 
     pub fn set_document_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDocumentView:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDocumentView:\0")), view);
     }
 
     pub fn set_has_vertical_scroller(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setHasVerticalScroller:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setHasVerticalScroller:\0")), flag);
     }
 
     pub fn set_has_horizontal_scroller(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setHasHorizontalScroller:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setHasHorizontalScroller:\0")), flag);
     }
 
     pub fn set_border_type(self, border_type: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setBorderType:\0")), border_type);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBorderType:\0")), border_type);
     }
 }
 
@@ -148,22 +148,22 @@ pub struct Box {
 
 impl Box {
     pub fn new(frame: rt::Rect) -> Box {
-        let cls: *u8 = rt::get_class(str_ptr("NSBox\0"));
-        let alloced: *u8 = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(str_ptr("initWithFrame:\0")), frame);
+        let cls: *u8 = rt::get_class(#str_ptr("NSBox\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let view: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
         return Box { obj: view };
     }
 
     pub fn set_title(self, title: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), rt::ns_string(title));
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
     pub fn set_content_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setContentView:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setContentView:\0")), view);
     }
 
     pub fn set_box_type(self, box_type: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setBoxType:\0")), box_type);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBoxType:\0")), box_type);
     }
 }
 
@@ -173,15 +173,15 @@ pub struct Scroller {
 
 impl Scroller {
     pub fn new(frame: rt::Rect) -> Scroller {
-        return Scroller { obj: rt::alloc_init_with_frame(str_ptr("NSScroller\0"), frame) };
+        return Scroller { obj: rt::alloc_init_with_frame(#str_ptr("NSScroller\0"), frame) };
     }
 
     pub fn set_double_value(self, value: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setDoubleValue:\0")), value);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setDoubleValue:\0")), value);
     }
 
     pub fn set_knob_proportion(self, proportion: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setKnobProportion:\0")), proportion);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setKnobProportion:\0")), proportion);
     }
 }
 
@@ -191,6 +191,6 @@ pub struct BackgroundExtensionView {
 
 impl BackgroundExtensionView {
     pub fn new(frame: rt::Rect) -> BackgroundExtensionView {
-        return BackgroundExtensionView { obj: rt::alloc_init_with_frame(str_ptr("NSBackgroundExtensionView\0"), frame) };
+        return BackgroundExtensionView { obj: rt::alloc_init_with_frame(#str_ptr("NSBackgroundExtensionView\0"), frame) };
     }
 }

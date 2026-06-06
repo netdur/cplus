@@ -43,7 +43,7 @@ impl Uuid {
         // which was BSD/Darwin-only). `addr_of` writes directly into
         // the stack-allocated `bytes` field; no heap allocation.
         let mut uuid: Uuid = zero_uuid();
-        let fd: i32 = unsafe { open(str_ptr("/dev/urandom\0"), 0 as i32) };
+        let fd: i32 = unsafe { open(#str_ptr("/dev/urandom\0"), 0 as i32) };
         if fd < 0 {
             return option::Option[Uuid]::None;
         }
@@ -68,11 +68,11 @@ impl Uuid {
     }
 
     pub fn parse(s: str) -> option::Option[Uuid] {
-        if str_len(s) != (36 as usize) {
+        if #str_len(s) != (36 as usize) {
             return option::Option[Uuid]::None;
         }
 
-        let p: *u8 = str_ptr(s);
+        let p: *u8 = #str_ptr(s);
         let dash: u8 = '-' as u8;
         if unsafe { *(p + 8) } != dash || unsafe { *(p + 13) } != dash ||
            unsafe { *(p + 18) } != dash || unsafe { *(p + 23) } != dash {
@@ -113,14 +113,14 @@ impl Uuid {
         ];
         let n: i32 = unsafe {
             snprintf(#addr_of(buf) as *u8, 37 as usize,
-            str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
+            #str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
             self.bytes[0] as i32, self.bytes[1] as i32, self.bytes[2] as i32, self.bytes[3] as i32,
             self.bytes[4] as i32, self.bytes[5] as i32,
             self.bytes[6] as i32, self.bytes[7] as i32,
             self.bytes[8] as i32, self.bytes[9] as i32,
             self.bytes[10] as i32, self.bytes[11] as i32, self.bytes[12] as i32, self.bytes[13] as i32, self.bytes[14] as i32, self.bytes[15] as i32)
         };
-        let view: str = unsafe { str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
+        let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
         return view.to_string();
     }
 }
@@ -220,9 +220,9 @@ fn test_to_string_format() {
         ],
     };
     let s: string = u.to_string();
-    assert str_len(s.as_str()) == (36 as usize);
+    assert #str_len(s.as_str()) == (36 as usize);
     // Dashes at positions 8, 13, 18, 23.
-    let p: *u8 = str_ptr(s.as_str());
+    let p: *u8 = #str_ptr(s.as_str());
     assert unsafe { *(p + 8) } == ('-' as u8);
     assert unsafe { *(p + 13) } == ('-' as u8);
     assert unsafe { *(p + 18) } == ('-' as u8);

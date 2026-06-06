@@ -21,19 +21,19 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 
 // Write `s` to stdout, no trailing newline.
 pub fn print(s: str) {
-    unsafe { printf(str_ptr("%.*s\0"), str_len(s) as i32, str_ptr(s)); }
+    unsafe { printf(#str_ptr("%.*s\0"), #str_len(s) as i32, #str_ptr(s)); }
     return;
 }
 
 // Write `s` to stdout, followed by '\n'.
 pub fn println(s: str) {
-    unsafe { printf(str_ptr("%.*s\n\0"), str_len(s) as i32, str_ptr(s)); }
+    unsafe { printf(#str_ptr("%.*s\n\0"), #str_len(s) as i32, #str_ptr(s)); }
     return;
 }
 
 // Write `s` to stderr, followed by '\n'.
 pub fn eprintln(s: str) {
-    write_all(2 as i32, str_ptr(s), str_len(s));
-    write_all(2 as i32, str_ptr("\n"), 1 as usize);
+    write_all(2 as i32, #str_ptr(s), #str_len(s));
+    write_all(2 as i32, #str_ptr("\n"), 1 as usize);
     return;
 }

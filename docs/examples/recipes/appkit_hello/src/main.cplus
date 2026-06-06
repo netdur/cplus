@@ -45,7 +45,7 @@ pub fn main() -> i32 {
     };
     // styleMask: titled(1) | closable(2) | miniaturizable(4) | resizable(8) = 15
     let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-    win.set_title(str_ptr("C+ AppKit Demo\0"));
+    win.set_title(#str_ptr("C+ AppKit Demo\0"));
     win.center();
 
     // ---- Label ----
@@ -66,7 +66,7 @@ pub fn main() -> i32 {
     let ns_greeting: *u8 = bridge::cplus_string_to_nsstring(greeting);
     rt::msg_void_id(
         label.obj,
-        rt::sel(str_ptr("setStringValue:\0")),
+        rt::sel(#str_ptr("setStringValue:\0")),
         ns_greeting,
     );
 
@@ -83,13 +83,13 @@ pub fn main() -> i32 {
         size: rt::Size { width: 100.0, height: 32.0 },
     };
     let quit_btn = controls::Button::new(btn_frame);
-    quit_btn.set_title(str_ptr("Quit\0"));
+    quit_btn.set_title(#str_ptr("Quit\0"));
     quit_btn.set_on_click(on_quit_click);
 
     // ---- Wire subviews ----
     let content: *u8 = win.content_view();
-    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), label.obj);
-    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), quit_btn.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), label.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit_btn.obj);
 
     // ---- Show + activate ----
     let null_sender: *u8 = unsafe { 0 as *u8 };
@@ -97,7 +97,7 @@ pub fn main() -> i32 {
     app.activate(1 as i8);
 
     // READY marker — spec convention for headless test harnesses.
-    unsafe { puts(str_ptr("READY\0")); }
+    unsafe { puts(#str_ptr("READY\0")); }
     unsafe { fflush(0 as *u8); }
 
     // ---- Event loop ----

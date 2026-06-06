@@ -75,9 +75,9 @@ fn main() -> i32 {
             // EOF (or error) — flush any pending partial line.
             if len > (0 as usize) {
                 print_u32(line_no);
-                write_all(1 as i32, str_ptr(": "), 2 as usize);
+                write_all(1 as i32, #str_ptr(": "), 2 as usize);
                 write_all(1 as i32, buf, len);
-                write_all(1 as i32, str_ptr("\n"), 1 as usize);
+                write_all(1 as i32, #str_ptr("\n"), 1 as usize);
             }
             break;
         }
@@ -104,9 +104,9 @@ fn main() -> i32 {
                 }
             }
             print_u32(line_no);
-            write_all(1 as i32, str_ptr(": "), 2 as usize);
+            write_all(1 as i32, #str_ptr(": "), 2 as usize);
             write_all(1 as i32, buf, line_end);
-            write_all(1 as i32, str_ptr("\n"), 1 as usize);
+            write_all(1 as i32, #str_ptr("\n"), 1 as usize);
             line_no = line_no +% (1 as u32);
 
             // Shift remaining bytes (after '\n') to the front.

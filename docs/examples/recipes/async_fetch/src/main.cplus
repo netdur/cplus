@@ -39,7 +39,7 @@ extern fn atoi(s: *u8) -> i32;
 // Read the target port from `FETCH_PORT` env var, defaulting to 7878.
 // Lets the e2e harness pick a free port without recompiling.
 fn target_port() -> u16 {
-    let var: *u8 = unsafe { getenv(str_ptr("FETCH_PORT\0")) };
+    let var: *u8 = unsafe { getenv(#str_ptr("FETCH_PORT\0")) };
     let null_p: *u8 = unsafe { 0 as *u8 };
     if var == null_p {
         return 7878 as u16;
@@ -77,6 +77,6 @@ fn main() -> i32 {
     let port: u16 = target_port();
     let f: future::Future[i32] = fetch_one_byte(port);
     let got: i32 = executor::block_on::[i32](f);
-    unsafe { printf(str_ptr("got=%d\n\0"), got); }
+    unsafe { printf(#str_ptr("got=%d\n\0"), got); }
     return got;
 }

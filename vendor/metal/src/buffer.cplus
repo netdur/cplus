@@ -14,22 +14,22 @@ impl Buffer {
         if self.raw == unsafe { 0 as *u8 } {
             return unsafe { 0 as *u8 };
         }
-        let selector: *u8 = runtime::sel(str_ptr("contents\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("contents\0"));
         return runtime::msg_ptr(self.raw, selector);
     }
 
     // v0.0.9 follow-up: `copy_to_slice` / `copy_from_slice` now
     // **return the byte count actually transferred** instead of
     // silently truncating. The caller can compare against
-    // `slice_len(slice)` to detect a too-small buffer; pre-fix
+    // `#slice_len(slice)` to detect a too-small buffer; pre-fix
     // they got no signal at all.
     pub fn copy_to_slice(self, slice: u8[]) -> usize {
-        let n: usize = slice_len(slice);
+        let n: usize = #slice_len(slice);
         let src: *u8 = self.contents();
         if src == unsafe { 0 as *u8 } {
             return 0 as usize;
         }
-        let dest: *u8 = unsafe { slice_ptr(slice) };
+        let dest: *u8 = unsafe { #slice_ptr(slice) };
         let bytes_to_copy: usize = if n < self.size { n } else { self.size };
         if bytes_to_copy > (0 as usize) {
             unsafe { memcpy(dest, src, bytes_to_copy); }
@@ -38,12 +38,12 @@ impl Buffer {
     }
 
     pub fn copy_from_slice(self, slice: u8[]) -> usize {
-        let n: usize = slice_len(slice);
+        let n: usize = #slice_len(slice);
         let dest: *u8 = self.contents();
         if dest == unsafe { 0 as *u8 } {
             return 0 as usize;
         }
-        let src: *u8 = unsafe { slice_ptr(slice) };
+        let src: *u8 = unsafe { #slice_ptr(slice) };
         let bytes_to_copy: usize = if n < self.size { n } else { self.size };
         if bytes_to_copy > (0 as usize) {
             unsafe { memcpy(dest, src, bytes_to_copy); }

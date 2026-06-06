@@ -20,26 +20,26 @@ pub fn create_table_data_source(
     row_count_imp: fn(*u8, *u8, *u8) -> i64,
     value_imp: fn(*u8, *u8, *u8, *u8, i64) -> *u8,
 ) -> *u8 {
-    let existing: *u8 = rt::get_class(str_ptr("CTableDataSource\0"));
+    let existing: *u8 = rt::get_class(#str_ptr("CTableDataSource\0"));
     let mut cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
-        let nsobject: *u8 = rt::get_class(str_ptr("NSObject\0"));
-        cls = rt::allocate_class_pair(nsobject, str_ptr("CTableDataSource\0"), 0 as usize);
+        let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+        cls = rt::allocate_class_pair(nsobject, #str_ptr("CTableDataSource\0"), 0 as usize);
         let _a: i8 = rt::add_method_i64_id(
             cls,
-            rt::sel(str_ptr("numberOfRowsInTableView:\0")),
+            rt::sel(#str_ptr("numberOfRowsInTableView:\0")),
             row_count_imp,
-            str_ptr("q@:@\0"),
+            #str_ptr("q@:@\0"),
         );
         let _b: i8 = rt::add_method_id_table_value(
             cls,
-            rt::sel(str_ptr("tableView:objectValueForTableColumn:row:\0")),
+            rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0")),
             value_imp,
-            str_ptr("@@:@@q\0"),
+            #str_ptr("@@:@@q\0"),
         );
         rt::register_class_pair(cls);
     }
-    return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
+    return rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
 }
 
 // Synthesize an `NSTableViewDelegate` for selection handling and return a
@@ -50,20 +50,20 @@ pub fn create_table_data_source(
 //   `TableView::selected_row()` (reach the table via a `static mut`, an
 //   associated object, or `[notification object]`).
 pub fn create_table_delegate(selection_changed_imp: fn(*u8, *u8, *u8)) -> *u8 {
-    let existing: *u8 = rt::get_class(str_ptr("CTableDelegate\0"));
+    let existing: *u8 = rt::get_class(#str_ptr("CTableDelegate\0"));
     let mut cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
-        let nsobject: *u8 = rt::get_class(str_ptr("NSObject\0"));
-        cls = rt::allocate_class_pair(nsobject, str_ptr("CTableDelegate\0"), 0 as usize);
+        let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+        cls = rt::allocate_class_pair(nsobject, #str_ptr("CTableDelegate\0"), 0 as usize);
         let _a: i8 = rt::add_action_method(
             cls,
-            rt::sel(str_ptr("tableViewSelectionDidChange:\0")),
+            rt::sel(#str_ptr("tableViewSelectionDidChange:\0")),
             selection_changed_imp,
-            str_ptr("v@:@\0"),
+            #str_ptr("v@:@\0"),
         );
         rt::register_class_pair(cls);
     }
-    return rt::msg_id(cls, rt::sel(str_ptr("new\0")));
+    return rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
 }
 
 // Owned (+1 via alloc/initWithFrame:); a scroll view (its document view) or a
@@ -74,7 +74,7 @@ pub struct TableView {
 
 impl TableView {
     pub fn new(frame: rt::Rect) -> TableView {
-        return TableView { obj: rt::alloc_init_with_frame(str_ptr("NSTableView\0"), frame) };
+        return TableView { obj: rt::alloc_init_with_frame(#str_ptr("NSTableView\0"), frame) };
     }
 
     fn drop(mut self) {
@@ -82,33 +82,33 @@ impl TableView {
     }
 
     pub fn add_table_column(self, column: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("addTableColumn:\0")), column);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addTableColumn:\0")), column);
     }
 
     pub fn remove_table_column(self, column: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("removeTableColumn:\0")), column);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("removeTableColumn:\0")), column);
     }
 
     pub fn reload_data(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadData\0")));
     }
 
     // The index of the selected row, or -1 if none. Read this from a selection
     // delegate (see `create_table_delegate`) to drive a master/detail UI.
     pub fn selected_row(self) -> i64 {
-        return rt::msg_i64(self.obj, rt::sel(str_ptr("selectedRow\0")));
+        return rt::msg_i64(self.obj, rt::sel(#str_ptr("selectedRow\0")));
     }
 
     pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
     pub fn set_data_source(self, data_source: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDataSource:\0")), data_source);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
     }
 
     pub fn set_row_height(self, height: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setRowHeight:\0")), height);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setRowHeight:\0")), height);
     }
 }
 
@@ -120,7 +120,7 @@ pub struct TableColumn {
 
 impl TableColumn {
     pub fn new(identifier: *u8) -> TableColumn {
-        return TableColumn { obj: rt::alloc_init_with_identifier(str_ptr("NSTableColumn\0"), identifier) };
+        return TableColumn { obj: rt::alloc_init_with_identifier(#str_ptr("NSTableColumn\0"), identifier) };
     }
 
     fn drop(mut self) {
@@ -128,20 +128,20 @@ impl TableColumn {
     }
 
     pub fn set_title(self, title: *u8) {
-        let header_cell = rt::msg_id(self.obj, rt::sel(str_ptr("headerCell\0")));
-        rt::msg_void_id(header_cell, rt::sel(str_ptr("setStringValue:\0")), rt::ns_string(title));
+        let header_cell = rt::msg_id(self.obj, rt::sel(#str_ptr("headerCell\0")));
+        rt::msg_void_id(header_cell, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(title));
     }
 
     pub fn set_width(self, width: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setWidth:\0")), width);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setWidth:\0")), width);
     }
 
     pub fn set_min_width(self, width: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMinWidth:\0")), width);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setMinWidth:\0")), width);
     }
 
     pub fn set_max_width(self, width: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMaxWidth:\0")), width);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setMaxWidth:\0")), width);
     }
 }
 
@@ -151,31 +151,31 @@ pub struct OutlineView {
 
 impl OutlineView {
     pub fn new(frame: rt::Rect) -> OutlineView {
-        return OutlineView { obj: rt::alloc_init_with_frame(str_ptr("NSOutlineView\0"), frame) };
+        return OutlineView { obj: rt::alloc_init_with_frame(#str_ptr("NSOutlineView\0"), frame) };
     }
 
     pub fn add_table_column(self, column: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("addTableColumn:\0")), column);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addTableColumn:\0")), column);
     }
 
     pub fn reload_data(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadData\0")));
     }
 
     pub fn expand_item(self, item: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("expandItem:\0")), item);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("expandItem:\0")), item);
     }
 
     pub fn collapse_item(self, item: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("collapseItem:\0")), item);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("collapseItem:\0")), item);
     }
 
     pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
     pub fn set_data_source(self, data_source: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDataSource:\0")), data_source);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
     }
 }
 
@@ -185,15 +185,15 @@ pub struct TableCellView {
 
 impl TableCellView {
     pub fn new(frame: rt::Rect) -> TableCellView {
-        return TableCellView { obj: rt::alloc_init_with_frame(str_ptr("NSTableCellView\0"), frame) };
+        return TableCellView { obj: rt::alloc_init_with_frame(#str_ptr("NSTableCellView\0"), frame) };
     }
 
     pub fn set_text_field(self, text_field: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTextField:\0")), text_field);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTextField:\0")), text_field);
     }
 
     pub fn set_image_view(self, image_view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setImageView:\0")), image_view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImageView:\0")), image_view);
     }
 }
 
@@ -203,7 +203,7 @@ pub struct TableRowView {
 
 impl TableRowView {
     pub fn new(frame: rt::Rect) -> TableRowView {
-        return TableRowView { obj: rt::alloc_init_with_frame(str_ptr("NSTableRowView\0"), frame) };
+        return TableRowView { obj: rt::alloc_init_with_frame(#str_ptr("NSTableRowView\0"), frame) };
     }
 }
 
@@ -213,23 +213,23 @@ pub struct CollectionView {
 
 impl CollectionView {
     pub fn new(frame: rt::Rect) -> CollectionView {
-        return CollectionView { obj: rt::alloc_init_with_frame(str_ptr("NSCollectionView\0"), frame) };
+        return CollectionView { obj: rt::alloc_init_with_frame(#str_ptr("NSCollectionView\0"), frame) };
     }
 
     pub fn set_collection_view_layout(self, layout: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setCollectionViewLayout:\0")), layout);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setCollectionViewLayout:\0")), layout);
     }
 
     pub fn reload_data(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("reloadData\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadData\0")));
     }
 
     pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
     pub fn set_data_source(self, data_source: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDataSource:\0")), data_source);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
     }
 }
 
@@ -239,11 +239,11 @@ pub struct CollectionViewItem {
 
 impl CollectionViewItem {
     pub fn new() -> CollectionViewItem {
-        return CollectionViewItem { obj: rt::alloc_init(str_ptr("NSCollectionViewItem\0")) };
+        return CollectionViewItem { obj: rt::alloc_init(#str_ptr("NSCollectionViewItem\0")) };
     }
 
     pub fn set_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setView:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setView:\0")), view);
     }
 }
 
@@ -253,19 +253,19 @@ pub struct CollectionViewFlowLayout {
 
 impl CollectionViewFlowLayout {
     pub fn new() -> CollectionViewFlowLayout {
-        return CollectionViewFlowLayout { obj: rt::alloc_init(str_ptr("NSCollectionViewFlowLayout\0")) };
+        return CollectionViewFlowLayout { obj: rt::alloc_init(#str_ptr("NSCollectionViewFlowLayout\0")) };
     }
 
     pub fn set_item_size(self, size: rt::Size) {
-        rt::msg_void_size(self.obj, rt::sel(str_ptr("setItemSize:\0")), size);
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setItemSize:\0")), size);
     }
 
     pub fn set_minimum_line_spacing(self, spacing: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMinimumLineSpacing:\0")), spacing);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setMinimumLineSpacing:\0")), spacing);
     }
 
     pub fn set_minimum_interitem_spacing(self, spacing: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setMinimumInteritemSpacing:\0")), spacing);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setMinimumInteritemSpacing:\0")), spacing);
     }
 }
 
@@ -275,15 +275,15 @@ pub struct CollectionViewGridLayout {
 
 impl CollectionViewGridLayout {
     pub fn new() -> CollectionViewGridLayout {
-        return CollectionViewGridLayout { obj: rt::alloc_init(str_ptr("NSCollectionViewGridLayout\0")) };
+        return CollectionViewGridLayout { obj: rt::alloc_init(#str_ptr("NSCollectionViewGridLayout\0")) };
     }
 
     pub fn set_minimum_item_size(self, size: rt::Size) {
-        rt::msg_void_size(self.obj, rt::sel(str_ptr("setMinimumItemSize:\0")), size);
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMinimumItemSize:\0")), size);
     }
 
     pub fn set_maximum_item_size(self, size: rt::Size) {
-        rt::msg_void_size(self.obj, rt::sel(str_ptr("setMaximumItemSize:\0")), size);
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMaximumItemSize:\0")), size);
     }
 }
 
@@ -293,15 +293,15 @@ pub struct RuleEditor {
 
 impl RuleEditor {
     pub fn new(frame: rt::Rect) -> RuleEditor {
-        return RuleEditor { obj: rt::alloc_init_with_frame(str_ptr("NSRuleEditor\0"), frame) };
+        return RuleEditor { obj: rt::alloc_init_with_frame(#str_ptr("NSRuleEditor\0"), frame) };
     }
 
     pub fn reload_criteria(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("reloadCriteria\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadCriteria\0")));
     }
 
     pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
@@ -311,14 +311,14 @@ pub struct PredicateEditor {
 
 impl PredicateEditor {
     pub fn new(frame: rt::Rect) -> PredicateEditor {
-        return PredicateEditor { obj: rt::alloc_init_with_frame(str_ptr("NSPredicateEditor\0"), frame) };
+        return PredicateEditor { obj: rt::alloc_init_with_frame(#str_ptr("NSPredicateEditor\0"), frame) };
     }
 
     pub fn reload_criteria(self) {
-        rt::msg_void(self.obj, rt::sel(str_ptr("reloadCriteria\0")));
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadCriteria\0")));
     }
 
     pub fn set_row_templates(self, row_templates: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setRowTemplates:\0")), row_templates);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setRowTemplates:\0")), row_templates);
     }
 }

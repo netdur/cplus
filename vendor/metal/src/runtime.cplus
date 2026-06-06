@@ -3,10 +3,10 @@
 // **String literal convention.** Every Objective-C selector and class
 // name passed to `sel()` / `cls()` is a `\0`-terminated C string. We
 // write them as plain `str` literals with a trailing `\0`, then call
-// `str_ptr(...)` to get the `*u8` start address. The trailing NUL is
+// `#str_ptr(...)` to get the `*u8` start address. The trailing NUL is
 // what `sel_registerName` / `objc_getClass` actually scan for; cpc's
 // `str` is just a (ptr, len) view that happens to include the NUL.
-// Note that `str_len("Foo\0")` returns 4, NOT 3 — the NUL counts as a
+// Note that `#str_len("Foo\0")` returns 4, NOT 3 — the NUL counts as a
 // byte. If you ever pass these strings to a `(ptr, len)` API, slice
 // off the trailing byte first.
 
@@ -163,16 +163,16 @@ pub fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSiz
 // Converts a C+ str to an Objective-C NSString.
 // Retains or copies the string bytes.
 pub fn ns_string(s: str) -> *u8 {
-    let clazz: *u8 = cls(str_ptr("NSString\0"));
-    let selector: *u8 = sel(str_ptr("stringWithBytes:length:encoding:\0"));
+    let clazz: *u8 = cls(#str_ptr("NSString\0"));
+    let selector: *u8 = sel(#str_ptr("stringWithBytes:length:encoding:\0"));
     let utf8_encoding: u64 = 4 as u64; // NSUTF8StringEncoding
-    return unsafe { objc_msg_id_ptr_len_enc(clazz, selector, str_ptr(s), str_len(s), utf8_encoding) };
+    return unsafe { objc_msg_id_ptr_len_enc(clazz, selector, #str_ptr(s), #str_len(s), utf8_encoding) };
 }
 
 // Wraps pre-allocated bytes as an NSData without copying them.
 pub fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
-    let clazz: *u8 = cls(str_ptr("NSData\0"));
-    let selector: *u8 = sel(str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
+    let clazz: *u8 = cls(#str_ptr("NSData\0"));
+    let selector: *u8 = sel(#str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
     return unsafe { objc_msg_id_ptr_len_free(clazz, selector, ptr, len, 0 as i8) };
 }
 
@@ -188,19 +188,19 @@ pub fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
 
 #[test]
 fn test_sel_registers_known_selector() {
-    let s: *u8 = sel(str_ptr("alloc\0"));
+    let s: *u8 = sel(#str_ptr("alloc\0"));
     assert unsafe { s as usize } != (0 as usize);
 }
 
 #[test]
 fn test_cls_resolves_nsstring() {
-    let c: *u8 = cls(str_ptr("NSString\0"));
+    let c: *u8 = cls(#str_ptr("NSString\0"));
     assert unsafe { c as usize } != (0 as usize);
 }
 
 #[test]
 fn test_cls_unknown_class_is_null() {
-    let c: *u8 = cls(str_ptr("NoSuchClassName_zzz\0"));
+    let c: *u8 = cls(#str_ptr("NoSuchClassName_zzz\0"));
     assert unsafe { c as usize } == (0 as usize);
 }
 
@@ -208,7 +208,7 @@ fn test_cls_unknown_class_is_null() {
 fn test_ns_string_round_trips_length() {
     let s: *u8 = ns_string("hello");
     assert unsafe { s as usize } != (0 as usize);
-    let len_sel: *u8 = sel(str_ptr("length\0"));
+    let len_sel: *u8 = sel(#str_ptr("length\0"));
     let n: u64 = msg_u64(s, len_sel);
     assert n == (5 as u64);
     release(s);

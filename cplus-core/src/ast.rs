@@ -495,7 +495,7 @@ pub enum TypeKind {
     /// (a view, not an owner). Constructed via `slice_from_raw_parts`
     /// (unsafe) or — pending follow-up — via an array→slice conversion.
     /// Indexing `s[i]` is bounds-checked at runtime; element access
-    /// via `slice_ptr(s)` / `slice_len(s)` intrinsics is safe.
+    /// via `#slice_ptr(s)` / `#slice_len(s)` intrinsics is safe.
     Slice(Box<Type>),
     /// v0.0.5 Phase 3 Slice 3B: tuple type `(T1, T2, ...)`. Arity must
     /// be ≥ 2; a parenthesised single type is grouping, and `()` is the

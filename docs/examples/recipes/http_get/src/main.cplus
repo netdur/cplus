@@ -38,7 +38,7 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
 }
 
 fn write_str(fd: i32, s: str) -> bool {
-    return write_all(fd, str_ptr(s), str_len(s));
+    return write_all(fd, #str_ptr(s), #str_len(s));
 }
 
 // Resolve `host` (NUL-terminated) to a network-order u32 IPv4 address.
@@ -166,8 +166,8 @@ fn main() -> i32 {
     let mut rlen: usize = 0 as usize;
 
     let s_get: str = "GET ";
-    unsafe { memcpy(req + rlen, str_ptr(s_get), str_len(s_get)); }
-    rlen = rlen +% str_len(s_get);
+    unsafe { memcpy(req + rlen, #str_ptr(s_get), #str_len(s_get)); }
+    rlen = rlen +% #str_len(s_get);
 
     if use_default_path {
         unsafe { (req + rlen)[0 as usize] = 47 as u8; }
@@ -178,13 +178,13 @@ fn main() -> i32 {
     }
 
     let s_http: str = " HTTP/1.0\r\nHost: ";
-    unsafe { memcpy(req + rlen, str_ptr(s_http), str_len(s_http)); }
-    rlen = rlen +% str_len(s_http);
+    unsafe { memcpy(req + rlen, #str_ptr(s_http), #str_len(s_http)); }
+    rlen = rlen +% #str_len(s_http);
     unsafe { memcpy(req + rlen, url + host_start, host_len); }
     rlen = rlen +% host_len;
     let s_tail: str = "\r\nConnection: close\r\n\r\n";
-    unsafe { memcpy(req + rlen, str_ptr(s_tail), str_len(s_tail)); }
-    rlen = rlen +% str_len(s_tail);
+    unsafe { memcpy(req + rlen, #str_ptr(s_tail), #str_len(s_tail)); }
+    rlen = rlen +% #str_len(s_tail);
 
     if !write_all(fd, req, rlen) {
         unsafe { free(req); free(host_cstr); close(fd); }

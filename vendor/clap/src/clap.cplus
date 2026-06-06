@@ -92,8 +92,8 @@ pub fn new_app(name: str) -> App {
 }
 
 fn write_out(fd: i32, s: str) {
-    let p: *u8 = str_ptr(s);
-    let n: usize = str_len(s);
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
     let mut written: usize = 0;
     while written < n {
         let q: *u8 = unsafe { p + written };
@@ -158,17 +158,17 @@ impl App {
         let fd: i32 = 1; // stdout
         write_out(fd, self.name);
         write_out(fd, "\n");
-        if str_len(self.version) > 0 {
+        if #str_len(self.version) > 0 {
             write_out(fd, "Version: ");
             write_out(fd, self.version);
             write_out(fd, "\n");
         }
-        if str_len(self.author) > 0 {
+        if #str_len(self.author) > 0 {
             write_out(fd, "Author: ");
             write_out(fd, self.author);
             write_out(fd, "\n");
         }
-        if str_len(self.about) > 0 {
+        if #str_len(self.about) > 0 {
             write_out(fd, self.about);
             write_out(fd, "\n");
         }
@@ -181,21 +181,21 @@ impl App {
         while i < len {
             let item: Arg = self.args.get(i);
             write_out(fd, "    ");
-            if str_len(item.short_name) > 0 {
+            if #str_len(item.short_name) > 0 {
                 write_out(fd, "-");
                 write_out(fd, item.short_name);
                 write_out(fd, ", ");
             } else {
                 write_out(fd, "    ");
             }
-            if str_len(item.long_name) > 0 {
+            if #str_len(item.long_name) > 0 {
                 write_out(fd, "--");
                 write_out(fd, item.long_name);
             }
             if !item.is_flag {
                 write_out(fd, " <value>");
             }
-            if str_len(item.help) > 0 {
+            if #str_len(item.help) > 0 {
                 write_out(fd, "        ");
                 write_out(fd, item.help);
             }
@@ -258,26 +258,26 @@ impl App {
         while i < n {
             let arg_str: str = args.get(i);
 
-            if str_len(arg_str) > (1 as usize) && unsafe { *str_ptr(arg_str) } == ('-' as u8) {
+            if #str_len(arg_str) > (1 as usize) && unsafe { *#str_ptr(arg_str) } == ('-' as u8) {
                 if arg_str == "--help" || arg_str == "-h" {
                     self.print_help_and_exit();
                 }
 
-                if str_len(arg_str) > (2 as usize) && unsafe { *(str_ptr(arg_str) + 1) } == ('-' as u8) {
+                if #str_len(arg_str) > (2 as usize) && unsafe { *(#str_ptr(arg_str) + 1) } == ('-' as u8) {
                     // Long option: --name OR --name=value.
-                    let body_ptr: *u8 = unsafe { str_ptr(arg_str) + 2 };
-                    let body_len: usize = str_len(arg_str) -% (2 as usize);
+                    let body_ptr: *u8 = unsafe { #str_ptr(arg_str) + 2 };
+                    let body_len: usize = #str_len(arg_str) -% (2 as usize);
                     let eq_pos: option::Option[usize] = find_byte(body_ptr, body_len, '=' as u8);
 
                     let opt_name: str = match eq_pos {
-                        option::Option[usize]::Some(p) => unsafe { str_from_raw_parts(body_ptr, p) },
-                        option::Option[usize]::None => unsafe { str_from_raw_parts(body_ptr, body_len) },
+                        option::Option[usize]::Some(p) => unsafe { #str_from_raw_parts(body_ptr, p) },
+                        option::Option[usize]::None => unsafe { #str_from_raw_parts(body_ptr, body_len) },
                     };
                     let inline_value: option::Option[str] = match eq_pos {
                         option::Option[usize]::Some(p) => {
                             let val_ptr: *u8 = unsafe { body_ptr + (p +% (1 as usize)) };
                             let val_len: usize = body_len -% p -% (1 as usize);
-                            option::Option[str]::Some(unsafe { str_from_raw_parts(val_ptr, val_len) })
+                            option::Option[str]::Some(unsafe { #str_from_raw_parts(val_ptr, val_len) })
                         }
                         option::Option[usize]::None => option::Option[str]::None,
                     };
@@ -318,14 +318,14 @@ impl App {
                     // the lookup OR points at a non-flag, fall back to
                     // the single-option path with the whole `-...` body
                     // as the option name.
-                    let body_ptr: *u8 = unsafe { str_ptr(arg_str) + 1 };
-                    let body_len: usize = str_len(arg_str) -% (1 as usize);
+                    let body_ptr: *u8 = unsafe { #str_ptr(arg_str) + 1 };
+                    let body_len: usize = #str_len(arg_str) -% (1 as usize);
 
                     let mut all_flags: bool = body_len > (1 as usize);
                     let mut k: usize = 0 as usize;
                     while all_flags && k < body_len {
                         let bptr: *u8 = unsafe { body_ptr + k };
-                        let one: str = unsafe { str_from_raw_parts(bptr, 1 as usize) };
+                        let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
                         let oa: option::Option[Arg] = self.find_arg_by_short(one);
                         match oa {
                             option::Option[Arg]::Some(a) => {
@@ -341,7 +341,7 @@ impl App {
                         let mut j2: usize = 0 as usize;
                         while j2 < body_len {
                             let bptr: *u8 = unsafe { body_ptr + j2 };
-                            let one: str = unsafe { str_from_raw_parts(bptr, 1 as usize) };
+                            let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
                             guard let option::Option[Arg]::Some(a) = self.find_arg_by_short(one) else {
                                 // can't happen — checked in loop above
                                 return ArgMatches {
@@ -353,7 +353,7 @@ impl App {
                             j2 = j2 +% (1 as usize);
                         }
                     } else {
-                        let opt_name: str = unsafe { str_from_raw_parts(body_ptr, body_len) };
+                        let opt_name: str = unsafe { #str_from_raw_parts(body_ptr, body_len) };
                         let opt_arg: option::Option[Arg] = self.find_arg_by_short(opt_name);
                         guard let option::Option[Arg]::Some(found) = opt_arg else {
                             self.print_unknown_arg_and_exit(arg_str);

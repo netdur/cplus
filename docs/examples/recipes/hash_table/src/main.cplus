@@ -149,12 +149,12 @@ fn table_free(t: Table) {
 }
 
 fn put_str(t: Table, key: str, val: i32) {
-    table_insert(t, str_ptr(key), str_len(key), val);
+    table_insert(t, #str_ptr(key), #str_len(key), val);
     return;
 }
 
 fn get_str(t: Table, key: str) -> i32 {
-    return table_get(t, str_ptr(key), str_len(key));
+    return table_get(t, #str_ptr(key), #str_len(key));
 }
 
 fn main() -> i32 {
@@ -172,10 +172,10 @@ fn main() -> i32 {
 
     if fails == (0 as i32) {
         let ok: str = "hash_table: 4/4 ok\n";
-        write_all(1 as i32, str_ptr(ok), str_len(ok));
+        write_all(1 as i32, #str_ptr(ok), #str_len(ok));
     } else {
         let fail: str = "hash_table: FAIL\n";
-        write_all(2 as i32, str_ptr(fail), str_len(fail));
+        write_all(2 as i32, #str_ptr(fail), #str_len(fail));
     }
     table_free(t);
     return fails;

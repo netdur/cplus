@@ -9067,10 +9067,91 @@ impl<'a> FnState<'a> {
             }
             // `#asm(...)` never reaches here: the parser routes it to
             // `ExprKind::Asm`, lowered by `gen_asm`.
-            _ => panic!(
-                "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
-            ),
+            _ => {
+                // FFI/raw + byte-swap builtins (`#str_ptr`, `#slice_ptr`,
+                // `#bswap32`, …) — shared with the bare-call path.
+                if let Some(r) = self.ffi_builtin_cg(name, args) {
+                    return Some(r);
+                }
+                panic!(
+                    "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
+                )
+            }
         }
+    }
+
+    /// v0.0.16: lower the `#`-sigil FFI/raw + byte-swap builtin intrinsics.
+    /// `Some((value, ty))` if `name` is one of them, else `None`. Shared by the
+    /// `#name` dispatch (`gen_intrinsic`) and the bare-call path during
+    /// migration. Sema (`ffi_builtin_ty`) has already validated arg shapes.
+    fn ffi_builtin_cg(&mut self, name: &str, args: &[Expr]) -> Option<(String, Ty)> {
+        if name == "str_ptr" {
+            let (av, _) = self.gen_expr(&args[0]).expect("str_ptr arg");
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
+            return Some((r, Ty::RawPtr(Box::new(Ty::U8))));
+        }
+        if name == "str_len" {
+            let (av, _) = self.gen_expr(&args[0]).expect("str_len arg");
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
+            return Some((r, Ty::Usize));
+        }
+        if name == "str_from_raw_parts" {
+            let (p_val, _) = self.gen_expr(&args[0]).expect("str_from_raw_parts ptr");
+            let (n_val, _) = self.gen_expr(&args[1]).expect("str_from_raw_parts len");
+            let t1 = self.next_tmp();
+            let t2 = self.next_tmp();
+            self.emit(&format!("{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"));
+            self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
+            return Some((t2, Ty::Str));
+        }
+        if name == "slice_ptr" {
+            let (av, ty) = self.gen_expr(&args[0]).expect("slice_ptr arg");
+            let elem_ty = match ty {
+                Ty::Slice(inner) => *inner,
+                _ => unreachable!("sema validated slice_ptr arg type"),
+            };
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
+            return Some((r, Ty::RawPtr(Box::new(elem_ty))));
+        }
+        if name == "slice_len" {
+            let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
+            // Publish the proven non-negative invariant via `llvm.assume`
+            // (`!range` is illegal on `extractvalue`).
+            let nn = self.next_tmp();
+            self.emit(&format!("{nn} = icmp sge i64 {r}, 0"));
+            self.emit(&format!("call void @llvm.assume(i1 {nn})"));
+            return Some((r, Ty::Usize));
+        }
+        if name == "slice_from_raw_parts" {
+            let (p_val, p_ty) = self.gen_expr(&args[0]).expect("slice_from_raw_parts ptr");
+            let (n_val, _) = self.gen_expr(&args[1]).expect("slice_from_raw_parts len");
+            let elem_ty = match p_ty {
+                Ty::RawPtr(inner) => *inner,
+                _ => unreachable!("sema validated slice_from_raw_parts ptr type"),
+            };
+            let t1 = self.next_tmp();
+            let t2 = self.next_tmp();
+            self.emit(&format!("{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"));
+            self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
+            return Some((t2, Ty::Slice(Box::new(elem_ty))));
+        }
+        if let Some((bits, ret_ty)) = match name {
+            "bswap16" | "htons" | "ntohs" => Some((16u32, Ty::U16)),
+            "bswap32" | "htonl" | "ntohl" => Some((32u32, Ty::U32)),
+            "bswap64" => Some((64u32, Ty::U64)),
+            _ => None,
+        } {
+            let (av, _) = self.gen_expr(&args[0]).expect("bswap arg");
+            let r = self.next_tmp();
+            self.emit(&format!("{r} = call i{bits} @llvm.bswap.i{bits}(i{bits} {av})"));
+            return Some((r, ret_ty));
+        }
+        None
     }
 
     /// v0.0.11 Phase 4: `#addr_of(expr)` — pointer to a place.
@@ -10682,63 +10763,9 @@ impl<'a> FnState<'a> {
             }
             return None;
         }
-        // Slice 10.FFI.2: `str_ptr(s)` and `str_len(s)` intrinsics.
-        // Lower to `extractvalue` from the `{ ptr, i64 }` fat pointer.
-        if name == "str_ptr" {
-            let (av, _) = self.gen_expr(&args[0]).expect("str_ptr arg");
-            let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
-            return Some((r, Ty::RawPtr(Box::new(Ty::U8))));
-        }
-        if name == "str_len" {
-            let (av, _) = self.gen_expr(&args[0]).expect("str_len arg");
-            let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
-            return Some((r, Ty::Usize));
-        }
-        if name == "str_from_raw_parts" {
-            let (p_val, _) = self.gen_expr(&args[0]).expect("str_from_raw_parts ptr");
-            let (n_val, _) = self.gen_expr(&args[1]).expect("str_from_raw_parts len");
-            let t1 = self.next_tmp();
-            let t2 = self.next_tmp();
-            self.emit(&format!(
-                "{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"
-            ));
-            self.emit(&format!(
-                "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
-            ));
-            return Some((t2, Ty::Str));
-        }
-        // Phase 11 polish (2026-05-14): slice intrinsics. Lower exactly
-        // like the str equivalents — same `{ ptr, i64 }` aggregate
-        // shape — but propagate the element type for the returned Ty.
-        if name == "slice_ptr" {
-            let (av, ty) = self.gen_expr(&args[0]).expect("slice_ptr arg");
-            let elem_ty = match ty {
-                Ty::Slice(inner) => *inner,
-                _ => unreachable!("sema validated slice_ptr arg type"),
-            };
-            let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
-            return Some((r, Ty::RawPtr(Box::new(elem_ty))));
-        }
-        // Phase 3A: byte-swap intrinsics. `bswap{16,32,64}` lower directly
-        // to `llvm.bswap.i{16,32,64}`. `htons`/`htonl`/`ntohs`/`ntohl` are
-        // aliases — on little-endian targets (every C+ target today) they
-        // bswap; on a future big-endian target we'd lower as identity.
-        if let Some((bits, ret_ty)) = match name {
-            "bswap16" | "htons" | "ntohs" => Some((16u32, Ty::U16)),
-            "bswap32" | "htonl" | "ntohl" => Some((32u32, Ty::U32)),
-            "bswap64" => Some((64u32, Ty::U64)),
-            _ => None,
-        } {
-            let (av, _) = self.gen_expr(&args[0]).expect("bswap arg");
-            let r = self.next_tmp();
-            self.emit(&format!(
-                "{r} = call i{bits} @llvm.bswap.i{bits}(i{bits} {av})"
-            ));
-            return Some((r, ret_ty));
-        }
+        // v0.0.16: FFI/raw + byte-swap builtins are `#name(...)` intrinsics,
+        // lowered by `gen_intrinsic` -> `ffi_builtin_cg`; a bare call never
+        // reaches codegen (sema rejects it with a fix-it).
         // v0.0.3 Phase 5 Slice 5A: atomic intrinsics
         // (`__cplus_atomic_<op>_<ty>_<ord>`). Lowered directly to LLVM's
         // `load atomic` / `store atomic` / `atomicrmw` / `cmpxchg`. Sema
@@ -10812,38 +10839,6 @@ impl<'a> FnState<'a> {
         // to drive other queued tasks.
         if name == "__cplus_reactor_yield_now" {
             return self.gen_reactor_yield_now();
-        }
-        if name == "slice_len" {
-            let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
-            let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
-            // Slice 1B: publish the proven invariant that slice lengths are
-            // non-negative (signed). LLVM `!range` metadata is only legal
-            // on `load`/`call`/`invoke`/`atomicrmw`/`cmpxchg` — not on
-            // `extractvalue` — so we publish the fact via `llvm.assume`
-            // instead. At -O2 the optimizer rewrites this into range
-            // metadata after the value is rematerialized through a load.
-            let nn = self.next_tmp();
-            self.emit(&format!("{nn} = icmp sge i64 {r}, 0"));
-            self.emit(&format!("call void @llvm.assume(i1 {nn})"));
-            return Some((r, Ty::Usize));
-        }
-        if name == "slice_from_raw_parts" {
-            let (p_val, p_ty) = self.gen_expr(&args[0]).expect("slice_from_raw_parts ptr");
-            let (n_val, _) = self.gen_expr(&args[1]).expect("slice_from_raw_parts len");
-            let elem_ty = match p_ty {
-                Ty::RawPtr(inner) => *inner,
-                _ => unreachable!("sema validated slice_from_raw_parts ptr type"),
-            };
-            let t1 = self.next_tmp();
-            let t2 = self.next_tmp();
-            self.emit(&format!(
-                "{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"
-            ));
-            self.emit(&format!(
-                "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
-            ));
-            return Some((t2, Ty::Slice(Box::new(elem_ty))));
         }
         // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` lowers to
         // a call to the monomorphized `T::drop(p)` when T has Drop,
@@ -16715,8 +16710,8 @@ mod tests {
              fn main() -> i32 {\n\
                let buf: *u8 = unsafe { malloc(16 as usize) };\n\
                let p: *i32 = unsafe { buf as *i32 };\n\
-               let s: i32[] = unsafe { slice_from_raw_parts(p, 3 as usize) };\n\
-               let n: usize = slice_len(s);\n\
+               let s: i32[] = unsafe { #slice_from_raw_parts(p, 3 as usize) };\n\
+               let n: usize = #slice_len(s);\n\
                return n as i32;\n\
              }",
         );
@@ -17605,7 +17600,7 @@ mod tests {
     #[test]
     fn bswap16_emits_intrinsic_call() {
         let ir = gen_src(
-            "fn main() -> i32 { let p: u16 = 0x1234 as u16; let q: u16 = bswap16(p); return 0; }",
+            "fn main() -> i32 { let p: u16 = 0x1234 as u16; let q: u16 = #bswap16(p); return 0; }",
         );
         assert!(
             ir.contains("call i16 @llvm.bswap.i16(i16 "),
@@ -17615,7 +17610,7 @@ mod tests {
 
     #[test]
     fn bswap32_emits_intrinsic_call() {
-        let ir = gen_src("fn main() -> i32 { let p: u32 = 0x12345678 as u32; let q: u32 = bswap32(p); return 0; }");
+        let ir = gen_src("fn main() -> i32 { let p: u32 = 0x12345678 as u32; let q: u32 = #bswap32(p); return 0; }");
         assert!(
             ir.contains("call i32 @llvm.bswap.i32(i32 "),
             "expected llvm.bswap.i32 call, got:\n{ir}"
@@ -17625,7 +17620,7 @@ mod tests {
     #[test]
     fn bswap64_emits_intrinsic_call() {
         let ir = gen_src(
-            "fn main() -> i32 { let p: u64 = 1 as u64; let q: u64 = bswap64(p); return 0; }",
+            "fn main() -> i32 { let p: u64 = 1 as u64; let q: u64 = #bswap64(p); return 0; }",
         );
         assert!(
             ir.contains("call i64 @llvm.bswap.i64(i64 "),
@@ -17637,7 +17632,7 @@ mod tests {
     fn htons_aliases_bswap16() {
         // htons/htonl/ntohs/ntohl are aliases that lower to bswap on LE.
         let ir = gen_src(
-            "fn main() -> i32 { let p: u16 = 8080 as u16; let q: u16 = htons(p); return 0; }",
+            "fn main() -> i32 { let p: u16 = 8080 as u16; let q: u16 = #htons(p); return 0; }",
         );
         assert!(
             ir.contains("call i16 @llvm.bswap.i16(i16 "),
@@ -17648,7 +17643,7 @@ mod tests {
     #[test]
     fn htonl_aliases_bswap32() {
         let ir =
-            gen_src("fn main() -> i32 { let p: u32 = 1 as u32; let q: u32 = htonl(p); return 0; }");
+            gen_src("fn main() -> i32 { let p: u32 = 1 as u32; let q: u32 = #htonl(p); return 0; }");
         assert!(
             ir.contains("call i32 @llvm.bswap.i32(i32 "),
             "expected htonl to lower to llvm.bswap.i32, got:\n{ir}"
@@ -18512,7 +18507,7 @@ mod tests {
             "fn main() -> i32 {\n\
                  let cond: bool = true;\n\
                  let v: str = if cond { \"aaa\" } else { \"bb\" };\n\
-                 return str_len(v) as i32;\n\
+                 return #str_len(v) as i32;\n\
              }",
         );
         assert!(
@@ -18881,7 +18876,7 @@ mod tests {
         let src = "fn main() -> i32 {\n\
                      unsafe {\n\
                          let obj: *u8 = 0 as *u8;\n\
-                         let s: *u8 = str_ptr(\"x\");\n\
+                         let s: *u8 = #str_ptr(\"x\");\n\
                          let r: *u8 = #msg_send(obj, \"stringWithUTF8String:\", s) -> *u8;\n\
                      }\n\
                      return 0;\n\

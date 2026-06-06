@@ -47,7 +47,7 @@ pub struct TcpListener {
 // ahead of the family; Linux starts with a 2-byte family) — netsys
 // supplies them. Caller owns the buffer.
 fn build_sockaddr(ip_dotted: str, port: u16) -> *u8 {
-    let addr: u32 = unsafe { inet_addr(str_ptr(ip_dotted)) };
+    let addr: u32 = unsafe { inet_addr(#str_ptr(ip_dotted)) };
     let sa: *u8 = unsafe { malloc(16 as usize) };
     unsafe {
         memset(sa, 0 as i32, 16 as usize);
@@ -150,7 +150,7 @@ impl TcpStream {
         }
         let n: usize = data.len();
         let slice: u8[] = data.as_slice();
-        let p: *u8 = unsafe { slice_ptr(slice) };
+        let p: *u8 = unsafe { #slice_ptr(slice) };
         let mut written: usize = 0 as usize;
         while written < n {
             let remaining: usize = n -% written;

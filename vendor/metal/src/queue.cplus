@@ -21,7 +21,7 @@ impl CommandQueue {
         if self.raw == unsafe { 0 as *u8 } {
             return CommandBuffer { raw: unsafe { 0 as *u8 } };
         }
-        let selector: *u8 = runtime::sel(str_ptr("commandBuffer\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("commandBuffer\0"));
         let buf_raw: *u8 = runtime::msg_id(self.raw, selector);
         return CommandBuffer { raw: buf_raw };
     }
@@ -38,7 +38,7 @@ impl CommandBuffer {
         if self.raw == unsafe { 0 as *u8 } {
             return ComputeCommandEncoder { raw: unsafe { 0 as *u8 } };
         }
-        let selector: *u8 = runtime::sel(str_ptr("computeCommandEncoder\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("computeCommandEncoder\0"));
         let enc_raw: *u8 = runtime::msg_id(self.raw, selector);
         return ComputeCommandEncoder { raw: enc_raw };
     }
@@ -47,7 +47,7 @@ impl CommandBuffer {
         if self.raw == unsafe { 0 as *u8 } {
             return;
         }
-        let selector: *u8 = runtime::sel(str_ptr("commit\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("commit\0"));
         runtime::msg_void(self.raw, selector);
         return;
     }
@@ -56,7 +56,7 @@ impl CommandBuffer {
         if self.raw == unsafe { 0 as *u8 } {
             return;
         }
-        let selector: *u8 = runtime::sel(str_ptr("waitUntilCompleted\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("waitUntilCompleted\0"));
         runtime::msg_void(self.raw, selector);
         return;
     }
@@ -78,7 +78,7 @@ impl ComputeCommandEncoder {
         if self.raw == unsafe { 0 as *u8 } || state.raw == unsafe { 0 as *u8 } {
             return;
         }
-        let selector: *u8 = runtime::sel(str_ptr("setComputePipelineState:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("setComputePipelineState:\0"));
         runtime::msg_void_pipeline(self.raw, selector, state.raw);
         return;
     }
@@ -91,7 +91,7 @@ impl ComputeCommandEncoder {
         if self.raw == unsafe { 0 as *u8 } || buf.raw == unsafe { 0 as *u8 } {
             return;
         }
-        let selector: *u8 = runtime::sel(str_ptr("setBuffer:offset:atIndex:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("setBuffer:offset:atIndex:\0"));
         runtime::msg_void_buf_idx(self.raw, selector, buf.raw, 0 as usize, index);
         return;
     }
@@ -100,7 +100,7 @@ impl ComputeCommandEncoder {
         if self.raw == unsafe { 0 as *u8 } {
             return;
         }
-        let selector: *u8 = runtime::sel(str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0"));
         runtime::msg_dispatch(self.raw, selector, groups, per_group);
         return;
     }
@@ -109,7 +109,7 @@ impl ComputeCommandEncoder {
         if self.raw == unsafe { 0 as *u8 } {
             return;
         }
-        let selector: *u8 = runtime::sel(str_ptr("endEncoding\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("endEncoding\0"));
         runtime::msg_void(self.raw, selector);
         return;
     }

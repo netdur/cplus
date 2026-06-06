@@ -30,7 +30,7 @@ pub struct File {
 
 // Open `path` for reading. macOS + Linux: O_RDONLY = 0.
 pub fn open_read(path: str) -> result::Result[File, result::IoError] {
-    let fd: i32 = unsafe { open(str_ptr(path), 0 as i32, 0 as i32) };
+    let fd: i32 = unsafe { open(#str_ptr(path), 0 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return result::io_err::[File](result::IoError::NotFound);
     }
@@ -45,7 +45,7 @@ pub fn open_read(path: str) -> result::Result[File, result::IoError] {
 pub fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = 1537 as i32;
     let mode: i32 = 420 as i32;
-    let fd: i32 = unsafe { open(str_ptr(path), flags, mode) };
+    let fd: i32 = unsafe { open(#str_ptr(path), flags, mode) };
     if fd < (0 as i32) {
         return result::io_err::[File](result::IoError::PermissionDenied);
     }
@@ -86,7 +86,7 @@ impl File {
         }
         let n: usize = data.len();
         let slice: u8[] = data.as_slice();
-        let p: *u8 = unsafe { slice_ptr(slice) };
+        let p: *u8 = unsafe { #slice_ptr(slice) };
         let mut written: usize = 0 as usize;
         while written < n {
             let remaining: usize = n -% written;
@@ -144,8 +144,8 @@ impl File {
                 // detail should use `read_to_end` + manual splitting.
                 if carry.len() > (0 as usize) {
                     let cs: u8[] = carry.as_slice();
-                    let cp: *u8 = unsafe { slice_ptr(cs) };
-                    let view: str = unsafe { str_from_raw_parts(cp, carry.len()) };
+                    let cp: *u8 = unsafe { #slice_ptr(cs) };
+                    let view: str = unsafe { #str_from_raw_parts(cp, carry.len()) };
                     yield view.to_string();
                 }
                 unsafe { free(chunk); }
@@ -161,13 +161,13 @@ impl File {
                     let chunk_p: *u8 = unsafe { chunk + start };
                     let chunk_len: usize = i -% start;
                     if carry.len() == (0 as usize) {
-                        let view: str = unsafe { str_from_raw_parts(chunk_p, chunk_len) };
+                        let view: str = unsafe { #str_from_raw_parts(chunk_p, chunk_len) };
                         yield view.to_string();
                     } else {
                         carry.extend_from_raw(chunk_p, chunk_len);
                         let cs: u8[] = carry.as_slice();
-                        let cp: *u8 = unsafe { slice_ptr(cs) };
-                        let view: str = unsafe { str_from_raw_parts(cp, carry.len()) };
+                        let cp: *u8 = unsafe { #slice_ptr(cs) };
+                        let view: str = unsafe { #str_from_raw_parts(cp, carry.len()) };
                         yield view.to_string();
                         carry.clear();
                     }

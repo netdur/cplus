@@ -23,7 +23,7 @@ impl Device {
         if self.raw == unsafe { 0 as *u8 } {
             return queue::CommandQueue { raw: unsafe { 0 as *u8 } };
         }
-        let selector: *u8 = runtime::sel(str_ptr("newCommandQueue\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("newCommandQueue\0"));
         let queue_raw: *u8 = runtime::msg_id(self.raw, selector);
         return queue::CommandQueue { raw: queue_raw };
     }
@@ -32,8 +32,8 @@ impl Device {
         if self.raw == unsafe { 0 as *u8 } {
             return result::Result[pipeline::Library, runtime::MetalError]::Err(runtime::MetalError::LibraryLoadFailed);
         }
-        let data_ptr: *u8 = unsafe { slice_ptr(data) };
-        let data_len: usize = slice_len(data);
+        let data_ptr: *u8 = unsafe { #slice_ptr(data) };
+        let data_len: usize = #slice_len(data);
         // Per Apple docs: `dispatch_data_create(buf, len, NULL queue,
         // NULL destructor)` defaults to DISPATCH_DATA_DESTRUCTOR_DEFAULT,
         // which copies the buffer — so `data` itself is safe to drop
@@ -42,7 +42,7 @@ impl Device {
         // avoid a per-shader-load leak (pre-fix it leaked silently).
         let dispatch_data: *u8 = runtime::ns_dispatch_data(data_ptr, data_len);
 
-        let selector: *u8 = runtime::sel(str_ptr("newLibraryWithData:error:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("newLibraryWithData:error:\0"));
         let null_err: *u8 = unsafe { 0 as *u8 };
         let lib_raw: *u8 = runtime::msg_id_id_ptr(self.raw, selector, dispatch_data, null_err);
         runtime::release(dispatch_data);
@@ -57,7 +57,7 @@ impl Device {
         if self.raw == unsafe { 0 as *u8 } {
             return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
         }
-        let selector: *u8 = runtime::sel(str_ptr("newBufferWithLength:options:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("newBufferWithLength:options:\0"));
         let buf_raw: *u8 = runtime::msg_id_usize_u64(self.raw, selector, len, 0 as u64);
         return buffer::Buffer { raw: buf_raw, size: len };
     }
@@ -66,9 +66,9 @@ impl Device {
         if self.raw == unsafe { 0 as *u8 } {
             return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
         }
-        let ptr: *u8 = unsafe { slice_ptr(slice) };
-        let len: usize = slice_len(slice);
-        let selector: *u8 = runtime::sel(str_ptr("newBufferWithBytes:length:options:\0"));
+        let ptr: *u8 = unsafe { #slice_ptr(slice) };
+        let len: usize = #slice_len(slice);
+        let selector: *u8 = runtime::sel(#str_ptr("newBufferWithBytes:length:options:\0"));
         let buf_raw: *u8 = runtime::msg_id_ptr_len_opt(self.raw, selector, ptr, len, 0 as u64);
         return buffer::Buffer { raw: buf_raw, size: len };
     }

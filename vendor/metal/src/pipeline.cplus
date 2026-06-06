@@ -21,7 +21,7 @@ impl Library {
             return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
         let ns_name: *u8 = runtime::ns_string(name);
-        let selector: *u8 = runtime::sel(str_ptr("newFunctionWithName:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("newFunctionWithName:\0"));
         let func_raw: *u8 = runtime::msg_id_id(self.raw, selector, ns_name);
         // `stringWithBytes:length:encoding:` returns an autoreleased
         // NSString. Without an autorelease pool active (the typical case
@@ -62,7 +62,7 @@ impl ComputePipelineState {
         if device_raw == unsafe { 0 as *u8 } || function.raw == unsafe { 0 as *u8 } {
             return result::Result[ComputePipelineState, runtime::MetalError]::Err(runtime::MetalError::PipelineCreationFailed);
         }
-        let selector: *u8 = runtime::sel(str_ptr("newComputePipelineStateWithFunction:error:\0"));
+        let selector: *u8 = runtime::sel(#str_ptr("newComputePipelineStateWithFunction:error:\0"));
         let null_err: *u8 = unsafe { 0 as *u8 };
         let pipeline_raw: *u8 = runtime::msg_id_pipeline(device_raw, selector, function.raw, null_err);
         if pipeline_raw == unsafe { 0 as *u8 } {

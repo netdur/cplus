@@ -6,19 +6,19 @@ pub struct Toolbar {
 
 impl Toolbar {
     pub fn new(identifier: *u8) -> Toolbar {
-        return Toolbar { obj: rt::alloc_init_with_identifier(str_ptr("NSToolbar\0"), identifier) };
+        return Toolbar { obj: rt::alloc_init_with_identifier(#str_ptr("NSToolbar\0"), identifier) };
     }
 
     pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
     pub fn set_display_mode(self, mode: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(str_ptr("setDisplayMode:\0")), mode);
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setDisplayMode:\0")), mode);
     }
 
     pub fn set_allows_user_customization(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(str_ptr("setAllowsUserCustomization:\0")), flag);
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setAllowsUserCustomization:\0")), flag);
     }
 }
 
@@ -28,38 +28,38 @@ pub struct ToolbarItem {
 
 impl ToolbarItem {
     pub fn new(identifier: *u8) -> ToolbarItem {
-        let cls = rt::get_class(str_ptr("NSToolbarItem\0"));
-        let alloced = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let item = rt::msg_id_id(alloced, rt::sel(str_ptr("initWithItemIdentifier:\0")), rt::ns_string(identifier));
+        let cls = rt::get_class(#str_ptr("NSToolbarItem\0"));
+        let alloced = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let item = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItemIdentifier:\0")), rt::ns_string(identifier));
         return ToolbarItem { obj: item };
     }
 
     pub fn set_label(self, label: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setLabel:\0")), rt::ns_string(label));
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setLabel:\0")), rt::ns_string(label));
     }
 
     pub fn set_palette_label(self, label: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setPaletteLabel:\0")), rt::ns_string(label));
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setPaletteLabel:\0")), rt::ns_string(label));
     }
 
     pub fn set_tool_tip(self, tip: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setToolTip:\0")), rt::ns_string(tip));
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setToolTip:\0")), rt::ns_string(tip));
     }
 
     pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setImage:\0")), image);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
     pub fn set_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setView:\0")), view);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setView:\0")), view);
     }
 
     pub fn set_target(self, target: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTarget:\0")), target);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
     pub fn set_action(self, action: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setAction:\0")), action);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setAction:\0")), action);
     }
 }
 
@@ -69,14 +69,14 @@ pub struct ToolbarItemGroup {
 
 impl ToolbarItemGroup {
     pub fn new(identifier: *u8) -> ToolbarItemGroup {
-        let cls = rt::get_class(str_ptr("NSToolbarItemGroup\0"));
-        let alloced = rt::msg_id(cls, rt::sel(str_ptr("alloc\0")));
-        let item = rt::msg_id_id(alloced, rt::sel(str_ptr("initWithItemIdentifier:\0")), rt::ns_string(identifier));
+        let cls = rt::get_class(#str_ptr("NSToolbarItemGroup\0"));
+        let alloced = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let item = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItemIdentifier:\0")), rt::ns_string(identifier));
         return ToolbarItemGroup { obj: item };
     }
 
     pub fn set_subitems(self, items: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setSubitems:\0")), items);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setSubitems:\0")), items);
     }
 }
 
@@ -86,11 +86,11 @@ pub struct StatusBar {
 
 impl StatusBar {
     pub fn system() -> StatusBar {
-        return StatusBar { obj: rt::msg_id(rt::get_class(str_ptr("NSStatusBar\0")), rt::sel(str_ptr("systemStatusBar\0"))) };
+        return StatusBar { obj: rt::msg_id(rt::get_class(#str_ptr("NSStatusBar\0")), rt::sel(#str_ptr("systemStatusBar\0"))) };
     }
 
     pub fn status_item_with_length(self, length: f64) -> *u8 {
-        return rt::msg_id_f64(self.obj, rt::sel(str_ptr("statusItemWithLength:\0")), length);
+        return rt::msg_id_f64(self.obj, rt::sel(#str_ptr("statusItemWithLength:\0")), length);
     }
 }
 
@@ -104,15 +104,15 @@ impl StatusItem {
     }
 
     pub fn button(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(str_ptr("button\0")));
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("button\0")));
     }
 
     pub fn set_menu(self, menu: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setMenu:\0")), menu);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setMenu:\0")), menu);
     }
 
     pub fn set_length(self, length: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(str_ptr("setLength:\0")), length);
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setLength:\0")), length);
     }
 }
 
@@ -126,11 +126,11 @@ impl StatusBarButton {
     }
 
     pub fn set_title(self, title: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setTitle:\0")), rt::ns_string(title));
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
     pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setImage:\0")), image);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
     pub fn set_on_click(self, cb: fn(*u8)) {
@@ -144,11 +144,11 @@ pub struct TouchBar {
 
 impl TouchBar {
     pub fn new() -> TouchBar {
-        return TouchBar { obj: rt::alloc_init(str_ptr("NSTouchBar\0")) };
+        return TouchBar { obj: rt::alloc_init(#str_ptr("NSTouchBar\0")) };
     }
 
     pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(str_ptr("setDelegate:\0")), delegate);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
@@ -158,6 +158,6 @@ pub struct TouchBarItem {
 
 impl TouchBarItem {
     pub fn new(identifier: *u8) -> TouchBarItem {
-        return TouchBarItem { obj: rt::alloc_init_with_identifier(str_ptr("NSTouchBarItem\0"), identifier) };
+        return TouchBarItem { obj: rt::alloc_init_with_identifier(#str_ptr("NSTouchBarItem\0"), identifier) };
     }
 }

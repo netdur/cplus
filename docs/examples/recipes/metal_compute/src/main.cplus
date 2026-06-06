@@ -15,8 +15,8 @@
 // `include_str!` + a 5-line digit parser drops the v0.0.6
 // `sed s/__SHADER_LEN__/.../` build-time patching dance entirely.
 fn parse_usize(s: str) -> usize {
-    let p: *u8 = str_ptr(s);
-    let n: usize = str_len(s);
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
     let mut acc: usize = 0 as usize;
     let mut i: usize = 0 as usize;
     while i < n {
@@ -160,10 +160,10 @@ pub fn main() -> i32 {
     // ---- Device + queue ----
     let device: *u8 = unsafe { MTLCreateSystemDefaultDevice() };
     if device == unsafe { 0 as *u8 } {
-        unsafe { printf(str_ptr("no Metal device available\n\0")); }
+        unsafe { printf(#str_ptr("no Metal device available\n\0")); }
         return 1;
     }
-    let queue: *u8 = unsafe { msg_id(device, sel(str_ptr("newCommandQueue\0"))) };
+    let queue: *u8 = unsafe { msg_id(device, sel(#str_ptr("newCommandQueue\0"))) };
 
     // ---- Embed the compiled .metallib + load it as an MTLLibrary ----
     let shader_bytes = #include_bytes("../shaders/double.metallib");
@@ -177,28 +177,28 @@ pub fn main() -> i32 {
 
     let err_slot: *u8 = unsafe { malloc(8 as usize) };
     let library: *u8 = unsafe {
-        msg_id_id_ptr(device, sel(str_ptr("newLibraryWithData:error:\0")), shader_data, err_slot)
+        msg_id_id_ptr(device, sel(#str_ptr("newLibraryWithData:error:\0")), shader_data, err_slot)
     };
     if library == unsafe { 0 as *u8 } {
-        unsafe { printf(str_ptr("newLibraryWithData:error: returned nil\n\0")); }
+        unsafe { printf(#str_ptr("newLibraryWithData:error: returned nil\n\0")); }
         return 2;
     }
 
     // ---- Resolve the kernel function + compute pipeline ----
     let fn_name: *u8 = unsafe {
         msg_id_id(
-            cls(str_ptr("NSString\0")),
-            sel(str_ptr("stringWithUTF8String:\0")),
-            str_ptr("double_each\0"),
+            cls(#str_ptr("NSString\0")),
+            sel(#str_ptr("stringWithUTF8String:\0")),
+            #str_ptr("double_each\0"),
         )
     };
     let kernel_fn: *u8 = unsafe {
-        msg_id_id(library, sel(str_ptr("newFunctionWithName:\0")), fn_name)
+        msg_id_id(library, sel(#str_ptr("newFunctionWithName:\0")), fn_name)
     };
     let pipeline: *u8 = unsafe {
         msg_id_pipeline(
             device,
-            sel(str_ptr("newComputePipelineStateWithFunction:error:\0")),
+            sel(#str_ptr("newComputePipelineStateWithFunction:error:\0")),
             kernel_fn, err_slot,
         )
     };
@@ -207,39 +207,39 @@ pub fn main() -> i32 {
     let mtl_in: *u8 = unsafe {
         msg_id_ptr_len_opt(
             device,
-            sel(str_ptr("newBufferWithBytes:length:options:\0")),
+            sel(#str_ptr("newBufferWithBytes:length:options:\0")),
             host_in, bytes, 0 as u64,
         )
     };
     let mtl_out: *u8 = unsafe {
         msg_id_usize_u64(
             device,
-            sel(str_ptr("newBufferWithLength:options:\0")),
+            sel(#str_ptr("newBufferWithLength:options:\0")),
             bytes, 0 as u64,
         )
     };
 
     // ---- Command buffer + compute encoder ----
-    let cmd_buf: *u8 = unsafe { msg_id(queue, sel(str_ptr("commandBuffer\0"))) };
-    let encoder: *u8 = unsafe { msg_id(cmd_buf, sel(str_ptr("computeCommandEncoder\0"))) };
+    let cmd_buf: *u8 = unsafe { msg_id(queue, sel(#str_ptr("commandBuffer\0"))) };
+    let encoder: *u8 = unsafe { msg_id(cmd_buf, sel(#str_ptr("computeCommandEncoder\0"))) };
     unsafe {
-        msg_void_pipeline(encoder, sel(str_ptr("setComputePipelineState:\0")), pipeline);
-        msg_void_buf_idx(encoder, sel(str_ptr("setBuffer:offset:atIndex:\0")), mtl_in, 0 as usize, 0 as usize);
-        msg_void_buf_idx(encoder, sel(str_ptr("setBuffer:offset:atIndex:\0")), mtl_out, 0 as usize, 1 as usize);
+        msg_void_pipeline(encoder, sel(#str_ptr("setComputePipelineState:\0")), pipeline);
+        msg_void_buf_idx(encoder, sel(#str_ptr("setBuffer:offset:atIndex:\0")), mtl_in, 0 as usize, 0 as usize);
+        msg_void_buf_idx(encoder, sel(#str_ptr("setBuffer:offset:atIndex:\0")), mtl_out, 0 as usize, 1 as usize);
     }
 
     // ---- Dispatch: 64 threads in one threadgroup ----
     let groups: MTLSize = MTLSize { width: 1 as usize, height: 1 as usize, depth: 1 as usize };
     let per_group: MTLSize = MTLSize { width: n, height: 1 as usize, depth: 1 as usize };
     unsafe {
-        msg_dispatch(encoder, sel(str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), #addr_of(groups), #addr_of(per_group));
-        msg_void(encoder, sel(str_ptr("endEncoding\0")));
-        msg_void(cmd_buf, sel(str_ptr("commit\0")));
-        msg_void(cmd_buf, sel(str_ptr("waitUntilCompleted\0")));
+        msg_dispatch(encoder, sel(#str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), #addr_of(groups), #addr_of(per_group));
+        msg_void(encoder, sel(#str_ptr("endEncoding\0")));
+        msg_void(cmd_buf, sel(#str_ptr("commit\0")));
+        msg_void(cmd_buf, sel(#str_ptr("waitUntilCompleted\0")));
     }
 
     // ---- Read back + validate ----
-    let mtl_contents: *u8 = unsafe { msg_ptr(mtl_out, sel(str_ptr("contents\0"))) };
+    let mtl_contents: *u8 = unsafe { msg_ptr(mtl_out, sel(#str_ptr("contents\0"))) };
     unsafe { memcpy(host_out, mtl_contents, bytes); }
     let outp: *f32 = unsafe { host_out as *f32 };
 

@@ -40,7 +40,7 @@ fn main() -> i32 {
     let argc: i32 = unsafe { *_NSGetArgc() };
     if argc < (4 as i32) {
         let u: str = "usage: tcp_client <ip> <port> <data>\n";
-        write_all(2 as i32, str_ptr(u), str_len(u));
+        write_all(2 as i32, #str_ptr(u), #str_len(u));
         return 1;
     }
     let argv: **u8 = unsafe { *_NSGetArgv() };

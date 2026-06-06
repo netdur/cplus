@@ -31,9 +31,9 @@ static mut THE_TABLE: *u8 = #zero::[*u8]();
 static mut DETAIL_LABEL: *u8 = #zero::[*u8]();
 
 fn item_text(row: i64) -> *u8 {
-    if row == (0 as i64) { return str_ptr("Apple\0"); }
-    if row == (1 as i64) { return str_ptr("Banana\0"); }
-    return str_ptr("Cherry\0");
+    if row == (0 as i64) { return #str_ptr("Apple\0"); }
+    if row == (1 as i64) { return #str_ptr("Banana\0"); }
+    return #str_ptr("Cherry\0");
 }
 
 fn ds_rows(self_obj: *u8, _cmd: *u8, table: *u8) -> i64 { return 3 as i64; }
@@ -41,9 +41,9 @@ fn ds_value(self_obj: *u8, _cmd: *u8, table: *u8, col: *u8, row: i64) -> *u8 {
     return rt::ns_string(item_text(row));
 }
 fn on_select(self_obj: *u8, _cmd: *u8, note: *u8) {
-    let row: i64 = rt::msg_i64(unsafe { THE_TABLE }, rt::sel(str_ptr("selectedRow\0")));
+    let row: i64 = rt::msg_i64(unsafe { THE_TABLE }, rt::sel(#str_ptr("selectedRow\0")));
     if row < (0 as i64) { return; }
-    rt::msg_void_id(unsafe { DETAIL_LABEL }, rt::sel(str_ptr("setStringValue:\0")), rt::ns_string(item_text(row)));
+    rt::msg_void_id(unsafe { DETAIL_LABEL }, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(item_text(row)));
     return;
 }
 fn should_terminate(self_obj: *u8, _cmd: *u8, app: *u8) -> i8 { return 1 as i8; }
@@ -58,7 +58,7 @@ fn main() -> i32 {
 
     let frame = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 520.0, height: 320.0 } };
     let win = window::Window::new(frame, 15 as u64, 2 as u64, 0 as i8);
-    win.set_title(str_ptr("List + Detail\0"));
+    win.set_title(#str_ptr("List + Detail\0"));
     win.center();
     let content: *u8 = win.content_view();
 
@@ -66,8 +66,8 @@ fn main() -> i32 {
     let scroll = view::ScrollView::new(list_frame);
     scroll.set_has_vertical_scroller(1 as i8);
     let table = data::TableView::new(list_frame);
-    let col = data::TableColumn::new(str_ptr("name\0"));
-    col.set_title(str_ptr("Fruit\0"));
+    let col = data::TableColumn::new(#str_ptr("name\0"));
+    col.set_title(#str_ptr("Fruit\0"));
     col.set_width(180.0);
     table.add_table_column(col.obj);
     let ds: *u8 = data::create_table_data_source(ds_rows, ds_value);
@@ -80,22 +80,22 @@ fn main() -> i32 {
 
     let detail_frame = rt::Rect { origin: rt::Point { x: 220.0, y: 140.0 }, size: rt::Size { width: 280.0, height: 40.0 } };
     let detail = controls::TextField::new_label(detail_frame);
-    detail.set_string_value(str_ptr("Select an item\0"));
+    detail.set_string_value(#str_ptr("Select an item\0"));
     unsafe { DETAIL_LABEL = detail.obj; };
 
     let btn_frame = rt::Rect { origin: rt::Point { x: 220.0, y: 40.0 }, size: rt::Size { width: 100.0, height: 32.0 } };
     let quit = controls::Button::new(btn_frame);
-    quit.set_title(str_ptr("Quit\0"));
+    quit.set_title(#str_ptr("Quit\0"));
     quit.set_on_click(on_quit);
 
-    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), scroll.obj);
-    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), detail.obj);
-    rt::msg_void_id(content, rt::sel(str_ptr("addSubview:\0")), quit.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), scroll.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), detail.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit.obj);
 
-    let mainmenu = menu::Menu::new(str_ptr("MainMenu\0"));
-    let appitem = menu::MenuItem::new(str_ptr("App\0"), unsafe { 0 as *u8 }, str_ptr("\0"));
-    let appmenu = menu::Menu::new(str_ptr("App\0"));
-    let quititem = menu::MenuItem::new(str_ptr("Quit\0"), str_ptr("terminate:\0"), str_ptr("q\0"));
+    let mainmenu = menu::Menu::new(#str_ptr("MainMenu\0"));
+    let appitem = menu::MenuItem::new(#str_ptr("App\0"), unsafe { 0 as *u8 }, #str_ptr("\0"));
+    let appmenu = menu::Menu::new(#str_ptr("App\0"));
+    let quititem = menu::MenuItem::new(#str_ptr("Quit\0"), #str_ptr("terminate:\0"), #str_ptr("q\0"));
     appmenu.add_item(quititem.obj);
     appitem.set_submenu(appmenu.obj);
     mainmenu.add_item(appitem.obj);
@@ -103,7 +103,7 @@ fn main() -> i32 {
 
     win.make_key_and_order_front(unsafe { 0 as *u8 });
     app.activate(1 as i8);
-    unsafe { puts(str_ptr("READY\0")); };
+    unsafe { puts(#str_ptr("READY\0")); };
     unsafe { fflush(0 as *u8); };
     app.run();
     pool.drain();
