@@ -196,7 +196,7 @@ return match s {                                  // exhaustive — missing arm 
     Shape::Rect(w, h)   => (w as i32) *% (h as i32),
 };
 
-if let Maybe[i32]::Some(v) = m { println(v); }
+if let Maybe[i32]::Some(v) = m { #println(v); }
 
 // guard let — pattern-or-diverge; else must return/break/continue/loop
 fn process(m: Maybe[i32]) -> i32 {
@@ -315,10 +315,10 @@ Under default-move, the **most common** conflict you'll see is `E0335` (use of m
 ### Drop + defer
 ```cplus
 fn main() -> i32 {
-    println(1);
-    defer println(4);
-    defer println(3);
-    println(2);
+    #println(1);
+    defer #println(4);
+    defer #println(3);
+    #println(2);
     return 0;            // prints 1, 2, 3, 4 (defer is LIFO at scope exit)
 }
 ```

@@ -32,7 +32,7 @@ fn main() -> i32 {
     let f: i32 = read_first(buf);       // shared — buf still usable
     let sum: i32 = buf.checksum();      // `move self` — consumes buf
     // `buf` is moved here; reading `buf.data` below would be E0335.
-    println(sum);                       // 28  (= 7 * 4)
-    println(f);                         // 7
+    #println(sum);                       // 28  (= 7 * 4)
+    #println(f);                         // 7
     return 0;
 }

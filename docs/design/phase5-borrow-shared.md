@@ -78,7 +78,7 @@ The same rule applies to method receivers: `buf.into_string(write(buf))` is reje
 
 ### 3.2 Move-then-use across statements (already Phase 3, tightened)
 
-Phase 3 catches `consume(move x); println(x);` as E0335 (use after move). Phase 5 keeps this behavior but extends the flow-sensitive analysis:
+Phase 3 catches `consume(move x); #println(x);` as E0335 (use after move). Phase 5 keeps this behavior but extends the flow-sensitive analysis:
 
 - Flow merging across branches: if `if c { consume(move x); } else { /* no move */ }`, then after the `if`, `x`'s state is "possibly moved." Any read of `x` past that point is **E0355** (use of possibly-moved binding) — distinct from E0335 (definitely moved on all paths).
 - Loops: a `move` inside a `while` / `for` / `loop` body that does not unconditionally precede the loop's exit makes `x` "possibly moved" after the loop. A `move` that *unconditionally* runs is "definitely moved" only if the loop runs at least once; conservative Phase-5 rule treats moves inside loops as "possibly" unless the loop is provably non-empty (which we don't try to prove). This is the same conservatism Rust applies; revisit if real cases hit it.
@@ -112,7 +112,7 @@ fn main() {
     let b = read_string();
     let r = longest(a, b);    // r borrows a and b
     drop_or_consume(move a);  // E0356 — would invalidate r
-    println(r);
+    #println(r);
 }
 ```
 
@@ -305,7 +305,7 @@ With every Phase 1–4 feature:
 - **§2.4 errors-are-values:** unaffected. Tagged-union return values are non-`Copy` aggregates that go through the borrow checker like any other non-`Copy` return.
 - **`if let` / `guard let` (slice 4A.5):** lowered to `match` before the borrow checker sees them. The pattern bindings count as new places, owned by their arm scope. `guard let Ok(v) = x else { return; };` binds `v` as a new owned place in the enclosing scope; the original `x` is moved into the match scrutinee per slice-3I rules. Borrow checker sees this as ordinary move.
 - **`break` / `continue` / `loop` / `while let` (slice 4-end):** flow merging extends — loops still apply the §3.2 "possibly moved" conservatism. `continue` and `break` cut control flow; the borrow-state intersect runs over all paths leading to the loop's exit point.
-- **`defer` (slice 3G):** a `defer EXPR;` registers `EXPR` to run at scope exit. Phase 5 borrow-checks the deferred expression *at its registration site* using the place-state that will be in force at scope exit. If `defer println(buf);` happens after a `move buf;`, the registration is fine but the scope-exit will run on a moved binding — Phase 5 rejects with E0355 / E0335 attributed at the `defer` site. Recording this here because it's a subtlety that needs a test the moment the slice lands.
+- **`defer` (slice 3G):** a `defer EXPR;` registers `EXPR` to run at scope exit. Phase 5 borrow-checks the deferred expression *at its registration site* using the place-state that will be in force at scope exit. If `defer #println(buf);` happens after a `move buf;`, the registration is fine but the scope-exit will run on a moved binding — Phase 5 rejects with E0355 / E0335 attributed at the `defer` site. Recording this here because it's a subtlety that needs a test the moment the slice lands.
 - **Drop (slice 3F):** the drop-flag machinery in codegen already handles the "moved or not" question at runtime. Phase 5 makes the *static* analysis catch more cases, but the runtime drop flag is still the source of truth for actual drop suppression. No codegen changes needed in Phase 5; this is purely a sema-time check.
 - **Modules / `pub` (slice 4B):** signatures cross file boundaries via the resolver's qualified names. The borrow checker reads each function's signature when checking call sites; same-file vs. cross-file is invisible to it. Cross-file borrow errors render via the per-file source threading already in place (slice 4C).
 - **Formatter (slice 4D):** borrow-checker errors carry source spans that point at the original file. No formatter interaction beyond rendering.

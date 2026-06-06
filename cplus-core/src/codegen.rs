@@ -1594,7 +1594,7 @@ struct FnSig {
 
 fn collect_sigs(p: &Program, types: &TypeTable) -> HashMap<String, FnSig> {
     let mut sigs = HashMap::new();
-    // builtin: println(i32) -> ()
+    // builtin: #println(i32) -> ()
     sigs.insert(
         "println".to_string(),
         FnSig {
@@ -3366,11 +3366,11 @@ fn write_preamble(out: &mut String) {
     out.push_str("; C+ Phase 1 codegen output\n");
     out.push_str("\n");
     out.push_str(windows_binary_mode_ctor_ir());
-    // Format string used by `println(i32)`. Module-private constant.
+    // Format string used by `#println(i32)`. Module-private constant.
     out.push_str(
         "@.fmt_int_nl = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n",
     );
-    // Phase 8 slice 8.STR.2: format string for `println(str)`. Uses
+    // Phase 8 slice 8.STR.2: format string for `#println(str)`. Uses
     // `%.*s` so the pointer + length are passed verbatim (no NUL
     // assumption — strings may legitimately contain embedded NULs).
     out.push_str(
@@ -9065,6 +9065,12 @@ impl<'a> FnState<'a> {
                 self.gen_intrinsic_cpu_relax();
                 None
             }
+            // `#println(x)` — void primitive print (its own arm; `ffi_builtin_cg`
+            // is value-only).
+            "println" => {
+                self.gen_println(args);
+                None
+            }
             // `#asm(...)` never reaches here: the parser routes it to
             // `ExprKind::Asm`, lowered by `gen_asm`.
             _ => {
@@ -9076,6 +9082,32 @@ impl<'a> FnState<'a> {
                 panic!(
                     "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
                 )
+            }
+        }
+    }
+
+    /// v0.0.16: lower `#println(x)` — the type-dispatched primitive print.
+    /// Void (returns no SSA value), so it has its own `gen_intrinsic` arm rather
+    /// than going through `ffi_builtin_cg` (whose `None` means "not a builtin").
+    fn gen_println(&mut self, args: &[Expr]) {
+        let (av, aty) = self.gen_expr(&args[0]).expect("println arg");
+        let v = self.next_tmp();
+        match aty {
+            Ty::Str => {
+                let ptr_tmp = self.next_tmp();
+                let len_tmp = self.next_tmp();
+                self.emit(&format!("{ptr_tmp} = extractvalue {{ ptr, i64 }} {av}, 0"));
+                self.emit(&format!("{len_tmp} = extractvalue {{ ptr, i64 }} {av}, 1"));
+                let len_i32 = self.next_tmp();
+                self.emit(&format!("{len_i32} = trunc i64 {len_tmp} to i32"));
+                self.emit(&format!(
+                    "{v} = call i32 (ptr, ...) @printf(ptr noundef @.fmt_str_nl, i32 {len_i32}, ptr {ptr_tmp})"
+                ));
+            }
+            _ => {
+                self.emit(&format!(
+                    "{v} = call i32 (ptr, ...) @printf(ptr noundef @.fmt_int_nl, i32 {av})"
+                ));
             }
         }
     }
@@ -10734,35 +10766,10 @@ impl<'a> FnState<'a> {
         // signature. Drop the field-read memo before evaluating
         // arguments so cached values can't outlive a mutation.
         self.invalidate_field_load_cache();
-        // Special case: println(i32) → call printf with our %d\n format.
-        // Phase 8 slice 8.STR.2: also handle println(str) by extracting
+        // Special case: #println(i32) → call printf with our %d\n format.
+        // Phase 8 slice 8.STR.2: also handle #println(str) by extracting
         // (ptr, len) from the fat-pointer value and passing both to
         // printf with the `%.*s\n` format string.
-        if name == "println" {
-            let (av, aty) = self.gen_expr(&args[0]).expect("println arg");
-            let v = self.next_tmp();
-            match aty {
-                Ty::Str => {
-                    // Extract ptr (field 0) and len (field 1).
-                    let ptr_tmp = self.next_tmp();
-                    let len_tmp = self.next_tmp();
-                    self.emit(&format!("{ptr_tmp} = extractvalue {{ ptr, i64 }} {av}, 0"));
-                    self.emit(&format!("{len_tmp} = extractvalue {{ ptr, i64 }} {av}, 1"));
-                    // printf's `%.*s` takes (int width, ptr); width is i32.
-                    let len_i32 = self.next_tmp();
-                    self.emit(&format!("{len_i32} = trunc i64 {len_tmp} to i32"));
-                    self.emit(&format!(
-                        "{v} = call i32 (ptr, ...) @printf(ptr noundef @.fmt_str_nl, i32 {len_i32}, ptr {ptr_tmp})"
-                    ));
-                }
-                _ => {
-                    self.emit(&format!(
-                        "{v} = call i32 (ptr, ...) @printf(ptr noundef @.fmt_int_nl, i32 {av})"
-                    ));
-                }
-            }
-            return None;
-        }
         // v0.0.16: FFI/raw + byte-swap builtins are `#name(...)` intrinsics,
         // lowered by `gen_intrinsic` -> `ffi_builtin_cg`; a bare call never
         // reaches codegen (sema rejects it with a fix-it).
@@ -14963,7 +14970,7 @@ mod tests {
 
     #[test]
     fn println_lowers_to_printf() {
-        let ir = gen_src("fn main() -> i32 { println(42); return 0; }");
+        let ir = gen_src("fn main() -> i32 { #println(42); return 0; }");
         assert!(ir.contains("call i32 (ptr, ...) @printf(ptr noundef @.fmt_int_nl, i32 42"));
     }
 
@@ -15022,8 +15029,8 @@ mod tests {
 
     #[test]
     fn println_str_uses_dotstar_format() {
-        // Slice 8.STR.2: `println(str)` lowers to printf with `%.*s\n`.
-        let ir = gen_src("fn main() -> i32 { println(\"hi\"); return 0; }");
+        // Slice 8.STR.2: `#println(str)` lowers to printf with `%.*s\n`.
+        let ir = gen_src("fn main() -> i32 { #println(\"hi\"); return 0; }");
         assert!(ir.contains("@.fmt_str_nl"));
         assert!(ir.contains("call i32 (ptr, ...) @printf(ptr noundef @.fmt_str_nl, i32"));
     }
@@ -15520,7 +15527,7 @@ mod tests {
     fn str_escape_sequences_in_global() {
         // `\n` in source becomes a real newline byte in the global blob,
         // encoded in the IR as `\0A`.
-        let ir = gen_src("fn main() -> i32 { println(\"a\\nb\"); return 0; }");
+        let ir = gen_src("fn main() -> i32 { #println(\"a\\nb\"); return 0; }");
         assert!(
             ir.contains("\\0A"),
             "expected newline byte (\\0A) in IR, got:\n{ir}"

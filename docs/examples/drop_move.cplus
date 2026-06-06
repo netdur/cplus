@@ -8,7 +8,7 @@ struct Handle { id: i32 }
 
 impl Handle {
     fn new(id: i32) -> Handle { return Handle { id: id }; }
-    fn drop(mut self) { println(0 -% self.id); }
+    fn drop(mut self) { #println(0 -% self.id); }
 }
 
 fn take(move h: Handle) -> i32 {
@@ -20,6 +20,6 @@ fn take(move h: Handle) -> i32 {
 fn main() -> i32 {
     let h: Handle = Handle::new(7);
     let id: i32 = take(h);   // h is moved; main's scope-exit drop is suppressed
-    println(id);
+    #println(id);
     return 0;
 }

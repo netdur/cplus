@@ -11,7 +11,7 @@ Phase-3 slice 3A landed a conservative `Ty::is_copy()`: primitives + plain enums
 ```cp
 let p: Point = Point { x: 3, y: 4 };
 let d: i32 = distance_from_origin(p);
-println(p.x);  // E0335 today — but p only contains two i32s; *why* is this a move?
+#println(p.x);  // E0335 today — but p only contains two i32s; *why* is this a move?
 ```
 
 A primitive-only struct is bit-for-bit copyable. Making it non-`Copy` forces users to write awkward code (re-construct, take `mut p` and pass borrows that don't exist yet, etc.) for no safety benefit.
@@ -131,9 +131,9 @@ fn main() -> i32 {
     // Under slice 3A's conservative rule this would be E0335 on `p.x`.
     // Under auto-derive, Point is Copy (both fields are i32), and `p`
     // remains usable.
-    println(d);            // 25
-    println(p.x);          // 3
-    println(p.y);          // 4
+    #println(d);            // 25
+    #println(p.x);          // 3
+    #println(p.y);          // 4
     return 0;
 }
 ```

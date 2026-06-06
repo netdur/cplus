@@ -113,7 +113,7 @@ A `mut`-claim plus a `Move`-claim on the same place. This is the harder case to 
 ```cp
 let bytes = drain(mut buf);   // bytes is a borrow tied to buf (Rule E1)
 let x = buf.len();            // E0383 (proposed) — buf is exclusively borrowed via bytes
-println(bytes);
+#println(bytes);
 ```
 
 This is the cross-statement form: when `drain(mut buf)` returns a borrow tied to `buf` (via the same Phase-5 elision rules, but with the borrow flavor flipped from Shared to Exclusive), the caller's binding `bytes` keeps `buf` in `BorrowedExclusive` state for as long as `bytes` is live. While `bytes` is alive, *any* access to `buf` — read, write, move — is rejected.

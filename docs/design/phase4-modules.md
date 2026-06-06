@@ -80,7 +80,7 @@ import "math.cplus" as math;
 fn main() -> i32 {
     let r: i32 = math::square(7);
     let p: math::Point = math::Point::new(3, 4);
-    println(r);
+    #println(r);
     return 0;
 }
 ```
@@ -231,7 +231,7 @@ import "math.cplus" as math;
 
 fn main() -> i32 {
     let r: i32 = math::square(7);
-    println(r);                  // 49
+    #println(r);                  // 49
     return 0;
 }
 ```

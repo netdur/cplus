@@ -8,6 +8,6 @@ fn main() -> i32 {
     let inner: i32 = eval::evaluate(util::add_lit(3, 4));    // 7
     let neg2: i32 = eval::evaluate(util::neg_lit(2));        // -2
     let total: i32 = eval::evaluate(util::mul_lit(inner, neg2));
-    println(total);                                          // -14
+    #println(total);                                          // -14
     return 0;
 }

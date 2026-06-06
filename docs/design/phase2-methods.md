@@ -151,7 +151,7 @@ impl Point {
 fn main() -> i32 {
     let mut p: Point = Point::new(3, 4);
     p.translate(1, 1);
-    println(p.magnitude());     // (4)^2 + (5)^2 = 41
+    #println(p.magnitude());     // (4)^2 + (5)^2 = 41
     0
 }
 ```

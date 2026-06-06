@@ -103,7 +103,7 @@ fn main() -> i32 {
     for i in 0..5 {
         total = total + xs[i as usize];
     }
-    println(total);     // 15
+    #println(total);     // 15
     0
 }
 ```
@@ -121,7 +121,7 @@ fn main() -> i32 {
     c.values[1] = 200;
     c.values[2] = 50;
     let total: i32 = c.values[0] + c.values[1] + c.values[2];
-    println(total);     // 350
+    #println(total);     // 350
     0
 }
 ```

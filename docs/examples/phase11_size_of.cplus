@@ -30,17 +30,17 @@ fn main() -> i32 {
     let a_i32: usize = #align_of::[i32]();   // 4
     let a_i64: usize = #align_of::[i64]();   // 8
 
-    println(s_i8 as i32);
-    println(s_i32 as i32);
-    println(s_i64 as i32);
-    println(a_i8 as i32);
-    println(a_i32 as i32);
-    println(a_i64 as i32);
+    #println(s_i8 as i32);
+    #println(s_i32 as i32);
+    #println(s_i64 as i32);
+    #println(a_i8 as i32);
+    #println(a_i32 as i32);
+    #println(a_i64 as i32);
 
     // Aggregate layout — Point is two i32s. On x86_64 / aarch64 this packs
     // to 8 bytes (4 + 4, no padding because alignof(i32) = 4 ≤ struct align).
     let s_point: usize = #size_of::[Point]();   // 8
-    println(s_point as i32);
+    #println(s_point as i32);
 
     return s_point as i32;
 }

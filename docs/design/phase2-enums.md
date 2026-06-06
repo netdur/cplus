@@ -111,7 +111,7 @@ fn opposite(d: Direction) -> Direction {
 
 fn main() -> i32 {
     let d: Direction = opposite(Direction::North);
-    println(d as i32);   // South = 1
+    #println(d as i32);   // South = 1
     0
 }
 ```

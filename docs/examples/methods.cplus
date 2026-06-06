@@ -12,6 +12,6 @@ impl Point {
 fn main() -> i32 {
     let mut p: Point = Point::new(3, 4);
     p.translate(1, 1);
-    println(p.magnitude_squared());
+    #println(p.magnitude_squared());
     return 0;
 }

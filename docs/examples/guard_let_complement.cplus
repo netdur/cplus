@@ -36,7 +36,7 @@ fn report(r: OuterResult) -> i32 {
 }
 
 fn main() -> i32 {
-    println(report(translate(5)));       //  Ok(105) → 105
-    println(report(translate(0 -% 3)));  //  Wrapped(-4) → 4
+    #println(report(translate(5)));       //  Ok(105) → 105
+    #println(report(translate(0 -% 3)));  //  Wrapped(-4) → 4
     return 0;
 }

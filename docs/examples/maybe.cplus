@@ -26,7 +26,7 @@ fn unwrap_or(m: Maybe, default: i32) -> i32 {
 fn main() -> i32 {
     let r1: Maybe = first_positive(0, 7);
     let r2: Maybe = first_positive(0 -% 1, 0 -% 1);
-    println(unwrap_or(r1, 0 -% 1));    // 7
-    println(unwrap_or(r2, 0 -% 1));    // -1
+    #println(unwrap_or(r1, 0 -% 1));    // 7
+    #println(unwrap_or(r2, 0 -% 1));    // -1
     return 0;
 }

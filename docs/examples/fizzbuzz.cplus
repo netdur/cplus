@@ -2,28 +2,28 @@
 //
 // Pre-Phase-8 this demo could only print integer codes because the
 // language had no string-print intrinsic. Slice 8.STR.2 added
-// `println(str)`, so this is now the canonical FizzBuzz.
+// `#println(str)`, so this is now the canonical FizzBuzz.
 //
 // Exercises:
 //   - Phase 1 control flow + arithmetic.
 //   - Phase 2A range-based for-loop.
 //   - Phase 8 slice 8.STR.1: string literals + `str` type.
-//   - Phase 8 slice 8.STR.2: `println(str)` intrinsic.
+//   - Phase 8 slice 8.STR.2: `#println(str)` intrinsic.
 
 fn fizzbuzz(i: i32) {
     if i % 15 == 0 {
-        println("FizzBuzz");
+        #println("FizzBuzz");
         return;
     }
     if i % 3 == 0 {
-        println("Fizz");
+        #println("Fizz");
         return;
     }
     if i % 5 == 0 {
-        println("Buzz");
+        #println("Buzz");
         return;
     }
-    println(i);
+    #println(i);
     return;
 }
 

@@ -9,6 +9,6 @@ fn distance_squared(a: Point, b: Point) -> i32 {
 fn main() -> i32 {
     let origin: Point = Point { x: 0, y: 0 };
     let p: Point = Point { x: 3, y: 4 };
-    println(distance_squared(origin, p));
+    #println(distance_squared(origin, p));
     return 0;
 }

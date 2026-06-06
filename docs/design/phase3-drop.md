@@ -31,7 +31,7 @@ impl Buffer {
         // Cleanup runs here. For Buffer this is trivial — no heap, no
         // handle — but the existence of the method is enough to make
         // Buffer non-Copy and to register the drop hook with the scope.
-        println(self.used);
+        #println(self.used);
     }
 }
 ```
@@ -165,7 +165,7 @@ A destructor that calls *another* function that calls *back* into the same destr
 
 **Should users be allowed to call `x.drop()` directly?** Lean **yes**, with no special restriction. Calling drop directly is unusual but legal; the result is that the binding's destructor runs early. The drop flag is set to `false` immediately after the call site so the scope-exit handler doesn't double-drop. This is the same machinery Rust's `std::mem::drop` (a one-liner generic function) uses.
 
-A `let x: Drop_T = ...; x.drop(); println(x);` — the explicit call moves the drop flag to false, but x's bits are still readable. Reading after explicit drop is fine for plain `Copy`-like field reads. Calling another method that would re-invoke drop is *not* fine and is caught by the regular move-tracking machinery once we treat `x.drop()` as a `move self` consumption (which is what it effectively is, at the language level). So in implementation: model an explicit `x.drop()` as a `move self` call. Sema and codegen both already handle that.
+A `let x: Drop_T = ...; x.drop(); #println(x);` — the explicit call moves the drop flag to false, but x's bits are still readable. Reading after explicit drop is fine for plain `Copy`-like field reads. Calling another method that would re-invoke drop is *not* fine and is caught by the regular move-tracking machinery once we treat `x.drop()` as a `move self` consumption (which is what it effectively is, at the language level). So in implementation: model an explicit `x.drop()` as a `move self` call. Sema and codegen both already handle that.
 
 ### 5.4 New error codes
 
@@ -187,12 +187,12 @@ struct Tracker { id: i32 }
 
 impl Tracker {
     fn new(id: i32) -> Tracker {
-        println(id);
+        #println(id);
         return Tracker { id: id };
     }
     fn drop(mut self) {
         // Negate so we can tell construction from destruction in the output.
-        println(0 -% self.id);
+        #println(0 -% self.id);
     }
 }
 
@@ -215,7 +215,7 @@ struct Handle { id: i32 }
 
 impl Handle {
     fn new(id: i32) -> Handle { return Handle { id: id }; }
-    fn drop(mut self) { println(0 -% self.id); }
+    fn drop(mut self) { #println(0 -% self.id); }
 }
 
 fn take(move h: Handle) -> i32 {
@@ -227,7 +227,7 @@ fn take(move h: Handle) -> i32 {
 fn main() -> i32 {
     let h: Handle = Handle::new(7);
     let id: i32 = take(h);  // h is moved; main's scope-exit drop is suppressed.
-    println(id);
+    #println(id);
     return 0;
 }
 ```

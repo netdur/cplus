@@ -80,11 +80,11 @@ Casting between same-bitwidth signed and unsigned (`i32 → u32`) is allowed and
 
 ## 6. The `println` builtin
 
-Stays as `println(n: i32)` for Phase 2. Other types use `as i32` to print:
+Stays as `#println(n: i32)` for Phase 2. Other types use `as i32` to print:
 
 ```cp
 let x: u64 = 1234;
-println(x as i32);   // ok; truncates if too large
+#println(x as i32);   // ok; truncates if too large
 ```
 
 Real formatted print is Phase 5 (`cpc test`/doctests need it; `println[T]` with a `Display` interface). Adding per-type intrinsics now would be wasted work that we throw away.
@@ -109,7 +109,7 @@ fn main() -> i32 {
     let a: i64 = 1_000_000_000;
     let b: i64 = a + a;
     let c: i32 = b as i32;       // truncates; we don't care about the value
-    println(c);
+    #println(c);
     0
 }
 ```
@@ -121,7 +121,7 @@ fn main() -> i32 {
     let y: f64 = 4.0;
     let z: f64 = x * x + y * y;   // 25.0
     let r: i32 = z as i32;
-    println(r);
+    #println(r);
     0
 }
 ```
@@ -134,7 +134,7 @@ fn main() -> i32 {
     for i in 1..=10 {
         acc = acc + (i as u64);
     }
-    println(acc as i32);   // 55
+    #println(acc as i32);   // 55
     let _check: bool = acc < n * n;
     0
 }

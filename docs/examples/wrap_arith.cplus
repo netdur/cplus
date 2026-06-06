@@ -8,22 +8,22 @@ fn main() -> i32 {
     // wrapping form wraps to 0.
     let a: u8 = 255u8;
     let b: u8 = a +% 1u8;       // wraps: 256 mod 256 = 0
-    println(b as i32);          // 0
+    #println(b as i32);          // 0
 
     // i8 max = 127. `127i8 +% 1i8` wraps to -128.
     let c: i8 = 127i8;
     let d: i8 = c +% 1i8;
-    println(d as i32);          // -128
+    #println(d as i32);          // -128
 
     // Wrapping multiply: 200u8 *% 2u8 wraps to (400 mod 256) = 144.
     let e: u8 = 200u8;
     let f: u8 = e *% 2u8;
-    println(f as i32);          // 144
+    #println(f as i32);          // 144
 
     // Wrapping subtract: 0u8 -% 1u8 wraps to 255.
     let g: u8 = 0u8;
     let h: u8 = g -% 1u8;
-    println(h as i32);          // 255
+    #println(h as i32);          // 255
 
     return 0;
 }

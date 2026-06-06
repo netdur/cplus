@@ -166,7 +166,7 @@ Practical Phase 1 rule: a block is "value-producing" iff its last item is an exp
 
 ```
 let x = if n > 0 { n } else { -n };           // expression
-if n > 0 { println(n); }                       // statement
+if n > 0 { #println(n); }                       // statement
 ```
 
 ### 4.3 Function `main`
@@ -182,7 +182,7 @@ Required signature in Phase 1. Return value becomes the process exit code. The i
 Just one, hard-wired in codegen:
 
 ```
-fn println(n: i32);     // prints n followed by '\n', via libc printf
+fn #println(n: i32);     // prints n followed by '\n', via libc printf
 ```
 
 Resolved as a name in the global scope. The compiler emits a `printf("%d\n", n)` call. No user-visible string type is needed yet.
@@ -207,7 +207,7 @@ fn factorial(n: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    println(factorial(10));   // expect: 3628800
+    #println(factorial(10));   // expect: 3628800
     0
 }
 ```
@@ -228,7 +228,7 @@ fn fib(n: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    println(fib(20));   // expect: 6765
+    #println(fib(20));   // expect: 6765
     0
 }
 ```
@@ -240,7 +240,7 @@ fn main() -> i32 {
     for i in 1..=100 {
         total = total + i;
     }
-    println(total);   // expect: 5050
+    #println(total);   // expect: 5050
     0
 }
 ```
@@ -252,7 +252,7 @@ fn main() -> i32 {
     for (let mut i: i32 = 0; i < 10; i = i + 1) {
         total = total + i;
     }
-    println(total);   // expect: 45
+    #println(total);   // expect: 45
     0
 }
 ```

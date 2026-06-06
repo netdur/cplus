@@ -21,7 +21,7 @@ fn unwrap_or(m: Maybe, default: i32) -> i32 {
 fn main() -> i32 {
     let a: Maybe = Maybe::Some(42);
     let b: Maybe = Maybe::None;
-    println(unwrap_or(a, 0));  // 42
-    println(unwrap_or(b, 7));  //  7
+    #println(unwrap_or(a, 0));  // 42
+    #println(unwrap_or(b, 7));  //  7
     return 0;
 }

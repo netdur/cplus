@@ -61,6 +61,6 @@ fn main() -> i32 {
     let mut greeting: OwnedString = OwnedString::with_capacity(32 as usize);
     greeting.push_str("Hello, ");
     greeting.push_str("world!");
-    println(greeting.as_str());
+    #println(greeting.as_str());
     return greeting.len as i32;
 }

@@ -17,9 +17,9 @@ fn area_times_4(s: Shape) -> i32 {
 }
 
 fn main() -> i32 {
-    println(area_times_4(Shape::Circle(2)));        // 48
-    println(area_times_4(Shape::Rectangle(3, 5)));  // 60
-    println(area_times_4(Shape::Square(4)));        // 64
-    println(area_times_4(Shape::Empty));            // 0
+    #println(area_times_4(Shape::Circle(2)));        // 48
+    #println(area_times_4(Shape::Rectangle(3, 5)));  // 60
+    #println(area_times_4(Shape::Square(4)));        // 64
+    #println(area_times_4(Shape::Empty));            // 0
     return 0;
 }

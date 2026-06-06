@@ -171,11 +171,11 @@ fn first_positive(a: i32, b: i32) -> Maybe {
 fn main() -> i32 {
     let r1: Maybe = first_positive(0, 7);
     let r2: Maybe = first_positive(-1, -1);
-    println(match r1 {
+    #println(match r1 {
         Maybe::Some(v) => v,
         Maybe::None => -1,
     });
-    println(match r2 {
+    #println(match r2 {
         Maybe::Some(v) => v,
         Maybe::None => -1,
     });
@@ -203,9 +203,9 @@ fn area_times_4(s: Shape) -> i32 {
 }
 
 fn main() -> i32 {
-    println(area_times_4(Shape::Circle(2)));     // 2*2*12 = 48
-    println(area_times_4(Shape::Rectangle(3, 5)));// 3*5*4 = 60
-    println(area_times_4(Shape::Empty));         // 0
+    #println(area_times_4(Shape::Circle(2)));     // 2*2*12 = 48
+    #println(area_times_4(Shape::Rectangle(3, 5)));// 3*5*4 = 60
+    #println(area_times_4(Shape::Empty));         // 0
     return 0;
 }
 ```

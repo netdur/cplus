@@ -6,11 +6,11 @@ struct Tracker { id: i32 }
 
 impl Tracker {
     fn new(id: i32) -> Tracker {
-        println(id);
+        #println(id);
         return Tracker { id: id };
     }
     fn drop(mut self) {
-        println(0 -% self.id);
+        #println(0 -% self.id);
     }
 }
 

@@ -12,6 +12,6 @@ fn fib(n: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    println(fib(20));
+    #println(fib(20));
     return 0;
 }

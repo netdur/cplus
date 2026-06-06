@@ -1154,7 +1154,7 @@ fn wrapping_add_does_not_trap_in_debug() {
     let src = dir.join("wrap_no_trap.cplus");
     std::fs::write(
         &src,
-        "fn main() -> i32 { let x: i32 = 2147483647; let y: i32 = x +% 1; println(y); return 0; }",
+        "fn main() -> i32 { let x: i32 = 2147483647; let y: i32 = x +% 1; #println(y); return 0; }",
     )
     .unwrap();
     let bin = dir.join("wrap_no_trap");
@@ -1573,9 +1573,9 @@ fn defer_drop_interleave_runs() {
     let out = compile_and_run("defer_drop.cplus");
     assert!(out.status.success(), "exited {:?}", out.status);
     // Construction: 1, 2. Scope exit reverses the registration stack:
-    //   defer println(200) -> 200
+    //   defer #println(200) -> 200
     //   Drop(b)            -> -2
-    //   defer println(100) -> 100
+    //   defer #println(100) -> 100
     //   Drop(a)            -> -1
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
@@ -1586,7 +1586,7 @@ fn defer_drop_interleave_runs() {
 // ---- runtime trap behavior for overflow + divide-by-zero ----
 
 const OVERFLOW_PROGRAM: &str =
-    "fn main() -> i32 { let mut x: i32 = 2147483647; x = x + 1; println(x); return 0; }";
+    "fn main() -> i32 { let mut x: i32 = 2147483647; x = x + 1; #println(x); return 0; }";
 
 const DIV_ZERO_PROGRAM: &str =
     "fn main() -> i32 { let x: i32 = 10; let y: i32 = 0; return x / y; }";
@@ -2539,7 +2539,7 @@ fn bump(mut t: Tag) {
 fn main() -> i32 {
     let mut x: Tag = Tag { v: 10 };
     bump(x);
-    println(x.v);
+    #println(x.v);
     return 0;
 }
 ",
@@ -2586,7 +2586,7 @@ fn bump(mut p: P) {
 fn main() -> i32 {
     let q: P = P { v: 10 };
     bump(q);
-    println(q.v);
+    #println(q.v);
     return 0;
 }
 ",
@@ -2628,7 +2628,7 @@ fn mut_param_noncopy_struct_no_double_drop_at_runtime() {
 struct Tracker { id: i32 }
 impl Tracker {
     fn drop(mut self) {
-        println(0 -% self.id);
+        #println(0 -% self.id);
         return;
     }
 }
@@ -2639,7 +2639,7 @@ fn bump(mut t: Tracker) {
 fn main() -> i32 {
     let mut x: Tracker = Tracker { id: 6 };
     bump(x);
-    println(x.id);
+    #println(x.id);
     return 0;
 }
 ",
@@ -2784,7 +2784,7 @@ fn assert_true_runs_to_completion() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("ok.cplus");
-    std::fs::write(&src, "fn main() -> i32 {\n  assert 1 == 1;\n  assert 2 + 2 == 4;\n  println(42);\n  return 0;\n}\n").unwrap();
+    std::fs::write(&src, "fn main() -> i32 {\n  assert 1 == 1;\n  assert 2 + 2 == 4;\n  #println(42);\n  return 0;\n}\n").unwrap();
     let bin = dir.join("ok");
     let compile = Command::new(cpc)
         .arg(&src)
@@ -2818,7 +2818,7 @@ fn assert_false_traps_at_runtime() {
     let src = dir.join("bad.cplus");
     std::fs::write(
         &src,
-        "fn main() -> i32 {\n  assert 1 == 2;\n  println(999);\n  return 0;\n}\n",
+        "fn main() -> i32 {\n  assert 1 == 2;\n  #println(999);\n  return 0;\n}\n",
     )
     .unwrap();
     let bin = dir.join("bad");
@@ -2839,7 +2839,7 @@ fn assert_false_traps_at_runtime() {
         "expected non-zero exit on trap, got: {}",
         run.status
     );
-    // The `println(999)` after the failing assertion must not have run.
+    // The `#println(999)` after the failing assertion must not have run.
     assert!(
         !String::from_utf8_lossy(&run.stdout).contains("999"),
         "code after failing assert ran: {:?}",
@@ -5665,13 +5665,13 @@ fn phase10_raw_pointer_in_extern_signature_compiles() {
 
 #[test]
 fn phase8_println_str_runs() {
-    // Slice 8.STR.2: `println(str)` prints a literal and exits.
+    // Slice 8.STR.2: `#println(str)` prints a literal and exits.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("p8s.cplus");
     std::fs::write(
         &src,
-        "fn main() -> i32 {\n    println(\"Hello, C+!\");\n    return 0;\n}\n",
+        "fn main() -> i32 {\n    #println(\"Hello, C+!\");\n    return 0;\n}\n",
     )
     .unwrap();
     let bin = dir.join("p8s");
@@ -5683,7 +5683,7 @@ fn phase8_println_str_runs() {
         .expect("invoke cpc");
     assert!(
         out.status.success(),
-        "println(str) should build: stderr={}",
+        "#println(str) should build: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let run = Command::new(&bin).output().expect("run binary");
@@ -5735,7 +5735,7 @@ fn phase8_str_equality_runs() {
 
 #[test]
 fn phase8_fizzbuzz_exit_demo_runs() {
-    // Phase-8 exit demo: FizzBuzz with real strings via println(str).
+    // Phase-8 exit demo: FizzBuzz with real strings via #println(str).
     // The full output (alternating "Fizz"/"Buzz"/"FizzBuzz"/numbers) is
     // verified by checking three key lines, not the whole transcript —
     // brittle full-output checks add no value over the structural ones.
@@ -6265,7 +6265,7 @@ fn phase11_fn_pointer_to_libc_atexit_runs() {
     std::fs::write(
         &src,
         "extern fn atexit(cb: fn()) -> i32;\n\
-         fn cleanup() { println(42); }\n\
+         fn cleanup() { #println(42); }\n\
          fn main() -> i32 { unsafe { atexit(cleanup); } return 0; }\n",
     )
     .unwrap();
@@ -7006,7 +7006,7 @@ fn phase8_to_string_on_primitives_runs() {
         "fn main() -> i32 {\n\
              let n: i32 = -1234;\n\
              let s: string = n.to_string();\n\
-             println(s.as_str());\n\
+             #println(s.as_str());\n\
              return s.len() as i32;\n\
          }\n",
     )
@@ -7040,7 +7040,7 @@ fn phase8_interp_simple_runs() {
              let n: i32 = 42;\n\
              let name: str = \"world\";\n\
              let g: string = \"hello ${name}, n is ${n}\";\n\
-             println(g.as_str());\n\
+             #println(g.as_str());\n\
              return 0;\n\
          }\n",
     )
@@ -7073,7 +7073,7 @@ fn phase8_interp_expressions_runs() {
         "fn main() -> i32 {\n\
              let n: i32 = 7;\n\
              let s: string = \"sum: ${n +% 3}, doubled: ${n *% 2}\";\n\
-             println(s.as_str());\n\
+             #println(s.as_str());\n\
              return 0;\n\
          }\n",
     )
@@ -7104,7 +7104,7 @@ fn phase8_interp_double_dollar_escape_runs() {
         &src,
         "fn main() -> i32 {\n\
              let s: str = \"price: $$5\";\n\
-             println(s);\n\
+             #println(s);\n\
              return 0;\n\
          }\n",
     )
@@ -17224,7 +17224,7 @@ fn mixed_if_arm_field_tail_compiles_and_runs() {
              let a: V3 = V3 { x: 3.0f32, y: 4.0f32, z: 5.0f32 };\n\
              let b: V3 = V3 { x: 9.0f32, y: 8.0f32, z: 7.0f32 };\n\
              let x: f32 = if cond { a.x } else { b.x };\n\
-             println(x as i32);\n\
+             #println(x as i32);\n\
              return 0;\n\
          }\n",
     )
@@ -17914,7 +17914,7 @@ fn link_extra_objects_e2e_runs() {
         src_dir.join("main.cplus"),
         "extern fn the_answer() -> i32;\n\
          fn main() -> i32 {\n\
-             println(unsafe { the_answer() });\n\
+             #println(unsafe { the_answer() });\n\
              return 0;\n\
          }\n",
     )
@@ -18011,7 +18011,7 @@ fn single_file_local_import_compiles_and_runs() {
         &entry,
         "import \"./helper\" as h;\n\
          fn main() -> i32 {\n\
-             println(h::answer());\n\
+             #println(h::answer());\n\
              return 0;\n\
          }\n",
     )

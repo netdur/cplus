@@ -9,6 +9,6 @@ import "./math" as math;
 
 fn main() -> i32 {
     let r: i32 = math::square(7);
-    println(r);                       // 49
+    #println(r);                       // 49
     return 0;
 }

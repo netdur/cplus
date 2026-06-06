@@ -21,14 +21,14 @@ fn main() -> i32 {
     let high: u8 = '\xff';     // 255
 
     let total: i32 = (a as i32) + (lb as i32) + (nl as i32) + (high as i32);
-    println(total);
+    #println(total);
 
     // Comparison against a char literal — the most common use site
     // (any byte-level parser).
     if is_open_brace('{') {
-        println(1);
+        #println(1);
     } else {
-        println(0);
+        #println(0);
     }
 
     return 0;

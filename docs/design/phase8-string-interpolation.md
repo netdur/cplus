@@ -12,7 +12,7 @@ can't embed variables. After this slice:
 let n: i32 = 42;
 let name: str = "world";
 let greeting: string = "hello ${name}, n is ${n}";
-println(greeting);   // hello world, n is 42
+#println(greeting);   // hello world, n is 42
 ```
 
 ## Syntax

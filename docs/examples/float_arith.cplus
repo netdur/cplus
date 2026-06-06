@@ -3,6 +3,6 @@ fn main() -> i32 {
     let y: f64 = 4.0;
     let z: f64 = x * x + y * y;
     let r: i32 = z as i32;
-    println(r);
+    #println(r);
     return 0;
 }

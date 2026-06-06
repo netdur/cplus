@@ -160,7 +160,7 @@ fn distance_squared(a: Point, b: Point) -> i32 {
 fn main() -> i32 {
     let origin: Point = Point { x: 0, y: 0 };
     let p: Point = Point { x: 3, y: 4 };
-    println(distance_squared(origin, p));   // 25
+    #println(distance_squared(origin, p));   // 25
     0
 }
 ```
@@ -175,7 +175,7 @@ fn main() -> i32 {
     while c.count < c.max {
         c.count = c.count + 1;
     }
-    println(c.count);   // 10
+    #println(c.count);   // 10
     0
 }
 ```
@@ -191,7 +191,7 @@ fn main() -> i32 {
         from: Point { x: 0, y: 0 },
         to:   Point { x: 5, y: 12 },
     };
-    println(line.to.x + line.to.y);   // 17
+    #println(line.to.x + line.to.y);   // 17
     0
 }
 ```

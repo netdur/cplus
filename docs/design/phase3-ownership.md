@@ -182,7 +182,7 @@ fn main() -> i32 {
     fill_with(buf, 7);                  // exclusive borrow; buf still usable after
     let f: u8 = read_first(buf);        // shared borrow; buf still usable after
     let sum: u32 = buf.checksum();      // moves buf; buf unusable after
-    println(sum as i32);                // expects 28 (7*4)
+    #println(sum as i32);                // expects 28 (7*4)
     return 0;
 }
 ```
@@ -196,7 +196,7 @@ Expected output: `28`.
 | `fn f(move mut x: Buffer) { ... }` | E0334 both move and mut |
 | `fn f(mut move x: Buffer) { ... }` | E0334 |
 | `let b = Buffer::new(); let s = b.checksum(); let s2 = b.checksum();` | E0335 use of moved value `b` |
-| `let b = Buffer::new(); let s = b.checksum(); println(b.first() as i32);` | E0335 |
+| `let b = Buffer::new(); let s = b.checksum(); #println(b.first() as i32);` | E0335 |
 | `fn take(move x: Buffer) {} fn main() { let b = Buffer::new(); take(b); take(b); return 0; }` | E0335 second `take(b)` is use of moved value |
 | `impl Buffer { fn m(move mut self) {} }` | E0334 on receiver |
 

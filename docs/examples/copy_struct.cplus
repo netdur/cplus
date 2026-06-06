@@ -16,8 +16,8 @@ fn main() -> i32 {
     let d: i32 = distance_from_origin_squared(p);
     // Under slice 3A's conservative rule this would have been E0335 on
     // `p.x` below. Under auto-derive `Point` is Copy and `p` stays usable.
-    println(d);            // 25
-    println(p.x);          // 3
-    println(p.y);          // 4
+    #println(d);            // 25
+    #println(p.x);          // 3
+    #println(p.y);          // 4
     return 0;
 }

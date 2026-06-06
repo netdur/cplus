@@ -549,7 +549,7 @@ pub enum StmtKind {
     /// `docs/design/phase3-drop.md` §4.4. The deferred expression is
     /// re-emitted at scope exit (lexical, not Go's runtime-stack model):
     /// whatever the expression evaluates to at scope-exit time is what
-    /// executes — so `defer println(x)` reads x's final value, not its
+    /// executes — so `defer #println(x)` reads x's final value, not its
     /// value at the `defer` statement.
     Defer(Expr),
     /// `if let PATTERN = SCRUTINEE { BODY }` and the two-arm form with

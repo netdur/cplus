@@ -4,6 +4,6 @@ fn main() -> i32 {
     for i in 0..5 {
         total = total + xs[i as usize];
     }
-    println(total);
+    #println(total);
     return 0;
 }

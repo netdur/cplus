@@ -139,7 +139,7 @@ fn main() -> i32 {
         j = j +% 1 as usize;
     }
 
-    println(sum);
+    #println(sum);
     // Drop fires here, freeing the buffer.
     return sum;
 }

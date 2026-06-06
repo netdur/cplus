@@ -1189,7 +1189,7 @@ impl SemaCx<'_> {
     // ---- setup ----
 
     fn register_builtins(&mut self) {
-        // `println(n: i32)` — emitted by codegen as a call to `printf("%d\n", n)`.
+        // `#println(n: i32)` — emitted by codegen as a call to `printf("%d\n", n)`.
         self.fns.insert(
             "println".to_string(),
             FnSig {
@@ -5423,6 +5423,31 @@ impl SemaCx<'_> {
     /// enclosing `unsafe` block. The single source for both the `#name`
     /// dispatch (`check_intrinsic`) and the bare-call path during migration.
     fn ffi_builtin_ty(&mut self, name: &str, args: &[Expr], span: ByteSpan) -> Option<Ty> {
+        // `#println(x)` — type-dispatched primitive print (`i32` or `str`). Not
+        // user-visible overloading; one of the compiler-known builtins. The
+        // library wrapper `io::println` is separate.
+        if name == "println" {
+            if args.len() != 1 {
+                self.err(
+                    "E0308",
+                    format!("`println` takes exactly 1 argument, got {}", args.len()),
+                    span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::Error);
+            }
+            let arg_ty = self.check_expr(&args[0], None);
+            if !matches!(arg_ty, Ty::I32 | Ty::Str | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!("`println` accepts `i32` or `str`; got `{}`", ty_display(&arg_ty)),
+                    args[0].span,
+                );
+            }
+            return Some(Ty::Unit);
+        }
         if name == "str_ptr" && args.len() == 1 {
             let arg_ty = self.check_expr(&args[0], Some(Ty::Str));
             if !matches!(arg_ty, Ty::Str | Ty::Error) {
@@ -7855,26 +7880,7 @@ impl SemaCx<'_> {
             }
             return Ty::Error;
         }
-        // Phase 8 slice 8.STR.2: `println` is a compiler intrinsic that
-        // dispatches by argument type: `println(i32)` and `println(str)`
-        // are both accepted. This is not user-visible overloading (§2.8
-        // still rejects user-defined overloads); the intrinsic is one of
-        // a small set of compiler-known names.
-        if name == "println" && args.len() == 1 {
-            let arg_ty = self.check_expr(&args[0], None);
-            if !matches!(arg_ty, Ty::I32 | Ty::Str | Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`println` accepts `i32` or `str`; got `{}`",
-                        ty_display(&arg_ty)
-                    ),
-                    args[0].span,
-                );
-            }
-            return Ty::Unit;
-        }
-        // v0.0.16: the FFI/raw + byte-swap builtins are `#name(...)` intrinsics
+        // v0.0.16: `#println`, the FFI/raw + byte-swap builtins are `#name(...)` intrinsics
         // now (one sigil for every compiler-known builtin). A bare call is a
         // migration error with a fix-it; `#name(...)` is type-checked by
         // `check_intrinsic` -> `ffi_builtin_ty`.
@@ -14440,7 +14446,8 @@ fn extract_call_name(callee: &Expr) -> Option<String> {
 fn is_ffi_builtin_name(name: &str) -> bool {
     matches!(
         name,
-        "str_ptr"
+        "println"
+            | "str_ptr"
             | "str_len"
             | "str_from_raw_parts"
             | "slice_ptr"
@@ -15184,12 +15191,12 @@ mod tests {
     fn arg_count_mismatch_e0308() {
         // Wrap in a stmt + 0 tail so we don't also trigger E0302 from main's
         // i32 return type vs println's Unit return.
-        assert_only_code("fn main() -> i32 { println(1, 2); return 0; }", "E0308");
+        assert_only_code("fn main() -> i32 { #println(1, 2); return 0; }", "E0308");
     }
 
     #[test]
     fn arg_type_mismatch_e0302() {
-        assert_only_code("fn main() -> i32 { println(true); return 0; }", "E0302");
+        assert_only_code("fn main() -> i32 { #println(true); return 0; }", "E0302");
     }
 
     #[test]
@@ -16427,14 +16434,14 @@ mod tests {
 
     #[test]
     fn defer_stmt_is_clean() {
-        assert_clean("fn main() -> i32 { defer println(1); return 0; }");
+        assert_clean("fn main() -> i32 { defer #println(1); return 0; }");
     }
 
     #[test]
     fn defer_with_type_error_e0302() {
         // The deferred expression is type-checked; passing the wrong type
         // to println surfaces the regular type-error.
-        let codes = errors("fn main() -> i32 { defer println(true); return 0; }");
+        let codes = errors("fn main() -> i32 { defer #println(true); return 0; }");
         // println takes i32; bool argument is a mismatch.
         assert!(
             codes.contains(&"E0302") || codes.contains(&"E0308"),
@@ -16444,7 +16451,7 @@ mod tests {
 
     #[test]
     fn defer_in_inner_block_clean() {
-        assert_clean("fn main() -> i32 { if 1 == 1 { defer println(42); } return 0; }");
+        assert_clean("fn main() -> i32 { if 1 == 1 { defer #println(42); } return 0; }");
     }
 
     // ----- Phase 3 slice 3I: tagged unions + match -----
@@ -17220,13 +17227,13 @@ mod tests {
     #[test]
     fn println_accepts_str_clean() {
         // 8.STR.2: println overload accepts str.
-        assert_clean("fn main() -> i32 { println(\"hi\"); return 0; }");
+        assert_clean("fn main() -> i32 { #println(\"hi\"); return 0; }");
     }
 
     #[test]
     fn println_rejects_non_int_non_str_arg_e0302() {
         // Phase 8 narrowed println: bool, structs, etc. all rejected.
-        let codes = errors("fn main() -> i32 { println(true); return 0; }");
+        let codes = errors("fn main() -> i32 { #println(true); return 0; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
@@ -17829,7 +17836,7 @@ mod tests {
     #[test]
     fn fn_pointer_type_no_return_parses() {
         assert_clean(
-            "fn handler(x: i32) { println(x); } \
+            "fn handler(x: i32) { #println(x); } \
              fn main() -> i32 { let f: fn(i32) = handler; f(7); return 0; }",
         );
     }
@@ -20324,6 +20331,17 @@ mod tests {
     #[test]
     fn ffi_builtin_hash_form_clean() {
         assert_clean("fn main() -> i32 { let p: *u8 = #str_ptr(\"x\"); return 0; }");
+    }
+
+    #[test]
+    fn bare_println_is_migration_error_e0905() {
+        let codes = errors("fn main() -> i32 { println(\"x\"); return 0; }");
+        assert!(codes.iter().any(|c| *c == "E0905"), "got {:?}", codes);
+    }
+
+    #[test]
+    fn hash_println_clean() {
+        assert_clean("fn main() -> i32 { #println(\"x\"); return 0; }");
     }
 
     #[test]

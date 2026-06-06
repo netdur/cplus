@@ -180,8 +180,8 @@ fn main() -> i32 {
     if ok_1 { passed = passed + 1; } else { failed = failed + 1; }
     // ... one block per test
 
-    println(passed);
-    println(failed);
+    #println(passed);
+    #println(failed);
     return failed;
 }
 ```

@@ -19,24 +19,24 @@ fn main() -> i32 {
     // Simple identifier embed. An interpolated literal is `string`
     // (owned); call `.as_str()` for `println`.
     let s1: string = "hello ${name}";
-    println(s1.as_str());
+    #println(s1.as_str());
 
     // Multiple embeds, mixed types.
     let s2: string = "n=${n}, pi=${pi}, on=${on}";
-    println(s2.as_str());
+    #println(s2.as_str());
 
     // Expression (not just an identifier) inside `${...}`.
     let s3: string = "doubled: ${n *% 2}, plus_one: ${n +% 1}";
-    println(s3.as_str());
+    #println(s3.as_str());
 
     // Function call inside `${...}` — `#str_len(s)` is the Phase-8
     // intrinsic for the length of a `str` view.
     let s4: string = "len of name: ${#str_len(name)}";
-    println(s4.as_str());
+    #println(s4.as_str());
 
     // `$$` for a literal `$`.
     let s5: str = "price: $$5";
-    println(s5);
+    #println(s5);
 
     return 0;
 }

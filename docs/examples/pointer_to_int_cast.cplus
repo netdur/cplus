@@ -15,6 +15,6 @@ fn main() -> i32 {
     let addr: usize = unsafe { p as usize };
     let misalignment: usize = addr % (16 as usize);
     unsafe { free(p); }
-    println(misalignment as i32);
+    #println(misalignment as i32);
     return 0;
 }

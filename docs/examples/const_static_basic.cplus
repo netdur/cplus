@@ -35,6 +35,6 @@ fn main() -> i32 {
     bump_counter(200);
     let from_static_mut: i32 = unsafe { COUNTER };
 
-    println(from_const + from_static + from_static_mut);  // 200 + 100 + 255 = 555
+    #println(from_const + from_static + from_static_mut);  // 200 + 100 + 255 = 555
     return 0;
 }

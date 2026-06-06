@@ -6,6 +6,6 @@ fn main() -> i32 {
     c.values[1] = 200;
     c.values[2] = 50;
     let total: i32 = c.values[0] + c.values[1] + c.values[2];
-    println(total);
+    #println(total);
     return 0;
 }
