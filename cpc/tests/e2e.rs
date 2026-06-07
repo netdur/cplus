@@ -13160,7 +13160,7 @@ fn stdlib_vec_push_and_get() {
              let mut total: i32 = 0;\n\
              let mut j: usize = 0 as usize;\n\
              while j < v.len() {\n\
-                 total = total +% v.get(j);\n\
+                 total = total +% vec::at_copy::[i32](v, j);\n\
                  j = j +% (1 as usize);\n\
              }\n\
              return total;\n\
@@ -13335,7 +13335,7 @@ fn stdlib_vec_collect_drains_iterator() {
              let mut sum: i32 = 0;\n\
              let mut i: usize = 0 as usize;\n\
              while i < positives.len() {\n\
-                 sum = sum +% positives.get(i);\n\
+                 sum = sum +% vec::at_copy::[i32](positives, i);\n\
                  i = i +% (1 as usize);\n\
              }\n\
              if sum != (11 as i32) { return 2 as i32; }\n\
@@ -13491,13 +13491,13 @@ fn stdlib_vec_extend_from_slice_round_trip() {
              // Extend a fresh Vec; assert total + count.\n\
              let mut dst: vec::Vec[i32] = vec::new::[i32]();\n\
              dst.push(1 as i32);\n\
-             dst.extend_from_slice(slice);\n\
+             vec::extend_from_slice::[i32](dst, slice);\n\
              dst.push(2 as i32);\n\
              // dst = [1, 10, 20, 30, 40, 50, 2]; len = 7, sum = 153.\n\
              let mut sum: i32 = 0;\n\
              let mut i: usize = 0 as usize;\n\
              while i < dst.len() {\n\
-                 sum = sum +% dst.get(i);\n\
+                 sum = sum +% vec::at_copy::[i32](dst, i);\n\
                  i = i +% (1 as usize);\n\
              }\n\
              if dst.len() != (7 as usize) { return 90 as i32; }\n\
@@ -16336,8 +16336,8 @@ fn main() -> i32 {
     let data: *u8 = bridge::vec_u8_to_nsdata(bytes);
     let back_bytes: vec::Vec[u8] = bridge::nsdata_to_vec_u8(data);
     if back_bytes.len() != (4 as usize) { return 5; }
-    if back_bytes.get(0 as usize) != (10 as u8) { return 6; }
-    if back_bytes.get(3 as usize) != (40 as u8) { return 7; }
+    if vec::at_copy::[u8](back_bytes, 0 as usize) != (10 as u8) { return 6; }
+    if vec::at_copy::[u8](back_bytes, 3 as usize) != (40 as u8) { return 7; }
 
     pool.drain();
     return 0;
@@ -17451,8 +17451,8 @@ fn main() -> i32 {
     let data: *u8 = convert::vec_u8_to_nsdata(v);
     let bytes: vec::Vec[u8] = convert::nsdata_to_vec_u8(data);
     if bytes.len() != (3 as usize) { return 2; }
-    if bytes.get(0 as usize) != (10 as u8) { return 3; }
-    if bytes.get(2 as usize) != (30 as u8) { return 4; }
+    if vec::at_copy::[u8](bytes, 0 as usize) != (10 as u8) { return 3; }
+    if vec::at_copy::[u8](bytes, 2 as usize) != (30 as u8) { return 4; }
 
     // NSArray of NSNumbers -> Vec[f64].
     let marr: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")), rt::sel(#str_ptr("array\0")));
@@ -17464,8 +17464,8 @@ fn main() -> i32 {
     if convert::nsarray_count(marr) != (2 as usize) { return 5; }
     let nums: vec::Vec[f64] = convert::nsarray_to_vec_f64(marr);
     if nums.len() != (2 as usize) { return 6; }
-    if nums.get(0 as usize) < (1.0) { return 7; }
-    if nums.get(1 as usize) < (2.0) { return 8; }
+    if vec::at_copy::[f64](nums, 0 as usize) < (1.0) { return 7; }
+    if vec::at_copy::[f64](nums, 1 as usize) < (2.0) { return 8; }
 
     return 0;
 }
@@ -18284,6 +18284,7 @@ fn enum_move_into_method_arg_no_double_free() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/option\" as option;\n\
          static mut DROPS: i32 = 0;\n\
          static mut SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
@@ -18311,7 +18312,7 @@ fn enum_move_into_method_arg_no_double_free() {
                  Node::Many(kids) => {\n\
                      let mut total: i32 = 0;\n\
                      let mut i: usize = 0 as usize;\n\
-                     while i < kids.len() { total = total +% count(kids.get(i)); i = i +% (1 as usize); }\n\
+                     while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count(unsafe { *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
                      total\n\
                  }\n\
              };\n\
@@ -18368,6 +18369,7 @@ fn enum_conditional_branch_tail_move_no_double_free() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
+         import \"stdlib/option\" as option;\n\
          static mut DROPS: i32 = 0;\n\
          static mut SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
@@ -18393,7 +18395,7 @@ fn enum_conditional_branch_tail_move_no_double_free() {
                  Node::Many(kids) => {\n\
                      let mut total: i32 = 0;\n\
                      let mut i: usize = 0 as usize;\n\
-                     while i < kids.len() { total = total +% count(kids.get(i)); i = i +% (1 as usize); }\n\
+                     while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count(unsafe { *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
                      total\n\
                  }\n\
              };\n\
@@ -19322,7 +19324,7 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          fn main() -> i32 {\n\
              let p: *vec::Vec[i32] = place::[vec::Vec[i32]](make_vec());\n\
              let len: usize = unsafe { (*p).len() };\n\
-             let v0: i32 = unsafe { (*p).get(0 as usize) };\n\
+             let v0: i32 = vec::at_copy::[i32](unsafe { *p }, 0 as usize);\n\
              if len == (2 as usize) && v0 == (100 as i32) { return 0; }\n\
              return 1;\n\
          }\n",

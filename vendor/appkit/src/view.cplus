@@ -149,6 +149,10 @@ impl ScrollView {
     pub fn set_border_type(self, border_type: i64) {
         rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBorderType:\0")), border_type);
     }
+
+    pub fn set_draws_background(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setDrawsBackground:\0")), flag);
+    }
 }
 
 pub struct Box {
@@ -177,6 +181,22 @@ impl Box {
 
     pub fn set_box_type(self, box_type: i64) {
         rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBoxType:\0")), box_type);
+    }
+
+    pub fn set_corner_radius(self, radius: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setCornerRadius:\0")), radius);
+    }
+
+    pub fn set_border_width(self, width: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setBorderWidth:\0")), width);
+    }
+
+    pub fn set_border_color(self, color: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setBorderColor:\0")), color);
+    }
+
+    pub fn set_fill_color(self, color: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setFillColor:\0")), color);
     }
 }
 

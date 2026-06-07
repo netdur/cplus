@@ -113,4 +113,12 @@ impl Window {
     pub fn set_max_size(self, size: rt::Size) {
         rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
     }
+
+    pub fn set_titlebar_appears_transparent(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setTitlebarAppearsTransparent:\0")), flag);
+    }
+
+    pub fn set_title_visibility(self, visibility: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setTitleVisibility:\0")), visibility);
+    }
 }

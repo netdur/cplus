@@ -1,25 +1,17 @@
-// stdlib/vec.cplus — growable, heap-backed buffer.
+// stdlib/vec.cplus -- ownership-safe growable vector.
 //
-// `Vec[T]` owns its allocation; Drop frees it. `push` doubles capacity on
-// overflow (1 → 2 → 4 → ...). `as_slice` borrows the live region as a `T[]`.
-//
-// API note: the v0.0.3 stdlib exposes constructors as **free functions**
-// (`vec::new[T]()`, `vec::with_capacity[T](n)`) rather than associated
-// functions (`Vec[T]::new()`). The latter is blocked on a Phase-7 polish
-// item — module-qualified generic associated-fn calls (`mod::Type[args]::method()`)
-// don't yet resolve. Free functions avoid the limitation cleanly and
-// match Zig/Go conventions. The associated-fn shape lands when the
-// resolver-side support is wired.
+// The core API rule is: a generic Vec[T] never bitwise-copies a T out of
+// storage. Operations that yield an owned element either remove it first
+// (`pop`, `swap_remove`), or require `T: Copy` at the boundary (`get`,
+// `at_copy`, `extend_from_slice`). To READ a non-Copy element in place, use
+// `at(i) -> Option[*T]` (a bounds-checked pointer; deref is `unsafe` because
+// the language has no element borrowing yet). `iter` is a gen method intended
+// for Copy `T` (it copies each element out); iterate non-Copy vectors by index
+// via `at`. Allocation sizing is overflow-checked and every malloc/realloc is
+// null-checked.
 
-// v0.0.5 Phase 3 Slice 3A: gen-method `iter` returns `Iterator[T]`;
-// importing `iterator` brings the template into scope so the wrap
-// resolves at sig-collection time.
-import "./iterator" as iterator;
-// v0.0.5 Phase 3 Slice 3C follow-on: `collect` consumes an Iterator[T]
-// into a fresh Vec[T]. Lives in vec.cplus (not iterator.cplus) to
-// avoid the iterator↔vec circular import that an `impl Iterator[T]`
-// method would force.
 import "./option" as option;
+import "./iterator" as iterator;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -32,131 +24,71 @@ pub struct Vec[T] {
     cap: usize,
 }
 
-// Empty Vec, no allocation. Drop's free is a no-op when `cap == 0`.
-pub fn new[T]() -> Vec[T] {
-    return Vec[T] { ptr: unsafe { 0 as *T }, len: 0 as usize, cap: 0 as usize };
+fn max_usize() -> usize {
+    return (0 as usize) -% (1 as usize);
 }
 
-// v0.0.5 Phase 3 Slice 3C follow-on: drain an Iterator[T] into a
-// fresh Vec[T]. Consumes the iterator (`move source`). The natural
-// home would be `impl Iterator[T]::collect_to_vec(move self) -> Vec[T]`
-// but iterator.cplus can't `import "./vec"` without a circular dep,
-// so we expose it as a free fn here. Call: `vec::collect::[i32](v.iter())`.
-pub fn collect[T](move source: iterator::Iterator[T]) -> Vec[T] {
-    let mut out: Vec[T] = new::[T]();
-    loop {
-        match source.next() {
-            option::Option[T]::Some(x) => { out.push(x); }
-            option::Option[T]::None => { return out; }
+fn checked_bytes[T](count: usize) -> usize {
+    if count == (0 as usize) {
+        return 0 as usize;
+    }
+    let elem: usize = #size_of::[T]();
+    assert elem != (0 as usize);
+    assert count <= (max_usize() / elem);
+    return count *% elem;
+}
+
+fn required_len(len: usize, additional: usize) -> usize {
+    assert additional <= (max_usize() -% len);
+    return len +% additional;
+}
+
+fn next_capacity(current: usize, required: usize) -> usize {
+    assert required > current;
+    let mut out: usize = current;
+    if out == (0 as usize) {
+        out = 1 as usize;
+    }
+    while out < required {
+        if out > (max_usize() / (2 as usize)) {
+            out = required;
+        } else {
+            out = out *% (2 as usize);
         }
     }
     return out;
 }
 
-// Pre-allocate room for `n` elements (len stays 0).
+pub fn new[T]() -> Vec[T] {
+    return Vec[T] {
+        ptr: unsafe { 0 as *T },
+        len: 0 as usize,
+        cap: 0 as usize,
+    };
+}
+
 pub fn with_capacity[T](n: usize) -> Vec[T] {
-    let bytes: usize = n *% #size_of::[T]();
+    if n == (0 as usize) {
+        return new::[T]();
+    }
+    let bytes: usize = checked_bytes::[T](n);
     let raw: *u8 = unsafe { malloc(bytes) };
-    return Vec[T] { ptr: unsafe { raw as *T }, len: 0 as usize, cap: n };
+    assert raw.is_not_null();
+    return Vec[T] {
+        ptr: unsafe { raw as *T },
+        len: 0 as usize,
+        cap: n,
+    };
 }
 
 impl Vec[T] {
-    // Append one element. Doubles capacity when full (0 → 1 → 2 → 4 → ...).
-    pub fn push(mut self, x: T) {
-        if self.len == self.cap {
-            let mut new_cap: usize = self.cap *% (2 as usize);
-            if new_cap == (0 as usize) {
-                new_cap = 1 as usize;
-            }
-            let new_bytes: usize = new_cap *% #size_of::[T]();
-            let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
-            self.ptr = unsafe { raw as *T };
-            self.cap = new_cap;
-        }
-        let slot: *T = unsafe { self.ptr + self.len };
-        unsafe { *slot = x; }
-        self.len = self.len +% (1 as usize);
-        return;
-    }
-
-    // Ensure capacity for at least `additional` more elements beyond
-    // `len`. If the current capacity already suffices, this is a no-op.
-    // Otherwise grows the buffer to fit `len + additional` exactly —
-    // no extra slack. Use `reserve(n)` upfront when you know you'll
-    // push `n` elements to skip the log2(n) realloc cascade `push`
-    // would otherwise pay (v0.0.4 Phase 3 Slice 3B.2).
-    pub fn reserve(mut self, additional: usize) {
-        let required: usize = self.len +% additional;
-        if required <= self.cap {
-            return;
-        }
-        let new_bytes: usize = required *% #size_of::[T]();
-        let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
+    fn grow_to(mut self, new_cap: usize) {
+        assert new_cap > self.cap;
+        let bytes: usize = checked_bytes::[T](new_cap);
+        let raw: *u8 = unsafe { realloc(self.ptr as *u8, bytes) };
+        assert raw.is_not_null();
         self.ptr = unsafe { raw as *T };
-        self.cap = required;
-        return;
-    }
-
-    // Drop the last element (no return). Use `get(len - 1)` first if needed.
-    // Returns true iff something was popped.
-    pub fn pop(mut self) -> bool {
-        if self.len == (0 as usize) {
-            return false;
-        }
-        self.len = self.len -% (1 as usize);
-        return true;
-    }
-
-    // Bulk-copy elements from a raw pointer.
-    pub fn extend_from_raw(mut self, src: *T, count: usize) {
-        if count == (0 as usize) {
-            return;
-        }
-        let required: usize = self.len +% count;
-        if required > self.cap {
-            let mut new_cap: usize = self.cap *% (2 as usize);
-            if new_cap < required {
-                new_cap = required;
-            }
-            if new_cap == (0 as usize) {
-                new_cap = required;
-            }
-            let new_bytes: usize = new_cap *% #size_of::[T]();
-            let raw: *u8 = unsafe { realloc(self.ptr as *u8, new_bytes) };
-            self.ptr = unsafe { raw as *T };
-            self.cap = new_cap;
-        }
-        let dest: *T = unsafe { self.ptr + self.len };
-        let bytes_to_copy: usize = count *% #size_of::[T]();
-        unsafe { memcpy(dest as *u8, src as *u8, bytes_to_copy); }
-        self.len = required;
-        return;
-    }
-
-    // v0.0.4 Phase 3 Slice 3B.3: slice-typed wrapper over `extend_from_raw`.
-    // Same single-realloc + single-memcpy lowering, but the caller passes a
-    // slice (fat pointer with bounds-known length) instead of a raw pointer
-    // + count. Safer in practice — slice length comes from the producer, not
-    // from a user-side `count` that can drift.
-    pub fn extend_from_slice(mut self, s: T[]) {
-        let p: *T = unsafe { #slice_ptr(s) };
-        let n: usize = #slice_len(s);
-        self.extend_from_raw(p, n);
-        return;
-    }
-
-    // Drop all elements (running inner-T Drop on each) and reset `len`
-    // to 0. Allocation is retained — the buffer keeps its capacity so
-    // subsequent pushes don't re-malloc. Useful as a per-iteration
-    // reset in chunked readers (File::lines's carry-over, etc.).
-    pub fn clear(mut self) {
-        let mut i: usize = 0 as usize;
-        while i < self.len {
-            let elem_ptr: *T = unsafe { self.ptr + i };
-            unsafe { __cplus_drop_in_place::[T](elem_ptr); }
-            i = i +% (1 as usize);
-        }
-        self.len = 0 as usize;
+        self.cap = new_cap;
         return;
     }
 
@@ -168,42 +100,230 @@ impl Vec[T] {
         return self.cap;
     }
 
-    // Read element `i`. Bounds check is the caller's job for now.
-    pub fn get(self, i: usize) -> T {
-        let p: *T = unsafe { self.ptr + i };
-        return unsafe { *p };
+    pub fn is_empty(self) -> bool {
+        return self.len == (0 as usize);
     }
 
-    // Borrow the live region as a slice.
+    pub fn reserve(mut self, additional: usize) {
+        let required: usize = required_len(self.len, additional);
+        if required <= self.cap {
+            return;
+        }
+        self.grow_to(next_capacity(self.cap, required));
+        return;
+    }
+
+    pub fn push(mut self, value: T) {
+        let required: usize = required_len(self.len, 1 as usize);
+        if required > self.cap {
+            self.grow_to(next_capacity(self.cap, required));
+        }
+        let slot: *T = unsafe { self.ptr + self.len };
+        unsafe { *slot = value; }
+        self.len = required;
+        return;
+    }
+
+    pub fn pop(mut self) -> option::Option[T] {
+        if self.len == (0 as usize) {
+            return option::Option[T]::None;
+        }
+        let new_len: usize = self.len -% (1 as usize);
+        let slot: *T = unsafe { self.ptr + new_len };
+        let value: T = unsafe { *slot };
+        self.len = new_len;
+        return option::Option[T]::Some(value);
+    }
+
+    pub fn swap_remove(mut self, i: usize) -> option::Option[T] {
+        if i >= self.len {
+            return option::Option[T]::None;
+        }
+        let last: usize = self.len -% (1 as usize);
+        let slot: *T = unsafe { self.ptr + i };
+        let value: T = unsafe { *slot };
+        if i != last {
+            let last_slot: *T = unsafe { self.ptr + last };
+            unsafe { *slot = *last_slot; }
+        }
+        self.len = last;
+        return option::Option[T]::Some(value);
+    }
+
+    pub fn clear(mut self) {
+        let mut i: usize = 0 as usize;
+        while i < self.len {
+            let elem: *T = unsafe { self.ptr + i };
+            unsafe { __cplus_drop_in_place::[T](elem); }
+            i = i +% (1 as usize);
+        }
+        self.len = 0 as usize;
+        return;
+    }
+
+    pub fn truncate(mut self, new_len: usize) {
+        if new_len >= self.len {
+            return;
+        }
+        let mut i: usize = new_len;
+        while i < self.len {
+            let elem: *T = unsafe { self.ptr + i };
+            unsafe { __cplus_drop_in_place::[T](elem); }
+            i = i +% (1 as usize);
+        }
+        self.len = new_len;
+        return;
+    }
+
+    pub fn shrink_to_fit(mut self) {
+        if self.len == self.cap {
+            return;
+        }
+        if self.len == (0 as usize) {
+            if self.ptr.is_not_null() {
+                unsafe { free(self.ptr as *u8); }
+            }
+            self.ptr = unsafe { 0 as *T };
+            self.cap = 0 as usize;
+            return;
+        }
+        let bytes: usize = checked_bytes::[T](self.len);
+        let raw: *u8 = unsafe { realloc(self.ptr as *u8, bytes) };
+        assert raw.is_not_null();
+        self.ptr = unsafe { raw as *T };
+        self.cap = self.len;
+        return;
+    }
+
     pub fn as_slice(self) -> T[] {
         return unsafe { #slice_from_raw_parts(self.ptr, self.len) };
     }
 
-    // v0.0.5 Phase 3 Slice 3A: iterator-style traversal. Yields each
-    // live element by value; for non-Copy T the receiver's storage
-    // stays intact (`get` reads through the raw pointer, not move out).
+    // Pointer to element `i`, bounds-checked (None past the end).
+    //
+    // This is the read path for NON-Copy elements, where `get`'s `T: Copy`
+    // bound does not apply. It hands back a raw `*T` into live storage, not an
+    // owned `T`, so there is no copy-out and no drop-flag hazard: the Vec keeps
+    // sole ownership, and a `*T` is never dropped. Reading through the pointer
+    // is `unsafe` only because, with no language-level element borrowing, the
+    // deref is unchecked:
+    //
+    //     match v.at(i) {
+    //         option::Option[*T]::Some(p) => { let n = unsafe { (*p).field }; ... }
+    //         option::Option[*T]::None    => { ... }
+    //     }
+    pub fn at(self, i: usize) -> option::Option[*T] {
+        if i >= self.len {
+            return option::Option[*T]::None;
+        }
+        return option::Option[*T]::Some(unsafe { self.ptr + i });
+    }
+
+    // Replace element `i` with `value`, dropping the element previously there.
+    // Asserts the index is in bounds. Works for any `T`: the old element's Drop
+    // runs (freeing e.g. a `string`'s buffer) before the new value is moved in,
+    // so there is no leak and no double free.
+    pub fn set(mut self, i: usize, value: T) {
+        assert i < self.len;
+        let slot: *T = unsafe { self.ptr + i };
+        unsafe { __cplus_drop_in_place::[T](slot); }
+        unsafe { *slot = value; }
+        return;
+    }
+
+    // Yield each element by value, in order, as an `Iterator[T]` (drives for-in
+    // and the iterator adapters). Intended for Copy `T`: iteration copies each
+    // element out, so for a non-Copy `T` the yielded value would alias storage —
+    // read those by index through `at` instead. This is a gen *method* (receiver
+    // by value), not a `[T: Copy]` free fn, because the coroutine must own the
+    // receiver across yields; a borrowed param does not survive suspension.
     pub gen fn iter(self) -> T {
         let mut i: usize = 0 as usize;
         while i < self.len {
-            yield self.get(i);
+            match self.at(i) {
+                option::Option[*T]::Some(p) => { yield unsafe { *p }; }
+                option::Option[*T]::None => { return; }
+            }
             i = i +% (1 as usize);
         }
         return;
     }
 
-    // Destructor: walk live elements invoking inner-T Drop, then free
-    // the heap buffer. v0.0.5 Phase 1C closes the v0.0.4 leak where
-    // `Vec[string]` / `Vec[Vec[U]]` / `Vec[MyStructWithDrop]` leaked
-    // every element's resources.
-    fn drop(mut self) {
-        if self.cap == (0 as usize) { return; }
-        let mut i: usize = 0 as usize;
-        while i < self.len {
-            let elem_ptr: *T = unsafe { self.ptr + i };
-            unsafe { __cplus_drop_in_place::[T](elem_ptr); }
-            i = i +% (1 as usize);
+    // Bulk-copy `count` elements from a raw pointer (bitwise). The caller is
+    // responsible for `T` being bit-copyable, or for the source relinquishing
+    // ownership; this runs no element clone or drop. Mirrors the old vec.cplus
+    // method so byte-stream consumers (fs, appkit/convert) port unchanged.
+    pub fn extend_from_raw(mut self, src: *T, count: usize) {
+        if count == (0 as usize) {
+            return;
         }
-        unsafe { free(self.ptr as *u8); }
+        let required: usize = required_len(self.len, count);
+        if required > self.cap {
+            self.grow_to(next_capacity(self.cap, required));
+        }
+        let dest: *T = unsafe { self.ptr + self.len };
+        let bytes: usize = checked_bytes::[T](count);
+        unsafe { memcpy(dest as *u8, src as *u8, bytes); }
+        self.len = required;
         return;
     }
+
+    fn drop(mut self) {
+        let mut i: usize = 0 as usize;
+        while i < self.len {
+            let elem: *T = unsafe { self.ptr + i };
+            unsafe { __cplus_drop_in_place::[T](elem); }
+            i = i +% (1 as usize);
+        }
+        if self.ptr.is_not_null() {
+            unsafe { free(self.ptr as *u8); }
+        }
+        return;
+    }
+}
+
+pub fn get[T: Copy](borrow v: Vec[T], i: usize) -> option::Option[T] {
+    if i >= v.len {
+        return option::Option[T]::None;
+    }
+    let slot: *T = unsafe { v.ptr + i };
+    return option::Option[T]::Some(unsafe { *slot });
+}
+
+// Like `get`, but asserts the index is in bounds and returns the element
+// directly (no Option) — the safe, ergonomic "I know this index is valid" read,
+// analogous to indexing. Copy-only (so the returned value is an independent copy,
+// never an alias into storage) and bounds-checked (aborts on out-of-bounds).
+pub fn at_copy[T: Copy](borrow v: Vec[T], i: usize) -> T {
+    assert i < v.len;
+    let slot: *T = unsafe { v.ptr + i };
+    return unsafe { *slot };
+}
+
+pub fn extend_from_slice[T: Copy](mut v: Vec[T], s: T[]) {
+    let count: usize = #slice_len(s);
+    if count == (0 as usize) {
+        return;
+    }
+    let required: usize = required_len(v.len, count);
+    if required > v.cap {
+        v.grow_to(next_capacity(v.cap, required));
+    }
+    let dest: *T = unsafe { v.ptr + v.len };
+    let src: *T = unsafe { #slice_ptr(s) };
+    let bytes: usize = checked_bytes::[T](count);
+    unsafe { memcpy(dest as *u8, src as *u8, bytes); }
+    v.len = required;
+    return;
+}
+
+pub fn collect[T](move source: iterator::Iterator[T]) -> Vec[T] {
+    let mut out: Vec[T] = new::[T]();
+    loop {
+        match source.next() {
+            option::Option[T]::Some(value) => { out.push(value); }
+            option::Option[T]::None => { return out; }
+        }
+    }
+    return out;
 }

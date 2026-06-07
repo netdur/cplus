@@ -166,4 +166,24 @@ impl Color {
     pub fn yellow() -> *u8 {
         return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("yellowColor\0")));
     }
+
+    pub fn label_color() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("labelColor\0")));
+    }
+
+    pub fn secondary_label_color() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("secondaryLabelColor\0")));
+    }
+
+    pub fn window_background_color() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("windowBackgroundColor\0")));
+    }
+
+    pub fn control_background_color() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("controlBackgroundColor\0")));
+    }
+
+    pub fn separator_color() -> *u8 {
+        return rt::msg_id(rt::get_class(#str_ptr("NSColor\0")), rt::sel(#str_ptr("separatorColor\0")));
+    }
 }

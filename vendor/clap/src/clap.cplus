@@ -132,7 +132,7 @@ impl App {
         let mut i: usize = 0 as usize;
         let len: usize = self.args.len();
         while i < len {
-            let item: Arg = self.args.get(i);
+            let item: Arg = vec::at_copy::[Arg](self.args, i);
             if item.long_name == name {
                 return option::some::[Arg](item);
             }
@@ -145,7 +145,7 @@ impl App {
         let mut i: usize = 0 as usize;
         let len: usize = self.args.len();
         while i < len {
-            let item: Arg = self.args.get(i);
+            let item: Arg = vec::at_copy::[Arg](self.args, i);
             if item.short_name == name {
                 return option::some::[Arg](item);
             }
@@ -179,7 +179,7 @@ impl App {
         let mut i: usize = 0 as usize;
         let len: usize = self.args.len();
         while i < len {
-            let item: Arg = self.args.get(i);
+            let item: Arg = vec::at_copy::[Arg](self.args, i);
             write_out(fd, "    ");
             if #str_len(item.short_name) > 0 {
                 write_out(fd, "-");
@@ -256,7 +256,7 @@ impl App {
         let args_len: usize = self.args.len();
 
         while i < n {
-            let arg_str: str = args.get(i);
+            let arg_str: str = vec::at_copy::[str](args, i);
 
             if #str_len(arg_str) > (1 as usize) && unsafe { *#str_ptr(arg_str) } == ('-' as u8) {
                 if arg_str == "--help" || arg_str == "-h" {
@@ -303,7 +303,7 @@ impl App {
                             option::Option[str]::None => {
                                 if i +% (1 as usize) < n {
                                     i = i +% (1 as usize);
-                                    let val: str = args.get(i);
+                                    let val: str = vec::at_copy::[str](args, i);
                                     matches.insert(found.name, val);
                                 } else {
                                     self.print_missing_value_and_exit(found.name);
@@ -368,7 +368,7 @@ impl App {
                         } else {
                             if i +% (1 as usize) < n {
                                 i = i +% (1 as usize);
-                                let val: str = args.get(i);
+                                let val: str = vec::at_copy::[str](args, i);
                                 matches.insert(found.name, val);
                             } else {
                                 self.print_missing_value_and_exit(found.name);
@@ -384,7 +384,7 @@ impl App {
 
         let mut j: usize = 0 as usize;
         while j < args_len {
-            let item: Arg = self.args.get(j);
+            let item: Arg = vec::at_copy::[Arg](self.args, j);
             if item.required {
                 if !matches.contains_key(item.name) {
                     self.print_missing_required_and_exit(item.name);
@@ -423,7 +423,7 @@ impl ArgMatches {
     }
 
     pub fn positional_at(self, i: usize) -> str {
-        return self.positionals.get(i);
+        return vec::at_copy::[str](self.positionals, i);
     }
 }
 
@@ -578,8 +578,8 @@ fn test_app_args_collects_via_vec() {
     app = app.arg(Arg::new("x"));
     app = app.arg(Arg::new("y"));
     assert app.args.len() == (2 as usize);
-    let a0: Arg = app.args.get(0 as usize);
-    let a1: Arg = app.args.get(1 as usize);
+    let a0: Arg = vec::at_copy::[Arg](app.args, 0 as usize);
+    let a1: Arg = vec::at_copy::[Arg](app.args, 1 as usize);
     assert a0.name == "x";
     assert a1.name == "y";
 }

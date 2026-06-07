@@ -226,7 +226,7 @@ impl ModuleMetadata {
             Ty::Isize => "isize".into(),
             Ty::Usize => "usize".into(),
             Ty::F16 => "f16".into(),
-        Ty::F32 => "f32".into(),
+            Ty::F32 => "f32".into(),
             Ty::F64 => "f64".into(),
             Ty::RawPtr(_) | Ty::FnPtr { .. } => "ptr".into(),
             // v0.0.8 bench-gap finding 4: aggregate leaves keyed by
@@ -500,7 +500,11 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
         // distinct mangled prefix so the trampoline tables don't clash
         // if both forms ever fly across a thread boundary.
         Ty::Mask { elem, lanes } => {
-            format!("mask{}x{}", mangle_o_for_tramp_with_types(elem, types), lanes)
+            format!(
+                "mask{}x{}",
+                mangle_o_for_tramp_with_types(elem, types),
+                lanes
+            )
         }
         Ty::Param(n) => format!("Param_{n}"),
         Ty::Error => "ERR".into(),
@@ -715,23 +719,57 @@ fn ty_from_future_name(name: &str, types: &TypeTable) -> Ty {
 }
 
 fn ty_from_suffix(suffix: &str, types: &TypeTable) -> Ty {
-    if suffix == "i8" { return Ty::I8; }
-    if suffix == "i16" { return Ty::I16; }
-    if suffix == "i32" { return Ty::I32; }
-    if suffix == "i64" { return Ty::I64; }
-    if suffix == "u8" { return Ty::U8; }
-    if suffix == "u16" { return Ty::U16; }
-    if suffix == "u32" { return Ty::U32; }
-    if suffix == "u64" { return Ty::U64; }
-    if suffix == "isize" { return Ty::Isize; }
-    if suffix == "usize" { return Ty::Usize; }
-    if suffix == "f32" { return Ty::F32; }
-    if suffix == "f64" { return Ty::F64; }
-    if suffix == "bool" { return Ty::Bool; }
-    if suffix == "unit" { return Ty::Unit; }
-    if suffix == "str" { return Ty::Str; }
-    if suffix == "string" { return Ty::String; }
-    if suffix == "ERR" { return Ty::Error; }
+    if suffix == "i8" {
+        return Ty::I8;
+    }
+    if suffix == "i16" {
+        return Ty::I16;
+    }
+    if suffix == "i32" {
+        return Ty::I32;
+    }
+    if suffix == "i64" {
+        return Ty::I64;
+    }
+    if suffix == "u8" {
+        return Ty::U8;
+    }
+    if suffix == "u16" {
+        return Ty::U16;
+    }
+    if suffix == "u32" {
+        return Ty::U32;
+    }
+    if suffix == "u64" {
+        return Ty::U64;
+    }
+    if suffix == "isize" {
+        return Ty::Isize;
+    }
+    if suffix == "usize" {
+        return Ty::Usize;
+    }
+    if suffix == "f32" {
+        return Ty::F32;
+    }
+    if suffix == "f64" {
+        return Ty::F64;
+    }
+    if suffix == "bool" {
+        return Ty::Bool;
+    }
+    if suffix == "unit" {
+        return Ty::Unit;
+    }
+    if suffix == "str" {
+        return Ty::Str;
+    }
+    if suffix == "string" {
+        return Ty::String;
+    }
+    if suffix == "ERR" {
+        return Ty::Error;
+    }
 
     if let Some(inner_suffix) = suffix.strip_prefix("ptr_") {
         let inner_ty = ty_from_suffix(inner_suffix, types);
@@ -1063,10 +1101,7 @@ fn generate_inner(
                 ItemKind::Impl(b) => {
                     let target_name = &b.target.name;
                     for m in &b.methods {
-                        if m.generic_params.is_empty()
-                            && !m.is_pub
-                            && m.name.name != "drop"
-                        {
+                        if m.generic_params.is_empty() && !m.is_pub && m.name.name != "drop" {
                             fastcc.insert(mangle(target_name, &m.name.name));
                         }
                     }
@@ -1245,7 +1280,10 @@ fn generate_inner(
             // The template is emitted verbatim (escaped for the LLVM string
             // grammar); module asm has no operands, so `$` is not special.
             ItemKind::ModuleAsm(ma) => {
-                out.push_str(&format!("module asm \"{}\"\n", escape_llvm_str(&ma.template)));
+                out.push_str(&format!(
+                    "module asm \"{}\"\n",
+                    escape_llvm_str(&ma.template)
+                ));
             }
         }
     }
@@ -2242,17 +2280,28 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> b
 /// and `borrow x` (shared borrow) do not consume, so they keep their
 /// by-pointer borrow ABI.
 ///
-/// Covers `Ty::Struct` and `Ty::Enum` (v0.0.15): both are non-Copy aggregates
-/// whose value-pass is a bitwise copy aliasing the caller's heap, so both need
-/// the move lowering. Excluding `Ty::Enum` was the v0.0.14 vendor/json
-/// double-free: a heap-owning enum (`Value::Array(Vec[Value])`) passed by
-/// bare-ident (`elems.push(v)`, `Result::Ok(v)`) was borrow-copied without
-/// `mark_moved`, so the caller's scope-exit drop freed heap the callee had
-/// already stored — a use-after-free on the next read. The callee `register_drop`
-/// path already handles `Ty::Enum` move params, so this routes enums through the
-/// identical, sound machinery as structs. `Ty::String` / `Vec[T]` value params
-/// still dodge the double-free via the auto-clone-on-return safety net
-/// (`borrowed_params`), so they are left untouched here.
+/// Covers `Ty::Struct` and `Ty::Enum` (v0.0.15) and `Ty::String` (v0.0.17): each
+/// is a non-Copy owning value whose value-pass is a bitwise copy aliasing the
+/// caller's heap, so all three need the move lowering. Excluding `Ty::Enum` was
+/// the v0.0.14 vendor/json double-free: a heap-owning enum
+/// (`Value::Array(Vec[Value])`) passed by bare-ident (`elems.push(v)`,
+/// `Result::Ok(v)`) was borrow-copied without `mark_moved`, so the caller's
+/// scope-exit drop freed heap the callee had already stored — a use-after-free
+/// on the next read.
+///
+/// `Ty::String` was the same class (bugs/string-param-store-double-free): a bare
+/// `string` value param used the borrow ABI (caller keeps the drop) guarded only
+/// by an auto-clone-on-*return* net (`borrowed_params`). That net never fired
+/// when the param was *stored or forwarded* instead of returned (e.g.
+/// `self.v.push(s)`, `self.field = s`), so the caller's drop and the new owner's
+/// drop freed the same buffer. Routing `Ty::String` through the move lowering —
+/// value-pass, caller `mark_moved`, callee `register_value_drop` — frees it
+/// exactly once: by the callee at scope exit, or by whoever it is forwarded to.
+/// The auto-clone-on-return net now only matters for explicit `borrow s: string`
+/// params, which keep the borrow ABI.
+///
+/// `Vec[T]` and other generic owning containers are `Ty::Struct` after
+/// monomorphization, so they are already covered by the struct arm.
 fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
     if p.move_ {
         return true;
@@ -2260,7 +2309,7 @@ fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
     if p.mutable || p.borrow_ {
         return false;
     }
-    matches!(ty, Ty::Struct(_) | Ty::Enum(_)) && !is_copy_ty(ty, t)
+    matches!(ty, Ty::Struct(_) | Ty::Enum(_) | Ty::String) && !is_copy_ty(ty, t)
 }
 
 /// Slice 1A: full parameter attribute set (v0.0.2 LLVM information dividend).
@@ -2898,7 +2947,9 @@ fn scan_moves_in_expr(
             // adds that binding to the moved set.
             if let ExprKind::Ident(fn_name) = &callee.kind {
                 if let Some(sig) = sigs.get(fn_name) {
-                    for (arg, (_pty, move_flag, _mut_flag, _restrict_flag)) in args.iter().zip(sig.params.iter()) {
+                    for (arg, (_pty, move_flag, _mut_flag, _restrict_flag)) in
+                        args.iter().zip(sig.params.iter())
+                    {
                         if *move_flag {
                             if let ExprKind::Ident(n) = &arg.kind {
                                 set.insert(n.clone());
@@ -2978,7 +3029,9 @@ fn scan_moves_in_expr(
                 // the receiver path — multiple matches are safe.
                 for sdef in &types.struct_defs {
                     if let Some(mi) = sdef.methods.get(&m.name) {
-                        for (a, (_ty, move_flag, _mut_flag, _restr)) in args.iter().zip(mi.params.iter()) {
+                        for (a, (_ty, move_flag, _mut_flag, _restr)) in
+                            args.iter().zip(mi.params.iter())
+                        {
                             if *move_flag {
                                 if let ExprKind::Ident(n) = &a.kind {
                                     set.insert(n.clone());
@@ -3240,36 +3293,111 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths — the NEON
         // D-register family. The result of `i8x16::low/high` and the input
         // to `widen` / `combine`.
-        "i8x8"   => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 8 },
-        "u8x8"   => Ty::Simd { elem: Box::new(Ty::U8),  lanes: 8 },
-        "i16x4"  => Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 },
-        "u16x4"  => Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 },
-        "i32x2"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 },
-        "u32x2"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 },
-        "f32x2"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 },
+        "i8x8" => Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 8,
+        },
+        "u8x8" => Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 8,
+        },
+        "i16x4" => Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 4,
+        },
+        "u16x4" => Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 4,
+        },
+        "i32x2" => Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 2,
+        },
+        "u32x2" => Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 2,
+        },
+        "f32x2" => Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 2,
+        },
         // v0.0.7 Slice 2.2: 256-bit widths.
-        "f32x8"  => Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  },
-        "f64x4"  => Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  },
-        "i8x32"  => Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 },
-        "u8x32"  => Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 },
-        "i16x16" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 },
-        "u16x16" => Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 },
-        "i32x8"  => Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  },
-        "u32x8"  => Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  },
-        "i64x4"  => Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  },
-        "u64x4"  => Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  },
+        "f32x8" => Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 8,
+        },
+        "f64x4" => Ty::Simd {
+            elem: Box::new(Ty::F64),
+            lanes: 4,
+        },
+        "i8x32" => Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 32,
+        },
+        "u8x32" => Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 32,
+        },
+        "i16x16" => Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 16,
+        },
+        "u16x16" => Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 16,
+        },
+        "i32x8" => Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 8,
+        },
+        "u32x8" => Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 8,
+        },
+        "i64x4" => Ty::Simd {
+            elem: Box::new(Ty::I64),
+            lanes: 4,
+        },
+        "u64x4" => Ty::Simd {
+            elem: Box::new(Ty::U64),
+            lanes: 4,
+        },
         // v0.0.9 follow-up: mask types resolve to `Ty::Mask`, a
         // distinct sema-level type whose LLVM lowering matches the
         // width-equivalent signed-int SIMD. Codegen's `lty` treats
         // Ty::Mask and Ty::Simd identically.
-        "mask8x16"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 16 },
-        "mask16x8"  => Ty::Mask { elem: Box::new(Ty::I16), lanes: 8  },
-        "mask32x4"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 4  },
-        "mask64x2"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 2  },
-        "mask8x32"  => Ty::Mask { elem: Box::new(Ty::I8),  lanes: 32 },
-        "mask16x16" => Ty::Mask { elem: Box::new(Ty::I16), lanes: 16 },
-        "mask32x8"  => Ty::Mask { elem: Box::new(Ty::I32), lanes: 8  },
-        "mask64x4"  => Ty::Mask { elem: Box::new(Ty::I64), lanes: 4  },
+        "mask8x16" => Ty::Mask {
+            elem: Box::new(Ty::I8),
+            lanes: 16,
+        },
+        "mask16x8" => Ty::Mask {
+            elem: Box::new(Ty::I16),
+            lanes: 8,
+        },
+        "mask32x4" => Ty::Mask {
+            elem: Box::new(Ty::I32),
+            lanes: 4,
+        },
+        "mask64x2" => Ty::Mask {
+            elem: Box::new(Ty::I64),
+            lanes: 2,
+        },
+        "mask8x32" => Ty::Mask {
+            elem: Box::new(Ty::I8),
+            lanes: 32,
+        },
+        "mask16x16" => Ty::Mask {
+            elem: Box::new(Ty::I16),
+            lanes: 16,
+        },
+        "mask32x8" => Ty::Mask {
+            elem: Box::new(Ty::I32),
+            lanes: 8,
+        },
+        "mask64x4" => Ty::Mask {
+            elem: Box::new(Ty::I64),
+            lanes: 4,
+        },
         _ => {
             if let Some(&id) = types.enum_by_name.get(name) {
                 return Ty::Enum(id);
@@ -3528,9 +3656,7 @@ fn write_preamble(out: &mut String) {
         out.push_str("declare void @llvm.aarch64.hint(i32 immarg)\n");
         // v0.0.12 SIMD Tier-1 (G-040): NEON `vqtbl1q` byte table lookup,
         // used by `i8x16/u8x16::table`. Out-of-range indices yield 0.
-        out.push_str(
-            "declare <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8>, <16 x i8>)\n",
-        );
+        out.push_str("declare <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8>, <16 x i8>)\n");
     } else if cfg!(target_arch = "x86_64") {
         out.push_str("declare void @llvm.x86.sse2.pause()\n");
     }
@@ -3602,7 +3728,9 @@ fn write_preamble(out: &mut String) {
     out.push_str("declare <8 x float> @llvm.roundeven.v8f32(<8 x float>)\n");
     out.push_str("declare <8 x float> @llvm.minnum.v8f32(<8 x float>, <8 x float>)\n");
     out.push_str("declare <8 x float> @llvm.maxnum.v8f32(<8 x float>, <8 x float>)\n");
-    out.push_str("declare <4 x double> @llvm.fma.v4f64(<4 x double>, <4 x double>, <4 x double>)\n");
+    out.push_str(
+        "declare <4 x double> @llvm.fma.v4f64(<4 x double>, <4 x double>, <4 x double>)\n",
+    );
     out.push_str("declare <4 x double> @llvm.sqrt.v4f64(<4 x double>)\n");
     out.push_str("declare <4 x double> @llvm.fabs.v4f64(<4 x double>)\n");
     out.push_str("declare <4 x double> @llvm.roundeven.v4f64(<4 x double>)\n");
@@ -3638,34 +3766,66 @@ fn write_preamble(out: &mut String) {
     // Float reductions are seeded (sequential fp), int reductions are
     // bare. LLVM auto-instantiates these — declarations exist so the
     // emitted IR is self-contained for `cpc --emit-ll | clang`.
-    let float_widths = [(4u32, "f32", "float"), (2, "f64", "double"),
-                        (8, "f32", "float"), (4, "f64", "double")];
+    let float_widths = [
+        (4u32, "f32", "float"),
+        (2, "f64", "double"),
+        (8, "f32", "float"),
+        (4, "f64", "double"),
+    ];
     for (n, suf, lty) in &float_widths {
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fadd.v{n}{suf}({lty}, <{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fmul.v{n}{suf}({lty}, <{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fmin.v{n}{suf}(<{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.fmax.v{n}{suf}(<{n} x {lty}>)\n"));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.fadd.v{n}{suf}({lty}, <{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.fmul.v{n}{suf}({lty}, <{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.fmin.v{n}{suf}(<{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.fmax.v{n}{suf}(<{n} x {lty}>)\n"
+        ));
     }
     let int_widths: &[(u32, &str)] = &[
-        (16, "i8"), (32, "i8"),
-        (8, "i16"), (16, "i16"),
-        (4, "i32"), (8, "i32"),
-        (2, "i64"), (4, "i64"),
+        (16, "i8"),
+        (32, "i8"),
+        (8, "i16"),
+        (16, "i16"),
+        (4, "i32"),
+        (8, "i32"),
+        (2, "i64"),
+        (4, "i64"),
     ];
     for (n, lty) in int_widths {
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.add.v{n}{lty}(<{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.mul.v{n}{lty}(<{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.smin.v{n}{lty}(<{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.smax.v{n}{lty}(<{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.umin.v{n}{lty}(<{n} x {lty}>)\n"));
-        out.push_str(&format!("declare {lty} @llvm.vector.reduce.umax.v{n}{lty}(<{n} x {lty}>)\n"));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.add.v{n}{lty}(<{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.mul.v{n}{lty}(<{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.smin.v{n}{lty}(<{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.smax.v{n}{lty}(<{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.umin.v{n}{lty}(<{n} x {lty}>)\n"
+        ));
+        out.push_str(&format!(
+            "declare {lty} @llvm.vector.reduce.umax.v{n}{lty}(<{n} x {lty}>)\n"
+        ));
     }
     // `any` / `all` lower to or/and reductions on i1 vectors. One
     // per mask width.
     let i1_widths = [2u32, 4, 8, 16, 32];
     for n in &i1_widths {
-        out.push_str(&format!("declare i1 @llvm.vector.reduce.or.v{n}i1(<{n} x i1>)\n"));
-        out.push_str(&format!("declare i1 @llvm.vector.reduce.and.v{n}i1(<{n} x i1>)\n"));
+        out.push_str(&format!(
+            "declare i1 @llvm.vector.reduce.or.v{n}i1(<{n} x i1>)\n"
+        ));
+        out.push_str(&format!(
+            "declare i1 @llvm.vector.reduce.and.v{n}i1(<{n} x i1>)\n"
+        ));
     }
     // v0.0.3 Phase 5 Slice 5B: pthread externs for the thread::spawn /
     // JoinHandle::join intrinsics. pthread_t is opaque-pointer-sized
@@ -3972,10 +4132,7 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
 /// "Free fn" here means a `sigs`-registered top-level function. Methods
 /// (looked up via type + name) aren't take-the-address-able in C+ —
 /// there's no `&T::method` syntax — so they're never added to the set.
-fn collect_address_taken_fns(
-    program: &Program,
-    sigs: &HashMap<String, FnSig>,
-) -> HashSet<String> {
+fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -> HashSet<String> {
     fn visit_expr(e: &Expr, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
         match &e.kind {
             ExprKind::Ident(name) => {
@@ -4198,7 +4355,9 @@ fn emit_compile_time_blob_globals(
                 v
             }
         };
-        md.compile_time_blobs.borrow_mut().insert(*span, (symbol, len));
+        md.compile_time_blobs
+            .borrow_mut()
+            .insert(*span, (symbol, len));
     }
     if !map.is_empty() {
         out.push_str("\n");
@@ -4373,7 +4532,9 @@ fn emit_statics(
                 out.push_str(&format!(
                     "@{qname} = {storage} {{ ptr, i64 }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
                 ));
-                md.statics.borrow_mut().insert(qname.clone(), info.ty.clone());
+                md.statics
+                    .borrow_mut()
+                    .insert(qname.clone(), info.ty.clone());
                 continue;
             }
         }
@@ -4391,7 +4552,9 @@ fn emit_statics(
         };
         let storage = if info.is_mut { "global" } else { "constant" };
         out.push_str(&format!("@{qname} = {storage} {lltype} {llvalue}\n"));
-        md.statics.borrow_mut().insert(qname.clone(), info.ty.clone());
+        md.statics
+            .borrow_mut()
+            .insert(qname.clone(), info.ty.clone());
     }
     out.push('\n');
 }
@@ -4412,7 +4575,9 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
         // G-044). A zero fill collapses to `zeroinitializer` to keep large
         // tables out of the textual IR.
         ExprKind::ArrayLit { elements } => {
-            let Ty::Array(elem, n) = ty else { return None; };
+            let Ty::Array(elem, n) = ty else {
+                return None;
+            };
             if elements.len() as u64 != *n as u64 {
                 return None;
             }
@@ -4425,7 +4590,9 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             Some(format!("[{}]", parts.join(", ")))
         }
         ExprKind::ArrayFill { fill, count, .. } => {
-            let Ty::Array(elem, n) = ty else { return None; };
+            let Ty::Array(elem, n) = ty else {
+                return None;
+            };
             if *count as u64 != *n as u64 {
                 return None;
             }
@@ -4445,7 +4612,9 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
         // `255` in an `f32` field and a `0` in a `bool` field coerce correctly,
         // and nested structs / arrays recurse. The ggml `sphere_t scene[]` case.
         ExprKind::StructLit { fields, .. } => {
-            let Ty::Struct(id) = ty else { return None; };
+            let Ty::Struct(id) = ty else {
+                return None;
+            };
             let info = &types.struct_defs[id.0 as usize];
             let mut parts: Vec<String> = Vec::with_capacity(info.fields.len());
             for (fname, fty) in &info.fields {
@@ -4457,9 +4626,16 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             Some(format!("{{ {} }}", parts.join(", ")))
         }
         ExprKind::IntLit(v, _) => Some(v.to_string()),
-        ExprKind::BoolLit(b) => Some(if *b { "true".to_string() } else { "false".to_string() }),
+        ExprKind::BoolLit(b) => Some(if *b {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        }),
         ExprKind::FloatLit(v, suf) => render_static_float(*v, *suf, ty),
-        ExprKind::Unary { op: UnaryOp::Neg, operand } => match &operand.kind {
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } => match &operand.kind {
             ExprKind::IntLit(v, _) => Some(format!("-{v}")),
             ExprKind::FloatLit(v, suf) => render_static_float(-*v, *suf, ty),
             _ => None,
@@ -4475,9 +4651,12 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
         // `static T name = {0};` / `static T name;`. Closes the
         // lookup-table and BSS-zero-struct cases the llama port hit
         // when porting `ggml_cpu_init`-owned globals into cpc.
-        ExprKind::Intrinsic { name, args, type_args, .. }
-            if name == "zero" && args.is_empty() && type_args.len() == 1 =>
-        {
+        ExprKind::Intrinsic {
+            name,
+            args,
+            type_args,
+            ..
+        } if name == "zero" && args.is_empty() && type_args.len() == 1 => {
             Some("zeroinitializer".to_string())
         }
         _ => None,
@@ -4995,7 +5174,12 @@ fn gen_function(
     } else {
         ""
     };
-    write!(out, "define {}{}{} @{}(", linkage, cc, sig_return_ty, f.name.name).unwrap();
+    write!(
+        out,
+        "define {}{}{} @{}(",
+        linkage, cc, sig_return_ty, f.name.name
+    )
+    .unwrap();
     if uses_sret {
         // sret slot: caller-allocated, callee-writable, exact size + align.
         let (sz, al) =
@@ -5178,18 +5362,13 @@ fn gen_function(
             state.borrowed_params.insert(param.name.name.clone());
         }
         if *move_flag {
-            // v0.0.14 auto field-drop: a moved-in owning aggregate (struct with
-            // owning fields, with or without an explicit `drop`, or a tagged
-            // enum with owning payloads) is the callee's to tear down.
-            match pty {
-                Ty::Struct(id) if state.needs_drop(pty) => {
-                    state.register_drop(&param.name.name, &slot, *id);
-                }
-                Ty::Enum(id) if state.needs_drop(pty) => {
-                    state.register_drop_kind(&param.name.name, &slot, DropKind::Enum(*id));
-                }
-                _ => {}
-            }
+            // A moved-in owning value (string, struct with owning fields, or
+            // tagged enum with owning payloads) is the callee's to tear down.
+            // `register_value_drop` is a no-op for trivially-droppable types and
+            // flips to a runtime drop flag when the binding is forwarded out, so
+            // a `string` param stored into a Vec/field (v0.0.17, the
+            // bugs/string-param-store-double-free fix) is freed exactly once.
+            state.register_value_drop(&param.name.name, &slot, pty);
         }
     }
 
@@ -5364,8 +5543,7 @@ fn gen_async_method(
         // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish async/gen/sync) matches this signature.
-        let self_by_ptr =
-            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
         let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -5384,7 +5562,9 @@ fn gen_async_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
+        m.params.iter().zip(sig.params.iter())
+    {
         if !first {
             out.push_str(", ");
         }
@@ -5466,7 +5646,8 @@ fn gen_async_method(
         }
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -5525,9 +5706,7 @@ fn gen_async_method(
         .push_str("  call void @free(ptr %.coro.mem_free)\n");
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
-    state.body.push_str(
-        &coro_end_call_ir(),
-    );
+    state.body.push_str(&coro_end_call_ir());
     state.body.push_str(&format!(
         "  %.coro.future0 = insertvalue {future_llvm} undef, ptr %.coro.hdl, 0\n"
     ));
@@ -5600,8 +5779,7 @@ fn gen_gen_method(
         // v0.0.8 fix A: same Copy+Read by-value rule as `gen_method` so
         // the call-site lowering in `gen_method_call` (which doesn't
         // distinguish gen/sync) matches this signature.
-        let self_by_ptr =
-            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
         let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -5620,7 +5798,9 @@ fn gen_gen_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
+        m.params.iter().zip(sig.params.iter())
+    {
         if !first {
             out.push_str(", ");
         }
@@ -5693,7 +5873,8 @@ fn gen_gen_method(
         next_idx += 1;
     }
     // Bind params to allocas (value-passed) or pointer slots (pointer-passed).
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -5737,9 +5918,7 @@ fn gen_gen_method(
         .push_str("  call void @free(ptr %.coro.mem_free)\n");
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
-    state.body.push_str(
-        &coro_end_call_ir(),
-    );
+    state.body.push_str(&coro_end_call_ir());
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
     ));
@@ -5795,7 +5974,12 @@ fn gen_gen_function(
     };
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
-    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, f.name.name).unwrap();
+    write!(
+        out,
+        "define {}{}{} @{}(",
+        linkage, cc, iter_llvm, f.name.name
+    )
+    .unwrap();
     for (i, (param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
@@ -5878,9 +6062,7 @@ fn gen_gen_function(
         .push_str("  call void @free(ptr %.coro.mem_free)\n");
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
-    state.body.push_str(
-        &coro_end_call_ir(),
-    );
+    state.body.push_str(&coro_end_call_ir());
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
     ));
@@ -5937,7 +6119,12 @@ fn gen_async_function(
     // pub), so we don't need the C-ABI coercion paths. They also
     // can't use the sret return path because the return value
     // (Future[T] = { *u8 }) is just one ptr — fits in a register.
-    write!(out, "define {}{}{} @{}(", linkage, cc, future_llvm, f.name.name).unwrap();
+    write!(
+        out,
+        "define {}{}{} @{}(",
+        linkage, cc, future_llvm, f.name.name
+    )
+    .unwrap();
     for (i, (param, (pty, _move_flag, _mut_flag, _restrict_flag))) in
         f.params.iter().zip(sig.params.iter()).enumerate()
     {
@@ -6076,9 +6263,7 @@ fn gen_async_function(
         .push_str("  call void @free(ptr %.coro.mem_free)\n");
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
-    state.body.push_str(
-        &coro_end_call_ir(),
-    );
+    state.body.push_str(&coro_end_call_ir());
     // Wrap the handle in Future[T].
     state.body.push_str(&format!(
         "  %.coro.future0 = insertvalue {future_llvm} undef, ptr %.coro.hdl, 0\n"
@@ -6168,7 +6353,12 @@ fn gen_enum_method(
     } else {
         llvm_ty(&return_ty, types)
     };
-    write!(out, "define {}{}{} @{}(", linkage, cc, return_ty_str, mangled).unwrap();
+    write!(
+        out,
+        "define {}{}{} @{}(",
+        linkage, cc, return_ty_str, mangled
+    )
+    .unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     if uses_sret {
@@ -6201,7 +6391,9 @@ fn gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
+        m.params.iter().zip(sig.params.iter())
+    {
         if !first {
             out.push_str(", ");
         }
@@ -6244,7 +6436,8 @@ fn gen_enum_method(
         state.bind("self", recv_name, Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -6343,7 +6536,9 @@ fn gen_gen_enum_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
+        m.params.iter().zip(sig.params.iter())
+    {
         if !first {
             out.push_str(", ");
         }
@@ -6398,7 +6593,8 @@ fn gen_gen_enum_method(
         state.bind("self", format!("%{}", next_idx), Ty::Enum(enum_id));
         next_idx += 1;
     }
-    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter())
+    {
         let by_ptr = param_passes_by_ptr(pty, *move_flag, *mut_flag, types);
         if by_ptr {
             state.bind(&param.name.name, format!("%{}", next_idx), pty.clone());
@@ -6439,9 +6635,7 @@ fn gen_gen_enum_method(
         .push_str("  call void @free(ptr %.coro.mem_free)\n");
     state.body.push_str("  br label %.coro.end\n");
     state.body.push_str(".coro.end:\n");
-    state.body.push_str(
-        &coro_end_call_ir(),
-    );
+    state.body.push_str(&coro_end_call_ir());
     state.body.push_str(&format!(
         "  %.coro.iter0 = insertvalue {iter_llvm} undef, ptr %.coro.hdl, 0\n"
     ));
@@ -6523,7 +6717,11 @@ fn gen_method(
     };
     // `cold` on drop glue, plus any `#[inline]` LLVM attribute. (A drop
     // method is never user-marked `#[inline]`, so these don't collide.)
-    let fn_attrs = format!("{}{}", if is_drop_method { " cold" } else { "" }, inline_fn_attr(&m.attributes));
+    let fn_attrs = format!(
+        "{}{}",
+        if is_drop_method { " cold" } else { "" },
+        inline_fn_attr(&m.attributes)
+    );
     let fn_attrs = fn_attrs.as_str();
     // Phase 5 Slice 5.B: in library builds, non-`pub` methods get
     // `internal` linkage. `drop` is compiler-synthesized infrastructure —
@@ -6595,8 +6793,7 @@ fn gen_method(
         // mutations through `mut self` as write-through to the caller's
         // place (see `phase7_generic_typed_impl_mut_self_runs` e2e test:
         // `b.set(42); b.get()` must observe the write).
-        let self_by_ptr =
-            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
         let attrs = param_attrs(&struct_ty, mv, mu, false, self_by_ptr, types);
         if self_by_ptr {
             if attrs.is_empty() {
@@ -6615,7 +6812,9 @@ fn gen_method(
         llvm_idx += 1;
         first = false;
     }
-    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in m.params.iter().zip(sig.params.iter()) {
+    for (_param, (pty, move_flag, mut_flag, restrict_flag)) in
+        m.params.iter().zip(sig.params.iter())
+    {
         if !first {
             out.push_str(", ");
         }
@@ -6670,8 +6869,7 @@ fn gen_method(
     // non-receiver param path below. Must match the signature decision
     // above.
     if let Some(rcv) = sig.receiver {
-        let self_by_ptr =
-            !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
+        let self_by_ptr = !is_copy_ty(&struct_ty, types) || !matches!(rcv, Receiver::Read);
         if self_by_ptr {
             let recv_name = format!("%{}", next_idx);
             state.bind("self", recv_name.clone(), struct_ty.clone());
@@ -6737,18 +6935,13 @@ fn gen_method(
             state.borrowed_params.insert(param.name.name.clone());
         }
         if *move_flag {
-            // v0.0.14 auto field-drop: a moved-in owning aggregate (struct with
-            // owning fields, with or without an explicit `drop`, or a tagged
-            // enum with owning payloads) is the callee's to tear down.
-            match pty {
-                Ty::Struct(id) if state.needs_drop(pty) => {
-                    state.register_drop(&param.name.name, &slot, *id);
-                }
-                Ty::Enum(id) if state.needs_drop(pty) => {
-                    state.register_drop_kind(&param.name.name, &slot, DropKind::Enum(*id));
-                }
-                _ => {}
-            }
+            // A moved-in owning value (string, struct with owning fields, or
+            // tagged enum with owning payloads) is the callee's to tear down.
+            // `register_value_drop` is a no-op for trivially-droppable types and
+            // flips to a runtime drop flag when the binding is forwarded out, so
+            // a `string` param stored into a Vec/field (v0.0.17, the
+            // bugs/string-param-store-double-free fix) is freed exactly once.
+            state.register_value_drop(&param.name.name, &slot, pty);
         }
     }
 
@@ -6777,7 +6970,9 @@ fn gen_method(
             noalias_ssas.push(0);
         }
     }
-    for (i, (_, (pty, mv, mu, _restrict_flag))) in m.params.iter().zip(sig.params.iter()).enumerate() {
+    for (i, (_, (pty, mv, mu, _restrict_flag))) in
+        m.params.iter().zip(sig.params.iter()).enumerate()
+    {
         let idx = next_idx + i as u32;
         if param_passes_by_ptr(pty, *mv, *mu, types) && (*mv || *mu) {
             noalias_ssas.push(idx);
@@ -7950,8 +8145,8 @@ impl<'a> FnState<'a> {
                                         // caller and callee to share a
                                         // calling convention.
                                         let callee_is_fastcc = self.md.is_fastcc(name);
-                                        let cc_matches = callee_is_fastcc
-                                            == self.enclosing_is_fastcc;
+                                        let cc_matches =
+                                            callee_is_fastcc == self.enclosing_is_fastcc;
                                         // Target guard: x86-64 cannot guarantee
                                         // a tail call that returns a by-value
                                         // aggregate wider than the 16-byte
@@ -8161,7 +8356,11 @@ impl<'a> FnState<'a> {
                     }
                 }
             }
-            StmtKind::While { cond, body, attributes } => self.gen_while(cond, body, attributes),
+            StmtKind::While {
+                cond,
+                body,
+                attributes,
+            } => self.gen_while(cond, body, attributes),
             StmtKind::For(fl, attributes) => self.gen_for(fl, attributes),
             StmtKind::Expr(e) => {
                 let _ = self.gen_expr(e);
@@ -8362,10 +8561,10 @@ impl<'a> FnState<'a> {
         for c in &child_ids {
             items.push(format!("!{c}"));
         }
-        self.md.nodes.borrow_mut().push(format!(
-            "!{loop_id} = distinct !{{{}}}",
-            items.join(", ")
-        ));
+        self.md
+            .nodes
+            .borrow_mut()
+            .push(format!("!{loop_id} = distinct !{{{}}}", items.join(", ")));
         format!(", !llvm.loop !{loop_id}")
     }
 
@@ -8765,9 +8964,8 @@ impl<'a> FnState<'a> {
                     // so we truncate from the f64-hex form.)
                     let bits = v.to_bits();
                     let t = self.next_tmp();
-                    self.body.push_str(&format!(
-                        "  {t} = fptrunc double 0x{bits:016X} to half\n"
-                    ));
+                    self.body
+                        .push_str(&format!("  {t} = fptrunc double 0x{bits:016X} to half\n"));
                     return Some((t, Ty::F16));
                 }
                 let ty = match suf {
@@ -8910,16 +9108,25 @@ impl<'a> FnState<'a> {
             ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
                 Some(self.gen_array_lit(elements, None))
             }
-            ExprKind::ArrayFill { fill, count, .. } => Some(self.gen_array_fill(fill, *count, None)),
+            ExprKind::ArrayFill { fill, count, .. } => {
+                Some(self.gen_array_fill(fill, *count, None))
+            }
             ExprKind::Index { receiver, index } => Some(self.gen_index(receiver, index)),
             ExprKind::Range { .. } => {
                 unreachable!("sema rejects ranges outside `for ... in`")
             }
             ExprKind::Match { scrutinee, arms } => self.gen_match(scrutinee, arms),
-            ExprKind::Intrinsic { name, type_args, args, ret_ty } => {
-                self.gen_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span)
-            }
-            ExprKind::Asm { template, operands, clobbers } => {
+            ExprKind::Intrinsic {
+                name,
+                type_args,
+                args,
+                ret_ty,
+            } => self.gen_intrinsic(name, type_args, args, ret_ty.as_ref(), e.span),
+            ExprKind::Asm {
+                template,
+                operands,
+                clobbers,
+            } => {
                 self.gen_asm(template, operands, clobbers);
                 None
             }
@@ -8973,7 +9180,12 @@ impl<'a> FnState<'a> {
     /// or a tight SIMD store loop. For other shapes we emit an N-iteration
     /// LLVM loop — small N could be unrolled by an inliner pass but isn't
     /// here. The result mirrors `gen_array_lit`'s aggregate-load tail.
-    fn gen_array_fill(&mut self, fill: &Expr, count: u32, expected_elem: Option<Ty>) -> (String, Ty) {
+    fn gen_array_fill(
+        &mut self,
+        fill: &Expr,
+        count: u32,
+        expected_elem: Option<Ty>,
+    ) -> (String, Ty) {
         // G-044: same expected-element-type rule as `gen_array_lit` — a typed
         // destination (`let a: [i64; N] = [1; N]`) coerces the bare fill
         // literal to the declared element type.
@@ -8988,8 +9200,7 @@ impl<'a> FnState<'a> {
         // This is the hot case for static-arena's buffer init — N can be
         // 16K, 64K, etc., and emitting that many enumerated stores would
         // be absurd both at codegen time and in the resulting IR size.
-        let zero_byte_fill =
-            matches!(elem_ty, Ty::U8 | Ty::I8) && fill_val == "0";
+        let zero_byte_fill = matches!(elem_ty, Ty::U8 | Ty::I8) && fill_val == "0";
         if zero_byte_fill {
             // `@llvm.memset.p0.i64` is already declared in the module
             // preamble (see `write_preamble`), so no extra decl needed.
@@ -9272,8 +9483,12 @@ impl<'a> FnState<'a> {
             let (n_val, _) = self.gen_expr(&args[1]).expect("str_from_raw_parts len");
             let t1 = self.next_tmp();
             let t2 = self.next_tmp();
-            self.emit(&format!("{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"));
-            self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
+            self.emit(&format!(
+                "{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"
+            ));
+            self.emit(&format!(
+                "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
+            ));
             return Some((t2, Ty::Str));
         }
         if name == "slice_ptr" {
@@ -9306,8 +9521,12 @@ impl<'a> FnState<'a> {
             };
             let t1 = self.next_tmp();
             let t2 = self.next_tmp();
-            self.emit(&format!("{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"));
-            self.emit(&format!("{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"));
+            self.emit(&format!(
+                "{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"
+            ));
+            self.emit(&format!(
+                "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
+            ));
             return Some((t2, Ty::Slice(Box::new(elem_ty))));
         }
         if let Some((bits, ret_ty)) = match name {
@@ -9318,7 +9537,9 @@ impl<'a> FnState<'a> {
         } {
             let (av, _) = self.gen_expr(&args[0]).expect("bswap arg");
             let r = self.next_tmp();
-            self.emit(&format!("{r} = call i{bits} @llvm.bswap.i{bits}(i{bits} {av})"));
+            self.emit(&format!(
+                "{r} = call i{bits} @llvm.bswap.i{bits}(i{bits} {av})"
+            ));
             return Some((r, ret_ty));
         }
         None
@@ -9623,7 +9844,9 @@ impl<'a> FnState<'a> {
         // free for LLVM to fold given the global's `nonnull` after the
         // register path, and it dodges the need to thread the entry-block
         // label through the helper.
-        self.emit(&format!("{cached_val} = load ptr, ptr {cached_sym}, align 8"));
+        self.emit(&format!(
+            "{cached_val} = load ptr, ptr {cached_sym}, align 8"
+        ));
         self.emit(&format!("{is_null} = icmp eq ptr {cached_val}, null"));
         self.emit_terminator(&format!(
             "br i1 {is_null}, label %{register_lbl}, label %{done_lbl}"
@@ -9632,7 +9855,9 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{registered} = call ptr @sel_registerName(ptr {data_sym})"
         ));
-        self.emit(&format!("store ptr {registered}, ptr {cached_sym}, align 8"));
+        self.emit(&format!(
+            "store ptr {registered}, ptr {cached_sym}, align 8"
+        ));
         self.emit_terminator(&format!("br label %{done_lbl}"));
         self.open_block(&done_lbl);
         self.emit(&format!("{result} = load ptr, ptr {cached_sym}, align 8"));
@@ -10612,8 +10837,12 @@ impl<'a> FnState<'a> {
                             let pty = variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
                             // Byte-offset GEP (shared with construct/drop) so a
                             // payload after a >8-byte one reads its real bytes.
-                            let slot_ptr =
-                                self.payload_slot_ptr(&llvm_enum, &scr_ptr, &variant_payload_tys, pi);
+                            let slot_ptr = self.payload_slot_ptr(
+                                &llvm_enum,
+                                &scr_ptr,
+                                &variant_payload_tys,
+                                pi,
+                            );
                             let v = self.next_tmp();
                             // v0.0.7 Slice 1.2: match-arm payload load/store —
                             // primitive payloads pick up their TBAA leaf;
@@ -10932,8 +11161,8 @@ impl<'a> FnState<'a> {
                 }
                 "acquire" => "acquire",
                 "release" => "release",
-                "acqrel"  => "acq_rel",
-                "seqcst"  => "seq_cst",
+                "acqrel" => "acq_rel",
+                "seqcst" => "seq_cst",
                 _ => unreachable!("parse_atomic_fence already validated"),
             };
             self.emit(&format!("fence {llvm_ord}"));
@@ -11046,7 +11275,11 @@ impl<'a> FnState<'a> {
                 // first real call.
                 if sig.is_extern {
                     match classify_c_abi(pty, self.types) {
-                        CAbiClass::Coerce { llvm_ty, size, align } => {
+                        CAbiClass::Coerce {
+                            llvm_ty,
+                            size,
+                            align,
+                        } => {
                             let (v, _) = self.gen_expr(a).expect("call arg is a value");
                             let pty_lty = self.lty(pty);
                             let slot = self.alloca_named_raw("arg.coerce", &llvm_ty, align);
@@ -11054,8 +11287,8 @@ impl<'a> FnState<'a> {
                             // the coerced LLVM type. The alloca was sized
                             // for the coerced type (≥ struct size), so
                             // store/load slop falls within the slot.
-                            let (_, struct_al) = static_layout(pty, self.types)
-                                .unwrap_or((size, align));
+                            let (_, struct_al) =
+                                static_layout(pty, self.types).unwrap_or((size, align));
                             self.emit(&format!(
                                 "store {pty_lty} {v}, ptr {slot}, align {struct_al}"
                             ));
@@ -11074,12 +11307,10 @@ impl<'a> FnState<'a> {
                         CAbiClass::Indirect => {
                             let (v, _) = self.gen_expr(a).expect("call arg is a value");
                             let pty_lty = self.lty(pty);
-                            let (_, al) = static_layout(pty, self.types)
-                                .expect("indirect arg has layout");
+                            let (_, al) =
+                                static_layout(pty, self.types).expect("indirect arg has layout");
                             let slot = self.alloca_anon(pty.clone());
-                            self.emit(&format!(
-                                "store {pty_lty} {v}, ptr {slot}, align {al}"
-                            ));
+                            self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
                             // aarch64-darwin doesn't use `byval` here (the
                             // caller-allocated slot is implicitly shared);
                             // x86_64-sysv would — matching the import-decl
@@ -11179,7 +11410,10 @@ impl<'a> FnState<'a> {
         // sret signature; this is the call-side companion.
         let extern_sret = sig.is_extern
             && !sig.is_variadic
-            && matches!(classify_c_abi(&sig.return_type, self.types), CAbiClass::Indirect);
+            && matches!(
+                classify_c_abi(&sig.return_type, self.types),
+                CAbiClass::Indirect
+            );
         let uses_sret = !sig.is_variadic
             && ((sig.link_name.is_none()
                 && !sig.is_extern
@@ -12225,8 +12459,7 @@ impl<'a> FnState<'a> {
         // Copy types so writes propagate to the caller's place.
         // v0.0.8 fix B (finish): on the pointer-passed receiver, mirror
         // the callee's receiver attrs at the call site.
-        let recv_by_value =
-            is_copy_ty(&recv_ty, self.types) && matches!(rcv, Receiver::Read);
+        let recv_by_value = is_copy_ty(&recv_ty, self.types) && matches!(rcv, Receiver::Read);
         let recv_arg = if recv_by_value {
             let v = self.next_tmp();
             self.gen_load(&v, &recv_ty, &recv_ptr);
@@ -12936,9 +13169,7 @@ impl<'a> FnState<'a> {
                         Ty::Str => (self.gen_to_string_str(&v).0, true),
                         Ty::Bool => (self.gen_to_string_bool(&v).0, true),
                         Ty::F32 | Ty::F64 => (self.gen_to_string_float(&v, &t).0, true),
-                        ref rt if rt.is_signed_int() => {
-                            (self.gen_to_string_signed(&v, rt).0, true)
-                        }
+                        ref rt if rt.is_signed_int() => (self.gen_to_string_signed(&v, rt).0, true),
                         ref rt if rt.is_unsigned_int() => {
                             (self.gen_to_string_unsigned(&v, rt).0, true)
                         }
@@ -13690,7 +13921,11 @@ impl<'a> FnState<'a> {
             "from_float" => {
                 let (v, src_ty) = self.gen_expr(&args[0]).expect("from_float arg");
                 let src_lty = self.lty(&src_ty);
-                let op = if elem.is_unsigned_int() { "fptoui" } else { "fptosi" };
+                let op = if elem.is_unsigned_int() {
+                    "fptoui"
+                } else {
+                    "fptosi"
+                };
                 let out = self.next_tmp();
                 self.emit(&format!("{out} = {op} {src_lty} {v} to {lty}"));
                 (out, recv.clone())
@@ -13718,7 +13953,10 @@ impl<'a> FnState<'a> {
             if let Ty::Mask { elem, lanes } = recv_ty {
                 return (
                     recv.to_string(),
-                    Ty::Simd { elem: elem.clone(), lanes: *lanes },
+                    Ty::Simd {
+                        elem: elem.clone(),
+                        lanes: *lanes,
+                    },
                 );
             }
         }
@@ -13726,7 +13964,10 @@ impl<'a> FnState<'a> {
             if let Ty::Simd { elem, lanes } = recv_ty {
                 return (
                     recv.to_string(),
-                    Ty::Mask { elem: elem.clone(), lanes: *lanes },
+                    Ty::Mask {
+                        elem: elem.clone(),
+                        lanes: *lanes,
+                    },
                 );
             }
         }
@@ -13972,11 +14213,7 @@ impl<'a> FnState<'a> {
                 self.emit(&format!(
                     "{mask_i1} = icmp ne {lty} {recv}, zeroinitializer"
                 ));
-                let intrinsic = if method == "any" {
-                    "or"
-                } else {
-                    "and"
-                };
+                let intrinsic = if method == "any" { "or" } else { "and" };
                 let result = self.next_tmp();
                 self.emit(&format!(
                     "{result} = call i1 @llvm.vector.reduce.{intrinsic}.v{lanes}i1(<{lanes} x i1> {mask_i1})"
@@ -14028,10 +14265,8 @@ impl<'a> FnState<'a> {
             // v0.0.7 Slice 2.1: reverse all lanes — shufflevector
             // with a constant descending mask.
             "reverse" => {
-                let mask_parts: Vec<String> = (0..*lanes)
-                    .rev()
-                    .map(|i| format!("i32 {i}"))
-                    .collect();
+                let mask_parts: Vec<String> =
+                    (0..*lanes).rev().map(|i| format!("i32 {i}")).collect();
                 let mask = mask_parts.join(", ");
                 let result = self.next_tmp();
                 self.emit(&format!(
@@ -14044,8 +14279,7 @@ impl<'a> FnState<'a> {
             "swizzle" => {
                 let indices = simd_swizzle_indices(&args[0], *lanes)
                     .expect("sema validated swizzle arg shape");
-                let mask_parts: Vec<String> =
-                    indices.iter().map(|i| format!("i32 {i}")).collect();
+                let mask_parts: Vec<String> = indices.iter().map(|i| format!("i32 {i}")).collect();
                 let mask = mask_parts.join(", ");
                 let result = self.next_tmp();
                 self.emit(&format!(
@@ -14079,9 +14313,11 @@ impl<'a> FnState<'a> {
             "low" | "high" => {
                 let half = *lanes / 2;
                 let base: u32 = if method == "high" { half } else { 0 };
-                let mask: Vec<String> =
-                    (0..half).map(|i| format!("i32 {}", base + i)).collect();
-                let target = Ty::Simd { elem: elem.clone(), lanes: half };
+                let mask: Vec<String> = (0..half).map(|i| format!("i32 {}", base + i)).collect();
+                let target = Ty::Simd {
+                    elem: elem.clone(),
+                    lanes: half,
+                };
                 let result = self.next_tmp();
                 self.emit(&format!(
                     "{result} = shufflevector {lty} {recv}, {lty} poison, <{half} x i32> <{}>",
@@ -14095,7 +14331,10 @@ impl<'a> FnState<'a> {
                 let (b, _) = self.gen_expr(&args[0]).expect("combine arg");
                 let total = *lanes * 2;
                 let mask: Vec<String> = (0..total).map(|i| format!("i32 {i}")).collect();
-                let target = Ty::Simd { elem: elem.clone(), lanes: total };
+                let target = Ty::Simd {
+                    elem: elem.clone(),
+                    lanes: total,
+                };
                 let result = self.next_tmp();
                 self.emit(&format!(
                     "{result} = shufflevector {lty} {recv}, {lty} {b}, <{total} x i32> <{}>",
@@ -14115,9 +14354,16 @@ impl<'a> FnState<'a> {
                     Ty::U32 => Ty::U64,
                     _ => unreachable!("sema validated widen lane type"),
                 };
-                let target = Ty::Simd { elem: Box::new(welem), lanes: *lanes };
+                let target = Ty::Simd {
+                    elem: Box::new(welem),
+                    lanes: *lanes,
+                };
                 let tlty = self.lty(&target);
-                let op = if elem.is_unsigned_int() { "zext" } else { "sext" };
+                let op = if elem.is_unsigned_int() {
+                    "zext"
+                } else {
+                    "sext"
+                };
                 let result = self.next_tmp();
                 self.emit(&format!("{result} = {op} {lty} {recv} to {tlty}"));
                 (result, target)
@@ -14134,7 +14380,10 @@ impl<'a> FnState<'a> {
                     Ty::U64 => Ty::U32,
                     _ => unreachable!("sema validated narrow lane type"),
                 };
-                let target = Ty::Simd { elem: Box::new(nelem), lanes: *lanes };
+                let target = Ty::Simd {
+                    elem: Box::new(nelem),
+                    lanes: *lanes,
+                };
                 let tlty = self.lty(&target);
                 let result = self.next_tmp();
                 self.emit(&format!("{result} = trunc {lty} {recv} to {tlty}"));
@@ -14164,11 +14413,15 @@ impl<'a> FnState<'a> {
                         let safe = self.next_tmp();
                         self.emit(&format!("{safe} = select i1 {inb}, i8 {ei}, i8 0"));
                         let val = self.next_tmp();
-                        self.emit(&format!("{val} = extractelement <16 x i8> {recv}, i8 {safe}"));
+                        self.emit(&format!(
+                            "{val} = extractelement <16 x i8> {recv}, i8 {safe}"
+                        ));
                         let val2 = self.next_tmp();
                         self.emit(&format!("{val2} = select i1 {inb}, i8 {val}, i8 0"));
                         let nxt = self.next_tmp();
-                        self.emit(&format!("{nxt} = insertelement <16 x i8> {cur}, i8 {val2}, i32 {i}"));
+                        self.emit(&format!(
+                            "{nxt} = insertelement <16 x i8> {cur}, i8 {val2}, i32 {i}"
+                        ));
                         cur = nxt;
                     }
                     (cur, recv_ty.clone())
@@ -14261,33 +14514,108 @@ fn codegen_simd_ty_from_name(name: &str) -> Option<Ty> {
             lanes: 8,
         }),
         // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths.
-        "i8x8"   => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 8 }),
-        "u8x8"   => Some(Ty::Simd { elem: Box::new(Ty::U8),  lanes: 8 }),
-        "i16x4"  => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 }),
-        "u16x4"  => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 }),
-        "i32x2"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 }),
-        "u32x2"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 }),
-        "f32x2"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 }),
+        "i8x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 8,
+        }),
+        "u8x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 8,
+        }),
+        "i16x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 4,
+        }),
+        "u16x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 4,
+        }),
+        "i32x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 2,
+        }),
+        "u32x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 2,
+        }),
+        "f32x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 2,
+        }),
         // v0.0.7 Slice 2.2: 256-bit widths.
-        "f32x8"  => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 8  }),
-        "f64x4"  => Some(Ty::Simd { elem: Box::new(Ty::F64), lanes: 4  }),
-        "i8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
-        "u8x32"  => Some(Ty::Simd { elem: Box::new(Ty::U8),  lanes: 32 }),
-        "i16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
-        "u16x16" => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 16 }),
-        "i32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
-        "u32x8"  => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 8  }),
-        "i64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
-        "u64x4"  => Some(Ty::Simd { elem: Box::new(Ty::U64), lanes: 4  }),
+        "f32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 8,
+        }),
+        "f64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::F64),
+            lanes: 4,
+        }),
+        "i8x32" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 32,
+        }),
+        "u8x32" => Some(Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 32,
+        }),
+        "i16x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 16,
+        }),
+        "u16x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 16,
+        }),
+        "i32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 8,
+        }),
+        "u32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 8,
+        }),
+        "i64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I64),
+            lanes: 4,
+        }),
+        "u64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::U64),
+            lanes: 4,
+        }),
         // v0.0.7 Slice 2.1: mask types alias the matching signed-int SIMD.
-        "mask8x16"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 16 }),
-        "mask16x8"  => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 8  }),
-        "mask32x4"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 4  }),
-        "mask64x2"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 2  }),
-        "mask8x32"  => Some(Ty::Simd { elem: Box::new(Ty::I8),  lanes: 32 }),
-        "mask16x16" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 16 }),
-        "mask32x8"  => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 8  }),
-        "mask64x4"  => Some(Ty::Simd { elem: Box::new(Ty::I64), lanes: 4  }),
+        "mask8x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 16,
+        }),
+        "mask16x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 8,
+        }),
+        "mask32x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 4,
+        }),
+        "mask64x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::I64),
+            lanes: 2,
+        }),
+        "mask8x32" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 32,
+        }),
+        "mask16x16" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 16,
+        }),
+        "mask32x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 8,
+        }),
+        "mask64x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I64),
+            lanes: 4,
+        }),
         _ => None,
     }
 }
@@ -14446,8 +14774,9 @@ mod tests {
             "declare i1 @llvm.coro.end(ptr, i1, token)\n"
         );
         assert!(
-            coro_end_call_ir()
-                .contains("%.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)"),
+            coro_end_call_ir().contains(
+                "%.coro.end_token = call i1 @llvm.coro.end(ptr %.coro.hdl, i1 false, token none)"
+            ),
             "i1 mode call: {}",
             coro_end_call_ir()
         );
@@ -14474,9 +14803,8 @@ mod tests {
     /// pattern is 0xC014000000000000.
     #[test]
     fn negative_float_literal_emits_hex_not_int_constant() {
-        let ir = gen_src(
-            "fn main() -> i32 { let n: f64 = -5.0; if n < 0.0 { return 1; } return 0; }",
-        );
+        let ir =
+            gen_src("fn main() -> i32 { let n: f64 = -5.0; if n < 0.0 { return 1; } return 0; }");
         assert!(
             !ir.contains("double -5"),
             "negative float literal emitted as an integer-form constant:\n{ir}"
@@ -14496,7 +14824,10 @@ mod tests {
             "fn f() -> i32 { return 7; }\n\
              fn main() -> i32 { let _ = f(); let _ = f(); return 0; }",
         );
-        assert!(ir.contains("define i32 @main"), "expected main in IR:\n{ir}");
+        assert!(
+            ir.contains("define i32 @main"),
+            "expected main in IR:\n{ir}"
+        );
     }
 
     /// v0.0.3 Phase 5 Slice 5B: gen_src + monomorphize. Required for
@@ -14708,7 +15039,8 @@ mod tests {
             "missing TBAA root; IR:\n{ir}"
         );
         assert!(
-            ir.lines().any(|l| l.contains("!{!\"i32\",") && l.contains("i64 0}")),
+            ir.lines()
+                .any(|l| l.contains("!{!\"i32\",") && l.contains("i64 0}")),
             "missing i32 TBAA leaf; IR:\n{ir}"
         );
         // The load picked up the tag.
@@ -14766,10 +15098,8 @@ mod tests {
         );
 
         // Every whole-struct load carries `!tbaa !N`.
-        let aggregate_load_lines: Vec<&str> = ir
-            .lines()
-            .filter(|l| l.contains(" = load %Pt,"))
-            .collect();
+        let aggregate_load_lines: Vec<&str> =
+            ir.lines().filter(|l| l.contains(" = load %Pt,")).collect();
         assert!(
             !aggregate_load_lines.is_empty(),
             "expected at least one whole-struct load; IR:\n{ir}"
@@ -14836,7 +15166,8 @@ mod tests {
         // cache it was 6 (one per source-level field read, with
         // `v.x` appearing twice etc.).
         assert_eq!(
-            gep_count, 3,
+            gep_count,
+            3,
             "expected 3 field GEPs (one per field) in dot; got {gep_count}. IR:\n{}",
             dot_body.join("\n")
         );
@@ -14869,7 +15200,10 @@ mod tests {
         // then-branch's `v.x` (fresh block), one in the merge
         // block's `v.x` (fresh block). Caching only fires within a
         // block.
-        let geps = ir.lines().filter(|l| l.contains("getelementptr inbounds %V")).count();
+        let geps = ir
+            .lines()
+            .filter(|l| l.contains("getelementptr inbounds %V"))
+            .count();
         assert!(
             geps >= 3,
             "expected at least 3 GEPs across the if's three basic blocks; got {geps}. IR:\n{ir}"
@@ -14895,16 +15229,10 @@ mod tests {
         );
         // No aggregate `load %Entry` should appear — the old path
         // emitted one to lift the literal out of its temp alloca.
-        let aggregate_loads = ir
-            .lines()
-            .filter(|l| l.contains(" = load %Entry,"))
-            .count();
+        let aggregate_loads = ir.lines().filter(|l| l.contains(" = load %Entry,")).count();
         // And no aggregate `store %Entry` either — the old path
         // stored the lifted value to the destination.
-        let aggregate_stores = ir
-            .lines()
-            .filter(|l| l.contains("store %Entry "))
-            .count();
+        let aggregate_stores = ir.lines().filter(|l| l.contains("store %Entry ")).count();
         assert_eq!(
             aggregate_loads, 0,
             "expected zero aggregate `load %Entry` in main; got {aggregate_loads}. IR:\n{ir}"
@@ -15372,8 +15700,7 @@ mod tests {
              }",
         );
         assert!(
-            ir.contains("call fastcc void @axpy(i64 ")
-                && ir.contains("ptr noalias noundef "),
+            ir.contains("call fastcc void @axpy(i64 ") && ir.contains("ptr noalias noundef "),
             "expected call site to mirror restrict noalias on both ptr args, got:\n{ir}"
         );
     }
@@ -15418,9 +15745,7 @@ mod tests {
         // regressing the f32 emission to a non-canonical or
         // bit-divergent form. Any change to f32 literal lowering must
         // continue to emit `0x3FD99999A0000000` for `0.4f32`.
-        let ir = gen_src(
-            "fn main() -> i32 { let _x: f32 = 0.4f32; return 0; }",
-        );
+        let ir = gen_src("fn main() -> i32 { let _x: f32 = 0.4f32; return 0; }");
         assert!(
             ir.contains("float 0x3FD99999A0000000"),
             "expected canonical f32 0.4 hex (matches clang's emission), got:\n{ir}"
@@ -15812,8 +16137,10 @@ mod tests {
     #[test]
     fn fp_contract_off_drops_fmuladd_and_contract_flag() {
         // B-10: `a*b+c` contracts to `llvm.fmuladd` by default.
-        let on = gen_src("fn f(a: f64, b: f64, c: f64) -> f64 { return a * b + c; }\n\
-                          fn main() -> i32 { return 0; }");
+        let on = gen_src(
+            "fn f(a: f64, b: f64, c: f64) -> f64 { return a * b + c; }\n\
+                          fn main() -> i32 { return 0; }",
+        );
         assert!(
             on.contains("call contract double @llvm.fmuladd.f64"),
             "default must contract to fmuladd, got:\n{on}"
@@ -17787,8 +18114,9 @@ mod tests {
 
     #[test]
     fn htonl_aliases_bswap32() {
-        let ir =
-            gen_src("fn main() -> i32 { let p: u32 = 1 as u32; let q: u32 = #htonl(p); return 0; }");
+        let ir = gen_src(
+            "fn main() -> i32 { let p: u32 = 1 as u32; let q: u32 = #htonl(p); return 0; }",
+        );
         assert!(
             ir.contains("call i32 @llvm.bswap.i32(i32 "),
             "expected htonl to lower to llvm.bswap.i32, got:\n{ir}"
@@ -18460,8 +18788,9 @@ mod tests {
         // module-level metadata (TBAA, range, etc.) is allocated
         // earlier in the pass.
         assert!(
-            ir.lines()
-                .any(|l| l.starts_with("!") && l.contains("distinct") && l.contains("!\"swap_bump\"")),
+            ir.lines().any(|l| l.starts_with("!")
+                && l.contains("distinct")
+                && l.contains("!\"swap_bump\"")),
             "expected swap_bump domain definition, got:\n{ir}"
         );
         assert!(
@@ -18915,7 +19244,9 @@ mod tests {
         // The pre-pass should have emitted both the NUL-terminated data
         // global and the lazy-cached pointer slot.
         assert!(
-            ir.contains("@__cplus.sel.0.data = private unnamed_addr constant [7 x i8] c\"length\\00\""),
+            ir.contains(
+                "@__cplus.sel.0.data = private unnamed_addr constant [7 x i8] c\"length\\00\""
+            ),
             "missing selector data global; IR:\n{ir}"
         );
         assert!(
@@ -19110,7 +19441,10 @@ mod tests {
              fn main() -> i32 { return a(0) +% b(0) +% c(0); }",
         );
         assert!(ir.contains("@a(i32 noundef %0) inlinehint {"), "IR:\n{ir}");
-        assert!(ir.contains("@b(i32 noundef %0) alwaysinline {"), "IR:\n{ir}");
+        assert!(
+            ir.contains("@b(i32 noundef %0) alwaysinline {"),
+            "IR:\n{ir}"
+        );
         assert!(ir.contains("@c(i32 noundef %0) noinline {"), "IR:\n{ir}");
     }
 
@@ -19126,7 +19460,8 @@ mod tests {
 
     #[test]
     fn no_inline_attr_emits_no_llvm_attr() {
-        let ir = gen_src("fn plain(x: i32) -> i32 { return x; }\nfn main() -> i32 { return plain(1); }");
+        let ir =
+            gen_src("fn plain(x: i32) -> i32 { return x; }\nfn main() -> i32 { return plain(1); }");
         // The signature closes straight into the body with no inline attribute.
         assert!(ir.contains("@plain(i32 noundef %0) {"), "IR:\n{ir}");
         assert!(!ir.contains("inlinehint"), "IR:\n{ir}");
@@ -19143,7 +19478,7 @@ mod tests {
         assert_eq!(f64_to_f16_bits(65504.0), 0x7BFF); // largest finite half
         assert_eq!(f64_to_f16_bits(65536.0), 0x7C00); // overflow → +inf
         assert_eq!(f64_to_f16_bits(0.5), 0x3800); // 0.5
-        // Smallest normal half: 2^-14.
+                                                  // Smallest normal half: 2^-14.
         assert_eq!(f64_to_f16_bits(6.103515625e-05), 0x0400);
         // A subnormal half: 2^-24 (smallest positive subnormal).
         assert_eq!(f64_to_f16_bits(5.960464477539063e-08), 0x0001);

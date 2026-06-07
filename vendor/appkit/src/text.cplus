@@ -50,6 +50,10 @@ impl TextView {
     pub fn set_delegate(self, delegate: *u8) {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
+
+    pub fn set_draws_background(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setDrawsBackground:\0")), flag);
+    }
 }
 
 pub struct SecureTextField {

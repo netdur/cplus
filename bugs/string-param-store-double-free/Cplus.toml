@@ -1,0 +1,11 @@
+[package]
+name    = "string_param_store_double_free"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "repro"
+path = "src/main.cplus"
+
+# No dependencies: the bug reproduces in pure C+ with one struct and a `string`.
+[dependencies]

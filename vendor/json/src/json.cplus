@@ -23,6 +23,7 @@
 
 import "stdlib/vec" as vec;
 import "stdlib/result" as result;
+import "stdlib/option" as option;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -535,9 +536,11 @@ pub fn parse(s: str) -> result::Result[Value, ParseError] {
 
 // v0.0.14: deep-clone a Value into an independent owned value. Accessors that
 // return owning data (an inner Value or a string) clone it so the result is
-// owned outright and the borrowed source is left intact. Vec elements are read
-// via inline `arr.get(i)` temporaries — never `let m = arr.get(i)`, which binds
-// an aliasing copy of a non-Copy element that double-frees when dropped.
+// owned outright and the borrowed source is left intact. Non-Copy Vec elements
+// (Value / Member) are read in place through `vec::at(i) -> Option[*T]`: bind the
+// pointer, then pass `unsafe { *p }` / `unsafe { (*p).value }` to the `borrow`
+// params, which borrow without consuming — never copy a non-Copy element out of
+// storage.
 pub fn clone_value(borrow v: Value) -> Value {
     return match v {
         Value::Null => Value::Null,
@@ -549,7 +552,10 @@ pub fn clone_value(borrow v: Value) -> Value {
             let mut out: vec::Vec[Value] = vec::new::[Value]();
             let mut i: usize = 0 as usize;
             while i < n {
-                out.push(clone_value(arr.get(i)));
+                match arr.at(i) {
+                    option::Option[*Value]::Some(p) => { out.push(clone_value(unsafe { *p })); }
+                    option::Option[*Value]::None => {}
+                }
                 i = i +% (1 as usize);
             }
             Value::Array(out)
@@ -559,10 +565,15 @@ pub fn clone_value(borrow v: Value) -> Value {
             let mut out: vec::Vec[Member] = vec::new::[Member]();
             let mut i: usize = 0 as usize;
             while i < n {
-                out.push(Member {
-                    key: arr.get(i).key.as_str().to_string(),
-                    value: clone_value(arr.get(i).value),
-                });
+                match arr.at(i) {
+                    option::Option[*Member]::Some(p) => {
+                        out.push(Member {
+                            key: unsafe { (*p).key.as_str() }.to_string(),
+                            value: clone_value(unsafe { (*p).value }),
+                        });
+                    }
+                    option::Option[*Member]::None => {}
+                }
                 i = i +% (1 as usize);
             }
             Value::Object(out)
@@ -600,7 +611,10 @@ pub fn array_len(borrow v: Value) -> usize {
 
 pub fn array_at(borrow v: Value, i: usize) -> Value {
     return match v {
-        Value::Array(arr) => clone_value(arr.get(i)),
+        Value::Array(arr) => match arr.at(i) {
+            option::Option[*Value]::Some(p) => clone_value(unsafe { *p }),
+            option::Option[*Value]::None => Value::Null,
+        },
         _ => Value::Null,
     };
 }
@@ -614,14 +628,20 @@ pub fn object_len(borrow v: Value) -> usize {
 
 pub fn object_key_at(borrow v: Value, i: usize) -> string {
     return match v {
-        Value::Object(arr) => arr.get(i).key.as_str().to_string(),
+        Value::Object(arr) => match arr.at(i) {
+            option::Option[*Member]::Some(p) => unsafe { (*p).key.as_str() }.to_string(),
+            option::Option[*Member]::None => "".to_string(),
+        },
         _ => "".to_string(),
     };
 }
 
 pub fn object_value_at(borrow v: Value, i: usize) -> Value {
     return match v {
-        Value::Object(arr) => clone_value(arr.get(i).value),
+        Value::Object(arr) => match arr.at(i) {
+            option::Option[*Member]::Some(p) => clone_value(unsafe { (*p).value }),
+            option::Option[*Member]::None => Value::Null,
+        },
         _ => Value::Null,
     };
 }
@@ -633,11 +653,16 @@ pub fn object_get(borrow v: Value, key: str) -> Value {
             let mut i: usize = 0 as usize;
             let mut found: Value = Value::Null;
             while i < n {
-                if arr.get(i).key.as_str() == key {
-                    found = clone_value(arr.get(i).value);
-                    i = n; // break
-                } else {
-                    i = i +% (1 as usize);
+                match arr.at(i) {
+                    option::Option[*Member]::Some(p) => {
+                        if unsafe { (*p).key.as_str() } == key {
+                            found = clone_value(unsafe { (*p).value });
+                            i = n; // break
+                        } else {
+                            i = i +% (1 as usize);
+                        }
+                    }
+                    option::Option[*Member]::None => { i = n; }
                 }
             }
             found
@@ -804,8 +829,10 @@ fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
             let mut i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
-                // inline temp (borrowed by encode_value): never `let e = arr.get(i)`.
-                bb = encode_value(bb, arr.get(i));
+                match arr.at(i) {
+                    option::Option[*Value]::Some(p) => { bb = encode_value(bb, unsafe { *p }); }
+                    option::Option[*Value]::None => {}
+                }
                 i = i +% (1 as usize);
             }
             bb = buf_push(bb, ']' as u8);
@@ -817,10 +844,14 @@ fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
             let mut i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
-                // inline `arr.get(i)` temps so no aliasing Member is bound.
-                bb = encode_string(bb, arr.get(i).key.as_str());
-                bb = buf_push(bb, ':' as u8);
-                bb = encode_value(bb, arr.get(i).value);
+                match arr.at(i) {
+                    option::Option[*Member]::Some(p) => {
+                        bb = encode_string(bb, unsafe { (*p).key.as_str() });
+                        bb = buf_push(bb, ':' as u8);
+                        bb = encode_value(bb, unsafe { (*p).value });
+                    }
+                    option::Option[*Member]::None => {}
+                }
                 i = i +% (1 as usize);
             }
             bb = buf_push(bb, '}' as u8);

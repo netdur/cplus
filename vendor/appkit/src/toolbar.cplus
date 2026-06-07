@@ -26,6 +26,40 @@ impl Toolbar {
     }
 }
 
+pub fn create_toolbar_delegate(
+    item_for_id: fn(*u8, *u8, *u8, *u8, i8) -> *u8,
+    default_ids: fn(*u8, *u8, *u8) -> *u8,
+    allowed_ids: fn(*u8, *u8, *u8) -> *u8
+) -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CToolbarDelegate\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+        cls = rt::allocate_class_pair(nsobject, #str_ptr("CToolbarDelegate\0"), 0 as usize);
+
+        let _a: i8 = rt::add_method_id_toolbar_item(
+            cls,
+            rt::sel(#str_ptr("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:\0")),
+            item_for_id,
+            #str_ptr("@@:@@c\0")
+        );
+        let _b: i8 = rt::add_method_id_toolbar_array(
+            cls,
+            rt::sel(#str_ptr("toolbarDefaultItemIdentifiers:\0")),
+            default_ids,
+            #str_ptr("@@:@\0")
+        );
+        let _c: i8 = rt::add_method_id_toolbar_array(
+            cls,
+            rt::sel(#str_ptr("toolbarAllowedItemIdentifiers:\0")),
+            allowed_ids,
+            #str_ptr("@@:@\0")
+        );
+        rt::register_class_pair(cls);
+    }
+    return rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
+}
+
 pub struct ToolbarItem {
     pub obj: *u8,
 }

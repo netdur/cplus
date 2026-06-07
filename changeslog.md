@@ -3,6 +3,40 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.17 — 2026-06-07
+
+Foundations: an ownership-safe `Vec`, a compiler soundness fix behind it, the
+framework-agnostic core of the agent surface, and a scoped-down package manager.
+
+### Compiler
+- **`string` value-param soundness fix:** a `string` (or other owning value)
+  passed by value and then *stored or forwarded* (e.g. `self.v.push(s)`,
+  `self.field = s`) instead of returned is no longer double-freed. `effective_move`
+  now covers `Ty::String` alongside `Ty::Struct`/`Ty::Enum`. Repro in
+  `bugs/string-param-store-double-free/`. (Requires a `cpc` reinstall from source.)
+
+### stdlib — `Vec` rewrite (breaking)
+- `Vec` is now ownership-safe: overflow-checked allocation sizing, null-checked
+  malloc/realloc, and **no silent out-of-bounds reads**.
+- API changes: `get` is a bounds-checked `vec::get::[T](v, i) -> Option[T]`
+  (Copy elements); `at_copy(i) -> T` asserts in-bounds; `at(i) -> Option[*T]`
+  reads a non-Copy element in place; `pop` returns `Option[T]`; added `set`,
+  `swap_remove`, `truncate`, `shrink_to_fit`, `is_empty`. `iter` stays a gen
+  method. All in-tree callers (json, clap, agent_core) migrated.
+
+### Package manager (new: `cplus-pm`)
+- A standalone tool to **manage packages in a project's `vendor/`**:
+  `install` / `remove` / `update`, with git-tag versioning, `pubgrub`
+  resolution, SHA-256 content addressing, a shared cache, and a lockfile. No
+  dependency on the compiler.
+
+### Agent surface core (new: `vendor/agent_core`, groundwork)
+- The framework-agnostic core for agent-controllable apps: the build-time-stable
+  agent-id tree, curated `describe`, the all-or-none auth gate + exposure +
+  affordance ceiling, bubbling events with `{node,verb,role}` subscriptions, and
+  action/text-op authorization with optimistic-concurrency versioning. Headless
+  and fully tested; the AppKit backend (GUI wiring) and MCP bridge are next.
+
 ## v0.0.16 — 2026-06-07
 
 The AppKit surface: full binding coverage, a leak-free ownership model, and

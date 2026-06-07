@@ -31,6 +31,12 @@ extern fn class_addMethod_draw_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, Rect),
 #[link_name = "class_addMethod"]
 extern fn class_addMethod_i64_id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) -> i64, types: *u8) -> i8;
 
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_toolbar_array(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_id_toolbar_item(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i8) -> *u8, types: *u8) -> i8;
+
 #[link_name = "objc_setAssociatedObject"]
 extern fn objc_setAssociatedObject(object: *u8, key: *u8, value: *u8, policy: usize);
 
@@ -271,6 +277,14 @@ pub fn add_method_i64_id_i64(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, i64
     return unsafe { class_addMethod_i64_id_i64(cls, selector, imp, types) };
 }
 
+pub fn add_method_id_toolbar_array(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> *u8, types: *u8) -> i8 {
+    return unsafe { class_addMethod_id_toolbar_array(cls, selector, imp, types) };
+}
+
+pub fn add_method_id_toolbar_item(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8, i8) -> *u8, types: *u8) -> i8 {
+    return unsafe { class_addMethod_id_toolbar_item(cls, selector, imp, types) };
+}
+
 pub fn set_associated_object(object: *u8, key: *u8, value: *u8, policy: usize) {
     unsafe { objc_setAssociatedObject(object, key, value, policy); };
 }
@@ -459,6 +473,16 @@ pub fn ns_string(utf8: *u8) -> *u8 {
     let cls: *u8 = get_class(#str_ptr("NSString\0"));
     let selector: *u8 = sel(#str_ptr("stringWithUTF8String:\0"));
     return msg_id_id(cls, selector, utf8);
+}
+
+// Generic NSMutableArray helpers (used by delegate methods that return
+// identifier arrays, e.g. the toolbar delegate).
+pub fn new_mutable_array() -> *u8 {
+    return msg_id(get_class(#str_ptr("NSMutableArray\0")), sel(#str_ptr("array\0")));
+}
+
+pub fn array_add_string(arr: *u8, s: *u8) {
+    msg_void_id(arr, sel(#str_ptr("addObject:\0")), ns_string(s));
 }
 
 // ---------------------------------------------------------------------------

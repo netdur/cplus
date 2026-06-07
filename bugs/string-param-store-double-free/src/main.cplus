@@ -1,0 +1,31 @@
+// Minimal reproducer: a `string` local moved into a method that STORES the
+// param (here into a struct field) is double-freed at scope exit.
+//
+//   cpc build && ./target/debug/repro   →   exits 133 (SIGTRAP, double free)
+//
+// Variants that are CLEAN (exit 0), pinning the trigger:
+//   - pass the temporary inline:           k.set("hello".to_string());
+//   - declare the param `move`:            fn set(mut self, move v: string)
+//   - a read-only param (not stored):      fn set(mut self, v: string) { ...read v... }
+//   - a user-Drop struct instead of string (routes through `effective_move`).
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> isize;
+
+struct Sink { s: string }
+
+impl Sink {
+    // Stores the param: `self.s = v` moves v into the field, so the field now
+    // owns v's buffer and will free it on Sink's drop.
+    fn set(mut self, v: string) { self.s = v; return; }
+}
+
+fn main() -> i32 {
+    let mut k: Sink = Sink { s: "init".to_string() };
+    let x: string = "hello".to_string();   // local binding -> buffer B
+    k.set(x);                              // move local into a storing method
+    // The caller still drops `x` at scope exit (bare `string` params use a
+    // borrow ABI; the caller is not `mark_moved`), so buffer B is freed by both
+    // `x`'s drop and the Sink field's drop -> double free.
+    unsafe { write(2 as i32, #str_ptr("reached end\n"), 12 as usize); }
+    return 0;
+}
