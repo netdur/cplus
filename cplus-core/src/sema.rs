@@ -7410,12 +7410,21 @@ impl SemaCx<'_> {
                             lit_field.name.span,
                         );
                     }
-                    let vty = self.check_expr(&lit_field.value, Some(t.clone()));
-                    // v0.0.14 soundness: the value is moved into the new struct's
-                    // field; moving a non-Copy field/index out of a Drop
-                    // aggregate would double-free (E0509), same as let/return.
-                    if vty != Ty::Error {
-                        self.reject_partial_move_of_drop(&lit_field.value, &vty);
+                    // TEXT.R1c: a string literal for a `Text`-typed field
+                    // constructs an owned Text (an rvalue — no partial move).
+                    // Matches codegen's struct-lit field lowering.
+                    let is_lang_string_field =
+                        matches!(lit_field.value.kind, ExprKind::StrLit(_))
+                            && matches!(t, Ty::Struct(fid)
+                                if self.designated_string_struct == Some(*fid));
+                    if !is_lang_string_field {
+                        let vty = self.check_expr(&lit_field.value, Some(t.clone()));
+                        // v0.0.14 soundness: the value is moved into the new
+                        // struct's field; moving a non-Copy field/index out of a
+                        // Drop aggregate would double-free (E0509), as let/return.
+                        if vty != Ty::Error {
+                            self.reject_partial_move_of_drop(&lit_field.value, &vty);
+                        }
                     }
                 }
                 None => {
@@ -15434,6 +15443,26 @@ mod tests {
             "struct Other { opaque ptr: *u8, len: usize, cap: usize }\n\
              fn make() -> Other { return \"x\"; }\n\
              fn main() -> i32 { let o: Other = make(); return 0; }",
+        );
+        assert!(codes.contains(&"E0302"));
+    }
+
+    #[test]
+    fn lang_string_literal_in_struct_field_clean_text_r1c() {
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             struct Widget { label: Text, id: i32 }\n\
+             fn main() -> i32 { let w: Widget = Widget { label: \"hi\", id: 1 }; return 0; }",
+        );
+    }
+
+    #[test]
+    fn non_lang_struct_field_literal_errors_text_r1c() {
+        // Field coercion is only for the designated string type.
+        let codes = errors(
+            "struct Inner { opaque ptr: *u8, len: usize, cap: usize }\n\
+             struct Widget { label: Inner, id: i32 }\n\
+             fn main() -> i32 { let w: Widget = Widget { label: \"hi\", id: 1 }; return 0; }",
         );
         assert!(codes.contains(&"E0302"));
     }

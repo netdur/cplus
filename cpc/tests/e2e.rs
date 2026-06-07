@@ -20776,6 +20776,39 @@ fn stdlib_text_literal_in_return_constructs_owned_text() {
     assert_eq!(run.code(), Some(3), "return-Text checks must pass");
 }
 
+/// TEXT.R1c: a string literal for a `Text`-typed struct field constructs an
+/// owned `Text` — the common UI pattern `Widget { label: "OK", .. }`. Builds,
+/// runs, the container drops the field clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_literal_in_struct_field_constructs_owned_text() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         struct Widget { label: text::Text, id: i32 }\n\
+         fn main() -> i32 {\n\
+             let w: Widget = Widget { label: \"Submit\", id: 7 };\n\
+             let mut score: i32 = 0;\n\
+             if w.label.len() == (6 as usize) { score = score +% 1; }\n\
+             if w.label.starts_with(\"Sub\") { score = score +% 1; }\n\
+             if w.id == 7 { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of struct Text field literal failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "struct-field Text checks must pass");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

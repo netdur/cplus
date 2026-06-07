@@ -9376,9 +9376,16 @@ impl<'a> FnState<'a> {
 
         let slot = self.alloca_anon(struct_ty.clone());
         for f in fields {
-            let (val, _val_ty) = self.gen_expr(&f.value).expect("field init has value");
-            let idx = info.field_index(&f.name.name);
             let field_ty = info.field_type(&f.name.name);
+            // TEXT.R1c: a string literal for a `Text`-typed field constructs an
+            // owned Text (matches the sema struct-lit field coercion).
+            let val = match &f.value.kind {
+                ExprKind::StrLit(s) if self.is_lang_string_ty(&field_ty) => {
+                    self.gen_strlit_as_lang_string(s, &field_ty)
+                }
+                _ => self.gen_expr(&f.value).expect("field init has value").0,
+            };
+            let idx = info.field_index(&f.name.name);
             let ptr = self.next_tmp();
             self.emit(&format!(
                 "{ptr} = getelementptr inbounds {llvm_struct}, ptr {slot}, i32 0, i32 {idx}"
