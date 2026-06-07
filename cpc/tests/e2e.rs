@@ -20679,34 +20679,42 @@ fn stdlib_text_literal_in_let_constructs_owned_text() {
     assert_eq!(run.code(), Some(4), "all 4 literal-Text checks must pass");
 }
 
-/// TEXT.R1 (lockstep): literal→`Text` coercion is scoped to the `let` site.
-/// A literal passed where a `Text` is expected (function arg) is still a `str`
-/// and must error (E0302) — sema and codegen agree on the supported context.
+/// TEXT.R1c: a string literal for an owning `Text` arg constructs an owned
+/// `Text` across the free-fn, method, and assoc-fn call paths. Builds, runs,
+/// each callee owns and drops its arg clean (ASan-verified separately).
 #[test]
 #[cfg(target_os = "macos")]
-fn stdlib_text_literal_as_arg_still_errors() {
+fn stdlib_text_literal_as_arg_constructs_owned_text() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     setup_text_project(
         &dir,
         "import \"stdlib/text\" as text;\n\
+         struct Setter { tag: i32 }\n\
+         impl Setter {\n\
+             fn set(self, t: text::Text) -> usize { return t.len(); }\n\
+             fn make(t: text::Text) -> usize { return t.len(); }\n\
+         }\n\
          fn take(t: text::Text) -> usize { return t.len(); }\n\
          fn main() -> i32 {\n\
-             let n: usize = take(\"hello\");\n\
-             return n as i32;\n\
+             let mut score: i32 = 0;\n\
+             if take(\"hello\") == (5 as usize) { score = score +% 1; }\n\
+             let s: Setter = Setter { tag: 1 };\n\
+             if s.set(\"hi there\") == (8 as usize) { score = score +% 1; }\n\
+             if Setter::make(\"yo\") == (2 as usize) { score = score +% 1; }\n\
+             return score;\n\
          }\n",
     );
-    let out = Command::new(cpc)
+    let st = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
-        .output()
+        .status()
         .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "literal as a Text arg must fail (coercion is let-scoped)"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0302"), "expected E0302, stderr:\n{stderr}");
+    assert!(st.success(), "cpc build of literal Text args failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "free/method/assoc Text-arg checks must pass");
 }
 
 /// TEXT.R1 + multi-line: a triple-quoted `"""..."""` literal in a `Text`-typed

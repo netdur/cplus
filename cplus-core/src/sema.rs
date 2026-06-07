@@ -11076,6 +11076,22 @@ impl SemaCx<'_> {
     /// `Copy`-typed arguments are unaffected — the `move` marker on a Copy
     /// parameter is redundant (a future E0336 lint will suggest removing it).
     fn check_arg_with_move(&mut self, arg: &Expr, expected: &ParamSig) {
+        // TEXT.R1c: a string literal where an *owned* `Text` is expected
+        // constructs an owned Text (an rvalue — nothing to consume). Scoped to
+        // owning, implicit-move params (not `mut`/`borrow`/`move`): those are
+        // exactly the non-Copy by-ptr params whose call-site lowering
+        // (`gen_place_coerced`) materializes the literal into a temp. A literal
+        // for a `mut`/`borrow` param makes no sense (no place to mutate / borrow)
+        // and still needs `from_str`.
+        if matches!(arg.kind, ExprKind::StrLit(_))
+            && !expected.mutable
+            && !expected.borrow_
+            && !expected.move_
+            && matches!(&expected.ty, Ty::Struct(id)
+                if self.designated_string_struct == Some(*id))
+        {
+            return;
+        }
         let _ = self.check_expr(arg, Some(expected.ty.clone()));
         // v0.0.10 Phase 5: non-Copy params consume the caller's binding by
         // default. `move x: T` is the explicit spelling (kept for
@@ -15416,12 +15432,23 @@ mod tests {
     }
 
     #[test]
-    fn lang_string_literal_as_arg_errors_text_r1() {
-        // Coercion is scoped to the `let` site; a literal passed where a `Text`
-        // is expected stays `str` and mismatches (E0302).
-        let codes = errors(
+    fn lang_string_literal_as_owning_arg_clean_text_r1c() {
+        // A literal for an owning (by-value) `Text` param constructs an owned
+        // Text — coercion now covers the arg site.
+        assert_clean(
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
              fn take(t: Text) -> i32 { return 0; }\n\
+             fn main() -> i32 { return take(\"x\"); }",
+        );
+    }
+
+    #[test]
+    fn lang_string_literal_as_mut_arg_errors_text_r1c() {
+        // Coercion is scoped to *owning* params; a literal for a `mut` param has
+        // no place to mutate and still mismatches (E0302).
+        let codes = errors(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn take(mut t: Text) -> i32 { return 0; }\n\
              fn main() -> i32 { return take(\"x\"); }",
         );
         assert!(codes.contains(&"E0302"));

@@ -11129,7 +11129,7 @@ impl<'a> FnState<'a> {
         // erases them). All callable signatures here are C-ABI (ccc).
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         for (a, pty) in args.iter().zip(params.iter()) {
-            let (v, _) = self.gen_expr(a).expect("indirect call arg has value");
+            let (v, _) = self.gen_value_arg(a, pty);
             arg_vals.push((v, self.lty(pty)));
         }
         let mut arg_str = String::new();
@@ -11359,7 +11359,7 @@ impl<'a> FnState<'a> {
                         CAbiClass::Direct => {}
                     }
                 }
-                let (v, _) = self.gen_expr(a).expect("call arg is a value");
+                let (v, _) = self.gen_value_arg(a, pty);
                 // v0.0.8 post-bench-gap: mirror `restrict *T` at the
                 // scalar-arg call site so it matches the callee's
                 // `ptr noalias noundef` signature.
@@ -12522,7 +12522,7 @@ impl<'a> FnState<'a> {
                     arg_parts.push(format!("ptr {attrs} {addr}"));
                 }
             } else {
-                let (v, _) = self.gen_expr(a).expect("call arg has value");
+                let (v, _) = self.gen_value_arg(a, pty);
                 // v0.0.8 post-bench-gap: mirror `restrict *T` noalias
                 // at the scalar-arg call site to match the callee's
                 // `ptr noalias noundef` signature.
@@ -12634,7 +12634,7 @@ impl<'a> FnState<'a> {
                     arg_parts.push(format!("ptr {attrs} {addr}"));
                 }
             } else {
-                let (v, _) = self.gen_expr(a).expect("call arg has value");
+                let (v, _) = self.gen_value_arg(a, pty);
                 // v0.0.8 post-bench-gap: mirror `restrict *T` noalias
                 // at the scalar-arg call site to match the callee's
                 // `ptr noalias noundef` signature.
@@ -12775,7 +12775,7 @@ impl<'a> FnState<'a> {
                     arg_parts.push(format!("ptr {attrs} {addr}"));
                 }
             } else {
-                let (v, _) = self.gen_expr(a).expect("call arg has value");
+                let (v, _) = self.gen_value_arg(a, pty);
                 // v0.0.8 post-bench-gap: mirror `restrict *T` noalias
                 // at the scalar-arg call site to match the callee's
                 // `ptr noalias noundef` signature.
@@ -13755,6 +13755,21 @@ impl<'a> FnState<'a> {
     /// struct (`Text`).
     fn is_lang_string_ty(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_lang_string)
+    }
+
+    /// TEXT.R1c: materialize a by-value call argument, building an owned `Text`
+    /// when a string literal meets a `Text` param (an owned, implicit-move
+    /// param is passed by value, so the literal must become the `%Text`
+    /// aggregate, not a `str`). Returns the SSA value; the callee owns and drops
+    /// it (the value is fresh — no caller binding to double-free). Falls through
+    /// to `gen_expr` otherwise.
+    fn gen_value_arg(&mut self, a: &Expr, pty: &Ty) -> (String, Ty) {
+        if let ExprKind::StrLit(s) = &a.kind {
+            if self.is_lang_string_ty(pty) {
+                return (self.gen_strlit_as_lang_string(s, pty), pty.clone());
+            }
+        }
+        self.gen_expr(a).expect("call arg has value")
     }
 
     /// TEXT.R1: lower a string literal in `Text` context to an owned heap copy,
