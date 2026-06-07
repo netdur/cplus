@@ -20709,6 +20709,39 @@ fn stdlib_text_literal_as_arg_still_errors() {
     assert!(stderr.contains("E0302"), "expected E0302, stderr:\n{stderr}");
 }
 
+/// TEXT.R1 + multi-line: a triple-quoted `"""..."""` literal in a `Text`-typed
+/// `let` constructs an owned `Text` whose value is the bytes between the
+/// delimiters, verbatim — no indentation stripping, leading/trailing newlines
+/// kept. Builds, runs, ASan-clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_multiline_literal_is_verbatim() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let banner: text::Text = \"\"\"\nusage: build <file>\n  --out <dir>\n\"\"\";\n\
+             let mut score: i32 = 0;\n\
+             if banner.starts_with(\"\\nusage:\") { score = score +% 1; }\n\
+             if banner.contains(\"--out <dir>\") { score = score +% 1; }\n\
+             if banner.ends_with(\"\\n\") { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of multi-line Text literal failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "verbatim multi-line checks must pass");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

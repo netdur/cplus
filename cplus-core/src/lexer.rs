@@ -310,6 +310,10 @@ impl<'a> Lexer<'a> {
 
         // strings
         if c == b'"' {
+            // Multi-line `"""..."""` — verbatim, no escape/indent magic.
+            if self.peek(1) == Some(b'"') && self.peek(2) == Some(b'"') {
+                return self.lex_triple_string(start);
+            }
             return self.lex_string(start);
         }
 
@@ -434,6 +438,41 @@ impl<'a> Lexer<'a> {
                 kind: LexErrorKind::UnterminatedString,
                 span: self.span_from(start),
             }),
+        }
+    }
+
+    /// Multi-line triple-quoted string `"""..."""`. **Verbatim**: the value is
+    /// exactly the bytes between the opening and closing `"""` — no indentation
+    /// stripping, no escape processing, no `${}` interpolation, literal newlines
+    /// included. The developer controls layout; the compiler adds no magic
+    /// (decided 2026-06-07). Emits a plain `Str` token, so it flows through the
+    /// same path as a single-line literal (including the `Text` let coercion).
+    fn lex_triple_string(&mut self, start: usize) -> Result<Token, LexError> {
+        self.pos += 3; // opening """
+        let mut decoded: Vec<u8> = Vec::new();
+        loop {
+            match self.peek(0) {
+                None => {
+                    return Err(LexError {
+                        kind: LexErrorKind::UnterminatedString,
+                        span: self.span_from(start),
+                    });
+                }
+                Some(b'"')
+                    if self.peek(1) == Some(b'"') && self.peek(2) == Some(b'"') =>
+                {
+                    self.pos += 3; // closing """
+                    let body = String::from_utf8(decoded).unwrap_or_default();
+                    return Ok(Token {
+                        kind: TokenKind::Str(body),
+                        span: self.span_from(start),
+                    });
+                }
+                Some(byte) => {
+                    decoded.push(byte);
+                    self.pos += 1;
+                }
+            }
         }
     }
 
@@ -1251,6 +1290,53 @@ mod tests {
     fn string_unterminated_newline_errors() {
         assert!(matches!(
             tokenize("\"oops\n\"").unwrap_err().kind,
+            LexErrorKind::UnterminatedString
+        ));
+    }
+
+    #[test]
+    fn triple_quote_basic() {
+        let toks = tokenize("\"\"\"hello\"\"\"").unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Str("hello".to_string()));
+    }
+
+    #[test]
+    fn triple_quote_multiline_keeps_newlines_verbatim() {
+        // Literal newlines are part of the value; leading newline after the
+        // opening `"""` is NOT stripped (verbatim, no magic).
+        let toks = tokenize("\"\"\"\nline one\nline two\n\"\"\"").unwrap();
+        assert_eq!(
+            toks[0].kind,
+            TokenKind::Str("\nline one\nline two\n".to_string())
+        );
+    }
+
+    #[test]
+    fn triple_quote_no_indentation_stripping() {
+        // Leading whitespace on each line stays in the value — the developer
+        // controls layout, the compiler does not de-indent.
+        let toks = tokenize("\"\"\"\n    indented\n    \"\"\"").unwrap();
+        assert_eq!(
+            toks[0].kind,
+            TokenKind::Str("\n    indented\n    ".to_string())
+        );
+    }
+
+    #[test]
+    fn triple_quote_allows_inner_quotes_and_backslashes_raw() {
+        // Single/double quotes inside are literal; backslashes are NOT escape
+        // sequences (raw/verbatim).
+        let toks = tokenize("\"\"\"say \"hi\" \\n done\"\"\"").unwrap();
+        assert_eq!(
+            toks[0].kind,
+            TokenKind::Str("say \"hi\" \\n done".to_string())
+        );
+    }
+
+    #[test]
+    fn triple_quote_unterminated_errors() {
+        assert!(matches!(
+            tokenize("\"\"\"oops").unwrap_err().kind,
             LexErrorKind::UnterminatedString
         ));
     }
