@@ -20485,6 +20485,167 @@ fn realtime_report_clean_exits_zero() {
     assert!(stdout.contains("functions under contract: 2"), "stdout:\n{stdout}");
 }
 
+/// TEXT.1: an `unsafe fn` (free function and method) compiles and runs when
+/// every call is inside an `unsafe { ... }` block. The exit code threads the
+/// returned values through to prove the bodies actually executed.
+#[test]
+fn unsafe_fn_compiles_and_runs_when_called_in_unsafe_block() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("unsafe_ok.cplus");
+    std::fs::write(
+        &src,
+        "struct Counter { n: i32 }\n\
+         impl Counter { unsafe fn raw_get(self) -> i32 { return self.n; } }\n\
+         unsafe fn danger() -> i32 { return 42; }\n\
+         fn main() -> i32 {\n\
+             let c: Counter = Counter { n: 7 };\n\
+             let a: i32 = unsafe { c.raw_get() };\n\
+             let b: i32 = unsafe { danger() };\n\
+             return a +% b;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("unsafe_ok");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "cpc must compile unsafe-fn program");
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(49), "7 + 42 should reach the exit code");
+}
+
+/// TEXT.1 (negative): calling an `unsafe fn` outside an `unsafe { ... }` block
+/// is a compile error (E0801) — the program must not build.
+#[test]
+fn unsafe_fn_call_outside_unsafe_block_fails_to_compile() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("unsafe_bad.cplus");
+    std::fs::write(
+        &src,
+        "unsafe fn danger() -> i32 { return 1; }\n\
+         fn main() -> i32 { return danger(); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("unsafe_bad");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "bare unsafe-fn call must fail to compile");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0801"), "expected E0801, stderr:\n{stderr}");
+}
+
+/// TEXT.2: vendor the `stdlib/text` module (and its `option` dep) into a temp
+/// project and write `src/main.cplus`. Mirrors the other stdlib e2e setups.
+#[cfg(target_os = "macos")]
+fn setup_text_project(dir: &std::path::Path, main_src: &str) {
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"textt\"\n\n[[bin]]\nname = \"textt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["text", "option"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+}
+
+/// TEXT.2: the `Text` stdlib type builds, links, and its core API
+/// (from_str / push_str / len / starts_with / ends_with / contains / find /
+/// clone / `unsafe` as_str) returns correct results. The exit code is the
+/// number of the 7 checks that passed, so a wrong answer is visible.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_core_api_builds_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         import \"stdlib/option\" as option;\n\
+         fn main() -> i32 {\n\
+             let mut t: text::Text = text::from_str(\"hello\");\n\
+             t.push_str(\", world\");\n\
+             let mut score: i32 = 0;\n\
+             if t.len() == (12 as usize) { score = score +% 1; }\n\
+             if t.starts_with(\"hello\") { score = score +% 1; }\n\
+             if t.ends_with(\"world\") { score = score +% 1; }\n\
+             if t.contains(\"lo, wo\") { score = score +% 1; }\n\
+             match t.find(\"world\") {\n\
+                 option::Option[usize]::Some(i) => { if i == (7 as usize) { score = score +% 1; } }\n\
+                 option::Option[usize]::None => { }\n\
+             }\n\
+             let c: text::Text = t.clone();\n\
+             if c.len() == (12 as usize) { score = score +% 1; }\n\
+             let v: str = unsafe { c.as_str() };\n\
+             if #str_len(v) == (12 as usize) { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of stdlib/text consumer failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(7), "all 7 Text API checks must pass");
+}
+
+/// TEXT.2 + TEXT.1: `Text::as_str` is an `unsafe fn`, so calling it without an
+/// `unsafe { ... }` block fails to compile (E0801) — the dangling-view escape
+/// hatch is opt-in even through the real stdlib type.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_as_str_requires_unsafe_block() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = text::from_str(\"hi\");\n\
+             let v: str = t.as_str();\n\
+             return 0;\n\
+         }\n",
+    );
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "bare Text::as_str call must fail to compile"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0801"), "expected E0801, stderr:\n{stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

@@ -194,6 +194,18 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         targets: TARGET_LOOP_STMT,
         allow_duplicate: false,
     },
+    // TEXT.R1: `#[lang("string")]` — lang-item marker. Tags the one stdlib
+    // struct that is the designated owned-string type (`Text`). The compiler
+    // records its `StructId` during collection and lowers string literals (and,
+    // later, interpolation) in a `Text` context into calls to its `from_str`
+    // constructor. Surface-shape only here; the designation + lowering live in
+    // sema. One string arg names the lang item.
+    AttrSpec {
+        name: "lang",
+        args: ArgsSpec::ExactlyOneStr,
+        targets: TARGET_STRUCT,
+        allow_duplicate: false,
+    },
 ];
 
 /// Single-file entry point. Mirrors `sema::check`.
@@ -824,6 +836,26 @@ mod tests {
             diags[0].suggestions.is_empty(),
             "no suggestion for distant unknown name"
         );
+    }
+
+    // ---- TEXT.R1: `#[lang("string")]` ----
+
+    #[test]
+    fn lang_string_on_struct_clean() {
+        let diags = check_src("#[lang(\"string\")] struct Text { ptr: *u8 }");
+        assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
+    }
+
+    #[test]
+    fn lang_missing_arg_e0355() {
+        let diags = check_src("#[lang] struct Text { ptr: *u8 }");
+        assert_eq!(codes(&diags), vec!["E0355"]);
+    }
+
+    #[test]
+    fn lang_on_function_wrong_target_e0356() {
+        let diags = check_src("#[lang(\"string\")] fn f() { return; }");
+        assert_eq!(codes(&diags), vec!["E0356"]);
     }
 
     // ---- Slice 10.FFI.5: `#[repr(C)]` ----

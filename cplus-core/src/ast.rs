@@ -320,6 +320,11 @@ pub struct Method {
     /// (async methods land alongside non-Copy `self` async).
     pub is_async: bool,
     pub is_gen: bool,
+    /// TEXT.1: `unsafe fn` method. When true, calling this method outside
+    /// an enclosing `unsafe { ... }` block is rejected (E0801). Used for
+    /// borrow-producing escape hatches like `Text::as_str` whose returned
+    /// view's lifetime the compiler can't prove.
+    pub is_unsafe: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -382,6 +387,11 @@ pub struct Function {
     /// resumes + reads + returns `Option::Some(v)` (or `Option::None`
     /// when the coroutine completes).
     pub is_gen: bool,
+    /// TEXT.1: `unsafe fn` declaration. When true, calling this function
+    /// outside an enclosing `unsafe { ... }` block is rejected (E0801),
+    /// mirroring the existing `extern fn` call gate. Always false for
+    /// `extern fn` (those are gated by `is_extern` independently).
+    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.1: a single type parameter declaration in a generic

@@ -354,6 +354,10 @@ pub struct MethodSig {
     /// Slice 7GEN.5e step 4: bounds parallel to `generic_params`.
     /// Empty list per param when unbounded.
     pub generic_bounds: Vec<Vec<String>>,
+    /// TEXT.1: `unsafe fn` method — calling it outside an `unsafe { ... }`
+    /// block is E0801. Blessed/builtin and interface signatures are safe
+    /// (false); only user `impl` methods marked `unsafe fn` set this.
+    pub is_unsafe: bool,
 }
 
 impl StructDef {
@@ -387,6 +391,9 @@ pub struct FnSig {
     /// name as the symbol." Only meaningful on extern fns; sema rejects
     /// the attribute on non-extern fns.
     pub link_name: Option<String>,
+    /// TEXT.1: `unsafe fn` — calling it outside an `unsafe { ... }` block
+    /// is E0801, mirroring the extern-fn call gate.
+    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.5a: a generic-fn signature with its type-parameter
@@ -404,6 +411,9 @@ pub struct GenericFnSig {
     pub bounds: Vec<Vec<String>>,
     pub params: Vec<ParamSig>,
     pub return_type: Ty,
+    /// TEXT.1: `unsafe fn` generic free function — call site requires an
+    /// `unsafe { ... }` block (E0801), same as non-generic `unsafe fn`.
+    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.4: a registered `interface Name { fn ... }` declaration.
@@ -645,6 +655,7 @@ fn check_with_files_inner<'a>(
         enum_by_name: HashMap::new(),
         structs: Vec::new(),
         struct_by_name: HashMap::new(),
+        designated_string_struct: None,
         type_aliases: HashMap::new(),
         resolving_aliases: std::collections::HashSet::new(),
         scopes: Vec::new(),
@@ -886,6 +897,11 @@ struct SemaCx<'a> {
     enum_by_name: HashMap<String, EnumId>,
     structs: Vec<StructDef>,
     struct_by_name: HashMap<String, StructId>,
+    /// TEXT.R1: the `StructId` of the struct tagged `#[lang("string")]` — the
+    /// designated owned-string type (`Text`). `None` until that struct is
+    /// collected (e.g. a program that doesn't import `stdlib/text`). A string
+    /// literal in this type's context lowers to its `from_str` constructor.
+    designated_string_struct: Option<StructId>,
     /// Phase 11 polish (2026-05-13): `type Foo = Bar;` aliases. Maps
     /// the alias name to its target AST `Type`. Resolved on every use
     /// via `resolve_type` — transparent (Foo and Bar are identical at
@@ -1141,6 +1157,7 @@ pub struct GenericImplMethodTemplate {
     pub impl_generic_params: Vec<String>,   // T from `impl Vec[T]`
     pub method_generic_params: Vec<String>, // U from `fn map[U]`
     pub is_drop: bool, // marker for cached Drop bookkeeping (always false today)
+    pub is_unsafe: bool, // TEXT.1: `unsafe fn` method, propagated to MethodSig
 }
 
 impl SemaCx<'_> {
@@ -1202,6 +1219,7 @@ impl SemaCx<'_> {
                 return_type: Ty::Unit,
                 is_variadic: false,
                 link_name: None,
+                is_unsafe: false,
             },
         );
     }
@@ -1303,6 +1321,27 @@ impl SemaCx<'_> {
                     // declaration. The attrs pass has already validated
                     // the args are `(C)`; here we just check presence.
                     let is_repr_c = s.attributes.iter().any(|a| a.path.name == "repr");
+                    // TEXT.R1: record the `#[lang("string")]` struct as the
+                    // designated owned-string type. The attrs pass has already
+                    // validated the one-string-arg shape.
+                    let is_lang_string = s.attributes.iter().any(|a| {
+                        a.path.name == "lang"
+                            && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == "string")
+                    });
+                    if is_lang_string {
+                        if let Some(prev) = self.designated_string_struct {
+                            self.err(
+                                "E0301",
+                                format!(
+                                    "duplicate `#[lang(\"string\")]` — already on `{}`",
+                                    self.structs[prev.0 as usize].name
+                                ),
+                                s.name.span,
+                            );
+                        } else {
+                            self.designated_string_struct = Some(id);
+                        }
+                    }
                     self.structs.push(StructDef {
                         name: s.name.name.clone(),
                         fields: Vec::new(),
@@ -2128,6 +2167,7 @@ impl SemaCx<'_> {
                         return_type,
                         generic_params,
                         generic_bounds,
+                        is_unsafe: m.is_unsafe,
                     },
                 );
             }
@@ -2214,6 +2254,7 @@ impl SemaCx<'_> {
                         return_type: resolved_return,
                         generic_params: t.method_generic_params.clone(),
                         generic_bounds: Vec::new(),
+                        is_unsafe: t.is_unsafe,
                     },
                 );
             }
@@ -2302,6 +2343,7 @@ impl SemaCx<'_> {
                     return_type,
                     generic_params,
                     generic_bounds,
+                    is_unsafe: m.is_unsafe,
                 },
             );
         }
@@ -2410,6 +2452,7 @@ impl SemaCx<'_> {
                 impl_generic_params: impl_param_names.clone(),
                 method_generic_params: method_param_names,
                 is_drop: false,
+                is_unsafe: m.is_unsafe,
             });
         }
         self.self_type_stack.pop();
@@ -2505,6 +2548,9 @@ impl SemaCx<'_> {
                     return_type: ret.clone(),
                     generic_params: Vec::new(),
                     generic_bounds: Vec::new(),
+                    // interface signatures are not `unsafe fn` (TEXT.1 targets
+                    // inherent `impl` methods); unsafe interfaces can come later.
+                    is_unsafe: false,
                 },
             );
             self.interfaces.insert(
@@ -2578,6 +2624,8 @@ impl SemaCx<'_> {
                         return_type,
                         generic_params: Vec::new(),
                         generic_bounds: Vec::new(),
+                        // `m` here is an InterfaceMethod (no `unsafe fn`).
+                        is_unsafe: false,
                     },
                 );
             }
@@ -3215,6 +3263,7 @@ impl SemaCx<'_> {
                             .collect(),
                         params,
                         return_type: ret,
+                        is_unsafe: f.is_unsafe,
                     },
                 );
                 continue;
@@ -3242,6 +3291,7 @@ impl SemaCx<'_> {
                     return_type: ret,
                     is_variadic: f.is_variadic,
                     link_name: link_name.clone(),
+                    is_unsafe: f.is_unsafe,
                 },
             );
         }
@@ -8068,6 +8118,17 @@ impl SemaCx<'_> {
                 call_span,
             );
         }
+        // TEXT.1: `unsafe fn` (C+-defined) calls require `unsafe { ... }`.
+        if sig.is_unsafe && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                format!(
+                    "calling `unsafe fn {}` requires an enclosing `unsafe {{ ... }}` block",
+                    name
+                ),
+                call_span,
+            );
+        }
         // Slice 10.FFI.4: variadic extern fns accept any number of
         // extra args beyond their fixed-param list. Fixed-param count
         // is still enforced as a minimum.
@@ -8572,6 +8633,17 @@ impl SemaCx<'_> {
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
+        // TEXT.1: `unsafe fn` generic free function requires `unsafe { ... }`.
+        if gsig.is_unsafe && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                format!(
+                    "calling `unsafe fn {}` requires an enclosing `unsafe {{ ... }}` block",
+                    name
+                ),
+                call_span,
+            );
+        }
         if args.len() != gsig.params.len() {
             self.err(
                 "E0308",
@@ -8992,6 +9064,18 @@ impl SemaCx<'_> {
             }
             return Ty::Error;
         };
+        // TEXT.1: `unsafe fn` method call requires `unsafe { ... }`. Checked
+        // once here so it covers both the generic-method and plain paths.
+        if sig.is_unsafe && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                format!(
+                    "calling `unsafe fn {}::{}` requires an enclosing `unsafe {{ ... }}` block",
+                    struct_name, name.name
+                ),
+                call_span,
+            );
+        }
         let Some(rcv) = sig.receiver else {
             self.err(
                 "E0327",
@@ -9087,6 +9171,17 @@ impl SemaCx<'_> {
         call_span: ByteSpan,
         receiver: &Expr,
     ) -> Ty {
+        // TEXT.1: `unsafe fn` method on an enum requires `unsafe { ... }`.
+        if sig.is_unsafe && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                format!(
+                    "calling `unsafe fn {}::{}` requires an enclosing `unsafe {{ ... }}` block",
+                    enum_name, name.name
+                ),
+                call_span,
+            );
+        }
         let Some(rcv) = sig.receiver else {
             self.err(
                 "E0327",
@@ -12311,6 +12406,7 @@ impl SemaCx<'_> {
                         // can still be `fn map[U]` inside `impl Vec[T]`.
                         generic_params: t.method_generic_params.clone(),
                         generic_bounds: Vec::new(),
+                        is_unsafe: t.is_unsafe,
                     },
                 );
             }
@@ -12684,6 +12780,7 @@ impl SemaCx<'_> {
                         return_type: resolved_return,
                         generic_params: t.method_generic_params.clone(),
                         generic_bounds: Vec::new(),
+                        is_unsafe: t.is_unsafe,
                     },
                 );
             }
@@ -15160,6 +15257,121 @@ mod tests {
              }",
         );
         assert!(codes.contains(&"E0801"));
+    }
+
+    // ---- TEXT.1: `unsafe fn` call gate (E0801) ----
+
+    #[test]
+    fn unsafe_free_fn_call_outside_unsafe_e0801_text1() {
+        let codes = errors(
+            "unsafe fn danger() -> i32 { return 1; }\n\
+             fn main() -> i32 { let d: i32 = danger(); return d; }",
+        );
+        assert!(codes.contains(&"E0801"));
+    }
+
+    #[test]
+    fn unsafe_free_fn_call_inside_unsafe_clean_text1() {
+        assert_clean(
+            "unsafe fn danger() -> i32 { return 1; }\n\
+             fn main() -> i32 { let d: i32 = unsafe { danger() }; return d; }",
+        );
+    }
+
+    #[test]
+    fn safe_free_fn_call_needs_no_unsafe_text1() {
+        assert_clean(
+            "fn calm() -> i32 { return 1; }\n\
+             fn main() -> i32 { let d: i32 = calm(); return d; }",
+        );
+    }
+
+    #[test]
+    fn unsafe_method_call_outside_unsafe_e0801_text1() {
+        let codes = errors(
+            "struct Counter { n: i32 }\n\
+             impl Counter { unsafe fn raw_get(self) -> i32 { return self.n; } }\n\
+             fn main() -> i32 {\n\
+                 let c: Counter = Counter { n: 7 };\n\
+                 let v: i32 = c.raw_get();\n\
+                 return v;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0801"));
+    }
+
+    #[test]
+    fn unsafe_method_call_inside_unsafe_clean_text1() {
+        assert_clean(
+            "struct Counter { n: i32 }\n\
+             impl Counter { unsafe fn raw_get(self) -> i32 { return self.n; } }\n\
+             fn main() -> i32 {\n\
+                 let c: Counter = Counter { n: 7 };\n\
+                 let v: i32 = unsafe { c.raw_get() };\n\
+                 return v;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn safe_method_beside_unsafe_method_needs_no_unsafe_text1() {
+        // A non-`unsafe` method on the same type is callable without a block.
+        assert_clean(
+            "struct Counter { n: i32 }\n\
+             impl Counter {\n\
+                 unsafe fn raw_get(self) -> i32 { return self.n; }\n\
+                 fn safe_get(self) -> i32 { return self.n; }\n\
+             }\n\
+             fn main() -> i32 {\n\
+                 let c: Counter = Counter { n: 7 };\n\
+                 let v: i32 = c.safe_get();\n\
+                 return v;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn unsafe_enum_method_call_outside_unsafe_e0801_text1() {
+        let codes = errors(
+            "enum E { A, B }\n\
+             impl E { unsafe fn raw(self) -> i32 { return 1; } }\n\
+             fn main() -> i32 {\n\
+                 let e: E = E::A;\n\
+                 let v: i32 = e.raw();\n\
+                 return v;\n\
+             }",
+        );
+        assert!(codes.contains(&"E0801"));
+    }
+
+    #[test]
+    fn unsafe_enum_method_call_inside_unsafe_clean_text1() {
+        assert_clean(
+            "enum E { A, B }\n\
+             impl E { unsafe fn raw(self) -> i32 { return 1; } }\n\
+             fn main() -> i32 {\n\
+                 let e: E = E::A;\n\
+                 let v: i32 = unsafe { e.raw() };\n\
+                 return v;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn unsafe_generic_free_fn_call_outside_unsafe_e0801_text1() {
+        let codes = errors(
+            "unsafe fn danger[T](x: T) -> T { return x; }\n\
+             fn main() -> i32 { let d: i32 = danger::[i32](1); return d; }",
+        );
+        assert!(codes.contains(&"E0801"));
+    }
+
+    #[test]
+    fn unsafe_generic_free_fn_call_inside_unsafe_clean_text1() {
+        assert_clean(
+            "unsafe fn danger[T](x: T) -> T { return x; }\n\
+             fn main() -> i32 { let d: i32 = unsafe { danger::[i32](1) }; return d; }",
+        );
     }
 
     #[test]

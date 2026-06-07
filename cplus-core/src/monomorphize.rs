@@ -1318,6 +1318,7 @@ fn synthesize_fn(
         generic_params: Vec::new(), // monomorphized — no longer generic
         is_async: template.is_async,
         is_gen: template.is_gen,
+        is_unsafe: template.is_unsafe,
     }
 }
 

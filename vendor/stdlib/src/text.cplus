@@ -1,0 +1,219 @@
+// stdlib/text.cplus — owned, growable string.
+//
+// `Text` owns a heap buffer (malloc'd) and frees it on drop. It is the owned
+// string type: build it incrementally with `push_str`, read it by lending a
+// `str` view via the `unsafe` `as_str` escape hatch. Reads that search the
+// contents (`find`/`contains`/`starts_with`/`ends_with`) take a `str` needle
+// so any source — a literal, a slice, or another Text's view — works without
+// allocating.
+//
+// `as_str` is an `unsafe fn` on purpose (TEXT.1): the returned `str` is a view
+// into this Text's buffer with no lifetime tie back to it. If the Text drops,
+// or reallocates on a later `push_str`, the view dangles. The caller promises
+// the Text outlives the view and is not mutated while the view is held. Every
+// everyday read either copies (none here yet) or returns a value/Option, so the
+// only way to obtain a borrow is to type `unsafe`.
+//
+// Bytes are stored as-is (UTF-8 when the inputs are UTF-8). Indices returned by
+// `find` are byte offsets. This is the owned half of the `Text` plan; the
+// borrowed-static / literal-construction representation is a later slice.
+
+import "./option" as option;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn realloc(p: *u8, n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
+extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
+
+pub struct Text {
+    ptr: *u8,
+    len: usize,
+    cap: usize,
+}
+
+fn max_usize() -> usize {
+    return (0 as usize) -% (1 as usize);
+}
+
+fn next_capacity(current: usize, required: usize) -> usize {
+    assert required > current;
+    let mut out: usize = current;
+    if out == (0 as usize) {
+        out = 1 as usize;
+    }
+    while out < required {
+        if out > (max_usize() / (2 as usize)) {
+            out = required;
+        } else {
+            out = out *% (2 as usize);
+        }
+    }
+    return out;
+}
+
+// True if the `n` bytes at `needle` equal the `n` bytes of `hay` starting at
+// byte offset `off`. The caller guarantees `off +% n <= hay length`.
+fn region_matches(hay: *u8, off: usize, needle: *u8, n: usize) -> bool {
+    if n == (0 as usize) {
+        return true;
+    }
+    let a: *u8 = unsafe { hay + off };
+    return unsafe { memcmp(a, needle, n) } == (0 as i32);
+}
+
+pub fn new() -> Text {
+    return Text {
+        ptr: unsafe { 0 as *u8 },
+        len: 0 as usize,
+        cap: 0 as usize,
+    };
+}
+
+pub fn with_capacity(n: usize) -> Text {
+    if n == (0 as usize) {
+        return new();
+    }
+    let raw: *u8 = unsafe { malloc(n) };
+    assert raw.is_not_null();
+    return Text {
+        ptr: raw,
+        len: 0 as usize,
+        cap: n,
+    };
+}
+
+pub fn from_str(s: str) -> Text {
+    let n: usize = #str_len(s);
+    let mut t: Text = with_capacity(n);
+    t.push_str(s);
+    return t;
+}
+
+impl Text {
+    fn grow_to(mut self, new_cap: usize) {
+        assert new_cap > self.cap;
+        let raw: *u8 = unsafe { realloc(self.ptr, new_cap) };
+        assert raw.is_not_null();
+        self.ptr = raw;
+        self.cap = new_cap;
+        return;
+    }
+
+    pub fn len(self) -> usize {
+        return self.len;
+    }
+
+    pub fn capacity(self) -> usize {
+        return self.cap;
+    }
+
+    pub fn is_empty(self) -> bool {
+        return self.len == (0 as usize);
+    }
+
+    pub fn reserve(mut self, additional: usize) {
+        assert additional <= (max_usize() -% self.len);
+        let required: usize = self.len +% additional;
+        if required <= self.cap {
+            return;
+        }
+        self.grow_to(next_capacity(self.cap, required));
+        return;
+    }
+
+    pub fn push_str(mut self, s: str) {
+        let n: usize = #str_len(s);
+        if n == (0 as usize) {
+            return;
+        }
+        self.reserve(n);
+        let src: *u8 = #str_ptr(s);
+        let dest: *u8 = unsafe { self.ptr + self.len };
+        unsafe { memcpy(dest, src, n); }
+        self.len = self.len +% n;
+        return;
+    }
+
+    pub fn clear(mut self) {
+        self.len = 0 as usize;
+        return;
+    }
+
+    pub fn truncate(mut self, new_len: usize) {
+        if new_len < self.len {
+            self.len = new_len;
+        }
+        return;
+    }
+
+    pub fn clone(self) -> Text {
+        let mut t: Text = with_capacity(self.len);
+        if self.len != (0 as usize) {
+            unsafe { memcpy(t.ptr, self.ptr, self.len); }
+            t.len = self.len;
+        }
+        return t;
+    }
+
+    // Borrow escape hatch — `unsafe fn` (TEXT.1). The returned view's lifetime
+    // is not tracked: the caller promises this Text outlives the view and is
+    // not mutated while the view is held.
+    pub unsafe fn as_str(self) -> str {
+        return unsafe { #str_from_raw_parts(self.ptr, self.len) };
+    }
+
+    pub fn starts_with(self, prefix: str) -> bool {
+        let n: usize = #str_len(prefix);
+        if n > self.len {
+            return false;
+        }
+        return region_matches(self.ptr, 0 as usize, #str_ptr(prefix), n);
+    }
+
+    pub fn ends_with(self, suffix: str) -> bool {
+        let n: usize = #str_len(suffix);
+        if n > self.len {
+            return false;
+        }
+        return region_matches(self.ptr, self.len -% n, #str_ptr(suffix), n);
+    }
+
+    // Byte offset of the first occurrence of `needle`, or None. An empty
+    // needle matches at 0.
+    pub fn find(self, needle: str) -> option::Option[usize] {
+        let n: usize = #str_len(needle);
+        if n == (0 as usize) {
+            return option::Option[usize]::Some(0 as usize);
+        }
+        if n > self.len {
+            return option::Option[usize]::None;
+        }
+        let p: *u8 = #str_ptr(needle);
+        let last: usize = self.len -% n; // inclusive last start index
+        let mut i: usize = 0 as usize;
+        while i <= last {
+            if region_matches(self.ptr, i, p, n) {
+                return option::Option[usize]::Some(i);
+            }
+            i = i +% (1 as usize);
+        }
+        return option::Option[usize]::None;
+    }
+
+    pub fn contains(self, needle: str) -> bool {
+        let mut found: bool = false;
+        match self.find(needle) {
+            option::Option[usize]::Some(_idx) => { found = true; }
+            option::Option[usize]::None => { found = false; }
+        }
+        return found;
+    }
+
+    fn drop(mut self) {
+        if self.ptr.is_not_null() {
+            unsafe { free(self.ptr); }
+        }
+        return;
+    }
+}

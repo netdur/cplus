@@ -273,28 +273,37 @@ impl Parser {
                 self.parse_impl_block(false)
             }
             // v0.0.14: `unsafe impl Send for T {}` — an unsafe marker impl.
-            // `unsafe` at item position only precedes `impl` (Send/Sync
-            // overrides); any other use of `unsafe` is an expression-level
-            // block inside a fn body.
-            TokenKind::Unsafe => {
-                if is_pub {
-                    return Err(self.err_at_peek(
-                        "item — `impl` blocks don't take `pub`; mark individual methods inside the block instead",
-                    ));
+            // TEXT.1: `unsafe fn name(...)` — an unsafe free function whose
+            // call site requires an `unsafe { ... }` block. At item scope
+            // `unsafe` therefore precedes either `impl` or a `fn` opener
+            // (`fn` / `async fn` / `gen fn`); any other use is an
+            // expression-level block inside a fn body.
+            TokenKind::Unsafe => match self.peek_kind_n(1) {
+                TokenKind::Fn | TokenKind::Async | TokenKind::Gen => {
+                    // `parse_function` eats the leading `unsafe` itself, so
+                    // the recorded span starts at the `unsafe` keyword.
+                    self.parse_function(is_pub, attributes)
                 }
-                if !attributes.is_empty() {
-                    return Err(self.err_at_peek(
-                        "item — `impl` blocks don't carry attributes; attach the attribute to individual methods inside instead",
-                    ));
+                _ => {
+                    if is_pub {
+                        return Err(self.err_at_peek(
+                            "item — `impl` blocks don't take `pub`; mark individual methods inside the block instead",
+                        ));
+                    }
+                    if !attributes.is_empty() {
+                        return Err(self.err_at_peek(
+                            "item — `impl` blocks don't carry attributes; attach the attribute to individual methods inside instead",
+                        ));
+                    }
+                    self.bump(); // `unsafe`
+                    if !self.at(&TokenKind::Impl) {
+                        return Err(self.err_at_peek(
+                            "item — `unsafe` at item scope precedes `impl` (e.g. `unsafe impl Send for T {}`) or `fn` (an unsafe function)",
+                        ));
+                    }
+                    self.parse_impl_block(true)
                 }
-                self.bump(); // `unsafe`
-                if !self.at(&TokenKind::Impl) {
-                    return Err(self.err_at_peek(
-                        "item — `unsafe` at item scope only precedes `impl` (e.g. `unsafe impl Send for T {}`)",
-                    ));
-                }
-                self.parse_impl_block(true)
-            }
+            },
             // `import` after the file's leading import block is a hard
             // error — call it out by name so the diagnostic explains the
             // restriction.
@@ -683,6 +692,8 @@ impl Parser {
         // Per-method attributes (slice 5ATTR.1) then per-method `pub` (slice 4B).
         let attributes = self.parse_attributes()?;
         let is_pub = self.eat(&TokenKind::Pub);
+        // TEXT.1: `unsafe fn` method — call site requires `unsafe { ... }`.
+        let is_unsafe = self.eat(&TokenKind::Unsafe);
         // v0.0.4 Phase 4 Slice 4E: `gen` (and `async`, when we land
         // async methods) modifier before `fn`. Methods can be generators
         // so `Vec[T]::iter(self) -> T` reads naturally.
@@ -742,6 +753,7 @@ impl Parser {
             attributes,
             is_async,
             is_gen,
+            is_unsafe,
         })
     }
 
@@ -1213,6 +1225,9 @@ impl Parser {
                 generic_params: Vec::new(),
                 is_async: false,
                 is_gen: false,
+                // extern fns are gated by `is_extern` independently; the
+                // `unsafe fn` marker is for C+-defined functions.
+                is_unsafe: false,
             }),
             span: start.merge(end_span),
             origin_file: None,
@@ -1225,6 +1240,10 @@ impl Parser {
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         let start = self.peek().span;
+        // TEXT.1: optional `unsafe` modifier before `fn` (and before any
+        // `async`/`gen`). `unsafe fn` makes the call site require an
+        // enclosing `unsafe { ... }` block (sema E0801).
+        let is_unsafe = self.eat(&TokenKind::Unsafe);
         // v0.0.3 Phase 5 Slice 5E.1: optional `async` modifier before `fn`.
         // `async fn` declares a coroutine whose declared return type T is
         // implicitly wrapped to `Future[T]` at sema (Slice 5E.2).
@@ -1270,6 +1289,7 @@ impl Parser {
                 generic_params,
                 is_async,
                 is_gen,
+                is_unsafe,
             }),
             span,
             origin_file: None,
@@ -3576,6 +3596,74 @@ mod tests {
             }
         }
         panic!("no Impl block found");
+    }
+
+    fn first_function(src: &str) -> Function {
+        let prog = parse_src(src).unwrap();
+        for item in &prog.items {
+            if let ItemKind::Function(f) = &item.kind {
+                return f.clone();
+            }
+        }
+        panic!("no Function found");
+    }
+
+    // ---- TEXT.1: `unsafe fn` declarations ----
+
+    #[test]
+    fn plain_fn_is_not_unsafe() {
+        assert!(!first_function("fn f() -> i32 { return 0; }").is_unsafe);
+    }
+
+    #[test]
+    fn unsafe_free_fn_sets_is_unsafe() {
+        assert!(first_function("unsafe fn f() -> i32 { return 0; }").is_unsafe);
+    }
+
+    #[test]
+    fn pub_unsafe_free_fn_sets_both_flags() {
+        let f = first_function("pub unsafe fn f() -> i32 { return 0; }");
+        assert!(f.is_unsafe);
+        assert!(f.is_pub);
+    }
+
+    #[test]
+    fn extern_fn_is_not_unsafe_flagged() {
+        // extern fns are gated by `is_extern`, not the `unsafe fn` marker.
+        let f = first_function("extern fn malloc(n: usize) -> *u8;");
+        assert!(!f.is_unsafe);
+        assert!(f.is_extern);
+    }
+
+    #[test]
+    fn unsafe_method_sets_is_unsafe() {
+        let m = first_method("struct S { n: i32 } impl S { unsafe fn g(self) -> i32 { return self.n; } }");
+        assert!(m.is_unsafe);
+    }
+
+    #[test]
+    fn plain_method_is_not_unsafe() {
+        let m = first_method("struct S { n: i32 } impl S { fn g(self) -> i32 { return self.n; } }");
+        assert!(!m.is_unsafe);
+    }
+
+    #[test]
+    fn pub_unsafe_method_sets_both_flags() {
+        let m = first_method("struct S { n: i32 } impl S { pub unsafe fn g(self) -> i32 { return self.n; } }");
+        assert!(m.is_unsafe);
+        assert!(m.is_pub);
+    }
+
+    #[test]
+    fn bare_unsafe_at_item_scope_without_impl_or_fn_errors() {
+        // `unsafe` at item scope must precede `impl` or `fn`.
+        assert!(parse_src("unsafe struct S { n: i32 }").is_err());
+    }
+
+    #[test]
+    fn unsafe_impl_still_parses() {
+        // The `unsafe impl` marker path must be untouched by the `unsafe fn` add.
+        assert!(parse_src("struct S {} unsafe impl Send for S {}").is_ok());
     }
 
     #[test]
