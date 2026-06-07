@@ -9386,6 +9386,10 @@ impl SemaCx<'_> {
                 }
                 let ok = Self::is_blessed_to_string_receiver(&ty)
                     || matches!(&ty, Ty::String)
+                    // TEXT.R2: an owned `Text` embeds directly (its bytes are
+                    // copied into the result), like `string`.
+                    || matches!(&ty, Ty::Struct(id)
+                        if self.designated_string_struct == Some(*id))
                     || matches!(&ty, Ty::Struct(id)
                     if self.interface_impls.contains(&(
                         "ToString".to_string(),
@@ -9408,7 +9412,13 @@ impl SemaCx<'_> {
         // could downgrade to Ty::Str. The lexer already returns a plain
         // Str token in that case, so we don't reach here.
         let _ = span;
-        Ty::String
+        // TEXT.R2: interpolation produces the designated owned-string type
+        // (`Text`) when it's available (the file imports `stdlib/text`);
+        // otherwise the legacy `Ty::String` (removed in R4).
+        match self.designated_string_struct {
+            Some(id) => Ty::Struct(id),
+            None => Ty::String,
+        }
     }
 
     /// Phase 8 slice 8.STR.6: which receiver types get a blessed
@@ -15472,6 +15482,16 @@ mod tests {
              fn main() -> i32 { let o: Other = make(); return 0; }",
         );
         assert!(codes.contains(&"E0302"));
+    }
+
+    #[test]
+    fn interpolation_produces_text_clean_text_r2() {
+        // With a `#[lang("string")]` struct in scope, an interpolation produces
+        // that type — so it matches a `Text` annotation (no E0302).
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let n: i32 = 1; let s: Text = \"v=${n}\"; return 0; }",
+        );
     }
 
     #[test]

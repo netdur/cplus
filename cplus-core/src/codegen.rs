@@ -13195,24 +13195,37 @@ impl<'a> FnState<'a> {
                 }
                 InterpStrPart::Expr(e) => {
                     let (v, t) = self.gen_expr(e).expect("interp expr has value");
+                    // TEXT.R2: an owned `Text` part is passed through (its bytes
+                    // are copied below; the binding still owns and drops it),
+                    // like `string` — but its value is the *named* `%Text`
+                    // aggregate, so the extract must use that named type.
+                    let is_text_part = matches!(&t, Ty::Struct(id)
+                        if self.types.struct_defs[id.0 as usize].is_lang_string);
                     // Convert to a string aggregate. Every arm except the
-                    // `Ty::String` passthrough allocates a fresh buffer.
-                    let (sv, is_temp) = match t {
-                        Ty::String => (v, false),
-                        Ty::Str => (self.gen_to_string_str(&v).0, true),
-                        Ty::Bool => (self.gen_to_string_bool(&v).0, true),
-                        Ty::F32 | Ty::F64 => (self.gen_to_string_float(&v, &t).0, true),
-                        ref rt if rt.is_signed_int() => (self.gen_to_string_signed(&v, rt).0, true),
-                        ref rt if rt.is_unsigned_int() => {
-                            (self.gen_to_string_unsigned(&v, rt).0, true)
+                    // owned-string passthroughs allocates a fresh buffer.
+                    let (sv, is_temp, agg) = if is_text_part {
+                        (v, false, self.lty(&t))
+                    } else {
+                        let s = "{ ptr, i64, i64 }".to_string();
+                        match t {
+                            Ty::String => (v, false, s),
+                            Ty::Str => (self.gen_to_string_str(&v).0, true, s),
+                            Ty::Bool => (self.gen_to_string_bool(&v).0, true, s),
+                            Ty::F32 | Ty::F64 => (self.gen_to_string_float(&v, &t).0, true, s),
+                            ref rt if rt.is_signed_int() => {
+                                (self.gen_to_string_signed(&v, rt).0, true, s)
+                            }
+                            ref rt if rt.is_unsigned_int() => {
+                                (self.gen_to_string_unsigned(&v, rt).0, true, s)
+                            }
+                            _ => unreachable!("sema validated interp expr type"),
                         }
-                        _ => unreachable!("sema validated interp expr type"),
                     };
                     // Extract ptr+len.
                     let pp = self.next_tmp();
-                    self.emit(&format!("{pp} = extractvalue {{ ptr, i64, i64 }} {sv}, 0"));
+                    self.emit(&format!("{pp} = extractvalue {agg} {sv}, 0"));
                     let lp = self.next_tmp();
-                    self.emit(&format!("{lp} = extractvalue {{ ptr, i64, i64 }} {sv}, 1"));
+                    self.emit(&format!("{lp} = extractvalue {agg} {sv}, 1"));
                     if is_temp {
                         temps_to_free.push(pp.clone());
                     }
@@ -13251,8 +13264,24 @@ impl<'a> FnState<'a> {
         for tmp in &temps_to_free {
             self.emit(&format!("call void @free(ptr {tmp})"));
         }
-        let v = self.string_aggregate(&buf, &total, &total);
-        (v, Ty::String)
+        // TEXT.R2: produce the named `%Text` aggregate when the lang-string type
+        // exists (identical {ptr,len,cap} layout); else the legacy `Ty::String`.
+        match self.lang_string_struct_ty() {
+            Some(text_ty) => {
+                let lty = self.lty(&text_ty);
+                let v0 = self.next_tmp();
+                self.emit(&format!("{v0} = insertvalue {lty} undef, ptr {buf}, 0"));
+                let v1 = self.next_tmp();
+                self.emit(&format!("{v1} = insertvalue {lty} {v0}, i64 {total}, 1"));
+                let v2 = self.next_tmp();
+                self.emit(&format!("{v2} = insertvalue {lty} {v1}, i64 {total}, 2"));
+                (v2, text_ty)
+            }
+            None => {
+                let v = self.string_aggregate(&buf, &total, &total);
+                (v, Ty::String)
+            }
+        }
     }
 
     // ---------- Phase 8 slice 8.STR.6: blessed `to_string()` ----------
@@ -13755,6 +13784,17 @@ impl<'a> FnState<'a> {
     /// struct (`Text`).
     fn is_lang_string_ty(&self, ty: &Ty) -> bool {
         matches!(ty, Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_lang_string)
+    }
+
+    /// TEXT.R2: the `Ty` of the `#[lang("string")]` struct (`Text`), if one is
+    /// in this module's type table. `None` when the program doesn't import
+    /// `stdlib/text` — interpolation then falls back to the legacy `Ty::String`.
+    fn lang_string_struct_ty(&self) -> Option<Ty> {
+        self.types
+            .struct_defs
+            .iter()
+            .position(|s| s.is_lang_string)
+            .map(|i| Ty::Struct(StructId(i as u32)))
     }
 
     /// TEXT.R1c: materialize a by-value call argument, building an owned `Text`

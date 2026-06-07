@@ -20817,6 +20817,41 @@ fn stdlib_text_literal_in_struct_field_constructs_owned_text() {
     assert_eq!(run.code(), Some(3), "struct-field Text checks must pass");
 }
 
+/// TEXT.R2: string interpolation produces an owned `Text` (when `stdlib/text`
+/// is imported). Covers a primitive part (`${n}`) and an embedded owned-`Text`
+/// part (`${a}` — its bytes are copied, the binding still drops it once).
+/// Builds, runs, ASan-clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_interpolation_produces_owned_text() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let n: i32 = 42;\n\
+             let a: text::Text = \"world\";\n\
+             let s: text::Text = \"count=${n} hi ${a}\";\n\
+             let mut score: i32 = 0;\n\
+             if s.len() == (17 as usize) { score = score +% 1; }\n\
+             if s.starts_with(\"count=42\") { score = score +% 1; }\n\
+             if s.contains(\"hi world\") { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of interpolation -> Text failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "interpolation-Text checks must pass");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")
