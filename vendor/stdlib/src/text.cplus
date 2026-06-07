@@ -19,6 +19,7 @@
 // borrowed-static / literal-construction representation is a later slice.
 
 import "./option" as option;
+import "./vec" as vec;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -55,6 +56,11 @@ fn next_capacity(current: usize, required: usize) -> usize {
         }
     }
     return out;
+}
+
+// ASCII whitespace: space, tab, LF, CR. Used by the `trim*` helpers.
+fn is_ascii_ws(b: u8) -> bool {
+    return b == (32 as u8) || b == (9 as u8) || b == (10 as u8) || b == (13 as u8);
 }
 
 // True if the `n` bytes at `needle` equal the `n` bytes of `hay` starting at
@@ -213,6 +219,130 @@ impl Text {
             option::Option[usize]::None => { found = false; }
         }
         return found;
+    }
+
+    // Byte offset of the *last* occurrence of `needle`, or None. An empty needle
+    // matches at `len`.
+    pub fn rfind(self, needle: str) -> option::Option[usize] {
+        let n: usize = #str_len(needle);
+        if n == (0 as usize) {
+            return option::Option[usize]::Some(self.len);
+        }
+        if n > self.len {
+            return option::Option[usize]::None;
+        }
+        let p: *u8 = #str_ptr(needle);
+        let mut i: usize = self.len -% n; // inclusive last start index
+        loop {
+            if region_matches(self.ptr, i, p, n) {
+                return option::Option[usize]::Some(i);
+            }
+            if i == (0 as usize) {
+                return option::Option[usize]::None;
+            }
+            i = i -% (1 as usize);
+        }
+        return option::Option[usize]::None;
+    }
+
+    // Read the byte at `i` (caller guarantees `i < len`).
+    fn byte_at_raw(self, i: usize) -> u8 {
+        let p: *u8 = unsafe { self.ptr + i };
+        return unsafe { *p };
+    }
+
+    // Owned copy of the byte range `[start, end)` (caller guarantees the range
+    // is in bounds and `start <= end`).
+    fn copy_range(self, start: usize, end: usize) -> Text {
+        let n: usize = end -% start;
+        let mut t: Text = with_capacity(n);
+        if n != (0 as usize) {
+            let src: *u8 = unsafe { self.ptr + start };
+            unsafe { memcpy(t.ptr, src, n); }
+            t.len = n;
+        }
+        return t;
+    }
+
+    // Owned copy of the byte range `[start, end)`, or None if out of bounds /
+    // inverted. (Copies — the result owns its bytes.)
+    pub fn slice(self, start: usize, end: usize) -> option::Option[Text] {
+        if start > end {
+            return option::Option[Text]::None;
+        }
+        if end > self.len {
+            return option::Option[Text]::None;
+        }
+        return option::Option[Text]::Some(self.copy_range(start, end));
+    }
+
+    // Owned copy with leading ASCII whitespace removed.
+    pub fn trim_start(self) -> Text {
+        let mut start: usize = 0 as usize;
+        while start < self.len {
+            if is_ascii_ws(self.byte_at_raw(start)) == false {
+                break;
+            }
+            start = start +% (1 as usize);
+        }
+        return self.copy_range(start, self.len);
+    }
+
+    // Owned copy with trailing ASCII whitespace removed.
+    pub fn trim_end(self) -> Text {
+        let mut end: usize = self.len;
+        while end > (0 as usize) {
+            if is_ascii_ws(self.byte_at_raw(end -% (1 as usize))) == false {
+                break;
+            }
+            end = end -% (1 as usize);
+        }
+        return self.copy_range(0 as usize, end);
+    }
+
+    // Owned copy with leading and trailing ASCII whitespace removed.
+    pub fn trim(self) -> Text {
+        let mut start: usize = 0 as usize;
+        while start < self.len {
+            if is_ascii_ws(self.byte_at_raw(start)) == false {
+                break;
+            }
+            start = start +% (1 as usize);
+        }
+        let mut end: usize = self.len;
+        while end > start {
+            if is_ascii_ws(self.byte_at_raw(end -% (1 as usize))) == false {
+                break;
+            }
+            end = end -% (1 as usize);
+        }
+        return self.copy_range(start, end);
+    }
+
+    // Split on every (non-overlapping) occurrence of `sep`, returning the pieces
+    // as owned `Text` values. An empty `sep` yields the whole string as one
+    // piece. `"a,b,c".split(",")` → `["a", "b", "c"]`.
+    pub fn split(self, sep: str) -> vec::Vec[Text] {
+        let mut out: vec::Vec[Text] = vec::new::[Text]();
+        let n: usize = #str_len(sep);
+        if n == (0 as usize) {
+            out.push(self.copy_range(0 as usize, self.len));
+            return out;
+        }
+        let p: *u8 = #str_ptr(sep);
+        let mut start: usize = 0 as usize;
+        let mut i: usize = 0 as usize;
+        while (i +% n) <= self.len {
+            if region_matches(self.ptr, i, p, n) {
+                out.push(self.copy_range(start, i));
+                i = i +% n;
+                start = i;
+            } else {
+                i = i +% (1 as usize);
+            }
+        }
+        out.push(self.copy_range(start, self.len));
+        return out;
     }
 
     fn drop(mut self) {

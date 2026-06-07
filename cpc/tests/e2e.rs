@@ -20559,7 +20559,8 @@ fn setup_text_project(dir: &std::path::Path, main_src: &str) {
         "[package]\nname = \"stdlib\"\n",
     )
     .unwrap();
-    for name in &["text", "option"] {
+    // `text` imports `vec` (for `split`), which imports `option` + `iterator`.
+    for name in &["text", "option", "vec", "iterator"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -20850,6 +20851,49 @@ fn stdlib_text_interpolation_produces_owned_text() {
         .status()
         .expect("run");
     assert_eq!(run.code(), Some(3), "interpolation-Text checks must pass");
+}
+
+/// TEXT.R3a: the rounded-out stdlib `Text` API — `trim`, `rfind`, `slice`
+/// (copies), and `split` into a `Vec[Text]` — all pure C+ stdlib (no compiler
+/// change). Builds, runs, and the owned pieces + the `Vec[Text]` drop clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_slice_rfind_trim_split() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         import \"stdlib/option\" as option;\n\
+         import \"stdlib/vec\" as vec;\n\
+         fn main() -> i32 {\n\
+             let s: text::Text = \"  hello,world,foo  \";\n\
+             let mut score: i32 = 0;\n\
+             let t: text::Text = s.trim();\n\
+             if t.len() == (15 as usize) { score = score +% 1; }\n\
+             match t.rfind(\",\") {\n\
+                 option::Option[usize]::Some(i) => { if i == (11 as usize) { score = score +% 1; } }\n\
+                 option::Option[usize]::None => { }\n\
+             }\n\
+             match t.slice(0 as usize, 5 as usize) {\n\
+                 option::Option[text::Text]::Some(sl) => { if sl.starts_with(\"hello\") { score = score +% 1; } }\n\
+                 option::Option[text::Text]::None => { }\n\
+             }\n\
+             let parts: vec::Vec[text::Text] = t.split(\",\");\n\
+             if parts.len() == (3 as usize) { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of Text slice/rfind/trim/split failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(4), "slice/rfind/trim/split checks must pass");
 }
 
 fn tempdir() -> std::path::PathBuf {
