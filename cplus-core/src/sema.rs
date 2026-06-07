@@ -5060,6 +5060,13 @@ impl SemaCx<'_> {
             StmtKind::Return(value) => {
                 let ret = self.current_return.clone();
                 match (value, &ret) {
+                    // TEXT.R1c: `return "literal";` from a `Text`-returning fn
+                    // constructs an owned Text (an rvalue — no partial move, no
+                    // borrow to track). Mirrors the let-site coercion; codegen
+                    // builds the owned value at the return site.
+                    (Some(e), Ty::Struct(id))
+                        if matches!(e.kind, ExprKind::StrLit(_))
+                            && self.designated_string_struct == Some(*id) => {}
                     (Some(e), _) => {
                         let t = self.check_expr(e, Some(ret.clone()));
                         // E0509: `return drop_typed.field;` moves a field out
@@ -15407,6 +15414,26 @@ mod tests {
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
              fn take(t: Text) -> i32 { return 0; }\n\
              fn main() -> i32 { return take(\"x\"); }",
+        );
+        assert!(codes.contains(&"E0302"));
+    }
+
+    #[test]
+    fn lang_string_literal_in_return_clean_text_r1c() {
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn label() -> Text { return \"OK\"; }\n\
+             fn main() -> i32 { let t: Text = label(); return 0; }",
+        );
+    }
+
+    #[test]
+    fn non_lang_struct_literal_in_return_errors_text_r1c() {
+        // Return coercion is only for the designated string type.
+        let codes = errors(
+            "struct Other { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn make() -> Other { return \"x\"; }\n\
+             fn main() -> i32 { let o: Other = make(); return 0; }",
         );
         assert!(codes.contains(&"E0302"));
     }

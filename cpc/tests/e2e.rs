@@ -20742,6 +20742,40 @@ fn stdlib_text_multiline_literal_is_verbatim() {
     assert_eq!(run.code(), Some(3), "verbatim multi-line checks must pass");
 }
 
+/// TEXT.R1c: `return "literal";` (and a multi-line literal) from a
+/// `Text`-returning function constructs an owned `Text`. Builds, runs, clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_literal_in_return_constructs_owned_text() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn label() -> text::Text { return \"OK\"; }\n\
+         fn banner() -> text::Text { return \"\"\"\nhi\n\"\"\"; }\n\
+         fn main() -> i32 {\n\
+             let a: text::Text = label();\n\
+             let b: text::Text = banner();\n\
+             let mut score: i32 = 0;\n\
+             if a.starts_with(\"OK\") { score = score +% 1; }\n\
+             if a.len() == (2 as usize) { score = score +% 1; }\n\
+             if b.contains(\"hi\") { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of `return literal` -> Text failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "return-Text checks must pass");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

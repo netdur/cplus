@@ -8216,7 +8216,18 @@ impl<'a> FnState<'a> {
                 // None *because* it terminated the block early.
                 let ret_val = match value {
                     Some(e) => {
-                        let v = self.gen_expr(e);
+                        // TEXT.R1c: `return "literal";` from a `Text`-returning
+                        // fn builds an owned Text (matches the sema return
+                        // coercion). `rt` is cloned up front to avoid borrowing
+                        // `self.return_ty` across the `&mut self` builder call.
+                        let rt = self.return_ty.clone();
+                        let v = match &e.kind {
+                            ExprKind::StrLit(s) if self.is_lang_string_ty(&rt) => {
+                                let val = self.gen_strlit_as_lang_string(s, &rt);
+                                Some((val, rt))
+                            }
+                            _ => self.gen_expr(e),
+                        };
                         if self.terminated {
                             return;
                         }
