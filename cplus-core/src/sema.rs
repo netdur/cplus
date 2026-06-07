@@ -4970,7 +4970,20 @@ impl SemaCx<'_> {
                 init,
             } => {
                 let declared = ty.as_ref().map(|t| self.resolve_type(t));
+                // TEXT.R1: a bare string literal in a `Text`-typed `let`
+                // constructs an owned `Text` (codegen lowers the literal to a
+                // heap copy). Scoped to the `let` site — and only a bare literal
+                // — so sema and codegen stay in lockstep; elsewhere a literal is
+                // still `str` and an owned `Text` needs `from_str`.
+                let is_lang_string_literal_let = init
+                    .as_ref()
+                    .is_some_and(|e| matches!(e.kind, ExprKind::StrLit(_)))
+                    && matches!(&declared, Some(Ty::Struct(id))
+                        if self.designated_string_struct == Some(*id));
                 let (final_ty, assigned) = match init {
+                    Some(_) if is_lang_string_literal_let => {
+                        (declared.clone().unwrap(), true)
+                    }
                     Some(init_expr) => {
                         let inferred = self.check_expr(init_expr, declared.clone());
                         let final_ty = declared.clone().unwrap_or(inferred);
@@ -15372,6 +15385,41 @@ mod tests {
             "unsafe fn danger[T](x: T) -> T { return x; }\n\
              fn main() -> i32 { let d: i32 = unsafe { danger::[i32](1) }; return d; }",
         );
+    }
+
+    // ---- TEXT.R1: literal → `Text` coercion (let-scoped) ----
+
+    #[test]
+    fn lang_string_literal_in_typed_let_clean_text_r1() {
+        // `opaque ptr` accounts for the raw-pointer field without a freeing
+        // drop (this is a type-check-only test, no codegen).
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let s: Text = \"x\"; return 0; }",
+        );
+    }
+
+    #[test]
+    fn lang_string_literal_as_arg_errors_text_r1() {
+        // Coercion is scoped to the `let` site; a literal passed where a `Text`
+        // is expected stays `str` and mismatches (E0302).
+        let codes = errors(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn take(t: Text) -> i32 { return 0; }\n\
+             fn main() -> i32 { return take(\"x\"); }",
+        );
+        assert!(codes.contains(&"E0302"));
+    }
+
+    #[test]
+    fn non_lang_struct_literal_in_let_errors_text_r1() {
+        // Without `#[lang("string")]`, a literal in a struct-typed `let` is a
+        // plain mismatch — only the designated string type coerces.
+        let codes = errors(
+            "struct Other { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let s: Other = \"x\"; return 0; }",
+        );
+        assert!(codes.contains(&"E0302"));
     }
 
     #[test]

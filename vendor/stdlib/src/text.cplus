@@ -26,6 +26,11 @@ extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memcmp(a: *u8, b: *u8, n: usize) -> i32;
 
+// `#[lang("string")]` designates this struct as the compiler's owned-string
+// type: a string literal in a `Text`-typed context (e.g. `let s: Text = "x";`)
+// is lowered to a heap copy constructed as this `{ ptr, len, cap }` layout.
+// The field order/shape below is load-bearing for that lowering.
+#[lang("string")]
 pub struct Text {
     ptr: *u8,
     len: usize,

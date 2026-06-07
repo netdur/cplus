@@ -1754,6 +1754,10 @@ struct StructInfo {
     /// ABI in `param_passes_by_ptr` — non-Copy `mut x: T` is pointer-passed
     /// so the callee's writes propagate back to the caller.
     is_copy: bool,
+    /// TEXT.R1: this struct is the `#[lang("string")]` designated owned-string
+    /// type (`Text`). A string literal in this type's context is lowered to an
+    /// owned `{ ptr, len, cap }` buffer instead of a `str` view.
+    is_lang_string: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1951,12 +1955,17 @@ fn collect_types(p: &Program) -> TypeTable {
                     continue;
                 }
                 let id = StructId(t.struct_defs.len() as u32);
+                let is_lang_string = s.attributes.iter().any(|a| {
+                    a.path.name == "lang"
+                        && matches!(a.args.first(), Some(AttrArg::Str(v, _)) if v == "string")
+                });
                 t.struct_defs.push(StructInfo {
                     name: s.name.name.clone(),
                     fields: Vec::new(),
                     methods: HashMap::new(),
                     is_drop: false,
                     is_copy: false, // computed in `compute_copy_flags`
+                    is_lang_string,
                 });
                 t.struct_by_name.insert(s.name.name.clone(), id);
             }
@@ -8071,6 +8080,12 @@ impl<'a> FnState<'a> {
                         (ExprKind::ArrayFill { fill, count, .. }, Ty::Array(elem, _)) => {
                             self.gen_array_fill(fill, *count, Some((**elem).clone()))
                         }
+                        // TEXT.R1: `let s: Text = "literal";` constructs an owned
+                        // heap copy as the named struct aggregate. Scoped to the
+                        // `let` site to match sema (see the let-checker).
+                        (ExprKind::StrLit(s), ty) if self.is_lang_string_ty(ty) => {
+                            (self.gen_strlit_as_lang_string(s, ty), ty.clone())
+                        }
                         _ => self.gen_expr(init_expr).expect("let init produces a value"),
                     };
                     self.emit(&format!(
@@ -13717,6 +13732,41 @@ impl<'a> FnState<'a> {
     // Drop is NOT integrated in this initial cut: `string` locals leak
     // their buffer at scope exit. Wiring Drop alongside the existing
     // struct-Drop machinery is a follow-up slice — see plan.md resolved-log.
+
+    /// TEXT.R1: true iff `ty` is the `#[lang("string")]` designated owned-string
+    /// struct (`Text`).
+    fn is_lang_string_ty(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Struct(id) if self.types.struct_defs[id.0 as usize].is_lang_string)
+    }
+
+    /// TEXT.R1: lower a string literal in `Text` context to an owned heap copy,
+    /// built as the *named* struct aggregate (`%Text { ptr, len, cap }`,
+    /// cap = len). Mirrors `gen_to_string_str` but targets the struct's named
+    /// LLVM type so a `store` into a `%Text` slot type-checks. Assumes the
+    /// designated struct has the `{ *u8, usize, usize }` shape (the stdlib
+    /// `Text` does; a malformed `#[lang("string")]` struct is the lang author's
+    /// responsibility).
+    fn gen_strlit_as_lang_string(&mut self, s: &str, struct_ty: &Ty) -> String {
+        let (symbol, len) = self
+            .str_lits
+            .get(s)
+            .expect("str literal not in table")
+            .clone();
+        let lty = self.lty(struct_ty);
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = call ptr @malloc(i64 {len})"));
+        let cpy = self.next_tmp();
+        self.emit(&format!(
+            "{cpy} = call ptr @memcpy(ptr {buf}, ptr {symbol}, i64 {len})"
+        ));
+        let v0 = self.next_tmp();
+        self.emit(&format!("{v0} = insertvalue {lty} undef, ptr {buf}, 0"));
+        let v1 = self.next_tmp();
+        self.emit(&format!("{v1} = insertvalue {lty} {v0}, i64 {len}, 1"));
+        let v2 = self.next_tmp();
+        self.emit(&format!("{v2} = insertvalue {lty} {v1}, i64 {len}, 2"));
+        v2
+    }
 
     /// Build a `string` SSA value from three components.
     fn string_aggregate(&mut self, ptr: &str, len: &str, cap: &str) -> String {

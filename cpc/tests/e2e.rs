@@ -20646,6 +20646,69 @@ fn stdlib_text_as_str_requires_unsafe_block() {
     assert!(stderr.contains("E0801"), "expected E0801, stderr:\n{stderr}");
 }
 
+/// TEXT.R1: a string literal in a `Text`-typed `let` constructs an owned `Text`
+/// (the `#[lang("string")]` lowering) — builds, runs, drops clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_literal_in_let_constructs_owned_text() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let s: text::Text = \"hello, world\";\n\
+             let mut score: i32 = 0;\n\
+             if s.len() == (12 as usize) { score = score +% 1; }\n\
+             if s.starts_with(\"hello\") { score = score +% 1; }\n\
+             if s.contains(\"o, w\") { score = score +% 1; }\n\
+             let v: str = unsafe { s.as_str() };\n\
+             if #str_len(v) == (12 as usize) { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of `let s: Text = literal` failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(4), "all 4 literal-Text checks must pass");
+}
+
+/// TEXT.R1 (lockstep): literal→`Text` coercion is scoped to the `let` site.
+/// A literal passed where a `Text` is expected (function arg) is still a `str`
+/// and must error (E0302) — sema and codegen agree on the supported context.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_literal_as_arg_still_errors() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn take(t: text::Text) -> usize { return t.len(); }\n\
+         fn main() -> i32 {\n\
+             let n: usize = take(\"hello\");\n\
+             return n as i32;\n\
+         }\n",
+    );
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "literal as a Text arg must fail (coercion is let-scoped)"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0302"), "expected E0302, stderr:\n{stderr}");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")
