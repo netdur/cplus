@@ -2,6 +2,7 @@
 // RFC 4122 v4 UUID generator, parser, and formatter.
 
 import "stdlib/option" as option;
+import "stdlib/text" as text;
 
 extern fn snprintf(str: *u8, size: usize, format: *u8, ...) -> i32;
 extern fn open(path: *u8, flags: i32) -> i32;
@@ -103,7 +104,7 @@ impl Uuid {
     // snprintf into a 37-byte stack buffer can't run out of space. The
     // result is heap-allocated by `str::to_string()` so the caller owns
     // the storage.
-    pub fn to_string(self) -> string {
+    pub fn to_string(self) -> text::Text {
         let mut buf: [u8; 37] = [
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -219,10 +220,10 @@ fn test_to_string_format() {
             0x9au8, 0xbcu8, 0xdeu8, 0xf0u8,
         ],
     };
-    let s: string = u.to_string();
-    assert #str_len(s.as_str()) == (36 as usize);
+    let s: text::Text = u.to_string();
+    assert s.len() == (36 as usize);
     // Dashes at positions 8, 13, 18, 23.
-    let p: *u8 = #str_ptr(s.as_str());
+    let p: *u8 = #str_ptr(unsafe { s.as_str() });
     assert unsafe { *(p + 8) } == ('-' as u8);
     assert unsafe { *(p + 13) } == ('-' as u8);
     assert unsafe { *(p + 18) } == ('-' as u8);
@@ -236,8 +237,8 @@ fn test_round_trip_parse_format() {
         assert false;
         return;
     };
-    let out: string = u.to_string();
-    assert out.as_str() == s;
+    let out: text::Text = u.to_string();
+    assert unsafe { out.as_str() } == s;
 }
 
 #[test]
@@ -246,8 +247,8 @@ fn test_random_uuid_round_trips() {
         assert false;
         return;
     };
-    let s: string = u.to_string();
-    guard let option::Option[Uuid]::Some(u2) = Uuid::parse(s.as_str()) else {
+    let s: text::Text = u.to_string();
+    guard let option::Option[Uuid]::Some(u2) = Uuid::parse(unsafe { s.as_str() }) else {
         assert false;
         return;
     };

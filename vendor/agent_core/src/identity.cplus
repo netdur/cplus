@@ -46,6 +46,7 @@ import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/hash_map" as hash_map;
+import "stdlib/text" as text;
 
 extern fn snprintf(s: *u8, size: usize, format: *u8, ...) -> i32;
 
@@ -92,9 +93,9 @@ pub fn role_eq(a: Role, b: Role) -> bool {
 // so the flat list reconstructs the tree. `actionable` is the resolved affordance
 // ceiling (enabled AND not observe-only), i.e. whether the agent may act on it.
 pub struct NodeView {
-    pub id: string,
+    pub id: text::Text,
     pub role: Role,
-    pub name: string,
+    pub name: text::Text,
     pub parent: option::Option[usize],
     pub enabled: bool,
     pub actionable: bool,
@@ -103,7 +104,7 @@ pub struct NodeView {
 // `parent/tag#index` as an owned string. snprintf truncates rather than
 // overflowing the fixed buffer, so a pathologically deep tree degrades to a
 // shorter id rather than corrupting memory.
-fn make_path_id(parent: str, tag: str, index: usize) -> string {
+fn make_path_id(parent: str, tag: str, index: usize) -> text::Text {
     let mut buf: [u8; 256] = [0u8; 256];
     let n: i32 = unsafe {
         snprintf(#addr_of(buf) as *u8, 256 as usize,
@@ -117,7 +118,7 @@ fn make_path_id(parent: str, tag: str, index: usize) -> string {
 }
 
 // `parent/key` as an owned string (the list-item form).
-fn make_key_id(parent: str, key: u64) -> string {
+fn make_key_id(parent: str, key: u64) -> text::Text {
     let mut buf: [u8; 256] = [0u8; 256];
     let n: i32 = unsafe {
         snprintf(#addr_of(buf) as *u8, 256 as usize,
@@ -134,10 +135,10 @@ fn make_key_id(parent: str, key: u64) -> string {
 // agent may see the node but never act on it (observe-only). Both default true
 // and are narrowed via setters. Defaults: name "" (no label yet).
 pub struct Registry {
-    ids: vec::Vec[string],
+    ids: vec::Vec[text::Text],
     roles: vec::Vec[Role],
     parents: vec::Vec[option::Option[usize]],
-    names: vec::Vec[string],
+    names: vec::Vec[text::Text],
     enabled: vec::Vec[bool],
     actionable: vec::Vec[bool],
     exposed: vec::Vec[bool],
@@ -149,10 +150,10 @@ pub struct Registry {
 // role Group. Windows and dialogs attach to it via `add_child`.
 pub fn new() -> Registry {
     let mut r: Registry = Registry {
-        ids: vec::new::[string](),
+        ids: vec::new::[text::Text](),
         roles: vec::new::[Role](),
         parents: vec::new::[option::Option[usize]](),
-        names: vec::new::[string](),
+        names: vec::new::[text::Text](),
         enabled: vec::new::[bool](),
         actionable: vec::new::[bool](),
         exposed: vec::new::[bool](),
@@ -264,8 +265,8 @@ impl Registry {
     pub fn name_of(self, node: usize) -> str {
         assert self.is_valid(node);
         return match self.names.at(node) {
-            option::Option[*string]::Some(p) => unsafe { (*p).as_str() },
-            option::Option[*string]::None => "",
+            option::Option[*text::Text]::Some(p) => unsafe { (*p).as_str() },
+            option::Option[*text::Text]::None => "",
         };
     }
 
@@ -366,8 +367,8 @@ impl Registry {
     // returned view aliases the live buffer the Vec still owns.
     fn id_view(self, node: usize) -> str {
         return match self.ids.at(node) {
-            option::Option[*string]::Some(p) => unsafe { (*p).as_str() },
-            option::Option[*string]::None => "",
+            option::Option[*text::Text]::Some(p) => unsafe { (*p).as_str() },
+            option::Option[*text::Text]::None => "",
         };
     }
 
@@ -375,7 +376,7 @@ impl Registry {
     // string into `ids` FIRST, then take the index key as a view of the stored
     // copy (`id_view`). Taking the view before the move would double-free on
     // drop (see the ordering rule at the top of this file).
-    fn push_node(mut self, id: string, role: Role, parent: option::Option[usize], exposed: bool) -> usize {
+    fn push_node(mut self, id: text::Text, role: Role, parent: option::Option[usize], exposed: bool) -> usize {
         let node_id: usize = self.ids.len();
         self.ids.push(id);
         self.index.insert(self.id_view(node_id), node_id);
