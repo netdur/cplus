@@ -9837,18 +9837,29 @@ fn stdlib_box_round_trip_copy_and_non_copy() {
     .unwrap();
     let box_src = include_str!("../../vendor/stdlib/src/box.cplus");
     std::fs::write(dir.join("vendor/stdlib/src/box.cplus"), box_src).unwrap();
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/box\" as box;\n\
+         import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
              let mut b = box::new::[i32](7);\n\
              if b.get() != 7 { return 1; }\n\
              b.set(100);\n\
              if b.get() != 100 { return 2; }\n\
              if b.unwrap() != 100 { return 3; }\n\
-             let s = \"boxed-string\".to_string();\n\
-             let b2 = box::new::[string](s);\n\
-             let recovered: string = b2.unwrap();\n\
+             let s = text::from_str(\"boxed-string\");\n\
+             let b2 = box::new::[text::Text](s);\n\
+             let recovered: text::Text = b2.unwrap();\n\
              if recovered.len() != (12 as usize) { return 4; }\n\
              return 0;\n\
          }\n",
@@ -12641,7 +12652,7 @@ fn phase1c_container_inner_drop_runs_without_crash() {
     )
     .unwrap();
     for name in &[
-        "box", "vec", "arc", "rc", "hash_map", "atomic", "result", "iterator", "option",
+        "box", "vec", "arc", "rc", "hash_map", "atomic", "result", "iterator", "option", "text",
     ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -12659,21 +12670,22 @@ fn phase1c_container_inner_drop_runs_without_crash() {
          import \"stdlib/arc\" as arc;\n\
          import \"stdlib/rc\" as rc;\n\
          import \"stdlib/hash_map\" as hm;\n\
-         fn box_scope() { let _b: box::Box[string] = box::new::[string](\"hello\".to_string()); return; }\n\
+         import \"stdlib/text\" as text;\n\
+         fn box_scope() { let _b: box::Box[text::Text] = box::new::[text::Text](text::from_str(\"hello\")); return; }\n\
          fn vec_scope() {\n\
-             let mut v: vec::Vec[string] = vec::new::[string]();\n\
-             v.push(\"one\".to_string());\n\
-             v.push(\"two\".to_string());\n\
-             v.push(\"three\".to_string());\n\
+             let mut v: vec::Vec[text::Text] = vec::new::[text::Text]();\n\
+             v.push(text::from_str(\"one\"));\n\
+             v.push(text::from_str(\"two\"));\n\
+             v.push(text::from_str(\"three\"));\n\
              return;\n\
          }\n\
          fn arc_scope() {\n\
-             let a: arc::Arc[string] = arc::new::[string](\"arc-value\".to_string());\n\
+             let a: arc::Arc[text::Text] = arc::new::[text::Text](text::from_str(\"arc-value\"));\n\
              let _c: u64 = a.strong_count();\n\
              return;\n\
          }\n\
          fn rc_scope() {\n\
-             let r: rc::Rc[string] = rc::new::[string](\"rc-value\".to_string());\n\
+             let r: rc::Rc[text::Text] = rc::new::[text::Text](text::from_str(\"rc-value\"));\n\
              let _c: u64 = r.strong_count();\n\
              return;\n\
          }\n\

@@ -376,11 +376,13 @@ impl Text {
     }
 }
 
-// `Text` owns its heap buffer outright (no shared/aliased state), so moving it
-// to another thread is sound — like Rust's `String`. The raw-pointer field
-// makes it `!Send` by default; this marker opts in. Needed for `Text` payloads
-// in `thread::spawn` / channels.
+// `Text` owns its heap buffer outright (no shared/aliased state, no interior
+// mutability), so moving it to another thread (`Send`) and sharing `&Text`
+// across threads (`Sync`) are both sound — like Rust's `String`. The
+// raw-pointer field makes it `!Send`/`!Sync` by default; these markers opt in.
+// `Send` is needed for `thread::spawn` payloads; `Send + Sync` for `Arc[Text]`.
 unsafe impl Send for Text {}
+unsafe impl Sync for Text {}
 
 // An owned, NUL-terminated C string — the bridge to `extern fn`s that take a
 // `const char*`. The buffer is `len + 1` bytes (the trailing NUL is not counted
