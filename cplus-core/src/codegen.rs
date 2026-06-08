@@ -14900,6 +14900,16 @@ mod tests {
         gen_src_with(src, BuildMode::Debug)
     }
 
+    // R4: a user-defined 24-byte owned (Drop) struct — `{ ptr, i64, i64 }`, the
+    // same layout `string` had — for the sret-ABI tests now that the `string`
+    // spelling is gone and `Text` is import-required (can't appear in an
+    // unvendored codegen snippet). Its LLVM type is the named `%S24`.
+    const OWNED24: &str = "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct S24 { a: *u8, b: i64, c: i64 }\n\
+         impl S24 { fn drop(mut self) { unsafe { free(self.a); } return; } }\n\
+         fn mk24() -> S24 { return S24 { a: unsafe { malloc(8 as usize) }, b: 0 as i64, c: 0 as i64 }; }\n";
+
     fn gen_src_with(src: &str, mode: BuildMode) -> String {
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
@@ -17932,18 +17942,18 @@ mod tests {
 
     #[test]
     fn string_returning_fn_uses_sret_definition() {
-        let ir = gen_src(
-            "fn greet() -> string { return \"hi\".to_string(); }\n\
-             fn main() -> i32 { let s: string = greet(); return 0; }",
-        );
+        let ir = gen_src(&format!(
+            "{OWNED24}fn greet() -> S24 {{ return mk24(); }}\n\
+             fn main() -> i32 {{ let s: S24 = greet(); return 0; }}"
+        ));
         // The function returns void and takes a sret pointer as %0.
         assert!(
-            ir.contains("void @greet(ptr sret({ ptr, i64, i64 }) noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
+            ir.contains("void @greet(ptr sret(%S24) noalias nonnull noundef writable dereferenceable(24) align 8 %0)"),
             "expected sret definition, got:\n{ir}"
         );
         // The body stores into %0 then returns void.
         assert!(
-            ir.contains("store { ptr, i64, i64 }") && ir.contains(", ptr %0"),
+            ir.contains("store %S24") && ir.contains(", ptr %0"),
             "expected store-to-sret-slot, got:\n{ir}"
         );
     }
@@ -17952,10 +17962,10 @@ mod tests {
     fn string_returning_fn_call_site_uses_sret_slot() {
         // The caller allocates a 24-byte slot, passes it as the sret
         // arg, and loads the result back for value-semantics consumers.
-        let ir = gen_src(
-            "fn greet() -> string { return \"hi\".to_string(); }\n\
-             fn main() -> i32 { let s: string = greet(); return 0; }",
-        );
+        let ir = gen_src(&format!(
+            "{OWNED24}fn greet() -> S24 {{ return mk24(); }}\n\
+             fn main() -> i32 {{ let s: S24 = greet(); return 0; }}"
+        ));
         // v0.0.8 fix C: non-pub `greet` → fastcc at the call.
         assert!(
             ir.contains("call fastcc void @greet(ptr "),
@@ -17963,7 +17973,7 @@ mod tests {
         );
         // After the call, the caller loads the value back from the slot.
         assert!(
-            ir.contains("load { ptr, i64, i64 }, ptr"),
+            ir.contains("load %S24, ptr"),
             "expected load-from-slot after sret call, got:\n{ir}"
         );
     }
@@ -17980,10 +17990,10 @@ mod tests {
         //
         // `string` is a 24-byte aggregate (ptr, len, cap); any 24B
         // `#[repr(C)]` struct would hit the same path.
-        let ir = gen_src(
-            "extern fn make_str() -> string;\n\
-             fn main() -> i32 { let s: string = unsafe { make_str() }; return 0; }",
-        );
+        let ir = gen_src(&format!(
+            "{OWNED24}extern fn make_str() -> S24;\n\
+             fn main() -> i32 {{ let s: S24 = unsafe {{ make_str() }}; return 0; }}"
+        ));
         assert!(
             ir.contains("declare void @make_str(ptr sret"),
             "extern fn returning 24B aggregate must declare with sret, got:\n{ir}"
@@ -18105,10 +18115,10 @@ mod tests {
     fn string_sret_with_args_shifts_param_indices() {
         // With sret, the user-declared params live at %1, %2, ... rather
         // than %0, %1, .... Verify the body references the shifted SSA.
-        let ir = gen_src(
-            "fn pick(n: i32) -> string { return \"x\".to_string(); }\n\
-             fn main() -> i32 { let s: string = pick(7); return 0; }",
-        );
+        let ir = gen_src(&format!(
+            "{OWNED24}fn pick(n: i32) -> S24 {{ return mk24(); }}\n\
+             fn main() -> i32 {{ let s: S24 = pick(7); return 0; }}"
+        ));
         // Definition: %0 is sret, %1 is `n`.
         assert!(
             ir.contains("void @pick(ptr sret") && ir.contains(", i32 noundef %1)"),
@@ -18121,11 +18131,11 @@ mod tests {
         // Caller's sret slot can be forwarded to callee on a tail call.
         // `caller() -> string` returning `helper()` (both sret) should
         // not need an intermediate slot+load — forward the caller's slot.
-        let ir = gen_src(
-            "fn helper() -> string { return \"hi\".to_string(); }\n\
-             fn caller() -> string { return helper(); }\n\
-             fn main() -> i32 { let s: string = caller(); return 0; }",
-        );
+        let ir = gen_src(&format!(
+            "{OWNED24}fn helper() -> S24 {{ return mk24(); }}\n\
+             fn caller() -> S24 {{ return helper(); }}\n\
+             fn main() -> i32 {{ let s: S24 = caller(); return 0; }}"
+        ));
         // Caller's body must musttail-call helper using its own sret slot.
         // v0.0.4 Phase 1A: the call-site sret attribute must match the
         // callee's declaration or LLVM's musttail verifier rejects the IR.
