@@ -3751,19 +3751,19 @@ fn enum_multi_payload_large_first_value_layout() {
     let bin = dir.join("t");
     std::fs::write(
         &src,
-        "\
+        format!("{}{}", BUF_PRELUDE, "\
 struct P { x: i32 }
-enum R { Both(string, P), None }
-fn mk() -> R { return R::Both(\"hello\".to_string(), P { x: 9 }); }
+enum R { Both(Buf, P), None }
+fn mk() -> R { return R::Both(mk_buf(), P { x: 9 }); }
 fn main() -> i32 {
     let r: R = mk();
     let out: i32 = match r {
-        R::Both(s, p) => { let kept: string = s; kept.len() as i32 +% p.x }
+        R::Both(s, p) => { let kept: Buf = s; kept.len() as i32 +% p.x }
         R::None => { 0 }
     };
-    return out -% 14;
+    return out -% 13;
 }
-",
+"),
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -3900,6 +3900,7 @@ const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
      impl Buf {\n\
          fn drop(mut self) { unsafe { free(self.ptr); } return; }\n\
          fn as_str(self) -> str { return unsafe { #str_from_raw_parts(self.ptr, 4 as usize) }; }\n\
+         fn len(self) -> usize { return 4 as usize; }\n\
      }\n\
      fn mk_buf() -> Buf { return Buf { ptr: unsafe { malloc(4 as usize) } }; }\n";
 
@@ -7069,7 +7070,7 @@ fn phase8_interp_non_tostring_type_rejected_e0612() {
         "struct Point { x: i32, y: i32 }\n\
          fn main() -> i32 {\n\
              let p: Point = Point { x: 1, y: 2 };\n\
-             let s: string = \"point: ${p}\";\n\
+             let s = \"point: ${p}\";\n\
              return s.len() as i32;\n\
          }\n",
     )
@@ -11519,17 +11520,17 @@ fn echo_string_param_does_not_double_free() {
     let src = dir.join("echo.cplus");
     std::fs::write(
         &src,
-        "\
-fn echo(x: string) -> string {
+        format!("{}{}", BUF_PRELUDE, "\
+fn echo(x: Buf) -> Buf {
     return x;
 }
 fn main() -> i32 {
-    let s: string = \"hello\".to_string();
-    let t: string = echo(s);
-    if t.len() != (5 as usize) { return 1 as i32; }
+    let s: Buf = mk_buf();
+    let t: Buf = echo(s);
+    if t.len() != (4 as usize) { return 1 as i32; }
     return 0 as i32;
 }
-",
+"),
     )
     .unwrap();
     let bin = dir.join("echo");
@@ -12598,19 +12599,18 @@ fn block_tail_ident_non_copy_does_not_double_free() {
     let src = dir.join("blkmv.cplus");
     std::fs::write(
         &src,
-        "\
-extern fn printf(fmt: *u8, ...) -> i32;
+        format!("{}{}", BUF_PRELUDE, "\
 fn main() -> i32 {
     // Block-tail rebind.
-    let f: string = {
-        let inner: string = \"inside\".to_string();
+    let f: Buf = {
+        let inner: Buf = mk_buf();
         inner
     };
-    if f.len() != (6 as usize) { return 1 as i32; }
+    if f.len() != (4 as usize) { return 1 as i32; }
     // Nested block-tail rebind.
-    let g: string = {
-        let outer: string = {
-            let deep: string = \"deep\".to_string();
+    let g: Buf = {
+        let outer: Buf = {
+            let deep: Buf = mk_buf();
             deep
         };
         outer
@@ -12618,7 +12618,7 @@ fn main() -> i32 {
     if g.len() != (4 as usize) { return 2 as i32; }
     return 0 as i32;
 }
-",
+"),
     )
     .unwrap();
     let bin = dir.join("blkmv");
@@ -19370,7 +19370,7 @@ fn no_alloc_rejects_to_string() {
     std::fs::write(
         &src,
         "#[no_alloc]\n\
-         fn hot(n: i32) { let _s: string = n.to_string(); return; }\n\
+         fn hot(n: i32) { let _s = n.to_string(); return; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
