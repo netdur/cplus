@@ -9470,13 +9470,25 @@ fn stdlib_thread_spawn_join_non_copy_string() {
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    // R4: payload is now `Text` (stdlib), which imports vec → option + iterator.
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/thread\" as thread;\n\
-         fn produce() -> string { return \"hello from worker\".to_string(); }\n\
+         import \"stdlib/text\" as text;\n\
+         fn produce() -> text::Text { return text::from_str(\"hello from worker\"); }\n\
          fn main() -> i32 {\n\
-             let h: thread::JoinHandle[string] = thread::spawn::[string](produce);\n\
-             let s: string = h.join();\n\
+             let h: thread::JoinHandle[text::Text] = thread::spawn::[text::Text](produce);\n\
+             let s: text::Text = h.join();\n\
              return s.len() as i32;\n\
          }\n",
     )
