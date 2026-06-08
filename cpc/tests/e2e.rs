@@ -9276,6 +9276,7 @@ fn stdlib_fs_round_trip() {
     // future (for File::read_async). Stage them too.
     for name in &[
         "result", "vec", "fs", "io", "iterator", "option", "net", "netsys", "reactor", "future",
+        "text",
     ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -10791,6 +10792,12 @@ fn stdlib_fs_file_lines_round_trip() {
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    // fs::lines now yields `Text` (R4); fs imports stdlib/text.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/text.cplus"),
+        include_str!("../../vendor/stdlib/src/text.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
     // On Linux the resolver loads reactor_linux.cplus (epoll) in place of
@@ -10900,6 +10907,12 @@ fn stdlib_fs_file_read_async_compiles() {
     std::fs::write(dir.join("vendor/stdlib/src/vec.cplus"), vec_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/iterator.cplus"), iterator_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/option.cplus"), option_src).unwrap();
+    // fs::lines now yields `Text` (R4); fs imports stdlib/text.
+    std::fs::write(
+        dir.join("vendor/stdlib/src/text.cplus"),
+        include_str!("../../vendor/stdlib/src/text.cplus"),
+    )
+    .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/reactor.cplus"), reactor_src).unwrap();
     // On Linux the resolver loads reactor_linux.cplus (epoll) in place of

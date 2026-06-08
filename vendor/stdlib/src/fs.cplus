@@ -11,6 +11,7 @@ import "./vec" as vec;
 // the gen-method machinery needs Iterator[T] in scope.
 import "./net" as net;
 import "./iterator" as iterator;
+import "./text" as text;
 
 // `open` is variadic in libc — mode is only consumed when O_CREAT is in
 // flags. The variadic decl matches the platform ABI exactly (on
@@ -126,12 +127,12 @@ impl File {
     }
 
     // v0.0.5 Phase 3 Slice 3D: iterator over '\n'-separated lines.
-    // Reads the file in 4 KiB chunks; each yielded `string` is the
+    // Reads the file in 4 KiB chunks; each yielded `Text` is the
     // line *without* its trailing newline. The carry buffer holds the
     // partial line that spans a chunk boundary, copied into the next
     // chunk's scan. A final fragment without a trailing newline at EOF
     // is yielded as the last line.
-    pub gen fn lines(self) -> string {
+    pub gen fn lines(self) -> text::Text {
         let mut carry: vec::Vec[u8] = vec::new::[u8]();
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = unsafe { malloc(chunk_size) };
