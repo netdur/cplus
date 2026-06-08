@@ -18515,7 +18515,9 @@ mod tests {
 
     #[test]
     fn pub_extern_fn_with_string_return_rejected_e0410() {
-        let codes = errors("pub extern fn make() -> string { return string::new(); }");
+        let codes = errors(&format!(
+            "{DROP_STRUCT}pub extern fn make() -> Owned {{ return Owned {{ x: 0 }}; }}"
+        ));
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
     }
 
@@ -18605,6 +18607,17 @@ mod tests {
 
     const FUTURE_PRELUDE: &str = "pub struct Future[T] { pub opaque handle: *u8 } ";
 
+    // R4: a minimal user-defined owned (non-Copy, Drop) struct. Replaces the
+    // blessed `string` in tests that just need "some owned heap-ish type" now
+    // that the `string` spelling is gone and `Text` is import-required (so it
+    // can't appear in a single unvendored snippet).
+    const DROP_STRUCT: &str = "struct Owned { x: i32 } impl Owned { fn drop(mut self) { return; } } ";
+
+    // R4: a user-defined struct whose `drop` *frees* heap — the freeing-drop
+    // signal `#[no_alloc]` (E0901) keys on. Replaces a `string` field, which
+    // used to be the convenient freeing-drop type before the spelling's removal.
+    const FREEING_DROP: &str = "extern fn free(p: *u8); struct Handle { opaque p: *u8 } impl Handle { fn drop(mut self) { unsafe { free(self.p); }; } } ";
+
     #[test]
     fn async_fn_body_returns_inner_type() {
         // `async fn foo() -> i32` body uses `return X` for X: i32,
@@ -18693,9 +18706,9 @@ mod tests {
 
     #[test]
     fn async_fn_with_owned_string_param_clean() {
-        // `string` is owned → safe to hold across await.
+        // An owned (Drop) struct param is safe to hold across await.
         assert_clean(&format!(
-            "{FUTURE_PRELUDE}async fn fetch(url: string) -> i32 {{ return 0 as i32; }}"
+            "{FUTURE_PRELUDE}{DROP_STRUCT}async fn fetch(url: Owned) -> i32 {{ return 0 as i32; }}"
         ));
     }
 
@@ -18709,10 +18722,10 @@ mod tests {
 
     #[test]
     fn async_fn_with_mut_noncopy_param_emits_e0900() {
-        // `mut buf: string` is pointer-passed in Phase-6 ABI; storage
+        // `mut buf: Owned` is pointer-passed in Phase-6 ABI; storage
         // doesn't necessarily live in the coroutine frame.
         let codes = errors(&format!(
-            "{FUTURE_PRELUDE}async fn proc(mut buf: string) -> i32 {{ return 0 as i32; }}"
+            "{FUTURE_PRELUDE}{DROP_STRUCT}async fn proc(mut buf: Owned) -> i32 {{ return 0 as i32; }}"
         ));
         assert!(
             codes.contains(&"E0900"),
@@ -20352,7 +20365,7 @@ mod tests {
         // even called here; the local is built from a static literal slice.)
         let codes = errors(
             "#[no_alloc] fn f(s: str) -> i32 {\n\
-                 let owned: string = s.to_string();\n\
+                 let owned = s.to_string();\n\
                  return 0;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -20396,16 +20409,16 @@ mod tests {
 
     #[test]
     fn no_alloc_field_carries_freeing_drop_e0901() {
-        // The rule reaches through fields: a struct holding a `string` field
+        // The rule reaches through fields: a struct holding a freeing-drop field
         // auto-drops that field (freeing) at scope exit.
-        let codes = errors(
-            "struct Wrap { name: string, tag: i32 }\n\
-             #[no_alloc] fn f(s: str) -> i32 {\n\
-                 let w: Wrap = Wrap { name: s.to_string(), tag: 1 };\n\
+        let codes = errors(&format!(
+            "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
+             #[no_alloc] fn f(s: str) -> i32 {{\n\
+                 let w: Wrap = Wrap {{ name: Handle {{ p: #str_ptr(s) }}, tag: 1 }};\n\
                  return 0;\n\
-             }\n\
-             fn main() -> i32 { return 0; }",
-        );
+             }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
     }
 
@@ -20456,12 +20469,12 @@ mod tests {
     #[test]
     fn no_alloc_bare_nonpcopy_param_carries_freeing_drop_e0901() {
         // A bare `w: Wrap` non-Copy struct param is move-by-default (v0.0.10),
-        // so the callee drops it — and the auto-dropped `string` field frees.
-        let codes = errors(
-            "struct Wrap { name: string, tag: i32 }\n\
-             #[no_alloc] fn f(w: Wrap) -> i32 { return w.tag; }\n\
-             fn main() -> i32 { return 0; }",
-        );
+        // so the callee drops it — and the auto-dropped freeing field frees.
+        let codes = errors(&format!(
+            "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
+             #[no_alloc] fn f(w: Wrap) -> i32 {{ return w.tag; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
     }
 
@@ -20469,22 +20482,22 @@ mod tests {
     fn no_alloc_borrow_param_drop_type_clean() {
         // `borrow` is a shared by-value parameter: the caller keeps ownership,
         // so there's no callee-side teardown to allocate.
-        assert_clean(
-            "struct Wrap { name: string, tag: i32 }\n\
-             #[no_alloc] fn f(borrow w: Wrap) -> i32 { return w.tag; }\n\
-             fn main() -> i32 { return 0; }",
-        );
+        assert_clean(&format!(
+            "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
+             #[no_alloc] fn f(borrow w: Wrap) -> i32 {{ return w.tag; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
     }
 
     #[test]
     fn no_alloc_mut_param_drop_type_clean() {
         // `mut` is an exclusive borrow (pointer-passed): caller-owned, no
         // callee drop.
-        assert_clean(
-            "struct Wrap { name: string, tag: i32 }\n\
-             #[no_alloc] fn f(mut w: Wrap) -> i32 { return w.tag; }\n\
-             fn main() -> i32 { return 0; }",
-        );
+        assert_clean(&format!(
+            "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
+             #[no_alloc] fn f(mut w: Wrap) -> i32 {{ return w.tag; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
     }
 
     #[test]
@@ -21181,10 +21194,10 @@ mod tests {
 
     #[test]
     fn asm_tier2_non_scalar_operand_e0892() {
-        let codes = errors(
-            "fn f(a: string) { unsafe { #asm(\"nop {a}\", a = in(reg) a); } return; }\n\
-             fn main() -> i32 { return 0; }",
-        );
+        let codes = errors(&format!(
+            "{DROP_STRUCT}fn f(a: Owned) {{ unsafe {{ #asm(\"nop {{a}}\", a = in(reg) a); }} return; }}\n\
+             fn main() -> i32 {{ return 0; }}"
+        ));
         assert!(codes.iter().any(|c| *c == "E0892"), "got {:?}", codes);
     }
 
