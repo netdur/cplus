@@ -8,6 +8,7 @@
 import "json/json" as json;
 import "stdlib/result" as result;
 import "stdlib/io" as io;
+import "stdlib/text" as text;
 
 fn main() -> i32 {
     let src: str = "{\"name\":\"alice\",\"age\":30,\"flags\":[true,false,null]}";
@@ -21,7 +22,7 @@ fn main() -> i32 {
     let age_v: json::Value = json::object_get(root, "age");
     let flags_v: json::Value = json::object_get(root, "flags");
 
-    io::print("name="); io::println(json::as_str(name_v).as_str());
+    io::print("name="); io::println(unsafe { json::as_str(name_v).as_str() });
     let n: f64 = json::as_number(age_v);
     if n >= 30.0f64 && n < 30.5f64 { io::println("age=30 ok"); } else { io::println("age FAIL"); }
 
@@ -36,7 +37,7 @@ fn main() -> i32 {
         return 3;
     }
 
-    let round: string = root.to_string();
-    io::print("round-trip="); io::println(round.as_str());
+    let round: text::Text = root.to_string();
+    io::print("round-trip="); io::println(unsafe { round.as_str() });
     return 0;
 }
