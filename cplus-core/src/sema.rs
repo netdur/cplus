@@ -10724,69 +10724,6 @@ impl SemaCx<'_> {
         }
     }
 
-    /// Phase 8 slice 8.STR.3: dispatch `string::method(args)`. Only two
-    /// associated fns ship in v1: `new` (no args, returns empty `string`)
-    /// and `with_capacity(n: usize)` (returns a string with `n` bytes
-    /// pre-allocated). Anything else fires E0324.
-    fn check_string_assoc_call(
-        &mut self,
-        method: &Ident,
-        args: &[Expr],
-        call_span: ByteSpan,
-    ) -> Ty {
-        match method.name.as_str() {
-            "new" => {
-                if !args.is_empty() {
-                    self.err(
-                        "E0308",
-                        format!("`string::new` takes 0 argument(s), got {}", args.len()),
-                        call_span,
-                    );
-                }
-                Ty::String
-            }
-            "with_capacity" => {
-                if args.len() != 1 {
-                    self.err(
-                        "E0308",
-                        format!(
-                            "`string::with_capacity` takes 1 argument, got {}",
-                            args.len()
-                        ),
-                        call_span,
-                    );
-                    for a in args {
-                        let _ = self.check_expr(a, None);
-                    }
-                    return Ty::Error;
-                }
-                let arg_ty = self.check_expr(&args[0], Some(Ty::Usize));
-                if !matches!(arg_ty, Ty::Usize | Ty::Error) {
-                    self.err(
-                        "E0302",
-                        format!(
-                            "`string::with_capacity` expects `usize`, got `{}`",
-                            ty_display(&arg_ty)
-                        ),
-                        args[0].span,
-                    );
-                }
-                Ty::String
-            }
-            _ => {
-                self.err(
-                    "E0324",
-                    format!("no associated function `{}` on type `string`", method.name),
-                    method.span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                Ty::Error
-            }
-        }
-    }
-
     fn check_assoc_call(
         &mut self,
         segments: &[Ident],
@@ -10808,20 +10745,11 @@ impl SemaCx<'_> {
         }
         let type_seg = &segments[0];
         let method_seg = &segments[1];
-        // Phase 8 slice 8.STR.3: blessed assoc fns on the owned `string`
-        // type. `string::new()` and `string::with_capacity(n)` are the
-        // only ways to construct an owned string in user code (besides
-        // interpolation literals — slice 8.STR.B).
-        if type_seg.name == "string" {
-            if !type_args.is_empty() {
-                self.err(
-                    "E0501",
-                    "`string::{new,with_capacity}` take no type arguments".to_string(),
-                    call_span,
-                );
-            }
-            return self.check_string_assoc_call(method_seg, args, call_span);
-        }
+        // R4: `string::new` / `string::with_capacity` are gone — `string` is no
+        // longer a type. The owned string is the import-required stdlib `Text`
+        // (`text::new()` / `text::with_capacity(n)` / `text::from_str(s)`).
+        // A source-level `string::...` now falls through to the unknown-type
+        // path below (E0303 on the `string` segment).
         // v0.0.12 G-045 (llama.cplus): blessed `fN::from_bits(uN)` — a
         // bit-preserving reinterpret from the same-width unsigned int to the
         // float (LLVM `bitcast`). Associated constructor on the float type;
@@ -12102,7 +12030,12 @@ impl SemaCx<'_> {
             "f64" => Ty::F64,
             "bool" => Ty::Bool,
             "str" => Ty::Str,
-            "string" => Ty::String,
+            // R4: `string` is no longer a nameable type. The owned string is the
+            // fully-stdlib, import-required `Text` (`#[lang("string")]`). `string`
+            // here falls through to the unknown-type path (E0303). The internal
+            // `Ty::String` (the lang-item target that `.to_string()` /
+            // interpolation lower to) is unaffected — it is produced directly,
+            // never via this name lookup.
             // v0.0.12 G-026: `()` as a type — the unit type. Parser
             // produces `Path("()")` for source-level `()` (in turbofish
             // type args, fn-pointer return types, etc.) so it resolves
