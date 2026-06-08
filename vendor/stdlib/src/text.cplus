@@ -345,6 +345,56 @@ impl Text {
         return out;
     }
 
+    // Build a C string (owned, NUL-terminated) for passing to a C function.
+    // Returns None if the text contains an interior NUL byte (a C string can't
+    // represent one). The returned `CString` owns its buffer and frees it on
+    // drop; pass `cs.as_ptr()` to the `extern fn` and keep `cs` alive across the
+    // call. Length-based C APIs don't need this — pass `as_str`'s ptr+len.
+    pub fn c_str(self) -> option::Option[CString] {
+        let mut i: usize = 0 as usize;
+        while i < self.len {
+            if self.byte_at_raw(i) == (0 as u8) {
+                return option::Option[CString]::None;
+            }
+            i = i +% (1 as usize);
+        }
+        let buf: *u8 = unsafe { malloc(self.len +% (1 as usize)) };
+        assert buf.is_not_null();
+        if self.len != (0 as usize) {
+            unsafe { memcpy(buf, self.ptr, self.len); }
+        }
+        let term: *u8 = unsafe { buf + self.len };
+        unsafe { *term = 0 as u8; }
+        return option::Option[CString]::Some(CString { ptr: buf, len: self.len });
+    }
+
+    fn drop(mut self) {
+        if self.ptr.is_not_null() {
+            unsafe { free(self.ptr); }
+        }
+        return;
+    }
+}
+
+// An owned, NUL-terminated C string — the bridge to `extern fn`s that take a
+// `const char*`. The buffer is `len + 1` bytes (the trailing NUL is not counted
+// in `len`). Owns its buffer; frees it on drop. Build one with `Text::c_str`.
+pub struct CString {
+    ptr: *u8,
+    len: usize,
+}
+
+impl CString {
+    // The raw `*u8` the C ABI wants. Valid only while this `CString` is alive.
+    pub fn as_ptr(self) -> *u8 {
+        return self.ptr;
+    }
+
+    // Length in bytes, NOT counting the trailing NUL.
+    pub fn len(self) -> usize {
+        return self.len;
+    }
+
     fn drop(mut self) {
         if self.ptr.is_not_null() {
             unsafe { free(self.ptr); }

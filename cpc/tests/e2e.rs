@@ -20896,6 +20896,49 @@ fn stdlib_text_slice_rfind_trim_split() {
     assert_eq!(run.code(), Some(4), "slice/rfind/trim/split checks must pass");
 }
 
+/// TEXT.R3b: `Text::c_str` builds an owning, NUL-terminated `CString` for C FFI.
+/// A real libc `strlen` round-trip confirms the terminator; an interior NUL is
+/// rejected with `None`. The `CString` frees its buffer on drop (ASan-clean).
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_c_str_round_trips_through_libc() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         import \"stdlib/option\" as option;\n\
+         extern fn strlen(s: *u8) -> usize;\n\
+         fn main() -> i32 {\n\
+             let mut score: i32 = 0;\n\
+             let t: text::Text = \"hello\";\n\
+             match t.c_str() {\n\
+                 option::Option[text::CString]::Some(cs) => {\n\
+                     if unsafe { strlen(cs.as_ptr()) } == (5 as usize) { score = score +% 1; }\n\
+                     if cs.len() == (5 as usize) { score = score +% 1; }\n\
+                 }\n\
+                 option::Option[text::CString]::None => { }\n\
+             }\n\
+             let withnul: text::Text = \"a\\0b\";\n\
+             match withnul.c_str() {\n\
+                 option::Option[text::CString]::Some(cs2) => { let _ = cs2.len(); }\n\
+                 option::Option[text::CString]::None => { score = score +% 1; }\n\
+             }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of Text::c_str failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "c_str strlen round-trip + interior-NUL checks");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")
