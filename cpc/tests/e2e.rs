@@ -16196,25 +16196,26 @@ fn appkit_bridge_round_trip() {
 import "appkit/convert" as bridge;
 import "appkit/application" as application;
 import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 
 fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
 
-    // string -> NSString -> string round-trip preserves content + length.
-    let original: string = "hello, world".to_string();
+    // Text -> NSString -> Text round-trip preserves content + length.
+    let original: text::Text = "hello, world".to_string();
     let ns: *u8 = bridge::cplus_string_to_nsstring(original);
-    let back: string = bridge::nsstring_to_cplus_string(ns);
+    let back: text::Text = bridge::nsstring_to_cplus_string(ns);
     if back.len() != (12 as usize) { return 1; }
-    if back.as_str() != "hello, world" { return 2; }
+    if unsafe { back.as_str() } != "hello, world" { return 2; }
 
     // str literal path.
     let ns2: *u8 = bridge::cplus_str_to_nsstring("bridge");
-    let s2: string = bridge::nsstring_to_cplus_string(ns2);
-    if s2.as_str() != "bridge" { return 3; }
+    let s2: text::Text = bridge::nsstring_to_cplus_string(ns2);
+    if unsafe { s2.as_str() } != "bridge" { return 3; }
 
     // Empty string is a corner the encoding-aware length path must handle.
     let ns3: *u8 = bridge::cplus_str_to_nsstring("");
-    let s3: string = bridge::nsstring_to_cplus_string(ns3);
+    let s3: text::Text = bridge::nsstring_to_cplus_string(ns3);
     if s3.len() != (0 as usize) { return 4; }
 
     // Vec[u8] -> NSData -> Vec[u8] copy round-trip.
@@ -16368,6 +16369,7 @@ fn appkit_pasteboard_round_trip() {
 import "appkit/application" as application;
 import "appkit/pasteboard" as pb;
 import "appkit/convert" as conv;
+import "stdlib/text" as text;
 
 fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
@@ -16376,10 +16378,10 @@ fn main() -> i32 {
     if board.set_string(#str_ptr("clip-test-123\0")) != (1 as i8) { return 1; }
     let got_ns: *u8 = board.string_ns();
     if got_ns == unsafe { 0 as *u8 } { return 2; }
-    if conv::nsstring_to_cplus_string(got_ns).as_str() != "clip-test-123" { return 3; }
+    if unsafe { conv::nsstring_to_cplus_string(got_ns).as_str() } != "clip-test-123" { return 3; }
     let _cc2: i64 = board.clear();
     let _ok2: i8 = board.set_string(#str_ptr("second\0"));
-    if conv::nsstring_to_cplus_string(board.string_ns()).as_str() != "second" { return 4; }
+    if unsafe { conv::nsstring_to_cplus_string(board.string_ns()).as_str() } != "second" { return 4; }
     pool.drain();
     return 0;
 }
@@ -16481,6 +16483,7 @@ import "appkit/application" as application;
 import "appkit/data" as data;
 import "appkit/runtime" as rt;
 import "appkit/convert" as conv;
+import "stdlib/text" as text;
 
 fn ds_row_count(self_obj: *u8, _cmd: *u8, table: *u8) -> i64 {
     return 3 as i64;
@@ -16501,8 +16504,8 @@ fn main() -> i32 {
 
     let nil: *u8 = unsafe { 0 as *u8 };
     let sel_v: *u8 = rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0"));
-    if conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() != "row-0" { return 2; }
-    if conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() != "row-2" { return 3; }
+    if unsafe { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() } != "row-0" { return 2; }
+    if unsafe { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() } != "row-2" { return 3; }
 
     rt::release(ds);
     pool.drain();
@@ -17326,12 +17329,13 @@ fn appkit_convert_roundtrips() {
 import "appkit/runtime" as rt;
 import "appkit/convert" as convert;
 import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 
 fn main() -> i32 {
-    // str -> NSString -> string, content preserved.
+    // str -> NSString -> Text, content preserved.
     let ns: *u8 = convert::cplus_str_to_nsstring("hello world");
-    let back: string = convert::nsstring_to_cplus_string(ns);
-    if back.as_str() != "hello world" { return 1; }
+    let back: text::Text = convert::nsstring_to_cplus_string(ns);
+    if unsafe { back.as_str() } != "hello world" { return 1; }
 
     // Vec[u8] -> NSData -> Vec[u8], bytes preserved.
     let mut v: vec::Vec[u8] = vec::Vec[u8]::new();

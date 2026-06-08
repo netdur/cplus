@@ -12,6 +12,7 @@ import "appkit/view" as view;
 import "appkit/controls" as controls;
 import "appkit/graphics" as graphics;
 import "appkit/convert" as bridge;
+import "stdlib/text" as text;
 
 // libc — for the spec-mandated READY marker (mirrors proves/03).
 extern fn puts(s: *u8) -> i32;
@@ -58,11 +59,10 @@ pub fn main() -> i32 {
     let font: *u8 = graphics::Font::system_font_of_size(20.0);
     label.set_font(font);
 
-    // Bridge usage: build a `string` dynamically (interpolation), then
-    // hand the NSString form to setStringValue: directly. This is the
-    // path consumers reach for whenever the label content isn't a
-    // static literal.
-    let greeting: string = "Hello from C+".to_string();
+    // Bridge usage: build a `Text` dynamically, then hand the NSString
+    // form to setStringValue: directly. This is the path consumers reach
+    // for whenever the label content isn't a static literal.
+    let greeting: text::Text = "Hello from C+".to_string();
     let ns_greeting: *u8 = bridge::cplus_string_to_nsstring(greeting);
     rt::msg_void_id(
         label.obj,
@@ -72,8 +72,8 @@ pub fn main() -> i32 {
 
     // Sanity round-trip: read it back, prove the bridge preserves it.
     let current_ns: *u8 = label.string_value();
-    let back: string = bridge::nsstring_to_cplus_string(current_ns);
-    if back.as_str() != "Hello from C+" {
+    let back: text::Text = bridge::nsstring_to_cplus_string(current_ns);
+    if unsafe { back.as_str() } != "Hello from C+" {
         return 1;
     }
 

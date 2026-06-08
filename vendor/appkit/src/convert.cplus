@@ -2,7 +2,7 @@
 //
 // C+ primitives + raw pointers + `#[repr(C)]` value structs cross the
 // ObjC boundary verbatim (see runtime.cplus). The richer C+ types —
-// `string`, `str`, `Vec[T]` — do NOT have direct ObjC counterparts;
+// `Text`, `str`, `Vec[T]` — do NOT have direct ObjC counterparts;
 // they need explicit conversions, which is what this module ships.
 //
 // Design call: the bridge lives in the binding package, not in cpc.
@@ -17,6 +17,7 @@
 
 import "./runtime" as rt;
 import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 
 // ===========================================================================
 // objc_msgSend shapes used only by this module. The runtime.cplus set
@@ -59,9 +60,9 @@ fn ns_utf8() -> u64 { return 4 as u64; }
 //   str    → NSString : `NSString.stringWithBytes:length:encoding:`,
 //                       which copies the buffer internally — caller's
 //                       `str` (a borrow) can drop freely after.
-//   string → NSString : same, via `s.as_str()`.
+//   Text   → NSString : same, via `unsafe { s.as_str() }`.
 //
-//   NSString → string : owned copy via `UTF8String` + length query,
+//   NSString → Text   : owned copy via `UTF8String` + length query,
 //                       safe to outlive the source NSString and its
 //                       autorelease pool.
 //   NSString → str    : unsafe borrow path; the resulting view is
@@ -76,11 +77,11 @@ pub fn cplus_str_to_nsstring(s: str) -> *u8 {
     return unsafe { objc_msg_id_ptr_len_enc(cls, selector, #str_ptr(s), #str_len(s), ns_utf8()) };
 }
 
-pub fn cplus_string_to_nsstring(s: string) -> *u8 {
-    return cplus_str_to_nsstring(s.as_str());
+pub fn cplus_string_to_nsstring(s: text::Text) -> *u8 {
+    return cplus_str_to_nsstring(unsafe { s.as_str() });
 }
 
-pub fn nsstring_to_cplus_string(ns: *u8) -> string {
+pub fn nsstring_to_cplus_string(ns: *u8) -> text::Text {
     let utf8_ptr: *u8 = rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
     let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
     let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };

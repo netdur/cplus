@@ -58,7 +58,7 @@ impl Pasteboard {
 
     // Read the plain-text contents as an `NSString*`, or null if the
     // clipboard holds no string of that type. Pair with
-    // `convert::nsstring_to_cplus_string` to get a C+ `string`.
+    // `convert::nsstring_to_cplus_string` to get an owned C+ `Text`.
     pub fn string_ns(self) -> *u8 {
         return rt::msg_id_id(self.obj, rt::sel(#str_ptr("stringForType:\0")), type_string());
     }
