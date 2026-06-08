@@ -8908,7 +8908,13 @@ impl SemaCx<'_> {
                     call_span,
                 );
             }
-            return Ty::String;
+            // TEXT.R3b: `.to_string()` produces the designated owned-string type
+            // (`Text`) when available (file imports `stdlib/text`), else the
+            // legacy `Ty::String`. Consistent with interpolation (R2).
+            return match self.designated_string_struct {
+                Some(id) => Ty::Struct(id),
+                None => Ty::String,
+            };
         }
         // v0.0.12 G-045 (llama.cplus): blessed `to_bits()` on a float scalar —
         // bit-preserving reinterpret to the same-width unsigned int (LLVM
@@ -15482,6 +15488,16 @@ mod tests {
              fn main() -> i32 { let o: Other = make(); return 0; }",
         );
         assert!(codes.contains(&"E0302"));
+    }
+
+    #[test]
+    fn to_string_produces_text_clean_text_r3b() {
+        // `.to_string()` produces the designated type, so it matches a `Text`
+        // annotation (no E0302) — consistent with interpolation.
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let n: i32 = 1; let s: Text = n.to_string(); return 0; }",
+        );
     }
 
     #[test]

@@ -12318,7 +12318,8 @@ impl<'a> FnState<'a> {
                 .gen_expr(receiver)
                 .expect("to_string receiver has value");
             if Self::is_blessed_to_string_receiver_codegen(&rt) {
-                return Some(self.gen_to_string_intrinsic(&rv, &rt));
+                let (sv, _) = self.gen_to_string_intrinsic(&rv, &rt);
+                return Some(self.lang_string_or_string(sv));
             }
         }
         // v0.0.12 G-045: blessed `to_bits()` on a float scalar → LLVM
@@ -13795,6 +13796,32 @@ impl<'a> FnState<'a> {
             .iter()
             .position(|s| s.is_lang_string)
             .map(|i| Ty::Struct(StructId(i as u32)))
+    }
+
+    /// TEXT.R3b: re-type a freshly-built owned-string `{ptr,i64,i64}` SSA value
+    /// as the named `%Text` aggregate when the lang-string type exists (same
+    /// layout), so `.to_string()` produces `Text`. Else returns it as the legacy
+    /// `Ty::String`. The buffer is unchanged — only the LLVM aggregate type.
+    fn lang_string_or_string(&mut self, sv: String) -> (String, Ty) {
+        match self.lang_string_struct_ty() {
+            Some(text_ty) => {
+                let lty = self.lty(&text_ty);
+                let p = self.next_tmp();
+                self.emit(&format!("{p} = extractvalue {{ ptr, i64, i64 }} {sv}, 0"));
+                let l = self.next_tmp();
+                self.emit(&format!("{l} = extractvalue {{ ptr, i64, i64 }} {sv}, 1"));
+                let c = self.next_tmp();
+                self.emit(&format!("{c} = extractvalue {{ ptr, i64, i64 }} {sv}, 2"));
+                let v0 = self.next_tmp();
+                self.emit(&format!("{v0} = insertvalue {lty} undef, ptr {p}, 0"));
+                let v1 = self.next_tmp();
+                self.emit(&format!("{v1} = insertvalue {lty} {v0}, i64 {l}, 1"));
+                let v2 = self.next_tmp();
+                self.emit(&format!("{v2} = insertvalue {lty} {v1}, i64 {c}, 2"));
+                (v2, text_ty)
+            }
+            None => (sv, Ty::String),
+        }
     }
 
     /// TEXT.R1c: materialize a by-value call argument, building an owned `Text`

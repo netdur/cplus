@@ -20939,6 +20939,39 @@ fn stdlib_text_c_str_round_trips_through_libc() {
     assert_eq!(run.code(), Some(3), "c_str strlen round-trip + interior-NUL checks");
 }
 
+/// TEXT.R3b: `.to_string()` produces an owned `Text` (when `stdlib/text` is
+/// imported) — consistent with interpolation. Builds, runs, drops clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_to_string_produces_owned_text() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    setup_text_project(
+        &dir,
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let n: i32 = 42;\n\
+             let s: text::Text = n.to_string();\n\
+             let b: text::Text = true.to_string();\n\
+             let mut score: i32 = 0;\n\
+             if s.len() == (2 as usize) { score = score +% 1; }\n\
+             if s.starts_with(\"42\") { score = score +% 1; }\n\
+             if b.starts_with(\"true\") { score = score +% 1; }\n\
+             return score;\n\
+         }\n",
+    );
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build of n.to_string() -> Text failed");
+    let run = Command::new(dir.join("target/debug/textt"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(3), "to_string -> Text checks must pass");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")
