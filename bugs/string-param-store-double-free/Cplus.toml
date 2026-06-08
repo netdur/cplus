@@ -7,5 +7,7 @@ edition = "2026"
 name = "repro"
 path = "src/main.cplus"
 
-# No dependencies: the bug reproduces in pure C+ with one struct and a `string`.
+# The `Vec[Text]` guard needs the stdlib (vec + text). Vendored via the
+# `vendor/stdlib` symlink, like the docs/examples projects.
 [dependencies]
+stdlib = "*"

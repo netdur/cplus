@@ -1,31 +1,46 @@
-// Minimal reproducer: a `string` local moved into a method that STORES the
-// param (here into a struct field) is double-freed at scope exit.
+// Regression guard (FIXED v0.0.17): an owned value bound to a local and then
+// moved into a method that STORES the param (here `push` into a `Vec` field)
+// used to be double-freed at scope exit — once by the new owner's drop, once by
+// the caller's scope-exit drop of the original local.
 //
-//   cpc build && ./target/debug/repro   →   exits 133 (SIGTRAP, double free)
+//   cpc build && ./target/debug/repro   →   prints "reached end", exits 0
 //
-// Variants that are CLEAN (exit 0), pinning the trigger:
-//   - pass the temporary inline:           k.set("hello".to_string());
-//   - declare the param `move`:            fn set(mut self, move v: string)
-//   - a read-only param (not stored):      fn set(mut self, v: string) { ...read v... }
-//   - a user-Drop struct instead of string (routes through `effective_move`).
+// Originally reproduced with a bare `string`/`Vec[string]` (the spelling has
+// since been removed; the owned string is now the stdlib `Text`). The bug was
+// in `effective_move` (cplus-core/src/codegen.rs): it routed bare non-Copy
+// params through the sound move lowering only for `Ty::Struct | Ty::Enum`, while
+// `Ty::String` and `Vec[T]` used the borrow ABI guarded by an
+// auto-clone-on-return net that did nothing when the param was *stored* rather
+// than returned. v0.0.17's string-move fix + ownership-safe `Vec` rewrite closed
+// it; this file is the minimal `Vec[Text]` guard (the agent_core `push_node`
+// shape that originally surfaced it).
+//
+// Variants that were CLEAN even before the fix, pinning the trigger:
+//   - pass the temporary inline:           k.set(text::from_str("hello"));
+//   - declare the param `move`:            fn set(mut self, move v: text::Text)
+//   - a read-only param (not stored):      fn set(mut self, v: text::Text) { ...read v... }
+//   - a user-Drop struct instead of a builtin owning type.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 
 extern fn write(fd: i32, buf: *u8, n: usize) -> isize;
 
-struct Sink { s: string }
+struct Sink { items: vec::Vec[text::Text] }
 
 impl Sink {
-    // Stores the param: `self.s = v` moves v into the field, so the field now
-    // owns v's buffer and will free it on Sink's drop.
-    fn set(mut self, v: string) { self.s = v; return; }
+    // Stores the param: `self.items.push(v)` moves v into the Vec, so the Vec now
+    // owns v's buffer and frees it on Sink's drop.
+    fn set(mut self, v: text::Text) { self.items.push(v); return; }
 }
 
 fn main() -> i32 {
-    let mut k: Sink = Sink { s: "init".to_string() };
-    let x: string = "hello".to_string();   // local binding -> buffer B
-    k.set(x);                              // move local into a storing method
-    // The caller still drops `x` at scope exit (bare `string` params use a
-    // borrow ABI; the caller is not `mark_moved`), so buffer B is freed by both
-    // `x`'s drop and the Sink field's drop -> double free.
+    let mut k: Sink = Sink { items: vec::new::[text::Text]() };
+    let x: text::Text = text::from_str("hello");   // local binding -> buffer B
+    k.set(x);                                       // move local into a storing method
+    // Pre-fix, the caller also dropped `x` at scope exit (bare owning params used
+    // a borrow ABI; the caller was not `mark_moved`), so buffer B was freed by
+    // both `x`'s drop and the Vec's drop -> double free.
     unsafe { write(2 as i32, #str_ptr("reached end\n"), 12 as usize); }
     return 0;
 }
