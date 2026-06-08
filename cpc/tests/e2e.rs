@@ -7007,137 +7007,11 @@ fn phase11_type_alias_in_fn_signature_runs() {
 // 8.STR.3 (owned string type), 8.STR.6 (blessed ToString), 8.STR.B
 // (interpolation parser + codegen).
 
-#[test]
-fn phase8_string_new_and_methods_runs() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("s.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             let s: string = string::with_capacity(64 as usize);\n\
-             let empty: bool = s.is_empty();\n\
-             let view: str = s.as_str();\n\
-             let n: i32 = s.len() as i32;\n\
-             if empty { return 42; }\n\
-             return n;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("s");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "string methods should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(42));
-}
-
-#[test]
-fn phase8_to_string_on_primitives_runs() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("ts.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             let n: i32 = -1234;\n\
-             let s: string = n.to_string();\n\
-             #println(s.as_str());\n\
-             return s.len() as i32;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("ts");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "to_string should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(5), "len of \"-1234\" is 5");
-    let stdout = String::from_utf8_lossy(&run.stdout);
-    assert!(stdout.contains("-1234"), "stdout: {stdout}");
-}
-
-#[test]
-fn phase8_interp_simple_runs() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("ip.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             let n: i32 = 42;\n\
-             let name: str = \"world\";\n\
-             let g: string = \"hello ${name}, n is ${n}\";\n\
-             #println(g.as_str());\n\
-             return 0;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("ip");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "interpolation should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(0));
-    let stdout = String::from_utf8_lossy(&run.stdout);
-    assert!(stdout.contains("hello world, n is 42"), "stdout: {stdout}");
-}
-
-#[test]
-fn phase8_interp_expressions_runs() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("ipe.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             let n: i32 = 7;\n\
-             let s: string = \"sum: ${n +% 3}, doubled: ${n *% 2}\";\n\
-             #println(s.as_str());\n\
-             return 0;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("ipe");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "expr-inside-interp should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = Command::new(&bin).output().expect("run binary");
-    let stdout = String::from_utf8_lossy(&run.stdout);
-    assert!(stdout.contains("sum: 10, doubled: 14"), "stdout: {stdout}");
-}
+// Phase 8 owned-`string` + interpolation single-file tests removed in R4
+// (string → Text). Coverage now lives in the `stdlib_text_*` project tests:
+// core_api (new/with_capacity/len/is_empty/as_str), to_string_produces_owned_text,
+// interpolation_produces_owned_text. Single-file owned strings no longer exist
+// (Text is import-required; single-file uses `str`).
 
 #[test]
 fn phase8_interp_double_dollar_escape_runs() {
@@ -7712,81 +7586,10 @@ fn phase11_doc_help_in_subcommand_help() {
     );
 }
 
-// Phase 11 polish (2026-05-14): owned `string` Drop integration.
-// Strings allocated via `string::with_capacity` / `s.clone()` /
-// `to_string()` / interpolation literals get freed at scope exit.
-// Verified via ASan — without Drop, the runtime would report leaks.
-// (LeakSanitizer is part of `-fsanitize=address` on macOS/Linux.)
-
-#[test]
-fn phase11_string_drop_no_leaks_under_asan() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("nl.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             let s: string = string::with_capacity(64 as usize);\n\
-             let n: i32 = 42;\n\
-             let g: string = \"n is ${n}\";\n\
-             let t: string = n.to_string();\n\
-             return s.len() as i32 +% t.len() as i32;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("nl");
-    let out = Command::new(cpc)
-        .arg("--asan")
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "asan build should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = Command::new(&bin).output().expect("run binary");
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    // ASan reports leaks on exit. If Drop is wired, stderr is clean.
-    assert!(
-        !stderr.contains("LeakSanitizer"),
-        "ASan reported a leak — string Drop not freeing: stderr={stderr}"
-    );
-    assert!(
-        !stderr.contains("AddressSanitizer"),
-        "ASan reported a bug: stderr={stderr}"
-    );
-}
-
-#[test]
-fn phase11_string_drop_handles_empty_string_new_safely() {
-    // `string::new()` stores ptr=null. free(null) is a libc no-op so
-    // Drop on an empty string must not crash.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("en.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             let s: string = string::new();\n\
-             return s.len() as i32;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("en");
-    let out = Command::new(cpc)
-        .arg("--asan")
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(out.status.success());
-    let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(0));
-}
+// Phase 11 owned-`string` Drop ASan tests removed in R4 (string → Text).
+// Text drop is ASan-verified by the `stdlib_text_*` project tests (literal/
+// return/field/arg construction, slice/split, and the Vec[Text] drop all run
+// clean under --asan).
 
 // Phase 11 polish (2026-05-14): slice types `T[]`. Fat-pointer view
 // of a contiguous run; same { ptr, len } shape as `str` but with the
