@@ -3,6 +3,45 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.18 — 2026-06-08
+
+The owned string is now `Text` — a single, fully-stdlib string type — and the
+compiler-blessed `string` is gone. One owned-string concept, with most of its
+API living in the standard library instead of the compiler.
+
+### Language — `Text` replaces `string` (breaking)
+- **`string` is removed.** Source-level `string` (and `string::new` /
+  `string::with_capacity`) now error with E0303. The owned, growable string is
+  `Text`, implemented entirely in `vendor/stdlib/src/text.cplus` and recognised
+  by one compiler lang-item (`#[lang("string")]`). `str` (the borrowed view) is
+  unchanged.
+- **Import-required.** A file that names an owned string or uses interpolation
+  must `import "stdlib/text"`. Single-file programs that only need views use
+  `str`. (`.to_string()` / interpolation still work without the import via type
+  inference, producing an un-nameable owned value; to *name* the type, import
+  `Text`.)
+- **`Text` API** — all in stdlib, extensible without touching the compiler:
+  `new` / `with_capacity` / `from_str`, `push_str` / `clear` / `truncate` /
+  `clone`, `len` / `capacity` / `is_empty`, `find` / `rfind` / `contains` /
+  `starts_with` / `ends_with`, `slice` / `trim*` / `split -> Vec[Text]`, the
+  `unsafe as_str` borrow escape hatch, and `c_str -> Option[CString]` for the C
+  ABI. `Text` is `Send + Sync` (usable as a `thread::spawn` payload and in
+  `Arc[Text]`).
+- **Multi-line string literals** `"""..."""` — verbatim: no indentation
+  stripping, no escape processing; the bytes between the quotes are the value.
+- String interpolation and `.to_string()` now produce an owned `Text`.
+
+### Language — `unsafe fn`
+- Functions can be declared `unsafe fn`; calling one outside an `unsafe { }`
+  block is rejected (E0801). The grep-able escape hatch for operations whose
+  safety the compiler can't verify (e.g. `Text::as_str`, raw FFI returns).
+
+### stdlib + vendor
+- Migrated off `string` to `Text`: stdlib `cow` / `fs`; vendor `json`, `appkit`
+  (the Objective-C string bridge), `uuid`, and `agent_core`. The owned `Text`
+  made the JSON deep-clone paths safe (`Text::clone()` instead of an
+  `as_str().to_string()` round-trip), removing `unsafe` from them.
+
 ## v0.0.17 — 2026-06-07
 
 Foundations: an ownership-safe `Vec`, a compiler soundness fix behind it, the

@@ -1,6 +1,6 @@
 [package]
 name = "cplus-core"
-version = "0.0.16"
+version = "0.0.18"
 edition.workspace = true
 rust-version.workspace = true
 
