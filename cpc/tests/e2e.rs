@@ -147,6 +147,46 @@ fn interface_bound_generic_backend_runs() {
     assert_eq!(run.code(), Some(15), "got {:?}", run.code());
 }
 
+// v0.0.19: the `__cplus_*` runtime/atomic builtins migrated to the `#` sigil.
+// Exercise the migrated forms directly (no stdlib import): atomic load/store/
+// fetch-add, a memory fence, and `#drop_in_place::[T]` — all end-to-end.
+#[test]
+fn cplus_intrinsic_sigil_forms_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("sig.cplus");
+    std::fs::write(
+        &src,
+        "static mut DROPPED: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
+         fn main() -> i32 {\n\
+             let mut x: i32 = 41;\n\
+             let p: *i32 = unsafe { #addr_of(x) };\n\
+             unsafe { #atomic_store_i32_seqcst(p, 7); }\n\
+             let v: i32 = unsafe { #atomic_load_i32_seqcst(p) };\n\
+             let old: i32 = unsafe { #atomic_fetch_add_i32_seqcst(p, 35) };\n\
+             unsafe { #atomic_fence_seqcst(); }\n\
+             let mut r: R = R { data: unsafe { 0 as *u8 } };\n\
+             let rp: *R = unsafe { #addr_of(r) };\n\
+             unsafe { #drop_in_place::[R](rp); }\n\
+             return v + old + unsafe { DROPPED };\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("sig");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "intrinsic-sigil program must compile");
+    let run = Command::new(&bin).status().expect("run sig");
+    // v=7, old=7 (value before the +35), DROPPED=1 → 15.
+    assert_eq!(run.code(), Some(15), "got {:?}", run.code());
+}
+
 #[test]
 fn diagnostics_json_emits_ndjson() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

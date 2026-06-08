@@ -220,8 +220,8 @@ impl HashMap[K, V] {
             if occ != (0 as u8) {
                 let k_ptr: *K = unsafe { self.keys + i };
                 let v_ptr: *V = unsafe { self.vals + i };
-                unsafe { __cplus_drop_in_place::[K](k_ptr); }
-                unsafe { __cplus_drop_in_place::[V](v_ptr); }
+                unsafe { #drop_in_place::[K](k_ptr); }
+                unsafe { #drop_in_place::[V](v_ptr); }
             }
             i = i +% (1 as usize);
         }

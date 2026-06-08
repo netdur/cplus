@@ -16,12 +16,12 @@ import "./reactor" as reactor;
 // fire-order, not registration-order, so total wall-clock time is
 // `max(durations)` not `sum(durations)`.
 //
-// The intrinsic `__cplus_reactor_wait_timer(ms)` is a compiler-blessed
+// The intrinsic `#reactor_wait_timer(ms)` is a compiler-blessed
 // suspend point — it can't be expressed in surface C+ because it needs
 // raw access to the enclosing coroutine handle (`%.coro.hdl`). The
 // stdlib's job here is just to give it a friendly `async fn` face.
 
 pub async fn sleep(ms: u64) {
-    unsafe { __cplus_reactor_wait_timer(ms); }
+    unsafe { #reactor_wait_timer(ms); }
     return;
 }

@@ -333,7 +333,7 @@ pub async fn read_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
         if e != netsys::eagain() {
             return (0 -% 1) as isize;
         }
-        unsafe { __cplus_reactor_wait_read(fd); }
+        unsafe { #reactor_wait_read(fd); }
     }
     return (0 -% 1) as isize;
 }
@@ -352,7 +352,7 @@ pub async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
         if e != netsys::eagain() {
             return (0 -% 1) as isize;
         }
-        unsafe { __cplus_reactor_wait_write(fd); }
+        unsafe { #reactor_wait_write(fd); }
     }
     return (0 -% 1) as isize;
 }
@@ -388,7 +388,7 @@ pub async fn accept_fd_async(listener_fd: i32) -> i32 {
         if e != netsys::eagain() {
             return 0 -% 1 as i32;
         }
-        unsafe { __cplus_reactor_wait_read(listener_fd); }
+        unsafe { #reactor_wait_read(listener_fd); }
     }
     return 0 -% 1 as i32;
 }

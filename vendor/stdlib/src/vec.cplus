@@ -154,7 +154,7 @@ impl Vec[T] {
         let mut i: usize = 0 as usize;
         while i < self.len {
             let elem: *T = unsafe { self.ptr + i };
-            unsafe { __cplus_drop_in_place::[T](elem); }
+            unsafe { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
         self.len = 0 as usize;
@@ -168,7 +168,7 @@ impl Vec[T] {
         let mut i: usize = new_len;
         while i < self.len {
             let elem: *T = unsafe { self.ptr + i };
-            unsafe { __cplus_drop_in_place::[T](elem); }
+            unsafe { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
         self.len = new_len;
@@ -226,7 +226,7 @@ impl Vec[T] {
     pub fn set(mut self, i: usize, value: T) {
         assert i < self.len;
         let slot: *T = unsafe { self.ptr + i };
-        unsafe { __cplus_drop_in_place::[T](slot); }
+        unsafe { #drop_in_place::[T](slot); }
         unsafe { *slot = value; }
         return;
     }
@@ -272,7 +272,7 @@ impl Vec[T] {
         let mut i: usize = 0 as usize;
         while i < self.len {
             let elem: *T = unsafe { self.ptr + i };
-            unsafe { __cplus_drop_in_place::[T](elem); }
+            unsafe { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
         if self.ptr.is_not_null() {

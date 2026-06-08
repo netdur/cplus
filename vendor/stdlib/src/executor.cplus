@@ -27,7 +27,7 @@ import "./reactor" as reactor;
 // Blocks the calling thread (no other tasks run on it) until the
 // future resolves. Drops the coroutine frame after extracting T.
 pub fn block_on[T](f: future::Future[T]) -> T {
-    return unsafe { __cplus_block_on::[T](f) };
+    return unsafe { #block_on::[T](f) };
 }
 
 // v0.0.4 Phase 3 Slice 3A.2: yield control back to the executor.
@@ -36,7 +36,7 @@ pub fn block_on[T](f: future::Future[T]) -> T {
 // iteration, the drain step resumes us; cooperative-multitasking
 // primitive for "give other tasks a turn."
 pub async fn yield_now() {
-    unsafe { __cplus_reactor_yield_now(); }
+    unsafe { #reactor_yield_now(); }
     return;
 }
 
@@ -48,7 +48,7 @@ pub async fn yield_now() {
 // `T` must be Send for forward compatibility, even though v0.0.4's
 // Send is permissive (every type satisfies it).
 pub fn spawn_local[T: Send](move f: future::Future[T]) {
-    unsafe { __cplus_reactor_spawn_local(f); }
+    unsafe { #reactor_spawn_local(f); }
     return;
 }
 
