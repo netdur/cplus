@@ -30,12 +30,14 @@
 // a use-after-free. No compile-time enforcement until lifetime
 // annotations land more thoroughly; for now: prefer `Owned` if in doubt.
 
+import "./text" as text;
+
 pub enum CowStr {
     // Borrowed view of someone else's storage. Caller asserts the
     // backing bytes outlive every CowStr that wraps them.
     View(str),
-    // Heap-allocated owned string. Drop releases it.
-    Owned(string),
+    // Heap-allocated owned `Text`. Drop releases it.
+    Owned(text::Text),
 }
 
 // Wrap a `str` (caller-owned-or-static bytes) as a Cow.
@@ -43,8 +45,8 @@ pub fn from_view(s: str) -> CowStr {
     return CowStr::View(s);
 }
 
-// Wrap an owned `string` as a Cow. The Cow now owns the buffer.
-pub fn from_owned(move s: string) -> CowStr {
+// Wrap an owned `Text` as a Cow. The Cow now owns the buffer.
+pub fn from_owned(move s: text::Text) -> CowStr {
     return CowStr::Owned(s);
 }
 
@@ -65,11 +67,11 @@ pub fn len(borrow c: CowStr) -> usize {
     };
 }
 
-// Consume the Cow; produce an owned `string`. View variant → allocate
+// Consume the Cow; produce an owned `Text`. View variant → allocate
 // and copy the bytes (`str::to_string()` does the malloc + memcpy).
 // Owned variant → unwrap and return the existing buffer (no extra
 // allocation, no copy).
-pub fn into_owned(move c: CowStr) -> string {
+pub fn into_owned(move c: CowStr) -> text::Text {
     return match c {
         CowStr::View(s) => s.to_string(),
         CowStr::Owned(s) => s,

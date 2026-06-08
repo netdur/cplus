@@ -10357,11 +10357,24 @@ fn stdlib_cow_str_view_and_owned_round_trip() {
         "[package]\nname = \"stdlib\"\n",
     )
     .unwrap();
-    let cow_src = include_str!("../../vendor/stdlib/src/cow.cplus");
-    std::fs::write(dir.join("vendor/stdlib/src/cow.cplus"), cow_src).unwrap();
+    // `cow` now wraps `Text` (R4 migration), which imports vec → option +
+    // iterator. Vendor the whole chain.
+    for name in &["cow", "text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
+        // main imports text so `.to_string()` yields the owned `Text` that
+        // `cow::from_owned` now takes.
         "import \"stdlib/cow\" as cow;\n\
+         import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
              let c1 = cow::from_view(\"hello\");\n\
              if cow::is_owned(c1) { return 1; }\n\
