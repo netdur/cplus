@@ -3150,6 +3150,29 @@ fn scan_moves_in_expr(
                 scan_moves_in_expr(&a.body, sigs, types, set);
             }
         }
+        // v0.0.19: the runtime/async intrinsics migrated from `__cplus_*` calls
+        // to the `#` sigil. The two that *consume* a binding still need it
+        // pre-registered in the moved set so its scope-exit drop gets a Runtime
+        // flag the intrinsic's disarm can flip (mirrors the `ExprKind::Call`
+        // special-cases above — `#thread_join(self)` frees the handle's heap
+        // ctx; `#thread_spawn_with(input, f)` moves `input` into the worker
+        // context). Without this the binding keeps its `.unused` Always-sentinel
+        // flag and codegen emits a store to an undefined SSA value.
+        ExprKind::Intrinsic { name, args, .. } => {
+            if name == "thread_join" {
+                if let Some(ExprKind::Ident(n)) = args.first().map(|a| &a.kind) {
+                    set.insert(n.clone());
+                }
+            }
+            if name == "thread_spawn_with" {
+                if let Some(ExprKind::Ident(n)) = args.first().map(|a| &a.kind) {
+                    set.insert(n.clone());
+                }
+            }
+            for a in args {
+                scan_moves_in_expr(a, sigs, types, set);
+            }
+        }
         _ => {}
     }
 }
@@ -9484,6 +9507,15 @@ impl<'a> FnState<'a> {
                 if let Some(r) = self.ffi_builtin_cg(name, args) {
                     return Some(r);
                 }
+                // v0.0.19: migrated `__cplus_*` runtime/async/atomic builtins now
+                // spelled `#name(...)`. Sema accepted them, so lower by
+                // delegating to the shared named-call emitter under the legacy
+                // spelling — `gen_named_call` special-cases the atomic / thread /
+                // reactor / drop families and emits a normal call for the
+                // extern-fn runtime helpers (`coro_*`, `reactor_*_state`).
+                if self.is_migrated_cplus_intrinsic_cg(name) {
+                    return self.gen_named_call(&format!("__cplus_{name}"), args, type_args);
+                }
                 panic!(
                     "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
                 )
@@ -9599,6 +9631,32 @@ impl<'a> FnState<'a> {
             return Some((r, ret_ty));
         }
         None
+    }
+
+    /// v0.0.19 codegen mirror of sema's `is_migrated_cplus_intrinsic`: true when
+    /// the bare `#name` corresponds to a legacy `__cplus_<name>` builtin or
+    /// extern runtime helper. Uses codegen's own signature table (`self.sigs`)
+    /// for the extern-helper group.
+    fn is_migrated_cplus_intrinsic_cg(&self, name: &str) -> bool {
+        const FAMILIES: &[&str] = &[
+            "thread_spawn",
+            "thread_join",
+            "thread_spawn_with",
+            "drop_in_place",
+            "block_on",
+            "reactor_wait_read",
+            "reactor_wait_write",
+            "reactor_wait_timer",
+            "reactor_spawn_local",
+            "reactor_yield_now",
+        ];
+        if FAMILIES.contains(&name) {
+            return true;
+        }
+        let legacy = format!("__cplus_{name}");
+        crate::atomic::parse_atomic_intrinsic(&legacy).is_some()
+            || crate::atomic::parse_atomic_fence(&legacy).is_some()
+            || self.sigs.contains_key(&legacy)
     }
 
     /// v0.0.11 Phase 4: `#addr_of(expr)` — pointer to a place.

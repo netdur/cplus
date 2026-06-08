@@ -84,7 +84,7 @@ impl Box[T] {
         // for `T = string` / `T = Vec[U]` / user struct with Drop, this
         // tears down the contained value's resources first so the
         // following `free` only releases the box's outer slot.
-        unsafe { __cplus_drop_in_place::[T](self.p); }
+        unsafe { #drop_in_place::[T](self.p); }
         unsafe { free(self.p as *u8); }
         return;
     }

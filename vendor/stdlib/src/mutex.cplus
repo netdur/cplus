@@ -122,7 +122,7 @@ impl Mutex[T] {
             // at refcount(8B) + pthread_mutex_t(64B) = offset 72.
             let value_off: usize = (8 as usize) +% (64 as usize);
             let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
-            unsafe { __cplus_drop_in_place::[T](value_ptr); }
+            unsafe { #drop_in_place::[T](value_ptr); }
             unsafe { free(self.ctrl); }
         }
         return;

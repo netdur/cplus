@@ -90,7 +90,7 @@ extern fn kevent(
 
 // LLVM coroutine intrinsics — surfaced via stable wrapper symbols
 // emitted by codegen, so stdlib can call them as plain extern fns.
-// `__cplus_coro_resume(hdl)` lowers to `call void @llvm.coro.resume(ptr %hdl)`.
+// `#coro_resume(hdl)` lowers to `call void @llvm.coro.resume(ptr %hdl)`.
 extern fn __cplus_coro_resume(hdl: *u8);
 extern fn __cplus_coro_done(hdl: *u8) -> i32;
 
@@ -134,7 +134,7 @@ fn evfilt_timer() -> i16 { return (0 as i16) -% (7 as i16); }
 // Lazily allocate + init the reactor on first use. Idempotent: returns
 // the same state pointer on every call within a process.
 pub fn ensure() -> *u8 {
-    let cur: *u8 = unsafe { __cplus_reactor_get_state() };
+    let cur: *u8 = unsafe { #reactor_get_state() };
     let null_p: *u8 = unsafe { 0 as *u8 };
     if !ptr_is_null(cur) { return cur; }
     let state: *u8 = unsafe { malloc(header_bytes()) };
@@ -172,7 +172,7 @@ pub fn ensure() -> *u8 {
     unsafe { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
     unsafe { *ar_slot = malloc((8 *% 8) as usize); }
-    unsafe { __cplus_reactor_set_state(state); }
+    unsafe { #reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
 }
@@ -381,7 +381,7 @@ pub fn poll_one_event() -> bool {
         let phdl: **u8 = unsafe { kb as **u8 };
         let hdl: *u8 = unsafe { *phdl };
         unsafe { *nt_slot = nt -% (1 as i32); }
-        unsafe { __cplus_coro_resume(hdl); }
+        unsafe { #coro_resume(hdl); }
         return true;
     }
     let fd_ready: i32 = ident as i32;
@@ -410,7 +410,7 @@ pub fn poll_one_event() -> bool {
                     unsafe { *(flts + (i as usize)) = last_flt; }
                 }
                 unsafe { *nw_slot = last_i; }
-                unsafe { __cplus_coro_resume(hdl); }
+                unsafe { #coro_resume(hdl); }
                 return true;
             }
         }
@@ -432,9 +432,9 @@ pub fn drain_pending() -> i32 {
     let mut i: i32 = 0;
     while i < n {
         let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
-        let done: i32 = unsafe { __cplus_coro_done(hdl) };
+        let done: i32 = unsafe { #coro_done(hdl) };
         if done == (0 as i32) {
-            unsafe { __cplus_coro_resume(hdl); }
+            unsafe { #coro_resume(hdl); }
         }
         i = i +% (1 as i32);
     }

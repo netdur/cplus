@@ -5753,6 +5753,36 @@ impl SemaCx<'_> {
     /// up in a hardcoded table; unknown names fire E0905. Each intrinsic
     /// implements its own arg-shape validation, then returns the result
     /// type. Codegen consults a parallel table.
+    /// v0.0.19: the runtime/async/atomic builtins historically spelled with the
+    /// `__cplus_` prefix now use the `#` sigil (one sigil for every
+    /// compiler-known builtin). Returns true when `name` (the bare `#name`
+    /// spelling) corresponds to a legacy `__cplus_<name>`. Three groups:
+    ///   - fixed intrinsic families recognized by name in `check_named_call`,
+    ///   - the pattern-matched atomic ops / fences (`atomic_*`),
+    ///   - the extern-fn runtime helpers (`coro_*`, `reactor_*_state`) declared
+    ///     `extern fn __cplus_*` in the stdlib and defined by codegen.
+    fn is_migrated_cplus_intrinsic(&self, name: &str) -> bool {
+        const FAMILIES: &[&str] = &[
+            "thread_spawn",
+            "thread_join",
+            "thread_spawn_with",
+            "drop_in_place",
+            "block_on",
+            "reactor_wait_read",
+            "reactor_wait_write",
+            "reactor_wait_timer",
+            "reactor_spawn_local",
+            "reactor_yield_now",
+        ];
+        if FAMILIES.contains(&name) {
+            return true;
+        }
+        let legacy = format!("__cplus_{name}");
+        crate::atomic::parse_atomic_intrinsic(&legacy).is_some()
+            || crate::atomic::parse_atomic_fence(&legacy).is_some()
+            || self.fns.contains_key(&legacy)
+    }
+
     fn check_intrinsic(
         &mut self,
         name: &str,
@@ -5806,6 +5836,18 @@ impl SemaCx<'_> {
                 // bare-call path.
                 if let Some(ty) = self.ffi_builtin_ty(name, args, span) {
                     return ty;
+                }
+                // v0.0.19: migrated `__cplus_*` runtime/async/atomic builtins.
+                // Delegate to the shared named-call checker via the legacy
+                // spelling so its unsafe gating, arg/type-arg validation, and
+                // extern-helper resolution are reused verbatim. (`ret_ty`
+                // ascription is never used by these — they're call-shaped.)
+                if self.is_migrated_cplus_intrinsic(name) {
+                    let synth = Expr {
+                        kind: ExprKind::Ident(format!("__cplus_{name}")),
+                        span,
+                    };
+                    return self.check_named_call(&synth, args, type_args, span);
                 }
                 self.err(
                     "E0905",
@@ -18041,6 +18083,41 @@ mod tests {
                  return a.run() + viaturbo; \
              }",
         );
+    }
+
+    // v0.0.19 `__cplus_*` → `#` sigil migration: the runtime/atomic builtins are
+    // now spelled `#name(...)`. The delegation to the shared named-call checker
+    // preserves the unsafe gating (E0801) — an atomic op outside `unsafe` errors.
+    #[test]
+    fn migrated_atomic_intrinsic_outside_unsafe_e0801_v0019() {
+        let codes = errors(
+            "fn f() -> i32 { \
+                 let mut x: i32 = 0; \
+                 let p: *i32 = unsafe { #addr_of(x) }; \
+                 return #atomic_load_i32_seqcst(p); \
+             }",
+        );
+        assert!(codes.contains(&"E0801"), "expected E0801, got: {codes:?}");
+    }
+
+    // The same atomic op inside `unsafe` is clean and types as the spec type.
+    #[test]
+    fn migrated_atomic_intrinsic_in_unsafe_clean_v0019() {
+        assert_clean(
+            "fn f() -> i32 { \
+                 let mut x: i32 = 0; \
+                 let p: *i32 = unsafe { #addr_of(x) }; \
+                 return unsafe { #atomic_load_i32_seqcst(p) }; \
+             }",
+        );
+    }
+
+    // A genuinely-unknown `#name` is still rejected (the migration delegation
+    // doesn't swallow non-migrated intrinsic names).
+    #[test]
+    fn unknown_intrinsic_still_e0905_v0019() {
+        let codes = errors("fn f() -> i32 { return #not_a_real_intrinsic(1); }");
+        assert!(codes.contains(&"E0905"), "expected E0905, got: {codes:?}");
     }
 
     // v0.0.19 regression lock: a Copy struct field passed by value out of

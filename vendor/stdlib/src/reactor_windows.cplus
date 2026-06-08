@@ -68,7 +68,7 @@ fn ptr_is_null(p: *u8) -> bool {
 
 // Lazily allocate + init the reactor on first use. Idempotent.
 pub fn ensure() -> *u8 {
-    let cur: *u8 = unsafe { __cplus_reactor_get_state() };
+    let cur: *u8 = unsafe { #reactor_get_state() };
     if !ptr_is_null(cur) { return cur; }
     let state: *u8 = unsafe { malloc(header_bytes()) };
     let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
@@ -101,7 +101,7 @@ pub fn ensure() -> *u8 {
     unsafe { *ae_slot = malloc((8 *% 8) as usize); }
     let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
     unsafe { *ar_slot = malloc((8 *% 8) as usize); }
-    unsafe { __cplus_reactor_set_state(state); }
+    unsafe { #reactor_set_state(state); }
     return state;
 }
 
@@ -253,7 +253,7 @@ pub fn poll_one_event() -> bool {
         unsafe { *(hdls + (best as usize)) = last_hdl; }
     }
     unsafe { *nt_slot = last_i; }
-    unsafe { __cplus_coro_resume(hdl); }
+    unsafe { #coro_resume(hdl); }
     return true;
 }
 
@@ -269,9 +269,9 @@ pub fn drain_pending() -> i32 {
     let mut i: i32 = 0;
     while i < n {
         let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
-        let done: i32 = unsafe { __cplus_coro_done(hdl) };
+        let done: i32 = unsafe { #coro_done(hdl) };
         if done == (0 as i32) {
-            unsafe { __cplus_coro_resume(hdl); }
+            unsafe { #coro_resume(hdl); }
         }
         i = i +% (1 as i32);
     }
