@@ -9561,20 +9561,33 @@ fn async_fn_returning_string_through_block_on() {
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/future.cplus"), future_src).unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/executor.cplus"), executor_src).unwrap();
+    // R4: async return type is now `Text` (stdlib), which imports vec → option
+    // + iterator.
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/future\" as future;\n\
          import \"stdlib/executor\" as executor;\n\
-         async fn inner() -> string {\n\
-             return \"hello from coro\".to_string();\n\
+         import \"stdlib/text\" as text;\n\
+         async fn inner() -> text::Text {\n\
+             return text::from_str(\"hello from coro\");\n\
          }\n\
-         async fn outer() -> string {\n\
+         async fn outer() -> text::Text {\n\
              let s = await inner();\n\
              return s;\n\
          }\n\
          fn main() -> i32 {\n\
-             let f: future::Future[string] = outer();\n\
-             let s: string = executor::block_on::[string](f);\n\
+             let f: future::Future[text::Text] = outer();\n\
+             let s: text::Text = executor::block_on::[text::Text](f);\n\
              return s.len() as i32;\n\
          }\n",
     )
@@ -13580,9 +13593,20 @@ fn stdlib_thread_spawn_with_round_trip() {
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/thread\" as thread;\n\
+         import \"stdlib/text\" as text;\n\
          struct Range { start: i64, end: i64 }\n\
          fn sum_range(r: Range) -> i64 {\n\
              let mut total: i64 = 0 as i64;\n\
@@ -13593,7 +13617,7 @@ fn stdlib_thread_spawn_with_round_trip() {
              }\n\
              return total;\n\
          }\n\
-         fn measure(move s: string) -> i64 { return s.len() as i64; }\n\
+         fn measure(move s: text::Text) -> i64 { return s.len() as i64; }\n\
          fn main() -> i32 {\n\
              let left:  Range = Range { start: 1 as i64,   end: 501 as i64  };\n\
              let right: Range = Range { start: 501 as i64, end: 1001 as i64 };\n\
@@ -13601,8 +13625,8 @@ fn stdlib_thread_spawn_with_round_trip() {
              let h2: thread::JoinHandle[i64] = thread::spawn_with::[Range, i64](right, sum_range);\n\
              let total: i64 = h1.join() +% h2.join();\n\
              if total != (500500 as i64) { return 1; }\n\
-             let s: string = \"hello, threaded world\".to_string();\n\
-             let hs: thread::JoinHandle[i64] = thread::spawn_with::[string, i64](s, measure);\n\
+             let s: text::Text = text::from_str(\"hello, threaded world\");\n\
+             let hs: thread::JoinHandle[i64] = thread::spawn_with::[text::Text, i64](s, measure);\n\
              if hs.join() != (21 as i64) { return 2; }\n\
              return 0;\n\
          }\n",
@@ -13652,13 +13676,24 @@ fn stdlib_thread_spawn_with_string_input_asan_clean() {
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/thread\" as thread;\n\
-         fn measure(move s: string) -> i64 { return s.len() as i64; }\n\
+         import \"stdlib/text\" as text;\n\
+         fn measure(move s: text::Text) -> i64 { return s.len() as i64; }\n\
          fn main() -> i32 {\n\
-             let s: string = \"hello, threaded world\".to_string();\n\
-             let h: thread::JoinHandle[i64] = thread::spawn_with::[string, i64](s, measure);\n\
+             let s: text::Text = text::from_str(\"hello, threaded world\");\n\
+             let h: thread::JoinHandle[i64] = thread::spawn_with::[text::Text, i64](s, measure);\n\
              let n: i64 = h.join();\n\
              if n != (21 as i64) { return 1; }\n\
              return 0;\n\
@@ -13722,13 +13757,24 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
     )
     .unwrap();
     std::fs::write(dir.join("vendor/stdlib/src/thread.cplus"), thread_src).unwrap();
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/thread\" as thread;\n\
-         fn measure(move s: string) -> i64 { return s.len() as i64; }\n\
+         import \"stdlib/text\" as text;\n\
+         fn measure(move s: text::Text) -> i64 { return s.len() as i64; }\n\
          fn main() -> i32 {\n\
-             let s: string = \"hi\".to_string();\n\
-             let h: thread::JoinHandle[i64] = thread::spawn_with::[string, i64](s, measure);\n\
+             let s: text::Text = text::from_str(\"hi\");\n\
+             let h: thread::JoinHandle[i64] = thread::spawn_with::[text::Text, i64](s, measure);\n\
              // Post-move use: borrow checker rejects.\n\
              let n: i64 = s.len() as i64;\n\
              let _r: i64 = h.join();\n\
