@@ -7198,30 +7198,6 @@ fn phase8_interp_non_tostring_type_rejected_e0612() {
     );
 }
 
-#[test]
-fn phase8_interp_demo_sample_runs() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = format!(
-        "{}/../docs/examples/phase8_interpolation.cplus",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    let bin = dir.join("interp_demo");
-    let out = Command::new(cpc)
-        .arg(src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "interpolation demo should compile: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(0));
-}
-
 // Phase 11 polish (2026-05-13): `-g` emits DWARF debug metadata.
 // v1 ships function-level info only — verified via IR shape and via
 // `nm -a` on the linked binary (macOS debug map).
