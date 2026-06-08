@@ -3888,17 +3888,32 @@ fn return_region_matching_compiles() {
     assert!(ok, "valid same-region return must compile; stderr: {stderr}");
 }
 
+// R4: these borrow-check tests previously used the blessed `string` as a local
+// owned type with a safe `as_str()`. With `string` removed, they use a tiny
+// user Drop struct `Buf` whose `as_str()` borrows `self` — `returned_borrow_root`
+// recognizes any `recv.as_str()` / `recv.as_slice()` by name, so E0513 fires the
+// same way. (`Text::as_str` is `unsafe`, so it deliberately bypasses this check
+// — the view-lifetime rule for `Text` is the deferred feature.)
+const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
+     extern fn free(p: *u8);\n\
+     struct Buf { ptr: *u8 }\n\
+     impl Buf {\n\
+         fn drop(mut self) { unsafe { free(self.ptr); } return; }\n\
+         fn as_str(self) -> str { return unsafe { #str_from_raw_parts(self.ptr, 4 as usize) }; }\n\
+     }\n\
+     fn mk_buf() -> Buf { return Buf { ptr: unsafe { malloc(4 as usize) } }; }\n";
+
 #[test]
 fn return_borrow_of_local_owned_rejected_e0513() {
     // v0.0.12 (#3): returning a `str` view into a function-local owned value
-    // (a `string`, which drops at function exit) dangles — reject it.
-    let (ok, stderr) = try_compile_snippet(
-        "fn bad() -> str {\n\
-             let s: string = \"heap\".to_string();\n\
+    // (which drops at function exit) dangles — reject it.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{BUF_PRELUDE}fn bad() -> str {{\n\
+             let s: Buf = mk_buf();\n\
              return s.as_str();\n\
-         }\n\
-         fn main() -> i32 { return #str_len(bad()) as i32; }\n",
-    );
+         }}\n\
+         fn main() -> i32 {{ return #str_len(bad()) as i32; }}\n"
+    ));
     assert!(!ok, "expected E0513 rejection, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
 }
@@ -3907,14 +3922,14 @@ fn return_borrow_of_local_owned_rejected_e0513() {
 fn return_borrow_alias_of_local_owned_rejected_e0513() {
     // Returning an alias to `s.as_str()` is the same dangling view as
     // returning `s.as_str()` directly.
-    let (ok, stderr) = try_compile_snippet(
-        "fn bad() -> str {\n\
-             let s: string = \"heap\".to_string();\n\
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{BUF_PRELUDE}fn bad() -> str {{\n\
+             let s: Buf = mk_buf();\n\
              let view: str = s.as_str();\n\
              return view;\n\
-         }\n\
-         fn main() -> i32 { return #str_len(bad()) as i32; }\n",
-    );
+         }}\n\
+         fn main() -> i32 {{ return #str_len(bad()) as i32; }}\n"
+    ));
     assert!(!ok, "expected E0513 rejection, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
 }
@@ -3923,15 +3938,15 @@ fn return_borrow_alias_of_local_owned_rejected_e0513() {
 fn return_borrow_branch_alias_of_local_owned_rejected_e0513() {
     // Flow merging must keep the unsafe branch provenance even when another
     // branch assigns a literal-backed view.
-    let (ok, stderr) = try_compile_snippet(
-        "fn bad(flag: bool) -> str {\n\
-             let s: string = \"heap\".to_string();\n\
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{BUF_PRELUDE}fn bad(flag: bool) -> str {{\n\
+             let s: Buf = mk_buf();\n\
              let mut view: str;\n\
-             if flag { view = s.as_str(); } else { view = \"static\"; }\n\
+             if flag {{ view = s.as_str(); }} else {{ view = \"static\"; }}\n\
              return view;\n\
-         }\n\
-         fn main() -> i32 { return #str_len(bad(true)) as i32; }\n",
-    );
+         }}\n\
+         fn main() -> i32 {{ return #str_len(bad(true)) as i32; }}\n"
+    ));
     assert!(!ok, "expected E0513 rejection, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
 }
@@ -3963,14 +3978,14 @@ fn escaping_view_in_returned_struct_rejected_e0513() {
     // v0.0.13 (Tier 1): the dangle hidden inside a returned aggregate. The
     // view borrows local `s`, which drops at return — so the struct carries a
     // dangling view. E0513 even though the return *type* is a struct, not a view.
-    let (ok, stderr) = try_compile_snippet(
-        "struct Holder { view: str }\n\
-         fn keep() -> Holder {\n\
-             let s: string = \"heap\".to_string();\n\
-             return Holder { view: s.as_str() };\n\
-         }\n\
-         fn main() -> i32 { let h: Holder = keep(); return 0; }\n",
-    );
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{BUF_PRELUDE}struct Holder {{ view: str }}\n\
+         fn keep() -> Holder {{\n\
+             let s: Buf = mk_buf();\n\
+             return Holder {{ view: s.as_str() }};\n\
+         }}\n\
+         fn main() -> i32 {{ let h: Holder = keep(); return 0; }}\n"
+    ));
     assert!(!ok, "expected E0513 on the escaping view, compiled instead");
     assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
 }
@@ -3979,15 +3994,15 @@ fn escaping_view_in_returned_struct_rejected_e0513() {
 fn move_owned_field_into_returned_struct_compiles() {
     // v0.0.13 (Tier 1) negative-guard: moving an *owned* `string` into a
     // returned struct is a normal ownership transfer — must NOT be flagged.
-    let (ok, stderr) = try_compile_snippet(
-        "struct Owner { s: string }\n\
-         fn mk() -> Owner {\n\
-             let s: string = \"heap\".to_string();\n\
-             return Owner { s: s };\n\
-         }\n\
-         fn main() -> i32 { let o: Owner = mk(); return 0; }\n",
-    );
-    assert!(ok, "moving an owned string into a returned struct must compile; stderr: {stderr}");
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{BUF_PRELUDE}struct Owner {{ s: Buf }}\n\
+         fn mk2() -> Owner {{\n\
+             let s: Buf = mk_buf();\n\
+             return Owner {{ s: s }};\n\
+         }}\n\
+         fn main() -> i32 {{ let o: Owner = mk2(); return 0; }}\n"
+    ));
+    assert!(ok, "moving an owned value into a returned struct must compile; stderr: {stderr}");
 }
 
 #[test]
@@ -3995,11 +4010,11 @@ fn param_rooted_view_in_returned_struct_compiles() {
     // v0.0.13 (Tier 1) negative-guard: a view borrowed from a *parameter* is
     // caller-tied (the source outlives the call), so storing it in a returned
     // struct is sound — must not be flagged as a dangling local.
-    let (ok, stderr) = try_compile_snippet(
-        "struct Holder { view: str }\n\
-         fn wrap(borrow s: string) -> Holder { return Holder { view: s.as_str() }; }\n\
-         fn main() -> i32 { return 0; }\n",
-    );
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{BUF_PRELUDE}struct Holder {{ view: str }}\n\
+         fn wrap(borrow s: Buf) -> Holder {{ return Holder {{ view: s.as_str() }}; }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
     assert!(ok, "param-rooted view in a returned struct must compile; stderr: {stderr}");
 }
 
