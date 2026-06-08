@@ -1183,6 +1183,42 @@ impl SemaCx<'_> {
         });
     }
 
+    /// Like `err`, but attaches explanatory `notes` (rendered as
+    /// `= help:` / `= note:` lines under the diagnostic). Used where a
+    /// bare error code is correct but a one-line pointer makes the fix
+    /// obvious — e.g. the removed `string` type (v0.0.18) pointing at the
+    /// stdlib `Text` replacement.
+    fn err_note(&mut self, code: &'static str, msg: String, span: ByteSpan, notes: Vec<String>) {
+        let primary = match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
+            Some(fc) => fc.lm.span(&fc.path, span, &fc.src),
+            None => self.lm.span(&self.file, span, self.src),
+        };
+        self.sink.emit(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode(code),
+            message: msg,
+            primary,
+            labels: Vec::new(),
+            notes,
+            suggestions: Vec::new(),
+        });
+    }
+
+    /// v0.0.18 removed the built-in `string` type in favor of the stdlib
+    /// `Text`. A source-level `string` (as a type, or `string::new` /
+    /// `string::with_capacity`) now hits the unknown-name path; this is the
+    /// shared note that points at the replacement so the E0303 is actionable.
+    fn text_replacement_notes() -> Vec<String> {
+        vec![
+            "the built-in `string` type was removed in v0.0.18; use the stdlib \
+             owned-string type `Text` instead"
+                .to_string(),
+            "add `import \"stdlib/text\"` and write `Text` (e.g. `Text::new()`, \
+             `Text::with_capacity(n)`)"
+                .to_string(),
+        ]
+    }
+
     /// Emit a non-fatal warning. Same span-routing as `err`, but
     /// `Severity::Warning` so the build continues (`has_error` ignores it).
     /// Used for lints that flag a likely mistake without rejecting code that
@@ -1730,6 +1766,21 @@ impl SemaCx<'_> {
         }
     }
 
+    /// Self-aware type display: like the free `ty_display`, but resolves
+    /// nominal `Struct`/`Enum` ids to their source names instead of the
+    /// generic `"struct"` / `"enum"` placeholders the free function falls back
+    /// to. Used in user-facing diagnostics (e.g. E0502 bound violations) so the
+    /// message names the actual type — important for agents locating the fix.
+    fn ty_display_named(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::Struct(id) => name_leaf(&self.structs[id.0 as usize].name).to_string(),
+            Ty::Enum(id) => name_leaf(&self.enums[id.0 as usize].name).to_string(),
+            Ty::Array(elem, n) => format!("[{}; {}]", self.ty_display_named(elem), n),
+            Ty::RawPtr(inner) => format!("*{}", self.ty_display_named(inner)),
+            _ => ty_display(ty),
+        }
+    }
+
     /// Slice 7GEN.5e step 4: verify each `(param, arg)` pair against
     /// the param's declared bounds at an instantiation site. Emits
     /// **E0502** for each violation, naming the offending bound, type,
@@ -1768,7 +1819,7 @@ impl SemaCx<'_> {
                         "E0502",
                         format!(
                             "type `{}` does not satisfy bound `{}` on type parameter `{}` of {}",
-                            ty_display(arg_ty),
+                            self.ty_display_named(arg_ty),
                             b,
                             pname,
                             context_desc
@@ -10921,11 +10972,20 @@ impl SemaCx<'_> {
             return Ty::Enum(id);
         }
         let Some(id) = struct_id else {
-            self.err(
-                "E0303",
-                format!("unknown type `{}`", type_seg.name),
-                type_seg.span,
-            );
+            if type_seg.name == "string" {
+                self.err_note(
+                    "E0303",
+                    format!("unknown type `{}`", type_seg.name),
+                    type_seg.span,
+                    Self::text_replacement_notes(),
+                );
+            } else {
+                self.err(
+                    "E0303",
+                    format!("unknown type `{}`", type_seg.name),
+                    type_seg.span,
+                );
+            }
             for a in args {
                 let _ = self.check_expr(a, None);
             }
@@ -11413,6 +11473,9 @@ impl SemaCx<'_> {
                     return lhs_ty;
                 }
                 if !lhs_ty.is_numeric() && lhs_ty != Ty::Error {
+                    // GAP 3: the message names the *left* operand's type, so
+                    // pin the span to the left operand rather than the whole
+                    // `a op b` expression — agents locate the fix from the span.
                     self.err(
                         "E0302",
                         format!(
@@ -11420,7 +11483,7 @@ impl SemaCx<'_> {
                             op_str(op),
                             lhs_ty.name()
                         ),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -11434,7 +11497,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0316",
                         "modulo (`%`) on float types is not supported".to_string(),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -11443,7 +11506,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0302",
                         format!("`%` requires integer operands, found `{}`", lhs_ty.name()),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -11457,7 +11520,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0302",
                         format!("`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function"),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Bool;
@@ -11485,7 +11548,7 @@ impl SemaCx<'_> {
                              — C+ has no operator overloading (§2.6)",
                             pname
                         ),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Bool;
@@ -11497,7 +11560,7 @@ impl SemaCx<'_> {
                             "ordered comparison requires numeric operands, found `{}`",
                             lhs_ty.name()
                         ),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Bool;
@@ -11520,7 +11583,7 @@ impl SemaCx<'_> {
                             op_str(op),
                             lhs_ty.name()
                         ),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -11546,7 +11609,7 @@ impl SemaCx<'_> {
                             op_str(op),
                             lhs_ty.name()
                         ),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -11575,7 +11638,7 @@ impl SemaCx<'_> {
                             op_str(op),
                             lhs_ty.name()
                         ),
-                        span,
+                        lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
                     return Ty::Error;
@@ -12232,7 +12295,16 @@ impl SemaCx<'_> {
                     self.resolving_aliases.remove(name);
                     return resolved;
                 }
-                self.err("E0303", format!("unknown type `{name}`"), t.span);
+                if name == "string" {
+                    self.err_note(
+                        "E0303",
+                        format!("unknown type `{name}`"),
+                        t.span,
+                        Self::text_replacement_notes(),
+                    );
+                } else {
+                    self.err("E0303", format!("unknown type `{name}`"), t.span);
+                }
                 Ty::Error
             }
         }
@@ -15433,6 +15505,79 @@ mod tests {
         );
     }
 
+    // v0.0.19: a source-level `string` (type position) still errors E0303
+    // (the type was removed in v0.0.18), but the diagnostic now carries a
+    // help note pointing at the stdlib `Text` replacement.
+    #[test]
+    fn string_type_e0303_suggests_text_v0019() {
+        let diags = check_src("fn main() -> i32 { let s: string = 0; return 0; }");
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0303" && d.message.contains("string"))
+            .expect("expected E0303 on `string`");
+        assert!(
+            d.notes.iter().any(|n| n.contains("Text"))
+                && d.notes.iter().any(|n| n.contains("stdlib/text")),
+            "expected Text/import note, got {:?}",
+            d.notes
+        );
+    }
+
+    // The `string::new` / `string::with_capacity` path form also hits the
+    // unknown-type path and gets the same help note.
+    #[test]
+    fn string_path_call_e0303_suggests_text_v0019() {
+        let diags = check_src("fn main() -> i32 { let s: i32 = string::new(); return 0; }");
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0303" && d.message.contains("string"))
+            .expect("expected E0303 on `string::new`");
+        assert!(
+            d.notes.iter().any(|n| n.contains("Text")),
+            "expected Text note, got {:?}",
+            d.notes
+        );
+    }
+
+    // A different unknown type does NOT get the Text note (the note is
+    // specific to the removed `string`).
+    #[test]
+    fn other_unknown_type_e0303_has_no_text_note_v0019() {
+        let diags = check_src("fn main() -> i32 { let s: Frobnicate = 0; return 0; }");
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0303")
+            .expect("expected E0303");
+        assert!(
+            d.notes.is_empty(),
+            "unexpected notes on unrelated unknown type: {:?}",
+            d.notes
+        );
+    }
+
+    // GAP 3 (v0.0.19): an operator type error whose message names the *left*
+    // operand's type pins its span to that operand, not the whole `a op b`
+    // expression — so an agent reading the JSON span lands on the operand to
+    // fix. Here `a` is the single offending char.
+    #[test]
+    fn operator_type_error_span_pins_left_operand_gap3() {
+        let src = "fn main() -> i32 { \
+                   let a: bool = true; let b: i32 = 2; \
+                   let c: i32 = a + b; return c; }";
+        let diags = check_src(src);
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0302" && d.message.contains("numeric operands"))
+            .expect("expected E0302 numeric-operands error");
+        assert_eq!(
+            d.primary.end.byte - d.primary.start.byte,
+            1,
+            "span should cover only the left operand `a`, got {:?}..{:?}",
+            d.primary.start,
+            d.primary.end
+        );
+    }
+
     #[test]
     fn interpolation_produces_text_clean_text_r2() {
         // With a `#[lang("string")]` struct in scope, an interpolation produces
@@ -17844,6 +17989,77 @@ mod tests {
         assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
     }
 
+    // v0.0.19: the E0502 message names the *actual* offending type, not the
+    // generic `struct` placeholder (the free `ty_display` can't resolve nominal
+    // ids; `ty_display_named` does). Helps agents locate the fix.
+    #[test]
+    fn bound_violation_message_names_the_type_v0019() {
+        let diags = check_src(
+            "fn max[T: Ord](a: T, b: T) -> T { return a; } \
+             struct Point { x: i32 } \
+             fn main() -> i32 { \
+                 let p: Point = Point { x: 0 }; \
+                 let r: Point = max(p, p); \
+                 return 0; \
+             }",
+        );
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0502")
+            .expect("expected E0502");
+        assert!(
+            d.message.contains("`Point`"),
+            "message should name the type `Point`, got: {}",
+            d.message
+        );
+        assert!(
+            !d.message.contains("type `struct`"),
+            "message should not use the generic `struct` placeholder, got: {}",
+            d.message
+        );
+    }
+
+    // v0.0.19 regression lock: a polymorphic backend built from a user-defined
+    // interface bound works end to end — generic fn (inference + turbofish),
+    // generic struct field of the bounded type, and a generic impl block that
+    // calls the interface method on that field. (Confirms the move-checker /
+    // interface-bound-generics "holes" the v0.0.19 plan listed no longer
+    // reproduce.)
+    #[test]
+    fn interface_bound_generic_backend_clean_v0019() {
+        assert_clean(
+            "interface Backend { fn flush(self) -> i32; } \
+             struct Mac { fd: i32 } \
+             impl Backend for Mac { fn flush(self) -> i32 { return self.fd; } } \
+             struct App[B: Backend] { backend: B } \
+             impl App[B: Backend] { fn run(self) -> i32 { return self.backend.flush(); } } \
+             fn render[B: Backend](b: B) -> i32 { return b.flush(); } \
+             fn main() -> i32 { \
+                 let m: Mac = Mac { fd: 3 }; \
+                 let viaturbo: i32 = render::[Mac](m); \
+                 let a: App[Mac] = App[Mac] { backend: Mac { fd: 4 } }; \
+                 return a.run() + viaturbo; \
+             }",
+        );
+    }
+
+    // v0.0.19 regression lock: a Copy struct field passed by value out of
+    // `self` is accepted (the move-checker exempts Copy projections). The
+    // plan listed an E0337 "even when Copy" hole that no longer reproduces.
+    #[test]
+    fn copy_struct_field_moved_by_value_out_of_self_clean_v0019() {
+        assert_clean(
+            "struct Point { x: i32, y: i32 } \
+             struct Holder { p: Point, tag: i32 } \
+             fn take(p: Point) -> i32 { return p.x; } \
+             impl Holder { fn use_field(self) -> i32 { return take(self.p); } } \
+             fn main() -> i32 { \
+                 let h: Holder = Holder { p: Point { x: 1, y: 2 }, tag: 0 }; \
+                 return h.use_field(); \
+             }",
+        );
+    }
+
     #[test]
     fn bound_satisfied_at_generic_fn_call_clean() {
         // Same fn but Point has `impl Ord`.
@@ -20049,6 +20265,63 @@ mod tests {
              fn main() -> i32 { return NEG_ONE; }",
         );
         assert!(diags.is_empty(), "got {:#?}", diags);
+    }
+
+    // v0.0.19: a narrowing-literal cast `1 as i8` is a constant and is
+    // accepted in `static` / `const` position — previously E0X30 rejected
+    // it even though the plain `= 1` form worked (a surprising asymmetry).
+    #[test]
+    fn static_narrowing_literal_cast_accepted_v0019() {
+        let codes = lowered_errors("static mut X: i8 = 1 as i8;");
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn static_negative_narrowing_literal_cast_accepted_v0019() {
+        let codes = lowered_errors("static mut X: i16 = -3 as i16;");
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn const_narrowing_literal_cast_accepted_v0019() {
+        // Consts inline at use sites; the cast value carries the declared
+        // type through substitution. Accepted symmetrically with `static`.
+        let codes = lowered_errors("const C: u8 = 7 as u8;");
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn static_int_to_float_literal_cast_accepted_v0019() {
+        let codes = lowered_errors("static mut F: f32 = 2 as f32;");
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
+    }
+
+    // The narrowing-cast allowance is for *literal* operands only: a cast
+    // of an arithmetic expression or identifier is still E0X30.
+    #[test]
+    fn static_cast_of_arithmetic_still_rejected_e0x30_v0019() {
+        let codes = lowered_errors("static mut X: i8 = (1 + 2) as i8;");
+        assert!(
+            codes.iter().any(|c| c == "E0X30"),
+            "expected E0X30, got {:?}",
+            codes
+        );
     }
 
     #[test]

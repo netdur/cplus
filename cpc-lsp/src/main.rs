@@ -895,7 +895,12 @@ fn compute_diagnostics(
                         loaded.files.clone(),
                     );
                     for d in attr_diags { push_into(&mut by_file, d); }
-                    let lower_diags = lower::lower(&mut loaded.program, &manifest.bins[0].path, open_text);
+                    let lower_diags = lower::lower_multi(
+                        &mut loaded.program,
+                        &manifest.bins[0].path,
+                        open_text,
+                        loaded.files.clone(),
+                    );
                     for d in lower_diags { push_into(&mut by_file, d); }
                     let diags = sema::check_multi(
                         &loaded.program,

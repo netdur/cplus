@@ -1675,8 +1675,15 @@ fn load_and_check_project_full(
     if let Some(profile) = rt_profile {
         apply_realtime_profile(&mut loaded.program, &loaded.files, root, profile);
     }
-    // Lower `if let` / `guard let` (slice 4A.5) before sema.
-    let lower_diags = lower::lower(&mut loaded.program, &entry.to_path_buf(), &entry_src);
+    // Lower `if let` / `guard let` (slice 4A.5) before sema. GAP 3: hand
+    // lower the per-file source map (like attrs / sema) so an E0X30 / E0X36 in
+    // an imported file renders against that file, not the entry file.
+    let lower_diags = lower::lower_multi(
+        &mut loaded.program,
+        &entry.to_path_buf(),
+        &entry_src,
+        loaded.files.clone(),
+    );
     let lower_errors = lower_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));
@@ -2340,7 +2347,8 @@ fn run_realtime_report(json: bool) -> ExitCode {
     if let Some(profile) = m.realtime_profile.as_ref() {
         apply_realtime_profile(&mut loaded.program, &loaded.files, &m.root, profile);
     }
-    let lower_diags = lower::lower(&mut loaded.program, &entry_path, &entry_src);
+    let lower_diags =
+        lower::lower_multi(&mut loaded.program, &entry_path, &entry_src, loaded.files.clone());
     if lower_diags.iter().any(|d| matches!(d.severity, Severity::Error)) {
         for d in &lower_diags {
             emit_diag(d, DiagMode::Human, &entry_src);
@@ -3051,8 +3059,14 @@ fn build_ir(
     if attr_errors {
         return Err(ExitCode::FAILURE);
     }
-    // Lower `if let` / `guard let` to match-using forms before sema.
-    let lower_diags = lower::lower(&mut prog, &file.to_path_buf(), src);
+    // Lower `if let` / `guard let` to match-using forms before sema. GAP 3:
+    // route the per-file source map through lower (like attrs / sema) so a
+    // lower-pass error in an imported file renders against that file.
+    let lower_diags = if files_map.is_empty() {
+        lower::lower(&mut prog, &file.to_path_buf(), src)
+    } else {
+        lower::lower_multi(&mut prog, &file.to_path_buf(), src, files_map.clone())
+    };
     let lower_errors = lower_diags
         .iter()
         .any(|d| matches!(d.severity, Severity::Error));

@@ -4649,6 +4649,29 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             ExprKind::FloatLit(v, suf) => render_static_float(-*v, *suf, ty),
             _ => None,
         },
+        // v0.0.19: a narrowing-literal cast `<numeric literal> as T` in
+        // const/static position (mirrors `lower::is_const_initializer`).
+        // The value is the inner literal rendered at the *declared* type
+        // (`ty`), so `1 as i8` lands as `i8 1` — identical to the plain
+        // `= 1` form. The one shape needing care is an integer literal
+        // cast to a float static (`2 as f32`): render the float bit
+        // pattern at the target width rather than emitting `float 2`.
+        ExprKind::Cast { expr, .. } => match (&expr.kind, ty) {
+            (ExprKind::IntLit(v, _), Ty::F16 | Ty::F32 | Ty::F64) => {
+                render_static_float(*v as f64, NumSuffix::None, ty)
+            }
+            (
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand,
+                },
+                Ty::F16 | Ty::F32 | Ty::F64,
+            ) => match &operand.kind {
+                ExprKind::IntLit(v, _) => render_static_float(-(*v as f64), NumSuffix::None, ty),
+                _ => render_static_literal(expr, ty, types),
+            },
+            _ => render_static_literal(expr, ty, types),
+        },
         // str-typed statics need a paired data global; v0.0.9 punts.
         // Users should declare these as `const FOO: str = "..."` which
         // lower-substitutes the literal at every use site (no global
@@ -19587,6 +19610,47 @@ mod tests {
         assert!(
             ir.contains("@G = constant %W { half 0xH3C00, half 0xH3E00 }"),
             "expected half constants; IR:\n{ir}"
+        );
+    }
+
+    // ---- v0.0.19: narrowing-literal cast in static-init position ----
+
+    #[test]
+    fn static_narrowing_int_cast_emits_scalar_global() {
+        let ir = gen_src_mono(
+            "static mut X: i8 = 1 as i8;\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // The cast value renders identically to the plain `= 1` form.
+        assert!(
+            ir.contains("@X = global i8 1"),
+            "expected scalar i8 global; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn static_negative_narrowing_int_cast_emits_scalar_global() {
+        let ir = gen_src_mono(
+            "static mut X: i16 = -3 as i16;\n\
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            ir.contains("@X = global i16 -3"),
+            "expected negative i16 global; IR:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn static_int_to_float_cast_emits_float_constant() {
+        let ir = gen_src_mono(
+            "static mut F: f32 = 2 as f32;\n\
+             fn main() -> i32 { return 0; }",
+        );
+        // 2.0f32 bit pattern (rendered as the double-width hex form LLVM
+        // uses for `float` constants), not the invalid `float 2`.
+        assert!(
+            ir.contains("@F = global float 0x4000000000000000"),
+            "expected float constant for `2 as f32`; IR:\n{ir}"
         );
     }
 

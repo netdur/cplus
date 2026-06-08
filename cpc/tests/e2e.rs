@@ -81,6 +81,72 @@ fn loop_body_locals_drop_each_iteration() {
     );
 }
 
+// v0.0.19: a narrowing-literal cast (`<numeric literal> as T`) is accepted in
+// `static` initializer position and produces the same value the runtime cast
+// would. Compile a program whose statics use the cast form, then read them back
+// and return a value derived from both to prove the globals hold the right bits.
+#[test]
+fn static_narrowing_literal_cast_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("statcast.cplus");
+    std::fs::write(
+        &src,
+        "static mut X: i8 = 5 as i8;\n\
+         static mut Y: i16 = -3 as i16;\n\
+         fn main() -> i32 { let d: i32 = unsafe { (X as i32) - (Y as i32) }; return d; }\n",
+    )
+    .unwrap();
+    let bin = dir.join("statcast");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "static narrowing-cast program must compile");
+    let run = Command::new(&bin).status().expect("run statcast");
+    // 5 - (-3) = 8.
+    assert_eq!(run.code(), Some(8), "got {:?}", run.code());
+}
+
+// v0.0.19: a polymorphic backend built on a user-defined interface bound
+// compiles and runs — generic fn (inference + turbofish), a generic struct
+// whose field is the bounded type, and a generic impl calling the interface
+// method on that field. Returns a value derived from all three paths.
+#[test]
+fn interface_bound_generic_backend_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("backend.cplus");
+    std::fs::write(
+        &src,
+        "interface Backend { fn flush(self) -> i32; }\n\
+         struct Mac { fd: i32 }\n\
+         impl Backend for Mac { fn flush(self) -> i32 { return self.fd; } }\n\
+         struct App[B: Backend] { backend: B }\n\
+         impl App[B: Backend] { fn run(self) -> i32 { return self.backend.flush(); } }\n\
+         fn render[B: Backend](b: B) -> i32 { return b.flush(); }\n\
+         fn main() -> i32 {\n\
+             let viaturbo: i32 = render::[Mac](Mac { fd: 10 });\n\
+             let a: App[Mac] = App[Mac] { backend: Mac { fd: 5 } };\n\
+             return a.run() + viaturbo;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("backend");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "polymorphic backend must compile");
+    let run = Command::new(&bin).status().expect("run backend");
+    // a.run() = 5, render::[Mac] = 10 → 15.
+    assert_eq!(run.code(), Some(15), "got {:?}", run.code());
+}
+
 #[test]
 fn diagnostics_json_emits_ndjson() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -642,6 +708,50 @@ fn inline_asm_outside_unsafe_rejected_e0801() {
     assert!(!out.status.success(), "#asm outside unsafe must be rejected");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0801"), "expected E0801, got:\n{stderr}");
+}
+
+// GAP 3 (v0.0.19): a lower-pass error (E0X30 bad static initializer) in an
+// imported file must render against THAT file in a multi-file build, not the
+// entry file. Before `lower_multi`, the diagnostic pointed at the entry file.
+#[test]
+fn multi_file_static_init_error_points_at_imported_file_gap3() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    // The bad static lives in lib.cplus; main.cplus is the entry and is clean.
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub static mut BAD: i32 = 1 + 2;\npub fn ok() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./lib\" as lib;\nfn main() -> i32 { return lib::ok(); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--diagnostics=json")
+        .arg("check")
+        .arg(dir.join("src/main.cplus"))
+        .output()
+        .expect("invoke cpc check");
+    assert!(!out.status.success(), "bad static must fail the build");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("E0X30"))
+        .expect("expected an E0X30 diagnostic line");
+    let v: serde_json::Value = serde_json::from_str(line).expect("diagnostic is JSON");
+    assert_eq!(v["code"], "E0X30");
+    let file = v["primary"]["file"].as_str().unwrap_or("");
+    assert!(
+        file.ends_with("lib.cplus"),
+        "E0X30 must point at lib.cplus, got {file}"
+    );
+    assert_eq!(
+        v["primary"]["start"]["line"], 1,
+        "static is on line 1 of lib.cplus"
+    );
 }
 
 #[test]

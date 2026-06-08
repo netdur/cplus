@@ -28,6 +28,7 @@
 use crate::ast::*;
 use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};
 use crate::lexer::Span;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Run the lowering pass over a merged Program. Mutates `prog` so all
@@ -40,18 +41,39 @@ use std::path::PathBuf;
 /// pass returns, sema sees literal expressions where the user wrote a
 /// const name — codegen never observes a const-name reference.
 pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
-    let mut cx = Lower {
-        file: file.clone(),
-        src: src.to_string(),
-        diags: vec![],
-    };
+    // Single-file entry: build a one-entry files map and delegate to the
+    // multi-file path. Mirrors `sema::check` / `attrs::check`.
+    let mut files: BTreeMap<String, (PathBuf, String)> = BTreeMap::new();
+    files.insert(String::new(), (file.clone(), src.to_string()));
+    lower_multi(prog, file, src, files)
+}
+
+/// Multi-file entry point. Mirrors `sema::check_multi` / `attrs::check_multi`.
+///
+/// GAP 3 (v0.0.19): the merged program carries items from several files, each
+/// tagged with its `origin_file`. Diagnostics raised here (E0X30 on a bad
+/// static/const initializer, the if-let/guard-let desugar errors, E0X36 on a
+/// bad const array length) must render against the file the *item* came from,
+/// not the entry file. Previously `lower` knew only the entry path + source, so
+/// an error in an imported file pointed at the entry file (wrong file) and a
+/// byte offset past the entry source's length (wrong / clamped line). Track
+/// `current_file` per item and resolve spans through that file's `LineMap`.
+pub fn lower_multi(
+    prog: &mut Program,
+    entry_file: &PathBuf,
+    entry_src: &str,
+    files: BTreeMap<String, (PathBuf, String)>,
+) -> Vec<Diagnostic> {
+    let mut cx = Lower::new(entry_file.clone(), entry_src, files);
     // v0.0.9 Phase 4: collect consts and validate initializers (both
     // const and static initializers must be literals). Done before the
     // per-item walk so the substitution pass sees a populated table.
     let const_values = cx.collect_consts_and_validate_inits(prog);
     for it in &mut prog.items {
+        cx.set_current_file(it.origin_file.as_deref());
         cx.lower_item(it);
     }
+    cx.set_current_file(None);
     // v0.0.9 Phase 4: substitute every `Ident(qualified_const_name)`
     // use site with the const's initializer. Done after per-item
     // lowering so any pattern-let desugar already turned `if let` /
@@ -65,19 +87,60 @@ pub fn lower(prog: &mut Program, file: &PathBuf, src: &str) -> Vec<Diagnostic> {
 }
 
 struct Lower {
-    file: PathBuf,
-    src: String,
+    entry_file: PathBuf,
+    entry_src: String,
+    entry_lm: LineMap,
+    /// `origin_file` id -> (path, source, line map) for every project file.
+    files: BTreeMap<String, (PathBuf, String, LineMap)>,
+    /// The file the item currently being lowered came from, if tagged.
+    current_file: Option<String>,
     diags: Vec<Diagnostic>,
 }
 
 impl Lower {
+    fn new(entry_file: PathBuf, entry_src: &str, files: BTreeMap<String, (PathBuf, String)>) -> Self {
+        let entry_lm = LineMap::new(entry_src);
+        let mut compiled = BTreeMap::new();
+        for (id, (path, src)) in files {
+            let lm = LineMap::new(&src);
+            compiled.insert(id, (path, src, lm));
+        }
+        Self {
+            entry_file,
+            entry_src: entry_src.to_string(),
+            entry_lm,
+            files: compiled,
+            current_file: None,
+            diags: vec![],
+        }
+    }
+
+    fn set_current_file(&mut self, id: Option<&str>) {
+        self.current_file = id.map(String::from);
+    }
+
+    /// (path, source, LineMap) for the current item's file, falling back to the
+    /// entry file (single-file mode, or items synthesized after resolver merge
+    /// that carry no `origin_file`).
+    fn file_ctx(&self) -> (&PathBuf, &str, &LineMap) {
+        if let Some(id) = self.current_file.as_deref() {
+            if let Some((path, src, lm)) = self.files.get(id) {
+                return (path, src.as_str(), lm);
+            }
+        }
+        (&self.entry_file, self.entry_src.as_str(), &self.entry_lm)
+    }
+
     fn err(&mut self, code: &'static str, message: String, span: Span) {
-        let lm = LineMap::new(&self.src);
+        let primary = {
+            let (path, src, lm) = self.file_ctx();
+            lm.span(path, span, src)
+        };
         self.diags.push(Diagnostic {
             severity: Severity::Error,
             code: DiagCode(code),
             message,
-            primary: lm.span(&self.file, span, &self.src),
+            primary,
             labels: vec![],
             notes: vec![],
             suggestions: vec![],
@@ -635,6 +698,9 @@ impl Lower {
         let mut consts: std::collections::HashMap<String, (Expr, Type)> =
             std::collections::HashMap::new();
         for item in &prog.items {
+            // GAP 3: an E0X30 on a bad initializer must point at the file the
+            // const/static was declared in, not always the entry file.
+            self.set_current_file(item.origin_file.as_deref());
             match &item.kind {
                 ItemKind::Const(c) => {
                     if !is_const_initializer(&c.value) {
@@ -708,6 +774,9 @@ impl Lower {
         consts: &std::collections::HashMap<String, (Expr, Type)>,
     ) {
         for item in &mut prog.items {
+            // GAP 3: an E0X36 on a bad const array length renders against the
+            // file the type/expression was written in.
+            self.set_current_file(item.origin_file.as_deref());
             match &mut item.kind {
                 ItemKind::Function(f) => {
                     for p in &mut f.params {
@@ -1052,6 +1121,23 @@ fn is_const_initializer(e: &Expr) -> bool {
             operand.kind,
             ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
         ),
+        // v0.0.19: a narrowing-literal cast `<numeric literal> as T`
+        // (`1 as i8`, `-3 as i16`, `2 as f32`). The cast operand is a
+        // numeric literal — or a unary-negated one — so the result is a
+        // compile-time constant, the const/static-position analog of the
+        // value sema would compute at runtime. Previously rejected with
+        // E0X30 ("casts aren't literals") even though the plain-literal
+        // form `= 1` worked, which was a surprising asymmetry. Bool and
+        // string casts are intentionally excluded: they have no
+        // narrowing-literal use and would not render as scalar globals.
+        ExprKind::Cast { expr, .. } => matches!(
+            &expr.kind,
+            ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
+        ) || matches!(
+            &expr.kind,
+            ExprKind::Unary { op: UnaryOp::Neg, operand }
+                if matches!(operand.kind, ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _))
+        ),
         // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` is a
         // sema-known constant zero of type T. For statics this lowers
         // to LLVM `zeroinitializer` — no runtime memset, just BSS.
@@ -1169,6 +1255,29 @@ fn subst_stmt(s: &mut Stmt, consts: &std::collections::HashMap<String, (Expr, Ty
     }
 }
 
+/// GAP 3 (v0.0.19): overwrite the span of `e` and every sub-expression it
+/// contains with `span`. Used when a `const` value is substituted into a use
+/// site in (possibly) another file: the cloned literal must not keep its
+/// definition-site coordinates, or a downstream diagnostic would render against
+/// the wrong file. Const initializers are restricted to literal forms
+/// (`is_const_initializer`), so the recursion only needs to cover those.
+fn respan_tree(e: &mut Expr, span: Span) {
+    e.span = span;
+    match &mut e.kind {
+        ExprKind::Unary { operand, .. } => respan_tree(operand, span),
+        ExprKind::Cast { expr, .. } => respan_tree(expr, span),
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                respan_tree(a, span);
+            }
+        }
+        // All other const-initializer-legal shapes are leaf literals
+        // (IntLit / FloatLit / BoolLit / StrLit / CStrLit) with no
+        // sub-expressions to re-stamp.
+        _ => {}
+    }
+}
+
 fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Type)>) {
     // Replace this node entirely if it's an Ident naming a const. Span
     // is taken from the original use site so diagnostics still point
@@ -1183,9 +1292,19 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
     if let ExprKind::Ident(name) = &e.kind {
         if let Some((value, decl_ty)) = consts.get(name) {
             let use_span = e.span;
+            // GAP 3 (v0.0.19): the cloned const *value* still carries the
+            // const's definition-site byte spans. With multi-file builds, a
+            // const defined in file A but used in file B would, on a downstream
+            // type error against the substituted literal, render at file A's
+            // offsets while sema believes it is in file B (current_file = B) —
+            // the wrong file, and a clamped/wrong line. Re-stamp the whole
+            // cloned subtree to the use site so any such diagnostic points where
+            // the user actually wrote the reference.
+            let mut value = value.clone();
+            respan_tree(&mut value, use_span);
             *e = Expr {
                 kind: ExprKind::Cast {
-                    expr: Box::new(value.clone()),
+                    expr: Box::new(value),
                     ty: decl_ty.clone(),
                 },
                 span: use_span,
@@ -1407,6 +1526,114 @@ mod tests {
 
     fn first_codes(diags: &[Diagnostic]) -> Vec<&str> {
         diags.iter().map(|d| d.code.0).collect()
+    }
+
+    // GAP 3 (v0.0.19): a lower-pass diagnostic (here E0X30 on a bad static
+    // initializer) in an *imported* file must render against that file, not the
+    // entry file. Before the multi-file `lower_multi`, every diagnostic used the
+    // entry path + entry source, so an imported-file error pointed at the wrong
+    // file and a byte offset past the entry source's end (wrong/clamped line).
+    fn merge_two_files(
+        entry_id: &str,
+        entry_path: &str,
+        entry_src: &str,
+        lib_id: &str,
+        lib_path: &str,
+        lib_src: &str,
+    ) -> (Program, std::collections::BTreeMap<String, (PathBuf, String)>, PathBuf) {
+        let mut prog = parse(tokenize(entry_src).expect("lex entry")).expect("parse entry");
+        for it in &mut prog.items {
+            it.origin_file = Some(entry_id.to_string());
+        }
+        let mut lib = parse(tokenize(lib_src).expect("lex lib")).expect("parse lib");
+        for it in &mut lib.items {
+            it.origin_file = Some(lib_id.to_string());
+        }
+        prog.items.extend(lib.items);
+        let mut files: std::collections::BTreeMap<String, (PathBuf, String)> =
+            std::collections::BTreeMap::new();
+        files.insert(
+            entry_id.to_string(),
+            (PathBuf::from(entry_path), entry_src.to_string()),
+        );
+        files.insert(
+            lib_id.to_string(),
+            (PathBuf::from(lib_path), lib_src.to_string()),
+        );
+        (prog, files, PathBuf::from(entry_path))
+    }
+
+    #[test]
+    fn multi_file_static_init_error_points_at_origin_file_gap3() {
+        let entry_src = "fn main() -> i32 { return 0; }\n";
+        let lib_src = "// lib header\nstatic mut BAD: i32 = 1 + 2;\n";
+        let (mut prog, files, entry_path) = merge_two_files(
+            "main",
+            "/proj/main.cplus",
+            entry_src,
+            "lib",
+            "/proj/lib.cplus",
+            lib_src,
+        );
+        let diags = lower_multi(&mut prog, &entry_path, entry_src, files);
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0X30")
+            .expect("expected E0X30 on the bad static initializer");
+        assert!(
+            d.primary.file.ends_with("lib.cplus"),
+            "diagnostic should point at lib.cplus, got {:?}",
+            d.primary.file
+        );
+        // The bad static is on line 2 of lib_src — not clamped to the short
+        // entry source.
+        assert_eq!(
+            d.primary.start.line, 2,
+            "wrong line: {:?}",
+            d.primary.start
+        );
+    }
+
+    #[test]
+    fn multi_file_const_array_length_error_points_at_origin_file_gap3() {
+        // E0X36 (unknown const array length) raised in the array-length pass
+        // also routes through the item's origin file.
+        let entry_src = "fn main() -> i32 { return 0; }\n";
+        let lib_src = "struct Buf { data: [i32; MISSING] }\n";
+        let (mut prog, files, entry_path) = merge_two_files(
+            "main",
+            "/proj/main.cplus",
+            entry_src,
+            "lib",
+            "/proj/lib.cplus",
+            lib_src,
+        );
+        let diags = lower_multi(&mut prog, &entry_path, entry_src, files);
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0X36")
+            .expect("expected E0X36 on the unknown array length");
+        assert!(
+            d.primary.file.ends_with("lib.cplus"),
+            "diagnostic should point at lib.cplus, got {:?}",
+            d.primary.file
+        );
+    }
+
+    #[test]
+    fn single_file_static_init_error_unchanged_gap3() {
+        // The single-file `lower` entry still renders against the one file.
+        let (_, diags) = run("static mut BAD: i32 = 1 + 2;\nfn main() -> i32 { return 0; }");
+        let d = diags
+            .iter()
+            .find(|d| d.code.0 == "E0X30")
+            .expect("expected E0X30");
+        assert!(
+            d.primary.file.ends_with("test.cplus"),
+            "got {:?}",
+            d.primary.file
+        );
+        assert_eq!(d.primary.start.line, 1);
     }
 
     #[test]
