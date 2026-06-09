@@ -1,12 +1,21 @@
 // agent_appkit — the AppKit backend for the agent surface (Theme B, Iris GAP 1).
 //
-// Walks a live NSView hierarchy (a window's contentView subtree) into the
-// agent-core identity tree, producing a `describe_ui` snapshot: one `UiNode`
-// per view with its stable agent-id, role, AppKit class, frame, hidden state,
-// and live text. This is the *read* path — the foundation agents use to see the
-// UI (describe_ui, not screenshots, per the headless-verify constraint). The
-// authorized *action* path (click / write / scroll) and the MCP bridge build on
-// top of this in later slices.
+// `open(window)` walks a live NSView hierarchy into a `Surface`: the agent-core
+// identity tree (ids / roles / enabled state / exposure) plus a NodeId->NSView
+// map and the text-version state. From a `Surface` you get:
+//
+//   - the READ path: `describe()` -> `Vec[UiNode]`, a live snapshot
+//     ({ id, role, class_name, frame, is_hidden, text, parent }). This is how an
+//     agent sees the UI (describe_ui, not screenshots).
+//   - the WRITE path: `click` / `set_text` / `scroll_to`, each gated through the
+//     framework-agnostic `agent_core::surface` authorization brain (exposure +
+//     affordance ceiling + optimistic-concurrency version) — the real widget I/O
+//     happens only when the core returns `Allowed`.
+//
+// The agent-visible/actionable surface is the *exposed* subset: a node is
+// exposed iff it was tagged with `set_agent_id` (the developer curates what the
+// agent can touch). Untagged views are still walked for tree completeness but
+// are NotExposed, so actions on them are refused.
 //
 // The walk is iterative (an explicit stack, DFS pre-order) so a deep hierarchy
 // can't overflow. NSView frames come back via `rt::msg_rect` (NSRect is an HFA
@@ -18,6 +27,7 @@ import "stdlib/text" as text;
 import "appkit/runtime" as rt;
 import "appkit/convert" as convert;
 import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
 
 fn null() -> *u8 {
     return unsafe { 0 as *u8 };
@@ -38,9 +48,10 @@ fn agent_id_key() -> *u8 {
 }
 
 // Pin a stable agent-id on a view (developer tagging). The walk uses a pinned id
-// as the node's developer id, so the resolved agent-id stays stable across
-// re-layouts that would otherwise shift auto-generated path indices. Stored as
-// an associated, retained NSString (OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1).
+// as the node's developer id, which both (a) keeps the resolved agent-id stable
+// across re-layouts and (b) marks the node *exposed* — i.e. part of the curated
+// surface the agent may act on. Stored as an associated, retained NSString
+// (OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1).
 pub fn set_agent_id(view: *u8, id: str) {
     let ns: *u8 = convert::cplus_str_to_nsstring(id);
     rt::set_associated_object(view, agent_id_key(), ns, 1 as usize);
@@ -57,12 +68,12 @@ pub fn get_agent_id(view: *u8) -> option::Option[text::Text] {
 
 // ---- the describe_ui snapshot node ------------------------------------------
 
-// One node of the describe_ui snapshot. `id` is the resolved agent-id (from the
-// identity tree); `class_name` is the AppKit class (e.g. "NSButton"); `frame` is
-// the view's frame in its superview's coordinates; `text` is the live label /
-// content (empty when the role carries none). `parent` indexes into the
-// returned `Vec[UiNode]` (None for the window root), so the flat list
-// reconstructs the tree.
+// One node of the describe_ui snapshot. `id` is the resolved agent-id; `role` is
+// the curated role; `class_name` is the AppKit class (e.g. "NSButton"); `frame`
+// is the view's frame in its superview's coordinates; `text` is the live label /
+// content; `actionable` is whether the agent may act on it (exposed + enabled +
+// not observe-only). `parent` indexes into the returned `Vec[UiNode]` (None for
+// the window root), so the flat list reconstructs the tree.
 pub struct UiNode {
     pub id: text::Text,
     pub role: identity::Role,
@@ -70,18 +81,8 @@ pub struct UiNode {
     pub frame: rt::Rect,
     pub is_hidden: bool,
     pub text: text::Text,
+    pub actionable: bool,
     pub parent: option::Option[usize],
-}
-
-// A pending view to visit: the NSView, its parent's NodeId in the identity
-// `Registry`, and its parent's index in the output `Vec[UiNode]`. All fields are
-// Copy, so the work stack is a plain `Vec`.
-struct WalkItem {
-    // Borrowed NSView (owned by its superview, not by this transient item) —
-    // `opaque` marks it unaccounted-by-design (nothing here frees it).
-    opaque view: *u8,
-    parent_reg: usize,
-    parent_out: option::Option[usize],
 }
 
 // ---- role classification ----------------------------------------------------
@@ -92,6 +93,11 @@ fn is_kind(obj: *u8, class_name: *u8) -> bool {
         return false;
     }
     return rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), cls) != (0 as i8);
+}
+
+fn responds_to(obj: *u8, selector_name: *u8) -> bool {
+    let s: *u8 = rt::sel(selector_name);
+    return rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), s) != (0 as i8);
 }
 
 // Map an AppKit view to the curated agent-core role vocabulary. NSTextField
@@ -117,9 +123,17 @@ fn classify(view: *u8) -> identity::Role {
     return identity::Role::Group;
 }
 
-// The live text a node carries: a button's title, a text field's string value,
-// a text view's string. Roles without inherent text return "".
+// The live text a node carries: a window's title, a button's title, a text
+// field's string value, a text view's string. Roles without inherent text
+// return "".
 fn node_text(view: *u8, role: identity::Role) -> text::Text {
+    if identity::role_eq(role, identity::Role::Window) {
+        let wt: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
+        if !is_null(wt) {
+            return convert::nsstring_to_cplus_string(wt);
+        }
+        return "".to_text();
+    }
     if identity::role_eq(role, identity::Role::Button) {
         let t: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
         if !is_null(t) {
@@ -163,9 +177,30 @@ fn c_strlen(p: *u8) -> usize {
     return n;
 }
 
-// ---- the walk ---------------------------------------------------------------
+// Live enabled state. NSControl responds to `isEnabled`; plain NSView / NSWindow
+// do not — sending it would raise "unrecognized selector", so guard with
+// `respondsToSelector:` and treat non-controls as enabled.
+fn live_enabled(view: *u8) -> bool {
+    if responds_to(view, #str_ptr("isEnabled\0")) {
+        return rt::msg_i8(view, rt::sel(#str_ptr("isEnabled\0"))) != (0 as i8);
+    }
+    return true;
+}
 
-// `[view subviews]` count.
+// Live hidden state. Views respond to `isHidden`; NSWindow does not (it has
+// `isVisible`), so guard.
+fn live_hidden(view: *u8) -> bool {
+    if responds_to(view, #str_ptr("isHidden\0")) {
+        return rt::msg_i8(view, rt::sel(#str_ptr("isHidden\0"))) != (0 as i8);
+    }
+    if responds_to(view, #str_ptr("isVisible\0")) {
+        return rt::msg_i8(view, rt::sel(#str_ptr("isVisible\0"))) == (0 as i8);
+    }
+    return false;
+}
+
+// ---- subview iteration ------------------------------------------------------
+
 fn subview_count(view: *u8) -> usize {
     let arr: *u8 = rt::msg_id(view, rt::sel(#str_ptr("subviews\0")));
     if is_null(arr) {
@@ -175,26 +210,51 @@ fn subview_count(view: *u8) -> usize {
     return n as usize;
 }
 
-// `[[view subviews] objectAtIndex:i]`.
 fn subview_at(view: *u8, i: usize) -> *u8 {
     let arr: *u8 = rt::msg_id(view, rt::sel(#str_ptr("subviews\0")));
     return rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i as u64);
 }
 
-// Visit one view: classify it, add it to the identity registry (using a pinned
-// agent-id as the developer id when present), append its `UiNode`, and push its
-// subviews (in reverse, so they pop left-to-right for a pre-order walk).
+// ---- the Surface ------------------------------------------------------------
+
+// A pending view to visit: the NSView and its parent's NodeId in the registry.
+struct WalkItem {
+    // Borrowed NSView (owned by its superview) — `opaque` marks it
+    // unaccounted-by-design (nothing here frees it).
+    opaque view: *u8,
+    parent_reg: usize,
+}
+
+// A borrowed NSView wrapped as a nominal type so it can be stored in a `Vec`.
+// (cpc's monomorphizer does not accept a bare raw pointer as a generic type
+// argument — `Vec[*u8]` fails with "unknown type <raw-ptr>" — so the map is a
+// `Vec[ViewRef]`.) `opaque` marks the pointer unaccounted-by-design.
+struct ViewRef {
+    opaque p: *u8,
+}
+
+// The live surface of one window: the identity tree, the NodeId->NSView map
+// (index 0 is the synthetic app root, mapped to null), and the text-version
+// state for optimistic-concurrency edits.
+pub struct Surface {
+    reg: identity::Registry,
+    versions: surface::TextVersions,
+    views: vec::Vec[ViewRef],
+}
+
+// Register one view: classify it, add it to the identity tree (a pinned
+// agent-id becomes the developer id, which also exposes the node), reflect its
+// live enabled state, map NodeId->view, and push its subviews (in reverse, so
+// they pop left-to-right for a pre-order walk). `views` stays index-aligned with
+// the registry: every `add_child` is paired with exactly one `views.push`.
 fn visit(
     mut reg: identity::Registry,
-    mut nodes: vec::Vec[UiNode],
+    mut views: vec::Vec[ViewRef],
     mut stack: vec::Vec[WalkItem],
     view: *u8,
     parent_reg: usize,
-    parent_out: option::Option[usize],
 ) {
     let role: identity::Role = classify(view);
-
-    // Register under the identity tree; a pinned agent-id becomes the dev id.
     let pinned: option::Option[text::Text] = get_agent_id(view);
     let reg_node: usize = match pinned {
         option::Option[text::Text]::Some(t) => {
@@ -204,48 +264,30 @@ fn visit(
             reg.add_child(parent_reg, option::Option[str]::None, role)
         }
     };
+    reg.set_enabled(reg_node, live_enabled(view));
+    views.push(ViewRef { p: view });
 
-    let id: text::Text = reg.resolved_id(reg_node).to_text();
-    let hidden: bool = rt::msg_i8(view, rt::sel(#str_ptr("isHidden\0"))) != (0 as i8);
-
-    nodes.push(UiNode {
-        id: id,
-        role: role,
-        class_name: class_name_text(view),
-        frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
-        is_hidden: hidden,
-        text: node_text(view, role),
-        parent: parent_out,
-    });
-    let this_out: usize = nodes.len() -% (1 as usize);
-
-    // Push children in reverse so the LIFO stack yields them in order.
     let n: usize = subview_count(view);
     let mut i: usize = n;
     while i > (0 as usize) {
         i = i -% (1 as usize);
-        stack.push(WalkItem {
-            view: subview_at(view, i),
-            parent_reg: reg_node,
-            parent_out: option::Option[usize]::Some(this_out),
-        });
+        stack.push(WalkItem { view: subview_at(view, i), parent_reg: reg_node });
     }
     return;
 }
 
-// Walk a window's view hierarchy into a describe_ui snapshot. The window itself
-// is the root `UiNode` (role Window, frame = window frame, text = title); its
-// contentView subtree follows in DFS pre-order. Returns the flat `Vec[UiNode]`;
-// `parent` indices reconstruct the tree.
-pub fn describe(window: *u8) -> vec::Vec[UiNode] {
+// Walk a window's view hierarchy into a `Surface`. The window is the root node
+// (role Window) under the registry's app root; its contentView subtree follows.
+pub fn open(window: *u8) -> Surface {
     let mut reg: identity::Registry = identity::new();
-    let mut nodes: vec::Vec[UiNode] = vec::new::[UiNode]();
+    let mut views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    // NodeId 0 is the synthetic app root — no backing view.
+    views.push(ViewRef { p: null() });
 
     if is_null(window) {
-        return nodes;
+        return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
     }
 
-    // The window node, attached under the registry's app root.
     let win_pinned: option::Option[text::Text] = get_agent_id(window);
     let win_reg: usize = match win_pinned {
         option::Option[text::Text]::Some(t) => {
@@ -255,39 +297,18 @@ pub fn describe(window: *u8) -> vec::Vec[UiNode] {
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
         }
     };
-    let win_title: *u8 = rt::msg_id(window, rt::sel(#str_ptr("title\0")));
-    let win_text: text::Text = if is_null(win_title) {
-        "".to_text()
-    } else {
-        convert::nsstring_to_cplus_string(win_title)
-    };
-    let win_visible: bool = rt::msg_i8(window, rt::sel(#str_ptr("isVisible\0"))) != (0 as i8);
-    nodes.push(UiNode {
-        id: reg.resolved_id(win_reg).to_text(),
-        role: identity::Role::Window,
-        class_name: class_name_text(window),
-        frame: rt::msg_rect(window, rt::sel(#str_ptr("frame\0"))),
-        is_hidden: !win_visible,
-        text: win_text,
-        parent: option::Option[usize]::None,
-    });
+    views.push(ViewRef { p: window });
 
-    // Seed the work stack with the window's contentView, parented to the window.
     let mut stack: vec::Vec[WalkItem] = vec::new::[WalkItem]();
     let content: *u8 = rt::msg_id(window, rt::sel(#str_ptr("contentView\0")));
     if !is_null(content) {
-        stack.push(WalkItem {
-            view: content,
-            parent_reg: win_reg,
-            parent_out: option::Option[usize]::Some(0 as usize),
-        });
+        stack.push(WalkItem { view: content, parent_reg: win_reg });
     }
-
     loop {
         let popped: option::Option[WalkItem] = stack.pop();
         match popped {
             option::Option[WalkItem]::Some(it) => {
-                visit(reg, nodes, stack, it.view, it.parent_reg, it.parent_out);
+                visit(reg, views, stack, it.view, it.parent_reg);
             }
             option::Option[WalkItem]::None => {
                 break;
@@ -295,5 +316,121 @@ pub fn describe(window: *u8) -> vec::Vec[UiNode] {
         }
     }
 
-    return nodes;
+    return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+// Convenience: the read-only snapshot of a window in one call.
+pub fn describe(window: *u8) -> vec::Vec[UiNode] {
+    let s: Surface = open(window);
+    return s.describe();
+}
+
+impl Surface {
+    fn view_of(self, node: usize) -> *u8 {
+        return match self.views.at(node) {
+            option::Option[*ViewRef]::Some(r) => unsafe { (*r).p },
+            option::Option[*ViewRef]::None => null(),
+        };
+    }
+
+    // Live describe_ui snapshot. Reads each node's current frame / hidden / text
+    // from its view, so it reflects state *now* (e.g. after a `set_text`). The
+    // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
+    pub fn describe(self) -> vec::Vec[UiNode] {
+        let mut out: vec::Vec[UiNode] = vec::new::[UiNode]();
+        let total: usize = self.reg.len();
+        let mut node: usize = 1 as usize;
+        while node < total {
+            let view: *u8 = self.view_of(node);
+            let role: identity::Role = self.reg.role_of(node);
+            let parent: option::Option[usize] = match self.reg.parent_of(node) {
+                option::Option[usize]::Some(p) => {
+                    if p == (0 as usize) {
+                        option::Option[usize]::None
+                    } else {
+                        option::Option[usize]::Some(p -% (1 as usize))
+                    }
+                }
+                option::Option[usize]::None => option::Option[usize]::None,
+            };
+            out.push(UiNode {
+                id: self.reg.resolved_id(node).to_text(),
+                role: role,
+                class_name: class_name_text(view),
+                frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
+                is_hidden: live_hidden(view),
+                text: node_text(view, role),
+                actionable: self.reg.is_exposed(node) && self.reg.is_agent_actionable(node),
+                parent: parent,
+            });
+            node = node +% (1 as usize);
+        }
+        return out;
+    }
+
+    // The current text version of a node (for optimistic-concurrency edits).
+    // 0 if the id is unknown or never edited.
+    pub fn text_version(self, id: str) -> u64 {
+        return match self.reg.lookup(id) {
+            option::Option[usize]::Some(n) => self.versions.version_of(n),
+            option::Option[usize]::None => 0 as u64,
+        };
+    }
+
+    // WRITE: click a control. Authorized via the core (exposed + actionable);
+    // on `Allowed`, sends `performClick:` to the backing view.
+    pub fn click(self, id: str) -> surface::Outcome {
+        match self.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_action(self.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                rt::msg_void_id(self.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // WRITE: set a field's text with optimistic concurrency. `base_version` is
+    // the version the agent last read (`text_version`); a racing edit yields
+    // `VersionConflict`. On `Allowed`, sends `setStringValue:` then bumps.
+    pub fn set_text(mut self, id: str, value: str, base_version: u64) -> surface::Outcome {
+        match self.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome =
+                    surface::authorize_text_write(self.reg, self.versions, node, base_version);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                let ns: *u8 = convert::cplus_str_to_nsstring(value);
+                rt::msg_void_id(self.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
+                self.versions.bump(node);
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // READ/NAV: scroll a node's bounds into view. Authorized via `authorize_read`
+    // (exposure required; the affordance ceiling does not apply to navigation).
+    pub fn scroll_to(self, id: str) -> surface::Outcome {
+        match self.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(self.reg, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return oc;
+                }
+                let v: *u8 = self.view_of(node);
+                let b: rt::Rect = rt::msg_rect(v, rt::sel(#str_ptr("bounds\0")));
+                rt::msg_void_rect(v, rt::sel(#str_ptr("scrollRectToVisible:\0")), b);
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
 }

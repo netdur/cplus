@@ -16712,6 +16712,122 @@ fn main() -> i32 {
     );
 }
 
+/// Harness for agent_appkit runtime tests: a tempdir project depending on the
+/// in-tree stdlib + appkit + agent_core + agent_appkit (via symlink), built and
+/// run; asserts exit 0. The program uses distinct non-zero codes per failed
+/// assertion.
+#[cfg(target_os = "macos")]
+fn agent_appkit_run(pkg: &str, program: &str) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!("[package]\nname = \"{pkg}\"\n\n[[bin]]\nname = \"{pkg}\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nappkit = \"*\"\nagent_core = \"*\"\nagent_appkit = \"*\"\n"),
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    for p in ["stdlib", "appkit", "agent_core", "agent_appkit"] {
+        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p)).unwrap();
+    }
+    std::fs::write(dir.join("src/main.cplus"), program).unwrap();
+    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    assert!(status.success(), "cpc build for {pkg} failed: {status}");
+    let bin = dir.join(format!("target/debug/{pkg}"));
+    let run = Command::new(bin).status().expect("run program");
+    assert!(run.success(), "{pkg} exited non-zero: {:?}", run.code());
+}
+
+/// Theme B (v0.0.19): the `agent_appkit` WRITE path through the agent-core
+/// authorization brain. Builds a window with a tagged button (wired to a C+
+/// click callback), a tagged input field, and an untagged label; opens a
+/// `Surface`; then asserts: `click` actually actuates the button (the callback
+/// fires), an unknown id is `NotFound`, `set_text` enforces optimistic
+/// concurrency (version 0→1, a stale base → `VersionConflict`), the edit is
+/// reflected in a fresh `describe`, and the exposure model holds (the tagged
+/// button is `actionable`, the untagged label is not).
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_appkit_write_path_authorized_actions_theme_b() {
+    agent_appkit_run(
+        "ak_write",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/surface" as surface;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+
+static mut CLICKED: i32 = 0;
+fn on_click(sender: *u8) { unsafe { CLICKED = CLICKED +% 1; } return; }
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+    let win: window::Window = window::Window::new(rect(0.0,0.0,400.0,300.0), 1 as u64, 2 as u64, 0 as i8);
+    let content: *u8 = win.content_view();
+
+    let btn: controls::Button = controls::Button::new(rect(10.0,10.0,100.0,30.0));
+    btn.set_title(#str_ptr("Save\0"));
+    btn.set_on_click(on_click);
+    ui::set_agent_id(btn.obj, "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+
+    let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,50.0,200.0,24.0));
+    ui::set_agent_id(inp.obj, "name-field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+
+    let lbl: controls::TextField = controls::TextField::new_label(rect(10.0,90.0,200.0,20.0));
+    lbl.set_string_value(#str_ptr("static\0"));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.obj);
+
+    let mut s: ui::Surface = ui::open(win.obj);
+
+    if !surface::outcome_eq(s.click("save-btn"), surface::Outcome::Allowed) { return 1; }
+    if unsafe { CLICKED } != (1 as i32) { return 2; }
+    if !surface::outcome_eq(s.click("nope"), surface::Outcome::NotFound) { return 3; }
+    if s.text_version("name-field") != (0 as u64) { return 4; }
+    if !surface::outcome_eq(s.set_text("name-field", "hello", 0 as u64), surface::Outcome::Allowed) { return 5; }
+    if s.text_version("name-field") != (1 as u64) { return 6; }
+    if !surface::outcome_eq(s.set_text("name-field", "race", 0 as u64), surface::Outcome::VersionConflict) { return 7; }
+
+    let nodes: vec::Vec[ui::UiNode] = s.describe();
+    let mut wrote_ok: bool = false;
+    let mut btn_actionable: bool = false;
+    let mut have_unexposed: bool = false;
+    let mut i: usize = 0 as usize;
+    while i < nodes.len() {
+        match nodes.at(i) {
+            option::Option[*ui::UiNode]::Some(p) => {
+                if unsafe { (*p).id.as_str() } == "name-field" {
+                    if unsafe { (*p).text.as_str() } == "hello" { wrote_ok = true; }
+                }
+                if unsafe { (*p).id.as_str() } == "save-btn" {
+                    if unsafe { (*p).actionable } { btn_actionable = true; }
+                }
+                if !unsafe { (*p).actionable } { have_unexposed = true; }
+            }
+            option::Option[*ui::UiNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    pool.drain();
+    if !wrote_ok { return 8; }
+    if !btn_actionable { return 9; }
+    if !have_unexposed { return 10; }
+    return 0;
+}
+"#,
+    );
+}
+
 /// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
 /// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
 /// (`Alert`, created `new` = +1) releases its object in `drop` — so building
