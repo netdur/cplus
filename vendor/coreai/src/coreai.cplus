@@ -1,0 +1,198 @@
+// vendor/coreai/src/coreai.cplus — C+ facade for Apple's Core AI runtime.
+//
+// CoreAI is currently Swift-first. This package deliberately exposes a small,
+// stable C+ surface over a Swift bridge:
+//
+//   C+ code -> C ABI functions -> Swift bridge -> CoreAI.framework
+//
+// The MVP supports loading a model, loading a named function, creating f32
+// NDArrays, running one named input to one named output, and copying f32
+// outputs back to C+ memory. Add shape/descriptor/tokenizer helpers after the
+// bridge is validated with an SDK that actually ships CoreAI.
+
+import "stdlib/result" as result;
+
+extern fn cplus_coreai_runtime_available() -> i32;
+extern fn cplus_coreai_last_error(buf: *u8, len: usize) -> i32;
+extern fn cplus_coreai_release(handle: *u8);
+
+extern fn cplus_coreai_model_load(path: *u8, path_len: usize) -> *u8;
+extern fn cplus_coreai_model_load_function(model: *u8, name: *u8, name_len: usize) -> *u8;
+
+extern fn cplus_coreai_ndarray_create_f32(
+    shape: *u64,
+    rank: u64,
+    data: *f32,
+    count: u64,
+) -> *u8;
+
+extern fn cplus_coreai_function_run1_f32(
+    function: *u8,
+    input_name: *u8,
+    input_name_len: usize,
+    input: *u8,
+    output_name: *u8,
+    output_name_len: usize,
+) -> *u8;
+
+extern fn cplus_coreai_ndarray_copy_f32(array: *u8, dest: *f32, count: u64) -> i64;
+
+pub enum CoreAIError {
+    RuntimeUnavailable,
+    BridgeFailure,
+    NullHandle,
+    CopyFailed,
+    InvalidArgument,
+}
+
+pub struct Model {
+    opaque raw: *u8,
+}
+
+pub struct Function {
+    opaque raw: *u8,
+}
+
+pub struct NDArray {
+    opaque raw: *u8,
+}
+
+fn null() -> *u8 {
+    return unsafe { 0 as *u8 };
+}
+
+fn is_null(p: *u8) -> bool {
+    return p == null();
+}
+
+impl Model {
+    fn drop(mut self) {
+        if !is_null(self.raw) {
+            unsafe { cplus_coreai_release(self.raw); }
+            self.raw = null();
+        }
+        return;
+    }
+}
+
+impl Function {
+    fn drop(mut self) {
+        if !is_null(self.raw) {
+            unsafe { cplus_coreai_release(self.raw); }
+            self.raw = null();
+        }
+        return;
+    }
+}
+
+impl NDArray {
+    fn drop(mut self) {
+        if !is_null(self.raw) {
+            unsafe { cplus_coreai_release(self.raw); }
+            self.raw = null();
+        }
+        return;
+    }
+}
+
+pub fn runtime_available() -> bool {
+    let ok: i32 = unsafe { cplus_coreai_runtime_available() };
+    return ok != 0;
+}
+
+pub fn last_error_into(buf: u8[]) -> usize {
+    let n: usize = #slice_len(buf);
+    if n == (0 as usize) {
+        return 0 as usize;
+    }
+    let wrote: i32 = unsafe { cplus_coreai_last_error(unsafe { #slice_ptr(buf) }, n) };
+    if wrote < 0 {
+        return 0 as usize;
+    }
+    return wrote as usize;
+}
+
+pub fn load_model(path: str) -> result::Result[Model, CoreAIError] {
+    if !runtime_available() {
+        return result::Result[Model, CoreAIError]::Err(CoreAIError::RuntimeUnavailable);
+    }
+    let raw: *u8 = unsafe {
+        cplus_coreai_model_load(#str_ptr(path), #str_len(path))
+    };
+    if is_null(raw) {
+        return result::Result[Model, CoreAIError]::Err(CoreAIError::BridgeFailure);
+    }
+    return result::Result[Model, CoreAIError]::Ok(Model { raw: raw });
+}
+
+pub fn load_function(borrow model: Model, name: str) -> result::Result[Function, CoreAIError] {
+    if is_null(model.raw) {
+        return result::Result[Function, CoreAIError]::Err(CoreAIError::NullHandle);
+    }
+    let raw: *u8 = unsafe {
+        cplus_coreai_model_load_function(model.raw, #str_ptr(name), #str_len(name))
+    };
+    if is_null(raw) {
+        return result::Result[Function, CoreAIError]::Err(CoreAIError::BridgeFailure);
+    }
+    return result::Result[Function, CoreAIError]::Ok(Function { raw: raw });
+}
+
+pub fn ndarray_f32(shape: usize[], values: f32[]) -> result::Result[NDArray, CoreAIError] {
+    let rank: usize = #slice_len(shape);
+    let count: usize = #slice_len(values);
+    if rank == (0 as usize) {
+        return result::Result[NDArray, CoreAIError]::Err(CoreAIError::InvalidArgument);
+    }
+    let raw: *u8 = unsafe {
+        cplus_coreai_ndarray_create_f32(
+            #slice_ptr(shape) as *u64,
+            rank as u64,
+            #slice_ptr(values),
+            count as u64,
+        )
+    };
+    if is_null(raw) {
+        return result::Result[NDArray, CoreAIError]::Err(CoreAIError::BridgeFailure);
+    }
+    return result::Result[NDArray, CoreAIError]::Ok(NDArray { raw: raw });
+}
+
+pub fn run1_f32(
+    borrow function: Function,
+    input_name: str,
+    borrow input: NDArray,
+    output_name: str,
+) -> result::Result[NDArray, CoreAIError] {
+    if is_null(function.raw) || is_null(input.raw) {
+        return result::Result[NDArray, CoreAIError]::Err(CoreAIError::NullHandle);
+    }
+    let raw: *u8 = unsafe {
+        cplus_coreai_function_run1_f32(
+            function.raw,
+            #str_ptr(input_name),
+            #str_len(input_name),
+            input.raw,
+            #str_ptr(output_name),
+            #str_len(output_name),
+        )
+    };
+    if is_null(raw) {
+        return result::Result[NDArray, CoreAIError]::Err(CoreAIError::BridgeFailure);
+    }
+    return result::Result[NDArray, CoreAIError]::Ok(NDArray { raw: raw });
+}
+
+pub fn copy_f32(borrow array: NDArray, dest: f32[]) -> result::Result[usize, CoreAIError] {
+    if is_null(array.raw) {
+        return result::Result[usize, CoreAIError]::Err(CoreAIError::NullHandle);
+    }
+    let n: usize = #slice_len(dest);
+    let wrote: i64 = unsafe {
+        cplus_coreai_ndarray_copy_f32(array.raw, #slice_ptr(dest), n as u64)
+    };
+    if wrote < (0 as i64) {
+        return result::Result[usize, CoreAIError]::Err(CoreAIError::CopyFailed);
+    }
+    return result::Result[usize, CoreAIError]::Ok(wrote as usize);
+}
