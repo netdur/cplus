@@ -17800,6 +17800,56 @@ fn main() -> i32 {
     );
 }
 
+// v0.0.19: adopt `vendor/coreai` — the C+ facade over Apple's Swift-first Core
+// AI runtime. The Swift bridge (`bridge/CoreAIBridge.swift`) can only be built
+// with an SDK that ships `CoreAI.framework` (Xcode 27+/macOS 27+), which CI
+// doesn't have, so a full link/run is impossible here. Instead, `cpc check`
+// typechecks the vendor package + the smoke recipe consumer end-to-end: imports
+// resolve, the C ABI `extern fn`s are well-formed, and the `Result`-based API
+// types against a real consumer. This is the standing regression gate for the
+// package's C+ surface.
+#[test]
+fn coreai_vendor_package_typechecks() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+
+    // Consumer project.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"coreai_consumer\"\n\n[[bin]]\nname = \"coreai_consumer\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\ncoreai = \"*\"\n",
+    )
+    .unwrap();
+
+    // Symlink the in-tree vendor packages (no copy). The Swift bridge / build
+    // artifacts aren't needed for `cpc check` (no linking).
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/coreai"), dir.join("vendor/coreai")).unwrap();
+
+    // Use the real smoke recipe as the consumer — keeps the example honest.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        include_str!("../../docs/examples/recipes/coreai_smoke/src/main.cplus"),
+    )
+    .unwrap();
+
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(dir.join("src/main.cplus"))
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(
+        out.status.success(),
+        "coreai vendor package must typecheck; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn simd_vendor_package_smoke() {
     // v0.0.8 Phase 2: end-to-end check that `vendor/simd` builds, links,

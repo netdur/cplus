@@ -1,0 +1,68 @@
+// Smoke skeleton for vendor/coreai.
+//
+// This example needs:
+//   1. Xcode/SDK with CoreAI.framework.
+//   2. `cd vendor/coreai && ./build.sh`.
+//   3. A local copy/symlink at `docs/examples/recipes/coreai_smoke/vendor/coreai`.
+//   4. A real `.aimodel` whose `main` function has f32 input/output names
+//      matching the strings below.
+
+import "coreai/coreai" as coreai;
+import "stdlib/result" as result;
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+pub fn main() -> i32 {
+    if !coreai::runtime_available() {
+        unsafe { printf(#str_ptr("CoreAI bridge/runtime unavailable\n\0")); }
+        return 1;
+    }
+
+    // Replace this with a real exported model path and function signature.
+    guard let result::Result[coreai::Model, coreai::CoreAIError]::Ok(model) =
+        coreai::load_model("/tmp/model.aimodel") else {
+        unsafe { printf(#str_ptr("load_model failed\n\0")); }
+        return 1;
+    };
+
+    guard let result::Result[coreai::Function, coreai::CoreAIError]::Ok(function) =
+        coreai::load_function(model, "main") else {
+        unsafe { printf(#str_ptr("load_function failed\n\0")); }
+        return 1;
+    };
+
+    let shape: [usize; 2] = [1 as usize, 4 as usize];
+    let values: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+
+    // A fixed-size array isn't a slice; build `T[]` views over them with
+    // `#slice_from_raw_parts(ptr, len)` (the element pointer comes from
+    // `#addr_of(arr[0])`).
+    let shape_slice: usize[] =
+        unsafe { #slice_from_raw_parts(#addr_of(shape[0]), 2 as usize) };
+    let values_slice: f32[] =
+        unsafe { #slice_from_raw_parts(#addr_of(values[0]), 4 as usize) };
+
+    guard let result::Result[coreai::NDArray, coreai::CoreAIError]::Ok(input) =
+        coreai::ndarray_f32(shape_slice, values_slice) else {
+        unsafe { printf(#str_ptr("ndarray_f32 failed\n\0")); }
+        return 1;
+    };
+
+    guard let result::Result[coreai::NDArray, coreai::CoreAIError]::Ok(output) =
+        coreai::run1_f32(function, "input", input, "output") else {
+        unsafe { printf(#str_ptr("run1_f32 failed\n\0")); }
+        return 1;
+    };
+
+    let mut out: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+    let out_slice: f32[] =
+        unsafe { #slice_from_raw_parts(#addr_of(out[0]), 4 as usize) };
+    guard let result::Result[usize, coreai::CoreAIError]::Ok(n) =
+        coreai::copy_f32(output, out_slice) else {
+        unsafe { printf(#str_ptr("copy_f32 failed\n\0")); }
+        return 1;
+    };
+
+    unsafe { printf(#str_ptr("copied %llu f32 values\n\0"), n as u64); }
+    return 0;
+}
