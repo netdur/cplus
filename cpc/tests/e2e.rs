@@ -8797,24 +8797,21 @@ fn cpc_bindgen_round_trips_via_c_library() {
          double area_of_rect(double w, double h) { return w * h; }\n",
     )
     .unwrap();
-    // Compile + archive the C source into libtiny.a.
-    let c_obj = dir.join("api.o");
+    // Compile the C source into a dylib (libtiny.dylib) — the realistic shape
+    // for generated bindings (e.g. llama.cpp links libllama.dylib), and
+    // order-independent at link time. `@rpath` install-name + cpc's
+    // `-Wl,-rpath,<search-path>` make it resolvable at run time.
+    let lib = dir.join("libtiny.dylib");
     let st = Command::new("clang")
-        .arg("-c")
+        .arg("-dynamiclib")
+        .arg("-install_name")
+        .arg("@rpath/libtiny.dylib")
         .arg(&c_src)
         .arg("-o")
-        .arg(&c_obj)
-        .status()
-        .expect("invoke clang");
-    assert!(st.success(), "clang -c failed");
-    let lib = dir.join("libtiny.a");
-    let st = Command::new(ar_prog())
-        .arg("rcs")
         .arg(&lib)
-        .arg(&c_obj)
         .status()
-        .expect("invoke ar");
-    assert!(st.success(), "ar failed");
+        .expect("invoke clang -dynamiclib");
+    assert!(st.success(), "clang -dynamiclib failed");
 
     // Run cpc-bindgen to produce the C+ bindings.
     let bg_out = Command::new(bindgen)
@@ -8827,50 +8824,60 @@ fn cpc_bindgen_round_trips_via_c_library() {
         String::from_utf8_lossy(&bg_out.stderr)
     );
     let bindings = String::from_utf8_lossy(&bg_out.stdout);
-    assert!(bindings.contains("extern fn add_ints(a: i32, b: i32) -> i32;"));
-    assert!(bindings.contains("extern fn max_u32(a: u32, b: u32) -> u32;"));
-    assert!(bindings.contains("extern fn count_bytes(s: *i8) -> i64;"));
-    assert!(bindings.contains("extern fn area_of_rect(w: f64, h: f64) -> f64;"));
+    // cpc-bindgen emits each C function as a `#[link_name]` extern (`__c_<name>`)
+    // plus a safe `pub fn <name>` wrapper that calls it in `unsafe` — so callers
+    // get a safe surface and the raw extern stays private.
+    assert!(bindings.contains("#[link_name = \"add_ints\"]"), "{bindings}");
+    assert!(bindings.contains("extern fn __c_add_ints(a: i32, b: i32) -> i32;"), "{bindings}");
+    assert!(bindings.contains("pub fn add_ints(a: i32, b: i32) -> i32 {"), "{bindings}");
+    assert!(bindings.contains("extern fn __c_max_u32(a: u32, b: u32) -> u32;"), "{bindings}");
+    assert!(bindings.contains("pub fn max_u32(a: u32, b: u32) -> u32 {"), "{bindings}");
+    assert!(bindings.contains("extern fn __c_count_bytes(s: *i8) -> i64;"), "{bindings}");
+    assert!(bindings.contains("pub fn count_bytes(s: *i8) -> i64 {"), "{bindings}");
+    assert!(bindings.contains("extern fn __c_area_of_rect(w: f64, h: f64) -> f64;"), "{bindings}");
+    assert!(bindings.contains("pub fn area_of_rect(w: f64, h: f64) -> f64 {"), "{bindings}");
 
-    // Write a `.cplus` driver that uses the bindings and asserts results.
-    let cplus = dir.join("main.cplus");
-    let driver = format!(
-        "{bindings}\n\
-         fn main() -> i32 {{\n\
-             let s: str = \"hello\\0\";\n\
-             let n: i64 = unsafe {{ count_bytes(#str_ptr(s) as *i8) }};\n\
-             if n != (5 as i64) {{ return 1; }}\n\
-             let sum: i32 = unsafe {{ add_ints(20 as i32, 22 as i32) }};\n\
-             if sum != (42 as i32) {{ return 2; }}\n\
-             let m: u32 = unsafe {{ max_u32(7 as u32, 11 as u32) }};\n\
-             if m != (11 as u32) {{ return 3; }}\n\
-             let a: f64 = unsafe {{ area_of_rect(3.0 as f64, 4.0 as f64) }};\n\
-             if a != (12.0 as f64) {{ return 4; }}\n\
-             return 0;\n\
-         }}\n"
-    );
-    std::fs::write(&cplus, driver).unwrap();
-
-    // cpc → .o, then clang to link with libtiny.a.
-    let cplus_obj = dir.join("main.o");
+    // Consume the bindings the way generated bindings are actually used: as an
+    // imported module. The safe `pub fn` wrappers are then module-mangled, so
+    // they don't collide with the bare `#[link_name]` extern symbols (inlining
+    // the bindings into one file would make `add_ints` the wrapper and the
+    // link-name clash). Build a package that links libtiny.a via `[link]`.
+    let _ = lib; // libtiny.dylib is linked by name (`libs`) + search-path below
+    // The consumer's own libs go on `[[bin]]`; `[link]` supplies its
+    // search-paths (and `-Wl,-rpath` so the dylib resolves at run time).
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!(
+            "[package]\nname = \"bgtiny\"\n\n[[bin]]\nname = \"bgtiny\"\npath = \"src/main.cplus\"\nlibs = [\"tiny\"]\n\n[link]\nsearch-paths = [\"{}\"]\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/api.cplus"), bindings.as_ref()).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./api\" as api;\n\
+         fn main() -> i32 {\n\
+         \x20   let s: str = \"hello\\0\";\n\
+         \x20   let p: *i8 = unsafe { #str_ptr(s) as *i8 };\n\
+         \x20   if api::count_bytes(p) != (5 as i64) { return 1; }\n\
+         \x20   if api::add_ints(20 as i32, 22 as i32) != (42 as i32) { return 2; }\n\
+         \x20   if api::max_u32(7 as u32, 11 as u32) != (11 as u32) { return 3; }\n\
+         \x20   if api::area_of_rect(3.0 as f64, 4.0 as f64) != (12.0 as f64) { return 4; }\n\
+         \x20   return 0;\n\
+         }\n",
+    )
+    .unwrap();
     let st = Command::new(cpc)
-        .arg("--emit-obj")
-        .arg(&cplus)
-        .arg("-o")
-        .arg(&cplus_obj)
+        .arg("build")
+        .current_dir(&dir)
         .status()
-        .expect("invoke cpc --emit-obj");
-    assert!(st.success(), "cpc --emit-obj failed");
-    let bin = dir.join("smoke");
-    let st = Command::new("clang")
-        .arg(&cplus_obj)
-        .arg(&lib)
-        .arg("-o")
-        .arg(&bin)
+        .expect("invoke cpc build");
+    assert!(st.success(), "cpc build of bindgen round-trip failed");
+    let run = Command::new(dir.join("target/debug/bgtiny"))
         .status()
-        .expect("clang link");
-    assert!(st.success(), "clang link failed");
-    let run = Command::new(&bin).status().expect("run");
+        .expect("run");
     assert_eq!(run.code(), Some(0), "bindgen round-trip should exit 0");
 }
 

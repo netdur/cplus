@@ -200,6 +200,7 @@ impl Emitter {
                     .collect()
             }).unwrap_or_default();
         let mut params_out: Vec<String> = Vec::with_capacity(params_c.len());
+        let mut arg_names: Vec<String> = Vec::with_capacity(params_c.len());
         for (i, p_c) in params_c.iter().enumerate() {
             let p_cplus = match map_c_type_to_cplus(p_c) {
                 Ok(t) => t,
@@ -214,19 +215,46 @@ impl Emitter {
                 .cloned()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("arg{i}"));
-            params_out.push(format!("{}: {}", sanitize_ident(&pname), p_cplus));
+            let pname = sanitize_ident(&pname);
+            arg_names.push(pname.clone());
+            params_out.push(format!("{}: {}", pname, p_cplus));
         }
-        let mut line = format!("extern fn {name}(");
-        line.push_str(&params_out.join(", "));
         if variadic {
+            let mut line = format!("extern fn {name}(");
+            line.push_str(&params_out.join(", "));
             if !params_out.is_empty() { line.push_str(", "); }
             line.push_str("...");
+            line.push(')');
+            if ret_cplus != "()" {
+                line.push_str(&format!(" -> {ret_cplus}"));
+            }
+            line.push_str(";\n");
+            self.out.push_str(&line);
+            return;
         }
+
+        let c_name = format!("__c_{name}");
+        let mut line = format!("#[link_name = \"{name}\"]\nextern fn {c_name}(");
+        line.push_str(&params_out.join(", "));
         line.push(')');
         if ret_cplus != "()" {
             line.push_str(&format!(" -> {ret_cplus}"));
         }
         line.push_str(";\n");
+        line.push_str(&format!("pub fn {name}("));
+        line.push_str(&params_out.join(", "));
+        line.push(')');
+        if ret_cplus != "()" {
+            line.push_str(&format!(" -> {ret_cplus}"));
+        }
+        line.push_str(" {\n");
+        let call = format!("{}({})", c_name, arg_names.join(", "));
+        if ret_cplus == "()" {
+            line.push_str(&format!("    unsafe {{ {call}; }}\n    return;\n"));
+        } else {
+            line.push_str(&format!("    return unsafe {{ {call} }};\n"));
+        }
+        line.push_str("}\n");
         self.out.push_str(&line);
     }
 
@@ -254,7 +282,7 @@ impl Emitter {
             let size_bytes = guess_record_size(decl);
             let size = size_bytes.unwrap_or(8); // conservative fallback
             self.out.push_str(&format!(
-                "#[repr(C)] struct {name} {{ _bytes: [u8; {size}] }}\n"
+                "#[repr(C)] pub struct {name} {{ pub _bytes: [u8; {size}] }}\n"
             ));
             self.out.push_str(&format!(
                 "// `{name}` is a C union — fields share storage. Access fields\n\
@@ -263,7 +291,7 @@ impl Emitter {
             return;
         }
         // struct: walk fields, emit a #[repr(C)] struct.
-        self.out.push_str(&format!("#[repr(C)] struct {name} {{\n"));
+        self.out.push_str(&format!("#[repr(C)] pub struct {name} {{\n"));
         let inner = decl.get("inner").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         let mut bitfields: Vec<(String, String, u32, u32)> = Vec::new(); // (parent, name, bit_offset, width)
         let mut bit_cursor: u32 = 0;
@@ -285,7 +313,7 @@ impl Emitter {
                 // Flush the accumulated bitfield run into a storage field.
                 let bytes = ((bit_cursor + 7) / 8).max(1);
                 let _ = bytes;
-                self.out.push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
+                self.out.push_str(&format!("    pub _packed{storage_field_idx}: u32,\n"));
                 storage_field_idx += 1;
                 bit_cursor = 0;
             }
@@ -298,10 +326,15 @@ impl Emitter {
                     continue;
                 }
             };
-            self.out.push_str(&format!("    {}: {},\n", sanitize_ident(&fname), cplus_ty));
+            let field_prefix = if cplus_ty.starts_with('*') { "pub opaque " } else { "pub " };
+            self.out.push_str(&format!(
+                "    {field_prefix}{}: {},\n",
+                sanitize_ident(&fname),
+                cplus_ty
+            ));
         }
         if !bitfields.is_empty() {
-            self.out.push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
+            self.out.push_str(&format!("    pub _packed{storage_field_idx}: u32,\n"));
         }
         self.out.push_str("}\n");
         // Emit bitfield accessors after the struct.
@@ -319,6 +352,29 @@ impl Emitter {
     fn emit_typedef(&mut self, decl: &serde_json::Value) {
         let name = decl.get("name").and_then(|v| v.as_str()).unwrap_or("");
         if name.is_empty() { return; }
+        // Simple typedef (`typedef int32_t llama_token;`) — emit a public C+
+        // alias so later generated declarations can refer to it.
+        let qual_type = decl.get("type")
+            .and_then(|t| t.get("qualType"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if let Some((lhs, rhs)) = qual_type.rsplit_once(' ') {
+            if rhs == name
+                && lhs != "struct"
+                && lhs != "union"
+                && !lhs.contains("struct ")
+                && !lhs.contains("union ")
+            {
+                if let Ok(cplus_ty) = map_c_type_to_cplus(lhs.trim()) {
+                    self.out.push_str(&format!(
+                        "pub type {} = {};\n",
+                        sanitize_ident(name),
+                        cplus_ty
+                    ));
+                    return;
+                }
+            }
+        }
         // If the typedef wraps an anonymous record (the `typedef struct
         // { int x; int y; } Point;` shape), emit the struct under the
         // typedef's name. Clang represents this as:
