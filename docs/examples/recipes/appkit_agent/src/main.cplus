@@ -1,0 +1,127 @@
+// appkit_agent — AppKit UI that an agent can see and drive (Theme B).
+//
+// The basics of agent-aware code, end to end:
+//
+//   1. Build an ordinary AppKit window (a Save button, a name field, and a
+//      decorative label).
+//   2. *Tag* the widgets an agent may use with `set_agent_id`. Tagging is what
+//      EXPOSES a node — untagged views are still seen in the tree but are not
+//      actionable. The developer curates the agent's surface this way.
+//   3. `open(window)` into a `Surface`: the agent-id tree + a NodeId->NSView map
+//      + text-version state.
+//   4. Drive it over the MCP bridge's JSON-RPC: `describe_ui` (what the agent
+//      sees), `click` / `set_text` (authorized actions), each first passed
+//      through the agent_core consent `AuthGate`.
+//
+// This program prints each step and exits — it focuses on the agent surface, so
+// it does NOT enter the blocking `app.run()` event loop. A real app would build
+// the same tagged UI, then `app.run()`, and serve the surface to agents on a
+// background connection (see `agent_mcp::serve_uds`).
+
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_mcp/agent_mcp" as mcp;
+import "stdlib/text" as text;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+
+// How many times the Save button actually fired. An authorized `click` actuates
+// the real widget, so this proves the action reached AppKit (not just the tree).
+static mut SAVES: i32 = 0;
+
+fn on_save(sender: *u8) {
+    unsafe { SAVES = SAVES +% (1 as i32); }
+    return;
+}
+
+// The consent policy. Here we admit the external agent; a real app would prompt
+// the user / consult persisted rules. An un-served (`deny_all`) gate rejects
+// everything — the surface is closed until a policy is supplied.
+fn allow_external(req: auth::Request) -> auth::Decision {
+    return auth::Decision::Allow;
+}
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn print_line(s: str) {
+    unsafe { write(1 as i32, #str_ptr(s), #str_len(s)); }
+    let nl: u8 = 10 as u8;
+    unsafe { write(1 as i32, #addr_of(nl), 1 as usize); }
+    return;
+}
+
+fn print_text(borrow t: text::Text) {
+    print_line(unsafe { t.as_str() });
+    return;
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+
+    // ---- An ordinary AppKit window ----
+    let win: window::Window = window::Window::new(rect(0.0, 0.0, 480.0, 240.0), 15 as u64, 2 as u64, 0 as i8);
+    win.set_title(#str_ptr("Agent-aware demo\0"));
+    let content: *u8 = win.content_view();
+
+    // A Save button — tagged + wired to a real handler.
+    let save: controls::Button = controls::Button::new(rect(360.0, 20.0, 100.0, 32.0));
+    save.set_title(#str_ptr("Save\0"));
+    save.set_on_click(on_save);
+    ui::set_agent_id(save.obj, "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), save.obj);
+
+    // A name field — tagged, so the agent may read + write its text.
+    let name: controls::TextField = controls::TextField::new_input_field(rect(20.0, 180.0, 300.0, 24.0));
+    ui::set_agent_id(name.obj, "name-field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), name.obj);
+
+    // A decorative label — deliberately UNtagged: it shows up in the tree but is
+    // not actionable (the agent can see it, not act on it).
+    let caption: controls::TextField = controls::TextField::new_label(rect(20.0, 140.0, 300.0, 20.0));
+    caption.set_string_value(#str_ptr("Your name:\0"));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), caption.obj);
+
+    // ---- Open the agent surface ----
+    let mut surf: ui::Surface = ui::open(win.obj);
+    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+
+    // 1) What the agent sees. `actionable:true` on the tagged nodes, `false` on
+    //    the untagged caption and structural views.
+    print_line("--- describe_ui (what the agent sees) ---");
+    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+        "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}"));
+
+    // 2) The agent clicks Save. Authorized -> performClick: -> our handler fires.
+    print_line("--- click save-btn ---");
+    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+        "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}"));
+    if unsafe { SAVES } == (1 as i32) {
+        print_line("(the real Save handler fired: SAVES == 1)");
+    }
+
+    // 3) The agent types a name. `set_text` carries the version it last read
+    //    (base_version); a stale base loses to a concurrent edit.
+    print_line("--- set_text name-field (base_version 0) ---");
+    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"Ada\",\"base_version\":0},\"id\":3}"));
+    print_line("--- set_text again with the SAME stale base_version 0 ---");
+    print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"oops\",\"base_version\":0},\"id\":4}"));
+
+    // 4) Consent: the very same request through a closed (deny-all) gate is
+    //    refused before it can touch the UI.
+    print_line("--- describe_ui through a deny-all gate (consent refused) ---");
+    print_text(mcp::handle_request(surf, sub, auth::deny_all(),
+        "{\"method\":\"describe_ui\",\"params\":{},\"id\":5}"));
+
+    pool.drain();
+    return 0;
+}

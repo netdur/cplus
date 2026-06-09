@@ -1,0 +1,16 @@
+[package]
+name    = "appkit_agent"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "appkit_agent"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib       = "*"
+json         = "*"
+appkit       = "*"
+agent_core   = "*"
+agent_appkit = "*"
+agent_mcp    = "*"
