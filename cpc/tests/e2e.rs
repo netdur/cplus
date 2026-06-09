@@ -10678,7 +10678,7 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          async fn await_and_read(rfd: i32) -> i32 {\n\
-             unsafe { __cplus_reactor_wait_read(rfd); }\n\
+             unsafe { #reactor_wait_read(rfd); }\n\
              let buf: *u8 = unsafe { malloc(1 as usize) };\n\
              let n: isize = unsafe { read(rfd, buf, 1 as usize) };\n\
              let v: u8 = unsafe { *buf };\n\
@@ -11282,7 +11282,7 @@ fn async_method_on_user_struct_round_trip() {
 
 /// v0.0.5 Phase 4 Slice 4A: `time::sleep(ms)` round-trip via kqueue
 /// EVFILT_TIMER. Drives the reactor's timer path end-to-end:
-///   - `time::sleep(80ms)` translates to `__cplus_reactor_wait_timer(80)`
+///   - `time::sleep(80ms)` translates to `#reactor_wait_timer(80)`
 ///     inside an `async fn`.
 ///   - Codegen emits `stdlib_reactor_register_timer_v1(80, %.coro.hdl)`
 ///     then suspends self via `llvm.coro.suspend`.
@@ -12791,7 +12791,7 @@ fn main() -> i32 {
 }
 
 /// v0.0.5 Phase 1C: container `drop` invokes inner-T Drop via the
-/// `__cplus_drop_in_place::[T]` intrinsic. Without this fix, every
+/// `#drop_in_place::[T]` intrinsic. Without this fix, every
 /// container that holds a Drop type leaked the inner resources on
 /// container teardown — `Box[string]`, `Vec[string]`, `Arc[string]`,
 /// `HashMap[str, string]` all bled bytes per-instance.
@@ -18174,7 +18174,7 @@ fn module_asm_item_compiles_links_and_runs() {
 
 /// v0.0.14: container element drop — verify (by count, not just crash-free)
 /// that dropping a `Vec[T]` runs each element's `drop` exactly once via the
-/// `__cplus_drop_in_place::[T]` loop, including when the Vec is itself an
+/// `#drop_in_place::[T]` loop, including when the Vec is itself an
 /// owning field auto-dropped through a wrapper struct.
 #[test]
 fn vec_element_drop_runs_per_element_by_count() {
