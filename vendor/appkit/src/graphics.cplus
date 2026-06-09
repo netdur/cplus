@@ -20,6 +20,19 @@ impl ImageView {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
+    // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
+    // see `view::View::into_raw` for the full explanation + the use-after-free
+    // trap it prevents.
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    pub fn from_raw(obj: *u8) -> ImageView {
+        return ImageView { obj: obj };
+    }
+
     pub fn set_scaling(self, scaling: i64) {
         rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
     }

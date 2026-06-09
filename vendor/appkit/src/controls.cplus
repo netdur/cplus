@@ -28,6 +28,21 @@ impl TextField {
         rt::release(self.obj);
     }
 
+    // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case.
+    // `into_raw` hands this wrapper's +1 to the returned pointer and disarms its
+    // drop (left holding nil), so the object survives a boundary the wrapper
+    // can't (e.g. `fn make() -> *u8`); `from_raw` re-adopts it. See the full
+    // explanation + the use-after-free trap on `view::View::into_raw`.
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    pub fn from_raw(obj: *u8) -> TextField {
+        return TextField { obj: obj };
+    }
+
     pub fn new_input_field(frame: rt::Rect) -> TextField {
         let cls: *u8 = rt::get_class(#str_ptr("NSTextField\0"));
         let field_alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -109,6 +124,19 @@ impl Button {
 
     fn drop(mut self) {
         rt::release(self.obj);
+    }
+
+    // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
+    // see `view::View::into_raw` for the full explanation + the use-after-free
+    // trap it prevents.
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    pub fn from_raw(obj: *u8) -> Button {
+        return Button { obj: obj };
     }
 
     pub fn set_title(self, title: *u8) {

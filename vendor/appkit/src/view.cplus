@@ -48,6 +48,34 @@ impl View {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), view);
     }
 
+    // GAP 2 (v0.0.19): ownership transfer across a boundary this wrapper can't
+    // outlive — e.g. a builder `fn make() -> *u8` that constructs a view and
+    // returns it to be parented later.
+    //
+    // THE TRAP (a real, compile-clean use-after-free): returning `.obj` and
+    // letting the wrapper drop frees the object (drop releases the +1) BEFORE
+    // the parent retains it. `into_raw` hands the +1 to the returned pointer and
+    // disarms this wrapper's drop (it is left holding nil, so its later drop
+    // releases nil — a no-op), so the object stays alive across the boundary.
+    // Re-adopt the pointer with `View::from_raw`, or hand it to an API that
+    // takes ownership.
+    //
+    // C+ forbids `move mut self`, so this consumes *logically* via `mut self` +
+    // nilling: after `into_raw`, the wrapper is inert (every method is a
+    // message-to-nil no-op) — don't keep using it.
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    // GAP 2 (v0.0.19): re-adopt a +1 `NSView*` (e.g. one returned by `into_raw`)
+    // into an owned wrapper that releases it on drop — the inverse of `into_raw`.
+    // The caller must own a +1 on `obj` (don't adopt the same pointer twice).
+    pub fn from_raw(obj: *u8) -> View {
+        return View { obj: obj };
+    }
+
     pub fn set_frame(self, frame: rt::Rect) {
         rt::msg_void_rect(self.obj, rt::sel(#str_ptr("setFrame:\0")), frame);
     }

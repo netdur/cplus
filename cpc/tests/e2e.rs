@@ -16468,6 +16468,56 @@ fn main() -> i32 {
     );
 }
 
+/// GAP 2 (v0.0.19): the ownership cliff. A builder that constructs a view and
+/// returns `.obj` frees the object when the wrapper drops at the function
+/// boundary — a use-after-free that compiles clean. `into_raw` transfers the +1
+/// to the returned pointer and disarms the wrapper's drop; `from_raw` re-adopts
+/// it. This proves the round-trip: a view survives a builder boundary (its
+/// retain count is still valid — reading it would itself crash if freed), is
+/// re-adopted, parented (the superview retains it), and everything tears down
+/// without an over-release. Without the fix, `make_view` would free the view
+/// and `retain_count` would be a use-after-free.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_into_raw_ownership_transfer_gap2() {
+    appkit_run_program(
+        "ak_intoraw",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/view" as view;
+
+// The dangerous "builder returns the object" shape, made safe with into_raw.
+fn make_view() -> *u8 {
+    let r: rt::Rect = rt::Rect {
+        origin: rt::Point { x: 0.0, y: 0.0 },
+        size: rt::Size { width: 10.0, height: 10.0 },
+    };
+    let mut v: view::View = view::View::new(r);   // +1 owned by v
+    return v.into_raw();                          // +1 transferred; v's drop releases nil
+}
+
+fn main() -> i32 {
+    let nullp: *u8 = unsafe { 0 as *u8 };
+    let raw: *u8 = make_view();
+    if raw == nullp { return 1; }
+    // Object must still be alive across the boundary (would be UAF/0 if freed).
+    if rt::retain_count(raw) < (1 as i64) { return 2; }
+
+    // Re-adopt and parent it: the superview retains (+2); the child wrapper's
+    // drop releases (+1); the parent owns it until the parent itself drops.
+    let pr: rt::Rect = rt::Rect {
+        origin: rt::Point { x: 0.0, y: 0.0 },
+        size: rt::Size { width: 100.0, height: 100.0 },
+    };
+    let parent: view::View = view::View::new(pr);
+    let child: view::View = view::View::from_raw(raw);
+    parent.add_subview(child.obj);
+    return 0;
+}
+"#,
+    );
+}
+
 /// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
 /// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
 /// (`Alert`, created `new` = +1) releases its object in `drop` — so building
