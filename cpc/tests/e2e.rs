@@ -16906,6 +16906,75 @@ fn main() -> i32 {
     );
 }
 
+/// Theme B (v0.0.19): the `agent_mcp` UDS transport (`serve_fd`). A connected
+/// `socketpair` stands in for the accept()ed connection: the client writes one
+/// newline-delimited JSON-RPC request and half-closes; `serve_fd` reads the
+/// line, dispatches against the live surface, writes the response line, then
+/// sees EOF and returns; the client reads back a response carrying the tagged
+/// node. This exercises the read-request → dispatch → write-response wire loop
+/// without needing a second process.
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_mcp_uds_serve_fd_roundtrip_theme_b() {
+    agent_mcp_run(
+        "mcp_serve",
+        r##"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_mcp/agent_mcp" as mcp;
+import "stdlib/text" as text;
+
+extern fn socketpair(d: i32, t: i32, p: i32, sv: *i32) -> i32;
+extern fn shutdown(fd: i32, how: i32) -> i32;
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn read(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn close(fd: i32) -> i32;
+
+fn allow_all(req: auth::Request) -> auth::Decision { return auth::Decision::Allow; }
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect { return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } }; }
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+    let win: window::Window = window::Window::new(rect(0.0,0.0,300.0,200.0), 1 as u64, 2 as u64, 0 as i8);
+    let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
+    ui::set_agent_id(btn.obj, "save-btn");
+    rt::msg_void_id(win.content_view(), rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+    let mut surf: ui::Surface = ui::open(win.obj);
+    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+
+    let mut sv: [i32; 2] = [0 as i32, 0 as i32];
+    if unsafe { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(sv[0])) } != (0 as i32) { return 10; }
+    let client: i32 = sv[0];
+    let server: i32 = sv[1];
+
+    let req: str = "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}\n";
+    unsafe { write(client, #str_ptr(req), #str_len(req)); }
+    unsafe { shutdown(client, 1 as i32); }
+
+    mcp::serve_fd(surf, sub, allow_all, server);
+
+    let mut rbuf: [u8; 4096] = [0 as u8; 4096];
+    let n: i64 = unsafe { read(client, #addr_of(rbuf[0]), 4096 as usize) };
+    if n <= (0 as i64) { return 11; }
+    let resp: str = unsafe { #str_from_raw_parts(#addr_of(rbuf[0]), n as usize) };
+    if !resp.to_text().contains("save-btn") { return 1; }
+    if !resp.to_text().contains("\"result\"") { return 2; }
+
+    unsafe { close(client); }
+    unsafe { close(server); }
+    pool.drain();
+    return 0;
+}
+"##,
+    );
+}
+
 /// Theme B (v0.0.19): the `agent_appkit` WRITE path through the agent-core
 /// authorization brain. Builds a window with a tagged button (wired to a C+
 /// click callback), a tagged input field, and an untagged label; opens a
