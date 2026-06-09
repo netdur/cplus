@@ -8965,25 +8965,36 @@ impl SemaCx<'_> {
             if !type_args.is_empty() {
                 self.err(
                     "E0501",
-                    "`to_string` takes no type arguments".to_string(),
+                    "`to_text` takes no type arguments".to_string(),
                     call_span,
                 );
             }
-            // v0.0.12 realtime Phase 1: blessed `to_string()` allocates an
-            // owned `string`, so it's banned in a `#[no_alloc]` body.
+            // v0.0.12 realtime Phase 1: blessed `to_text()` allocates an
+            // owned string, so it's banned in a `#[no_alloc]` body.
             if self.current_fn_no_alloc {
                 self.err(
                     "E0901",
-                    "function is marked `#[no_alloc]` but calls `to_string()`, which heap-allocates".to_string(),
+                    "function is marked `#[no_alloc]` but calls `to_text()`, which heap-allocates".to_string(),
                     call_span,
                 );
             }
-            // TEXT.R3b: `.to_string()` produces the designated owned-string type
-            // (`Text`) when available (file imports `stdlib/text`), else the
-            // legacy `Ty::String`. Consistent with interpolation (R2).
+            // TEXT.R3b / v0.0.19 import-gating: `.to_text()` produces the
+            // designated owned-string type `Text`, which exists only when the
+            // file imports `stdlib/text` (the `#[lang("string")]` struct). With
+            // no such struct in scope, owned strings are unavailable — E0613
+            // rather than silently minting the legacy `Ty::String`.
             return match self.designated_string_struct {
                 Some(id) => Ty::Struct(id),
-                None => Ty::String,
+                None => {
+                    self.err(
+                        "E0613",
+                        "`.to_text()` produces an owned string, which requires the \
+                         `Text` type — add `import \"stdlib/text\"`"
+                            .to_string(),
+                        call_span,
+                    );
+                    Ty::Error
+                }
             };
         }
         // v0.0.12 G-045 (llama.cplus): blessed `to_bits()` on a float scalar —
@@ -9487,13 +9498,24 @@ impl SemaCx<'_> {
         // Future: if the literal has *zero* Expr parts after sub-parsing,
         // could downgrade to Ty::Str. The lexer already returns a plain
         // Str token in that case, so we don't reach here.
-        let _ = span;
-        // TEXT.R2: interpolation produces the designated owned-string type
-        // (`Text`) when it's available (the file imports `stdlib/text`);
-        // otherwise the legacy `Ty::String` (removed in R4).
+        // TEXT.R2 / v0.0.19 import-gating: interpolation produces the designated
+        // owned-string type `Text`, available only when the file imports
+        // `stdlib/text` (the `#[lang("string")]` struct). With no such struct in
+        // scope, owned strings are unavailable — E0613 rather than silently
+        // minting the legacy `Ty::String`. (A plain string with no `${...}`
+        // segments is a `str` and never reaches here.)
         match self.designated_string_struct {
             Some(id) => Ty::Struct(id),
-            None => Ty::String,
+            None => {
+                self.err(
+                    "E0613",
+                    "string interpolation produces an owned string, which requires \
+                     the `Text` type — add `import \"stdlib/text\"`"
+                        .to_string(),
+                    span,
+                );
+                Ty::Error
+            }
         }
     }
 
@@ -15523,6 +15545,38 @@ mod tests {
         );
     }
 
+    // v0.0.19 import-gating: owned strings require `import "stdlib/text"` (which
+    // brings the `#[lang("string")]` `Text` struct into scope). Without it,
+    // `.to_text()` and string interpolation error E0613 instead of silently
+    // producing the legacy internal owned-string type.
+    #[test]
+    fn to_text_without_text_import_rejected_e0613_v0019() {
+        let codes = errors("fn f() -> i32 { let n: i32 = 1; let s = n.to_text(); return 0; }");
+        assert!(codes.contains(&"E0613"), "expected E0613, got: {codes:?}");
+    }
+
+    #[test]
+    fn interpolation_without_text_import_rejected_e0613_v0019() {
+        let codes =
+            errors("fn f(x: i32) -> i32 { let s = \"v=${x}\"; return 0; } fn main() -> i32 { return 0; }");
+        assert!(codes.contains(&"E0613"), "expected E0613, got: {codes:?}");
+    }
+
+    // With the lang-string struct in scope (the import's effect), both are clean.
+    #[test]
+    fn to_text_and_interpolation_with_text_in_scope_clean_v0019() {
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn f(x: i32) -> i32 { let a: Text = x.to_text(); let b: Text = \"v=${x}\"; return 0; }",
+        );
+    }
+
+    // A plain string literal with no `${...}` is a `str` — never gated.
+    #[test]
+    fn plain_string_literal_without_text_import_clean_v0019() {
+        assert_clean("fn f() -> str { return \"hello\"; }");
+    }
+
     // v0.0.19: the blessed conversion method was renamed `to_string` → `to_text`
     // (tracking the surviving owned type `Text` after `string` was removed). The
     // old `.to_string()` spelling is no longer blessed — on a primitive it's now
@@ -20636,8 +20690,11 @@ mod tests {
     #[test]
     fn no_block_string_interpolation_clean() {
         // Interpolation allocates but does not block — fine under #[no_block].
+        // (v0.0.19: owned strings are import-gated, so a `#[lang("string")]`
+        // struct must be in scope for the interpolation to type.)
         assert_clean(
-            "#[no_block] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             #[no_block] fn f(x: i32) -> i32 { let s = \"v=${x}\"; return x; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
