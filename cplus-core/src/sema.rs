@@ -5753,36 +5753,6 @@ impl SemaCx<'_> {
     /// up in a hardcoded table; unknown names fire E0905. Each intrinsic
     /// implements its own arg-shape validation, then returns the result
     /// type. Codegen consults a parallel table.
-    /// v0.0.19: the runtime/async/atomic builtins historically spelled with the
-    /// `__cplus_` prefix now use the `#` sigil (one sigil for every
-    /// compiler-known builtin). Returns true when `name` (the bare `#name`
-    /// spelling) corresponds to a legacy `__cplus_<name>`. Three groups:
-    ///   - fixed intrinsic families recognized by name in `check_named_call`,
-    ///   - the pattern-matched atomic ops / fences (`atomic_*`),
-    ///   - the extern-fn runtime helpers (`coro_*`, `reactor_*_state`) declared
-    ///     `extern fn __cplus_*` in the stdlib and defined by codegen.
-    fn is_migrated_cplus_intrinsic(&self, name: &str) -> bool {
-        const FAMILIES: &[&str] = &[
-            "thread_spawn",
-            "thread_join",
-            "thread_spawn_with",
-            "drop_in_place",
-            "block_on",
-            "reactor_wait_read",
-            "reactor_wait_write",
-            "reactor_wait_timer",
-            "reactor_spawn_local",
-            "reactor_yield_now",
-        ];
-        if FAMILIES.contains(&name) {
-            return true;
-        }
-        let legacy = format!("__cplus_{name}");
-        crate::atomic::parse_atomic_intrinsic(&legacy).is_some()
-            || crate::atomic::parse_atomic_fence(&legacy).is_some()
-            || self.fns.contains_key(&legacy)
-    }
-
     fn check_intrinsic(
         &mut self,
         name: &str,
@@ -5837,16 +5807,26 @@ impl SemaCx<'_> {
                 if let Some(ty) = self.ffi_builtin_ty(name, args, span) {
                     return ty;
                 }
-                // v0.0.19: migrated `__cplus_*` runtime/async/atomic builtins.
-                // Delegate to the shared named-call checker via the legacy
-                // spelling so its unsafe gating, arg/type-arg validation, and
-                // extern-helper resolution are reused verbatim. (`ret_ty`
+                // v0.0.19: runtime/async/atomic builtins. These live in
+                // `dispatch_cplus_intrinsic` (keyed on the legacy `__cplus_`
+                // spelling); the bare `__cplus_*(...)` call form was removed, so
+                // the `#` sigil is the only way to reach them. (`ret_ty`
                 // ascription is never used by these — they're call-shaped.)
-                if self.is_migrated_cplus_intrinsic(name) {
-                    let synth = Expr {
-                        kind: ExprKind::Ident(format!("__cplus_{name}")),
-                        span,
-                    };
+                let legacy = format!("__cplus_{name}");
+                let synth = Expr {
+                    kind: ExprKind::Ident(legacy.clone()),
+                    span,
+                };
+                if let Some(ty) =
+                    self.dispatch_cplus_intrinsic(&synth, &legacy, args, type_args, span)
+                {
+                    return ty;
+                }
+                // Extern-fn runtime helpers (`#coro_resume`, `#coro_done`,
+                // `#reactor_get_state`, `#reactor_set_state`) — codegen-emitted
+                // functions declared `extern fn __cplus_*` in the stdlib. Resolve
+                // the symbol as a normal call.
+                if self.fns.contains_key(&legacy) {
                     return self.check_named_call(&synth, args, type_args, span);
                 }
                 self.err(
@@ -7996,6 +7976,179 @@ impl SemaCx<'_> {
         }
     }
 
+    /// v0.0.19: type-check the runtime / async / atomic builtins. These are now
+    /// spelled with the `#` sigil and reach here only from `check_intrinsic`,
+    /// under the legacy `__cplus_<name>` spelling (`callee`/`name` are
+    /// synthesized). Returns `Some(ty)` when `name` names one of these builtins,
+    /// `None` otherwise (the caller then tries the extern-fn runtime helpers and
+    /// finally E0905). The bare `__cplus_*(...)` call spelling was removed in
+    /// v0.0.19 — `check_named_call` no longer recognizes it (E0300).
+    fn dispatch_cplus_intrinsic(
+        &mut self,
+        callee: &Expr,
+        name: &str,
+        args: &[Expr],
+        type_args: &[Type],
+        call_span: ByteSpan,
+    ) -> Option<Ty> {
+        if name == "__cplus_thread_spawn" || name == "__cplus_thread_join" {
+            return Some(self.check_thread_intrinsic(name, callee, args, type_args, call_span));
+        }
+        // `#drop_in_place::[T](p: *T)` — drop the value at *p in place. Lowers to
+        // `T::drop(p)` for the monomorphized T (or a no-op when T has no Drop).
+        if name == "__cplus_drop_in_place" {
+            if type_args.len() != 1 {
+                self.err(
+                    "E0501",
+                    format!(
+                        "`#drop_in_place` takes exactly 1 type argument, got {}",
+                        type_args.len()
+                    ),
+                    callee.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::Unit);
+            }
+            if args.len() != 1 {
+                self.err(
+                    "E0308",
+                    format!("`#drop_in_place` takes 1 value argument, got {}", args.len()),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::Unit);
+            }
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    "`#drop_in_place` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                    call_span,
+                );
+            }
+            let target_ty = self.resolve_type(&type_args[0]);
+            let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty))));
+            return Some(Ty::Unit);
+        }
+        if name == "__cplus_thread_spawn_with" {
+            return Some(self.check_thread_spawn_with(callee, args, type_args, call_span));
+        }
+        if name == "__cplus_block_on" {
+            return Some(self.check_block_on(callee, args, type_args, call_span));
+        }
+        if name == "__cplus_reactor_wait_read" {
+            return Some(self.check_reactor_wait_read(callee, args, type_args, call_span));
+        }
+        if name == "__cplus_reactor_wait_write" {
+            return Some(self.check_reactor_wait_write(callee, args, type_args, call_span));
+        }
+        if name == "__cplus_reactor_wait_timer" {
+            return Some(self.check_reactor_wait_timer(callee, args, type_args, call_span));
+        }
+        if name == "__cplus_reactor_spawn_local" {
+            return Some(self.check_reactor_spawn_local(callee, args, type_args, call_span));
+        }
+        if name == "__cplus_reactor_yield_now" {
+            return Some(self.check_reactor_yield_now(callee, args, type_args, call_span));
+        }
+        // Atomic ops `#atomic_<op>_<ty>_<ord>(...)`. All require `unsafe` (they
+        // read/write through a raw pointer the compiler can't prove valid).
+        if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    format!("`#{}` is unsafe; wrap in `unsafe {{ ... }}`", &name["__cplus_".len()..]),
+                    call_span,
+                );
+            }
+            let expected_args = 1 + spec.value_arg_count();
+            if args.len() != expected_args {
+                self.err(
+                    "E0308",
+                    format!(
+                        "`#{}` takes {} argument(s), got {}",
+                        &name["__cplus_".len()..],
+                        expected_args,
+                        args.len()
+                    ),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(if spec.returns_value() {
+                    spec.ty.clone()
+                } else {
+                    Ty::Unit
+                });
+            }
+            let ptr_ty = Ty::RawPtr(Box::new(spec.ty.clone()));
+            let p_actual = self.check_expr(&args[0], Some(ptr_ty.clone()));
+            if !matches!(p_actual, Ty::RawPtr(_) | Ty::Error) {
+                self.err(
+                    "E0302",
+                    format!(
+                        "`#{}` first argument must be `*{}`, got `{}`",
+                        &name["__cplus_".len()..],
+                        spec.ty.name(),
+                        ty_display(&p_actual)
+                    ),
+                    args[0].span,
+                );
+            } else if let Ty::RawPtr(inner) = &p_actual {
+                if **inner != spec.ty {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "`#{}` first argument must be `*{}`, got `{}`",
+                            &name["__cplus_".len()..],
+                            spec.ty.name(),
+                            ty_display(&p_actual)
+                        ),
+                        args[0].span,
+                    );
+                }
+            }
+            for a in args.iter().skip(1) {
+                let _ = self.check_expr(a, Some(spec.ty.clone()));
+            }
+            return Some(if spec.returns_value() {
+                spec.ty.clone()
+            } else {
+                Ty::Unit
+            });
+        }
+        // Standalone memory fence `#atomic_fence_<ord>()`.
+        if crate::atomic::parse_atomic_fence(name).is_some() {
+            if self.unsafe_depth == 0 {
+                self.err(
+                    "E0801",
+                    format!("`#{}` is unsafe; wrap in `unsafe {{ ... }}`", &name["__cplus_".len()..]),
+                    call_span,
+                );
+            }
+            if !args.is_empty() {
+                self.err(
+                    "E0308",
+                    format!(
+                        "`#{}` takes 0 arguments, got {}",
+                        &name["__cplus_".len()..],
+                        args.len()
+                    ),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+            }
+            return Some(Ty::Unit);
+        }
+        None
+    }
+
     fn check_named_call(
         &mut self,
         callee: &Expr,
@@ -8010,88 +8163,6 @@ impl SemaCx<'_> {
         // Slice 7GEN.5b: when type_args are explicit, use them directly.
         if let Some(gsig) = self.fns_generic.get(name).cloned() {
             return self.check_generic_named_call(name, &gsig, args, type_args, call_span);
-        }
-        // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Placed
-        // before the "non-generic fn with turbofish" reject because both
-        // intrinsics take one type-argument by design (mirroring size_of's
-        // shape) — they're compiler-known and don't appear in `fns_generic`.
-        if name == "__cplus_thread_spawn" || name == "__cplus_thread_join" {
-            return self.check_thread_intrinsic(name, callee, args, type_args, call_span);
-        }
-        // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` — drop the
-        // value at *p in place. Compiler lowers to a call to `T::drop(p)`
-        // for the monomorphized T, or to a no-op when T has no Drop. Used
-        // by stdlib containers to invoke inner-T Drop before freeing
-        // their storage. Unsafe (raw-pointer write semantics).
-        if name == "__cplus_drop_in_place" {
-            if type_args.len() != 1 {
-                self.err(
-                    "E0501",
-                    format!(
-                        "`__cplus_drop_in_place` takes exactly 1 type argument, got {}",
-                        type_args.len()
-                    ),
-                    callee.span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return Ty::Unit;
-            }
-            if args.len() != 1 {
-                self.err(
-                    "E0308",
-                    format!(
-                        "`__cplus_drop_in_place` takes 1 value argument, got {}",
-                        args.len()
-                    ),
-                    call_span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return Ty::Unit;
-            }
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`__cplus_drop_in_place` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    call_span,
-                );
-            }
-            let target_ty = self.resolve_type(&type_args[0]);
-            let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty))));
-            return Ty::Unit;
-        }
-        // v0.0.3 Phase 5 Slice 5C: spawn-with-input intrinsic. Takes
-        // two type args (I, O) and two value args (input, f).
-        if name == "__cplus_thread_spawn_with" {
-            return self.check_thread_spawn_with(callee, args, type_args, call_span);
-        }
-        // v0.0.3 Phase 5 Slice 5E.5: `__cplus_block_on::[T](future) -> T`.
-        // Drives a `Future[T]` to completion via a resume-loop and
-        // returns the produced value. Stdlib's `executor::block_on`
-        // wraps this so the user-visible API stays in stdlib.
-        if name == "__cplus_block_on" {
-            return self.check_block_on(callee, args, type_args, call_span);
-        }
-        // v0.0.4 Phase 3 Slice 3A.1: reactor-suspend intrinsics. Each
-        // requires `unsafe { ... }` and must appear inside an async fn
-        // body — the suspend needs an enclosing coroutine to suspend.
-        if name == "__cplus_reactor_wait_read" {
-            return self.check_reactor_wait_read(callee, args, type_args, call_span);
-        }
-        if name == "__cplus_reactor_wait_write" {
-            return self.check_reactor_wait_write(callee, args, type_args, call_span);
-        }
-        if name == "__cplus_reactor_wait_timer" {
-            return self.check_reactor_wait_timer(callee, args, type_args, call_span);
-        }
-        if name == "__cplus_reactor_spawn_local" {
-            return self.check_reactor_spawn_local(callee, args, type_args, call_span);
-        }
-        if name == "__cplus_reactor_yield_now" {
-            return self.check_reactor_yield_now(callee, args, type_args, call_span);
         }
         // Non-generic fn with turbofish → reject. The user explicitly
         // asked to instantiate something that has no generic params.
@@ -8124,101 +8195,6 @@ impl SemaCx<'_> {
                 let _ = self.check_expr(a, None);
             }
             return Ty::Error;
-        }
-        // v0.0.3 Phase 5 Slice 5A: atomic intrinsics. Names match the
-        // pattern `__cplus_atomic_<op>_<ty>_<ord>`. See the
-        // `cplus_core::atomic` module for the full surface. All
-        // atomic ops require `unsafe` — they read/write through a raw
-        // pointer whose validity the compiler can't prove.
-        if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    format!("`{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
-                    call_span,
-                );
-            }
-            let expected_args = 1 + spec.value_arg_count();
-            if args.len() != expected_args {
-                self.err(
-                    "E0308",
-                    format!(
-                        "`{}` takes {} argument(s), got {}",
-                        name,
-                        expected_args,
-                        args.len()
-                    ),
-                    call_span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-                return if spec.returns_value() {
-                    spec.ty.clone()
-                } else {
-                    Ty::Unit
-                };
-            }
-            let ptr_ty = Ty::RawPtr(Box::new(spec.ty.clone()));
-            let p_actual = self.check_expr(&args[0], Some(ptr_ty.clone()));
-            if !matches!(p_actual, Ty::RawPtr(_) | Ty::Error) {
-                self.err(
-                    "E0302",
-                    format!(
-                        "`{}` first argument must be `*{}`, got `{}`",
-                        name,
-                        spec.ty.name(),
-                        ty_display(&p_actual)
-                    ),
-                    args[0].span,
-                );
-            } else if let Ty::RawPtr(inner) = &p_actual {
-                if **inner != spec.ty {
-                    self.err(
-                        "E0302",
-                        format!(
-                            "`{}` first argument must be `*{}`, got `{}`",
-                            name,
-                            spec.ty.name(),
-                            ty_display(&p_actual)
-                        ),
-                        args[0].span,
-                    );
-                }
-            }
-            for a in args.iter().skip(1) {
-                let _ = self.check_expr(a, Some(spec.ty.clone()));
-            }
-            return if spec.returns_value() {
-                spec.ty.clone()
-            } else {
-                Ty::Unit
-            };
-        }
-        // v0.0.12 G-030 (llama.cplus G-029): standalone memory fence
-        // `__cplus_atomic_fence_<ord>()`. No type, no operand — just a
-        // barrier on the sequenced-before/happens-before edges of the
-        // surrounding atomic ops. Same unsafe requirement as the typed
-        // atomic ops (it influences other unsafe-gated atomic accesses).
-        if crate::atomic::parse_atomic_fence(name).is_some() {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    format!("`{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
-                    call_span,
-                );
-            }
-            if !args.is_empty() {
-                self.err(
-                    "E0308",
-                    format!("`{}` takes 0 arguments, got {}", name, args.len()),
-                    call_span,
-                );
-                for a in args {
-                    let _ = self.check_expr(a, None);
-                }
-            }
-            return Ty::Unit;
         }
         let Some(sig) = self.fns.get(name).cloned() else {
             self.err("E0300", format!("undefined function `{name}`"), callee.span);
@@ -8314,8 +8290,8 @@ impl SemaCx<'_> {
     ///   return-only params are deferred.
     /// - **E0302** — type mismatch when the same Param infers two
     ///   different concrete types across arguments.
-    /// v0.0.3 Phase 5 Slice 5B: type-check `__cplus_thread_spawn::[O](f)`
-    /// and `__cplus_thread_join::[O](h)`. Both intrinsics take one
+    /// v0.0.3 Phase 5 Slice 5B: type-check `#thread_spawn::[O](f)`
+    /// and `#thread_join::[O](h)`. Both intrinsics take one
     /// turbofish type argument and one value argument; both require
     /// `unsafe`. Spawn returns `JoinHandle[O]` (from stdlib/thread),
     /// join returns `O`.
@@ -8381,7 +8357,7 @@ impl SemaCx<'_> {
     }
 
     /// v0.0.3 Phase 5 Slice 5E.5: type-check
-    /// `__cplus_block_on::[T](future)`. Takes one type arg T and one
+    /// `#block_on::[T](future)`. Takes one type arg T and one
     /// value arg (a `Future[T]`); returns T. Requires `unsafe`.
     fn check_block_on(
         &mut self,
@@ -8435,7 +8411,7 @@ impl SemaCx<'_> {
     }
 
     /// v0.0.4 Phase 3 Slice 3A.1: type-check
-    /// `__cplus_reactor_wait_read(fd: i32)`. Single i32 arg, returns
+    /// `#reactor_wait_read(fd: i32)`. Single i32 arg, returns
     /// Unit. Must appear inside an `async fn` body (we need a coroutine
     /// to suspend) and inside `unsafe { ... }` (it's an FFI-shaped
     /// intrinsic that the compiler can't safety-check beyond shape).
@@ -8486,7 +8462,7 @@ impl SemaCx<'_> {
     }
 
     /// v0.0.4 Phase 3 Slice 3A.3: type-check
-    /// `__cplus_reactor_wait_write(fd: i32)`. Same shape as wait_read.
+    /// `#reactor_wait_write(fd: i32)`. Same shape as wait_read.
     fn check_reactor_wait_write(
         &mut self,
         callee: &Expr,
@@ -8533,7 +8509,7 @@ impl SemaCx<'_> {
         Ty::Unit
     }
 
-    /// v0.0.5 Phase 4 Slice 4A: `__cplus_reactor_wait_timer(ms: u64)`.
+    /// v0.0.5 Phase 4 Slice 4A: `#reactor_wait_timer(ms: u64)`.
     /// Registers a kqueue EVFILT_TIMER for `ms` milliseconds, then
     /// suspends self. Reactor wakes us when the timer fires. Same
     /// unsafe + async-only gates as wait_read / wait_write.
@@ -8584,7 +8560,7 @@ impl SemaCx<'_> {
     }
 
     /// v0.0.4 Phase 3 Slice 3A.2: type-check
-    /// `__cplus_reactor_spawn_local(future: Future[T])`. Pushes the
+    /// `#reactor_spawn_local(future: Future[T])`. Pushes the
     /// future onto the reactor's task queue. Returns Unit.
     fn check_reactor_spawn_local(
         &mut self,
@@ -8627,7 +8603,7 @@ impl SemaCx<'_> {
         Ty::Unit
     }
 
-    /// v0.0.4 Phase 3 Slice 3A.2: type-check `__cplus_reactor_yield_now()`.
+    /// v0.0.4 Phase 3 Slice 3A.2: type-check `#reactor_yield_now()`.
     /// Zero args, zero type args, returns Unit. Must be inside async fn.
     fn check_reactor_yield_now(
         &mut self,
@@ -8674,7 +8650,7 @@ impl SemaCx<'_> {
     }
 
     /// v0.0.3 Phase 5 Slice 5C: type-check
-    /// `__cplus_thread_spawn_with::[I, O](input, f)`. Like
+    /// `#thread_spawn_with::[I, O](input, f)`. Like
     /// `__cplus_thread_spawn` but with an added `input: I` arg and an
     /// fn signature of `fn(I) -> O`.
     fn check_thread_spawn_with(
@@ -15258,7 +15234,7 @@ mod tests {
     fn atomic_fence_seqcst_in_unsafe_clean_g030() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 unsafe { __cplus_atomic_fence_seqcst(); }\n\
+                 unsafe { #atomic_fence_seqcst(); }\n\
                  return 0;\n\
              }",
         );
@@ -15269,7 +15245,7 @@ mod tests {
         // Relaxed is accepted by sema (it's a no-op at codegen).
         assert_clean(
             "fn main() -> i32 {\n\
-                 unsafe { __cplus_atomic_fence_relaxed(); }\n\
+                 unsafe { #atomic_fence_relaxed(); }\n\
                  return 0;\n\
              }",
         );
@@ -15277,7 +15253,7 @@ mod tests {
 
     #[test]
     fn atomic_fence_outside_unsafe_e0801_g030() {
-        let codes = errors("fn main() -> i32 { __cplus_atomic_fence_seqcst(); return 0; }");
+        let codes = errors("fn main() -> i32 { #atomic_fence_seqcst(); return 0; }");
         assert!(codes.contains(&"E0801"));
     }
 
@@ -15285,7 +15261,7 @@ mod tests {
     fn atomic_fence_with_args_e0308_g030() {
         let codes = errors(
             "fn main() -> i32 {\n\
-                 unsafe { __cplus_atomic_fence_seqcst(1 as i32); }\n\
+                 unsafe { #atomic_fence_seqcst(1 as i32); }\n\
                  return 0;\n\
              }",
         );
@@ -18118,6 +18094,20 @@ mod tests {
     fn unknown_intrinsic_still_e0905_v0019() {
         let codes = errors("fn f() -> i32 { return #not_a_real_intrinsic(1); }");
         assert!(codes.contains(&"E0905"), "expected E0905, got: {codes:?}");
+    }
+
+    // v0.0.19: the legacy bare `__cplus_*(...)` call spelling was removed — only
+    // the `#` sigil reaches these builtins. A bare call is an undefined function.
+    #[test]
+    fn legacy_cplus_call_spelling_rejected_v0019() {
+        let codes = errors(
+            "fn f() -> i32 { \
+                 let mut x: i32 = 0; \
+                 let p: *i32 = unsafe { #addr_of(x) }; \
+                 return unsafe { __cplus_atomic_load_i32_seqcst(p) }; \
+             }",
+        );
+        assert!(codes.contains(&"E0300"), "expected E0300, got: {codes:?}");
     }
 
     // v0.0.19 regression lock: a Copy struct field passed by value out of

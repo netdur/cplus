@@ -2966,30 +2966,9 @@ fn scan_moves_in_expr(
                         }
                     }
                 }
-                // v0.0.3 Phase 5 Slice 5B: `__cplus_thread_join`
-                // consumes its handle argument (frees the heap ctx
-                // it points into). Treat it as a move so the
-                // surrounding scope-exit drop is gated by a real
-                // flag the intrinsic can flip.
-                if fn_name == "__cplus_thread_join" {
-                    if let Some(arg) = args.first() {
-                        if let ExprKind::Ident(n) = &arg.kind {
-                            set.insert(n.clone());
-                        }
-                    }
-                }
-                // v0.0.3 Phase 5 Slice 5C: `__cplus_thread_spawn_with`
-                // moves its first value-arg (the input) into the
-                // worker's context buffer. The trampoline reads it
-                // before f runs, so the parent must relinquish
-                // ownership at the spawn site.
-                if fn_name == "__cplus_thread_spawn_with" {
-                    if let Some(arg) = args.first() {
-                        if let ExprKind::Ident(n) = &arg.kind {
-                            set.insert(n.clone());
-                        }
-                    }
-                }
+                // v0.0.19: the move-consuming `#thread_join` / `#thread_spawn_with`
+                // are now `ExprKind::Intrinsic` (handled in that arm below); the
+                // bare `__cplus_*` call spelling was removed.
             }
             // v0.0.3 drop-tracking: Call with a Path callee = associated-fn
             // call (enum variant construction `Result::Ok(v)`, or
@@ -9507,14 +9486,19 @@ impl<'a> FnState<'a> {
                 if let Some(r) = self.ffi_builtin_cg(name, args) {
                     return Some(r);
                 }
-                // v0.0.19: migrated `__cplus_*` runtime/async/atomic builtins now
-                // spelled `#name(...)`. Sema accepted them, so lower by
-                // delegating to the shared named-call emitter under the legacy
-                // spelling — `gen_named_call` special-cases the atomic / thread /
-                // reactor / drop families and emits a normal call for the
-                // extern-fn runtime helpers (`coro_*`, `reactor_*_state`).
-                if self.is_migrated_cplus_intrinsic_cg(name) {
-                    return self.gen_named_call(&format!("__cplus_{name}"), args, type_args);
+                // v0.0.19: runtime / async / atomic builtins (`#name`). Lowered
+                // by `dispatch_gen_cplus_intrinsic` under the legacy spelling.
+                let legacy = format!("__cplus_{name}");
+                if let Some(result) =
+                    self.dispatch_gen_cplus_intrinsic(&legacy, args, type_args)
+                {
+                    return result;
+                }
+                // Extern-fn runtime helpers (`#coro_resume`, `#reactor_get_state`,
+                // …) — codegen-emitted functions declared `extern fn __cplus_*`.
+                // Emit a normal call to the legacy symbol.
+                if self.sigs.contains_key(&legacy) {
+                    return self.gen_named_call(&legacy, args, type_args);
                 }
                 panic!(
                     "codegen: unknown `#{name}` intrinsic — sema should have rejected this with E0905"
@@ -9631,32 +9615,6 @@ impl<'a> FnState<'a> {
             return Some((r, ret_ty));
         }
         None
-    }
-
-    /// v0.0.19 codegen mirror of sema's `is_migrated_cplus_intrinsic`: true when
-    /// the bare `#name` corresponds to a legacy `__cplus_<name>` builtin or
-    /// extern runtime helper. Uses codegen's own signature table (`self.sigs`)
-    /// for the extern-helper group.
-    fn is_migrated_cplus_intrinsic_cg(&self, name: &str) -> bool {
-        const FAMILIES: &[&str] = &[
-            "thread_spawn",
-            "thread_join",
-            "thread_spawn_with",
-            "drop_in_place",
-            "block_on",
-            "reactor_wait_read",
-            "reactor_wait_write",
-            "reactor_wait_timer",
-            "reactor_spawn_local",
-            "reactor_yield_now",
-        ];
-        if FAMILIES.contains(&name) {
-            return true;
-        }
-        let legacy = format!("__cplus_{name}");
-        crate::atomic::parse_atomic_intrinsic(&legacy).is_some()
-            || crate::atomic::parse_atomic_fence(&legacy).is_some()
-            || self.sigs.contains_key(&legacy)
     }
 
     /// v0.0.11 Phase 4: `#addr_of(expr)` — pointer to a place.
@@ -11236,6 +11194,76 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// v0.0.19: lower the runtime / async / atomic builtins (spelled `#name`,
+    /// reaching codegen from `gen_intrinsic` under the legacy `__cplus_<name>`
+    /// spelling). Returns `Some(result)` when `name` is one of these builtins —
+    /// where `result` is the value (`Some`) or void (`None`) the call produces —
+    /// and `None` when `name` is not a cplus intrinsic (caller falls through to
+    /// the normal/extern call path). The bare `__cplus_*(...)` call spelling was
+    /// removed in v0.0.19.
+    fn dispatch_gen_cplus_intrinsic(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        type_args: &[Type],
+    ) -> Option<Option<(String, Ty)>> {
+        // Atomic ops (`#atomic_<op>_<ty>_<ord>`) → LLVM `load atomic` /
+        // `store atomic` / `atomicrmw` / `cmpxchg`.
+        if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
+            return Some(self.gen_atomic_intrinsic(&spec, args));
+        }
+        // Standalone memory fence (`#atomic_fence_<ord>`). `relaxed` emits
+        // nothing (parity with C's relaxed thread fence).
+        if let Some(ord) = crate::atomic::parse_atomic_fence(name) {
+            let llvm_ord = match ord {
+                "relaxed" => return Some(None),
+                "acquire" => "acquire",
+                "release" => "release",
+                "acqrel" => "acq_rel",
+                "seqcst" => "seq_cst",
+                _ => unreachable!("parse_atomic_fence already validated"),
+            };
+            self.emit(&format!("fence {llvm_ord}"));
+            return Some(None);
+        }
+        if name == "__cplus_thread_spawn" {
+            return Some(self.gen_thread_spawn(args, type_args));
+        }
+        if name == "__cplus_thread_spawn_with" {
+            return Some(self.gen_thread_spawn_with(args, type_args));
+        }
+        if name == "__cplus_thread_join" {
+            return Some(self.gen_thread_join(args, type_args));
+        }
+        if name == "__cplus_block_on" {
+            return Some(self.gen_block_on(args, type_args));
+        }
+        if name == "__cplus_reactor_wait_read" {
+            return Some(self.gen_reactor_wait_read(args));
+        }
+        if name == "__cplus_reactor_wait_write" {
+            return Some(self.gen_reactor_wait_write(args));
+        }
+        if name == "__cplus_reactor_wait_timer" {
+            return Some(self.gen_reactor_wait_timer(args));
+        }
+        if name == "__cplus_reactor_spawn_local" {
+            return Some(self.gen_reactor_spawn_local(args));
+        }
+        if name == "__cplus_reactor_yield_now" {
+            return Some(self.gen_reactor_yield_now());
+        }
+        // `#drop_in_place::[T](p: *T)` → call the monomorphized `T::drop(p)`
+        // when T has Drop, else nothing.
+        if name == "__cplus_drop_in_place" {
+            let t = ty_from(&type_args[0], &self.types);
+            let (p_val, _) = self.gen_expr(&args[0]).expect("drop_in_place ptr arg");
+            self.gen_drop_in_place(&t, &p_val);
+            return Some(None);
+        }
+        None
+    }
+
     fn gen_named_call(
         &mut self,
         name: &str,
@@ -11247,97 +11275,6 @@ impl<'a> FnState<'a> {
         // signature. Drop the field-read memo before evaluating
         // arguments so cached values can't outlive a mutation.
         self.invalidate_field_load_cache();
-        // Special case: #println(i32) → call printf with our %d\n format.
-        // Phase 8 slice 8.STR.2: also handle #println(str) by extracting
-        // (ptr, len) from the fat-pointer value and passing both to
-        // printf with the `%.*s\n` format string.
-        // v0.0.16: FFI/raw + byte-swap builtins are `#name(...)` intrinsics,
-        // lowered by `gen_intrinsic` -> `ffi_builtin_cg`; a bare call never
-        // reaches codegen (sema rejects it with a fix-it).
-        // v0.0.3 Phase 5 Slice 5A: atomic intrinsics
-        // (`__cplus_atomic_<op>_<ty>_<ord>`). Lowered directly to LLVM's
-        // `load atomic` / `store atomic` / `atomicrmw` / `cmpxchg`. Sema
-        // validated arg count + types + the surrounding `unsafe`; codegen
-        // is mechanical.
-        if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
-            return self.gen_atomic_intrinsic(&spec, args);
-        }
-        // v0.0.12 G-030 (llama.cplus G-029): standalone memory fence.
-        // LLVM's `fence` instruction accepts acquire / release / acq_rel /
-        // seq_cst (not monotonic — that would be rejected). The stdlib
-        // wrapper passes a `relaxed` arg through as a no-op for parity
-        // with C's `atomic_thread_fence(memory_order_relaxed)`.
-        if let Some(ord) = crate::atomic::parse_atomic_fence(name) {
-            let llvm_ord = match ord {
-                "relaxed" => {
-                    // No instruction emitted — matches C's behavior.
-                    return None;
-                }
-                "acquire" => "acquire",
-                "release" => "release",
-                "acqrel" => "acq_rel",
-                "seqcst" => "seq_cst",
-                _ => unreachable!("parse_atomic_fence already validated"),
-            };
-            self.emit(&format!("fence {llvm_ord}"));
-            return None;
-        }
-        // v0.0.3 Phase 5 Slice 5B: thread spawn/join intrinsics. Sema
-        // validated args + JoinHandle[O] shape + the surrounding
-        // `unsafe`; codegen mallocs the context, registers a per-O
-        // trampoline, and lowers to pthread_create / pthread_join +
-        // load/store of the result slot.
-        if name == "__cplus_thread_spawn" {
-            return self.gen_thread_spawn(args, type_args);
-        }
-        if name == "__cplus_thread_spawn_with" {
-            return self.gen_thread_spawn_with(args, type_args);
-        }
-        if name == "__cplus_thread_join" {
-            return self.gen_thread_join(args, type_args);
-        }
-        if name == "__cplus_block_on" {
-            return self.gen_block_on(args, type_args);
-        }
-        // v0.0.4 Phase 3 Slice 3A.1: async I/O suspension intrinsic.
-        // `__cplus_reactor_wait_read(fd)` — inside an async fn, register
-        // the current coroutine handle with the reactor for read-readiness
-        // on `fd`, then suspend self. Reactor wakes us when the fd is
-        // ready; control returns from the intrinsic call.
-        if name == "__cplus_reactor_wait_read" {
-            return self.gen_reactor_wait_read(args);
-        }
-        // v0.0.4 Phase 3 Slice 3A.3: write-side counterpart to wait_read.
-        // Suspends until `fd` is write-ready (EVFILT_WRITE).
-        if name == "__cplus_reactor_wait_write" {
-            return self.gen_reactor_wait_write(args);
-        }
-        // v0.0.5 Phase 4 Slice 4A: timer-side counterpart. Registers a
-        // one-shot EVFILT_TIMER for `ms` ms, then suspends self.
-        if name == "__cplus_reactor_wait_timer" {
-            return self.gen_reactor_wait_timer(args);
-        }
-        // v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)`
-        // pushes a Future's handle onto the reactor's task queue.
-        if name == "__cplus_reactor_spawn_local" {
-            return self.gen_reactor_spawn_local(args);
-        }
-        // v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_yield_now()`
-        // enqueues self + suspends, giving the executor a round-trip
-        // to drive other queued tasks.
-        if name == "__cplus_reactor_yield_now" {
-            return self.gen_reactor_yield_now();
-        }
-        // v0.0.5 Phase 1C: `__cplus_drop_in_place::[T](p: *T)` lowers to
-        // a call to the monomorphized `T::drop(p)` when T has Drop,
-        // or to nothing (no-op) when T has no Drop. Used by stdlib
-        // containers to invoke inner-T Drop before freeing storage.
-        if name == "__cplus_drop_in_place" {
-            let t = ty_from(&type_args[0], &self.types);
-            let (p_val, _) = self.gen_expr(&args[0]).expect("drop_in_place ptr arg");
-            self.gen_drop_in_place(&t, &p_val);
-            return None;
-        }
         let sig = self
             .sigs
             .get(name)
@@ -11709,7 +11646,7 @@ impl<'a> FnState<'a> {
         }
     }
 
-    /// v0.0.3 Phase 5 Slice 5B: lower `__cplus_thread_spawn(f)` to:
+    /// v0.0.3 Phase 5 Slice 5B: lower `#thread_spawn(f)` to:
     ///   1. malloc(8 + size_of(O)) → ctx
     ///   2. store f at ctx[0]
     ///   3. malloc(8) → tid_slot (pthread_create needs writable storage)
@@ -11784,7 +11721,7 @@ impl<'a> FnState<'a> {
         Some((agg1, handle_ty))
     }
 
-    /// v0.0.3 Phase 5 Slice 5B: lower `__cplus_thread_join(h)` to:
+    /// v0.0.3 Phase 5 Slice 5B: lower `#thread_join(h)` to:
     ///   1. extract tid (field 0) and ctx (field 1) from h
     ///   2. pthread_join(tid, NULL)
     ///   3. load result from ctx + 8
@@ -11792,7 +11729,7 @@ impl<'a> FnState<'a> {
     ///   5. return the loaded result
     ///
     /// Restricted to Copy O ≤ 8 bytes (matches spawn's eligibility).
-    /// v0.0.3 Phase 5 Slice 5C: lower `__cplus_thread_spawn_with::[I, O](input, f)`
+    /// v0.0.3 Phase 5 Slice 5C: lower `#thread_spawn_with::[I, O](input, f)`
     /// to malloc(`8 + size_of(O) + size_of(I)`) → store f at offset 0 →
     /// store input at offset `8 + size_of(O)` → pthread_create with the
     /// per-(I, O) trampoline → return `JoinHandle[O]`. Sharing the
@@ -12057,7 +11994,7 @@ impl<'a> FnState<'a> {
         Some((result, u_ty))
     }
 
-    /// v0.0.3 Phase 5 Slice 5E.5: lower `__cplus_block_on::[T](future)`.
+    /// v0.0.3 Phase 5 Slice 5E.5: lower `#block_on::[T](future)`.
     /// Synchronously drives the coroutine to completion via
     /// `coro.resume` until `coro.done`, then reads T from the
     /// coroutine promise, destroys the frame, and returns T.
@@ -12142,7 +12079,7 @@ impl<'a> FnState<'a> {
         Some((result, t_ty))
     }
 
-    /// v0.0.4 Phase 3 Slice 3A.1: `__cplus_reactor_wait_read(fd)` —
+    /// v0.0.4 Phase 3 Slice 3A.1: `#reactor_wait_read(fd)` —
     /// register fd + current coroutine handle with the reactor, then
     /// suspend self via `llvm.coro.suspend`. When the reactor wakes us,
     /// fall through. Returns Unit.
@@ -12184,7 +12121,7 @@ impl<'a> FnState<'a> {
         None
     }
 
-    /// v0.0.4 Phase 3 Slice 3A.3: `__cplus_reactor_wait_write(fd)` —
+    /// v0.0.4 Phase 3 Slice 3A.3: `#reactor_wait_write(fd)` —
     /// mirror of wait_read for write-readiness. Same control-flow shape;
     /// the only difference is registering with EVFILT_WRITE via the
     /// `register_write_v1` stable export.
@@ -12213,7 +12150,7 @@ impl<'a> FnState<'a> {
         None
     }
 
-    /// v0.0.5 Phase 4 Slice 4A: `__cplus_reactor_wait_timer(ms: u64)` —
+    /// v0.0.5 Phase 4 Slice 4A: `#reactor_wait_timer(ms: u64)` —
     /// register a one-shot EVFILT_TIMER with the reactor for `ms`
     /// milliseconds, then suspend self. Reactor's `poll_one_event` reads
     /// the kevent ident back as `%.coro.hdl` (we set it that way in
@@ -12243,7 +12180,7 @@ impl<'a> FnState<'a> {
         None
     }
 
-    /// v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_spawn_local(fut)` —
+    /// v0.0.4 Phase 3 Slice 3A.2: `#reactor_spawn_local(fut)` —
     /// push a Future's coroutine handle onto the reactor's task queue.
     /// The Future is consumed (its handle propagates to the reactor).
     /// Returns Unit.
@@ -12259,7 +12196,7 @@ impl<'a> FnState<'a> {
         None
     }
 
-    /// v0.0.4 Phase 3 Slice 3A.2: `__cplus_reactor_yield_now()` —
+    /// v0.0.4 Phase 3 Slice 3A.2: `#reactor_yield_now()` —
     /// enqueue self + suspend. Lets the executor round-trip through
     /// the pending queue before resuming us.
     fn gen_reactor_yield_now(&mut self) -> Option<(String, Ty)> {
@@ -18383,7 +18320,7 @@ mod tests {
     #[test]
     fn atomic_load_emits_load_atomic_seqcst() {
         let ir = gen_src(&atomic_test_src(
-            "let p: *i32 = malloc(4 as usize) as *i32; let _v: i32 = __cplus_atomic_load_i32_seqcst(p);",
+            "let p: *i32 = malloc(4 as usize) as *i32; let _v: i32 = #atomic_load_i32_seqcst(p);",
         ));
         assert!(
             ir.contains("load atomic i32, ptr"),
@@ -18398,7 +18335,7 @@ mod tests {
     #[test]
     fn atomic_store_emits_store_atomic_release() {
         let ir = gen_src(&atomic_test_src(
-            "let p: *i64 = malloc(8 as usize) as *i64; __cplus_atomic_store_i64_release(p, 42 as i64);",
+            "let p: *i64 = malloc(8 as usize) as *i64; #atomic_store_i64_release(p, 42 as i64);",
         ));
         assert!(
             ir.contains("store atomic i64"),
@@ -18413,7 +18350,7 @@ mod tests {
     #[test]
     fn atomic_fetch_add_emits_atomicrmw_add() {
         let ir = gen_src(&atomic_test_src(
-            "let p: *u64 = malloc(8 as usize) as *u64; let _r: u64 = __cplus_atomic_fetch_add_u64_seqcst(p, 1 as u64);",
+            "let p: *u64 = malloc(8 as usize) as *u64; let _r: u64 = #atomic_fetch_add_u64_seqcst(p, 1 as u64);",
         ));
         assert!(
             ir.contains("atomicrmw add ptr"),
@@ -18428,7 +18365,7 @@ mod tests {
     #[test]
     fn atomic_fetch_or_relaxed_uses_monotonic_keyword() {
         let ir = gen_src(&atomic_test_src(
-            "let p: *u32 = malloc(4 as usize) as *u32; let _r: u32 = __cplus_atomic_fetch_or_u32_relaxed(p, 1 as u32);",
+            "let p: *u32 = malloc(4 as usize) as *u32; let _r: u32 = #atomic_fetch_or_u32_relaxed(p, 1 as u32);",
         ));
         assert!(
             ir.contains("atomicrmw or ptr"),
@@ -18443,7 +18380,7 @@ mod tests {
     #[test]
     fn atomic_xchg_emits_atomicrmw_xchg() {
         let ir = gen_src(&atomic_test_src(
-            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = __cplus_atomic_xchg_i32_acquire(p, 5 as i32);",
+            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = #atomic_xchg_i32_acquire(p, 5 as i32);",
         ));
         assert!(
             ir.contains("atomicrmw xchg ptr"),
@@ -18455,7 +18392,7 @@ mod tests {
     #[test]
     fn atomic_cmpxchg_emits_cmpxchg_and_extracts_prev() {
         let ir = gen_src(&atomic_test_src(
-            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = __cplus_atomic_cmpxchg_i32_seqcst(p, 0 as i32, 1 as i32);",
+            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = #atomic_cmpxchg_i32_seqcst(p, 0 as i32, 1 as i32);",
         ));
         assert!(ir.contains("cmpxchg ptr"), "expected cmpxchg, got:\n{ir}");
         assert!(
@@ -18473,7 +18410,7 @@ mod tests {
         // Failure ordering must not be stronger than success and cannot be
         // release/acq_rel; release success → monotonic failure.
         let ir = gen_src(&atomic_test_src(
-            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = __cplus_atomic_cmpxchg_i32_release(p, 0 as i32, 1 as i32);",
+            "let p: *i32 = malloc(4 as usize) as *i32; let _r: i32 = #atomic_cmpxchg_i32_release(p, 0 as i32, 1 as i32);",
         ));
         assert!(
             ir.contains("release monotonic"),
@@ -18483,7 +18420,7 @@ mod tests {
 
     #[test]
     fn atomic_load_outside_unsafe_is_rejected() {
-        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { let p: *i32 = unsafe { malloc(4 as usize) as *i32 }; let _v: i32 = __cplus_atomic_load_i32_seqcst(p); return 0; }";
+        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { let p: *i32 = unsafe { malloc(4 as usize) as *i32 }; let _v: i32 = #atomic_load_i32_seqcst(p); return 0; }";
         let toks = crate::lexer::tokenize(src).expect("lex");
         let prog = crate::parser::parse(toks).expect("parse");
         let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
@@ -18496,7 +18433,7 @@ mod tests {
 
     #[test]
     fn atomic_load_wrong_ptr_type_is_rejected() {
-        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { unsafe { let p: *i32 = malloc(4 as usize) as *i32; let _v: i64 = __cplus_atomic_load_i64_seqcst(p); } return 0; }";
+        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { unsafe { let p: *i32 = malloc(4 as usize) as *i32; let _v: i64 = #atomic_load_i64_seqcst(p); } return 0; }";
         let toks = crate::lexer::tokenize(src).expect("lex");
         let prog = crate::parser::parse(toks).expect("parse");
         let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
@@ -18516,7 +18453,7 @@ mod tests {
     fn thread_spawn_emits_pthread_create_and_trampoline() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn::[i64](worker) }}; \
+             let h: JoinHandle[i64] = unsafe {{ #thread_spawn::[i64](worker) }}; \
              return 0; \
              }}"
         );
@@ -18543,8 +18480,8 @@ mod tests {
     fn thread_join_emits_pthread_join_load_free() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn::[i64](worker) }}; \
-             let r: i64 = unsafe {{ __cplus_thread_join::[i64](h) }}; \
+             let h: JoinHandle[i64] = unsafe {{ #thread_spawn::[i64](worker) }}; \
+             let r: i64 = unsafe {{ #thread_join::[i64](h) }}; \
              return 0; \
              }}"
         );
@@ -18578,7 +18515,7 @@ mod tests {
         let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn flag() -> bool { return true; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[bool] = unsafe { __cplus_thread_spawn::[bool](flag) }; \
+                       let h: JoinHandle[bool] = unsafe { #thread_spawn::[bool](flag) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -18594,7 +18531,7 @@ mod tests {
     fn thread_spawn_outside_unsafe_is_rejected() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = __cplus_thread_spawn::[i64](worker); \
+             let h: JoinHandle[i64] = #thread_spawn::[i64](worker); \
              return 0; \
              }}"
         );
@@ -18612,8 +18549,8 @@ mod tests {
     fn thread_join_outside_unsafe_is_rejected() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn::[i64](worker) }}; \
-             let r: i64 = __cplus_thread_join::[i64](h); \
+             let h: JoinHandle[i64] = unsafe {{ #thread_spawn::[i64](worker) }}; \
+             let r: i64 = #thread_join::[i64](h); \
              return 0; \
              }}"
         );
@@ -18631,7 +18568,7 @@ mod tests {
     fn thread_spawn_without_turbofish_is_rejected() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ __cplus_thread_spawn(worker) }}; \
+             let h: JoinHandle[i64] = unsafe {{ #thread_spawn(worker) }}; \
              return 0; \
              }}"
         );
@@ -18659,7 +18596,7 @@ mod tests {
         let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](21 as i32, double) }; \
+                       let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](21 as i32, double) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -18691,7 +18628,7 @@ mod tests {
         let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](7 as i32, double) }; \
+                       let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](7 as i32, double) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -18710,7 +18647,7 @@ mod tests {
         let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i64] = unsafe { __cplus_thread_spawn_with::[i64, i64](5 as i64, negate) }; \
+                       let h: JoinHandle[i64] = unsafe { #thread_spawn_with::[i64, i64](5 as i64, negate) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -18732,8 +18669,8 @@ mod tests {
                    fn d32(x: i32) -> i32 { return x; } \
                    fn d64(x: i64) -> i64 { return x; } \
                    fn main() -> i32 { \
-                       let h1: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32, i32](1 as i32, d32) }; \
-                       let h2: JoinHandle[i64] = unsafe { __cplus_thread_spawn_with::[i64, i64](2 as i64, d64) }; \
+                       let h1: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](1 as i32, d32) }; \
+                       let h2: JoinHandle[i64] = unsafe { #thread_spawn_with::[i64, i64](2 as i64, d64) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -18752,7 +18689,7 @@ mod tests {
         let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = __cplus_thread_spawn_with::[i32, i32](21 as i32, double); \
+                       let h: JoinHandle[i32] = #thread_spawn_with::[i32, i32](21 as i32, double); \
                        return 0; \
                    }";
         let toks = crate::lexer::tokenize(src).expect("lex");
@@ -18770,7 +18707,7 @@ mod tests {
         let src = "pub struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = unsafe { __cplus_thread_spawn_with::[i32](21 as i32, double) }; \
+                       let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32](21 as i32, double) }; \
                        return 0; \
                    }";
         let toks = crate::lexer::tokenize(src).expect("lex");
