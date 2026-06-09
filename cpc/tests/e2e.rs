@@ -16581,6 +16581,137 @@ fn main() -> i32 {
     );
 }
 
+/// Theme B (v0.0.19, Iris GAP 1): the `agent_appkit` describe_ui view-tree walk.
+/// Builds a real window (button + static label + editable field on the
+/// contentView), tags the button with a stable agent-id, then walks the live
+/// NSView hierarchy into the agent-core identity tree. Asserts: the roles are
+/// classified correctly (Window / Button / Text / Input / Group), the button's
+/// live title is read back, `set_agent_id`/`get_agent_id` round-trips, and a
+/// pinned id resolves verbatim as the node's agent-id. This is the read path
+/// agents use (describe_ui, not screenshots).
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_appkit_describe_ui_walk_theme_b() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"ak_agent\"\n\n[[bin]]\nname = \"ak_agent\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nappkit = \"*\"\nagent_core = \"*\"\nagent_appkit = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    for pkg in ["stdlib", "appkit", "agent_core", "agent_appkit"] {
+        std::os::unix::fs::symlink(
+            root.join("vendor").join(pkg),
+            dir.join("vendor").join(pkg),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/identity" as identity;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+
+    let win: window::Window = window::Window::new(rect(0.0, 0.0, 400.0, 300.0), 1 as u64, 2 as u64, 0 as i8);
+    win.set_title(#str_ptr("Test Window\0"));
+    let content: *u8 = win.content_view();
+
+    let btn: controls::Button = controls::Button::new(rect(10.0, 10.0, 100.0, 30.0));
+    btn.set_title(#str_ptr("Click me\0"));
+    ui::set_agent_id(btn.obj, "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+
+    let lbl: controls::TextField = controls::TextField::new_label(rect(10.0, 50.0, 200.0, 20.0));
+    lbl.set_string_value(#str_ptr("Hello\0"));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.obj);
+
+    let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0, 90.0, 200.0, 24.0));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+
+    // set_agent_id / get_agent_id round-trip.
+    match ui::get_agent_id(btn.obj) {
+        option::Option[text::Text]::Some(t) => {
+            if unsafe { t.as_str() } != "save-btn" { return 10; }
+        }
+        option::Option[text::Text]::None => { return 11; }
+    }
+
+    let nodes: vec::Vec[ui::UiNode] = ui::describe(win.obj);
+
+    let mut n_window: i32 = 0;
+    let mut n_button: i32 = 0;
+    let mut n_text: i32 = 0;
+    let mut n_input: i32 = 0;
+    let mut n_group: i32 = 0;
+    let mut found_click: bool = false;
+    let mut found_pinned_id: bool = false;
+    let mut i: usize = 0 as usize;
+    while i < nodes.len() {
+        match nodes.at(i) {
+            option::Option[*ui::UiNode]::Some(p) => {
+                let r: identity::Role = unsafe { (*p).role };
+                if identity::role_eq(r, identity::Role::Window) { n_window = n_window +% 1; }
+                if identity::role_eq(r, identity::Role::Button) {
+                    n_button = n_button +% 1;
+                    if unsafe { (*p).text.as_str() } == "Click me" { found_click = true; }
+                    if unsafe { (*p).id.as_str() } == "save-btn" { found_pinned_id = true; }
+                }
+                if identity::role_eq(r, identity::Role::Text) { n_text = n_text +% 1; }
+                if identity::role_eq(r, identity::Role::Input) { n_input = n_input +% 1; }
+                if identity::role_eq(r, identity::Role::Group) { n_group = n_group +% 1; }
+            }
+            option::Option[*ui::UiNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    pool.drain();
+
+    if n_window != (1 as i32) { return 1; }
+    if n_button != (1 as i32) { return 2; }
+    if n_text < (1 as i32) { return 3; }
+    if n_input < (1 as i32) { return 4; }
+    if n_group < (1 as i32) { return 5; }
+    if !found_click { return 6; }
+    if !found_pinned_id { return 7; }
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build for ak_agent failed: {status}");
+    let bin = dir.join("target/debug/ak_agent");
+    let run = Command::new(bin).status().expect("run ak_agent");
+    assert!(
+        run.success(),
+        "agent_appkit describe walk exited non-zero: {:?}",
+        run.code()
+    );
+}
+
 /// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
 /// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
 /// (`Alert`, created `new` = +1) releases its object in `drop` — so building

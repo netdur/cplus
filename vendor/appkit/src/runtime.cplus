@@ -172,6 +172,20 @@ extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8(recv: *u8, sel: *u8) -> i8;
 
+// No-arg `NSRect` getter (e.g. `-[NSView frame]`/`bounds`). NSRect is an HFA of
+// four doubles, returned in v0–v3 on arm64 — plain objc_msgSend, not _stret.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect(recv: *u8, sel: *u8) -> Rect;
+
+// objc_msgSend returning id with one unsigned-integer arg (e.g.
+// `-[NSArray objectAtIndex:]`).
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
+
+// The runtime class name of an object as a C string (`const char *`). From
+// libobjc; used to label nodes by AppKit class during the view-tree walk.
+extern fn object_getClassName(obj: *u8) -> *u8;
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i64_id(recv: *u8, sel: *u8, a: *u8) -> i64;
 
@@ -445,6 +459,21 @@ pub fn msg_void_edge_insets(recv: *u8, selector: *u8, insets: EdgeInsets) {
 
 pub fn msg_i64(recv: *u8, selector: *u8) -> i64 {
     return unsafe { objc_msg_i64(recv, selector) };
+}
+
+// No-arg `NSRect` getter — `-[NSView frame]` / `bounds`.
+pub fn msg_rect(recv: *u8, selector: *u8) -> Rect {
+    return unsafe { objc_msg_rect(recv, selector) };
+}
+
+// id-returning message with one unsigned-integer arg — `-[NSArray objectAtIndex:]`.
+pub fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
+    return unsafe { objc_msg_id_u64(recv, selector, a) };
+}
+
+// The object's runtime class name as a C string (`const char *`).
+pub fn class_name(obj: *u8) -> *u8 {
+    return unsafe { object_getClassName(obj) };
 }
 
 pub fn msg_i8(recv: *u8, selector: *u8) -> i8 {

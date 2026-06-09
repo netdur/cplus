@@ -1,0 +1,299 @@
+// agent_appkit — the AppKit backend for the agent surface (Theme B, Iris GAP 1).
+//
+// Walks a live NSView hierarchy (a window's contentView subtree) into the
+// agent-core identity tree, producing a `describe_ui` snapshot: one `UiNode`
+// per view with its stable agent-id, role, AppKit class, frame, hidden state,
+// and live text. This is the *read* path — the foundation agents use to see the
+// UI (describe_ui, not screenshots, per the headless-verify constraint). The
+// authorized *action* path (click / write / scroll) and the MCP bridge build on
+// top of this in later slices.
+//
+// The walk is iterative (an explicit stack, DFS pre-order) so a deep hierarchy
+// can't overflow. NSView frames come back via `rt::msg_rect` (NSRect is an HFA
+// of four doubles, returned in registers on arm64).
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "appkit/runtime" as rt;
+import "appkit/convert" as convert;
+import "agent_core/identity" as identity;
+
+fn null() -> *u8 {
+    return unsafe { 0 as *u8 };
+}
+
+fn is_null(p: *u8) -> bool {
+    return p == null();
+}
+
+// ---- agent-id tagging -------------------------------------------------------
+
+// A unique, stable address used as the associated-object key for the pinned
+// agent-id. The byte's value is irrelevant — only its address matters.
+static mut AGENT_ID_KEY: u8 = 0;
+
+fn agent_id_key() -> *u8 {
+    return unsafe { #addr_of(AGENT_ID_KEY) };
+}
+
+// Pin a stable agent-id on a view (developer tagging). The walk uses a pinned id
+// as the node's developer id, so the resolved agent-id stays stable across
+// re-layouts that would otherwise shift auto-generated path indices. Stored as
+// an associated, retained NSString (OBJC_ASSOCIATION_RETAIN_NONATOMIC = 1).
+pub fn set_agent_id(view: *u8, id: str) {
+    let ns: *u8 = convert::cplus_str_to_nsstring(id);
+    rt::set_associated_object(view, agent_id_key(), ns, 1 as usize);
+}
+
+// Read a view's pinned agent-id, or None if it was never tagged.
+pub fn get_agent_id(view: *u8) -> option::Option[text::Text] {
+    let ns: *u8 = rt::get_associated_object(view, agent_id_key());
+    if is_null(ns) {
+        return option::Option[text::Text]::None;
+    }
+    return option::Option[text::Text]::Some(convert::nsstring_to_cplus_string(ns));
+}
+
+// ---- the describe_ui snapshot node ------------------------------------------
+
+// One node of the describe_ui snapshot. `id` is the resolved agent-id (from the
+// identity tree); `class_name` is the AppKit class (e.g. "NSButton"); `frame` is
+// the view's frame in its superview's coordinates; `text` is the live label /
+// content (empty when the role carries none). `parent` indexes into the
+// returned `Vec[UiNode]` (None for the window root), so the flat list
+// reconstructs the tree.
+pub struct UiNode {
+    pub id: text::Text,
+    pub role: identity::Role,
+    pub class_name: text::Text,
+    pub frame: rt::Rect,
+    pub is_hidden: bool,
+    pub text: text::Text,
+    pub parent: option::Option[usize],
+}
+
+// A pending view to visit: the NSView, its parent's NodeId in the identity
+// `Registry`, and its parent's index in the output `Vec[UiNode]`. All fields are
+// Copy, so the work stack is a plain `Vec`.
+struct WalkItem {
+    // Borrowed NSView (owned by its superview, not by this transient item) —
+    // `opaque` marks it unaccounted-by-design (nothing here frees it).
+    opaque view: *u8,
+    parent_reg: usize,
+    parent_out: option::Option[usize],
+}
+
+// ---- role classification ----------------------------------------------------
+
+fn is_kind(obj: *u8, class_name: *u8) -> bool {
+    let cls: *u8 = rt::get_class(class_name);
+    if is_null(cls) {
+        return false;
+    }
+    return rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), cls) != (0 as i8);
+}
+
+// Map an AppKit view to the curated agent-core role vocabulary. NSTextField
+// splits on editability (an editable field is an Input; a static label is Text);
+// table/outline views are Lists; everything else (plain views, stacks, scroll
+// views, boxes) is a structural Group.
+fn classify(view: *u8) -> identity::Role {
+    if is_kind(view, #str_ptr("NSButton\0")) {
+        return identity::Role::Button;
+    }
+    if is_kind(view, #str_ptr("NSTextField\0")) {
+        if rt::msg_i8(view, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8) {
+            return identity::Role::Input;
+        }
+        return identity::Role::Text;
+    }
+    if is_kind(view, #str_ptr("NSTextView\0")) {
+        return identity::Role::Input;
+    }
+    if is_kind(view, #str_ptr("NSTableView\0")) || is_kind(view, #str_ptr("NSOutlineView\0")) {
+        return identity::Role::List;
+    }
+    return identity::Role::Group;
+}
+
+// The live text a node carries: a button's title, a text field's string value,
+// a text view's string. Roles without inherent text return "".
+fn node_text(view: *u8, role: identity::Role) -> text::Text {
+    if identity::role_eq(role, identity::Role::Button) {
+        let t: *u8 = rt::msg_id(view, rt::sel(#str_ptr("title\0")));
+        if !is_null(t) {
+            return convert::nsstring_to_cplus_string(t);
+        }
+    }
+    if identity::role_eq(role, identity::Role::Text) || identity::role_eq(role, identity::Role::Input) {
+        // NSTextView's content is `string`; NSTextField's is `stringValue`.
+        let sel_name: *u8 = if is_kind(view, #str_ptr("NSTextView\0")) {
+            #str_ptr("string\0")
+        } else {
+            #str_ptr("stringValue\0")
+        };
+        let s: *u8 = rt::msg_id(view, rt::sel(sel_name));
+        if !is_null(s) {
+            return convert::nsstring_to_cplus_string(s);
+        }
+    }
+    return "".to_text();
+}
+
+fn class_name_text(view: *u8) -> text::Text {
+    let c: *u8 = rt::class_name(view);
+    if is_null(c) {
+        return "".to_text();
+    }
+    let view_str: str = unsafe { #str_from_raw_parts(c, c_strlen(c)) };
+    return view_str.to_text();
+}
+
+// Length of a NUL-terminated C string (the class name from object_getClassName).
+fn c_strlen(p: *u8) -> usize {
+    let mut n: usize = 0 as usize;
+    loop {
+        let b: u8 = unsafe { *(p + n) };
+        if b == (0 as u8) {
+            break;
+        }
+        n = n +% (1 as usize);
+    }
+    return n;
+}
+
+// ---- the walk ---------------------------------------------------------------
+
+// `[view subviews]` count.
+fn subview_count(view: *u8) -> usize {
+    let arr: *u8 = rt::msg_id(view, rt::sel(#str_ptr("subviews\0")));
+    if is_null(arr) {
+        return 0 as usize;
+    }
+    let n: i64 = rt::msg_i64(arr, rt::sel(#str_ptr("count\0")));
+    return n as usize;
+}
+
+// `[[view subviews] objectAtIndex:i]`.
+fn subview_at(view: *u8, i: usize) -> *u8 {
+    let arr: *u8 = rt::msg_id(view, rt::sel(#str_ptr("subviews\0")));
+    return rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i as u64);
+}
+
+// Visit one view: classify it, add it to the identity registry (using a pinned
+// agent-id as the developer id when present), append its `UiNode`, and push its
+// subviews (in reverse, so they pop left-to-right for a pre-order walk).
+fn visit(
+    mut reg: identity::Registry,
+    mut nodes: vec::Vec[UiNode],
+    mut stack: vec::Vec[WalkItem],
+    view: *u8,
+    parent_reg: usize,
+    parent_out: option::Option[usize],
+) {
+    let role: identity::Role = classify(view);
+
+    // Register under the identity tree; a pinned agent-id becomes the dev id.
+    let pinned: option::Option[text::Text] = get_agent_id(view);
+    let reg_node: usize = match pinned {
+        option::Option[text::Text]::Some(t) => {
+            reg.add_child(parent_reg, option::Option[str]::Some(unsafe { t.as_str() }), role)
+        }
+        option::Option[text::Text]::None => {
+            reg.add_child(parent_reg, option::Option[str]::None, role)
+        }
+    };
+
+    let id: text::Text = reg.resolved_id(reg_node).to_text();
+    let hidden: bool = rt::msg_i8(view, rt::sel(#str_ptr("isHidden\0"))) != (0 as i8);
+
+    nodes.push(UiNode {
+        id: id,
+        role: role,
+        class_name: class_name_text(view),
+        frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
+        is_hidden: hidden,
+        text: node_text(view, role),
+        parent: parent_out,
+    });
+    let this_out: usize = nodes.len() -% (1 as usize);
+
+    // Push children in reverse so the LIFO stack yields them in order.
+    let n: usize = subview_count(view);
+    let mut i: usize = n;
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        stack.push(WalkItem {
+            view: subview_at(view, i),
+            parent_reg: reg_node,
+            parent_out: option::Option[usize]::Some(this_out),
+        });
+    }
+    return;
+}
+
+// Walk a window's view hierarchy into a describe_ui snapshot. The window itself
+// is the root `UiNode` (role Window, frame = window frame, text = title); its
+// contentView subtree follows in DFS pre-order. Returns the flat `Vec[UiNode]`;
+// `parent` indices reconstruct the tree.
+pub fn describe(window: *u8) -> vec::Vec[UiNode] {
+    let mut reg: identity::Registry = identity::new();
+    let mut nodes: vec::Vec[UiNode] = vec::new::[UiNode]();
+
+    if is_null(window) {
+        return nodes;
+    }
+
+    // The window node, attached under the registry's app root.
+    let win_pinned: option::Option[text::Text] = get_agent_id(window);
+    let win_reg: usize = match win_pinned {
+        option::Option[text::Text]::Some(t) => {
+            reg.add_child(reg.root(), option::Option[str]::Some(unsafe { t.as_str() }), identity::Role::Window)
+        }
+        option::Option[text::Text]::None => {
+            reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
+        }
+    };
+    let win_title: *u8 = rt::msg_id(window, rt::sel(#str_ptr("title\0")));
+    let win_text: text::Text = if is_null(win_title) {
+        "".to_text()
+    } else {
+        convert::nsstring_to_cplus_string(win_title)
+    };
+    let win_visible: bool = rt::msg_i8(window, rt::sel(#str_ptr("isVisible\0"))) != (0 as i8);
+    nodes.push(UiNode {
+        id: reg.resolved_id(win_reg).to_text(),
+        role: identity::Role::Window,
+        class_name: class_name_text(window),
+        frame: rt::msg_rect(window, rt::sel(#str_ptr("frame\0"))),
+        is_hidden: !win_visible,
+        text: win_text,
+        parent: option::Option[usize]::None,
+    });
+
+    // Seed the work stack with the window's contentView, parented to the window.
+    let mut stack: vec::Vec[WalkItem] = vec::new::[WalkItem]();
+    let content: *u8 = rt::msg_id(window, rt::sel(#str_ptr("contentView\0")));
+    if !is_null(content) {
+        stack.push(WalkItem {
+            view: content,
+            parent_reg: win_reg,
+            parent_out: option::Option[usize]::Some(0 as usize),
+        });
+    }
+
+    loop {
+        let popped: option::Option[WalkItem] = stack.pop();
+        match popped {
+            option::Option[WalkItem]::Some(it) => {
+                visit(reg, nodes, stack, it.view, it.parent_reg, it.parent_out);
+            }
+            option::Option[WalkItem]::None => {
+                break;
+            }
+        }
+    }
+
+    return nodes;
+}
