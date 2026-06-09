@@ -17,9 +17,10 @@
 // agent can touch). Untagged views are still walked for tree completeness but
 // are NotExposed, so actions on them are refused.
 //
-// The walk is iterative (an explicit stack, DFS pre-order) so a deep hierarchy
-// can't overflow. NSView frames come back via `rt::msg_rect` (NSRect is an HFA
-// of four doubles, returned in registers on arm64).
+// The walk is a recursive DFS (pre-order); recursion depth tracks view-tree
+// depth, which is shallow in practice. NSView frames come back via
+// `rt::msg_rect` (NSRect is an HFA of four doubles, returned in registers on
+// arm64).
 
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
@@ -28,6 +29,7 @@ import "appkit/runtime" as rt;
 import "appkit/convert" as convert;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
+import "agent_core/events" as events;
 
 fn null() -> *u8 {
     return unsafe { 0 as *u8 };
@@ -199,6 +201,37 @@ fn live_hidden(view: *u8) -> bool {
     return false;
 }
 
+// ---- notification -> verb translation ---------------------------------------
+
+// Map an AppKit notification name to the curated agent-core `Verb`, or None if
+// it isn't one the agent surface reports. The app installs the actual observers
+// (NSNotificationCenter / target-action / delegate methods are closure-free C
+// callbacks reaching app-global state, so observer *installation* is app policy,
+// not the library's); this is the semantic translation those callbacks use, and
+// `Surface::emit` is how a translated event reaches a subscriber. Verbs come
+// from the W3C-a11y / AppKit-AX channels (plan.agent-core.md §7.2).
+pub fn verb_for_notification(name: str) -> option::Option[events::Verb] {
+    if name == "NSControlTextDidChangeNotification" {
+        return option::Option[events::Verb]::Some(events::Verb::Changed);
+    }
+    if name == "NSControlTextDidEndEditingNotification" {
+        return option::Option[events::Verb]::Some(events::Verb::Submitted);
+    }
+    if name == "NSTableViewSelectionDidChangeNotification" {
+        return option::Option[events::Verb]::Some(events::Verb::Selected);
+    }
+    if name == "NSPopUpButtonWillPopUpNotification" {
+        return option::Option[events::Verb]::Some(events::Verb::Opened);
+    }
+    if name == "NSWindowDidBecomeKeyNotification" {
+        return option::Option[events::Verb]::Some(events::Verb::WindowOpened);
+    }
+    if name == "NSWindowWillCloseNotification" {
+        return option::Option[events::Verb]::Some(events::Verb::WindowClosed);
+    }
+    return option::Option[events::Verb]::None;
+}
+
 // ---- subview iteration ------------------------------------------------------
 
 fn subview_count(view: *u8) -> usize {
@@ -217,14 +250,6 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 
 // ---- the Surface ------------------------------------------------------------
 
-// A pending view to visit: the NSView and its parent's NodeId in the registry.
-struct WalkItem {
-    // Borrowed NSView (owned by its superview) — `opaque` marks it
-    // unaccounted-by-design (nothing here frees it).
-    opaque view: *u8,
-    parent_reg: usize,
-}
-
 // A borrowed NSView wrapped as a nominal type so it can be stored in a `Vec`.
 // (cpc's monomorphizer does not accept a bare raw pointer as a generic type
 // argument — `Vec[*u8]` fails with "unknown type <raw-ptr>" — so the map is a
@@ -242,18 +267,13 @@ pub struct Surface {
     views: vec::Vec[ViewRef],
 }
 
-// Register one view: classify it, add it to the identity tree (a pinned
-// agent-id becomes the developer id, which also exposes the node), reflect its
-// live enabled state, map NodeId->view, and push its subviews (in reverse, so
-// they pop left-to-right for a pre-order walk). `views` stays index-aligned with
-// the registry: every `add_child` is paired with exactly one `views.push`.
-fn visit(
-    mut reg: identity::Registry,
-    mut views: vec::Vec[ViewRef],
-    mut stack: vec::Vec[WalkItem],
-    view: *u8,
-    parent_reg: usize,
-) {
+// Recursively register a view subtree: classify the view, add it to the
+// identity tree (a pinned agent-id becomes the developer id, which also exposes
+// the node), reflect its live enabled state, map NodeId->view, then recurse into
+// its subviews in order (DFS pre-order). `views` stays index-aligned with the
+// registry: every `add_child` is paired with exactly one `views.push`. Recursion
+// depth is the view-tree depth (shallow in practice).
+fn walk(mut reg: identity::Registry, mut views: vec::Vec[ViewRef], view: *u8, parent_reg: usize) {
     let role: identity::Role = classify(view);
     let pinned: option::Option[text::Text] = get_agent_id(view);
     let reg_node: usize = match pinned {
@@ -268,10 +288,10 @@ fn visit(
     views.push(ViewRef { p: view });
 
     let n: usize = subview_count(view);
-    let mut i: usize = n;
-    while i > (0 as usize) {
-        i = i -% (1 as usize);
-        stack.push(WalkItem { view: subview_at(view, i), parent_reg: reg_node });
+    let mut i: usize = 0 as usize;
+    while i < n {
+        walk(reg, views, subview_at(view, i), reg_node);
+        i = i +% (1 as usize);
     }
     return;
 }
@@ -299,21 +319,9 @@ pub fn open(window: *u8) -> Surface {
     };
     views.push(ViewRef { p: window });
 
-    let mut stack: vec::Vec[WalkItem] = vec::new::[WalkItem]();
     let content: *u8 = rt::msg_id(window, rt::sel(#str_ptr("contentView\0")));
     if !is_null(content) {
-        stack.push(WalkItem { view: content, parent_reg: win_reg });
-    }
-    loop {
-        let popped: option::Option[WalkItem] = stack.pop();
-        match popped {
-            option::Option[WalkItem]::Some(it) => {
-                visit(reg, views, stack, it.view, it.parent_reg);
-            }
-            option::Option[WalkItem]::None => {
-                break;
-            }
-        }
+        walk(reg, views, content, win_reg);
     }
 
     return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
@@ -366,6 +374,24 @@ impl Surface {
             node = node +% (1 as usize);
         }
         return out;
+    }
+
+    // EVENTS: translate a fired widget into an agent event. Resolves the source
+    // agent-id to its NodeId and offers `{ source, verb }` to the subscriber
+    // (which applies its own subtree/verb/role filter + backpressure). Returns
+    // false if the id is unknown. The app's closure-free notification/action
+    // callback calls this with the verb from `verb_for_notification` (or a
+    // direct one, e.g. `Clicked` for a target-action). Events bubble: a
+    // subscriber on an ancestor sees descendant events.
+    pub fn emit(self, mut sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+        match self.reg.lookup(source_id) {
+            option::Option[usize]::Some(node) => {
+                sub.offer(self.reg, events::event(node, verb));
+                return true;
+            }
+            option::Option[usize]::None => {}
+        }
+        return false;
     }
 
     // The current text version of a node (for optimistic-concurrency edits).

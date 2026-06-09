@@ -16828,6 +16828,71 @@ fn main() -> i32 {
     );
 }
 
+/// Theme B (v0.0.19): the `agent_appkit` notification→verb / event slice.
+/// `verb_for_notification` maps AppKit notification names to curated verbs, and
+/// `Surface::emit` resolves a fired widget's agent-id to its NodeId and offers
+/// the event to a subscriber. Asserts: emitting on a tagged node delivers a
+/// matching event (right verb), an unknown id delivers nothing (returns false),
+/// and the notification-name mapping is correct (known→verb, unknown→None).
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_appkit_notification_verb_events_theme_b() {
+    agent_appkit_run(
+        "ak_events",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/events" as events;
+import "stdlib/option" as option;
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+    let win: window::Window = window::Window::new(rect(0.0,0.0,300.0,200.0), 1 as u64, 2 as u64, 0 as i8);
+    let content: *u8 = win.content_view();
+    let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
+    ui::set_agent_id(btn.obj, "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+
+    let s: ui::Surface = ui::open(win.obj);
+    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+
+    // Emit a translated event on the tagged node -> delivered.
+    if !s.emit(sub, "save-btn", events::Verb::Clicked) { return 1; }
+    if sub.pending() != (1 as usize) { return 2; }
+    match sub.poll() {
+        option::Option[events::Event]::Some(ev) => {
+            if !events::verb_eq(ev.verb, events::Verb::Clicked) { return 3; }
+        }
+        option::Option[events::Event]::None => { return 4; }
+    }
+    // Unknown id -> not delivered.
+    if s.emit(sub, "ghost", events::Verb::Clicked) { return 5; }
+    if sub.pending() != (0 as usize) { return 6; }
+
+    // notification name -> verb mapping.
+    match ui::verb_for_notification("NSControlTextDidChangeNotification") {
+        option::Option[events::Verb]::Some(v) => { if !events::verb_eq(v, events::Verb::Changed) { return 7; } }
+        option::Option[events::Verb]::None => { return 8; }
+    }
+    match ui::verb_for_notification("NSBogusNotification") {
+        option::Option[events::Verb]::Some(_v) => { return 9; }
+        option::Option[events::Verb]::None => {}
+    }
+    pool.drain();
+    return 0;
+}
+"#,
+    );
+}
+
 /// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
 /// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
 /// (`Alert`, created `new` = +1) releases its object in `drop` — so building
