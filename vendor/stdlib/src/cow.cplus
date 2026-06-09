@@ -68,12 +68,12 @@ pub fn len(borrow c: CowStr) -> usize {
 }
 
 // Consume the Cow; produce an owned `Text`. View variant → allocate
-// and copy the bytes (`str::to_string()` does the malloc + memcpy).
+// and copy the bytes (`str::to_text()` does the malloc + memcpy).
 // Owned variant → unwrap and return the existing buffer (no extra
 // allocation, no copy).
 pub fn into_owned(move c: CowStr) -> text::Text {
     return match c {
-        CowStr::View(s) => s.to_string(),
+        CowStr::View(s) => s.to_text(),
         CowStr::Owned(s) => s,
     };
 }

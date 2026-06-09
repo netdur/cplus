@@ -2572,12 +2572,13 @@ impl SemaCx<'_> {
             ("Ord", "cmp", Ty::I32, true),
             ("Hash", "hash", Ty::U64, false),
             ("Clone", "clone", Ty::Param("Self".to_string()), false),
-            // Phase 8 slice 8.STR.6: `ToString` — produces an owned
-            // string. Blessed impls cover every primitive + str +
-            // string; user types add their own via the usual
-            // `impl ToString for Foo { fn to_string(self) -> string }`
-            // surface.
-            ("ToString", "to_string", Ty::String, false),
+            // Phase 8 slice 8.STR.6 (renamed v0.0.19): `ToText` — produces an
+            // owned `Text`. Blessed impls cover every primitive + str; user
+            // types add their own via the usual
+            // `impl ToText for Foo { fn to_text(self) -> Text }` surface.
+            // (Was `ToString`/`to_string` until v0.0.19; renamed to track the
+            // surviving owned-string type after `string` → `Text`.)
+            ("ToText", "to_text", Ty::String, false),
         ];
         for (name, mname, ret, has_other) in single {
             let mut methods = HashMap::new();
@@ -8952,14 +8953,14 @@ impl SemaCx<'_> {
             }
             return self.check_simd_method_call(&recv_ty, name, args, call_span);
         }
-        // Phase 8 slice 8.STR.6: blessed `to_string()` on every primitive
-        // + `str`. Returns `string` (owned). User-defined structs hit
+        // Phase 8 slice 8.STR.6 (renamed v0.0.19): blessed `to_text()` on every
+        // primitive + `str`. Returns an owned `Text`. User-defined structs hit
         // the normal method-lookup below; if they provide
-        // `impl ToString for Foo { fn to_string(self) -> string }`, that
-        // path handles them.
-        if name.name == "to_string"
+        // `impl ToText for Foo { fn to_text(self) -> Text }`, that path handles
+        // them.
+        if name.name == "to_text"
             && args.is_empty()
-            && Self::is_blessed_to_string_receiver(&recv_ty)
+            && Self::is_blessed_to_text_receiver(&recv_ty)
         {
             if !type_args.is_empty() {
                 self.err(
@@ -9449,8 +9450,8 @@ impl SemaCx<'_> {
 
     /// Phase 8 slice 8.STR.B: type-check an interpolated string literal.
     /// Walk each part; each `Expr` part must have a type that satisfies
-    /// `ToString` (blessed primitives + `str`, or a user-declared
-    /// `impl ToString for Foo`). Result type is `Ty::String`.
+    /// `ToText` (blessed primitives + `str`, or a user-declared
+    /// `impl ToText for Foo`). Result type is `Ty::String`.
     fn check_interp_str(&mut self, parts: &[crate::ast::InterpStrPart], span: ByteSpan) -> Ty {
         use crate::ast::InterpStrPart;
         for part in parts {
@@ -9459,22 +9460,22 @@ impl SemaCx<'_> {
                 if matches!(ty, Ty::Error) {
                     continue;
                 }
-                let ok = Self::is_blessed_to_string_receiver(&ty)
+                let ok = Self::is_blessed_to_text_receiver(&ty)
                     || matches!(&ty, Ty::String)
                     // TEXT.R2: an owned `Text` embeds directly (its bytes are
-                    // copied into the result), like `string`.
+                    // copied into the result).
                     || matches!(&ty, Ty::Struct(id)
                         if self.designated_string_struct == Some(*id))
                     || matches!(&ty, Ty::Struct(id)
                     if self.interface_impls.contains(&(
-                        "ToString".to_string(),
+                        "ToText".to_string(),
                         self.structs[id.0 as usize].name.clone(),
                     )));
                 if !ok {
                     self.err(
                         "E0612",
                         format!(
-                            "type `{}` does not implement `ToString`; \
+                            "type `{}` does not implement `ToText`; \
                              cannot embed in an interpolation `${{...}}` segment",
                             ty_display(&ty)
                         ),
@@ -9496,14 +9497,13 @@ impl SemaCx<'_> {
         }
     }
 
-    /// Phase 8 slice 8.STR.6: which receiver types get a blessed
-    /// `to_string()` method? Every numeric primitive + `bool` + `str`.
-    /// `string` is intentionally NOT in this list — its `.clone()` is
-    /// the way to duplicate an owned string, and `s.to_string()` would
-    /// be a redundant alias. User-declared structs aren't here either
-    /// — they go through the normal method-lookup with an
-    /// `impl ToString for Foo` provided by the user.
-    fn is_blessed_to_string_receiver(ty: &Ty) -> bool {
+    /// Phase 8 slice 8.STR.6 (renamed v0.0.19): which receiver types get a
+    /// blessed `to_text()` method? Every numeric primitive + `bool` + `str`.
+    /// `Text` is intentionally NOT here — its `.clone()` duplicates an owned
+    /// string, so `t.to_text()` would be a redundant alias. User-declared
+    /// structs aren't here either — they go through normal method-lookup with
+    /// an `impl ToText for Foo` provided by the user.
+    fn is_blessed_to_text_receiver(ty: &Ty) -> bool {
         matches!(
             ty,
             Ty::I8
@@ -15515,12 +15515,25 @@ mod tests {
 
     #[test]
     fn to_string_produces_text_clean_text_r3b() {
-        // `.to_string()` produces the designated type, so it matches a `Text`
+        // `.to_text()` produces the designated type, so it matches a `Text`
         // annotation (no E0302) — consistent with interpolation.
         assert_clean(
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let n: i32 = 1; let s: Text = n.to_text(); return 0; }",
+        );
+    }
+
+    // v0.0.19: the blessed conversion method was renamed `to_string` → `to_text`
+    // (tracking the surviving owned type `Text` after `string` was removed). The
+    // old `.to_string()` spelling is no longer blessed — on a primitive it's now
+    // an unknown method (E0324).
+    #[test]
+    fn to_string_method_spelling_rejected_v0019() {
+        let codes = errors(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
              fn main() -> i32 { let n: i32 = 1; let s: Text = n.to_string(); return 0; }",
         );
+        assert!(codes.contains(&"E0324"), "expected E0324, got: {codes:?}");
     }
 
     // v0.0.19: a source-level `string` (type position) still errors E0303
@@ -20633,12 +20646,12 @@ mod tests {
 
     #[test]
     fn no_alloc_string_local_drops_at_scope_exit_e0901() {
-        // A `string` local frees its buffer at scope exit — invisible in the
-        // body, but the drop glue deallocates. (`malloc`/`to_string` is not
-        // even called here; the local is built from a static literal slice.)
+        // An owned-`Text` local frees its buffer at scope exit — invisible in
+        // the body, but the drop glue deallocates. (`malloc`/`to_text` allocates
+        // here, which is itself what `#[no_alloc]` rejects.)
         let codes = errors(
             "#[no_alloc] fn f(s: str) -> i32 {\n\
-                 let owned = s.to_string();\n\
+                 let owned = s.to_text();\n\
                  return 0;\n\
              }\n\
              fn main() -> i32 { return 0; }",

@@ -9,7 +9,7 @@
 //
 // **API.**
 //   - `Value::parse(s) -> Result[Value, ParseError]`
-//   - `v.to_string() -> string` (compact JSON; `%.17g` for numbers
+//   - `v.to_text() -> string` (compact JSON; `%.17g` for numbers
 //      round-trips correctly, accepting some ugliness)
 //   - constructors: `Value::null()`, `Value::bool(b)`, `Value::number(n)`,
 //      `Value::str(s)`, builder helpers `array_new()`, `object_new()`,
@@ -57,7 +57,7 @@ impl Value {
     pub fn null() -> Value { return Value::Null; }
     pub fn bool_(b: bool) -> Value { return Value::Bool(b); }
     pub fn number(n: f64) -> Value { return Value::Number(n); }
-    pub fn str_(s: str) -> Value { return Value::Str(s.to_string()); }
+    pub fn str_(s: str) -> Value { return Value::Str(s.to_text()); }
 
     // Predicates.
     pub fn is_null(self) -> bool {
@@ -142,7 +142,7 @@ fn buf_free(b: Buf) {
 
 fn buf_to_string(b: Buf) -> text::Text {
     let view: str = unsafe { #str_from_raw_parts(b.ptr, b.len) };
-    let out: text::Text = view.to_string();
+    let out: text::Text = view.to_text();
     buf_free(b);
     return out;
 }
@@ -599,7 +599,7 @@ pub fn as_number(borrow v: Value) -> f64 {
 pub fn as_str(borrow v: Value) -> text::Text {
     return match v {
         Value::Str(x) => x.clone(),
-        _ => "".to_string(),
+        _ => "".to_text(),
     };
 }
 
@@ -631,9 +631,9 @@ pub fn object_key_at(borrow v: Value, i: usize) -> text::Text {
     return match v {
         Value::Object(arr) => match arr.at(i) {
             option::Option[*Member]::Some(p) => unsafe { (*p).key.clone() },
-            option::Option[*Member]::None => "".to_string(),
+            option::Option[*Member]::None => "".to_text(),
         },
-        _ => "".to_string(),
+        _ => "".to_text(),
     };
 }
 
@@ -863,7 +863,7 @@ fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
 }
 
 impl Value {
-    pub fn to_string(self) -> text::Text {
+    pub fn to_text(self) -> text::Text {
         let b: Buf = buf_new();
         let final_buf: Buf = encode_value(b, self);
         return buf_to_string(final_buf);
@@ -1003,14 +1003,14 @@ fn test_parse_rejects_empty() {
 fn test_round_trip_array() {
     let src: str = "[true,false,null]";
     let v: Value = parse_ok(src);
-    assert unsafe { v.to_string().as_str() } == src;
+    assert unsafe { v.to_text().as_str() } == src;
 }
 
 #[test]
 fn test_round_trip_object() {
     let src: str = "{\"k\":\"v\"}";
     let v: Value = parse_ok(src);
-    assert unsafe { v.to_string().as_str() } == src;
+    assert unsafe { v.to_text().as_str() } == src;
 }
 
 #[test]
@@ -1042,11 +1042,11 @@ fn test_emit_number_short_form() {
     // simple decimals print at their natural precision (not the old
     // %.17g "0.10000000000000001" noise).
     let v_int: Value = Value::Number(42.0f64);
-    let s_int: text::Text = v_int.to_string();
+    let s_int: text::Text = v_int.to_text();
     assert unsafe { s_int.as_str() } == "42";
 
     let v_dec: Value = Value::Number(0.1f64);
-    let s_dec: text::Text = v_dec.to_string();
+    let s_dec: text::Text = v_dec.to_text();
     assert unsafe { s_dec.as_str() } == "0.1";
 }
 

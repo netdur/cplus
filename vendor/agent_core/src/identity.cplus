@@ -114,7 +114,7 @@ fn make_path_id(parent: str, tag: str, index: usize) -> text::Text {
         index as u64)
     };
     let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
-    return view.to_string();
+    return view.to_text();
 }
 
 // `parent/key` as an owned string (the list-item form).
@@ -126,7 +126,7 @@ fn make_key_id(parent: str, key: u64) -> text::Text {
         #str_len(parent) as i32, #str_ptr(parent), key)
     };
     let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
-    return view.to_string();
+    return view.to_text();
 }
 
 // Per-node fields beyond identity (plan.agent-core.md §4): the accessible
@@ -161,7 +161,7 @@ pub fn new() -> Registry {
         sibling_counts: hash_map::new::[usize, usize](),
     };
     // The app root is always exposed: it is the agent-visible tree's root.
-    r.push_node("app".to_string(), Role::Group, option::Option[usize]::None, true);
+    r.push_node("app".to_text(), Role::Group, option::Option[usize]::None, true);
     return r;
 }
 
@@ -197,7 +197,7 @@ impl Registry {
         // current cpc build, while an inline temporary is consumed correctly.
         return self.push_node(
             match dev_id {
-                option::Option[str]::Some(d) => d.to_string(),
+                option::Option[str]::Some(d) => d.to_text(),
                 option::Option[str]::None => {
                     let pid: str = self.id_view(parent);
                     make_path_id(pid, role_tag(role), idx)
@@ -221,7 +221,7 @@ impl Registry {
         // Inline id expression (no `let id = ...`): see add_child for why.
         return self.push_node(
             match dev_id {
-                option::Option[str]::Some(d) => d.to_string(),
+                option::Option[str]::Some(d) => d.to_text(),
                 option::Option[str]::None => {
                     let pid: str = self.id_view(parent);
                     make_key_id(pid, key)
@@ -257,7 +257,7 @@ impl Registry {
     // Set the accessible name (label) the agent reads for this node.
     pub fn set_name(mut self, node: usize, name: str) {
         assert self.is_valid(node);
-        self.names.set(node, name.to_string());
+        self.names.set(node, name.to_text());
         return;
     }
 
@@ -334,9 +334,9 @@ impl Registry {
         while i < n {
             if self.is_exposed(i) {
                 out.push(NodeView {
-                    id: self.id_view(i).to_string(),
+                    id: self.id_view(i).to_text(),
                     role: self.role_of(i),
-                    name: self.name_of(i).to_string(),
+                    name: self.name_of(i).to_text(),
                     parent: self.nearest_exposed_ancestor(i),
                     enabled: self.is_enabled(i),
                     actionable: self.is_agent_actionable(i),
@@ -382,7 +382,7 @@ impl Registry {
         self.index.insert(self.id_view(node_id), node_id);
         self.roles.push(role);
         self.parents.push(parent);
-        self.names.push("".to_string());
+        self.names.push("".to_text());
         self.enabled.push(true);
         self.actionable.push(true);
         self.exposed.push(exposed);

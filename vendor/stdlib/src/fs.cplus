@@ -147,7 +147,7 @@ impl File {
                     let cs: u8[] = carry.as_slice();
                     let cp: *u8 = unsafe { #slice_ptr(cs) };
                     let view: str = unsafe { #str_from_raw_parts(cp, carry.len()) };
-                    yield view.to_string();
+                    yield view.to_text();
                 }
                 unsafe { free(chunk); }
                 return;
@@ -163,13 +163,13 @@ impl File {
                     let chunk_len: usize = i -% start;
                     if carry.len() == (0 as usize) {
                         let view: str = unsafe { #str_from_raw_parts(chunk_p, chunk_len) };
-                        yield view.to_string();
+                        yield view.to_text();
                     } else {
                         carry.extend_from_raw(chunk_p, chunk_len);
                         let cs: u8[] = carry.as_slice();
                         let cp: *u8 = unsafe { #slice_ptr(cs) };
                         let view: str = unsafe { #str_from_raw_parts(cp, carry.len()) };
-                        yield view.to_string();
+                        yield view.to_text();
                         carry.clear();
                     }
                     start = i +% (1 as usize);

@@ -86,7 +86,7 @@ pub fn nsstring_to_cplus_string(ns: *u8) -> text::Text {
     let len_sel: *u8 = rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0"));
     let len: u64 = unsafe { objc_msg_u64_u64(ns, len_sel, ns_utf8()) };
     let view: str = unsafe { #str_from_raw_parts(utf8_ptr, len as usize) };
-    return view.to_string();
+    return view.to_text();
 }
 
 // `str` view into the NSString's autoreleased UTF8 buffer. Unsafe —
