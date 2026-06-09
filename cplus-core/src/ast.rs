@@ -662,7 +662,7 @@ pub enum ExprKind {
     /// Phase 8 slice 8.STR.B.1: interpolated string literal —
     /// `"hello ${name}, n is ${n}"`. Alternating Lit and Expr parts.
     /// Type is `Ty::String` (owned). Sema requires every Expr part's
-    /// type to satisfy `ToString` (blessed for primitives + `str`).
+    /// type to satisfy `ToText` (blessed for primitives + `str`).
     /// Codegen lowers to `__string_concat`: compute total length, one
     /// malloc, memcpy each part in turn.
     InterpStr {
@@ -952,7 +952,7 @@ pub struct StructLitField {
 
 /// Phase 8 slice 8.STR.B.1: one piece of an interpolated string literal.
 /// Lit holds decoded bytes (escapes + `$$` already processed). Expr holds
-/// a parsed expression — sema requires its type to satisfy `ToString`.
+/// a parsed expression — sema requires its type to satisfy `ToText`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterpStrPart {
     Lit(String),

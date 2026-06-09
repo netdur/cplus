@@ -10361,14 +10361,14 @@ fn stdlib_cow_str_view_and_owned_round_trip() {
              let c1 = cow::from_view(\"hello\");\n\
              if cow::is_owned(c1) { return 1; }\n\
              if cow::len(c1) != (5 as usize) { return 2; }\n\
-             let initial = \"world\".to_string();\n\
+             let initial = \"world\".to_text();\n\
              let c2 = cow::from_owned(initial);\n\
              if !cow::is_owned(c2) { return 3; }\n\
              if cow::len(c2) != (5 as usize) { return 4; }\n\
              let c3 = cow::from_view(\"abc\");\n\
              let s3 = cow::into_owned(c3);\n\
              if s3.len() != (3 as usize) { return 5; }\n\
-             let init2 = \"xyzpq\".to_string();\n\
+             let init2 = \"xyzpq\".to_text();\n\
              let c4 = cow::from_owned(init2);\n\
              let s4 = cow::into_owned(c4);\n\
              if s4.len() != (5 as usize) { return 6; }\n\
@@ -16352,7 +16352,7 @@ fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
 
     // Text -> NSString -> Text round-trip preserves content + length.
-    let original: text::Text = "hello, world".to_string();
+    let original: text::Text = "hello, world".to_text();
     let ns: *u8 = bridge::cplus_string_to_nsstring(original);
     let back: text::Text = bridge::nsstring_to_cplus_string(ns);
     if back.len() != (12 as usize) { return 1; }
@@ -18547,7 +18547,7 @@ fn no_alloc_drop_glue_rejected_at_compile_time() {
         "\
 #[no_alloc]
 fn f(s: str) -> i32 {
-    let owned: string = s.to_string();
+    let owned = s.to_text();
     return 0;
 }
 fn main() -> i32 { return 0; }
@@ -19524,7 +19524,7 @@ fn no_alloc_rejects_to_string() {
     std::fs::write(
         &src,
         "#[no_alloc]\n\
-         fn hot(n: i32) { let _s = n.to_string(); return; }\n\
+         fn hot(n: i32) { let _s = n.to_text(); return; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -20995,8 +20995,8 @@ fn stdlib_text_to_string_produces_owned_text() {
         "import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
              let n: i32 = 42;\n\
-             let s: text::Text = n.to_string();\n\
-             let b: text::Text = true.to_string();\n\
+             let s: text::Text = n.to_text();\n\
+             let b: text::Text = true.to_text();\n\
              let mut score: i32 = 0;\n\
              if s.len() == (2 as usize) { score = score +% 1; }\n\
              if s.starts_with(\"42\") { score = score +% 1; }\n\

@@ -102,9 +102,9 @@ impl Uuid {
 
     // Infallible: the canonical UUID format is a fixed 36 bytes, and
     // snprintf into a 37-byte stack buffer can't run out of space. The
-    // result is heap-allocated by `str::to_string()` so the caller owns
+    // result is heap-allocated by `str::to_text()` so the caller owns
     // the storage.
-    pub fn to_string(self) -> text::Text {
+    pub fn to_text(self) -> text::Text {
         let mut buf: [u8; 37] = [
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -122,7 +122,7 @@ impl Uuid {
             self.bytes[10] as i32, self.bytes[11] as i32, self.bytes[12] as i32, self.bytes[13] as i32, self.bytes[14] as i32, self.bytes[15] as i32)
         };
         let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
-        return view.to_string();
+        return view.to_text();
     }
 }
 
@@ -220,7 +220,7 @@ fn test_to_string_format() {
             0x9au8, 0xbcu8, 0xdeu8, 0xf0u8,
         ],
     };
-    let s: text::Text = u.to_string();
+    let s: text::Text = u.to_text();
     assert s.len() == (36 as usize);
     // Dashes at positions 8, 13, 18, 23.
     let p: *u8 = #str_ptr(unsafe { s.as_str() });
@@ -237,7 +237,7 @@ fn test_round_trip_parse_format() {
         assert false;
         return;
     };
-    let out: text::Text = u.to_string();
+    let out: text::Text = u.to_text();
     assert unsafe { out.as_str() } == s;
 }
 
@@ -247,7 +247,7 @@ fn test_random_uuid_round_trips() {
         assert false;
         return;
     };
-    let s: text::Text = u.to_string();
+    let s: text::Text = u.to_text();
     guard let option::Option[Uuid]::Some(u2) = Uuid::parse(unsafe { s.as_str() }) else {
         assert false;
         return;

@@ -12331,12 +12331,12 @@ impl<'a> FnState<'a> {
         // Phase 8 slice 8.STR.6: blessed `to_string()` on primitives + `str`.
         // The receiver is a primitive value, not a place — handle before
         // gen_place (which expects a place-producing expression).
-        if name.name == "to_string" && args.is_empty() {
+        if name.name == "to_text" && args.is_empty() {
             let (rv, rt) = self
                 .gen_expr(receiver)
-                .expect("to_string receiver has value");
-            if Self::is_blessed_to_string_receiver_codegen(&rt) {
-                let (sv, _) = self.gen_to_string_intrinsic(&rv, &rt);
+                .expect("to_text receiver has value");
+            if Self::is_blessed_to_text_receiver_codegen(&rt) {
+                let (sv, _) = self.gen_to_text_intrinsic(&rv, &rt);
                 return Some(self.lang_string_or_string(sv));
             }
         }
@@ -13305,7 +13305,7 @@ impl<'a> FnState<'a> {
 
     // ---------- Phase 8 slice 8.STR.6: blessed `to_string()` ----------
 
-    fn is_blessed_to_string_receiver_codegen(ty: &Ty) -> bool {
+    fn is_blessed_to_text_receiver_codegen(ty: &Ty) -> bool {
         matches!(
             ty,
             Ty::I8
@@ -13674,7 +13674,7 @@ impl<'a> FnState<'a> {
     ///   - bool: branch on the i1, malloc 4/5 bytes, memcpy "true"/"false".
     ///   - str: extract ptr+len from the fat-pointer, malloc(len),
     ///     memcpy. The result owns the bytes; old bytes untouched.
-    fn gen_to_string_intrinsic(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+    fn gen_to_text_intrinsic(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
         match rt {
             Ty::Bool => self.gen_to_string_bool(rv),
             Ty::Str => self.gen_to_string_str(rv),
@@ -13818,7 +13818,7 @@ impl<'a> FnState<'a> {
 
     /// TEXT.R3b: re-type a freshly-built owned-string `{ptr,i64,i64}` SSA value
     /// as the named `%Text` aggregate when the lang-string type exists (same
-    /// layout), so `.to_string()` produces `Text`. Else returns it as the legacy
+    /// layout), so `.to_text()` produces `Text`. Else returns it as the legacy
     /// `Ty::String`. The buffer is unchanged — only the LLVM aggregate type.
     fn lang_string_or_string(&mut self, sv: String) -> (String, Ty) {
         match self.lang_string_struct_ty() {

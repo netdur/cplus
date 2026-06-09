@@ -62,7 +62,7 @@ pub fn main() -> i32 {
     // Bridge usage: build a `Text` dynamically, then hand the NSString
     // form to setStringValue: directly. This is the path consumers reach
     // for whenever the label content isn't a static literal.
-    let greeting: text::Text = "Hello from C+".to_string();
+    let greeting: text::Text = "Hello from C+".to_text();
     let ns_greeting: *u8 = bridge::cplus_string_to_nsstring(greeting);
     rt::msg_void_id(
         label.obj,

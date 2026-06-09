@@ -37,7 +37,7 @@ fn main() -> i32 {
         return 3;
     }
 
-    let round: text::Text = root.to_string();
+    let round: text::Text = root.to_text();
     io::print("round-trip="); io::println(unsafe { round.as_str() });
     return 0;
 }
