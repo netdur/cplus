@@ -187,6 +187,61 @@ fn cplus_intrinsic_sigil_forms_run() {
     assert_eq!(run.code(), Some(15), "got {:?}", run.code());
 }
 
+// v0.0.19: monomorphization fix — a turbofish generic call must mangle its
+// callee from its own (collision-free) AST type-args, not from `call_monos`
+// (keyed by a file-less `ByteSpan`). Two turbofish `vec::new::[T]()` calls at
+// the SAME byte offset in different files used to collide: one got the other's
+// type-args, miscompiling a `Vec[A]` value into a `Vec[B]` slot. Here modA and
+// modB are byte-identical except `Aaa`<->`Bbb` / `fa`<->`fb` (same lengths), so
+// the calls land at the same offset; the program must build and return 2
+// (fa()=1 + fb()=1). Before the fix this failed at the clang stage.
+#[test]
+fn monomorphize_turbofish_same_offset_no_collision() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"mono_span\"\n\n[[bin]]\nname = \"mono_span\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    let mod_a = "import \"stdlib/vec\" as vec;\n\
+                 struct Aaa { x: i32 }\n\
+                 pub fn fa() -> usize {\n\
+                 \x20   let mut v: vec::Vec[Aaa] = vec::new::[Aaa]();\n\
+                 \x20   v.push(Aaa { x: 1 });\n\
+                 \x20   return v.len();\n\
+                 }\n";
+    std::fs::write(dir.join("src/modA.cplus"), mod_a).unwrap();
+    // Byte-identical except the 3-char type name and 2-char fn name → the
+    // `vec::new::[...]` calls share a byte offset.
+    std::fs::write(
+        dir.join("src/modB.cplus"),
+        mod_a.replace("Aaa", "Bbb").replace("fa", "fb"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./modA\" as ma;\n\
+         import \"./modB\" as mb;\n\
+         fn main() -> i32 { return (ma::fa() +% mb::fb()) as i32; }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "same-offset turbofish build failed: {status}");
+    let run = Command::new(dir.join("target/debug/mono_span"))
+        .status()
+        .expect("run mono_span");
+    assert_eq!(run.code(), Some(2), "got {:?}", run.code());
+}
+
 #[test]
 fn diagnostics_json_emits_ndjson() {
     let cpc = env!("CARGO_BIN_EXE_cpc");

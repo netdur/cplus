@@ -1953,6 +1953,24 @@ fn rewrite_expr(
                 None
             };
             let new_callee: Expr = match (&callee.kind, resolved_args_for_call.as_ref()) {
+                // v0.0.19: a turbofish generic-fn call mangles its callee
+                // directly from the (collision-free) AST type-args, never
+                // consulting the file-less-span `call_monos`. See
+                // `mangle_call_from_ast`.
+                (ExprKind::Ident(cname), _)
+                    if generic_names.contains(cname) && !type_args.is_empty() =>
+                {
+                    Expr {
+                        kind: ExprKind::Ident(mangle_call_from_ast(
+                            cname,
+                            type_args,
+                            subst,
+                            type_name_of,
+                            struct_lookup,
+                        )),
+                        span: callee.span,
+                    }
+                }
                 (ExprKind::Ident(cname), Some(args_for_call)) if generic_names.contains(cname) => {
                     if let Some(mangled) = inst_lookup.get(&(cname.clone(), args_for_call.clone()))
                     {
@@ -2519,6 +2537,34 @@ fn mangle_name(name: &str, args: &[Ty], type_name_of: &dyn Fn(&Ty) -> String) ->
     for arg in args {
         s.push_str("__");
         s.push_str(&mangle_ty(arg, type_name_of));
+    }
+    s
+}
+
+// v0.0.19: mangle a generic call's callee straight from its explicit turbofish
+// type-arg AST, producing the SAME symbol `mangle_name` builds from the resolved
+// `Vec<Ty>`. `subst_type_ast` resolves type-params through the active subst and
+// qualifies struct/enum names, so the per-arg `mangle_type_ast_arg` string
+// equals `type_name_of(resolved_ty)`.
+//
+// Why this exists: the resolved type-args otherwise come from `call_monos`,
+// keyed by a file-less `ByteSpan` — so two turbofish calls at the same byte
+// offset in *different files* collide and one gets the other's type-args (a
+// `Vec[A]` value miscompiled into a `Vec[B]` slot). The turbofish AST is
+// per-call and collision-free, so for turbofish calls we mangle from it directly
+// and never consult `call_monos`.
+fn mangle_call_from_ast(
+    name: &str,
+    type_args: &[Type],
+    subst: &std::collections::HashMap<String, Ty>,
+    type_name_of: &dyn Fn(&Ty) -> String,
+    struct_lookup: &StructLookup,
+) -> String {
+    let mut s = name.to_string();
+    for t in type_args {
+        let resolved = subst_type_ast(t, subst, type_name_of, struct_lookup);
+        s.push_str("__");
+        s.push_str(&mangle_type_ast_arg(&resolved));
     }
     s
 }
