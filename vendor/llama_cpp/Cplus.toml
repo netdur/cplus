@@ -1,0 +1,18 @@
+[package]
+name    = "llama_cpp"
+version = "0.0.1"
+edition = "2026"
+
+# C+ bindings for upstream llama.cpp's C API.
+#
+# Raw FFI is generated from `upstream/llama_cplus.h` and
+# `upstream/mtmd_cplus.h` with cpc-bindgen. The default search path matches
+# this workstation's local llama.cpp checkout; edit it if your build lives
+# elsewhere.
+[link]
+frameworks    = ["Foundation", "Metal", "Accelerate"]
+libs          = ["llama", "mtmd"]
+search-paths  = ["/Users/adel/Workspace/llama.cpp/build/bin"]
+
+[dependencies]
+stdlib = "*"

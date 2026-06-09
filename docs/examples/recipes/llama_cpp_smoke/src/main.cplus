@@ -1,0 +1,43 @@
+// Smoke skeleton for vendor/llama_cpp.
+//
+// This recipe needs:
+//   1. A built `vendor/llama_cpp/bridge/build/libcplus_llama_cpp_bridge.dylib`.
+//   2. A local copy/symlink at `docs/examples/recipes/llama_cpp_smoke/vendor/llama_cpp`.
+//   3. A GGUF model path replacing `/tmp/model.gguf`.
+
+import "llama_cpp/llama_cpp" as llama;
+import "stdlib/result" as result;
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+pub fn main() -> i32 {
+    llama::backend_init();
+
+    let opts: llama::LoadOptions = llama::default_options();
+    guard let result::Result[llama::Session, llama::LlamaError]::Ok(session) =
+        llama::load("/tmp/model.gguf", opts) else {
+        unsafe { printf(#str_ptr("model load failed\n\0")); }
+        return 1;
+    };
+
+    let mut out: [u8; 64] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    let out_slice: u8[] = unsafe { #slice_from_raw_parts(#addr_of(out[0]), 64 as usize) };
+
+    guard let result::Result[usize, llama::LlamaError]::Ok(n) =
+        llama::generate_greedy_into(session, "Hello, who are you?", 16, out_slice) else {
+        unsafe { printf(#str_ptr("generation failed\n\0")); }
+        return 1;
+    };
+
+    unsafe {
+        printf(#str_ptr("%.*s\n\0"), n as i32, #slice_ptr(out_slice));
+    }
+
+    llama::backend_free();
+    return 0;
+}

@@ -3,6 +3,59 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.19 — 2026-06-09
+
+The agent surface reaches the GUI: a macOS app can expose itself to an external
+agent — described, driven, and observed — over a consent-gated JSON-RPC bridge.
+Also the breaking intrinsic and string-method renames, a monomorphization fix,
+and bindings for llama.cpp.
+
+### Language / compiler (breaking)
+- Intrinsics use the `#name(...)` sigil; the legacy `__cplus_*()` call spelling
+  is removed.
+- `.to_string()` / `ToString` are now `.to_text()` / `ToText`.
+- Naming an owned string via `.to_text()` or interpolation requires
+  `import "stdlib/text"` (E0613); borrowed views (`str`) need no import.
+
+### Compiler
+- Fixed a monomorphization miscompile: a turbofish generic call now mangles its
+  callee from its own type-args instead of the file-keyed `call_monos`, so two
+  same-offset turbofish calls in different files no longer resolve to the same
+  wrong instantiation.
+- Multi-file diagnostics render against the right file (GAP 3); static-init
+  narrowing casts; clearer E0303 (suggests `Text`) and E0502 (names the real
+  type) messages.
+
+### Agent surface — GUI side (Theme B)
+- `vendor/agent_appkit`: `open(window)` walks the live NSView tree into a
+  `Surface`. describe_ui snapshot (`Vec[UiNode]`); authorized `click` /
+  `set_text` / `scroll_to` through the agent_core authorization brain (exposure
+  via `set_agent_id`, optimistic-concurrency text edits); notification-to-verb
+  event translation.
+- `vendor/agent_mcp`: the MCP bridge. JSON-RPC 2.0 (describe_ui / actions /
+  events) over Unix-domain sockets (`serve_uds` / `serve_fd`), every request
+  gated by an agent_core consent `AuthGate`.
+- New `appkit_agent` recipe showing the whole flow.
+
+### vendor/appkit
+- Ownership `into_raw` / `from_raw` for parented view wrappers (GAP 2); SF
+  Symbols, a layer-backed `RoundedView`, toolbar and text coverage (GAP 4/5);
+  the correct NSImage symbol-configuration selector (GAP 6).
+
+### vendor/llama_cpp (new)
+- C+ bindings for llama.cpp's C API: raw FFI generated from the upstream headers
+  with cpc-bindgen (`build.sh`), plus a hand-written safe facade (`Session`:
+  load / generate / tokenize / decode / sample). Links `libllama` / `libmtmd`;
+  the `[link]` search-path points at a local llama.cpp build. A `llama_cpp_smoke`
+  recipe shows greedy generation.
+
+### vendor/coreai (new)
+- Swift bridge for Apple's CoreAI, adapted to the real API (Xcode 27 / macOS 27).
+
+### Tooling
+- cpc-bindgen emits safe `pub fn` wrappers over `#[link_name]` externs, `pub`
+  records/fields, and `pub type` typedef aliases (the bindings llama_cpp needs).
+
 ## v0.0.18 — 2026-06-08
 
 The owned string is now `Text` — a single, fully-stdlib string type — and the

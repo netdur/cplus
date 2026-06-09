@@ -97,12 +97,12 @@ fn main() -> i32 {
     //    the untagged caption and structural views.
     print_line("--- describe_ui (what the agent sees) ---");
     print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
-        "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}"));
+    "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}"));
 
     // 2) The agent clicks Save. Authorized -> performClick: -> our handler fires.
     print_line("--- click save-btn ---");
     print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
-        "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}"));
+    "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}"));
     if unsafe { SAVES } == (1 as i32) {
         print_line("(the real Save handler fired: SAVES == 1)");
     }
@@ -111,16 +111,16 @@ fn main() -> i32 {
     //    (base_version); a stale base loses to a concurrent edit.
     print_line("--- set_text name-field (base_version 0) ---");
     print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
-        "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"Ada\",\"base_version\":0},\"id\":3}"));
+    "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"Ada\",\"base_version\":0},\"id\":3}"));
     print_line("--- set_text again with the SAME stale base_version 0 ---");
     print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
-        "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"oops\",\"base_version\":0},\"id\":4}"));
+    "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"oops\",\"base_version\":0},\"id\":4}"));
 
     // 4) Consent: the very same request through a closed (deny-all) gate is
     //    refused before it can touch the UI.
     print_line("--- describe_ui through a deny-all gate (consent refused) ---");
     print_text(mcp::handle_request(surf, sub, auth::deny_all(),
-        "{\"method\":\"describe_ui\",\"params\":{},\"id\":5}"));
+    "{\"method\":\"describe_ui\",\"params\":{},\"id\":5}"));
 
     pool.drain();
     return 0;

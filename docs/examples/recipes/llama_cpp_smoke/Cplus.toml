@@ -1,0 +1,12 @@
+[package]
+name    = "llama_cpp_smoke"
+version = "0.0.1"
+edition = "2026"
+
+[dependencies]
+stdlib = "*"
+llama_cpp = "*"
+
+[[bin]]
+name = "llama_cpp_smoke"
+path = "src/main.cplus"
