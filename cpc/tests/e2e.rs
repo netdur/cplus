@@ -16793,6 +16793,119 @@ fn agent_appkit_run(pkg: &str, program: &str) {
     assert!(run.success(), "{pkg} exited non-zero: {:?}", run.code());
 }
 
+/// Like `agent_appkit_run` but also wires `json` + `agent_mcp` (the MCP bridge
+/// and its JSON dependency).
+#[cfg(target_os = "macos")]
+fn agent_mcp_run(pkg: &str, program: &str) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!("[package]\nname = \"{pkg}\"\n\n[[bin]]\nname = \"{pkg}\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\njson = \"*\"\nappkit = \"*\"\nagent_core = \"*\"\nagent_appkit = \"*\"\nagent_mcp = \"*\"\n"),
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    for p in ["stdlib", "json", "appkit", "agent_core", "agent_appkit", "agent_mcp"] {
+        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p)).unwrap();
+    }
+    std::fs::write(dir.join("src/main.cplus"), program).unwrap();
+    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    assert!(status.success(), "cpc build for {pkg} failed: {status}");
+    let bin = dir.join(format!("target/debug/{pkg}"));
+    let run = Command::new(bin).status().expect("run program");
+    assert!(run.success(), "{pkg} exited non-zero: {:?}", run.code());
+}
+
+/// Theme B (v0.0.19): the `agent_mcp` JSON-RPC protocol core. Drives a live
+/// `agent_appkit::Surface` through `handle_request` (parse → consent-gate →
+/// dispatch → JSON response): describe_ui returns the tagged button node,
+/// click/set_text route through the authorization brain (allowed / not_found /
+/// version-conflict on a stale base), a deny-all `AuthGate` yields a
+/// consent-denied error, and an unknown method yields a method-not-found error.
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_mcp_jsonrpc_dispatch_theme_b() {
+    agent_mcp_run(
+        "mcp_dispatch",
+        r##"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_mcp/agent_mcp" as mcp;
+import "json/json" as json;
+import "stdlib/text" as text;
+import "stdlib/result" as result;
+
+fn allow_all(req: auth::Request) -> auth::Decision { return auth::Decision::Allow; }
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn outcome_of(borrow resp: text::Text) -> text::Text {
+    return match json::parse(unsafe { resp.as_str() }) {
+        result::Result[json::Value, json::ParseError]::Ok(v) =>
+            json::as_str(json::object_get(json::object_get(v, "result"), "outcome")),
+        result::Result[json::Value, json::ParseError]::Err(_e) => "PARSE_FAIL".to_text(),
+    };
+}
+
+fn has_error(borrow resp: text::Text) -> bool {
+    return match json::parse(unsafe { resp.as_str() }) {
+        result::Result[json::Value, json::ParseError]::Ok(v) => json::object_get(v, "error").is_object(),
+        result::Result[json::Value, json::ParseError]::Err(_e) => false,
+    };
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+    let win: window::Window = window::Window::new(rect(0.0,0.0,400.0,300.0), 1 as u64, 2 as u64, 0 as i8);
+    let content: *u8 = win.content_view();
+    let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
+    btn.set_title(#str_ptr("Save\0"));
+    ui::set_agent_id(btn.obj, "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+    let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,50.0,200.0,24.0));
+    ui::set_agent_id(inp.obj, "name-field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+
+    let mut surf: ui::Surface = ui::open(win.obj);
+    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+
+    let d: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}");
+    if !unsafe { d.as_str() }.to_text().contains("save-btn") { return 1; }
+    if !unsafe { d.as_str() }.to_text().contains("\"role\":\"button\"") { return 2; }
+
+    let c: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}");
+    if unsafe { outcome_of(c).as_str() } != "allowed" { return 3; }
+
+    let c2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"ghost\"},\"id\":3}");
+    if unsafe { outcome_of(c2).as_str() } != "not_found" { return 4; }
+
+    let s1: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"hi\",\"base_version\":0},\"id\":4}");
+    if unsafe { outcome_of(s1).as_str() } != "allowed" { return 5; }
+    let s2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"x\",\"base_version\":0},\"id\":5}");
+    if unsafe { outcome_of(s2).as_str() } != "version_conflict" { return 6; }
+
+    let denied: text::Text = mcp::handle_request(surf, sub, auth::deny_all(), "{\"method\":\"describe_ui\",\"params\":{},\"id\":6}");
+    if !has_error(denied) { return 7; }
+
+    let bad: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"frobnicate\",\"params\":{},\"id\":7}");
+    if !has_error(bad) { return 8; }
+
+    pool.drain();
+    return 0;
+}
+"##,
+    );
+}
+
 /// Theme B (v0.0.19): the `agent_appkit` WRITE path through the agent-core
 /// authorization brain. Builds a window with a tagged button (wired to a C+
 /// click callback), a tagged input field, and an untagged label; opens a

@@ -1,0 +1,237 @@
+// agent_mcp — the MCP bridge for the agent surface (Theme B, plan.agent-mcp.md).
+//
+// An external agent drives a live `agent_appkit::Surface` over JSON-RPC 2.0:
+//
+//   - describe_ui  -> the live node snapshot (read path)
+//   - click / set_text / scroll_to -> authorized actions (write path)
+//   - poll_event   -> the next queued semantic event
+//
+// Every request is first gated by the agent_core consent `AuthGate` on the
+// `External` channel: an un-served (deny-all) gate rejects everything, so the
+// surface is closed until the developer arms a policy. This module is the
+// protocol + serialization core (pure, no sockets); `serve.cplus` layers the
+// UDS-by-PID transport on top.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "json/json" as json;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+
+// ---- JSON building helpers --------------------------------------------------
+
+fn jstr(s: str) -> json::Value {
+    return json::Value::Str(s.to_text());
+}
+
+fn jnum(n: f64) -> json::Value {
+    return json::Value::Number(n);
+}
+
+fn jbool(b: bool) -> json::Value {
+    return json::Value::Bool(b);
+}
+
+fn member(k: str, v: json::Value) -> json::Member {
+    return json::Member { key: k.to_text(), value: v };
+}
+
+// ---- enum -> wire string ----------------------------------------------------
+
+fn role_to_str(role: identity::Role) -> str {
+    if identity::role_eq(role, identity::Role::Button) { return "button"; }
+    if identity::role_eq(role, identity::Role::Text) { return "text"; }
+    if identity::role_eq(role, identity::Role::Input) { return "input"; }
+    if identity::role_eq(role, identity::Role::List) { return "list"; }
+    if identity::role_eq(role, identity::Role::Group) { return "group"; }
+    if identity::role_eq(role, identity::Role::Window) { return "window"; }
+    return "group";
+}
+
+fn outcome_to_str(o: surface::Outcome) -> str {
+    if surface::outcome_eq(o, surface::Outcome::Allowed) { return "allowed"; }
+    if surface::outcome_eq(o, surface::Outcome::NotFound) { return "not_found"; }
+    if surface::outcome_eq(o, surface::Outcome::NotExposed) { return "not_exposed"; }
+    if surface::outcome_eq(o, surface::Outcome::NotActionable) { return "not_actionable"; }
+    return "version_conflict";
+}
+
+fn verb_to_str(v: events::Verb) -> str {
+    if events::verb_eq(v, events::Verb::Clicked) { return "clicked"; }
+    if events::verb_eq(v, events::Verb::Changed) { return "changed"; }
+    if events::verb_eq(v, events::Verb::Submitted) { return "submitted"; }
+    if events::verb_eq(v, events::Verb::Selected) { return "selected"; }
+    if events::verb_eq(v, events::Verb::Toggled) { return "toggled"; }
+    if events::verb_eq(v, events::Verb::Opened) { return "opened"; }
+    if events::verb_eq(v, events::Verb::Closed) { return "closed"; }
+    if events::verb_eq(v, events::Verb::Enabled) { return "enabled"; }
+    if events::verb_eq(v, events::Verb::Disabled) { return "disabled"; }
+    if events::verb_eq(v, events::Verb::Added) { return "added"; }
+    if events::verb_eq(v, events::Verb::Removed) { return "removed"; }
+    if events::verb_eq(v, events::Verb::Appeared) { return "appeared"; }
+    if events::verb_eq(v, events::Verb::Disappeared) { return "disappeared"; }
+    if events::verb_eq(v, events::Verb::WindowOpened) { return "window_opened"; }
+    if events::verb_eq(v, events::Verb::WindowClosed) { return "window_closed"; }
+    return "ui_changed";
+}
+
+// ---- surface -> JSON --------------------------------------------------------
+
+// One describe_ui node as a JSON object. Takes a raw pointer INTO the node Vec
+// and reads fields through it (Text fields via `as_str` borrows, the rest are
+// Copy) — never moving the non-Copy `UiNode` out of the Vec, which would
+// double-free its owned `Text`s. `parent` is the index into the node array, or
+// JSON null for the window root.
+fn node_to_json(p: *ui::UiNode) -> json::Value {
+    let mut frame: vec::Vec[json::Member] = vec::new::[json::Member]();
+    frame.push(member("x", jnum(unsafe { (*p).frame.origin.x })));
+    frame.push(member("y", jnum(unsafe { (*p).frame.origin.y })));
+    frame.push(member("w", jnum(unsafe { (*p).frame.size.width })));
+    frame.push(member("h", jnum(unsafe { (*p).frame.size.height })));
+
+    let parent_val: json::Value = match unsafe { (*p).parent } {
+        option::Option[usize]::Some(pi) => jnum(pi as f64),
+        option::Option[usize]::None => json::Value::Null,
+    };
+
+    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.push(member("id", jstr(unsafe { (*p).id.as_str() })));
+    m.push(member("role", jstr(role_to_str(unsafe { (*p).role }))));
+    m.push(member("class", jstr(unsafe { (*p).class_name.as_str() })));
+    m.push(member("frame", json::Value::Object(frame)));
+    m.push(member("hidden", jbool(unsafe { (*p).is_hidden })));
+    m.push(member("text", jstr(unsafe { (*p).text.as_str() })));
+    m.push(member("actionable", jbool(unsafe { (*p).actionable })));
+    m.push(member("parent", parent_val));
+    return json::Value::Object(m);
+}
+
+// The whole describe_ui snapshot as a JSON array of node objects.
+fn describe_to_json(nodes: vec::Vec[ui::UiNode]) -> json::Value {
+    let mut arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+    let mut i: usize = 0 as usize;
+    while i < nodes.len() {
+        match nodes.at(i) {
+            option::Option[*ui::UiNode]::Some(p) => {
+                arr.push(node_to_json(p));
+            }
+            option::Option[*ui::UiNode]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return json::Value::Array(arr);
+}
+
+fn outcome_result(o: surface::Outcome) -> json::Value {
+    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.push(member("outcome", jstr(outcome_to_str(o))));
+    return json::Value::Object(m);
+}
+
+// ---- JSON-RPC envelopes -----------------------------------------------------
+
+fn ok_response(id: f64, result: json::Value) -> json::Value {
+    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.push(member("jsonrpc", jstr("2.0")));
+    m.push(member("id", jnum(id)));
+    m.push(member("result", result));
+    return json::Value::Object(m);
+}
+
+fn err_response(id: f64, code: f64, msg: str) -> json::Value {
+    let mut e: vec::Vec[json::Member] = vec::new::[json::Member]();
+    e.push(member("code", jnum(code)));
+    e.push(member("message", jstr(msg)));
+    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.push(member("jsonrpc", jstr("2.0")));
+    m.push(member("id", jnum(id)));
+    m.push(member("error", json::Value::Object(e)));
+    return json::Value::Object(m);
+}
+
+// ---- the dispatch -----------------------------------------------------------
+
+// JSON-RPC error codes: -32601 method-not-found (standard); -32001 the
+// surface-specific "consent denied" (server error range).
+
+// Dispatch one parsed JSON-RPC request against the live surface. `params` is the
+// request's `params` object; `id` is the request id (echoed back). Every call is
+// gated on the External consent channel first — a rejected gate yields a
+// consent-denied error and never touches the surface.
+pub fn dispatch(
+    mut surf: ui::Surface,
+    mut sub: events::Subscriber,
+    gate: auth::AuthGate,
+    method: str,
+    params: json::Value,
+    id: f64,
+) -> json::Value {
+    if auth::decision_eq(gate.check(auth::request(auth::Channel::External)), auth::Decision::Reject) {
+        return err_response(id, - 32001 as f64, "consent denied");
+    }
+
+    if method == "describe_ui" {
+        return ok_response(id, describe_to_json(surf.describe()));
+    }
+    if method == "click" {
+        let target: text::Text = json::as_str(json::object_get(params, "id"));
+        let o: surface::Outcome = surf.click(unsafe { target.as_str() });
+        return ok_response(id, outcome_result(o));
+    }
+    if method == "scroll_to" {
+        let target: text::Text = json::as_str(json::object_get(params, "id"));
+        let o: surface::Outcome = surf.scroll_to(unsafe { target.as_str() });
+        return ok_response(id, outcome_result(o));
+    }
+    if method == "set_text" {
+        let target: text::Text = json::as_str(json::object_get(params, "id"));
+        let value: text::Text = json::as_str(json::object_get(params, "value"));
+        let base: u64 = json::as_number(json::object_get(params, "base_version")) as u64;
+        let o: surface::Outcome = surf.set_text(unsafe { target.as_str() }, unsafe { value.as_str() }, base);
+        return ok_response(id, outcome_result(o));
+    }
+    if method == "poll_event" {
+        let ev: option::Option[events::Event] = sub.poll();
+        let result: json::Value = match ev {
+            option::Option[events::Event]::Some(e) => {
+                let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                m.push(member("source", jnum(e.source as f64)));
+                m.push(member("verb", jstr(verb_to_str(e.verb))));
+                json::Value::Object(m)
+            }
+            option::Option[events::Event]::None => json::Value::Null,
+        };
+        return ok_response(id, result);
+    }
+    return err_response(id, - 32601 as f64, "method not found");
+}
+
+// Convenience: dispatch a raw JSON-RPC request string and return the response
+// string. Parses `{ "method": ..., "params": ..., "id": ... }`; a parse failure
+// or missing method yields a JSON-RPC error envelope. This is the unit the
+// transport reads/writes per line.
+pub fn handle_request(
+    mut surf: ui::Surface,
+    mut sub: events::Subscriber,
+    gate: auth::AuthGate,
+    line: str,
+) -> text::Text {
+    let out: text::Text = match json::parse(line) {
+        result::Result[json::Value, json::ParseError]::Ok(req) => {
+            let method_t: text::Text = json::as_str(json::object_get(req, "method"));
+            let id: f64 = json::as_number(json::object_get(req, "id"));
+            let params: json::Value = json::object_get(req, "params");
+            let resp: json::Value = dispatch(surf, sub, gate, unsafe { method_t.as_str() }, params, id);
+            resp.to_text()
+        }
+        result::Result[json::Value, json::ParseError]::Err(_e) => {
+            err_response(0 as f64, - 32700 as f64, "parse error").to_text()
+        }
+    };
+    return out;
+}

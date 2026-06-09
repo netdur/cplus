@@ -1,0 +1,16 @@
+[package]
+name    = "agent_mcp"
+version = "0.0.1"
+edition = "2026"
+
+# The MCP bridge for the agent surface (Theme B, plan.agent-mcp.md): exposes a
+# live agent_appkit `Surface` over a JSON-RPC protocol (describe_ui / actions /
+# events), gated by the agent_core consent `AuthGate`. This crate is the
+# protocol + serialization core; the UDS-by-PID transport is layered on top.
+
+[dependencies]
+stdlib     = "*"
+json       = "*"
+appkit     = "*"
+agent_core = "*"
+agent_appkit = "*"
