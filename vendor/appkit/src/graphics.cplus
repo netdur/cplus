@@ -36,6 +36,19 @@ impl ImageView {
     pub fn set_scaling(self, scaling: i64) {
         rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
     }
+
+    // GAP 4 (v0.0.19): tint a template/SF-Symbol image — `setContentTintColor:`
+    // (macOS 10.14+). Takes an `NSColor*` (e.g. `Color::label_color()`).
+    pub fn set_content_tint_color(self, color: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setContentTintColor:\0")), color);
+    }
+
+    // GAP 4 (v0.0.19): apply an `NSImageSymbolConfiguration` (build one with
+    // `Image::symbol_config`) to the displayed SF Symbol — `setSymbolConfiguration:`
+    // (macOS 11+).
+    pub fn set_symbol_configuration(self, config: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), config);
+    }
 }
 
 pub struct Image {
@@ -54,6 +67,24 @@ impl Image {
         let cls = rt::get_class(#str_ptr("NSImage\0"));
         let img_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return rt::msg_id_id(img_alloc, rt::sel(#str_ptr("initWithContentsOfFile:\0")), ns_path);
+    }
+
+    // GAP 4 (v0.0.19): create an SF Symbol image by system name (e.g.
+    // "gearshape", "star.fill") — `+[NSImage imageWithSystemSymbolName:
+    // accessibilityDescription:]` (macOS 11+). Pass `0 as *u8` for no
+    // accessibility description. Returns the (autoreleased) symbol image, or
+    // `0 as *u8` if the name isn't a known system symbol. Feed the result to
+    // `with_symbol_configuration` (GAP 6) to size/weight it, or set it on an
+    // `ImageView`.
+    pub fn system_symbol(name: *u8, accessibility_description: *u8) -> *u8 {
+        let cls = rt::get_class(#str_ptr("NSImage\0"));
+        let ns_name = rt::ns_string(name);
+        return rt::msg_id_2id(
+            cls,
+            rt::sel(#str_ptr("imageWithSystemSymbolName:accessibilityDescription:\0")),
+            ns_name,
+            accessibility_description,
+        );
     }
 
     // GAP 6 (v0.0.19): build an `NSImageSymbolConfiguration` from a point size
@@ -88,6 +119,79 @@ impl Image {
             rt::sel(#str_ptr("imageWithSymbolConfiguration:\0")),
             config,
         );
+    }
+}
+
+// GAP 4 + GAP 5 (v0.0.19): a layer-backed rounded rectangle view — corner
+// radius, border, and fill — for cards / panels / pills.
+//
+// WHY THIS EXISTS (GAP 5): `NSBox` is the classic "framed container," but it
+// does NOT size itself to a content view that is laid out purely with Auto
+// Layout constraints (no intrinsic frame) — the box collapses to zero. Rather
+// than fight that, build the rounded chrome directly on a plain layer-backed
+// `NSView`: set `wantsLayer = YES`, then drive the backing `CALayer`'s
+// `cornerRadius` / `borderWidth` / `borderColor` / `backgroundColor`. This sizes
+// and resizes like any other view and composes with constraints.
+//
+// Color note: CALayer color properties are `CGColorRef`, not `NSColor*` — pass
+// an NSColor directly and it crashes. `set_border_color` / `set_background_color`
+// take an `NSColor*` and bridge via `Color::cg_color` for you.
+pub struct RoundedView {
+    pub obj: *u8,
+}
+
+impl RoundedView {
+    pub fn new(frame: rt::Rect) -> RoundedView {
+        let cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let v: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+        // Layer-backing creates the backing CALayer that the rounded chrome
+        // lives on. Without this, `layer` is nil and the setters no-op.
+        rt::msg_void_i8(v, rt::sel(#str_ptr("setWantsLayer:\0")), 1 as i8);
+        return RoundedView { obj: v };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    // The backing CALayer (valid once `wantsLayer` is set, which `new` does).
+    fn layer(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("layer\0")));
+    }
+
+    pub fn set_corner_radius(self, radius: f64) {
+        rt::msg_void_f64(self.layer(), rt::sel(#str_ptr("setCornerRadius:\0")), radius);
+    }
+
+    pub fn set_border_width(self, width: f64) {
+        rt::msg_void_f64(self.layer(), rt::sel(#str_ptr("setBorderWidth:\0")), width);
+    }
+
+    // Takes an `NSColor*`; bridged to CGColorRef for the layer.
+    pub fn set_border_color(self, ns_color: *u8) {
+        rt::msg_void_id(self.layer(), rt::sel(#str_ptr("setBorderColor:\0")), Color::cg_color(ns_color));
+    }
+
+    // Takes an `NSColor*`; bridged to CGColorRef for the layer.
+    pub fn set_background_color(self, ns_color: *u8) {
+        rt::msg_void_id(self.layer(), rt::sel(#str_ptr("setBackgroundColor:\0")), Color::cg_color(ns_color));
+    }
+
+    pub fn add_subview(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), view);
+    }
+
+    // GAP 2 (v0.0.19): see `view::View::into_raw` for the ownership-transfer
+    // rationale + the use-after-free trap these prevent.
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    pub fn from_raw(obj: *u8) -> RoundedView {
+        return RoundedView { obj: obj };
     }
 }
 
@@ -180,6 +284,15 @@ impl Color {
     pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSColor\0"));
         return rt::msg_id_rgba(cls, rt::sel(#str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), r, g, b, a);
+    }
+
+    // GAP 4 (v0.0.19): the NSColor -> CGColor bridge. CALayer color properties
+    // (`borderColor`, `backgroundColor`) take a `CGColorRef`, not an `NSColor*`;
+    // pass an `NSColor*` directly and you get a type-mismatch crash. Use this to
+    // convert (e.g. for `RoundedView`). The returned `CGColorRef` is valid while
+    // the source NSColor is alive.
+    pub fn cg_color(ns_color: *u8) -> *u8 {
+        return rt::msg_id(ns_color, rt::sel(#str_ptr("CGColor\0")));
     }
 
     pub fn red() -> *u8 {

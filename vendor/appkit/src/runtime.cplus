@@ -68,6 +68,9 @@ extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
 extern fn objc_msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_2id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_id_f64_f64(recv: *u8, sel: *u8, a: f64, b: f64) -> *u8;
 
 #[link_name = "objc_msgSend"]
@@ -307,6 +310,13 @@ pub fn msg_id(recv: *u8, selector: *u8) -> *u8 {
 
 pub fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
     return unsafe { objc_msg_id_id(recv, selector, arg) };
+}
+
+// objc_msgSend returning id with two id args — e.g. `+[NSImage
+// imageWithSystemSymbolName:accessibilityDescription:]` or `+[NSSet
+// setWithObject:]`-style two-argument constructors.
+pub fn msg_id_2id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> *u8 {
+    return unsafe { objc_msg_id_2id(recv, selector, a, b) };
 }
 
 pub fn msg_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8) -> *u8 {

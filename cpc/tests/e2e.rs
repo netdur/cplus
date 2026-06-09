@@ -16518,6 +16518,69 @@ fn main() -> i32 {
     );
 }
 
+/// GAP 4 + GAP 5 (v0.0.19): exercise the new coverage at runtime — a
+/// layer-backed `RoundedView` (corner/border/background via the NSColor->CGColor
+/// bridge, the GAP 5 alternative to NSBox), an SF Symbol image
+/// (`Image::system_symbol`) tinted + symbol-configured on an `ImageView`, a
+/// wrapping label with a focus-ring tweak, and toolbar style/centering. These
+/// are object-graph operations (no event loop), so the value is that none of
+/// the new selectors raise "unrecognized selector" and the CGColor bridge
+/// doesn't crash. A known system symbol must resolve non-nil.
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_gap4_gap5_coverage_runs() {
+    appkit_run_program(
+        "ak_cov",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/graphics" as gfx;
+import "appkit/controls" as controls;
+import "appkit/toolbar" as toolbar;
+
+fn main() -> i32 {
+    let nullp: *u8 = unsafe { 0 as *u8 };
+    let frame: rt::Rect = rt::Rect {
+        origin: rt::Point { x: 0.0, y: 0.0 },
+        size: rt::Size { width: 120.0, height: 48.0 },
+    };
+
+    // GAP 5: layer-backed rounded card with the NSColor->CGColor bridge.
+    let card: gfx::RoundedView = gfx::RoundedView::new(frame);
+    card.set_corner_radius(10.0);
+    card.set_border_width(1.0);
+    card.set_border_color(gfx::Color::separator_color());
+    card.set_background_color(gfx::Color::control_background_color());
+
+    // GAP 4: SF Symbol — a real system name must resolve non-nil.
+    let sym: *u8 = gfx::Image::system_symbol(#str_ptr("star.fill\0"), nullp);
+    if sym == nullp { return 1; }
+    let cfg: *u8 = gfx::Image::symbol_config(17.0, 0.0);
+    if cfg == nullp { return 2; }
+    let iv: gfx::ImageView = gfx::ImageView::new(frame);
+    iv.set_image(sym);
+    iv.set_symbol_configuration(cfg);
+    iv.set_content_tint_color(gfx::Color::label_color());
+    card.add_subview(iv.obj);
+
+    // GAP 4: wrapping label + focus-ring tweak.
+    let lbl: controls::TextField = controls::TextField::new_wrapping_label(frame);
+    lbl.set_focus_ring_type(1 as i64);
+    lbl.set_string_value(#str_ptr("a long wrapping caption\0"));
+    card.add_subview(lbl.obj);
+
+    // GAP 4: toolbar style + centered item + (deprecated) item sizing.
+    let tb: toolbar::Toolbar = toolbar::Toolbar::new(#str_ptr("tb\0"));
+    tb.set_centered_item(#str_ptr("home\0"));
+    let item: toolbar::ToolbarItem = toolbar::ToolbarItem::new(#str_ptr("home\0"));
+    item.set_min_size(rt::Size { width: 40.0, height: 28.0 });
+    item.set_max_size(rt::Size { width: 80.0, height: 28.0 });
+
+    return 0;
+}
+"#,
+    );
+}
+
 /// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
 /// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
 /// (`Alert`, created `new` = +1) releases its object in `drop` — so building

@@ -1,5 +1,14 @@
 import "./runtime" as rt;
 
+// GAP 4 note (v0.0.19) — TextView placeholder: `NSTextView` has NO native
+// placeholder API (unlike `NSTextField`, which has `setPlaceholderString:`).
+// There is no selector to bind — a placeholder is implemented in the app by
+// overlaying a non-editable, gray `TextField` label inside the text view's
+// frame and toggling its `setHidden:` from the text-change delegate
+// (`textDidChange:` -> hide when `string()` is non-empty, show when empty).
+// `controls::TextField::new_wrapping_label` + `View::add_subview` give you the
+// overlay; the delegate wiring is app-specific. (Provided as guidance rather
+// than a binding because there is no underlying AppKit API to wrap.)
 pub struct TextView {
     pub obj: *u8,
 }

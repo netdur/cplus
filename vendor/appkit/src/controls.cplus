@@ -103,6 +103,35 @@ impl TextField {
     pub fn set_background_color(self, color: *u8) {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color);
     }
+
+    // GAP 4 (v0.0.19): the focus-ring style (`setFocusRingType:`, an NSView
+    // property). `t` is an `NSFocusRingType`: 0 default, 1 none, 2 exterior.
+    // Common use: `1` to suppress the focus ring on a custom-styled field.
+    pub fn set_focus_ring_type(self, t: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setFocusRingType:\0")), t);
+    }
+
+    // GAP 4 (v0.0.19): a multi-line, word-wrapping static label (the default
+    // `new_label` is single-line and truncates). Same non-editable / no-bezel /
+    // no-background config, plus wrapping enabled on the cell and an unbounded
+    // line count. Give it a width and let height grow (or pin via constraints).
+    pub fn new_wrapping_label(frame: rt::Rect) -> TextField {
+        let cls: *u8 = rt::get_class(#str_ptr("NSTextField\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let label: *u8 = rt::msg_init_with_frame(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setEditable:\0")), 0 as i8);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setSelectable:\0")), 0 as i8);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setBezeled:\0")), 0 as i8);
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setDrawsBackground:\0")), 0 as i8);
+        // Multi-line: no single-line mode, unbounded lines, and word-wrap on the
+        // cell (NSLineBreakByWordWrapping = 0).
+        rt::msg_void_i8(label, rt::sel(#str_ptr("setUsesSingleLineMode:\0")), 0 as i8);
+        rt::msg_void_i64(label, rt::sel(#str_ptr("setMaximumNumberOfLines:\0")), 0 as i64);
+        let cell: *u8 = rt::msg_id(label, rt::sel(#str_ptr("cell\0")));
+        rt::msg_void_i8(cell, rt::sel(#str_ptr("setWraps:\0")), 1 as i8);
+        rt::msg_void_i64(cell, rt::sel(#str_ptr("setLineBreakMode:\0")), 0 as i64);
+        return TextField { obj: label };
+    }
 }
 
 // Owned (+1 via alloc/initWithFrame:). Added to a parent view, which retains it;

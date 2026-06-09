@@ -106,6 +106,13 @@ impl Window {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setToolbar:\0")), toolbar);
     }
 
+    // GAP 4 (v0.0.19): control how the toolbar integrates with the titlebar
+    // (`setToolbarStyle:`, macOS 11+). `style` is an `NSWindowToolbarStyle`:
+    // 0 automatic, 1 expanded, 2 preference, 3 unified, 4 unifiedCompact.
+    pub fn set_toolbar_style(self, style: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setToolbarStyle:\0")), style);
+    }
+
     pub fn set_min_size(self, size: rt::Size) {
         rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMinSize:\0")), size);
     }

@@ -24,6 +24,17 @@ impl Toolbar {
     pub fn set_allows_user_customization(self, flag: i8) {
         rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setAllowsUserCustomization:\0")), flag);
     }
+
+    // GAP 4 (v0.0.19): center a single toolbar item by identifier. Uses the
+    // modern `centeredItemIdentifiers` (NSSet, macOS 13+) — wraps the one
+    // identifier in an `NSSet` — rather than the deprecated singular
+    // `centeredItemIdentifier`.
+    pub fn set_centered_item(self, identifier: *u8) {
+        let ns_id: *u8 = rt::ns_string(identifier);
+        let set_cls: *u8 = rt::get_class(#str_ptr("NSSet\0"));
+        let set: *u8 = rt::msg_id_id(set_cls, rt::sel(#str_ptr("setWithObject:\0")), ns_id);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setCenteredItemIdentifiers:\0")), set);
+    }
 }
 
 pub fn create_toolbar_delegate(
@@ -102,6 +113,18 @@ impl ToolbarItem {
 
     pub fn set_action(self, action: *u8) {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setAction:\0")), action);
+    }
+
+    // GAP 4 (v0.0.19): pin a view-backed item's size. NOTE: `minSize`/`maxSize`
+    // are deprecated (macOS 10–12) — Apple recommends letting the system measure
+    // a `view`-backed item via Auto Layout constraints instead. They still
+    // function; provided for parity, but prefer constraints on the item's view.
+    pub fn set_min_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMinSize:\0")), size);
+    }
+
+    pub fn set_max_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
     }
 }
 
