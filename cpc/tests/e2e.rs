@@ -207,7 +207,7 @@ fn monomorphize_turbofish_same_offset_no_collision() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
-    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
+    symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
     let mod_a = "import \"stdlib/vec\" as vec;\n\
                  struct Aaa { x: i32 }\n\
                  pub fn fa() -> usize {\n\
@@ -18537,8 +18537,8 @@ fn coreai_vendor_package_typechecks() {
         .parent()
         .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
-    std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
-    std::os::unix::fs::symlink(root.join("vendor/coreai"), dir.join("vendor/coreai")).unwrap();
+    symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
+    symlink_dir(&root.join("vendor/coreai"), &dir.join("vendor/coreai"));
 
     // Use the real smoke recipe as the consumer — keeps the example honest.
     std::fs::write(
