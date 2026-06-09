@@ -16427,6 +16427,47 @@ fn appkit_run_program(pkg: &str, program: &str) {
     assert!(run.success(), "{pkg} exited non-zero: {run}");
 }
 
+/// GAP 6 (v0.0.19): the AppKit symbol-configuration selector is
+/// `imageWithSymbolConfiguration:` (NSImage), NOT the UIKit
+/// `imageByApplyingSymbolConfiguration:` (UIImage). Sending the UIKit name to a
+/// valid, non-nil NSImage raises "unrecognized selector" at runtime. This proves
+/// the `Image::with_symbol_configuration` wrapper uses the right selector: it
+/// applies a config to a real (alloc/init) NSImage and the program runs to a
+/// clean exit. With the wrong selector the process would abort (SIGABRT) and the
+/// run would fail. (A nil receiver would *not* prove anything — ObjC swallows
+/// messages to nil — so the image must be non-nil.)
+#[test]
+#[cfg(target_os = "macos")]
+fn appkit_image_symbol_configuration_selector_gap6() {
+    appkit_run_program(
+        "ak_sym",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/graphics" as gfx;
+
+fn main() -> i32 {
+    // A guaranteed non-nil NSImage (empty, but a real instance).
+    let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
+    let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let img: *u8 = rt::msg_id(alloced, rt::sel(#str_ptr("init\0")));   // +1
+    let nullp: *u8 = unsafe { 0 as *u8 };
+    if img == nullp { return 1; }
+
+    // Build a symbol configuration and apply it. The selector must be
+    // `imageWithSymbolConfiguration:` — the UIKit name would abort here.
+    let cfg: *u8 = gfx::Image::symbol_config(17.0, 0.0);
+    if cfg == nullp { return 2; }
+    let _configured: *u8 = gfx::Image::with_symbol_configuration(img, cfg);
+    // `_configured` is nil (the image isn't an SF Symbol), which is fine — the
+    // point is that the selector was recognized and nothing crashed.
+
+    rt::release(img);
+    return 0;
+}
+"#,
+    );
+}
+
 /// v0.0.16 AppKit ownership/Drop model (plan.appkit.md §2): the `rt::retain` /
 /// `rt::release` / `rt::retain_count` primitives behave, and an owned wrapper
 /// (`Alert`, created `new` = +1) releases its object in `drop` — so building

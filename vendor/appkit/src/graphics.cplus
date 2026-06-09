@@ -42,6 +42,40 @@ impl Image {
         let img_alloc = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
         return rt::msg_id_id(img_alloc, rt::sel(#str_ptr("initWithContentsOfFile:\0")), ns_path);
     }
+
+    // GAP 6 (v0.0.19): build an `NSImageSymbolConfiguration` from a point size
+    // and font weight, for use with `with_symbol_configuration` below. `weight`
+    // is an `NSFontWeight` (a CGFloat): 0.0 = regular, ~0.3 = semibold, ~0.62 =
+    // bold (the `NSFontWeight*` constants). The returned object is autoreleased
+    // (a `+configurationWith…` factory), so it is NOT owned — don't release it.
+    pub fn symbol_config(point_size: f64, weight: f64) -> *u8 {
+        let cls = rt::get_class(#str_ptr("NSImageSymbolConfiguration\0"));
+        return rt::msg_id_f64_f64(
+            cls,
+            rt::sel(#str_ptr("configurationWithPointSize:weight:\0")),
+            point_size,
+            weight,
+        );
+    }
+
+    // GAP 6 (v0.0.19): apply a symbol configuration to an image, returning a new
+    // configured `NSImage` (or `0 as *u8` if AppKit returns nil — the selector
+    // is nullable).
+    //
+    // TRAP: the correct AppKit selector is `imageWithSymbolConfiguration:`
+    // (NSImage). The *UIKit* name `imageByApplyingSymbolConfiguration:` (UIImage)
+    // does NOT exist on NSImage — sending it raises "unrecognized selector sent
+    // to instance" at runtime, even on a perfectly valid, non-nil NSImage.
+    // `#msg_send` / `rt::sel` can't catch a wrong selector string at compile
+    // time, so always route symbol-config through this wrapper rather than
+    // hand-rolling the selector in app code (this was Iris's GAP 6 crash).
+    pub fn with_symbol_configuration(image: *u8, config: *u8) -> *u8 {
+        return rt::msg_id_id(
+            image,
+            rt::sel(#str_ptr("imageWithSymbolConfiguration:\0")),
+            config,
+        );
+    }
 }
 
 // NSBezierPath — the path/drawing primitive for custom views (plan.appkit.md
