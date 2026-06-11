@@ -112,6 +112,10 @@ pub struct TargetSpec {
     pub apple_sdk: Option<&'static str>,
     pub handoff: Handoff,
     pub toolchain: ToolchainKind,
+    /// The OS-version token inside `triple` that `--min-os` replaces
+    /// (`"13.0"` for the iOS targets, `"24"` for Android). `None` = the
+    /// triple is unversioned and `--min-os` is rejected.
+    pub min_os_default: Option<&'static str>,
     /// stdlib modules excluded from this target's package profile —
     /// modules whose mechanism does not exist there (kqueue/epoll
     /// reactor, pthreads, process environment). Importing one fails at
@@ -153,6 +157,7 @@ pub const HOST: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::HostLink,
     toolchain: ToolchainKind::HostClang,
+    min_os_default: None,
     unsupported_stdlib: &[],
 };
 
@@ -172,6 +177,7 @@ pub const IOS_ARM64: TargetSpec = TargetSpec {
     apple_sdk: Some("iphoneos"),
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::HostClang,
+    min_os_default: Some("13.0"),
     unsupported_stdlib: &[],
 };
 
@@ -188,6 +194,7 @@ pub const IOS_ARM64_SIMULATOR: TargetSpec = TargetSpec {
     apple_sdk: Some("iphonesimulator"),
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::HostClang,
+    min_os_default: Some("13.0"),
     unsupported_stdlib: &[],
 };
 
@@ -209,6 +216,7 @@ pub const ANDROID_ARM64: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::AndroidNdk,
+    min_os_default: Some("24"),
     unsupported_stdlib: &[],
 };
 
@@ -233,6 +241,7 @@ pub const ESP32_XTENSA: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::EspClang,
+    min_os_default: None,
     // The POSIX half of stdlib: pthread-backed (thread/mutex/channel),
     // the kqueue/epoll reactor and its consumers (executor/time/net/
     // netsys/fs), and the process environment. `vendor/espidf` covers
@@ -276,6 +285,32 @@ pub fn supported_names() -> String {
 }
 
 static ACTIVE: Mutex<TargetSpec> = Mutex::new(HOST);
+static MIN_OS_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Install the `--min-os` override. The driver validates the target
+/// supports one (`min_os_default` present) before calling.
+pub fn set_min_os_override(version: String) {
+    *MIN_OS_OVERRIDE.lock().unwrap() = Some(version);
+}
+
+/// The version-spliced triple for a spec: the spec's `min_os_default`
+/// token replaced by `over`. Pure, for unit tests; `active_triple`
+/// applies it with the process-global override.
+pub fn spliced_triple(spec: &TargetSpec, over: Option<&str>) -> Option<String> {
+    let triple = spec.triple?;
+    match (spec.min_os_default, over) {
+        (Some(default), Some(v)) => Some(triple.replace(default, v)),
+        _ => Some(triple.to_string()),
+    }
+}
+
+/// The active target's triple with any `--min-os` override applied —
+/// what the IR `target triple` line and clang's `-target` receive.
+pub fn active_triple() -> Option<String> {
+    let spec = active_target();
+    let over = MIN_OS_OVERRIDE.lock().unwrap().clone();
+    spliced_triple(&spec, over.as_deref())
+}
 
 /// Install the target the driver resolved from `--target`. Call before any
 /// `codegen::generate*`. Defaults to [`HOST`] when never called.
@@ -400,6 +435,33 @@ mod tests {
                 assert_eq!(spec.pointer_width, 64, "`{}` must be 64-bit", spec.name);
             }
         }
+    }
+
+    #[test]
+    fn spliced_triple_replaces_only_the_version_token() {
+        assert_eq!(
+            spliced_triple(&IOS_ARM64, Some("15.2")).as_deref(),
+            Some("arm64-apple-ios15.2")
+        );
+        assert_eq!(
+            spliced_triple(&IOS_ARM64_SIMULATOR, Some("14.0")).as_deref(),
+            Some("arm64-apple-ios14.0-simulator")
+        );
+        assert_eq!(
+            spliced_triple(&ANDROID_ARM64, Some("28")).as_deref(),
+            Some("aarch64-linux-android28")
+        );
+        // No override: the baked-in floor.
+        assert_eq!(
+            spliced_triple(&IOS_ARM64, None).as_deref(),
+            Some("arm64-apple-ios13.0")
+        );
+        // Unversioned triples ignore the override; host has no triple.
+        assert_eq!(
+            spliced_triple(&ESP32_XTENSA, Some("9")).as_deref(),
+            Some("xtensa-esp32-elf")
+        );
+        assert_eq!(spliced_triple(&HOST, Some("15.0")), None);
     }
 
     #[test]

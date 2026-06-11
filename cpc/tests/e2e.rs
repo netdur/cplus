@@ -23540,6 +23540,64 @@ pub extern fn Java_com_example_NativeClickListener_nativeOnClick(
     assert_eq!(&obj[0..4], b"\x7fELF");
 }
 
+/// v0.0.22: `--min-os` overrides the OS floor baked into a versioned
+/// target triple; unversioned targets and bad versions are rejected.
+#[test]
+fn target_min_os_overrides_versioned_triples() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    for (target, ver, expect) in [
+        ("ios-arm64", "15.2", "target triple = \"arm64-apple-ios15.2\""),
+        (
+            "ios-arm64-simulator",
+            "14.0",
+            "target triple = \"arm64-apple-ios14.0-simulator\"",
+        ),
+        ("android-arm64", "28", "target triple = \"aarch64-linux-android28\""),
+    ] {
+        let out = Command::new(cpc)
+            .arg("--target")
+            .arg(target)
+            .arg("--min-os")
+            .arg(ver)
+            .arg("--emit-ll")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
+        assert!(out.status.success(), "--min-os {ver} for {target} must work");
+        let ir = String::from_utf8_lossy(&out.stdout);
+        assert!(ir.contains(expect), "expected `{expect}` for {target}: {ir}");
+    }
+    // Unversioned targets reject the flag with the placement hint.
+    for args in [vec!["--min-os", "15.0"], vec!["--target", "esp32-xtensa", "--min-os", "9"]] {
+        let out = Command::new(cpc)
+            .args(&args)
+            .arg("--emit-ll")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
+        assert!(!out.status.success(), "--min-os must be rejected for {args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("versioned triple"),
+            "rejection must explain: {stderr}"
+        );
+    }
+    // Malformed version.
+    let out = Command::new(cpc)
+        .args(["--target", "ios-arm64", "--min-os", "15.x", "--emit-ll"])
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("dotted numeric"),
+        "bad version must be named"
+    );
+}
+
 /// Regression (v0.0.22, android_view listener): one module *declares* an
 /// extern symbol as an import while another module in the same program
 /// *defines* it (`pub extern fn`) — the app-provided-hook pattern. Codegen

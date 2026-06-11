@@ -3694,7 +3694,7 @@ fn write_preamble(out: &mut String) {
     // external build system) carries the target instead of relying on the
     // consumer's `-target` flag. Host builds emit no triple line — clang's
     // default applies and the output stays byte-for-byte what it was.
-    if let Some(triple) = active_target().triple {
+    if let Some(triple) = crate::target::active_triple() {
         out.push_str(&format!("target triple = \"{triple}\"\n"));
     }
     out.push_str("\n");
@@ -19084,6 +19084,7 @@ mod tests {
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
             toolchain: crate::target::ToolchainKind::HostClang,
+            min_os_default: None,
             unsupported_stdlib: &[],
         };
 
@@ -19099,6 +19100,7 @@ mod tests {
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
             toolchain: crate::target::ToolchainKind::HostClang,
+            min_os_default: None,
             unsupported_stdlib: &[],
         };
 

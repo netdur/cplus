@@ -84,6 +84,9 @@ build flags (apply to `cpc FILE` and `cpc build`):
                                     esp32-xtensa is 32-bit: usize/isize/pointers are 4
                                     bytes; heap types (Text, Vec) are not yet supported
                                     there. Place before --emit-ll/--emit-asm FILE.
+  --min-os VERSION                  override the OS floor baked into a versioned target
+                                    triple: 13.0 for the ios targets, API 24 for
+                                    android-arm64. Place after --target.
 
 debug / introspection (single-file):
   cpc --emit-ir                     print the frozen Phase-0 LLVM IR to stdout
@@ -477,6 +480,30 @@ fn main() -> ExitCode {
                 };
                 target_spec = spec;
                 target::set_active_target(spec);
+                i += 2;
+            }
+            // v0.0.22: `--min-os VERSION` — override the OS version baked
+            // into a versioned target triple (ios 13.0 / android API 24).
+            // Requires `--target` first so the version can be validated
+            // against the selected target.
+            Some("--min-os") => {
+                let Some(v) = args.get(i + 1).and_then(|v| v.to_str()) else {
+                    eprintln!("cpc: --min-os requires a VERSION argument (e.g. 15.0 for ios targets, 28 for android-arm64)");
+                    return ExitCode::FAILURE;
+                };
+                if v.is_empty() || !v.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                    eprintln!("cpc: --min-os expects a dotted numeric version, got `{v}`");
+                    return ExitCode::FAILURE;
+                }
+                if target_spec.min_os_default.is_none() {
+                    eprintln!(
+                        "cpc: --min-os applies to targets with a versioned triple (ios-arm64, ios-arm64-simulator, android-arm64); current target is `{}`",
+                        target_spec.name
+                    );
+                    eprintln!("    place `--target NAME` before `--min-os VERSION`");
+                    return ExitCode::FAILURE;
+                }
+                target::set_min_os_override(v.to_string());
                 i += 2;
             }
             Some(s) if s.starts_with("--target=") => {
@@ -1143,11 +1170,13 @@ fn detect_host_triple() -> Result<String, ExitCode> {
 /// cross-emitting iOS objects with mainline clang) simply omits the flag.
 fn clang_target_args(t: &TargetSpec) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
-    let Some(triple) = t.triple else {
+    if t.triple.is_none() {
         return args;
-    };
+    }
+    // `--min-os`-aware: the spliced triple when an override is installed.
+    let triple = target::active_triple().expect("non-host target has a triple");
     args.push("-target".to_string());
-    args.push(triple.to_string());
+    args.push(triple);
     if let Some(sdk) = t.apple_sdk {
         if let Some(path) = xcrun_sdk_path(sdk) {
             args.push("-isysroot".to_string());
