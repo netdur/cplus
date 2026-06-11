@@ -11,6 +11,9 @@ This mirrors the AppKit/UIKit package shape:
 - `activity`: borrowed `Activity` wrapper and `setContentView`.
 - `view`: `View` and `LinearLayout`.
 - `controls`: `TextView` and `Button` (text + `set_on_click`).
+- `listener`: self-contained click handling (package-shipped DEX adapter);
+  imported separately, not via the umbrella, because it obligates the app
+  to export the `cplus_on_click` hook.
 - `android_view`: umbrella module.
 
 ## Host Contract
@@ -42,8 +45,12 @@ View tree, and return the root object. The root should be returned as a raw
 import "android_view/android_view" as av;
 import "jni/jni" as jni;
 
+// `nativeCreateView` is a *static* native method, so JNI passes
+// (env, class, args...): the second parameter is the jclass, the third
+// is the MainActivity argument.
 pub extern fn Java_com_example_MainActivity_nativeCreateView(
     envp: *jni::JNIEnv,
+    cls: jni::jobject,
     activity_obj: jni::jobject,
 ) -> jni::jobject {
     let env: av::Env = av::from_native(envp);
@@ -59,6 +66,23 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
     return root.into_raw();
 }
 ```
+
+## Building and packaging
+
+cpc stops at the staticlib; the NDK's clang links the shared library the
+JVM loads (`--whole-archive` keeps the JNI exports no Java code references
+at link time):
+
+```sh
+cpc build --target android-arm64
+$NDK/toolchains/llvm/prebuilt/<host>/bin/clang -target aarch64-linux-android24 \
+    -shared -Wl,--whole-archive target/android-arm64/debug/libapp.a \
+    -Wl,--no-whole-archive -o lib/arm64-v8a/libapp.so
+```
+
+`libapp.so` goes into the APK at `lib/arm64-v8a/` (a Gradle project places
+it via `jniLibs`). The listener module needs minSdk 26+
+(InMemoryDexClassLoader); everything else runs on 24+.
 
 ## Click handling
 
@@ -131,7 +155,8 @@ global reference out of the wrapper.
 
 This is a first slice, not a complete Android toolkit:
 
-- `JValue` currently supports object/int/boolean slots only.
+- `JValue` currently supports object/int/boolean/long slots only
+  (floats need real bit casts).
 - Layout params, colors, density conversion, resources, and UI-thread dispatch
   are still missing.
 
