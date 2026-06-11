@@ -1191,6 +1191,41 @@ fn build_project(
     // The consumer's own `[link] search-paths` go first so `-L<dir>`
     // precedes any `-l<name>` (its own `[[bin]] libs` below, or a dep's).
     if let Some(ls) = m.link.as_ref() {
+        // v0.0.20 (W0003): a `[[bin]]` package's own `[link] libs`/`frameworks`
+        // are dead — the dep walk (`collect_dep_link_args`) reads a package's
+        // `[link]` libs/frameworks only when it is a *dependency* of another,
+        // and a `[[bin]]` package is never a dependency. Only `[link]
+        // search-paths` feed the binary's own link line (the `-L`/`-rpath`
+        // below). Warn rather than silently ignore; the build continues.
+        if !ls.libs.is_empty() || !ls.frameworks.is_empty() {
+            let mut what: Vec<&str> = Vec::new();
+            if !ls.libs.is_empty() {
+                what.push("libs");
+            }
+            if !ls.frameworks.is_empty() {
+                what.push("frameworks");
+            }
+            let what = what.join(" / ");
+            let d = diag::Diagnostic {
+                severity: Severity::Warning,
+                code: diag::DiagCode("W0003"),
+                message: format!(
+                    "`[link] {what}` on a `[[bin]]` package is ignored when building the binary"
+                ),
+                primary: diag::SourceSpan {
+                    file: manifest_path.clone(),
+                    start: diag::Position { line: 1, col: 1, byte: 0 },
+                    end: diag::Position { line: 1, col: 1, byte: 0 },
+                },
+                labels: Vec::new(),
+                notes: vec![
+                    "`[link] libs`/`frameworks` are read only when this package is a dependency of another package".to_string(),
+                    format!("move them to `[[bin]] {what}` to link them into this binary"),
+                ],
+                suggestions: Vec::new(),
+            };
+            emit_diag(&d, diag_mode, "");
+        }
         for dir in &ls.search_paths {
             link_args.push(format!("-L{dir}"));
             link_args.push(format!("-Wl,-rpath,{dir}"));

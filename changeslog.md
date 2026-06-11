@@ -3,6 +3,48 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.20 — (unreleased)
+
+### Agent surface (Theme B)
+- New `agent_consent` recipe: a reference consent middleware over `agent_core`'s
+  `AuthGate`. `decide(rules_dir, mode, agent_id, prompt)` resolves an agent in
+  three steps — a remembered per-agent rule (persisted to disk), a standing Mode
+  (allow-all / deny-all), else prompt the user and remember the answer — then
+  maps the result onto a real `AuthGate`. Closes the "ask-user + persisted
+  per-agent rules" residual; the gate itself stays a pure predicate.
+
+### Compiler
+- Fixed a `musttail` miscompile on arm64: a tail call returning a by-value
+  aggregate wider than 16 bytes (returned indirectly by AAPCS64) was marked
+  `musttail`, which LLVM's arm64 backend rejects ("failed to perform tail call
+  elimination on a call site marked musttail"). The >16-byte eligibility guard
+  was x86-64-only; it now applies on all targets. Surfaced building the
+  llama.cpp bindings (the 72-byte `llama_model_params` FFI return).
+- Closed the inferred-call half of the v0.0.19 monomorphization fix: an
+  inferred (no-turbofish) generic call resolved its concrete type-args through
+  `call_monos`, keyed by a file-less span, so two such calls at the same byte
+  offset in different files could select the wrong instantiation. `call_monos`
+  is now keyed by `(origin_file, span)`. (Turbofish calls were already
+  collision-free.)
+
+### Bindings
+- `llama_cpp` verified end to end: the `llama_cpp_smoke` recipe links against a
+  current llama.cpp via `${LLAMA_CPP_LIB}` and runs real text generation on the
+  Metal GPU (gemma-4-E2B). Closes the loop with the env-var portability change
+  and the arm64 `musttail` fix above.
+
+### Build / manifest
+- New W0003 warning: a `[[bin]]` package's own `[link] libs`/`frameworks` are
+  ignored when building the binary (those are read only when the package is a
+  *dependency*). The warning points to `[[bin]] libs`/`frameworks`, where a
+  binary's own libraries belong. The build still succeeds.
+- `[link].search-paths` and `[link].extra-objects` now expand `${VAR}` and
+  `${VAR:-default}` against the environment, so a binding can point at an
+  external SDK without baking an absolute path into the manifest. An unset
+  `${VAR}` with no fallback fails at parse time with E0865 naming the variable,
+  rather than an opaque linker error. `vendor/llama_cpp` reads `${LLAMA_CPP_LIB}`;
+  `vendor/cuda` reads `${CUDA_LIB:-/usr/local/cuda/lib64}`.
+
 ## v0.0.19 — 2026-06-09
 
 The agent surface reaches the GUI: a macOS app can expose itself to an external

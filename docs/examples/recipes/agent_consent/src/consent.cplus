@@ -1,0 +1,124 @@
+// docs/examples/recipes/agent_consent/src/consent.cplus
+//
+// Reference consent middleware over agent_core's AuthGate.
+//
+//   agent --> app --> consent::decide(...) --> (dialog --> user, if needed)
+//
+// AuthGate (agent_core/auth.cplus) is a pure predicate on purpose: a bare
+// `fn(Request) -> Decision`, no captured state, a channel-only Request. So the
+// stateful parts of consent -- the user's remembered choices and the app's
+// standing setting -- live HERE, in the consumer layer, exactly as the core
+// intends. `decide` resolves one agent's request in three steps:
+//
+//   1. a remembered per-agent rule (the user already chose; persisted to disk)
+//   2. the app's standing Mode (allow-all / deny-all)
+//   3. otherwise prompt the user, then remember the answer
+//
+// `prompt` is a bare fn the app supplies: a real app shows a dialog (e.g. an
+// NSAlert and blocks for the click); this recipe's test passes a preset. C+ has
+// no closures, so the prompt can't capture app state -- bake what it needs into
+// the fn, or reach it through a global, just like the policy fn.
+//
+// Persistence is deliberately trivial: one tiny file per agent under `rules_dir`
+// containing `allow` or `deny`. A granted agent is therefore not re-prompted on
+// the next run. `agent_id` is used verbatim as the file name, so callers pass a
+// filesystem-safe id (a PID, a uuid -- what agent_core/identity already hands
+// out); a real deployment would hash or namespace it.
+
+import "agent_core/auth" as auth;
+import "stdlib/fs" as fs;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+
+// The developer's standing setting (a global preference, not per agent).
+pub enum Mode {
+    AllowAll,
+    DenyAll,
+    Ask,
+}
+
+// `rules_dir` + "/" + `agent_id`, as an owned Text the caller can lend.
+fn rule_path(rules_dir: str, agent_id: str) -> text::Text {
+    let mut p: text::Text = text::from_str(rules_dir);
+    p.push_str("/");
+    p.push_str(agent_id);
+    return p;
+}
+
+// The remembered decision for `agent_id`, or None if the user has not chosen
+// one yet (no rule file). A rule file beginning with 'a' is Allow, anything
+// else is Reject.
+pub fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
+    let path: text::Text = rule_path(rules_dir, agent_id);
+    guard let result::Result[fs::File, result::IoError]::Ok(f) =
+        fs::open_read(unsafe { path.as_str() }) else {
+        return option::Option[auth::Decision]::None;
+    };
+    let mut fm: fs::File = f;
+    guard let result::Result[vec::Vec[u8], result::IoError]::Ok(bytes) =
+        fm.read_to_end() else {
+        return option::Option[auth::Decision]::None;
+    };
+    let first: u8 = match bytes.at(0 as usize) {
+        option::Option[*u8]::Some(p) => unsafe { *p },
+        option::Option[*u8]::None => 0 as u8,
+    };
+    if first == (97 as u8) {
+        return option::Option[auth::Decision]::Some(auth::Decision::Allow);
+    }
+    return option::Option[auth::Decision]::Some(auth::Decision::Reject);
+}
+
+// Persist the user's choice for `agent_id` so it is honored without a prompt on
+// the next request (and the next run). Best-effort: a write failure leaves the
+// agent un-remembered (it will be asked again), which is the safe direction.
+pub fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
+    let path: text::Text = rule_path(rules_dir, agent_id);
+    let word: str = match d {
+        auth::Decision::Allow => "allow",
+        auth::Decision::Reject => "deny",
+    };
+    guard let result::Result[fs::File, result::IoError]::Ok(f) =
+        fs::create(unsafe { path.as_str() }) else {
+        return;
+    };
+    let mut fm: fs::File = f;
+    let mut bytes: vec::Vec[u8] = vec::new::[u8]();
+    bytes.extend_from_raw(unsafe { #str_ptr(word) }, #str_len(word));
+    match fm.write_all(bytes) {
+        result::Result[usize, result::IoError]::Ok(_) => {}
+        result::Result[usize, result::IoError]::Err(_) => {}
+    }
+    return;
+}
+
+// The middleware: resolve one agent's request. This is the single function an
+// app's bridge calls before admitting an agent.
+//
+//   1. a remembered rule wins (no prompt);
+//   2. else the standing Mode decides (AllowAll / DenyAll, no prompt);
+//   3. else (Ask) prompt the user, remember the answer, and honor it.
+pub fn decide(
+    rules_dir: str,
+    mode: Mode,
+    agent_id: str,
+    prompt: fn(str) -> auth::Decision,
+) -> auth::Decision {
+    match recall(rules_dir, agent_id) {
+        option::Option[auth::Decision]::Some(d) => {
+            return d;
+        }
+        option::Option[auth::Decision]::None => {}
+    }
+    return match mode {
+        Mode::AllowAll => auth::Decision::Allow,
+        Mode::DenyAll => auth::Decision::Reject,
+        Mode::Ask => {
+            let chosen: auth::Decision = prompt(agent_id);
+            remember(rules_dir, agent_id, chosen);
+            chosen
+        }
+    };
+}

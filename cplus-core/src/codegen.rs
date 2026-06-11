@@ -8187,33 +8187,39 @@ impl<'a> FnState<'a> {
                                         let callee_is_fastcc = self.md.is_fastcc(name);
                                         let cc_matches =
                                             callee_is_fastcc == self.enclosing_is_fastcc;
-                                        // Target guard: x86-64 cannot guarantee
-                                        // a tail call that returns a by-value
-                                        // aggregate wider than the 16-byte
-                                        // System V register-return window — the
-                                        // value comes back in memory and LLVM's
-                                        // backend aborts with "failed to perform
-                                        // tail call elimination on a call site
-                                        // marked musttail". (sret returns go
-                                        // through a separate void-return path and
-                                        // are unaffected.) arm64/AArch64 — the
-                                        // macOS target — has no such limit, so we
-                                        // only relax `musttail` on x86-64 and
-                                        // leave the macOS code path byte-for-byte
-                                        // identical. `musttail` is a TCO
-                                        // optimization here, never a correctness
-                                        // requirement, so falling back to a plain
-                                        // `call` is always safe.
-                                        let tail_return_ok = if cfg!(target_arch = "x86_64")
-                                            && !return_passes_by_sret_widened(
-                                                &self.return_ty,
-                                                self.types,
-                                            ) {
+                                        // Target guard: a tail call that returns
+                                        // a *by-value* aggregate wider than the
+                                        // 16-byte register-return window cannot
+                                        // be musttail — the value comes back in
+                                        // memory and LLVM's backend aborts with
+                                        // "failed to perform tail call elimination
+                                        // on a call site marked musttail". This
+                                        // holds on BOTH x86-64 System V and
+                                        // arm64 AAPCS64 (both return >16B
+                                        // aggregates indirectly); an earlier
+                                        // version gated this on x86-64 only, on
+                                        // the assumption arm64 had no such limit,
+                                        // but a >16B C-struct FFI return on
+                                        // arm64-darwin (llama.cpp's
+                                        // `llama_model_params`) proved otherwise.
+                                        // Returns cpc lowers to an explicit sret
+                                        // param go through a separate void-return
+                                        // musttail path (Slice 1D) and forward the
+                                        // caller's slot, so they ARE eligible —
+                                        // `return_passes_by_sret_widened` keeps
+                                        // them on the `true` branch. `musttail`
+                                        // is a TCO optimization here, never a
+                                        // correctness requirement, so falling back
+                                        // to a plain `call` is always safe.
+                                        let tail_return_ok = if return_passes_by_sret_widened(
+                                            &self.return_ty,
+                                            self.types,
+                                        ) {
+                                            true
+                                        } else {
                                             static_layout(&self.return_ty, self.types)
                                                 .map(|(sz, _)| sz <= 16)
                                                 .unwrap_or(true)
-                                        } else {
-                                            true
                                         };
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
@@ -17877,6 +17883,51 @@ mod tests {
         assert!(
             !ir.contains("musttail call fastcc i64 @long_id"),
             "i64 fn must not appear as musttail from i32-returning caller, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn large_by_value_aggregate_return_does_not_use_musttail() {
+        // Regression: a tail call returning a *by-value* aggregate wider than
+        // the 16-byte register-return window cannot be musttail — both x86-64
+        // System V and arm64 AAPCS64 return it indirectly (in memory), and
+        // LLVM's backend aborts with "failed to perform tail call elimination
+        // on a call site marked musttail". This bit arm64-darwin specifically
+        // (the size guard used to be x86-64-only, on the wrong assumption that
+        // arm64 had no such limit); surfaced by llama.cpp's 72-byte
+        // `llama_model_params` FFI return.
+        let ir = gen_src(
+            "struct Big { a: i64, b: i64, c: i64 }\n\
+             fn make_big() -> Big { return Big { a: 1, b: 2, c: 3 }; }\n\
+             fn wrap() -> Big { return make_big(); }\n\
+             fn main() -> i32 { let b: Big = wrap(); return b.a as i32; }",
+        );
+        // wrap() returns the 24-byte Big by value; its tail call must be a
+        // plain `call`, never `musttail`.
+        assert!(
+            ir.contains("call fastcc %Big @make_big"),
+            "expected a call to make_big, got:\n{ir}"
+        );
+        assert!(
+            !ir.contains("musttail call fastcc %Big @make_big"),
+            ">16B by-value aggregate return must NOT be musttail, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn small_by_value_aggregate_return_still_uses_musttail() {
+        // Boundary companion to the test above: a 16-byte Copy aggregate fits
+        // the register-return window on both targets, so the tail call stays
+        // musttail. Guards against the >16B fix over-restricting small returns.
+        let ir = gen_src(
+            "struct Pair { a: i64, b: i64 }\n\
+             fn make_pair() -> Pair { return Pair { a: 4, b: 5 }; }\n\
+             fn wrap() -> Pair { return make_pair(); }\n\
+             fn main() -> i32 { let p: Pair = wrap(); return p.a as i32; }",
+        );
+        assert!(
+            ir.contains("musttail call fastcc %Pair @make_pair"),
+            "<=16B by-value aggregate return should still be musttail, got:\n{ir}"
         );
     }
 

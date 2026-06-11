@@ -1,0 +1,12 @@
+[package]
+name    = "agent_consent"
+version = "0.0.1"
+edition = "2026"
+
+[[bin]]
+name = "agent_consent"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib     = "*"
+agent_core = "*"

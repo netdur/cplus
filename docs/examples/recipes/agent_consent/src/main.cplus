@@ -1,0 +1,100 @@
+// agent_consent — a reference consent middleware for the agent surface.
+//
+// The flow a developer wires up:
+//
+//   agent --> app --> consent::decide(...) --> (dialog --> user, if needed)
+//
+// agent_core's `AuthGate` is a pure yes/no predicate with no memory. The
+// real-world parts -- "did the user already allow this agent?", a standing
+// "allow everything / deny everything" setting, and "ask the user" -- live in
+// this consumer-side middleware (`consent.cplus`). This program drives it
+// through the three paths and then maps the result onto a real `AuthGate`.
+//
+// It prints one line and exits (distinct non-zero codes mark a failed step), so
+// it runs headless with no GUI. A real app supplies a `prompt` that shows an
+// NSAlert and returns the user's click.
+
+import "agent_core/auth" as auth;
+import "stdlib/option" as option;
+import "./consent" as consent;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+
+fn print_line(s: str) {
+    unsafe { write(1 as i32, #str_ptr(s), #str_len(s)); }
+    let nl: u8 = 10 as u8;
+    unsafe { write(1 as i32, #addr_of(nl), 1 as usize); }
+    return;
+}
+
+// How many times a dialog was shown. An app's real prompt would block on an
+// NSAlert; here we count so the test can prove a remembered rule short-circuits.
+static mut PROMPTS: i32 = 0;
+
+// A preset "dialog" that the user answers Allow.
+fn prompt_allow(agent_id: str) -> auth::Decision {
+    unsafe { PROMPTS = PROMPTS +% (1 as i32); }
+    return auth::Decision::Allow;
+}
+
+// A prompt that must NEVER run: if a remembered rule or a standing Mode already
+// decided, the middleware must not reach the dialog. Calling it poisons the
+// count so the next assertion fails.
+fn prompt_never(agent_id: str) -> auth::Decision {
+    unsafe { PROMPTS = PROMPTS +% (100 as i32); }
+    return auth::Decision::Reject;
+}
+
+// The bare policy installed once consent has admitted an agent.
+fn allow_policy(req: auth::Request) -> auth::Decision {
+    return auth::Decision::Allow;
+}
+
+fn main() -> i32 {
+    // Rules persist as one file per agent under the current directory.
+    let dir: str = ".";
+
+    // 1. First contact with "alice" in Ask mode: no rule yet -> the dialog is
+    //    shown -> the user Allows -> the choice is remembered.
+    let d1: auth::Decision = consent::decide(dir, consent::Mode::Ask, "consent_alice", prompt_allow);
+    if !auth::decision_eq(d1, auth::Decision::Allow) { return 10; }
+    if unsafe { PROMPTS } != (1 as i32) { return 11; }
+
+    // 2. "alice" again: the remembered rule wins WITHOUT prompting. We pass the
+    //    poison prompt to prove the dialog is not reached.
+    let d2: auth::Decision = consent::decide(dir, consent::Mode::Ask, "consent_alice", prompt_never);
+    if !auth::decision_eq(d2, auth::Decision::Allow) { return 12; }
+    if unsafe { PROMPTS } != (1 as i32) { return 13; }
+
+    // 3. New agent "mallory" under a standing DenyAll: rejected, no prompt.
+    let d3: auth::Decision = consent::decide(dir, consent::Mode::DenyAll, "consent_mallory", prompt_never);
+    if !auth::decision_eq(d3, auth::Decision::Reject) { return 14; }
+    if unsafe { PROMPTS } != (1 as i32) { return 15; }
+
+    // 4. New agent "carol" under a standing AllowAll: allowed, no prompt.
+    let d4: auth::Decision = consent::decide(dir, consent::Mode::AllowAll, "consent_carol", prompt_never);
+    if !auth::decision_eq(d4, auth::Decision::Allow) { return 16; }
+    if unsafe { PROMPTS } != (1 as i32) { return 17; }
+
+    // 5. The recall path is durable on its own (independent of the cache above):
+    //    "alice" is remembered as Allow.
+    match consent::recall(dir, "consent_alice") {
+        option::Option[auth::Decision]::Some(d) => {
+            if !auth::decision_eq(d, auth::Decision::Allow) { return 18; }
+        }
+        option::Option[auth::Decision]::None => { return 19; }
+    }
+
+    // 6. Map the admitted decision onto a real agent_core AuthGate.
+    let gate: auth::AuthGate = if auth::decision_eq(d1, auth::Decision::Allow) {
+        auth::serve(allow_policy)
+    } else {
+        auth::deny_all()
+    };
+    if !auth::decision_eq(gate.check(auth::request(auth::Channel::External)), auth::Decision::Allow) {
+        return 20;
+    }
+
+    print_line("consent middleware OK: remembered rule + standing mode + prompt-and-persist");
+    return 0;
+}

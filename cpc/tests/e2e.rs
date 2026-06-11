@@ -242,6 +242,60 @@ fn monomorphize_turbofish_same_offset_no_collision() {
     assert_eq!(run.code(), Some(2), "got {:?}", run.code());
 }
 
+// v0.0.20: the inferred (no-turbofish) companion to the test above. An
+// inferred generic call has no AST type-args, so monomorphize resolves it
+// via `call_monos` — which used to be keyed by a file-less `ByteSpan`. Two
+// inferred `g::id(v)` calls at the SAME byte offset in different files (modA
+// infers `id[i32]`, modB infers `id[i64]`) collided: modA's call picked up
+// modB's `[i64]`, emitting `call i32 ... @id__i64(i32 ...)` — a type
+// mismatch clang rejects. The fix keys `call_monos` by `(origin_file, span)`.
+// modA/modB are byte-identical except `i32`<->`i64` and `fa`<->`fb` (equal
+// lengths), so the calls share an offset; the program must build and return
+// 2 (fa()=1 + fb()=1).
+#[test]
+fn monomorphize_inferred_same_offset_no_collision() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"infer_span\"\n\n[[bin]]\nname = \"infer_span\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/idlib.cplus"),
+        "pub fn id[T](x: T) -> T { return x; }\n",
+    )
+    .unwrap();
+    let mod_a = "import \"./idlib\" as g;\n\
+                 pub fn fa() -> i32 { let v: i32 = 1; return g::id(v); }\n";
+    std::fs::write(dir.join("src/modA.cplus"), mod_a).unwrap();
+    // Byte-identical except the 3-char type name and 2-char fn name → the
+    // inferred `g::id(v)` calls share a byte offset.
+    std::fs::write(
+        dir.join("src/modB.cplus"),
+        mod_a.replace("fa", "fb").replace("i32", "i64"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./modA\" as ma;\n\
+         import \"./modB\" as mb;\n\
+         fn main() -> i32 { return (ma::fa() +% (mb::fb() as i32)); }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "same-offset inferred build failed: {status}");
+    let run = Command::new(dir.join("target/debug/infer_span"))
+        .status()
+        .expect("run infer_span");
+    assert_eq!(run.code(), Some(2), "got {:?}", run.code());
+}
+
 #[test]
 fn diagnostics_json_emits_ndjson() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -4310,6 +4364,48 @@ fn main() -> i32 {
     let run = Command::new(&bin).output().expect("run binary");
     // dot(a,b)=32>0 so check is true; reflect = a - 64*b, r.x = -255 < 0.
     assert_eq!(run.status.code(), Some(0), "expected the happy-path exit 0");
+}
+
+#[test]
+fn musttail_large_by_value_aggregate_return_compiles_and_runs() {
+    // Regression: `return make_big();` where Big is a >16-byte Copy struct
+    // returned by value. Such a return is ABI-indirect (in memory) on BOTH
+    // x86-64 SysV and arm64 AAPCS64, so the tail call cannot be `musttail` —
+    // LLVM's backend aborts with "failed to perform tail call elimination on
+    // a call site marked musttail". The eligibility guard used to apply the
+    // >16B size check only on x86-64, so arm64-darwin emitted an illegal
+    // musttail and clang's backend failed. Surfaced building the llama.cpp
+    // bindings (the 72-byte `llama_model_params` return). Must compile and run.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    let bin = dir.join("t");
+    std::fs::write(
+        &src,
+        "\
+struct Big { a: i64, b: i64, c: i64 }
+fn make_big() -> Big { return Big { a: 1, b: 2, c: 3 }; }
+fn wrap() -> Big { return make_big(); }
+fn main() -> i32 {
+    let b: Big = wrap();
+    return (b.a + b.b + b.c) as i32;
+}
+",
+    )
+    .unwrap();
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        compile.status.success(),
+        ">16B by-value aggregate tail-call return must compile (no musttail backend abort); stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run binary");
+    assert_eq!(run.status.code(), Some(6), "expected 1+2+3 == 6");
 }
 
 #[test]
@@ -8422,6 +8518,44 @@ fn dep_link_table_libs_flow_through_to_linker() {
 }
 
 #[test]
+fn bin_package_link_libs_warns_w0003() {
+    // v0.0.20 (W0003): a `[[bin]]` package's own `[link] libs`/`frameworks`
+    // are dead (read only when the package is a *dependency*). Declaring them
+    // must warn and point to `[[bin]] libs`, but the build still succeeds
+    // (the entries are simply ignored — here `boguslib` would not resolve if
+    // it were actually passed to the linker).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[link]\nlibs = [\"boguslib\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "build must succeed (the dead [link] libs are ignored, not linked); stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("W0003"), "expected W0003 warning, got: {stderr}");
+    assert!(
+        stderr.contains("[[bin]] libs"),
+        "warning should point to `[[bin]] libs`: {stderr}"
+    );
+}
+
+#[test]
 fn dep_walk_links_bundled_static_lib_end_to_end() {
     // Full bundled-artifact path: vendor ships a real `.a` at
     // `src/lib/<host>/libtiny.a`; consumer's C+ source declares an extern
@@ -8493,6 +8627,87 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
         .status()
         .expect("run");
     assert_eq!(run.code(), Some(42), "expected tiny::double(21) == 42");
+}
+
+#[test]
+fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
+    // v0.0.20: a `[link]` path may reference `${VAR}` so a vendor binding can
+    // point at an external SDK via the environment instead of a hardcoded
+    // absolute path. Build a `.o` into an out-of-tree dir, point a dep's
+    // `extra-objects` at it through `${CPLUS_E2E_OBJDIR}`, and confirm the
+    // dep walk expands the var and links the object. Uses an object file
+    // (not `-l<name>`) so the test is portable: no platform archive-naming.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    // 1. Compile a tiny object into an `objs/` subdir (not the manifest root).
+    let objs_dir = dir.join("objs");
+    std::fs::create_dir_all(&objs_dir).unwrap();
+    let c_src = dir.join("extra_src.c");
+    std::fs::write(&c_src, "int extra_answer(void) { return 7; }\n").unwrap();
+    let obj = objs_dir.join("extra.o");
+    let cc = Command::new("clang")
+        .arg("-c")
+        .arg(&c_src)
+        .arg("-o")
+        .arg(&obj)
+        .status()
+        .expect("invoke clang -c");
+    assert!(cc.success(), "clang -c on extra_src.c failed");
+
+    // 2. Vendor manifest references the object via an env var.
+    std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/Cplus.toml"),
+        "[package]\nname = \"mathy\"\n\n[link]\nextra-objects = [\"${CPLUS_E2E_OBJDIR}/extra.o\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/mathy/src/api.cplus"),
+        "pub fn answer() -> i32 { return unsafe { extra_answer() }; }\n\
+         extern fn extra_answer() -> i32;\n",
+    )
+    .unwrap();
+
+    // 3. Consumer.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nmathy = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mathy/api\" as m;\nfn main() -> i32 { return m::answer(); }\n",
+    )
+    .unwrap();
+
+    // 4. Build with CPLUS_E2E_OBJDIR set in the child env (no global mutation).
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .env("CPLUS_E2E_OBJDIR", objs_dir.to_string_lossy().into_owned())
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "build with ${{CPLUS_E2E_OBJDIR}} set should link");
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(7), "expected extra_answer() == 7");
+
+    // 5. Same build with the var UNSET → E0865 before reaching the linker.
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .env_remove("CPLUS_E2E_OBJDIR")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "build must fail when the var is unset");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0865"), "expected E0865, got: {stderr}");
+    assert!(
+        stderr.contains("CPLUS_E2E_OBJDIR"),
+        "diagnostic should name the variable: {stderr}"
+    );
 }
 
 #[test]
@@ -16822,6 +17037,60 @@ fn agent_mcp_run(pkg: &str, program: &str) {
     let bin = dir.join(format!("target/debug/{pkg}"));
     let run = Command::new(bin).status().expect("run program");
     assert!(run.success(), "{pkg} exited non-zero: {:?}", run.code());
+}
+
+/// Theme B residual (v0.0.20): the `agent_consent` reference middleware over
+/// agent_core's `AuthGate`. Drives the three decision paths end to end — a
+/// remembered per-agent rule, a standing `Mode` (allow-all / deny-all), and
+/// prompt-and-persist — plus durable recall and mapping the result onto a real
+/// `AuthGate`. The recipe's own source is compiled (via `include_str!`) so the
+/// test and the shipped recipe cannot drift. `main.cplus` returns distinct
+/// non-zero codes per failed step; 0 means every path behaved.
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_consent_middleware_three_paths() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"agent_consent\"\n\n[[bin]]\nname = \"agent_consent\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nagent_core = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/consent.cplus"),
+        include_str!("../../docs/examples/recipes/agent_consent/src/consent.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        include_str!("../../docs/examples/recipes/agent_consent/src/main.cplus"),
+    )
+    .unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    for p in ["stdlib", "agent_core"] {
+        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p)).unwrap();
+    }
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "agent_consent build failed: {status}");
+    // Run inside the tempdir: the program persists per-agent rule files under
+    // its cwd (`.`), so it must run sandboxed or the files leak into the repo
+    // and a remembered rule skips the first-contact prompt on the next run.
+    let run = Command::new(dir.join("target/debug/agent_consent"))
+        .current_dir(&dir)
+        .status()
+        .expect("run agent_consent");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "consent middleware failed at step code {:?}",
+        run.code()
+    );
 }
 
 /// Theme B (v0.0.19): the `agent_mcp` JSON-RPC protocol core. Drives a live

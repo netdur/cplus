@@ -471,7 +471,20 @@ pub fn check(program: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {
 #[derive(Debug, Default, Clone)]
 pub struct MonoInfo {
     pub instantiations: std::collections::BTreeSet<(String, Vec<Ty>)>,
-    pub call_monos: HashMap<ByteSpan, Vec<Ty>>,
+    /// Maps each generic-fn call site to its concrete arg list. Keyed by
+    /// `(origin_file, span)`: a `ByteSpan` is file-less (`{start, end}`
+    /// byte offsets), so two inferred generic calls at the same byte offset
+    /// in different files would otherwise collide and select the wrong
+    /// instantiation. The file component (sema's `current_file` at record
+    /// time; the rewriter's per-item `call_mono_file` at lookup time)
+    /// disambiguates them. Turbofish calls don't consult this map — they
+    /// mangle directly from the AST type-args (collision-free).
+    pub call_monos: HashMap<(Option<String>, ByteSpan), Vec<Ty>>,
+    /// Rewriter scratch (monomorphize only): the `origin_file` of the item
+    /// currently being rewritten, set per-item so the `call_monos` lookup
+    /// can supply the matching file component. Interior-mutable because the
+    /// rewriter threads `&MonoInfo` everywhere; never read by sema.
+    pub call_mono_file: std::cell::RefCell<Option<String>>,
     /// Slice 7GEN.5c: generic-struct instantiations. Maps
     /// `(generic_name, [concrete_args])` to the synthesized
     /// `StructDef` (cloned out of sema's table so monomorphize can
@@ -859,6 +872,7 @@ fn check_with_files_inner<'a>(
     let mono = MonoInfo {
         instantiations: std::mem::take(&mut cx.fn_instantiations),
         call_monos: std::mem::take(&mut cx.call_monos),
+        call_mono_file: std::cell::RefCell::new(None),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
         struct_instantiations,
         enum_instantiations,
@@ -1056,8 +1070,10 @@ struct SemaCx<'a> {
     /// Slice 7GEN.5a: per-call-site mapping from a generic call's span
     /// to the inferred concrete type-arguments. The monomorphize pass
     /// looks up each `Call` node by span to pick the right mangled
-    /// callee name.
-    call_monos: HashMap<ByteSpan, Vec<Ty>>,
+    /// callee name. Keyed by `(origin_file, span)` so same-offset call
+    /// sites in different files don't collide (a `ByteSpan` is file-less);
+    /// the file component is `current_file` at record time.
+    call_monos: HashMap<(Option<String>, ByteSpan), Vec<Ty>>,
     /// v0.0.4 Phase 1C: `Type[args]::name(...)` call sites that resolved
     /// to a free generic fn (not an impl method). Maps the
     /// `GenericEnumCall`'s span to the qualified free fn name sema
@@ -8841,7 +8857,8 @@ impl SemaCx<'_> {
             );
             self.fn_instantiations
                 .insert((name.to_string(), concrete_args.clone()));
-            self.call_monos.insert(call_span, concrete_args.clone());
+            self.call_monos
+            .insert((self.current_file.clone(), call_span), concrete_args.clone());
             return self.subst_ty_deep(&gsig.return_type, &subst);
         }
         // Infer concrete types per param position, then unify.
@@ -8899,7 +8916,8 @@ impl SemaCx<'_> {
         // monomorphize pass; sema only records the concrete args.
         self.fn_instantiations
             .insert((name.to_string(), concrete_args.clone()));
-        self.call_monos.insert(call_span, concrete_args.clone());
+        self.call_monos
+            .insert((self.current_file.clone(), call_span), concrete_args.clone());
         // Substitute the return type and return it as the call's type.
         self.subst_ty_deep(&gsig.return_type, &subst)
     }
@@ -9455,7 +9473,8 @@ impl SemaCx<'_> {
         );
         let key = (struct_id, name.name.clone(), arg_tys.clone());
         self.method_instantiations.insert(key);
-        self.call_monos.insert(call_span, arg_tys);
+        self.call_monos
+            .insert((self.current_file.clone(), call_span), arg_tys);
         self.subst_ty_deep(&sig.return_type, &subst)
     }
 

@@ -6,13 +6,20 @@ edition = "2026"
 # C+ bindings for upstream llama.cpp's C API.
 #
 # Raw FFI is generated from `upstream/llama_cplus.h` and
-# `upstream/mtmd_cplus.h` with cpc-bindgen. The default search path matches
-# this workstation's local llama.cpp checkout; edit it if your build lives
-# elsewhere.
+# `upstream/mtmd_cplus.h` with cpc-bindgen.
+#
+# llama.cpp has no standard install location, so point cpc at your build's
+# library directory via the LLAMA_CPP_LIB environment variable, e.g.
+#
+#   export LLAMA_CPP_LIB="$HOME/Workspace/llama.cpp/build/bin"
+#
+# `cpc build` expands `${LLAMA_CPP_LIB}` below into the `-L` / `-rpath` link
+# args; if it is unset you get a clear E0865 telling you to set it (rather
+# than an opaque "library not found" from the linker).
 [link]
 frameworks    = ["Foundation", "Metal", "Accelerate"]
 libs          = ["llama", "mtmd"]
-search-paths  = ["/Users/adel/Workspace/llama.cpp/build/bin"]
+search-paths  = ["${LLAMA_CPP_LIB}"]
 
 [dependencies]
 stdlib = "*"

@@ -215,6 +215,16 @@ pub enum ManifestError {
     BundledRequiresTriples {
         path: PathBuf,
     },
+    /// v0.0.20 (E0865): a `${VAR}` reference in `[link].search-paths` or
+    /// `[link].extra-objects` could not be expanded — the variable is unset
+    /// and no `:-default` fallback was given (or the `${...}` is malformed).
+    /// Lets vendor manifests point at an external SDK via the environment
+    /// instead of a hardcoded absolute path.
+    EnvExpansion {
+        path: PathBuf,
+        entry: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for ManifestError {
@@ -252,6 +262,9 @@ impl fmt::Display for ManifestError {
             ManifestError::BundledRequiresTriples { path } => {
                 write!(f, "manifest {}: `[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples the binaries are built for", path.display())
             }
+            ManifestError::EnvExpansion { path, entry, message } => {
+                write!(f, "manifest {}: cannot expand `{entry}`: {message}", path.display())
+            }
         }
     }
 }
@@ -272,7 +285,8 @@ impl ManifestError {
             | ManifestError::BinAndLibConflict { path }
             | ManifestError::UnsupportedCrateType { path, .. }
             | ManifestError::InvalidDependencyName { path, .. }
-            | ManifestError::BundledRequiresTriples { path } => path.clone(),
+            | ManifestError::BundledRequiresTriples { path }
+            | ManifestError::EnvExpansion { path, .. } => path.clone(),
         };
         let primary = SourceSpan {
             file: path.clone(),
@@ -330,6 +344,10 @@ impl ManifestError {
             ManifestError::BundledRequiresTriples { .. } => (
                 "E0863",
                 "`[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples your bundled binaries are built for (e.g. `triples = [\"aarch64-apple-darwin\"]`)".to_string(),
+            ),
+            ManifestError::EnvExpansion { entry, message, .. } => (
+                "E0865",
+                format!("cannot expand `{entry}` in `[link]`: {message}"),
             ),
         };
         Diagnostic {
@@ -554,18 +572,23 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                     path: manifest_path.to_path_buf(),
                 });
             }
+            // v0.0.20: expand `${VAR}` / `${VAR:-default}` in path entries
+            // before resolving, so a vendor binding can point at an external
+            // SDK via the environment instead of a hardcoded absolute path.
             // v0.0.9 Phase 8 (cpc-gaps G-001): resolve each extra-object
             // path relative to the manifest directory. We don't check
             // file existence at parse time — that happens at link time
             // (E0864) so the diagnostic carries the full link context.
             let extra_objects: Vec<PathBuf> =
-                rl.extra_objects.into_iter().map(|p| root.join(p)).collect();
+                expand_link_entries(rl.extra_objects, manifest_path)?
+                    .into_iter()
+                    .map(|p| root.join(p))
+                    .collect();
             // Resolve each search path against the manifest dir. `join` is
             // a no-op for absolute inputs (the common case — system SDK
             // dirs like /usr/local/cuda/lib64), so this only rewrites
             // relative entries.
-            let search_paths: Vec<String> = rl
-                .search_paths
+            let search_paths: Vec<String> = expand_link_entries(rl.search_paths, manifest_path)?
                 .into_iter()
                 .map(|p| root.join(p).to_string_lossy().into_owned())
                 .collect();
@@ -620,6 +643,75 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         root,
         realtime_profile,
     })
+}
+
+/// v0.0.20: expand `${VAR}` / `${VAR:-default}` references in a manifest
+/// `[link]` path entry against `lookup` (the process environment, in
+/// production). Lets a vendor binding point at an external SDK via the
+/// environment instead of baking one workstation's absolute path into the
+/// manifest. Plain text passes through untouched; a bare `$` not followed by
+/// `{` is literal. Returns `Err(message)` on a malformed `${...}` (no closing
+/// `}`) or an unset variable with no `:-default` fallback.
+///
+/// `lookup` is injected (rather than calling `std::env` directly) so the
+/// expansion logic is unit-testable without mutating process-global state.
+fn expand_env_vars(
+    input: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, String> {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(dollar) = rest.find("${") {
+        out.push_str(&rest[..dollar]);
+        let after = &rest[dollar + 2..];
+        let close = after
+            .find('}')
+            .ok_or_else(|| "unterminated `${` (missing closing `}`)".to_string())?;
+        let spec = &after[..close];
+        // `${VAR}` or `${VAR:-fallback}` (shell-style default).
+        let (var, default) = match spec.split_once(":-") {
+            Some((v, d)) => (v.trim(), Some(d)),
+            None => (spec.trim(), None),
+        };
+        if var.is_empty() {
+            return Err("empty variable name in `${...}`".to_string());
+        }
+        match lookup(var) {
+            Some(val) => out.push_str(&val),
+            None => match default {
+                Some(d) => out.push_str(d),
+                None => {
+                    return Err(format!(
+                        "environment variable `{var}` is not set (set it, or supply a fallback with `${{{var}:-/default/path}}`)"
+                    ))
+                }
+            },
+        }
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Expand every entry of a `[link]` path list against the process
+/// environment, surfacing the offending entry in the error so the
+/// diagnostic is actionable.
+fn expand_link_entries(
+    entries: Vec<String>,
+    manifest_path: &Path,
+) -> Result<Vec<String>, ManifestError> {
+    let lookup = |k: &str| std::env::var(k).ok();
+    entries
+        .into_iter()
+        .map(|entry| match expand_env_vars(&entry, &lookup) {
+            Ok(expanded) => Ok(expanded),
+            Err(message) => Err(ManifestError::EnvExpansion {
+                path: manifest_path.to_path_buf(),
+                entry,
+                message,
+            }),
+        })
+        .collect()
 }
 
 /// Phase 2: dep names must match `[a-z][a-z0-9_]*` so the first segment
@@ -1090,6 +1182,166 @@ mod tests {
         assert_eq!(
             link.search_paths[1],
             m.root.join("vendored/lib").to_string_lossy()
+        );
+    }
+
+    // ---- v0.0.20: `${VAR}` / `${VAR:-default}` expansion in `[link]` paths ----
+
+    #[test]
+    fn expand_env_vars_plain_text_passthrough() {
+        let none = |_: &str| None;
+        assert_eq!(
+            expand_env_vars("/usr/local/lib", &none).unwrap(),
+            "/usr/local/lib"
+        );
+        // A bare `$` not followed by `{` is literal — only `${...}` is special.
+        assert_eq!(
+            expand_env_vars("/opt/$HOME/lib", &none).unwrap(),
+            "/opt/$HOME/lib"
+        );
+    }
+
+    #[test]
+    fn expand_env_vars_substitutes_set_variable() {
+        let lookup = |k: &str| (k == "SDK").then(|| "/opt/sdk".to_string());
+        assert_eq!(expand_env_vars("${SDK}/lib", &lookup).unwrap(), "/opt/sdk/lib");
+        // Multiple references in one entry all expand.
+        assert_eq!(
+            expand_env_vars("${SDK}/lib:${SDK}/bin", &lookup).unwrap(),
+            "/opt/sdk/lib:/opt/sdk/bin"
+        );
+    }
+
+    #[test]
+    fn expand_env_vars_default_used_when_unset() {
+        let none = |_: &str| None;
+        assert_eq!(
+            expand_env_vars("${SDK:-/usr/local/cuda/lib64}", &none).unwrap(),
+            "/usr/local/cuda/lib64"
+        );
+        // A set value wins over the `:-default`.
+        let set = |k: &str| (k == "SDK").then(|| "/opt/sdk".to_string());
+        assert_eq!(
+            expand_env_vars("${SDK:-/fallback}", &set).unwrap(),
+            "/opt/sdk"
+        );
+    }
+
+    #[test]
+    fn expand_env_vars_unset_no_default_errors() {
+        let none = |_: &str| None;
+        let err = expand_env_vars("${MISSING_SDK}/lib", &none).unwrap_err();
+        assert!(err.contains("MISSING_SDK"), "error names the variable: {err}");
+    }
+
+    #[test]
+    fn expand_env_vars_malformed_errors() {
+        let none = |_: &str| None;
+        // Unterminated `${`.
+        assert!(expand_env_vars("${SDK/lib", &none).is_err());
+        assert!(expand_env_vars("${", &none).is_err());
+        // Empty variable name.
+        assert!(expand_env_vars("${}", &none).is_err());
+        assert!(expand_env_vars("${:-x}", &none).is_err());
+    }
+
+    #[test]
+    fn link_search_paths_expand_env_var_through_parse() {
+        // End-to-end: `${VAR}` in search-paths is expanded against the process
+        // environment during parse(). Unique var name avoids cross-test races.
+        // "Absolute" is platform-specific (see link_search_paths_parse), so an
+        // absolute value passes through root.join unchanged on each OS.
+        let var = "CPLUS_TEST_LLAMA_LIB_X1";
+        let abs = if cfg!(windows) {
+            "C:/llama/build/bin"
+        } else {
+            "/opt/llama/build/bin"
+        };
+        std::env::set_var(var, abs);
+        let text = format!(
+            "
+            [package]
+            name = \"llama_cpp\"
+
+            [link]
+            libs         = [\"llama\"]
+            search-paths = [\"${{{var}}}\"]
+        "
+        );
+        let parsed = parse_in(&std::env::temp_dir(), &text);
+        std::env::remove_var(var);
+        let m = parsed.unwrap();
+        let link = m.link.expect("expected [link]");
+        assert_eq!(link.search_paths[0], abs);
+    }
+
+    #[test]
+    fn link_search_paths_env_default_fallback_through_parse() {
+        // `${VAR:-default}` with VAR unset resolves to the default — this is
+        // how vendor/cuda keeps `/usr/local/cuda/lib64` as a sane default
+        // while staying overridable via the environment.
+        let abs = if cfg!(windows) {
+            "C:/cuda/lib64"
+        } else {
+            "/usr/local/cuda/lib64"
+        };
+        let text = format!(
+            "
+            [package]
+            name = \"cuda\"
+
+            [link]
+            search-paths = [\"${{CPLUS_UNSET_CUDA_LIB_Z7:-{abs}}}\"]
+        "
+        );
+        let m = parse_in(&std::env::temp_dir(), &text).unwrap();
+        let link = m.link.unwrap();
+        assert_eq!(link.search_paths[0], abs);
+    }
+
+    #[test]
+    fn link_search_paths_unset_env_var_rejected_e0865() {
+        // No default + unset var → E0865 at parse time, naming the offending
+        // entry so the user knows which variable to set.
+        let text = "
+            [package]
+            name = \"x\"
+
+            [link]
+            search-paths = [\"${CPLUS_DEFINITELY_UNSET_VAR_Q9}/lib\"]
+        ";
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        match &err {
+            ManifestError::EnvExpansion { entry, .. } => {
+                assert!(entry.contains("CPLUS_DEFINITELY_UNSET_VAR_Q9"));
+            }
+            other => panic!("expected EnvExpansion, got {other:?}"),
+        }
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0865"));
+    }
+
+    #[test]
+    fn link_extra_objects_also_expand_env_vars() {
+        // extra-objects are paths too, so they get the same treatment.
+        let var = "CPLUS_TEST_OBJ_DIR_K3";
+        let abs = if cfg!(windows) { "C:/objs" } else { "/opt/objs" };
+        std::env::set_var(var, abs);
+        let text = format!(
+            "
+            [package]
+            name = \"x\"
+
+            [link]
+            extra-objects = [\"${{{var}}}/startup.o\"]
+        "
+        );
+        let parsed = parse_in(&std::env::temp_dir(), &text);
+        std::env::remove_var(var);
+        let m = parsed.unwrap();
+        let link = m.link.unwrap();
+        assert_eq!(
+            link.extra_objects[0].to_string_lossy(),
+            format!("{abs}/startup.o")
         );
     }
 
