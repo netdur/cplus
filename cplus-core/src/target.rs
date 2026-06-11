@@ -112,6 +112,13 @@ pub struct TargetSpec {
     pub apple_sdk: Option<&'static str>,
     pub handoff: Handoff,
     pub toolchain: ToolchainKind,
+    /// stdlib modules excluded from this target's package profile —
+    /// modules whose mechanism does not exist there (kqueue/epoll
+    /// reactor, pthreads, process environment). Importing one fails at
+    /// resolve time with E0866 instead of reaching the IR verifier.
+    /// Includes their stdlib-internal consumers (executor/time/fs reach
+    /// the reactor through relative imports).
+    pub unsupported_stdlib: &'static [&'static str],
 }
 
 /// The host target: everything `--target`-less compilation did before
@@ -146,6 +153,7 @@ pub const HOST: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::HostLink,
     toolchain: ToolchainKind::HostClang,
+    unsupported_stdlib: &[],
 };
 
 /// iOS device (arm64). Reuses the host clang family on macOS; the
@@ -164,6 +172,7 @@ pub const IOS_ARM64: TargetSpec = TargetSpec {
     apple_sdk: Some("iphoneos"),
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::HostClang,
+    unsupported_stdlib: &[],
 };
 
 /// iOS simulator (arm64) — the cheap validation loop: no device, no signing.
@@ -179,6 +188,7 @@ pub const IOS_ARM64_SIMULATOR: TargetSpec = TargetSpec {
     apple_sdk: Some("iphonesimulator"),
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::HostClang,
+    unsupported_stdlib: &[],
 };
 
 /// Android native, arm64 (rung 2 of the backends plan: the first non-host
@@ -199,6 +209,7 @@ pub const ANDROID_ARM64: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::AndroidNdk,
+    unsupported_stdlib: &[],
 };
 
 /// ESP32 classic (Xtensa LX6, the WROOM-32 module family) under ESP-IDF —
@@ -222,6 +233,14 @@ pub const ESP32_XTENSA: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::EspClang,
+    // The POSIX half of stdlib: pthread-backed (thread/mutex/channel),
+    // the kqueue/epoll reactor and its consumers (executor/time/net/
+    // netsys/fs), and the process environment. `vendor/espidf` covers
+    // the embedded equivalents (timer, task sleep, console).
+    unsupported_stdlib: &[
+        "thread", "mutex", "channel", "env", "net", "netsys", "reactor",
+        "executor", "time", "fs",
+    ],
 };
 
 /// Every named target `--target` accepts, in the order help text lists them.

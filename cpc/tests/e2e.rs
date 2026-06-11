@@ -23323,6 +23323,117 @@ fn target_esp32_text_and_vec_compile_to_xtensa_object() {
     assert_eq!(run.code(), Some(0), "heap program must compute correctly");
 }
 
+/// v0.0.21 embedded profile: importing a POSIX stdlib module on a target
+/// whose profile excludes it fails at resolve time with E0866 and the
+/// vendor/espidf pointer — including transitively-POSIX modules — while
+/// the same import stays valid on the host, and non-POSIX modules stay
+/// valid on the target.
+#[test]
+fn target_esp32_gated_stdlib_modules_fire_e0866() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"g\"\n\n[lib]\nname = \"g\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
+
+    // Directly-POSIX (pthread) and transitively-POSIX (executor imports
+    // ./reactor inside the package) both gate.
+    for module in ["thread", "executor"] {
+        std::fs::write(
+            dir.join("src/lib.cplus"),
+            format!("import \"stdlib/{module}\" as m;\npub fn f() -> i32 {{ return 0; }}\n"),
+        )
+        .unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg("--target")
+            .arg("esp32-xtensa")
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            !out.status.success(),
+            "stdlib/{module} must be rejected on esp32-xtensa"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("E0866"), "expected E0866 for {module}: {stderr}");
+        assert!(
+            stderr.contains("vendor/espidf"),
+            "E0866 must point at the embedded package: {stderr}"
+        );
+        // The same import is fine on the host.
+        let st = Command::new(cpc)
+            .arg("check")
+            .current_dir(&dir)
+            .status()
+            .expect("invoke cpc");
+        assert!(st.success(), "stdlib/{module} must stay valid on the host");
+    }
+
+    // Heap modules stay available on the target.
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "import \"stdlib/vec\" as vec;\nimport \"stdlib/text\" as text;\npub fn f() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("check")
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "vec/text must stay valid on esp32-xtensa");
+}
+
+/// v0.0.21 embedded profile: `async fn` is rejected on 32-bit targets at
+/// check time (E0867) — the coroutine runtime is 64-bit only — and the
+/// gate never fires for the host.
+#[test]
+fn target_esp32_async_fn_fires_e0867() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "pub fn helper() -> i32 { return 1; }\n\
+         async fn fetch() -> i32 { return helper(); }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "async fn must be rejected on esp32");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0867"), "expected E0867: {stderr}");
+    assert!(
+        stderr.contains("32-bit"),
+        "E0867 must explain the 32-bit restriction: {stderr}"
+    );
+    // Host: whatever else this snippet needs, the 32-bit gate is silent.
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("E0867"),
+        "E0867 must never fire for the host: {stderr}"
+    );
+}
+
 /// The espidf bindings and the all-C+ firmware shape pass whole-project
 /// sema for the esp32 target on every host (front end only, no esp-clang).
 #[test]

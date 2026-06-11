@@ -19045,6 +19045,7 @@ mod tests {
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
             toolchain: crate::target::ToolchainKind::HostClang,
+            unsupported_stdlib: &[],
         };
 
         const X86_64_WINDOWS: TargetSpec = TargetSpec {
@@ -19059,6 +19060,7 @@ mod tests {
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
             toolchain: crate::target::ToolchainKind::HostClang,
+            unsupported_stdlib: &[],
         };
 
         fn struct_ty(src: &str, name: &str) -> (Ty, TypeTable) {

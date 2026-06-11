@@ -129,6 +129,16 @@ pub enum ResolveError {
         import_span: Span,
         requested: String,
     },
+    /// v0.0.21 embedded profile (E0866): the import names a stdlib
+    /// module the selected target's package profile excludes (POSIX
+    /// mechanisms absent on the target). Failing at resolve time gives
+    /// the profile story instead of an IR-verifier error.
+    TargetGatedModule {
+        importing_file: PathBuf,
+        import_span: Span,
+        requested: String,
+        target_name: &'static str,
+    },
     /// Phase 2: a vendor import contains a `..` segment that would
     /// escape `vendor/<pkg>/src/`. Security: a package can't reach
     /// outside its own directory via static imports.
@@ -255,6 +265,18 @@ impl std::fmt::Display for ResolveError {
                 write!(
                     f,
                     "[E0853] {}: bare import `{requested}` — paths must start with `./`/`../` for file-relative or match a declared `[dependencies]` entry",
+                    importing_file.display(),
+                )
+            }
+            ResolveError::TargetGatedModule {
+                importing_file,
+                requested,
+                target_name,
+                ..
+            } => {
+                write!(
+                    f,
+                    "[E0866] {}: import `{requested}` is not available on target `{target_name}` (excluded from this target's package profile)",
                     importing_file.display(),
                 )
             }
@@ -440,6 +462,7 @@ impl LoadFailure {
             ResolveError::Io { path, .. } => Some(path),
             ResolveError::UnknownPackage { importing_file, .. } => Some(importing_file),
             ResolveError::BareImport { importing_file, .. } => Some(importing_file),
+            ResolveError::TargetGatedModule { importing_file, .. } => Some(importing_file),
             ResolveError::StaleExtension { importing_file, .. } => Some(importing_file),
             ResolveError::VendorEscape { importing_file, .. } => Some(importing_file),
         }
@@ -654,6 +677,24 @@ impl LoadFailure {
                 (
                     "E0853",
                     format!("bare import `{requested}` is not `./`/`../`-prefixed and `{requested}`'s first segment isn't a declared dependency"),
+                    span_in(importing_file, *import_span),
+                )
+            }
+            ResolveError::TargetGatedModule {
+                importing_file,
+                import_span,
+                requested,
+                target_name,
+            } => {
+                notes.push(
+                    "the module relies on POSIX mechanisms (pthreads, kqueue/epoll, process environment) the target does not provide".to_string(),
+                );
+                notes.push(
+                    "see `vendor/espidf` for the embedded equivalents (esp_timer, task sleep, GPIO, console)".to_string(),
+                );
+                (
+                    "E0866",
+                    format!("import `{requested}` is not available on target `{target_name}`"),
                     span_in(importing_file, *import_span),
                 )
             }
@@ -1067,6 +1108,26 @@ fn classify_import_path(
             import_span: span,
             requested: path_str.to_string(),
         });
+    }
+
+    // v0.0.21 embedded profile: the selected target may exclude stdlib
+    // modules whose mechanism it lacks. The gate lives here (not sema)
+    // so the error points at the offending `import` line. Gated modules'
+    // stdlib-internal consumers are themselves in the list, so relative
+    // imports inside the package (`./reactor` from executor) can't
+    // bypass it.
+    if first == "stdlib" {
+        if let Some(module) = rest.first() {
+            let tgt = crate::target::active_target();
+            if tgt.unsupported_stdlib.contains(module) {
+                return Err(ResolveError::TargetGatedModule {
+                    importing_file: importing_canonical.to_path_buf(),
+                    import_span: span,
+                    requested: path_str.to_string(),
+                    target_name: tgt.name,
+                });
+            }
+        }
     }
 
     let mut p = manifest_root.to_path_buf();

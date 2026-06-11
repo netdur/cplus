@@ -231,6 +231,7 @@ pub fn check_multi(
         match &item.kind {
             ItemKind::Function(f) => {
                 ctx.check_attrs(&f.attributes, TARGET_FN, "function");
+                ctx.check_async_on_32_bit(f.is_async, &f.name);
                 ctx.walk_block_for_loop_attrs(&f.body);
             }
             ItemKind::Struct(s) => {
@@ -248,6 +249,7 @@ pub fn check_multi(
             ItemKind::Impl(b) => {
                 for method in &b.methods {
                     ctx.check_attrs(&method.attributes, TARGET_METHOD, "method");
+                    ctx.check_async_on_32_bit(method.is_async, &method.name);
                     ctx.walk_block_for_loop_attrs(&method.body);
                 }
             }
@@ -528,6 +530,35 @@ impl Ctx {
                 }
             }
         }
+    }
+
+    /// v0.0.21 embedded profile (E0867): async fns lower through the
+    /// kqueue/epoll reactor and a coroutine runtime that is not yet
+    /// pointer-width clean; 32-bit targets reject them at check time
+    /// with the profile story instead of an IR-verifier failure.
+    fn check_async_on_32_bit(&mut self, is_async: bool, name: &crate::ast::Ident) {
+        if !is_async {
+            return;
+        }
+        let tgt = crate::target::active_target();
+        if tgt.pointer_width >= 64 {
+            return;
+        }
+        let primary = self.make_span(name.span);
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: DiagCode("E0867"),
+            message: format!(
+                "async functions are not supported on 32-bit target `{}`",
+                tgt.name
+            ),
+            primary,
+            labels: Vec::new(),
+            notes: vec![
+                "the async runtime (reactor + coroutine frames) is 64-bit only today".to_string(),
+            ],
+            suggestions: Vec::new(),
+        });
     }
 
     fn emit_expected_int_arg(&mut self, attr: &Attribute, spec: &AttrSpec) {

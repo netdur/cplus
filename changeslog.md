@@ -6,6 +6,15 @@ earlier history lives in each version's archived plan.
 ## v0.0.21 — unreleased
 
 ### esp32: heap types + the espidf package
+- Embedded package profile: a target can exclude stdlib modules whose
+  mechanism it lacks. On `esp32-xtensa`, importing the POSIX half of
+  stdlib (`thread`, `mutex`, `channel`, `env`, `net`, `netsys`,
+  `reactor`, `executor`, `time`, `fs`) fails at resolve time with E0866
+  naming the target and pointing at `vendor/espidf` — instead of an IR
+  verifier error after codegen. `async fn` on 32-bit targets is rejected
+  at check time with E0867 (the coroutine runtime is 64-bit only). Heap
+  modules (`vec`, `text`, `box`, ...) stay available; the host profile is
+  unchanged.
 - The 32-bit heap runtime: fat pointers (`{ ptr, usize }`), string/Text/Vec
   lengths, pointer-arithmetic GEP indices, and the libc size_t surface
   (`malloc` / `memcpy` / `memcmp` / `snprintf`) now follow the target's
