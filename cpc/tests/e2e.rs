@@ -23501,20 +23501,34 @@ fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
+    // Out3 (12 bytes) takes the Coerce arm on aarch64/x86_64-sysv and the
+    // Indirect (sret) arm on Microsoft x64; Out6 (24 bytes) takes the
+    // Indirect arm everywhere — so every platform exercises the
+    // export-only-sret guard, not just Windows.
     std::fs::write(
         &src,
         "#[repr(C)] pub struct Out3 { pub a: i32, pub b: i32, pub c: i32 }\n\
+         #[repr(C)] pub struct Out6 { pub a: i32, pub b: i32, pub c: i32, pub d: i32, pub e: i32, pub f: i32 }\n\
          pub extern fn wrapped(x: i32) -> Out3 {\n\
              return inner(x);\n\
          }\n\
          pub fn inner(x: i32) -> Out3 {\n\
              return Out3 { a: x + 1, b: x + 2, c: x + 3 };\n\
          }\n\
+         pub extern fn wrapped_wide(x: i32) -> Out6 {\n\
+             return inner_wide(x);\n\
+         }\n\
+         pub fn inner_wide(x: i32) -> Out6 {\n\
+             return Out6 { a: x + 1, b: x + 2, c: x + 3, d: x + 4, e: x + 5, f: x + 6 };\n\
+         }\n\
          fn main() -> i32 {\n\
              let r: Out3 = inner(10);\n\
              if r.a != 11 { return 1; }\n\
              if r.b != 12 { return 2; }\n\
              if r.c != 13 { return 3; }\n\
+             let w: Out6 = inner_wide(20);\n\
+             if w.a != 21 { return 4; }\n\
+             if w.f != 26 { return 5; }\n\
              return 0;\n\
          }\n",
     )

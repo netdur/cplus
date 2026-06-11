@@ -8359,9 +8359,29 @@ impl<'a> FnState<'a> {
                                         // always correct.
                                         let enclosing_ret_coerced = self.coerce_ret.is_some();
                                         let callee_ret_coerced = sig.is_extern
-                                            && matches!(
+                                            && !matches!(
                                                 classify_c_abi_return(&sig.return_type, self.types),
-                                                CAbiClass::Coerce { .. }
+                                                CAbiClass::Direct
+                                            );
+                                        // The enclosing fn may return via sret
+                                        // only because the C-export ABI
+                                        // classified its Copy aggregate return
+                                        // Indirect (e.g. a 12-byte struct on
+                                        // Microsoft x64, where only 1/2/4/8
+                                        // bytes pass direct). The Slice-1D
+                                        // void-return musttail path handles
+                                        // returns that are sret for every
+                                        // caller (`return_passes_by_sret_widened`);
+                                        // an export-only sret wrapper calling a
+                                        // value-returning internal fn would
+                                        // emit `musttail call %T` inside a
+                                        // void function — fall back to a plain
+                                        // call instead. Surfaced by Windows CI
+                                        // on the extern-wrapper regression test.
+                                        let enclosing_export_sret = self.sret_slot.is_some()
+                                            && !return_passes_by_sret_widened(
+                                                &self.return_ty,
+                                                self.types,
                                             );
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
@@ -8371,6 +8391,7 @@ impl<'a> FnState<'a> {
                                             && tail_return_ok
                                             && !enclosing_ret_coerced
                                             && !callee_ret_coerced
+                                            && !enclosing_export_sret
                                         {
                                             self.pending_musttail = true;
                                         }
