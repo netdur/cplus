@@ -72,11 +72,14 @@ build flags (apply to `cpc FILE` and `cpc build`):
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
                                     mutually exclusive; ubsan composes with any)
   --target NAME                     compile for a named target: host (default), ios-arm64,
-                                    ios-arm64-simulator. External-builder targets (iOS) stop
-                                    at object emission — the external build system (Xcode)
-                                    owns the final link. Combine with --emit-obj / --emit-ll /
-                                    --emit-asm, or `cpc build` of a `[lib]` staticlib.
-                                    Place before --emit-ll/--emit-asm FILE.
+                                    ios-arm64-simulator, android-arm64. External-builder
+                                    targets stop at object emission — the external build
+                                    system (Xcode, the Android NDK build) owns the final
+                                    link. Combine with --emit-obj / --emit-ll / --emit-asm,
+                                    or `cpc build` of a `[lib]` staticlib. android-arm64
+                                    uses the NDK's clang ($ANDROID_NDK_HOME, or the SDK's
+                                    newest ndk/; r28.2+). Place before --emit-ll/--emit-asm
+                                    FILE.
 
 debug / introspection (single-file):
   cpc --emit-ir                     print the frozen Phase-0 LLVM IR to stdout
@@ -781,6 +784,156 @@ fn clang_program() -> &'static str {
         .as_str()
 }
 
+/// v0.0.21 multi-backend rung 2: the clang that consumes IR for the given
+/// target. Host-toolchain targets (including iOS — Apple/mainline clang
+/// emits `arm64-apple-ios` objects) use the existing `clang_program()`
+/// resolution; the Android target resolves the NDK's clang, which carries
+/// the Android sysroot. `Err` is a ready-to-print message (callers add the
+/// `cpc: ` prefix).
+fn clang_program_for(t: &TargetSpec) -> Result<String, String> {
+    match t.toolchain {
+        target::ToolchainKind::HostClang => Ok(clang_program().to_string()),
+        target::ToolchainKind::AndroidNdk => ndk_clang().clone(),
+    }
+}
+
+/// Resolve the Android NDK's clang, cached per process. Order:
+///   1. `$CPC_NDK_CLANG` — an explicit clang path, trusted verbatim
+///      (mirrors `$CPC_CLANG`).
+///   2. `$ANDROID_NDK_HOME` / `$ANDROID_NDK_ROOT` / `$ANDROID_NDK_LATEST_HOME`
+///      — an NDK root. Set-but-wrong is an error naming the variable, never
+///      a silent fallback.
+///   3. The Android SDK's default `ndk/` directory for the host OS
+///      (`~/Library/Android/sdk/ndk`, `~/Android/Sdk/ndk`,
+///      `%LOCALAPPDATA%\Android\Sdk\ndk`), newest installed version.
+/// The resolved clang must report LLVM >= 19: cpc emits `preserve_nonecc`,
+/// which older LLVM rejects — that means NDK r28.2+ (r27 ships clang 18).
+fn ndk_clang() -> &'static Result<String, String> {
+    static RESOLVED: OnceLock<Result<String, String>> = OnceLock::new();
+    RESOLVED.get_or_init(|| {
+        if let Ok(p) = env::var("CPC_NDK_CLANG") {
+            if !p.is_empty() {
+                return Ok(p);
+            }
+        }
+        let mut root: Option<PathBuf> = None;
+        for var in ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK_LATEST_HOME"] {
+            if let Ok(v) = env::var(var) {
+                if !v.is_empty() {
+                    let p = PathBuf::from(&v);
+                    if !p.is_dir() {
+                        return Err(format!(
+                            "${var} is set to `{v}`, which is not a directory; point it at an Android NDK root (r28.2+)"
+                        ));
+                    }
+                    root = Some(p);
+                    break;
+                }
+            }
+        }
+        let root = match root {
+            Some(r) => r,
+            None => match newest_default_ndk() {
+                Some(r) => r,
+                None => {
+                    return Err(
+                        "the Android NDK was not found; set $ANDROID_NDK_HOME to an NDK root (r28.2+), or $CPC_NDK_CLANG to its clang binary".to_string(),
+                    );
+                }
+            },
+        };
+        let host_tag = if cfg!(target_os = "macos") {
+            "darwin-x86_64" // also the arm64-mac tag: NDK ships universal binaries here
+        } else if cfg!(windows) {
+            "windows-x86_64"
+        } else {
+            "linux-x86_64"
+        };
+        let clang_name = if cfg!(windows) { "clang.exe" } else { "clang" };
+        let clang = root
+            .join("toolchains")
+            .join("llvm")
+            .join("prebuilt")
+            .join(host_tag)
+            .join("bin")
+            .join(clang_name);
+        if !clang.is_file() {
+            return Err(format!(
+                "NDK at `{}` has no clang at `{}`; expected an NDK r28.2+ install",
+                root.display(),
+                clang.display()
+            ));
+        }
+        let clang_str = clang.to_string_lossy().to_string();
+        match clang_major(&clang_str) {
+            Some(m) if m >= 19 => Ok(clang_str),
+            Some(m) => Err(format!(
+                "the NDK at `{}` ships clang {m}, but cpc emits IR for LLVM 19+; install NDK r28.2 or newer (or point $ANDROID_NDK_HOME at one)",
+                root.display()
+            )),
+            None => Err(format!(
+                "could not run `{clang_str} --version` to verify the NDK clang"
+            )),
+        }
+    })
+}
+
+/// The archiver for a target's staticlib. `$CPC_AR` overrides everything.
+/// External toolchains use the `llvm-ar` sitting next to their resolved
+/// clang (it understands the target's object format); host targets keep the
+/// historical `ar` / `llvm-ar`-on-Windows choice.
+fn ar_program_for(t: &TargetSpec, clang_prog: &str) -> String {
+    if let Ok(p) = env::var("CPC_AR") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    if t.toolchain != target::ToolchainKind::HostClang {
+        let name = if cfg!(windows) { "llvm-ar.exe" } else { "llvm-ar" };
+        let sibling = Path::new(clang_prog).with_file_name(name);
+        if sibling.is_file() {
+            return sibling.to_string_lossy().to_string();
+        }
+    }
+    if cfg!(windows) { "llvm-ar" } else { "ar" }.to_string()
+}
+
+/// The newest NDK version directory under the host's default Android SDK
+/// location, or `None` when none is installed. Version directories are
+/// dotted-numeric (`28.2.13676358`); non-numeric entries are ignored.
+fn newest_default_ndk() -> Option<PathBuf> {
+    let ndk_dir: PathBuf = if cfg!(target_os = "macos") {
+        PathBuf::from(env::var_os("HOME")?).join("Library/Android/sdk/ndk")
+    } else if cfg!(windows) {
+        PathBuf::from(env::var_os("LOCALAPPDATA")?).join("Android").join("Sdk").join("ndk")
+    } else {
+        PathBuf::from(env::var_os("HOME")?).join("Android/Sdk/ndk")
+    };
+    let mut best: Option<(Vec<u64>, PathBuf)> = None;
+    for entry in fs::read_dir(&ndk_dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Ok(parts) = name
+            .split('.')
+            .map(|s| s.parse::<u64>())
+            .collect::<Result<Vec<u64>, _>>()
+        else {
+            continue;
+        };
+        if parts.is_empty() {
+            continue;
+        }
+        if best.as_ref().map_or(true, |(b, _)| parts > *b) {
+            best = Some((parts, path));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 /// Major LLVM version reported by `<prog> --version`, or `None` if the
 /// program can't be run or its output can't be parsed. The first line looks
 /// like `Ubuntu clang version 19.1.1` or `clang version 19.1.1`.
@@ -823,7 +976,13 @@ fn coro_end_returns_void() -> bool {
         if std::fs::write(&probe, ir).is_err() {
             return true;
         }
-        let output = Command::new(clang_program())
+        // v0.0.21 rung 2: probe the toolchain that will consume this
+        // process's IR — the active target's clang (e.g. NDK clang) when it
+        // resolves, else the host clang (pure IR-emission paths must work
+        // without the external toolchain installed).
+        let prog = clang_program_for(&target::active_target())
+            .unwrap_or_else(|_| clang_program().to_string());
+        let output = Command::new(&prog)
             .arg("-x").arg("ir").arg(&probe)
             .arg("-c").arg("-o").arg(&obj)
             .output();
@@ -1474,6 +1633,16 @@ fn build_lib_project(
         eprintln!("    use `crate-type = \"staticlib\"` and link the archive from the external build system");
         return ExitCode::FAILURE;
     }
+    // v0.0.21 rung 2: resolve the target's toolchain before any front-end
+    // work, so a missing NDK fails in milliseconds with the setup hint
+    // rather than after a full sema + codegen pass.
+    let clang_prog = match clang_program_for(&tgt) {
+        Ok(p) => p,
+        Err(msg) => {
+            eprintln!("cpc: {msg}");
+            return ExitCode::FAILURE;
+        }
+    };
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
     let (program, _entry_file_id, mono) =
         match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names), m.realtime_profile.as_ref()) {
@@ -1571,7 +1740,7 @@ fn build_lib_project(
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let obj_status = Command::new(clang_program())
+    let obj_status = Command::new(&clang_prog)
         .arg(opt)
         .arg("-Wno-override-module")
         .args(clang_target_args(&tgt))
@@ -1609,10 +1778,10 @@ fn build_lib_project(
         let _ = fs::remove_file(&a_path); // ar refuses to add a duplicate entry across runs
         // Windows/MSVC has no `ar`; LLVM ships `llvm-ar`, which speaks the
         // same `rcs` interface. `$CPC_AR` overrides for either host.
-        let ar_prog = env::var("CPC_AR")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| if cfg!(windows) { "llvm-ar" } else { "ar" }.to_string());
+        // v0.0.21 rung 2: an external toolchain archives with its own
+        // llvm-ar — macOS's BSD ar can't index ELF members (ranlib skips
+        // them), leaving an archive the NDK's lld resolves no symbols from.
+        let ar_prog = ar_program_for(&tgt, &clang_prog);
         let ar_status = Command::new(&ar_prog)
             .arg("rcs")
             .arg(&a_path)
@@ -3809,10 +3978,19 @@ fn dump_obj(
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let status = Command::new(clang_program())
+    let tgt = target::active_target();
+    let prog = match clang_program_for(&tgt) {
+        Ok(p) => p,
+        Err(msg) => {
+            eprintln!("cpc: {msg}");
+            drop(tmp_handle);
+            return ExitCode::FAILURE;
+        }
+    };
+    let status = Command::new(&prog)
         .arg(opt)
         .arg("-Wno-override-module")
-        .args(clang_target_args(&target::active_target()))
+        .args(clang_target_args(&tgt))
         .arg("-c")
         .arg(&tmp)
         .arg("-o")
@@ -3880,9 +4058,17 @@ fn run_clang_to_stdout(input_ll: &Path, mode: BuildMode, kind: ClangOutputKind) 
         BuildMode::Debug => "-O0",
         BuildMode::Release => "-O3",
     };
-    let mut cmd = Command::new(clang_program());
+    let tgt = target::active_target();
+    let prog = match clang_program_for(&tgt) {
+        Ok(p) => p,
+        Err(msg) => {
+            eprintln!("cpc: {msg}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut cmd = Command::new(&prog);
     cmd.arg(opt).arg("-Wno-override-module").arg("-S");
-    cmd.args(clang_target_args(&target::active_target()));
+    cmd.args(clang_target_args(&tgt));
     if matches!(kind, ClangOutputKind::LlvmIr) {
         cmd.arg("-emit-llvm");
     }

@@ -5,12 +5,21 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.21 — unreleased
 
-### Multi-backend: target model + iOS
+### Multi-backend: target model + iOS + Android
 - New `--target NAME` on `build` / `check` / `--emit-ll` / `--emit-ll-opt` /
   `--emit-asm` / `--emit-obj`. Named targets: `host` (the default),
-  `ios-arm64`, `ios-arm64-simulator`. An unknown name fails with the supported
-  list. Omitting `--target` reproduces the previous host behavior byte for
-  byte.
+  `ios-arm64`, `ios-arm64-simulator`, `android-arm64`. An unknown name fails
+  with the supported list. Omitting `--target` reproduces the previous host
+  behavior byte for byte.
+- `android-arm64` (rung 2: the first non-host external toolchain): emits
+  `aarch64-linux-android24` ELF objects and staticlibs through the Android
+  NDK's clang, resolved from `$CPC_NDK_CLANG`, `$ANDROID_NDK_HOME` /
+  `$ANDROID_NDK_ROOT` / `$ANDROID_NDK_LATEST_HOME`, or the SDK's default
+  `ndk/` directory (newest version). The resolved clang must report LLVM 19+
+  (NDK r28.2+); older NDKs and misconfigured variables fail with the setup
+  hint. Staticlibs are archived with the NDK's `llvm-ar` (the host BSD `ar`
+  cannot index ELF members). Verified end to end: a C+ staticlib linked by
+  NDK clang ran on a Pixel 9 Pro XL emulator.
 - A `TargetSpec` (triple, pointer width, endianness, object format, ABI and
   intrinsic selectors, handoff mode) now drives codegen's per-target decisions.
   The former compile-time `cfg!` gates (HFA classification, Microsoft x64 size

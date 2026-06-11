@@ -18877,7 +18877,7 @@ mod tests {
         use crate::lexer::tokenize;
         use crate::parser::parse;
         use crate::sema;
-        use crate::target::{IOS_ARM64, IOS_ARM64_SIMULATOR};
+        use crate::target::{ANDROID_ARM64, IOS_ARM64, IOS_ARM64_SIMULATOR};
         use std::path::PathBuf;
 
         /// An x86_64 Linux spec, for pinning the SysV pair coercion from
@@ -18893,6 +18893,7 @@ mod tests {
             artifact_triple: Some("x86_64-unknown-linux-gnu"),
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
+            toolchain: crate::target::ToolchainKind::HostClang,
         };
 
         const X86_64_WINDOWS: TargetSpec = TargetSpec {
@@ -18906,6 +18907,7 @@ mod tests {
             artifact_triple: Some("x86_64-pc-windows-msvc"),
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
+            toolchain: crate::target::ToolchainKind::HostClang,
         };
 
         fn struct_ty(src: &str, name: &str) -> (Ty, TypeTable) {
@@ -18928,7 +18930,8 @@ mod tests {
                  fn main() -> i32 { return 0; }",
                 "CGPoint",
             );
-            for spec in [IOS_ARM64, IOS_ARM64_SIMULATOR] {
+            // AAPCS64 HFAs apply on every aarch64 target — iOS and Android alike.
+            for spec in [IOS_ARM64, IOS_ARM64_SIMULATOR, ANDROID_ARM64] {
                 match classify_c_abi_for(&ty, &types, &spec) {
                     CAbiClass::Coerce { llvm_ty, size, .. } => {
                         assert_eq!(llvm_ty, "[2 x double]");
@@ -18946,10 +18949,12 @@ mod tests {
                  fn main() -> i32 { return 0; }",
                 "Pair",
             );
-            // aarch64 (iOS): array form, two integer registers.
-            match classify_c_abi_for(&ty, &types, &IOS_ARM64) {
-                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[2 x i64]"),
-                other => panic!("expected [2 x i64] on ios-arm64, got {other:?}"),
+            // aarch64 (iOS, Android): array form, two integer registers.
+            for spec in [IOS_ARM64, ANDROID_ARM64] {
+                match classify_c_abi_for(&ty, &types, &spec) {
+                    CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[2 x i64]"),
+                    other => panic!("expected [2 x i64] on {}, got {other:?}", spec.name),
+                }
             }
             // x86_64 SysV: struct-pair form.
             match classify_c_abi_for(&ty, &types, &X86_64_LINUX) {

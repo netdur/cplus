@@ -22678,6 +22678,262 @@ fn target_dep_unsupported_target_triple_fires_e0862() {
     );
 }
 
+// ---- v0.0.21 multi-backend rung 2: android-arm64 via the NDK toolchain ----
+
+/// Probe: resolve the Android NDK clang the way cpc does (env overrides,
+/// then the SDK's default ndk/ directory, newest version, LLVM >= 19).
+/// Tests that need the NDK to consume IR skip (loudly) when this returns
+/// `None`; the pure-cpc assertions (IR text, diagnostics) never skip.
+fn ndk_clang_for_test() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("CPC_NDK_CLANG") {
+        if !p.is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    let mut root: Option<std::path::PathBuf> = None;
+    for var in ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK_LATEST_HOME"] {
+        if let Ok(v) = std::env::var(var) {
+            if !v.is_empty() {
+                let p = std::path::PathBuf::from(v);
+                if p.is_dir() {
+                    root = Some(p);
+                }
+                break;
+            }
+        }
+    }
+    if root.is_none() {
+        let ndk_dir = if cfg!(target_os = "macos") {
+            std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Android/sdk/ndk")
+        } else if cfg!(windows) {
+            std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
+                .join("Android")
+                .join("Sdk")
+                .join("ndk")
+        } else {
+            std::path::PathBuf::from(std::env::var_os("HOME")?).join("Android/Sdk/ndk")
+        };
+        let mut best: Option<(Vec<u64>, std::path::PathBuf)> = None;
+        for entry in std::fs::read_dir(&ndk_dir).ok()?.flatten() {
+            let path = entry.path();
+            let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
+                continue;
+            };
+            let Ok(parts) = name
+                .split('.')
+                .map(|s| s.parse::<u64>())
+                .collect::<Result<Vec<u64>, _>>()
+            else {
+                continue;
+            };
+            if path.is_dir() && best.as_ref().map_or(true, |(b, _)| parts > *b) {
+                best = Some((parts, path));
+            }
+        }
+        root = best.map(|(_, p)| p);
+    }
+    let root = root?;
+    let host_tag = if cfg!(target_os = "macos") {
+        "darwin-x86_64"
+    } else if cfg!(windows) {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
+    let clang = root
+        .join("toolchains/llvm/prebuilt")
+        .join(host_tag)
+        .join("bin")
+        .join(if cfg!(windows) { "clang.exe" } else { "clang" });
+    if !clang.is_file() {
+        return None;
+    }
+    // LLVM >= 19, same floor cpc enforces.
+    let out = Command::new(&clang).arg("--version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let major: u32 = text
+        .split("clang version ")
+        .nth(1)?
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()?;
+    if major < 19 {
+        return None;
+    }
+    Some(clang)
+}
+
+#[test]
+fn target_android_emit_ll_pins_triple() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    // Pure IR emission needs no NDK — the coro probe falls back to the
+    // host clang when the external toolchain is absent.
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("android-arm64")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "emit-ll --target android-arm64 must succeed without the NDK: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("target triple = \"aarch64-linux-android24\""),
+        "android IR must pin its triple: {ir}"
+    );
+    assert!(
+        !ir.contains("@_setmode"),
+        "android IR must not carry the Windows binary-mode ctor: {ir}"
+    );
+}
+
+#[test]
+fn target_android_missing_ndk_is_rejected_with_setup_hint() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    // A set-but-wrong $ANDROID_NDK_HOME is an error naming the variable,
+    // never a fallback to other install locations — deterministic on every
+    // host regardless of what NDKs are actually installed.
+    let out = Command::new(cpc)
+        .env_remove("CPC_NDK_CLANG")
+        .env("ANDROID_NDK_HOME", "/nonexistent/cpc-test-ndk")
+        .arg("--target")
+        .arg("android-arm64")
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(dir.join("t.o"))
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "bad ANDROID_NDK_HOME must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("ANDROID_NDK_HOME") && stderr.contains("not a directory"),
+        "rejection must name the misconfigured variable: {stderr}"
+    );
+}
+
+#[test]
+fn target_android_emit_obj_produces_elf_aarch64_object() {
+    if ndk_clang_for_test().is_none() {
+        eprintln!("skipping: no Android NDK (r28.2+) found");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let obj = dir.join("t_android.o");
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("android-arm64")
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "--emit-obj --target android-arm64 failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&obj).expect("read emitted object");
+    assert!(bytes.len() > 20, "object is implausibly small");
+    // ELF magic, 64-bit class, then e_machine EM_AARCH64 (0xB7) at offset 18 LE.
+    assert_eq!(&bytes[0..4], b"\x7fELF", "object must be ELF");
+    assert_eq!(bytes[4], 2, "object must be ELFCLASS64");
+    assert_eq!(
+        (bytes[18], bytes[19]),
+        (0xb7, 0x00),
+        "object must target aarch64 (EM_AARCH64)"
+    );
+}
+
+/// The full rung-2 handoff, including the archive-format lesson: the
+/// staticlib must be indexed by the NDK's llvm-ar (macOS BSD ar skips ELF
+/// members, leaving an archive lld resolves no symbols from), and the NDK
+/// clang must link it into an Android executable.
+#[test]
+fn target_android_staticlib_links_under_ndk_clang() {
+    let Some(ndk_clang) = ndk_clang_for_test() else {
+        eprintln!("skipping: no Android NDK (r28.2+) found");
+        return;
+    };
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"droid\"\n\n[lib]\nname = \"droid\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub extern fn droid_answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("android-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "android staticlib build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for artifact in ["droid.o", "libdroid.a", "droid.h"] {
+        let p = dir.join("target/android-arm64/debug").join(artifact);
+        assert!(p.is_file(), "expected {} in the per-target tree", p.display());
+    }
+    let obj_bytes = std::fs::read(dir.join("target/android-arm64/debug/droid.o")).unwrap();
+    assert_eq!(&obj_bytes[0..4], b"\x7fELF", "per-target object must be ELF");
+
+    std::fs::write(
+        dir.join("main.c"),
+        "extern int droid_answer(void);\nint main(void) { return droid_answer() == 42 ? 0 : 1; }\n",
+    )
+    .unwrap();
+    let exe = dir.join("droid_exe");
+    let link = Command::new(&ndk_clang)
+        .arg("-target")
+        .arg("aarch64-linux-android24")
+        .arg(dir.join("main.c"))
+        .arg(dir.join("target/android-arm64/debug/libdroid.a"))
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("invoke NDK clang");
+    assert!(
+        link.status.success(),
+        "NDK link of the C+ staticlib failed (archive symbol index?): {}",
+        String::from_utf8_lossy(&link.stderr)
+    );
+    assert!(exe.is_file(), "linked Android executable missing");
+}
+
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
 /// The minimal-screen demo from `vendor/uikit/README.md`: a white window
