@@ -72,7 +72,8 @@ build flags (apply to `cpc FILE` and `cpc build`):
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
                                     mutually exclusive; ubsan composes with any)
   --target NAME                     compile for a named target: host (default), ios-arm64,
-                                    ios-arm64-simulator, android-arm64, esp32-xtensa.
+                                    ios-arm64-simulator, android-arm64, esp32-xtensa,
+                                    esp32c3-riscv32.
                                     External-builder targets stop at object emission — the
                                     external build system (Xcode, the Android NDK build,
                                     ESP-IDF) owns the final link. Combine with --emit-obj /
@@ -1177,6 +1178,9 @@ fn clang_target_args(t: &TargetSpec) -> Vec<String> {
     let triple = target::active_triple().expect("non-host target has a triple");
     args.push("-target".to_string());
     args.push(triple);
+    for extra in t.extra_clang_args {
+        args.push((*extra).to_string());
+    }
     if let Some(sdk) = t.apple_sdk {
         if let Some(path) = xcrun_sdk_path(sdk) {
             args.push("-isysroot".to_string());

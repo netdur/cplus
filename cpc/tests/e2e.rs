@@ -23540,6 +23540,75 @@ pub extern fn Java_com_example_NativeClickListener_nativeOnClick(
     assert_eq!(&obj[0..4], b"\x7fELF");
 }
 
+/// v0.0.22: esp32c3-riscv32 — the mainline-LLVM 32-bit comparison point.
+/// Pure-cpc IR assertions everywhere; object emission when esp-clang is
+/// installed (EM_RISCV = 243).
+#[test]
+fn target_esp32c3_emits_rv32_ir_and_object() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[repr(C)] struct V3 { x: i32, y: i32, z: i32 }\n\
+         extern fn c_take_v3(v: V3) -> i32;\n\
+         pub extern fn use_usize(n: usize) -> usize {\n\
+             return n + #size_of::[*u8]();\n\
+         }\n\
+         pub extern fn drive() -> i32 {\n\
+             let v: V3 = V3 { x: 1, y: 2, z: 3 };\n\
+             return unsafe { c_take_v3(v) };\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32c3-riscv32")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("target triple = \"riscv32-esp-elf\""),
+        "C3 IR must pin its triple: {ir}"
+    );
+    assert!(
+        ir.contains("define i32 @use_usize(i32"),
+        "usize must lower to i32 on rv32: {ir}"
+    );
+    // RV32 ilp32: a 12-byte aggregate passes as a bare pointer (no byval,
+    // unlike Xtensa's 24-byte direct window).
+    assert!(
+        ir.contains("declare i32 @c_take_v3(ptr)"),
+        "12-byte aggregate must pass indirect on rv32: {ir}"
+    );
+    if esp_clang_for_test().is_none() {
+        eprintln!("skipping object half: esp-clang not installed");
+        return;
+    }
+    let obj = dir.join("t_c3.o");
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32c3-riscv32")
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "--emit-obj for esp32c3 failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&obj).unwrap();
+    assert_eq!(&bytes[0..4], b"\x7fELF");
+    assert_eq!(bytes[4], 1, "ELFCLASS32");
+    assert_eq!((bytes[18], bytes[19]), (0xf3, 0x00), "EM_RISCV");
+}
+
 /// v0.0.22: `--min-os` overrides the OS floor baked into a versioned
 /// target triple; unversioned targets and bad versions are rejected.
 #[test]

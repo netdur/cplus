@@ -26,6 +26,9 @@ pub enum TargetArch {
     /// FP registers for doubles. Not in mainline LLVM — objects come from
     /// Espressif's esp-clang.
     Xtensa,
+    /// RISC-V RV32 (ESP32-C3/C6/H2 class), ilp32 ABI. Mainline LLVM;
+    /// compiled here with esp-clang for the ESP-IDF pairing.
+    Riscv32,
 }
 
 /// Operating system, as codegen's ABI classifier and the driver's link
@@ -112,6 +115,9 @@ pub struct TargetSpec {
     pub apple_sdk: Option<&'static str>,
     pub handoff: Handoff,
     pub toolchain: ToolchainKind,
+    /// Extra clang arguments the target's object emission requires beyond
+    /// `-target` (e.g. RV32's `-march`/`-mabi` selection). Empty for most.
+    pub extra_clang_args: &'static [&'static str],
     /// The OS-version token inside `triple` that `--min-os` replaces
     /// (`"13.0"` for the iOS targets, `"24"` for Android). `None` = the
     /// triple is unversioned and `--min-os` is rejected.
@@ -157,6 +163,7 @@ pub const HOST: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::HostLink,
     toolchain: ToolchainKind::HostClang,
+    extra_clang_args: &[],
     min_os_default: None,
     unsupported_stdlib: &[],
 };
@@ -177,6 +184,7 @@ pub const IOS_ARM64: TargetSpec = TargetSpec {
     apple_sdk: Some("iphoneos"),
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::HostClang,
+    extra_clang_args: &[],
     min_os_default: Some("13.0"),
     unsupported_stdlib: &[],
 };
@@ -194,6 +202,7 @@ pub const IOS_ARM64_SIMULATOR: TargetSpec = TargetSpec {
     apple_sdk: Some("iphonesimulator"),
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::HostClang,
+    extra_clang_args: &[],
     min_os_default: Some("13.0"),
     unsupported_stdlib: &[],
 };
@@ -216,6 +225,7 @@ pub const ANDROID_ARM64: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::AndroidNdk,
+    extra_clang_args: &[],
     min_os_default: Some("24"),
     unsupported_stdlib: &[],
 };
@@ -241,11 +251,40 @@ pub const ESP32_XTENSA: TargetSpec = TargetSpec {
     apple_sdk: None,
     handoff: Handoff::ExternalBuilder,
     toolchain: ToolchainKind::EspClang,
+    extra_clang_args: &[],
     min_os_default: None,
     // The POSIX half of stdlib: pthread-backed (thread/mutex/channel),
     // the kqueue/epoll reactor and its consumers (executor/time/net/
     // netsys/fs), and the process environment. `vendor/espidf` covers
     // the embedded equivalents (timer, task sleep, console).
+    unsupported_stdlib: &[
+        "thread", "mutex", "channel", "env", "net", "netsys", "reactor",
+        "executor", "time", "fs",
+    ],
+};
+
+/// ESP32-C3 (RISC-V RV32IMC, single core) under ESP-IDF — the mainline-LLVM
+/// comparison point for the embedded story. Same handoff and profile as
+/// esp32-xtensa. ABI pinned against an esp-clang 20.1.1 ilp32 probe:
+/// datalayout `e-m:e-p:32:32-i64:64-n32-S128`; aggregate args ≤ 8 bytes
+/// coerce to align-sized chunks (`[2 x i32]`, bare `i64`), larger pass as a
+/// bare pointer (no byval, unlike Xtensa); returns > 8 bytes use sret.
+pub const ESP32C3_RISCV32: TargetSpec = TargetSpec {
+    name: "esp32c3-riscv32",
+    arch: TargetArch::Riscv32,
+    os: TargetOs::EspIdf,
+    pointer_width: 32,
+    little_endian: true,
+    object_format: ObjectFormat::Elf,
+    triple: Some("riscv32-esp-elf"),
+    artifact_triple: Some("riscv32-esp-elf"),
+    apple_sdk: None,
+    handoff: Handoff::ExternalBuilder,
+    toolchain: ToolchainKind::EspClang,
+    // The C3 core is RV32IMC; esp-clang needs the arch/abi selection
+    // alongside `-target` (its multilibs are keyed on it).
+    extra_clang_args: &["-march=rv32imc_zicsr_zifencei", "-mabi=ilp32"],
+    min_os_default: None,
     unsupported_stdlib: &[
         "thread", "mutex", "channel", "env", "net", "netsys", "reactor",
         "executor", "time", "fs",
@@ -259,6 +298,7 @@ pub const SUPPORTED: &[TargetSpec] = &[
     IOS_ARM64_SIMULATOR,
     ANDROID_ARM64,
     ESP32_XTENSA,
+    ESP32C3_RISCV32,
 ];
 
 impl TargetSpec {
@@ -429,11 +469,17 @@ mod tests {
         assert_eq!(ESP32_XTENSA.toolchain, ToolchainKind::EspClang);
         assert_eq!(ESP32_XTENSA.triple, Some("xtensa-esp32-elf"));
         assert_eq!(ESP32_XTENSA.artifact_triple, Some("xtensa-esp32-elf"));
+        // The C3 shares the 32-bit/ESP-IDF shape on a mainline-LLVM arch.
+        assert_eq!(ESP32C3_RISCV32.pointer_width, 32);
+        assert_eq!(ESP32C3_RISCV32.arch, TargetArch::Riscv32);
+        assert_eq!(ESP32C3_RISCV32.toolchain, ToolchainKind::EspClang);
+        assert!(!ESP32C3_RISCV32.extra_clang_args.is_empty());
         // Every other supported target stays 64-bit.
         for spec in SUPPORTED {
-            if spec.name != ESP32_XTENSA.name {
-                assert_eq!(spec.pointer_width, 64, "`{}` must be 64-bit", spec.name);
+            if spec.pointer_width == 32 {
+                continue;
             }
+            assert_eq!(spec.pointer_width, 64, "`{}` must be 64-bit", spec.name);
         }
     }
 
@@ -469,7 +515,7 @@ mod tests {
         let names = supported_names();
         assert_eq!(
             names,
-            "host, ios-arm64, ios-arm64-simulator, android-arm64, esp32-xtensa"
+            "host, ios-arm64, ios-arm64-simulator, android-arm64, esp32-xtensa, esp32c3-riscv32"
         );
     }
 

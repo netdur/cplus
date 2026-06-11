@@ -2565,15 +2565,20 @@ fn classify_c_abi_impl(
     if size == 0 {
         return CAbiClass::Direct;
     }
-    // Xtensa (ESP32): empirical esp-clang 20.1.1 shapes (see the
-    // `ESP32_XTENSA` spec doc). Aggregates coerce to arrays of align-sized
-    // integer chunks — i32 chunks for align ≤ 4, i64 chunks for align 8 —
-    // with a single chunk passing as the bare integer. Arguments stay
-    // direct up to 24 bytes (six 32-bit words), then indirect with `byval`;
-    // returns stay direct up to 16 bytes, then sret. No FP-register HFAs:
-    // 2×f64 coerces to [2 x i64], not [2 x double].
-    if target.arch == TargetArch::Xtensa {
-        let limit: u64 = if is_return { 16 } else { 24 };
+    // Embedded 32-bit targets: empirical esp-clang 20.1.1 shapes (see the
+    // `ESP32_XTENSA` / `ESP32C3_RISCV32` spec docs). Aggregates coerce to
+    // arrays of align-sized integer chunks — i32 chunks for align ≤ 4, i64
+    // chunks for align 8 — with a single chunk passing as the bare integer,
+    // and no FP-register HFAs (2×f64 coerces integer-class). The direct
+    // window differs: Xtensa keeps arguments direct to 24 bytes (then
+    // indirect with `byval`) and returns to 16 (then sret); RV32 ilp32
+    // keeps both to 8 bytes (2×XLEN), larger passing as a bare pointer.
+    if matches!(target.arch, TargetArch::Xtensa | TargetArch::Riscv32) {
+        let limit: u64 = match (target.arch, is_return) {
+            (TargetArch::Xtensa, false) => 24,
+            (TargetArch::Xtensa, true) => 16,
+            _ => 8,
+        };
         if size > limit {
             return CAbiClass::Indirect;
         }
@@ -3802,10 +3807,10 @@ fn write_preamble(out: &mut String) {
         TargetArch::X86_64 => {
             out.push_str("declare void @llvm.x86.sse2.pause()\n");
         }
-        // Xtensa has no LLVM spin-loop hint intrinsic and no 128-bit SIMD;
-        // `#cpu_relax()` compiles to nothing and `table` takes the portable
-        // per-lane fallback, so there is nothing to declare.
-        TargetArch::Xtensa => {}
+        // Xtensa and RV32 have no LLVM spin-loop hint intrinsic and no
+        // 128-bit SIMD here; `#cpu_relax()` compiles to nothing and `table`
+        // takes the portable per-lane fallback — nothing to declare.
+        TargetArch::Xtensa | TargetArch::Riscv32 => {}
     }
     // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
     // alloca helpers bracket each local's live range with these so
@@ -10086,9 +10091,9 @@ impl<'a> FnState<'a> {
         match active_target().arch {
             TargetArch::Aarch64 => self.emit("call void @llvm.aarch64.hint(i32 1)"),
             TargetArch::X86_64 => self.emit("call void @llvm.x86.sse2.pause()"),
-            // No spin hint on Xtensa — the hint is a power optimization,
-            // not a correctness requirement; emit nothing.
-            TargetArch::Xtensa => {}
+            // No spin hint on Xtensa/RV32 — the hint is a power
+            // optimization, not a correctness requirement; emit nothing.
+            TargetArch::Xtensa | TargetArch::Riscv32 => {}
         }
     }
 
@@ -19084,6 +19089,7 @@ mod tests {
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
             toolchain: crate::target::ToolchainKind::HostClang,
+            extra_clang_args: &[],
             min_os_default: None,
             unsupported_stdlib: &[],
         };
@@ -19100,6 +19106,7 @@ mod tests {
             apple_sdk: None,
             handoff: crate::target::Handoff::HostLink,
             toolchain: crate::target::ToolchainKind::HostClang,
+            extra_clang_args: &[],
             min_os_default: None,
             unsupported_stdlib: &[],
         };
@@ -19297,6 +19304,47 @@ mod tests {
                     spec.name
                 );
             }
+        }
+
+        /// v0.0.22: RV32 ilp32 shapes, pinned against the esp-clang probe —
+        /// both positions cap at 8 bytes (2×XLEN) and larger aggregates
+        /// pass as a bare pointer (no byval).
+        #[test]
+        fn riscv32_caps_direct_aggregates_at_eight_bytes() {
+            use crate::target::ESP32C3_RISCV32;
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct Small { a: i32, b: i32 }\n\
+                 fn main() -> i32 { return 0; }",
+                "Small",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32C3_RISCV32) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[2 x i32]"),
+                other => panic!("expected [2 x i32], got {other:?}"),
+            }
+            // 8B align-8: a bare i64 (soft-float arg passing covers f64 too).
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct One64 { a: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "One64",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32C3_RISCV32) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "i64"),
+                other => panic!("expected bare i64, got {other:?}"),
+            }
+            // 12B: indirect in both positions (vs Xtensa's [3 x i32] argument).
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct V3 { x: i32, y: i32, z: i32 }\n\
+                 fn main() -> i32 { return 0; }",
+                "V3",
+            );
+            assert_eq!(
+                classify_c_abi_for(&ty, &types, &ESP32C3_RISCV32),
+                CAbiClass::Indirect
+            );
+            assert_eq!(
+                classify_c_abi_return_for(&ty, &types, &ESP32C3_RISCV32),
+                CAbiClass::Indirect
+            );
         }
 
         #[test]
