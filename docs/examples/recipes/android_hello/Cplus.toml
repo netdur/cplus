@@ -1,0 +1,13 @@
+[package]
+name    = "android_hello"
+version = "0.0.1"
+edition = "2026"
+
+[lib]
+name       = "android_hello"
+path       = "src/lib.cplus"
+crate-type = "staticlib"
+
+[dependencies]
+android_view = "*"
+jni = "*"

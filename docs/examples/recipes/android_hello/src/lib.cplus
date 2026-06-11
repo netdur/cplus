@@ -1,0 +1,82 @@
+// Interactive hello: the Button's clicks land in C+ (via the
+// NativeClickListener adapter), mutate C+ state, and update the TextView.
+
+import "android_view/android_view" as av;
+import "android_view/listener" as listener;
+import "jni/jni" as jni;
+
+// The status TextView's own global ref (jobject as usize) + click count.
+static mut STATUS_REF: usize = 0;
+static mut CLICKS: i32 = 0;
+
+pub extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
+    envp: *jni::JNIEnv,
+    cls: jni::jobject,
+    activity_obj: jni::jobject,
+) -> jni::jobject {
+    let env: av::Env = av::from_native(envp);
+    let act: av::Activity = av::Activity::from_borrowed(env, activity_obj);
+
+    let mut root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
+    root.set_orientation(av::orientation_vertical());
+
+    let title: av::TextView = av::TextView::new(env, act.as_context());
+    title.set_text(#str_ptr("Hello from C+ on Android\0"));
+    root.add_view(title.as_view_obj());
+
+    let status: av::TextView = av::TextView::new(env, act.as_context());
+    status.set_text(#str_ptr("clicks: 0\0"));
+    // A second global ref, owned by the click handler's static state —
+    // the wrapper's own ref dies with the wrapper at end of scope.
+    unsafe { STATUS_REF = env.new_global_ref(status.as_view_obj()) as usize; }
+    root.add_view(status.as_view_obj());
+
+    let button: av::Button = av::Button::new(env, act.as_context());
+    button.set_text(#str_ptr("Tap me (handled in C+)\0"));
+    // Dex path: the adapter ships inside the package; no host Java.
+    listener::set_on_click(env, button.as_view_obj(), 1 as i64);
+    root.add_view(button.as_view_obj());
+
+    return root.into_raw();
+}
+
+// The android_view/listener hook: every adapter click lands here.
+pub extern fn cplus_on_click(
+    envp: *jni::JNIEnv,
+    token: i64,
+    view: jni::jobject,
+) {
+    let env: av::Env = av::from_native(envp);
+    let mut n: i32 = 0;
+    unsafe {
+        CLICKS = CLICKS + 1;
+        n = CLICKS;
+    }
+    // "clicks: N\0" rendered into a stack buffer (NewStringUTF wants NUL).
+    let mut buf: [u8; 24] = [0 as u8; 24];
+    buf[0] = 99 as u8;   // c
+    buf[1] = 108 as u8;  // l
+    buf[2] = 105 as u8;  // i
+    buf[3] = 99 as u8;   // c
+    buf[4] = 107 as u8;  // k
+    buf[5] = 115 as u8;  // s
+    buf[6] = 58 as u8;   // :
+    buf[7] = 32 as u8;   // space
+    let mut i: i32 = 8;
+    if n >= 100 { buf[i as usize] = (48 + (n / 100) % 10) as u8; i = i + 1; }
+    if n >= 10 { buf[i as usize] = (48 + (n / 10) % 10) as u8; i = i + 1; }
+    buf[i as usize] = (48 + n % 10) as u8;
+    buf[(i + 1) as usize] = 0 as u8;
+
+    let status: jni::jobject = unsafe { STATUS_REF as *u8 };
+    let s: jni::jstring = env.new_string_utf(unsafe { #addr_of(buf[0]) });
+    env.call_void_1(
+        status,
+        #str_ptr("android/widget/TextView\0"),
+        #str_ptr("setText\0"),
+        #str_ptr("(Ljava/lang/CharSequence;)V\0"),
+        av::arg_object(s),
+    );
+    env.delete_local_ref(s);
+    return;
+}
