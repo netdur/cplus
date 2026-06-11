@@ -82,6 +82,12 @@ extern fn objc_msg_void_id(recv: *u8, sel: *u8, arg: *u8);
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
 
+// `(recv, sel, id, id, BOOL) -> void` — e.g.
+// `-[NSObject performSelectorOnMainThread:withObject:waitUntilDone:]`, whose
+// first argument is itself a SEL (a pointer, so it rides the `id` slot).
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_i8(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i8);
+
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_i8_id(recv: *u8, sel: *u8, a: *u8) -> i8;
 
@@ -265,6 +271,12 @@ pub fn add_action_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types:
     return unsafe { class_addMethod_action(cls, selector, imp, types) };
 }
 
+// Add a `(self, _cmd, sender) -> void` method (the target-action / single-id
+// shape, e.g. a synthesized `cplusScrollSelfVisible:`). `types` e.g. `"v@:@"`.
+pub fn add_method_action(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
+    return unsafe { class_addMethod_action(cls, selector, imp, types) };
+}
+
 // Add an `(self, _cmd, arg) -> NSInteger` method (e.g. a data source's row
 // count). `types` is the ObjC type encoding, e.g. `"q@:@"`.
 pub fn add_method_i64_id(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8) -> i64, types: *u8) -> i8 {
@@ -351,6 +363,12 @@ pub fn msg_void_id(recv: *u8, selector: *u8, arg: *u8) {
 
 pub fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
     unsafe { objc_msg_void_id_id(recv, selector, a, b); };
+}
+
+// `[recv selector:a withObject:b waitUntilDone:c]`-shaped send. Used for
+// `performSelectorOnMainThread:withObject:waitUntilDone:` (`a` is a SEL).
+pub fn msg_void_id_id_i8(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i8) {
+    unsafe { objc_msg_void_id_id_i8(recv, selector, a, b, c); };
 }
 
 pub fn msg_i8_id(recv: *u8, selector: *u8, a: *u8) -> i8 {

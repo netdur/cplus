@@ -12,6 +12,16 @@ earlier history lives in each version's archived plan.
   (allow-all / deny-all), else prompt the user and remember the answer — then
   maps the result onto a real `AuthGate`. Closes the "ask-user + persisted
   per-agent rules" residual; the gate itself stays a pure predicate.
+- `agent_appkit` actions (click / set_text / scroll_to) now marshal to the main
+  thread when called off it, so an MCP bridge driven on a background connection
+  can't message AppKit off-main. Closure-free (`performSelectorOnMainThread:` +
+  an `[NSThread isMainThread]` fast path; scroll_to's NSRect rides a once-
+  registered `cplusScrollSelfVisible:` NSView method). `on_main_thread()` is
+  public.
+- New `Surface::layout_diagnostics`: per-node Auto Layout health
+  (`uses_autolayout`, `has_ambiguous_layout` via `-[NSView hasAmbiguousLayout]`),
+  so an agent can check a generated UI's layout without a screenshot. The tree
+  walk guards the NSView-only selectors so the NSWindow root node is safe.
 
 ### Compiler
 - Fixed a `musttail` miscompile on arm64: a tail call returning a by-value

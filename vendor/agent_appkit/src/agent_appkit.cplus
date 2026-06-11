@@ -39,6 +39,90 @@ fn is_null(p: *u8) -> bool {
     return p == null();
 }
 
+// ---- main-thread marshaling -------------------------------------------------
+//
+// AppKit requires UI mutations to run on the main thread. When the MCP bridge
+// is driven off-thread (the realistic deployment: `agent_mcp::serve_uds` on a
+// background connection), the agent's click / set_text / scroll_to would
+// otherwise message views off-main. These helpers hop to the main thread when
+// needed. C+ has no closures (so no `dispatch_async(^{...})`) and no extern
+// globals (so no `dispatch_get_main_queue()`); the closure-free path is Cocoa's
+// `performSelectorOnMainThread:withObject:waitUntilDone:`, which carries a
+// selector plus one `id` argument. `waitUntilDone:YES` keeps the action
+// synchronous, so the Outcome the caller returns stays accurate. Already on the
+// main thread, we send directly (the common in-app case, and what the headless
+// tests exercise).
+
+pub fn on_main_thread() -> bool {
+    let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
+    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8);
+}
+
+// Send `[target action:arg]` on the main thread (directly if already there).
+// `action` takes 0 or 1 `id` arg (the withObject value); pass `null()` for none.
+fn perform_on_main(target: *u8, action: *u8, arg: *u8) {
+    if on_main_thread() {
+        rt::msg_void_id(target, action, arg);
+        return;
+    }
+    rt::msg_void_id_id_i8(
+        target,
+        rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+        action,
+        arg,
+        1 as i8,
+    );
+    return;
+}
+
+// scroll_to passes an NSRect (a struct), which performSelectorOnMainThread
+// can't carry as its `id` argument. So scroll the view's own bounds into view
+// through a no-extra-arg helper method registered on NSView once:
+// `cplusScrollSelfVisible:` reads its own bounds and calls `scrollRectToVisible:`.
+// Registered lazily and idempotently (class_addMethod no-ops if it exists).
+static mut SCROLL_METHOD_REGISTERED: bool = false;
+
+fn cplus_scroll_self_visible(view: *u8, _cmd: *u8, _sender: *u8) {
+    let b: rt::Rect = rt::msg_rect(view, rt::sel(#str_ptr("bounds\0")));
+    rt::msg_void_rect(view, rt::sel(#str_ptr("scrollRectToVisible:\0")), b);
+    return;
+}
+
+fn ensure_scroll_method() {
+    if unsafe { SCROLL_METHOD_REGISTERED } {
+        return;
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
+    if !is_null(cls) {
+        rt::add_method_action(
+            cls,
+            rt::sel(#str_ptr("cplusScrollSelfVisible:\0")),
+            cplus_scroll_self_visible,
+            #str_ptr("v@:@\0"),
+        );
+    }
+    unsafe { SCROLL_METHOD_REGISTERED = true; }
+    return;
+}
+
+// Scroll `view`'s bounds into view on the main thread.
+fn scroll_visible_on_main(view: *u8) {
+    if on_main_thread() {
+        let b: rt::Rect = rt::msg_rect(view, rt::sel(#str_ptr("bounds\0")));
+        rt::msg_void_rect(view, rt::sel(#str_ptr("scrollRectToVisible:\0")), b);
+        return;
+    }
+    ensure_scroll_method();
+    rt::msg_void_id_id_i8(
+        view,
+        rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+        rt::sel(#str_ptr("cplusScrollSelfVisible:\0")),
+        null(),
+        1 as i8,
+    );
+    return;
+}
+
 // ---- agent-id tagging -------------------------------------------------------
 
 // A unique, stable address used as the associated-object key for the pinned
@@ -85,6 +169,19 @@ pub struct UiNode {
     pub text: text::Text,
     pub actionable: bool,
     pub parent: option::Option[usize],
+}
+
+// Per-node Auto Layout health, surfaced by `Surface::layout_diagnostics`. Lets
+// an agent (or a developer debugging a generated UI) ask "is this layout
+// well-formed?" without a screenshot. `uses_autolayout` is true when the view
+// opts into constraints (`translatesAutoresizingMaskIntoConstraints == NO`);
+// `has_ambiguous_layout` mirrors AppKit's `-[NSView hasAmbiguousLayout]` — true
+// when the constraint solver cannot pin the view's frame (under-constrained).
+pub struct LayoutDiagnostic {
+    pub id: text::Text,
+    pub class_name: text::Text,
+    pub uses_autolayout: bool,
+    pub has_ambiguous_layout: bool,
 }
 
 // ---- role classification ----------------------------------------------------
@@ -376,6 +473,46 @@ impl Surface {
         return out;
     }
 
+    // READ: Auto Layout health per node. For each non-root node, reports whether
+    // the view opts into constraints and whether its layout is ambiguous
+    // (under-constrained). Pure reads via the ObjC runtime — no mutation, so no
+    // authorization gate beyond being in the tree. Same node ordering as
+    // `describe` (snapshot index = NodeId - 1). Useful to an agent diagnosing a
+    // UI it just built, or to a developer, without a screenshot.
+    pub fn layout_diagnostics(self) -> vec::Vec[LayoutDiagnostic] {
+        let mut out: vec::Vec[LayoutDiagnostic] = vec::new::[LayoutDiagnostic]();
+        let total: usize = self.reg.len();
+        let mut node: usize = 1 as usize;
+        while node < total {
+            let view: *u8 = self.view_of(node);
+            // Both selectors are NSView-only — the tree also carries the
+            // NSWindow root node, which doesn't respond to them — so guard each
+            // with `respondsToSelector:` and report false for non-view nodes.
+            // `translatesAutoresizingMaskIntoConstraints == NO` => the view is
+            // driven by constraints (opted into Auto Layout).
+            let translates: bool =
+                if responds_to(view, #str_ptr("translatesAutoresizingMaskIntoConstraints\0")) {
+                    rt::msg_i8(view, rt::sel(#str_ptr("translatesAutoresizingMaskIntoConstraints\0")))
+                        != (0 as i8)
+                } else {
+                    true
+                };
+            let ambiguous: bool = if responds_to(view, #str_ptr("hasAmbiguousLayout\0")) {
+                rt::msg_i8(view, rt::sel(#str_ptr("hasAmbiguousLayout\0"))) != (0 as i8)
+            } else {
+                false
+            };
+            out.push(LayoutDiagnostic {
+                id: self.reg.resolved_id(node).to_text(),
+                class_name: class_name_text(view),
+                uses_autolayout: !translates,
+                has_ambiguous_layout: ambiguous,
+            });
+            node = node +% (1 as usize);
+        }
+        return out;
+    }
+
     // EVENTS: translate a fired widget into an agent event. Resolves the source
     // agent-id to its NodeId and offers `{ source, verb }` to the subscriber
     // (which applies its own subtree/verb/role filter + backpressure). Returns
@@ -412,7 +549,7 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                rt::msg_void_id(self.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
+                perform_on_main(self.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -432,7 +569,7 @@ impl Surface {
                     return oc;
                 }
                 let ns: *u8 = convert::cplus_str_to_nsstring(value);
-                rt::msg_void_id(self.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
+                perform_on_main(self.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
                 self.versions.bump(node);
                 return surface::Outcome::Allowed;
             }
@@ -450,9 +587,7 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                let v: *u8 = self.view_of(node);
-                let b: rt::Rect = rt::msg_rect(v, rt::sel(#str_ptr("bounds\0")));
-                rt::msg_void_rect(v, rt::sel(#str_ptr("scrollRectToVisible:\0")), b);
+                scroll_visible_on_main(self.view_of(node));
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}

@@ -16989,6 +16989,76 @@ fn main() -> i32 {
     );
 }
 
+/// Theme B residual (v0.0.20): `Surface::layout_diagnostics` reports per-node
+/// Auto Layout health. Builds two constraint-driven views (so
+/// `translatesAutoresizingMaskIntoConstraints == NO`) plus the window/content
+/// tree, then walks the whole tree — including the NSWindow root, which does
+/// NOT respond to the NSView-only layout selectors, so the walk must guard them
+/// (the bug this exercises is an unrecognized-selector trap on the window node).
+/// We assert the deterministic facts: exactly 2 nodes report `uses_autolayout`
+/// (a property we set and read), and the walk covered the full tree without
+/// trapping. `has_ambiguous_layout` is surfaced but its value is Apple's layout
+/// engine — only meaningful for a visible/laid-out window — so it is not
+/// asserted here (out of scope: that's framework behavior, not our binding).
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_appkit_layout_diagnostics_theme_b() {
+    agent_appkit_run(
+        "layout_diag",
+        r##"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "appkit/layout" as layout;
+import "agent_appkit/agent_appkit" as ui;
+import "stdlib/vec" as vec;
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+    let win: window::Window = window::Window::new(rect(0.0,0.0,400.0,300.0), 15 as u64, 2 as u64, 0 as i8);
+    let content: *u8 = win.content_view();
+
+    // Two views opt into Auto Layout (translates=NO) via the constraint API.
+    let a: controls::TextField = controls::TextField::new_label(rect(0.0,0.0,10.0,10.0));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), a.obj);
+    layout::use_constraints(a.obj);
+    let _wa = layout::activate(layout::equal_const(layout::width(a.obj), 50.0));
+    let _ha = layout::activate(layout::equal_const(layout::height(a.obj), 20.0));
+
+    let b: controls::TextField = controls::TextField::new_label(rect(0.0,0.0,10.0,10.0));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), b.obj);
+    layout::use_constraints(b.obj);
+    let _wb = layout::activate(layout::equal_const(layout::width(b.obj), 80.0));
+    let _hb = layout::activate(layout::equal_const(layout::height(b.obj), 20.0));
+    let _lb = layout::activate(layout::equal(layout::leading(b.obj), layout::leading(content)));
+    let _tb = layout::activate(layout::equal(layout::top(b.obj), layout::top(content)));
+
+    rt::msg_void(content, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0")));
+
+    let surf: ui::Surface = ui::open(win.obj);
+    let diags: vec::Vec[ui::LayoutDiagnostic] = surf.layout_diagnostics();
+    let mut n_auto: i32 = 0;
+    for d in diags.iter() {
+        if d.uses_autolayout { n_auto = n_auto +% (1 as i32); }
+    }
+    pool.drain();
+    // Exactly the two constraint-driven views report uses_autolayout.
+    if n_auto != (2 as i32) { return 2; }
+    // The walk covered the full tree (window root + content + 2 views + ...)
+    // without an unrecognized-selector trap on the non-view nodes.
+    if (diags.len() as i32) < (3 as i32) { return 3; }
+    return 0;
+}
+"##,
+    );
+}
+
 /// Harness for agent_appkit runtime tests: a tempdir project depending on the
 /// in-tree stdlib + appkit + agent_core + agent_appkit (via symlink), built and
 /// run; asserts exit 0. The program uses distinct non-zero codes per failed
@@ -17335,6 +17405,58 @@ fn main() -> i32 {
     if !wrote_ok { return 8; }
     if !btn_actionable { return 9; }
     if !have_unexposed { return 10; }
+    return 0;
+}
+"#,
+    );
+}
+
+/// Theme B residual (v0.0.20): main-thread marshaling of agent actions. When
+/// the MCP bridge is driven off-thread, click / set_text / scroll_to must hop
+/// to the main thread before touching AppKit. On the main thread (this test,
+/// and the in-app case) the helpers send directly — the fast path. Asserts
+/// `on_main_thread()` reports correctly and that `scroll_to` (whose NSRect arg
+/// can't ride performSelectorOnMainThread, so it routes through a dedicated
+/// path) authorizes and runs. The off-thread hop itself needs a live window +
+/// background thread + run loop to exercise, so it is not covered headless.
+#[test]
+#[cfg(target_os = "macos")]
+fn agent_appkit_main_thread_marshaling_theme_b() {
+    agent_appkit_run(
+        "ak_mainthread",
+        r#"
+import "appkit/runtime" as rt;
+import "appkit/application" as application;
+import "appkit/window" as window;
+import "appkit/controls" as controls;
+import "agent_appkit/agent_appkit" as ui;
+import "agent_core/surface" as surface;
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
+    return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
+}
+
+fn main() -> i32 {
+    let pool = application::AutoreleasePool::new();
+    let _app = application::Application::shared();
+    // The test (and an in-app assistant) run on the main thread.
+    if !ui::on_main_thread() { return 1; }
+
+    let win: window::Window = window::Window::new(rect(0.0,0.0,300.0,200.0), 1 as u64, 2 as u64, 0 as i8);
+    let content: *u8 = win.content_view();
+    let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,10.0,200.0,24.0));
+    ui::set_agent_id(inp.obj, "field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+    let mut s: ui::Surface = ui::open(win.obj);
+
+    // scroll_to is exposed (tagged) -> Allowed; routes through the main-thread
+    // scroll path (direct send while on main).
+    if !surface::outcome_eq(s.scroll_to("field"), surface::Outcome::Allowed) { return 2; }
+    // Unknown id -> NotFound, no send.
+    if !surface::outcome_eq(s.scroll_to("nope"), surface::Outcome::NotFound) { return 3; }
+    // A marshaled write still works on the main thread.
+    if !surface::outcome_eq(s.set_text("field", "ok", 0 as u64), surface::Outcome::Allowed) { return 4; }
+    pool.drain();
     return 0;
 }
 "#,
