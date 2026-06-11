@@ -3,7 +3,7 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
-## v0.0.21 — unreleased
+## v0.0.21 — 2026-06-11
 
 ### esp32: heap types + the espidf package
 - Embedded package profile: a target can exclude stdlib modules whose

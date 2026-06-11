@@ -11,9 +11,10 @@ C+ provides the necessary primitives for low-level systems programming:
 - **Modern Constructs**: Structs, tagged enums, generics, interfaces, methods, and modules.
 - **Low-Level Control**: Raw pointers, `unsafe` blocks, `#[repr(C)]`, SIMD primitives, atomics, threads, compiler-checked real-time contracts (`#[no_alloc]` / `#[realtime]`), and direct LLVM IR generation.
 - **C Interoperability**: Seamless C ABI interop, `extern fn`, and clang-based linking.
+- **Multi-target**: `--target` cross-compiles for iOS (`ios-arm64`), Android (`android-arm64`, via the NDK's clang), and ESP32 (`esp32-xtensa`, 32-bit, via Espressif's esp-clang). cpc emits the object or static library; the platform's build system (Xcode, Gradle/NDK, ESP-IDF) owns the final link. Compiler-checked `#[realtime]` code runs on a $4 microcontroller.
 - **Built for tools and LLMs**: a deliberately small, unambiguous surface, plus a resolved, typed **code-knowledge graph** the compiler exposes to editors and agents (`cpc query` / `cpc mcp`, and the LSP) — so navigation is by *symbol and type*, not text search.
 
-Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit`) are implemented as regular packages, keeping the compiler focused and fast.
+Instead of relying on compiler magic for everything, C+ relies on an external-package architecture. Capabilities like the standard library (`stdlib`), 3D math (`simd`), GPU compute (`metal`), and UI bindings (`appkit` for macOS, `uikit` for iOS, `espidf` for ESP32 firmware) are implemented as regular packages, keeping the compiler focused and fast.
 
 - [Getting Started](#getting-started)
   - [Installing](#installing)
@@ -40,7 +41,7 @@ To build from source instead, see [Building from Source](#building-from-source).
 
 ### Requirements
 
-C+ has a single external dependency: a C toolchain (**clang**), used to assemble and link the native binary. `cpc` emits textual LLVM IR and shells out to `clang`, detecting the host target with `clang -print-target-triple`. clang already bundles LLVM, so **no separate LLVM install is needed**.
+C+ has a single external dependency: a C toolchain (**clang**), used to assemble and link the native binary. `cpc` emits textual LLVM IR and shells out to `clang`, detecting the host target with `clang -print-target-triple`. clang already bundles LLVM, so **no separate LLVM install is needed**. Cross-compiling with `--target` uses the platform's own toolchain: the Android NDK's clang for `android-arm64`, Espressif's esp-clang for `esp32-xtensa` (both auto-discovered from their default install locations).
 
 On macOS, install the Xcode Command Line Tools (most developers already have them):
 
