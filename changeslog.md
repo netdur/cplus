@@ -3,7 +3,7 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
-## v0.0.20 — (unreleased)
+## v0.0.20 — 2026-06-11
 
 ### Agent surface (Theme B)
 - New `agent_consent` recipe: a reference consent middleware over `agent_core`'s
