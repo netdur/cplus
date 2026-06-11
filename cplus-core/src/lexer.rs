@@ -614,10 +614,14 @@ impl<'a> Lexer<'a> {
                             self.pos += 1; // skip the closing `}`
                         }
                         _ => {
-                            return Err(LexError {
-                                kind: LexErrorKind::UnexpectedChar('$'),
-                                span: Span::new(self.pos as u32, self.pos as u32 + 1),
-                            });
+                            // v0.0.22: a bare `$` not followed by `{` or `$`
+                            // is a literal `$`. Previously an error, so no
+                            // existing program changes meaning; `$$` stays
+                            // the escape for a `$` that *is* followed by
+                            // `{`. Needed for JNI descriptors of nested
+                            // Java classes (`android/view/View$OnClickListener`).
+                            decoded.push(b'$');
+                            self.pos += 1;
                         }
                     }
                 }
@@ -1483,6 +1487,43 @@ mod tests {
             kinds("borrow A string"),
             vec![TokenKind::Borrow, TokenKind::Ident("A".into()),
                  TokenKind::Ident("string".into()), TokenKind::Eof]
+        );
+    }
+
+    /// v0.0.22: a bare `$` in a string literal (not followed by `{` or
+    /// `$`) is a literal `$` — JNI descriptors for nested Java classes
+    /// need it (`android/view/View$OnClickListener`). `$$` stays the
+    /// escape and `${...}` stays interpolation.
+    #[test]
+    fn bare_dollar_in_string_is_literal() {
+        assert_eq!(
+            kinds("\"View$OnClickListener\""),
+            vec![TokenKind::Str("View$OnClickListener".into()), TokenKind::Eof]
+        );
+        // `$` before the closing quote.
+        assert_eq!(
+            kinds("\"costs 5$\""),
+            vec![TokenKind::Str("costs 5$".into()), TokenKind::Eof]
+        );
+        // Multiple bare dollars.
+        assert_eq!(
+            kinds("\"a$b$c\""),
+            vec![TokenKind::Str("a$b$c".into()), TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn dollar_escape_and_interpolation_unchanged() {
+        // `$$` still decodes to one `$`.
+        assert_eq!(
+            kinds("\"a$$b\""),
+            vec![TokenKind::Str("a$b".into()), TokenKind::Eof]
+        );
+        // `${...}` still lexes as an interpolated string.
+        let toks = kinds("\"n is ${n}\"");
+        assert!(
+            matches!(&toks[0], TokenKind::InterpStr(parts) if parts.len() == 2),
+            "expected InterpStr, got {toks:?}"
         );
     }
 }

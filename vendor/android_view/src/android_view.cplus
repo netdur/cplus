@@ -1,0 +1,28 @@
+// Umbrella module for Android View bindings.
+
+import "jni/jni" as jni;
+import "./runtime" as runtime;
+import "./activity" as activity;
+import "./view" as view;
+import "./controls" as controls;
+
+pub type Env = runtime::Env;
+pub type Context = runtime::Context;
+pub type Activity = activity::Activity;
+
+pub type View = view::View;
+pub type LinearLayout = view::LinearLayout;
+pub type TextView = controls::TextView;
+pub type Button = controls::Button;
+
+pub fn from_native(envp: *jni::JNIEnv) -> runtime::Env {
+    return runtime::from_native(envp);
+}
+
+pub fn orientation_horizontal() -> i32 {
+    return view::orientation_horizontal();
+}
+
+pub fn orientation_vertical() -> i32 {
+    return view::orientation_vertical();
+}

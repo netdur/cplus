@@ -23434,6 +23434,85 @@ fn target_esp32_async_fn_fires_e0867() {
     );
 }
 
+/// v0.0.22: the android_view bindings (layered on vendor/jni) and the
+/// nativeCreateView host-contract shape pass whole-project sema for the
+/// android target on every host, and build to an arm64 staticlib when the
+/// NDK is present. JNI descriptors with `$` (nested Java classes) ride the
+/// v0.0.22 bare-dollar string-literal rule.
+#[test]
+fn android_view_project_checks_and_builds() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"avapp\"\n\n[lib]\nname = \"avapp\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n\n[dependencies]\nandroid_view = \"*\"\njni = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    symlink_dir(&root.join("vendor/android_view"), &dir.join("vendor/android_view"));
+    symlink_dir(&root.join("vendor/jni"), &dir.join("vendor/jni"));
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        r#"
+import "android_view/android_view" as av;
+import "jni/jni" as jni;
+
+pub extern fn Java_com_example_MainActivity_nativeCreateView(
+    envp: *jni::JNIEnv,
+    cls: jni::jobject,
+    activity_obj: jni::jobject,
+) -> jni::jobject {
+    let env: av::Env = av::from_native(envp);
+    let act: av::Activity = av::Activity::from_borrowed(env, activity_obj);
+    let mut root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
+    root.set_orientation(av::orientation_vertical());
+    let title: av::TextView = av::TextView::new(env, act.as_context());
+    title.set_text(#str_ptr("Hello from C+\0"));
+    root.add_view(title.as_view_obj());
+    // `$` in a JNI descriptor for a nested Java class lexes as a literal.
+    let listener_cls: *u8 = #str_ptr("android/view/View$OnClickListener\0");
+    let _unused: *u8 = listener_cls;
+    return root.into_raw();
+}
+"#,
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg("--target")
+        .arg("android-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(
+        out.status.success(),
+        "android_view host-contract project must check clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // With an NDK available, the staticlib pipeline produces an ELF arm64
+    // object; without one, the front-end check above is the gate.
+    if ndk_clang_for_test().is_none() {
+        eprintln!("skipping build half: no Android NDK (r28.2+) found");
+        return;
+    }
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("android-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "android_view staticlib build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let obj = std::fs::read(dir.join("target/android-arm64/debug/avapp.o")).unwrap();
+    assert_eq!(&obj[0..4], b"\x7fELF");
+}
+
 /// The espidf bindings and the all-C+ firmware shape pass whole-project
 /// sema for the esp32 target on every host (front end only, no esp-clang).
 #[test]

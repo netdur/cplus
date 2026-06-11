@@ -1,0 +1,116 @@
+// Android View and ViewGroup wrappers.
+
+import "jni/jni" as jni;
+import "./runtime" as rt;
+
+pub fn orientation_horizontal() -> i32 { return 0 as i32; }
+pub fn orientation_vertical() -> i32 { return 1 as i32; }
+
+pub struct View {
+    pub env: rt::Env,
+    pub obj: jni::jobject,
+}
+
+impl View {
+    fn drop(mut self) {
+        // `into_raw` nulls `obj` after transferring the global ref out;
+        // JNI's DeleteGlobalRef contract does not admit NULL.
+        if self.obj != unsafe { 0 as jni::jobject } {
+            self.env.delete_global_ref(self.obj);
+        }
+        return;
+    }
+
+    pub fn from_global(env: rt::Env, obj: jni::jobject) -> View {
+        return View { env: env, obj: obj };
+    }
+
+    pub fn from_local(env: rt::Env, obj: jni::jobject) -> View {
+        return View { env: env, obj: env.retain_local_as_global(obj) };
+    }
+
+    pub fn as_obj(self) -> jni::jobject {
+        return self.obj;
+    }
+
+    pub fn into_raw(mut self) -> jni::jobject {
+        let p: jni::jobject = self.obj;
+        self.obj = unsafe { 0 as jni::jobject };
+        return p;
+    }
+
+    pub fn set_visibility(self, visibility: i32) {
+        self.env.call_void_1(
+            self.obj,
+            #str_ptr("android/view/View\0"),
+            #str_ptr("setVisibility\0"),
+            #str_ptr("(I)V\0"),
+            rt::arg_int(visibility),
+        );
+    }
+
+    pub fn set_enabled(self, flag: i8) {
+        self.env.call_void_1(
+            self.obj,
+            #str_ptr("android/view/View\0"),
+            #str_ptr("setEnabled\0"),
+            #str_ptr("(Z)V\0"),
+            rt::arg_bool(flag),
+        );
+    }
+}
+
+pub struct LinearLayout {
+    pub env: rt::Env,
+    pub obj: jni::jobject,
+}
+
+impl LinearLayout {
+    fn drop(mut self) {
+        // `into_raw` nulls `obj` after transferring the global ref out;
+        // JNI's DeleteGlobalRef contract does not admit NULL.
+        if self.obj != unsafe { 0 as jni::jobject } {
+            self.env.delete_global_ref(self.obj);
+        }
+        return;
+    }
+
+    pub fn new(env: rt::Env, ctx: rt::Context) -> LinearLayout {
+        let local: jni::jobject = env.new_object_1(
+            #str_ptr("android/widget/LinearLayout\0"),
+            #str_ptr("(Landroid/content/Context;)V\0"),
+            rt::arg_object(ctx),
+        );
+        return LinearLayout { env: env, obj: env.retain_local_as_global(local) };
+    }
+
+    pub fn as_view_obj(self) -> jni::jobject {
+        return self.obj;
+    }
+
+    pub fn into_raw(mut self) -> jni::jobject {
+        let p: jni::jobject = self.obj;
+        self.obj = unsafe { 0 as jni::jobject };
+        return p;
+    }
+
+    pub fn set_orientation(self, orientation: i32) {
+        self.env.call_void_1(
+            self.obj,
+            #str_ptr("android/widget/LinearLayout\0"),
+            #str_ptr("setOrientation\0"),
+            #str_ptr("(I)V\0"),
+            rt::arg_int(orientation),
+        );
+    }
+
+    pub fn add_view(self, child: jni::jobject) {
+        self.env.call_void_1(
+            self.obj,
+            #str_ptr("android/view/ViewGroup\0"),
+            #str_ptr("addView\0"),
+            #str_ptr("(Landroid/view/View;)V\0"),
+            rt::arg_object(child),
+        );
+    }
+}

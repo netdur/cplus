@@ -1,0 +1,132 @@
+// android_view runtime: small JNI helpers used by the typed View wrappers.
+//
+// Native Android entrypoints receive `JNIEnv *` — a pointer to the
+// thread-local JNI function-table pointer. JNI functions must be called
+// with that same double pointer (ART recovers the thread from it), so
+// `Env` stores it as-is and dereferences twice to reach the table.
+
+import "jni/jni" as jni;
+
+pub type Context = jni::jobject;
+pub type Activity = jni::jobject;
+pub type JavaObject = jni::jobject;
+
+pub struct Env {
+    pub opaque env: *jni::JNIEnv,
+}
+
+pub fn from_native(envp: *jni::JNIEnv) -> Env {
+    return Env { env: envp };
+}
+
+impl Env {
+    pub fn get_version(self) -> jni::jint {
+        return unsafe { (*(*self.env)).GetVersion(self.env) };
+    }
+
+    pub fn find_class(self, name: *u8) -> jni::jclass {
+        return unsafe { (*(*self.env)).FindClass(self.env, name) };
+    }
+
+    pub fn get_method_id(self, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
+        return unsafe { (*(*self.env)).GetMethodID(self.env, cls, name, sig) };
+    }
+
+    pub fn exception_occurred(self) -> jni::jthrowable {
+        return unsafe { (*(*self.env)).ExceptionOccurred(self.env) };
+    }
+
+    pub fn exception_clear(self) {
+        unsafe { (*(*self.env)).ExceptionClear(self.env); };
+    }
+
+    pub fn new_global_ref(self, obj: jni::jobject) -> jni::jobject {
+        return unsafe { (*(*self.env)).NewGlobalRef(self.env, obj) };
+    }
+
+    pub fn delete_global_ref(self, obj: jni::jobject) {
+        unsafe { (*(*self.env)).DeleteGlobalRef(self.env, obj); };
+    }
+
+    pub fn delete_local_ref(self, obj: jni::jobject) {
+        unsafe { (*(*self.env)).DeleteLocalRef(self.env, obj); };
+    }
+
+    // `utf8` must be NUL-terminated modified UTF-8, matching JNI's
+    // NewStringUTF contract. String-literal call sites should include `\0`.
+    pub fn new_string_utf(self, utf8: *u8) -> jni::jstring {
+        return unsafe { (*(*self.env)).NewStringUTF(self.env, utf8) };
+    }
+
+    pub fn method(self, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
+        let cls: jni::jclass = self.find_class(class_name);
+        let mid: jni::jmethodID = self.get_method_id(cls, name, sig);
+        self.delete_local_ref(cls);
+        return mid;
+    }
+
+    pub fn new_object_0(self, class_name: *u8, ctor_sig: *u8) -> jni::jobject {
+        let cls: jni::jclass = self.find_class(class_name);
+        let ctor: jni::jmethodID = self.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
+        let obj: jni::jobject = unsafe {
+            (*(*self.env)).NewObjectA(self.env, cls, ctor, 0 as *jni::JValue)
+        };
+        self.delete_local_ref(cls);
+        return obj;
+    }
+
+    pub fn new_object_1(self, class_name: *u8, ctor_sig: *u8, arg0: jni::JValue) -> jni::jobject {
+        let cls: jni::jclass = self.find_class(class_name);
+        let ctor: jni::jmethodID = self.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
+        let mut args: [jni::JValue; 1] = [arg0];
+        let obj: jni::jobject = unsafe {
+            (*(*self.env)).NewObjectA(self.env, cls, ctor, #addr_of(args[0]))
+        };
+        self.delete_local_ref(cls);
+        return obj;
+    }
+
+    pub fn call_void_0(self, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) {
+        let mid: jni::jmethodID = self.method(class_name, name, sig);
+        unsafe { (*(*self.env)).CallVoidMethodA(self.env, obj, mid, 0 as *jni::JValue); };
+    }
+
+    pub fn call_void_1(self, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) {
+        let mid: jni::jmethodID = self.method(class_name, name, sig);
+        let mut args: [jni::JValue; 1] = [arg0];
+        unsafe { (*(*self.env)).CallVoidMethodA(self.env, obj, mid, #addr_of(args[0])); };
+    }
+
+    pub fn call_void_2(
+        self,
+        obj: jni::jobject,
+        class_name: *u8,
+        name: *u8,
+        sig: *u8,
+        arg0: jni::JValue,
+        arg1: jni::JValue,
+    ) {
+        let mid: jni::jmethodID = self.method(class_name, name, sig);
+        let mut args: [jni::JValue; 2] = [arg0, arg1];
+        unsafe { (*(*self.env)).CallVoidMethodA(self.env, obj, mid, #addr_of(args[0])); };
+    }
+
+    pub fn retain_local_as_global(self, local: jni::jobject) -> jni::jobject {
+        let global: jni::jobject = self.new_global_ref(local);
+        self.delete_local_ref(local);
+        return global;
+    }
+}
+
+pub fn arg_object(obj: jni::jobject) -> jni::JValue {
+    return jni::arg_object(obj);
+}
+
+pub fn arg_int(v: i32) -> jni::JValue {
+    return jni::arg_int(v as jni::jint);
+}
+
+pub fn arg_bool(v: i8) -> jni::JValue {
+    return jni::arg_bool(v as jni::jboolean);
+}
+

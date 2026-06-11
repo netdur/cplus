@@ -1,0 +1,31 @@
+// Activity handoff helpers. The JVM still owns Activity creation/lifecycle;
+// C+ can build a View tree and hand the root back through setContentView.
+
+import "jni/jni" as jni;
+import "./runtime" as rt;
+
+pub struct Activity {
+    pub env: rt::Env,
+    pub opaque obj: jni::jobject,
+}
+
+impl Activity {
+    pub fn from_borrowed(env: rt::Env, activity: jni::jobject) -> Activity {
+        return Activity { env: env, obj: activity };
+    }
+
+    pub fn as_context(self) -> rt::Context {
+        return self.obj;
+    }
+
+    pub fn set_content_view(self, view: jni::jobject) {
+        self.env.call_void_1(
+            self.obj,
+            #str_ptr("android/app/Activity\0"),
+            #str_ptr("setContentView\0"),
+            #str_ptr("(Landroid/view/View;)V\0"),
+            rt::arg_object(view),
+        );
+    }
+}
+
