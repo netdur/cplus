@@ -23471,10 +23471,24 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
     let title: av::TextView = av::TextView::new(env, act.as_context());
     title.set_text(#str_ptr("Hello from C+\0"));
     root.add_view(title.as_view_obj());
-    // `$` in a JNI descriptor for a nested Java class lexes as a literal.
-    let listener_cls: *u8 = #str_ptr("android/view/View$OnClickListener\0");
-    let _unused: *u8 = listener_cls;
+    let btn: av::Button = av::Button::new(env, act.as_context());
+    // Click contract: the host's adapter class name + a routing token.
+    // The setOnClickListener descriptor inside set_on_click uses the
+    // nested-class `$` (android/view/View$OnClickListener) — the
+    // v0.0.22 bare-dollar literal rule.
+    btn.set_on_click(#str_ptr("com/example/NativeClickListener\0"), 7 as i64);
+    root.add_view(btn.as_view_obj());
     return root.into_raw();
+}
+
+pub extern fn Java_com_example_NativeClickListener_nativeOnClick(
+    envp: *jni::JNIEnv,
+    cls: jni::jobject,
+    token: i64,
+    view: jni::jobject,
+) {
+    let _e: av::Env = av::from_native(envp);
+    return;
 }
 "#,
     )

@@ -26,3 +26,20 @@ pub fn orientation_horizontal() -> i32 {
 pub fn orientation_vertical() -> i32 {
     return view::orientation_vertical();
 }
+
+pub fn set_on_click_raw(env: runtime::Env, v: jni::jobject, adapter_class: *u8, token: i64) {
+    view::set_on_click_raw(env, v, adapter_class, token);
+    return;
+}
+
+pub fn arg_object(obj: jni::jobject) -> jni::JValue {
+    return runtime::arg_object(obj);
+}
+
+pub fn arg_int(v: i32) -> jni::JValue {
+    return runtime::arg_int(v);
+}
+
+pub fn arg_long(v: i64) -> jni::JValue {
+    return runtime::arg_long(v);
+}

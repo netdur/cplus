@@ -10,7 +10,7 @@ This mirrors the AppKit/UIKit package shape:
 - `runtime`: JNI environment helpers, method calls, UTF strings, global refs.
 - `activity`: borrowed `Activity` wrapper and `setContentView`.
 - `view`: `View` and `LinearLayout`.
-- `controls`: `TextView` and `Button`.
+- `controls`: `TextView` and `Button` (text + `set_on_click`).
 - `android_view`: umbrella module.
 
 ## Host Contract
@@ -60,6 +60,38 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
 }
 ```
 
+## Click handling
+
+Java interfaces cannot be implemented from native code, so click handling
+rides a tiny adapter class the host app ships next to MainActivity:
+
+```java
+package com.example.app;
+
+public final class NativeClickListener implements android.view.View.OnClickListener {
+    private final long token;
+    public NativeClickListener(long token) { this.token = token; }
+    private static native void nativeOnClick(long token, android.view.View v);
+    @Override public void onClick(android.view.View v) { nativeOnClick(token, v); }
+}
+```
+
+The C+ side wires it with `button.set_on_click(#str_ptr("com/example/app/NativeClickListener\0"), token)`
+and exports the matching handler:
+
+```cplus
+pub extern fn Java_com_example_app_NativeClickListener_nativeOnClick(
+    envp: *jni::JNIEnv,
+    cls: jni::jobject,
+    token: i64,
+    view: jni::jobject,
+) { ... }
+```
+
+`token` routes multiple controls through one adapter class. Validated on the
+emulator: taps on a Button reach the C+ handler and a `setText` from C+
+updates the screen.
+
 ## Ownership
 
 Wrappers own a JNI global reference and delete it in `drop`. Methods that pass a
@@ -72,8 +104,6 @@ global reference out of the wrapper.
 This is a first slice, not a complete Android toolkit:
 
 - `JValue` currently supports object/int/boolean slots only.
-- Callbacks need a tiny Java adapter class for interfaces like
-  `View.OnClickListener`.
 - Layout params, colors, density conversion, resources, and UI-thread dispatch
   are still missing.
 

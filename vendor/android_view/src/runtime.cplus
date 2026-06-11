@@ -130,3 +130,7 @@ pub fn arg_bool(v: i8) -> jni::JValue {
     return jni::arg_bool(v as jni::jboolean);
 }
 
+pub fn arg_long(v: i64) -> jni::JValue {
+    return jni::arg_long(v as jni::jlong);
+}
+

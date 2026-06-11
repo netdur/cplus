@@ -2,6 +2,7 @@
 
 import "jni/jni" as jni;
 import "./runtime" as rt;
+import "./view" as view;
 
 pub struct TextView {
     pub env: rt::Env,
@@ -96,10 +97,10 @@ impl Button {
         self.env.delete_local_ref(s);
     }
 
-    // Listener construction needs a tiny JVM-side adapter class because
-    // OnClickListener is an interface. `listener_sig` is the JNI descriptor for
-    // that adapter/interface; keep it caller-provided because C+ string
-    // literals currently reject '$', which appears in nested Java class names.
+    pub fn set_on_click(self, adapter_class: *u8, token: i64) {
+        view::set_on_click_raw(self.env, self.obj, adapter_class, token);
+        return;
+    }
     pub fn set_on_click_listener(self, listener: jni::jobject, listener_sig: *u8) {
         self.env.call_void_1(
             self.obj,

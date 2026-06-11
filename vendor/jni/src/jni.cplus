@@ -60,6 +60,10 @@ pub fn arg_bool(v: jboolean) -> JValue {
     return JValue { bits: v as jlong };
 }
 
+pub fn arg_long(v: jlong) -> JValue {
+    return JValue { bits: v };
+}
+
 // The core JNI environment struct.
 // Note: This struct must exactly match the memory layout of JNINativeInterface_ in jni.h.
 // Since we only *read* from the JVM-provided pointer, we only need to define 
