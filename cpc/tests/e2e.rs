@@ -23457,6 +23457,7 @@ fn android_view_project_checks_and_builds() {
         dir.join("src/lib.cplus"),
         r#"
 import "android_view/android_view" as av;
+import "android_view/listener" as listener;
 import "jni/jni" as jni;
 
 pub extern fn Java_com_example_MainActivity_nativeCreateView(
@@ -23472,13 +23473,25 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
     title.set_text(#str_ptr("Hello from C+\0"));
     root.add_view(title.as_view_obj());
     let btn: av::Button = av::Button::new(env, act.as_context());
-    // Click contract: the host's adapter class name + a routing token.
-    // The setOnClickListener descriptor inside set_on_click uses the
-    // nested-class `$` (android/view/View$OnClickListener) — the
-    // v0.0.22 bare-dollar literal rule.
+    // Java-adapter click path: the host's adapter class name + a token.
     btn.set_on_click(#str_ptr("com/example/NativeClickListener\0"), 7 as i64);
+    // Dex click path: the package-embedded adapter (include_bytes +
+    // InMemoryDexClassLoader + RegisterNatives); the descriptor inside
+    // uses the nested-class `$` enabled by the v0.0.22 literal rule.
+    listener::set_on_click(env, btn.as_view_obj(), 8 as i64);
     root.add_view(btn.as_view_obj());
     return root.into_raw();
+}
+
+// The listener module's app hook (also exercises define-vs-import-declare
+// symbol dedup: android_view/listener *declares* this as an extern import).
+pub extern fn cplus_on_click(
+    envp: *jni::JNIEnv,
+    token: i64,
+    view: jni::jobject,
+) {
+    let _e: av::Env = av::from_native(envp);
+    return;
 }
 
 pub extern fn Java_com_example_NativeClickListener_nativeOnClick(
@@ -23525,6 +23538,60 @@ pub extern fn Java_com_example_NativeClickListener_nativeOnClick(
     );
     let obj = std::fs::read(dir.join("target/android-arm64/debug/avapp.o")).unwrap();
     assert_eq!(&obj[0..4], b"\x7fELF");
+}
+
+/// Regression (v0.0.22, android_view listener): one module *declares* an
+/// extern symbol as an import while another module in the same program
+/// *defines* it (`pub extern fn`) — the app-provided-hook pattern. Codegen
+/// used to emit both the `declare` and the `define`, which LLVM rejects as
+/// a redefinition; the import declare is now skipped for program-defined
+/// symbols. Host-runnable: the caller module invokes the hook through its
+/// extern declaration and the result proves the call landed in the
+/// definition.
+#[test]
+fn extern_import_of_program_defined_symbol_links_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hookapp\"\n\n[[bin]]\nname = \"hookapp\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/caller.cplus"),
+        "extern fn app_hook(x: i32) -> i32;\n\
+         pub fn call_through_hook(x: i32) -> i32 {\n\
+             return unsafe { app_hook(x) };\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./caller\" as caller;\n\
+         pub extern fn app_hook(x: i32) -> i32 {\n\
+             return x * 2 + 1;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             if caller::call_through_hook(20) != 41 { return 1; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "declare+define of one symbol must compile: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("target/debug/hookapp"))
+        .status()
+        .expect("run hookapp");
+    assert_eq!(run.code(), Some(0), "hook call must reach the definition");
 }
 
 /// The espidf bindings and the all-C+ firmware shape pass whole-project

@@ -1201,6 +1201,24 @@ fn generate_inner(
         emitted_extern_symbols.insert("sel_registerName".to_string());
         emitted_extern_symbols.insert("objc_msgSend".to_string());
     }
+    // v0.0.22 (android_view listener): a program may both *define* a C-ABI
+    // symbol (`pub extern fn cplus_on_click` in the app) and *declare* it
+    // as an import elsewhere (a vendor package calling an app-provided
+    // hook). Emitting both the `define` and a `declare` for one symbol is
+    // an LLVM-level redefinition; pre-seed the dedup set with every
+    // defined export so the import path skips its declare regardless of
+    // item order after the resolver merge.
+    for item in &program.items {
+        if let ItemKind::Function(f) = &item.kind {
+            if f.is_extern && f.is_pub && f.generic_params.is_empty() {
+                let sym = sigs
+                    .get(&f.name.name)
+                    .and_then(|s| s.link_name.clone())
+                    .unwrap_or_else(|| f.name.name.clone());
+                emitted_extern_symbols.insert(sym);
+            }
+        }
+    }
     for item in &program.items {
         match &item.kind {
             ItemKind::Function(f) => {

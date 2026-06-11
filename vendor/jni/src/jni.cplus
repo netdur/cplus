@@ -241,6 +241,82 @@ pub struct JNINativeInterface {
     pub GetStringUTFLength: fn(*JNIEnv, jstring) -> jsize,
     pub GetStringUTFChars: fn(*JNIEnv, jstring, *jboolean) -> *u8,
     pub ReleaseStringUTFChars: fn(*JNIEnv, jstring, *u8),
+    // Object arrays (slots 171-174 in jni.h).
+    pub GetArrayLength: fn(*JNIEnv, jarray) -> jsize,
+    pub NewObjectArray: fn(*JNIEnv, jsize, jclass, jobject) -> jobjectArray,
+    pub GetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize) -> jobject,
+    pub SetObjectArrayElement: fn(*JNIEnv, jobjectArray, jsize, jobject),
+    // Primitive arrays (175-214): 8 New<P>Array, 8 Get<P>ArrayElements,
+    // 8 Release<P>ArrayElements, 8 Get<P>ArrayRegion, 8 Set<P>ArrayRegion.
+    opaque reserved_new_prim_array_0: *u8,
+    opaque reserved_new_prim_array_1: *u8,
+    opaque reserved_new_prim_array_2: *u8,
+    opaque reserved_new_prim_array_3: *u8,
+    opaque reserved_new_prim_array_4: *u8,
+    opaque reserved_new_prim_array_5: *u8,
+    opaque reserved_new_prim_array_6: *u8,
+    opaque reserved_new_prim_array_7: *u8,
+    opaque reserved_get_prim_elems_0: *u8,
+    opaque reserved_get_prim_elems_1: *u8,
+    opaque reserved_get_prim_elems_2: *u8,
+    opaque reserved_get_prim_elems_3: *u8,
+    opaque reserved_get_prim_elems_4: *u8,
+    opaque reserved_get_prim_elems_5: *u8,
+    opaque reserved_get_prim_elems_6: *u8,
+    opaque reserved_get_prim_elems_7: *u8,
+    opaque reserved_release_prim_elems_0: *u8,
+    opaque reserved_release_prim_elems_1: *u8,
+    opaque reserved_release_prim_elems_2: *u8,
+    opaque reserved_release_prim_elems_3: *u8,
+    opaque reserved_release_prim_elems_4: *u8,
+    opaque reserved_release_prim_elems_5: *u8,
+    opaque reserved_release_prim_elems_6: *u8,
+    opaque reserved_release_prim_elems_7: *u8,
+    opaque reserved_get_prim_region_0: *u8,
+    opaque reserved_get_prim_region_1: *u8,
+    opaque reserved_get_prim_region_2: *u8,
+    opaque reserved_get_prim_region_3: *u8,
+    opaque reserved_get_prim_region_4: *u8,
+    opaque reserved_get_prim_region_5: *u8,
+    opaque reserved_get_prim_region_6: *u8,
+    opaque reserved_get_prim_region_7: *u8,
+    opaque reserved_set_prim_region_0: *u8,
+    opaque reserved_set_prim_region_1: *u8,
+    opaque reserved_set_prim_region_2: *u8,
+    opaque reserved_set_prim_region_3: *u8,
+    opaque reserved_set_prim_region_4: *u8,
+    opaque reserved_set_prim_region_5: *u8,
+    opaque reserved_set_prim_region_6: *u8,
+    opaque reserved_set_prim_region_7: *u8,
+    // 215: explicit native-method binding. `methods` is a pointer to
+    // `count` packed records { name, signature, fnPtr } — callers define
+    // the record with a concretely-typed fn field (see
+    // android_view/listener). Required for classes from
+    // InMemoryDexClassLoader: ART resolves `native` methods by symbol
+    // only through a classloader's own native-lib namespace, which an
+    // in-memory loader does not have.
+    pub RegisterNatives: fn(*JNIEnv, jclass, *u8, jint) -> jint,
+    opaque reserved_unregister_natives: *u8,
+    opaque reserved_monitor_enter: *u8,
+    opaque reserved_monitor_exit: *u8,
+    opaque reserved_get_java_vm: *u8,
+    opaque reserved_get_string_region: *u8,
+    opaque reserved_get_string_utf_region: *u8,
+    opaque reserved_get_prim_critical: *u8,
+    opaque reserved_release_prim_critical: *u8,
+    opaque reserved_get_string_critical: *u8,
+    opaque reserved_release_string_critical: *u8,
+    opaque reserved_new_weak_global_ref: *u8,
+    opaque reserved_delete_weak_global_ref: *u8,
+    // 228: pending-exception predicate (cheaper than ExceptionOccurred —
+    // no local ref).
+    pub ExceptionCheck: fn(*JNIEnv) -> jboolean,
+    // 229: wrap native memory as a java.nio.ByteBuffer. The memory must
+    // outlive the buffer; `#include_bytes` blobs (static lifetime) qualify.
+    pub NewDirectByteBuffer: fn(*JNIEnv, *u8, jlong) -> jobject,
+    opaque reserved_get_direct_buffer_address: *u8,
+    opaque reserved_get_direct_buffer_capacity: *u8,
+    opaque reserved_get_object_ref_type: *u8,
 }
 
 #[repr(C)]
@@ -258,11 +334,12 @@ pub struct JNIInvokeInterface {
 // Layout sanity: the binding's correctness rests entirely on every function
 // pointer sitting at its `jni.h` offset, so pin the total size. A dropped,
 // added, or mistyped field shifts every later offset and changes the size.
-// 64-bit: JNINativeInterface through ReleaseStringUTFChars = 168 slots * 8.
-// JNIInvokeInterface = 3 reserved + 5 fn-ptrs = 8 * 8 = 64.
+// 64-bit: the full JNI 1.6 table is 233 slots (GetVersion at index 4
+// through GetObjectRefType at 232, verified against the NDK r29 jni.h),
+// 233 * 8 = 1864. JNIInvokeInterface = 3 reserved + 5 fn-ptrs = 64.
 #[test]
 fn jni_interface_layout_sizes() {
-    assert #size_of::[JNINativeInterface]() == (1344 as usize);
+    assert #size_of::[JNINativeInterface]() == (1864 as usize);
     assert #size_of::[JNIInvokeInterface]() == (64 as usize);
     assert #align_of::[JNINativeInterface]() == (8 as usize);
 }

@@ -111,6 +111,23 @@ impl Env {
         unsafe { (*(*self.env)).CallVoidMethodA(self.env, obj, mid, #addr_of(args[0])); };
     }
 
+    pub fn call_object_0(self, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) -> jni::jobject {
+        let mid: jni::jmethodID = self.method(class_name, name, sig);
+        return unsafe { (*(*self.env)).CallObjectMethodA(self.env, obj, mid, 0 as *u8) };
+    }
+
+    pub fn call_object_1(self, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
+        let mid: jni::jmethodID = self.method(class_name, name, sig);
+        let mut args: [jni::JValue; 1] = [arg0];
+        return unsafe {
+            (*(*self.env)).CallObjectMethodA(self.env, obj, mid, #addr_of(args[0]) as *u8)
+        };
+    }
+
+    pub fn exception_check(self) -> i8 {
+        return unsafe { (*(*self.env)).ExceptionCheck(self.env) } as i8;
+    }
+
     pub fn retain_local_as_global(self, local: jni::jobject) -> jni::jobject {
         let global: jni::jobject = self.new_global_ref(local);
         self.delete_local_ref(local);

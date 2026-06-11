@@ -62,8 +62,36 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
 
 ## Click handling
 
-Java interfaces cannot be implemented from native code, so click handling
-rides a tiny adapter class the host app ships next to MainActivity:
+Java interfaces cannot be implemented from native code, so clicks ride an
+adapter class. Two paths:
+
+### Self-contained (recommended, API 26+)
+
+The adapter ships *inside this package* as a pre-compiled DEX
+(`adapter/adapter.dex`, embedded via `#include_bytes`); on first use
+`android_view/listener` loads it with `dalvik.system.InMemoryDexClassLoader`
+and binds its native method with `RegisterNatives`. The host app ships no
+Java beyond MainActivity. Importing the module obligates the app to export
+the hook (bionic binds eagerly at `System.loadLibrary`, so a missing hook
+fails at library load):
+
+```cplus
+import "android_view/listener" as listener;
+
+// wire any control:
+listener::set_on_click(env, button.as_view_obj(), 1 as i64);
+
+// every adapter click lands here; `token` routes controls:
+pub extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject) { ... }
+```
+
+Validated on the emulator: taps reach the hook and a `setText` from C+
+updates the screen, with only MainActivity in the APK's dex.
+`adapter/build.sh` regenerates the dex (committed; consumers never run it).
+
+### Host-shipped adapter (works on any API level)
+
+Alternatively the host app ships the tiny class next to MainActivity:
 
 ```java
 package com.example.app;
@@ -77,7 +105,7 @@ public final class NativeClickListener implements android.view.View.OnClickListe
 ```
 
 The C+ side wires it with `button.set_on_click(#str_ptr("com/example/app/NativeClickListener\0"), token)`
-and exports the matching handler:
+and exports the matching `Java_..._nativeOnClick` handler:
 
 ```cplus
 pub extern fn Java_com_example_app_NativeClickListener_nativeOnClick(
