@@ -2,6 +2,7 @@
 
 import "./runtime" as rt;
 import "./view" as view;
+import "./convert" as convert;
 
 pub struct ViewController {
     pub opaque obj: *u8,
@@ -14,8 +15,141 @@ impl ViewController {
         return ViewController { obj: vc };
     }
 
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    pub fn from_raw(obj: *u8) -> ViewController {
+        return ViewController { obj: obj };
+    }
+
     pub fn view(self) -> view::View {
         let v: *u8 = rt::msg_id(self.obj, rt::sel(#str_ptr("view\0")));
         return view::View { obj: v };
+    }
+
+    pub fn set_view(self, v: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setView:\0")), v);
+    }
+
+    pub fn set_title(self, title: str) {
+        let ns: *u8 = convert::cplus_str_to_nsstring(title);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTitle:\0")), ns);
+    }
+
+    pub fn add_child(self, child: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addChildViewController:\0")), child);
+    }
+
+    pub fn did_move_to_parent(self, parent: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("didMoveToParentViewController:\0")), parent);
+    }
+
+    pub fn present(self, child: *u8, animated: i8) {
+        rt::msg_void_id_i8_id(
+            self.obj,
+            rt::sel(#str_ptr("presentViewController:animated:completion:\0")),
+            child,
+            animated,
+            unsafe { 0 as *u8 },
+        );
+    }
+
+    pub fn dismiss(self, animated: i8) {
+        rt::msg_void_i8_id(
+            self.obj,
+            rt::sel(#str_ptr("dismissViewControllerAnimated:completion:\0")),
+            animated,
+            unsafe { 0 as *u8 },
+        );
+    }
+}
+
+pub struct NavigationController {
+    pub obj: *u8,
+}
+
+impl NavigationController {
+    pub fn new(root: *u8) -> NavigationController {
+        let cls: *u8 = rt::get_class(#str_ptr("UINavigationController\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let nav: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithRootViewController:\0")), root);
+        return NavigationController { obj: nav };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn push(self, vc: *u8, animated: i8) {
+        rt::msg_void_id_i8(self.obj, rt::sel(#str_ptr("pushViewController:animated:\0")), vc, animated);
+    }
+
+    pub fn pop(self, animated: i8) -> *u8 {
+        return rt::msg_id_i8(self.obj, rt::sel(#str_ptr("popViewControllerAnimated:\0")), animated);
+    }
+
+    pub fn navigation_bar(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("navigationBar\0")));
+    }
+}
+
+pub struct TabBarController {
+    pub obj: *u8,
+}
+
+impl TabBarController {
+    pub fn new() -> TabBarController {
+        return TabBarController { obj: rt::new_object(#str_ptr("UITabBarController\0")) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_view_controllers(self, controllers: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setViewControllers:\0")), controllers);
+    }
+
+    pub fn tab_bar(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("tabBar\0")));
+    }
+}
+
+pub struct SplitViewController {
+    pub obj: *u8,
+}
+
+impl SplitViewController {
+    pub fn new() -> SplitViewController {
+        return SplitViewController { obj: rt::new_object(#str_ptr("UISplitViewController\0")) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_view_controllers(self, controllers: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setViewControllers:\0")), controllers);
+    }
+}
+
+pub struct PageViewController {
+    pub obj: *u8,
+}
+
+impl PageViewController {
+    pub fn new() -> PageViewController {
+        return PageViewController { obj: rt::new_object(#str_ptr("UIPageViewController\0")) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
     }
 }

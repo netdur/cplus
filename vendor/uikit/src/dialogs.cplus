@@ -1,0 +1,47 @@
+import "./runtime" as rt;
+import "./convert" as convert;
+
+pub struct AlertController {
+    pub obj: *u8,
+}
+
+impl AlertController {
+    pub fn new(title: str, message: str, style: i64) -> AlertController {
+        let cls: *u8 = rt::get_class(#str_ptr("UIAlertController\0"));
+        let alert: *u8 = rt::msg_id_id_id_i64(
+            cls,
+            rt::sel(#str_ptr("alertControllerWithTitle:message:preferredStyle:\0")),
+            convert::cplus_str_to_nsstring(title),
+            convert::cplus_str_to_nsstring(message),
+            style,
+        );
+        return AlertController { obj: rt::retain(alert) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn add_action(self, action: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addAction:\0")), action);
+    }
+}
+
+pub struct AlertAction {
+    pub opaque obj: *u8,
+}
+
+impl AlertAction {
+    pub fn new(title: str, style: i64) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIAlertAction\0"));
+        return rt::msg_id_id_i64_id(
+            cls,
+            rt::sel(#str_ptr("actionWithTitle:style:handler:\0")),
+            convert::cplus_str_to_nsstring(title),
+            style,
+            unsafe { 0 as *u8 },
+        );
+    }
+}
+
+pub type Alert = AlertController;

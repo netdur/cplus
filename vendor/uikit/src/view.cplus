@@ -1,23 +1,106 @@
-// UIView, UILabel, UIColor.
+// UIView, UILabel, UIColor, UIStackView, UIScrollView.
 
 import "./runtime" as rt;
 import "./convert" as convert;
+
+pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
+    let existing: *u8 = rt::get_class(#str_ptr("CUIKitCustomView\0"));
+    let mut cls: *u8 = existing;
+    if existing == unsafe { 0 as *u8 } {
+        let uiview: *u8 = rt::get_class(#str_ptr("UIView\0"));
+        cls = rt::allocate_class_pair(uiview, #str_ptr("CUIKitCustomView\0"), 0 as usize);
+        let _added: i8 = rt::add_method_draw_rect(
+            cls,
+            rt::sel(#str_ptr("drawRect:\0")),
+            draw_imp,
+            #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"),
+        );
+        rt::register_class_pair(cls);
+    }
+    let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    let v: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+    return View { obj: v };
+}
 
 pub struct View {
     pub opaque obj: *u8,
 }
 
 impl View {
+    pub fn new(frame: rt::Rect) -> View {
+        return View { obj: rt::alloc_init_with_frame(#str_ptr("UIView\0"), frame) };
+    }
+
+    pub fn from_raw(obj: *u8) -> View {
+        return View { obj: obj };
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+
     pub fn add_subview(self, child: *u8) {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), child);
+    }
+
+    pub fn remove_from_superview(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("removeFromSuperview\0")));
     }
 
     pub fn set_background_color(self, color: Color) {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
     }
 
+    pub fn frame(self) -> rt::Rect {
+        return rt::msg_rect(self.obj, rt::sel(#str_ptr("frame\0")));
+    }
+
+    pub fn set_frame(self, frame: rt::Rect) {
+        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("setFrame:\0")), frame);
+    }
+
     pub fn bounds(self) -> rt::Rect {
         return rt::msg_rect(self.obj, rt::sel(#str_ptr("bounds\0")));
+    }
+
+    pub fn set_bounds(self, bounds: rt::Rect) {
+        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("setBounds:\0")), bounds);
+    }
+
+    pub fn set_hidden(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setHidden:\0")), flag);
+    }
+
+    pub fn is_hidden(self) -> i8 {
+        return rt::msg_i8(self.obj, rt::sel(#str_ptr("isHidden\0")));
+    }
+
+    pub fn set_alpha(self, alpha: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setAlpha:\0")), alpha);
+    }
+
+    pub fn set_user_interaction_enabled(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setUserInteractionEnabled:\0")), flag);
+    }
+
+    pub fn set_content_mode(self, mode: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setContentMode:\0")), mode);
+    }
+
+    pub fn set_needs_display(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("setNeedsDisplay\0")));
+    }
+
+    pub fn layout_if_needed(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("layoutIfNeeded\0")));
+    }
+
+    pub fn layer(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("layer\0")));
+    }
+
+    pub fn safe_area_layout_guide(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("safeAreaLayoutGuide\0")));
     }
 }
 
@@ -51,6 +134,22 @@ impl Label {
         rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
     }
 
+    pub fn set_font(self, font: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setFont:\0")), font);
+    }
+
+    pub fn set_number_of_lines(self, lines: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setNumberOfLines:\0")), lines);
+    }
+
+    pub fn set_line_break_mode(self, mode: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setLineBreakMode:\0")), mode);
+    }
+
+    pub fn set_background_color(self, color: Color) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
+    }
+
     pub fn as_view_obj(self) -> *u8 {
         return self.obj;
     }
@@ -71,14 +170,142 @@ impl Color {
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("blackColor\0"))) };
     }
 
+    pub fn clear() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("clearColor\0"))) };
+    }
+
+    pub fn red() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("redColor\0"))) };
+    }
+
+    pub fn green() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("greenColor\0"))) };
+    }
+
+    pub fn blue() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("blueColor\0"))) };
+    }
+
     pub fn system_blue() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("systemBlueColor\0"))) };
+    }
+
+    pub fn label() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("labelColor\0"))) };
+    }
+
+    pub fn secondary_label() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("secondaryLabelColor\0"))) };
+    }
+
+    pub fn system_background() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("systemBackgroundColor\0"))) };
     }
 
     pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         let selector: *u8 = rt::sel(#str_ptr("colorWithRed:green:blue:alpha:\0"));
         return Color { obj: rt::msg_id_rgba(cls, selector, r, g, b, a) };
+    }
+
+    pub fn cg_color(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("CGColor\0")));
+    }
+}
+
+pub struct StackView {
+    pub obj: *u8,
+}
+
+impl StackView {
+    pub fn new(frame: rt::Rect) -> StackView {
+        return StackView { obj: rt::alloc_init_with_frame(#str_ptr("UIStackView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn add_view(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addArrangedSubview:\0")), view);
+    }
+
+    pub fn remove_view(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("removeArrangedSubview:\0")), view);
+    }
+
+    pub fn set_axis(self, axis: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setAxis:\0")), axis);
+    }
+
+    pub fn set_spacing(self, spacing: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setSpacing:\0")), spacing);
+    }
+
+    pub fn set_alignment(self, alignment: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setAlignment:\0")), alignment);
+    }
+
+    pub fn set_distribution(self, distribution: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setDistribution:\0")), distribution);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct ScrollView {
+    pub obj: *u8,
+}
+
+impl ScrollView {
+    pub fn new(frame: rt::Rect) -> ScrollView {
+        return ScrollView { obj: rt::alloc_init_with_frame(#str_ptr("UIScrollView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn add_subview(self, view: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), view);
+    }
+
+    pub fn set_content_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setContentSize:\0")), size);
+    }
+
+    pub fn set_content_offset(self, point: rt::Point) {
+        rt::msg_void_point(self.obj, rt::sel(#str_ptr("setContentOffset:\0")), point);
+    }
+
+    pub fn set_content_inset(self, top: f64, left: f64, bottom: f64, right: f64) {
+        let insets: rt::EdgeInsets = rt::EdgeInsets { top: top, left: left, bottom: bottom, right: right };
+        rt::msg_void_edge_insets(self.obj, rt::sel(#str_ptr("setContentInset:\0")), insets);
+    }
+
+    pub fn set_scroll_enabled(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setScrollEnabled:\0")), flag);
+    }
+
+    pub fn set_shows_vertical_scroll_indicator(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setShowsVerticalScrollIndicator:\0")), flag);
+    }
+
+    pub fn set_shows_horizontal_scroll_indicator(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setShowsHorizontalScrollIndicator:\0")), flag);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
     }
 }

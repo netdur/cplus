@@ -10,6 +10,8 @@ extern fn sel_registerName(name: *u8) -> *u8;
 extern fn objc_allocateClassPair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8;
 extern fn objc_registerClassPair(cls: *u8);
 
+extern fn object_getClassName(obj: *u8) -> *u8;
+
 // `(self, _cmd, application, launchOptions) -> BOOL` — the
 // `application:didFinishLaunchingWithOptions:` IMP shape. types "c@:@@".
 #[link_name = "class_addMethod"]
@@ -19,12 +21,30 @@ extern fn class_addMethod_did_finish(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, 
 #[link_name = "class_addMethod"]
 extern fn class_addMethod_action(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
 
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_draw_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8;
+
+#[link_name = "objc_setAssociatedObject"]
+extern fn objc_setAssociatedObject(object: *u8, key: *u8, value: *u8, policy: usize);
+
+#[link_name = "objc_getAssociatedObject"]
+extern fn objc_getAssociatedObject(object: *u8, key: *u8) -> *u8;
+
+#[link_name = "objc_setAssociatedObject"]
+extern fn objc_setAssociatedObject_cb(object: *u8, key: *u8, value: fn(*u8), policy: usize);
+
+#[link_name = "objc_getAssociatedObject"]
+extern fn objc_getAssociatedObject_cb(object: *u8, key: *u8) -> fn(*u8);
+
 // ARC primitives (libobjc), called by hand — same calls ARC would emit.
 #[link_name = "objc_retain"]
 extern fn objc_retain_raw(obj: *u8) -> *u8;
 
 #[link_name = "objc_release"]
 extern fn objc_release_raw(obj: *u8);
+
+#[link_name = "objc_autorelease"]
+extern fn objc_autorelease_raw(obj: *u8) -> *u8;
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
@@ -33,10 +53,58 @@ extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
 extern fn objc_msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_2id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f64(recv: *u8, sel: *u8, a: f64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_f64(recv: *u8, sel: *u8, a: *u8, b: f64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_f64_f64(recv: *u8, sel: *u8, a: f64, b: f64) -> *u8;
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void(recv: *u8, sel: *u8);
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_id(recv: *u8, sel: *u8, arg: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i64_i8(recv: *u8, sel: *u8, a: *u8, b: i64, c: i8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_id(recv: *u8, sel: *u8, a: i64, b: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i8_i64(recv: *u8, sel: *u8, a: i8, b: i64);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_i8_id(recv: *u8, sel: *u8, a: *u8, b: i8, c: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i8_id(recv: *u8, sel: *u8, a: i8, b: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64_i64(recv: *u8, sel: *u8, a: i64, b: i64);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8);
 
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_void_i64(recv: *u8, sel: *u8, arg: i64);
@@ -48,22 +116,70 @@ extern fn objc_msg_void_i8(recv: *u8, sel: *u8, arg: i8);
 extern fn objc_msg_void_f64(recv: *u8, sel: *u8, arg: f64);
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f32(recv: *u8, sel: *u8, arg: f32);
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_i8(recv: *u8, sel: *u8) -> i8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_i8_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64_i64(recv: *u8, sel: *u8, a: i64) -> i64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i8(recv: *u8, sel: *u8, a: i8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_i64_id(recv: *u8, sel: *u8, a: i64, b: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: i64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_id(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id_i64_id_id(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8, d: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_u64(recv: *u8, sel: *u8) -> u64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f64(recv: *u8, sel: *u8) -> f64;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f32(recv: *u8, sel: *u8) -> f32;
 
 // `initWithFrame:` and friends — one CGRect argument, id result.
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_id_rect(recv: *u8, sel: *u8, frame: Rect) -> *u8;
 
 #[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect_id(recv: *u8, sel: *u8, frame: Rect, arg: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
 extern fn objc_msg_void_rect(recv: *u8, sel: *u8, frame: Rect);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_point(recv: *u8, sel: *u8, point: Point);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_size(recv: *u8, sel: *u8, size: Size);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_edge_insets(recv: *u8, sel: *u8, insets: EdgeInsets);
 
 // No-arg `CGRect` getter (`-[UIScreen bounds]`, `-[UIView frame]`). CGRect is
 // an HFA of four doubles, returned in v0–v3 on arm64 — plain objc_msgSend.
 #[link_name = "objc_msgSend"]
 extern fn objc_msg_rect(recv: *u8, sel: *u8) -> Rect;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_point_id(recv: *u8, sel: *u8, a: *u8) -> Point;
 
 // `colorWithRed:green:blue:alpha:`.
 #[link_name = "objc_msgSend"]
@@ -93,6 +209,14 @@ pub struct Rect {
     pub size: Size,
 }
 
+#[repr(C)]
+pub struct EdgeInsets {
+    pub top: f64,
+    pub left: f64,
+    pub bottom: f64,
+    pub right: f64,
+}
+
 pub fn make_rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     return Rect {
         origin: Point { x: x, y: y },
@@ -116,6 +240,10 @@ pub fn register_class_pair(cls: *u8) {
     unsafe { objc_registerClassPair(cls); };
 }
 
+pub fn class_name(obj: *u8) -> *u8 {
+    return unsafe { object_getClassName(obj) };
+}
+
 // Add `application:didFinishLaunchingWithOptions:` (`(self, _cmd, app,
 // options) -> BOOL`) to a synthesized delegate class. `types` is "c@:@@".
 pub fn add_did_finish_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8 {
@@ -127,12 +255,36 @@ pub fn add_action_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types:
     return unsafe { class_addMethod_action(cls, selector, imp, types) };
 }
 
+pub fn add_method_draw_rect(cls: *u8, selector: *u8, imp: fn(*u8, *u8, Rect), types: *u8) -> i8 {
+    return unsafe { class_addMethod_draw_rect(cls, selector, imp, types) };
+}
+
+pub fn set_associated_object(object: *u8, key: *u8, value: *u8, policy: usize) {
+    unsafe { objc_setAssociatedObject(object, key, value, policy); };
+}
+
+pub fn get_associated_object(object: *u8, key: *u8) -> *u8 {
+    return unsafe { objc_getAssociatedObject(object, key) };
+}
+
+pub fn set_associated_callback(object: *u8, key: *u8, value: fn(*u8), policy: usize) {
+    unsafe { objc_setAssociatedObject_cb(object, key, value, policy); };
+}
+
+pub fn get_associated_callback(object: *u8, key: *u8) -> fn(*u8) {
+    return unsafe { objc_getAssociatedObject_cb(object, key) };
+}
+
 pub fn retain(obj: *u8) -> *u8 {
     return unsafe { objc_retain_raw(obj) };
 }
 
 pub fn release(obj: *u8) {
     unsafe { objc_release_raw(obj); };
+}
+
+pub fn autorelease(obj: *u8) -> *u8 {
+    return unsafe { objc_autorelease_raw(obj) };
 }
 
 pub fn msg_id(recv: *u8, selector: *u8) -> *u8 {
@@ -143,12 +295,76 @@ pub fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
     return unsafe { objc_msg_id_id(recv, selector, arg) };
 }
 
+pub fn msg_id_2id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> *u8 {
+    return unsafe { objc_msg_id_2id(recv, selector, a, b) };
+}
+
+pub fn msg_id_u64(recv: *u8, selector: *u8, a: u64) -> *u8 {
+    return unsafe { objc_msg_id_u64(recv, selector, a) };
+}
+
+pub fn msg_id_f64(recv: *u8, selector: *u8, a: f64) -> *u8 {
+    return unsafe { objc_msg_id_f64(recv, selector, a) };
+}
+
+pub fn msg_id_id_f64(recv: *u8, selector: *u8, a: *u8, b: f64) -> *u8 {
+    return unsafe { objc_msg_id_id_f64(recv, selector, a, b) };
+}
+
+pub fn msg_id_f64_f64(recv: *u8, selector: *u8, a: f64, b: f64) -> *u8 {
+    return unsafe { objc_msg_id_f64_f64(recv, selector, a, b) };
+}
+
 pub fn msg_void(recv: *u8, selector: *u8) {
     unsafe { objc_msg_void(recv, selector); };
 }
 
 pub fn msg_void_id(recv: *u8, selector: *u8, arg: *u8) {
     unsafe { objc_msg_void_id(recv, selector, arg); };
+}
+
+pub fn msg_void_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) {
+    unsafe { objc_msg_void_id_id(recv, selector, a, b); };
+}
+
+pub fn msg_void_id_id_u64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: u64) {
+    unsafe { objc_msg_void_id_id_u64(recv, selector, a, b, c); };
+}
+
+pub fn msg_void_id_i64(recv: *u8, selector: *u8, a: *u8, b: i64) {
+    unsafe { objc_msg_void_id_i64(recv, selector, a, b); };
+}
+
+pub fn msg_void_id_i64_i8(recv: *u8, selector: *u8, a: *u8, b: i64, c: i8) {
+    unsafe { objc_msg_void_id_i64_i8(recv, selector, a, b, c); };
+}
+
+pub fn msg_void_i64_id(recv: *u8, selector: *u8, a: i64, b: *u8) {
+    unsafe { objc_msg_void_i64_id(recv, selector, a, b); };
+}
+
+pub fn msg_void_i8_i64(recv: *u8, selector: *u8, a: i8, b: i64) {
+    unsafe { objc_msg_void_i8_i64(recv, selector, a, b); };
+}
+
+pub fn msg_void_id_i8(recv: *u8, selector: *u8, a: *u8, b: i8) {
+    unsafe { objc_msg_void_id_i8(recv, selector, a, b); };
+}
+
+pub fn msg_void_id_i8_id(recv: *u8, selector: *u8, a: *u8, b: i8, c: *u8) {
+    unsafe { objc_msg_void_id_i8_id(recv, selector, a, b, c); };
+}
+
+pub fn msg_void_i8_id(recv: *u8, selector: *u8, a: i8, b: *u8) {
+    unsafe { objc_msg_void_i8_id(recv, selector, a, b); };
+}
+
+pub fn msg_void_i64_i64(recv: *u8, selector: *u8, a: i64, b: i64) {
+    unsafe { objc_msg_void_i64_i64(recv, selector, a, b); };
+}
+
+pub fn msg_void_id_id_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8, c: *u8, d: *u8) {
+    unsafe { objc_msg_void_id_id_id_id(recv, selector, a, b, c, d); };
 }
 
 pub fn msg_void_i64(recv: *u8, selector: *u8, arg: i64) {
@@ -163,24 +379,88 @@ pub fn msg_void_f64(recv: *u8, selector: *u8, arg: f64) {
     unsafe { objc_msg_void_f64(recv, selector, arg); };
 }
 
+pub fn msg_void_f32(recv: *u8, selector: *u8, arg: f32) {
+    unsafe { objc_msg_void_f32(recv, selector, arg); };
+}
+
 pub fn msg_i8(recv: *u8, selector: *u8) -> i8 {
     return unsafe { objc_msg_i8(recv, selector) };
+}
+
+pub fn msg_i8_id_id(recv: *u8, selector: *u8, a: *u8, b: *u8) -> i8 {
+    return unsafe { objc_msg_i8_id_id(recv, selector, a, b) };
 }
 
 pub fn msg_i64(recv: *u8, selector: *u8) -> i64 {
     return unsafe { objc_msg_i64(recv, selector) };
 }
 
+pub fn msg_i64_i64(recv: *u8, selector: *u8, a: i64) -> i64 {
+    return unsafe { objc_msg_i64_i64(recv, selector, a) };
+}
+
+pub fn msg_id_i8(recv: *u8, selector: *u8, a: i8) -> *u8 {
+    return unsafe { objc_msg_id_i8(recv, selector, a) };
+}
+
+pub fn msg_id_i64_id(recv: *u8, selector: *u8, a: i64, b: *u8) -> *u8 {
+    return unsafe { objc_msg_id_i64_id(recv, selector, a, b) };
+}
+
+pub fn msg_id_id_id_i64(recv: *u8, selector: *u8, a: *u8, b: *u8, c: i64) -> *u8 {
+    return unsafe { objc_msg_id_id_id_i64(recv, selector, a, b, c) };
+}
+
+pub fn msg_id_id_i64_id(recv: *u8, selector: *u8, a: *u8, b: i64, c: *u8) -> *u8 {
+    return unsafe { objc_msg_id_id_i64_id(recv, selector, a, b, c) };
+}
+
+pub fn msg_id_id_i64_id_id(recv: *u8, selector: *u8, a: *u8, b: i64, c: *u8, d: *u8) -> *u8 {
+    return unsafe { objc_msg_id_id_i64_id_id(recv, selector, a, b, c, d) };
+}
+
+pub fn msg_u64(recv: *u8, selector: *u8) -> u64 {
+    return unsafe { objc_msg_u64(recv, selector) };
+}
+
+pub fn msg_f64(recv: *u8, selector: *u8) -> f64 {
+    return unsafe { objc_msg_f64(recv, selector) };
+}
+
+pub fn msg_f32(recv: *u8, selector: *u8) -> f32 {
+    return unsafe { objc_msg_f32(recv, selector) };
+}
+
 pub fn msg_id_rect(recv: *u8, selector: *u8, frame: Rect) -> *u8 {
     return unsafe { objc_msg_id_rect(recv, selector, frame) };
+}
+
+pub fn msg_id_rect_id(recv: *u8, selector: *u8, frame: Rect, arg: *u8) -> *u8 {
+    return unsafe { objc_msg_id_rect_id(recv, selector, frame, arg) };
 }
 
 pub fn msg_void_rect(recv: *u8, selector: *u8, frame: Rect) {
     unsafe { objc_msg_void_rect(recv, selector, frame); };
 }
 
+pub fn msg_void_point(recv: *u8, selector: *u8, point: Point) {
+    unsafe { objc_msg_void_point(recv, selector, point); };
+}
+
+pub fn msg_void_size(recv: *u8, selector: *u8, size: Size) {
+    unsafe { objc_msg_void_size(recv, selector, size); };
+}
+
+pub fn msg_void_edge_insets(recv: *u8, selector: *u8, insets: EdgeInsets) {
+    unsafe { objc_msg_void_edge_insets(recv, selector, insets); };
+}
+
 pub fn msg_rect(recv: *u8, selector: *u8) -> Rect {
     return unsafe { objc_msg_rect(recv, selector) };
+}
+
+pub fn msg_point_id(recv: *u8, selector: *u8, a: *u8) -> Point {
+    return unsafe { objc_msg_point_id(recv, selector, a) };
 }
 
 pub fn msg_id_rgba(recv: *u8, selector: *u8, r: f64, g: f64, b: f64, a: f64) -> *u8 {
@@ -190,3 +470,81 @@ pub fn msg_id_rgba(recv: *u8, selector: *u8, r: f64, g: f64, b: f64, a: f64) -> 
 pub fn msg_id_ptr_len_enc(recv: *u8, selector: *u8, bytes: *u8, len: usize, enc: u64) -> *u8 {
     return unsafe { objc_msg_id_ptr_len_enc(recv, selector, bytes, len, enc) };
 }
+
+pub fn ns_string(utf8: *u8) -> *u8 {
+    let cls: *u8 = get_class(#str_ptr("NSString\0"));
+    return msg_id_id(cls, sel(#str_ptr("stringWithUTF8String:\0")), utf8);
+}
+
+pub fn alloc_init(class_name: *u8) -> *u8 {
+    let cls: *u8 = get_class(class_name);
+    let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
+    return msg_id(alloced, sel(#str_ptr("init\0")));
+}
+
+pub fn new_object(class_name: *u8) -> *u8 {
+    return msg_id(get_class(class_name), sel(#str_ptr("new\0")));
+}
+
+pub fn alloc_init_with_frame(class_name: *u8, frame: Rect) -> *u8 {
+    let cls: *u8 = get_class(class_name);
+    let alloced: *u8 = msg_id(cls, sel(#str_ptr("alloc\0")));
+    return msg_id_rect(alloced, sel(#str_ptr("initWithFrame:\0")), frame);
+}
+
+pub fn retain_count(obj: *u8) -> i64 {
+    return msg_i64(obj, sel(#str_ptr("retainCount\0")));
+}
+
+pub fn set_target_action(obj: *u8, target: *u8, action: *u8) {
+    msg_void_id_id_u64(
+        obj,
+        sel(#str_ptr("addTarget:action:forControlEvents:\0")),
+        target,
+        action,
+        control_event_touch_up_inside(),
+    );
+}
+
+fn handle_action_callback(self_obj: *u8, _cmd: *u8, sender: *u8) {
+    let cb: fn(*u8) = get_associated_callback(sender, #str_ptr("cb_key\0"));
+    cb(sender);
+}
+
+pub fn get_action_target() -> *u8 {
+    let target_cls: *u8 = get_class(#str_ptr("CUIKitActionTarget\0"));
+    let app: *u8 = msg_id(get_class(#str_ptr("UIApplication\0")), sel(#str_ptr("sharedApplication\0")));
+    if target_cls != unsafe { 0 as *u8 } {
+        return get_associated_object(app, #str_ptr("action_target_inst\0"));
+    }
+
+    let nsobject_cls: *u8 = get_class(#str_ptr("NSObject\0"));
+    let new_cls: *u8 = allocate_class_pair(nsobject_cls, #str_ptr("CUIKitActionTarget\0"), 0 as usize);
+    let handle_action_sel: *u8 = sel(#str_ptr("handleAction:\0"));
+    let _added: i8 = add_action_method(
+        new_cls,
+        handle_action_sel,
+        handle_action_callback,
+        #str_ptr("v@:@\0"),
+    );
+    register_class_pair(new_cls);
+
+    let inst: *u8 = msg_id(new_cls, sel(#str_ptr("new\0")));
+    set_associated_object(app, #str_ptr("action_target_inst\0"), inst, 1 as usize);
+    return inst;
+}
+
+pub fn attach_control_callback(obj: *u8, cb: fn(*u8), events: u64) {
+    let target: *u8 = get_action_target();
+    msg_void_id_id_u64(
+        obj,
+        sel(#str_ptr("addTarget:action:forControlEvents:\0")),
+        target,
+        sel(#str_ptr("handleAction:\0")),
+        events,
+    );
+    set_associated_callback(obj, #str_ptr("cb_key\0"), cb, 0 as usize);
+}
+
+pub fn control_event_value_changed() -> u64 { return 4096 as u64; }
+pub fn control_event_touch_up_inside() -> u64 { return 64 as u64; }

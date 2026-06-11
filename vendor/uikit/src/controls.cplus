@@ -1,0 +1,329 @@
+import "./runtime" as rt;
+import "./convert" as convert;
+import "./view" as view;
+
+pub fn control_event_touch_up_inside() -> u64 { return rt::control_event_touch_up_inside(); }
+pub fn control_event_value_changed() -> u64 { return rt::control_event_value_changed(); }
+
+pub struct Button {
+    pub obj: *u8,
+}
+
+impl Button {
+    pub fn new(frame: rt::Rect) -> Button {
+        return Button { obj: rt::alloc_init_with_frame(#str_ptr("UIButton\0"), frame) };
+    }
+
+    pub fn system(frame: rt::Rect) -> Button {
+        let cls: *u8 = rt::get_class(#str_ptr("UIButton\0"));
+        let raw: *u8 = rt::msg_id_u64(cls, rt::sel(#str_ptr("buttonWithType:\0")), 1 as u64);
+        rt::msg_void_rect(raw, rt::sel(#str_ptr("setFrame:\0")), frame);
+        return Button { obj: rt::retain(raw) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn into_raw(mut self) -> *u8 {
+        let p: *u8 = self.obj;
+        self.obj = unsafe { 0 as *u8 };
+        return p;
+    }
+
+    pub fn from_raw(obj: *u8) -> Button {
+        return Button { obj: obj };
+    }
+
+    pub fn set_title(self, title: str) {
+        rt::msg_void_id_i64(
+            self.obj,
+            rt::sel(#str_ptr("setTitle:forState:\0")),
+            convert::cplus_str_to_nsstring(title),
+            0 as i64,
+        );
+    }
+
+    pub fn set_title_ns(self, title_ns: *u8) {
+        rt::msg_void_id_i64(
+            self.obj,
+            rt::sel(#str_ptr("setTitle:forState:\0")),
+            title_ns,
+            0 as i64,
+        );
+    }
+
+    pub fn set_title_color(self, color: view::Color) {
+        rt::msg_void_id_i64(
+            self.obj,
+            rt::sel(#str_ptr("setTitleColor:forState:\0")),
+            color.obj,
+            0 as i64,
+        );
+    }
+
+    pub fn set_enabled(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
+    }
+
+    pub fn is_enabled(self) -> i8 {
+        return rt::msg_i8(self.obj, rt::sel(#str_ptr("isEnabled\0")));
+    }
+
+    pub fn set_selected(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setSelected:\0")), flag);
+    }
+
+    pub fn is_selected(self) -> i8 {
+        return rt::msg_i8(self.obj, rt::sel(#str_ptr("isSelected\0")));
+    }
+
+    pub fn set_on_click(self, cb: fn(*u8)) {
+        rt::attach_control_callback(self.obj, cb, rt::control_event_touch_up_inside());
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct Slider {
+    pub obj: *u8,
+}
+
+impl Slider {
+    pub fn new(frame: rt::Rect) -> Slider {
+        return Slider { obj: rt::alloc_init_with_frame(#str_ptr("UISlider\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_value(self, value: f32) {
+        rt::msg_void_f32(self.obj, rt::sel(#str_ptr("setValue:\0")), value);
+    }
+
+    pub fn value(self) -> f32 {
+        return rt::msg_f32(self.obj, rt::sel(#str_ptr("value\0")));
+    }
+
+    pub fn set_minimum_value(self, value: f32) {
+        rt::msg_void_f32(self.obj, rt::sel(#str_ptr("setMinimumValue:\0")), value);
+    }
+
+    pub fn set_maximum_value(self, value: f32) {
+        rt::msg_void_f32(self.obj, rt::sel(#str_ptr("setMaximumValue:\0")), value);
+    }
+
+    pub fn set_on_change(self, cb: fn(*u8)) {
+        rt::attach_control_callback(self.obj, cb, rt::control_event_value_changed());
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct Switch {
+    pub obj: *u8,
+}
+
+impl Switch {
+    pub fn new(frame: rt::Rect) -> Switch {
+        return Switch { obj: rt::alloc_init_with_frame(#str_ptr("UISwitch\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_on(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setOn:\0")), flag);
+    }
+
+    pub fn is_on(self) -> i8 {
+        return rt::msg_i8(self.obj, rt::sel(#str_ptr("isOn\0")));
+    }
+
+    pub fn set_on_change(self, cb: fn(*u8)) {
+        rt::attach_control_callback(self.obj, cb, rt::control_event_value_changed());
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct SegmentedControl {
+    pub obj: *u8,
+}
+
+impl SegmentedControl {
+    pub fn new(frame: rt::Rect) -> SegmentedControl {
+        return SegmentedControl { obj: rt::alloc_init_with_frame(#str_ptr("UISegmentedControl\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn insert_segment(self, title: str, index: i64, animated: i8) {
+        rt::msg_void_id_i64_i8(
+            self.obj,
+            rt::sel(#str_ptr("insertSegmentWithTitle:atIndex:animated:\0")),
+            convert::cplus_str_to_nsstring(title),
+            index,
+            animated,
+        );
+    }
+
+    pub fn set_title_for_segment(self, title: str, index: i64) {
+        rt::msg_void_id_i64(
+            self.obj,
+            rt::sel(#str_ptr("setTitle:forSegmentAtIndex:\0")),
+            convert::cplus_str_to_nsstring(title),
+            index,
+        );
+    }
+
+    pub fn set_selected_segment_index(self, index: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setSelectedSegmentIndex:\0")), index);
+    }
+
+    pub fn selected_segment_index(self) -> i64 {
+        return rt::msg_i64(self.obj, rt::sel(#str_ptr("selectedSegmentIndex\0")));
+    }
+
+    pub fn set_on_change(self, cb: fn(*u8)) {
+        rt::attach_control_callback(self.obj, cb, rt::control_event_value_changed());
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct ProgressView {
+    pub obj: *u8,
+}
+
+impl ProgressView {
+    pub fn new(frame: rt::Rect) -> ProgressView {
+        return ProgressView { obj: rt::alloc_init_with_frame(#str_ptr("UIProgressView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_progress(self, value: f32) {
+        rt::msg_void_f32(self.obj, rt::sel(#str_ptr("setProgress:\0")), value);
+    }
+
+    pub fn progress(self) -> f32 {
+        return rt::msg_f32(self.obj, rt::sel(#str_ptr("progress\0")));
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct ActivityIndicator {
+    pub obj: *u8,
+}
+
+impl ActivityIndicator {
+    pub fn new(frame: rt::Rect) -> ActivityIndicator {
+        return ActivityIndicator { obj: rt::alloc_init_with_frame(#str_ptr("UIActivityIndicatorView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn start_animating(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("startAnimating\0")));
+    }
+
+    pub fn stop_animating(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("stopAnimating\0")));
+    }
+
+    pub fn set_hides_when_stopped(self, flag: i8) {
+        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setHidesWhenStopped:\0")), flag);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct PageControl {
+    pub obj: *u8,
+}
+
+impl PageControl {
+    pub fn new(frame: rt::Rect) -> PageControl {
+        return PageControl { obj: rt::alloc_init_with_frame(#str_ptr("UIPageControl\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_number_of_pages(self, count: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setNumberOfPages:\0")), count);
+    }
+
+    pub fn set_current_page(self, page: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setCurrentPage:\0")), page);
+    }
+
+    pub fn current_page(self) -> i64 {
+        return rt::msg_i64(self.obj, rt::sel(#str_ptr("currentPage\0")));
+    }
+
+    pub fn set_on_change(self, cb: fn(*u8)) {
+        rt::attach_control_callback(self.obj, cb, rt::control_event_value_changed());
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct DatePicker {
+    pub obj: *u8,
+}
+
+impl DatePicker {
+    pub fn new(frame: rt::Rect) -> DatePicker {
+        return DatePicker { obj: rt::alloc_init_with_frame(#str_ptr("UIDatePicker\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_date_picker_mode(self, mode: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setDatePickerMode:\0")), mode);
+    }
+
+    pub fn date(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("date\0")));
+    }
+
+    pub fn set_date(self, date: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDate:\0")), date);
+    }
+
+    pub fn set_on_change(self, cb: fn(*u8)) {
+        rt::attach_control_callback(self.obj, cb, rt::control_event_value_changed());
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}

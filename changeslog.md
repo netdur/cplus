@@ -92,6 +92,17 @@ earlier history lives in each version's archived plan.
   staticlib, which registers the delegate and enters `UIApplicationMain`.
   Verified on the iOS simulator: a C+-driven screen (white window, centered
   label) renders on an iPhone 16 Pro simulator.
+- `vendor/uikit` expanded to the full binding surface (18 modules):
+  controls (Button, Slider, Switch, SegmentedControl, ProgressView,
+  ActivityIndicator, PageControl, DatePicker), text (TextField,
+  SecureTextField, TextView, SearchBar), containers, data (TableView,
+  CollectionView, PickerView), graphics (ImageView, Image, Font,
+  BezierPath), dialogs (AlertController), toolbar/navigation/tab bars,
+  pasteboard, Auto Layout anchors, events, notifications, navigation /
+  tab / split / page controllers, custom-view synthesis (`drawRect:`),
+  and ownership rules (owned wrappers release in `drop`). The umbrella
+  module re-exports the set; the whole surface sema-checks for the iOS
+  targets and links against the simulator SDK in e2e.
 
 ## v0.0.20 — 2026-06-11
 

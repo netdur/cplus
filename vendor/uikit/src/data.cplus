@@ -1,0 +1,182 @@
+import "./runtime" as rt;
+
+pub struct TableView {
+    pub obj: *u8,
+}
+
+impl TableView {
+    pub fn new(frame: rt::Rect) -> TableView {
+        return TableView { obj: rt::alloc_init_with_frame(#str_ptr("UITableView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_data_source(self, data_source: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn reload_data(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadData\0")));
+    }
+
+    pub fn dequeue_cell(self, identifier: *u8) -> *u8 {
+        return rt::msg_id_id(self.obj, rt::sel(#str_ptr("dequeueReusableCellWithIdentifier:\0")), identifier);
+    }
+
+    pub fn register_cell_class(self, cls: *u8, identifier: *u8) {
+        rt::msg_void_id_id(
+            self.obj,
+            rt::sel(#str_ptr("registerClass:forCellReuseIdentifier:\0")),
+            cls,
+            identifier,
+        );
+    }
+
+    pub fn set_row_height(self, height: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setRowHeight:\0")), height);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct CollectionView {
+    pub obj: *u8,
+}
+
+impl CollectionView {
+    pub fn new(frame: rt::Rect, layout: *u8) -> CollectionView {
+        let cls: *u8 = rt::get_class(#str_ptr("UICollectionView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let cv: *u8 = rt::msg_id_rect_id(
+            alloced,
+            rt::sel(#str_ptr("initWithFrame:collectionViewLayout:\0")),
+            frame,
+            layout,
+        );
+        return CollectionView { obj: cv };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_data_source(self, data_source: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn reload_data(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadData\0")));
+    }
+
+    pub fn register_cell_class(self, cls: *u8, identifier: *u8) {
+        rt::msg_void_id_id(
+            self.obj,
+            rt::sel(#str_ptr("registerClass:forCellWithReuseIdentifier:\0")),
+            cls,
+            identifier,
+        );
+    }
+
+    pub fn dequeue_cell(self, identifier: *u8, index_path: *u8) -> *u8 {
+        return rt::msg_id_2id(
+            self.obj,
+            rt::sel(#str_ptr("dequeueReusableCellWithReuseIdentifier:forIndexPath:\0")),
+            identifier,
+            index_path,
+        );
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct CollectionViewFlowLayout {
+    pub obj: *u8,
+}
+
+impl CollectionViewFlowLayout {
+    pub fn new() -> CollectionViewFlowLayout {
+        return CollectionViewFlowLayout { obj: rt::alloc_init(#str_ptr("UICollectionViewFlowLayout\0")) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_minimum_line_spacing(self, spacing: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setMinimumLineSpacing:\0")), spacing);
+    }
+
+    pub fn set_minimum_interitem_spacing(self, spacing: f64) {
+        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setMinimumInteritemSpacing:\0")), spacing);
+    }
+
+    pub fn set_item_size(self, size: rt::Size) {
+        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setItemSize:\0")), size);
+    }
+}
+
+pub struct CollectionViewCell {
+    pub obj: *u8,
+}
+
+impl CollectionViewCell {
+    pub fn new(frame: rt::Rect) -> CollectionViewCell {
+        return CollectionViewCell { obj: rt::alloc_init_with_frame(#str_ptr("UICollectionViewCell\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn content_view(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("contentView\0")));
+    }
+}
+
+pub struct PickerView {
+    pub obj: *u8,
+}
+
+impl PickerView {
+    pub fn new(frame: rt::Rect) -> PickerView {
+        return PickerView { obj: rt::alloc_init_with_frame(#str_ptr("UIPickerView\0"), frame) };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn set_data_source(self, data_source: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDataSource:\0")), data_source);
+    }
+
+    pub fn set_delegate(self, delegate: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    }
+
+    pub fn reload_all_components(self) {
+        rt::msg_void(self.obj, rt::sel(#str_ptr("reloadAllComponents\0")));
+    }
+
+    pub fn selected_row(self, component: i64) -> i64 {
+        return rt::msg_i64_i64(self.obj, rt::sel(#str_ptr("selectedRowInComponent:\0")), component);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}

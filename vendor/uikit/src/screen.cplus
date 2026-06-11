@@ -18,11 +18,6 @@ impl Screen {
     }
 
     pub fn scale(self) -> f64 {
-        // `scale` returns CGFloat (f64 on arm64).
-        let scale_sel: *u8 = rt::sel(#str_ptr("scale\0"));
-        return unsafe { objc_msg_f64(self.obj, scale_sel) };
+        return rt::msg_f64(self.obj, rt::sel(#str_ptr("scale\0")));
     }
 }
-
-#[link_name = "objc_msgSend"]
-extern fn objc_msg_f64(recv: *u8, sel: *u8) -> f64;

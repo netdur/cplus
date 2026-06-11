@@ -1,0 +1,80 @@
+import "./runtime" as rt;
+import "./view" as view;
+import "./controllers" as controllers;
+
+pub type StackView = view::StackView;
+pub type ScrollView = view::ScrollView;
+pub type NavigationController = controllers::NavigationController;
+pub type TabBarController = controllers::TabBarController;
+pub type SplitViewController = controllers::SplitViewController;
+pub type PageViewController = controllers::PageViewController;
+
+pub struct VisualEffectView {
+    pub obj: *u8,
+}
+
+impl VisualEffectView {
+    pub fn new(effect: *u8) -> VisualEffectView {
+        let cls: *u8 = rt::get_class(#str_ptr("UIVisualEffectView\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let obj: *u8 = rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithEffect:\0")), effect);
+        return VisualEffectView { obj: obj };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn content_view(self) -> view::View {
+        return view::View { obj: rt::msg_id(self.obj, rt::sel(#str_ptr("contentView\0"))) };
+    }
+
+    pub fn set_effect(self, effect: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setEffect:\0")), effect);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct BlurEffect {
+    pub opaque obj: *u8,
+}
+
+impl BlurEffect {
+    pub fn style(style: i64) -> *u8 {
+        let cls: *u8 = rt::get_class(#str_ptr("UIBlurEffect\0"));
+        return rt::msg_id_u64(cls, rt::sel(#str_ptr("effectWithStyle:\0")), style as u64);
+    }
+}
+
+pub struct TableViewCell {
+    pub obj: *u8,
+}
+
+impl TableViewCell {
+    pub fn new(style: i64, reuse_identifier: *u8) -> TableViewCell {
+        let cls: *u8 = rt::get_class(#str_ptr("UITableViewCell\0"));
+        let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let cell: *u8 = rt::msg_id_i64_id(
+            alloced,
+            rt::sel(#str_ptr("initWithStyle:reuseIdentifier:\0")),
+            style,
+            reuse_identifier,
+        );
+        return TableViewCell { obj: cell };
+    }
+
+    fn drop(mut self) {
+        rt::release(self.obj);
+    }
+
+    pub fn content_view(self) -> view::View {
+        return view::View { obj: rt::msg_id(self.obj, rt::sel(#str_ptr("contentView\0"))) };
+    }
+
+    pub fn text_label(self) -> *u8 {
+        return rt::msg_id(self.obj, rt::sel(#str_ptr("textLabel\0")));
+    }
+}
