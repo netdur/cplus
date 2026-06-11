@@ -1,0 +1,16 @@
+// Task sleep. `usleep` is newlib's real function under ESP-IDF (it
+// delegates to `vTaskDelay` for whole ticks), so sleeping is independent
+// of the FreeRTOS tick-rate configuration — unlike the `pdMS_TO_TICKS`
+// C macro, which cannot be bound.
+
+extern fn usleep(us: u32) -> i32;
+
+pub fn delay_ms(ms: u32) {
+    let _r: i32 = unsafe { usleep(ms * 1000) };
+    return;
+}
+
+pub fn delay_us(us: u32) {
+    let _r: i32 = unsafe { usleep(us) };
+    return;
+}

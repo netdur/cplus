@@ -5,6 +5,23 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.21 — unreleased
 
+### esp32: heap types + the espidf package
+- The 32-bit heap runtime: fat pointers (`{ ptr, usize }`), string/Text/Vec
+  lengths, pointer-arithmetic GEP indices, and the libc size_t surface
+  (`malloc` / `memcpy` / `memcmp` / `snprintf`) now follow the target's
+  pointer width, lifting the heap-type restriction on `esp32-xtensa`.
+  Verified by esp-clang's IR verifier (kept as a regression gate in e2e)
+  and on hardware: a Text and a Vec[i32] built on the ESP32's newlib heap
+  print correctly from the device. 64-bit targets are byte-identical.
+- New `vendor/espidf` package: GPIO, esp_timer (`now_us`), task sleep
+  (`delay_ms` via newlib `usleep`, tick-rate independent), and UART
+  console printing. The gpio/timer externs are `#[no_alloc]`+`#[no_block]`
+  leaves, so `#[realtime]` control loops can drive pins and read the
+  clock under the contract. Entry convention: the app exports
+  `cplus_app_main`; ESP-IDF's main component keeps a two-line
+  `app_main` C shim. Validated on hardware with an all-C+ firmware
+  (GPIO blink + `#[realtime]` PID + telemetry — no C beyond the shim).
+
 ### Multi-backend: esp32-xtensa (first 32-bit target) + #[realtime] on-device
 - New `esp32-xtensa` target (rungs 3-4 collapsed: the local WROOM-32D spike
   proved esp-clang accepts cpc's IR, so 32-bit support and the Xtensa rung

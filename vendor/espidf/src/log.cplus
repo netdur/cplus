@@ -1,0 +1,21 @@
+// Console output. ESP-IDF routes newlib's stdout to UART0, so plain
+// `printf` reaches the serial monitor. `ESP_LOGx` are C macros and cannot
+// be bound; these helpers print the same content without the log-level
+// framing. Format strings are NUL-terminated literals via `#str_ptr`.
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+pub fn print_i32(label: *u8, v: i32) {
+    let _r: i32 = unsafe { printf(#str_ptr("%s%d\n\0"), label, v) };
+    return;
+}
+
+pub fn print_i64(label: *u8, v: i64) {
+    let _r: i32 = unsafe { printf(#str_ptr("%s%lld\n\0"), label, v) };
+    return;
+}
+
+pub fn print_line(text: *u8) {
+    let _r: i32 = unsafe { printf(#str_ptr("%s\n\0"), text) };
+    return;
+}

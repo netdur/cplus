@@ -23181,6 +23181,204 @@ fn target_esp32_emit_obj_produces_xtensa_elf_object() {
     );
 }
 
+/// v0.0.21 32-bit heap slice: fat pointers, lengths, and the libc size_t
+/// surface (`malloc`/`memcpy`/`memcmp`/`snprintf`) follow the target's
+/// pointer width. Pure cpc — no esp-clang needed.
+#[test]
+fn target_esp32_heap_ir_is_pointer_width_clean() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+             let s: str = \"hello esp32\";\n\
+             #println(s);\n\
+             let n: usize = #str_len(s);\n\
+             return (n as i32) - 11;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("{ ptr, i32 }"),
+        "str must be a 32-bit fat pointer on esp32: {ir}"
+    );
+    assert!(
+        !ir.contains("{ ptr, i64 }"),
+        "no 64-bit fat pointers may remain in 32-bit IR: {ir}"
+    );
+    assert!(
+        ir.contains("@malloc(i32 noundef)"),
+        "malloc must declare a 32-bit size_t: {ir}"
+    );
+    assert!(
+        !ir.contains("@malloc(i64"),
+        "no 64-bit malloc declaration in 32-bit IR: {ir}"
+    );
+
+    // The same source for the host keeps the 64-bit shapes byte-for-byte.
+    let out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("{ ptr, i64 }"), "host str stays 64-bit: {ir}");
+    assert!(
+        ir.contains("@malloc(i64 noundef)"),
+        "host malloc stays 64-bit: {ir}"
+    );
+}
+
+/// The full heap surface — Text (lang string), Vec, to_text, interpolation
+/// lengths — emits 32-bit-correct IR that esp-clang's verifier accepts and
+/// compiles to a Xtensa object. This is the oracle from the development
+/// loop, kept as a regression gate. Skips (loudly) without esp-clang.
+#[test]
+fn target_esp32_text_and_vec_compile_to_xtensa_object() {
+    let Some(esp_clang) = esp_clang_for_test() else {
+        eprintln!("skipping: esp-clang not installed");
+        return;
+    };
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"heaptest\"\n\n[[bin]]\nname = \"heaptest\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/text\" as text;\n\
+         import \"stdlib/vec\" as vec;\n\
+         fn main() -> i32 {\n\
+             let t: text::Text = \"esp32 heap\".to_text();\n\
+             let n: usize = t.len();\n\
+             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             v.push(40);\n\
+             v.push(2);\n\
+             let a: i32 = vec::at_copy::[i32](v, 0 as usize);\n\
+             let b: i32 = vec::at_copy::[i32](v, 1 as usize);\n\
+             return (n as i32) + a + b - 52;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "emit-ll-project for esp32 failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ll = dir.join("heap.ll");
+    std::fs::write(&ll, &out.stdout).unwrap();
+    let obj = dir.join("heap.o");
+    let cc = Command::new(&esp_clang)
+        .arg("-Wno-override-module")
+        .arg("-target")
+        .arg("xtensa-esp32-elf")
+        .arg("-c")
+        .arg(&ll)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("invoke esp-clang");
+    assert!(
+        cc.status.success(),
+        "esp-clang must verify + compile the 32-bit heap IR: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    assert!(obj.is_file());
+
+    // Behavior check on the host: same program, host target, must run clean
+    // (exit 0 — the arithmetic checks Text len and Vec contents).
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(st.success(), "host build of the heap program failed");
+    let run = Command::new(dir.join("target/debug/heaptest"))
+        .status()
+        .expect("run heaptest");
+    assert_eq!(run.code(), Some(0), "heap program must compute correctly");
+}
+
+/// The espidf bindings and the all-C+ firmware shape pass whole-project
+/// sema for the esp32 target on every host (front end only, no esp-clang).
+#[test]
+fn espidf_firmware_project_passes_check() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"fw\"\n\n[lib]\nname = \"fw\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n\n[dependencies]\nespidf = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    symlink_dir(&root.join("vendor/espidf"), &dir.join("vendor/espidf"));
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "import \"espidf/gpio\" as gpio;\n\
+         import \"espidf/timer\" as timer;\n\
+         import \"espidf/task\" as task;\n\
+         \n\
+         #[realtime]\n\
+         fn step(x: i32) -> i32 { return (205 * x) / 256; }\n\
+         \n\
+         pub extern fn cplus_app_main() {\n\
+             let _r0: i32 = gpio::reset(2);\n\
+             let _r1: i32 = gpio::set_direction(2, gpio::mode_output());\n\
+             let mut on: u32 = 0;\n\
+             let mut i: i32 = 0;\n\
+             while i < 3 {\n\
+                 on = (1 as u32) - on;\n\
+                 let _r2: i32 = gpio::set_level(2, on);\n\
+                 let t0: i64 = timer::now_us();\n\
+                 let _c: i32 = step(i);\n\
+                 let _dt: i64 = timer::now_us() - t0;\n\
+                 task::delay_ms(10);\n\
+                 i = i + 1;\n\
+             }\n\
+             return;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(
+        out.status.success(),
+        "espidf firmware project must check clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Regression: a `pub extern fn` wrapper tail-calling an internal fn that
 /// returns the same aggregate used to emit `musttail` even though the
 /// export's IR return is ABI-coerced (`[2 x i64]`) and the callee's is the

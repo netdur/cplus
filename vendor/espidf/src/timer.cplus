@@ -1,0 +1,12 @@
+// esp_timer: the 64-bit microsecond clock, monotonic since boot.
+
+// A counter read: non-allocating and non-blocking, callable from
+// `#[realtime]` code.
+#[no_alloc]
+#[no_block]
+extern fn esp_timer_get_time() -> i64;
+
+#[no_alloc]
+pub fn now_us() -> i64 {
+    return unsafe { esp_timer_get_time() };
+}

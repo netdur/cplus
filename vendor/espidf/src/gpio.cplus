@@ -1,0 +1,43 @@
+// GPIO (ESP-IDF `driver/gpio.h`). Pin numbers and modes are plain `i32`
+// (`gpio_num_t` / `gpio_mode_t` are C enums); errors are `esp_err_t`
+// (`i32`, 0 = ESP_OK). The externs are register writes/reads — marked
+// `#[no_alloc]` + `#[no_block]` so `#[realtime]` code can drive pins.
+
+#[no_alloc]
+#[no_block]
+extern fn gpio_reset_pin(pin: i32) -> i32;
+#[no_alloc]
+#[no_block]
+extern fn gpio_set_direction(pin: i32, mode: i32) -> i32;
+#[no_alloc]
+#[no_block]
+extern fn gpio_set_level(pin: i32, level: u32) -> i32;
+#[no_alloc]
+#[no_block]
+extern fn gpio_get_level(pin: i32) -> i32;
+
+// gpio_mode_t values (`GPIO_MODE_DEF_INPUT` = 1, `_OUTPUT` = 2).
+pub fn mode_disable() -> i32 { return 0; }
+pub fn mode_input() -> i32 { return 1; }
+pub fn mode_output() -> i32 { return 2; }
+pub fn mode_input_output() -> i32 { return 3; }
+
+#[no_alloc]
+pub fn reset(pin: i32) -> i32 {
+    return unsafe { gpio_reset_pin(pin) };
+}
+
+#[no_alloc]
+pub fn set_direction(pin: i32, mode: i32) -> i32 {
+    return unsafe { gpio_set_direction(pin, mode) };
+}
+
+#[no_alloc]
+pub fn set_level(pin: i32, level: u32) -> i32 {
+    return unsafe { gpio_set_level(pin, level) };
+}
+
+#[no_alloc]
+pub fn get_level(pin: i32) -> i32 {
+    return unsafe { gpio_get_level(pin) };
+}

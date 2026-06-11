@@ -3669,6 +3669,7 @@ fn coro_end_call_ir() -> String {
 }
 
 fn write_preamble(out: &mut String) {
+    let us = usize_llvm_ty();
     out.push_str("; C+ Phase 1 codegen output\n");
     // v0.0.21 multi-backend slice 1: an explicit `--target` pins the IR to
     // its clang triple, so the handoff artifact (`--emit-ll` consumed by an
@@ -3697,7 +3698,9 @@ fn write_preamble(out: &mut String) {
     // the function returns a deterministic value of the bytes — clang
     // declares this libc header with `readonly` so the optimizer can
     // hoist memcmp calls past intervening loads.
-    out.push_str("declare i32 @memcmp(ptr noundef readonly, ptr noundef readonly, i64 noundef)\n");
+    out.push_str(&format!(
+        "declare i32 @memcmp(ptr noundef readonly, ptr noundef readonly, {us} noundef)\n"
+    ));
     // Phase 8 slice 8.STR.3: owned `string` runtime. malloc + free for
     // construction + Drop; memcpy for clone. realloc reserved for future
     // mutation API (not used in v1).
@@ -3708,7 +3711,7 @@ fn write_preamble(out: &mut String) {
     // single biggest enabler for LLVM's alias analysis to disambiguate
     // heap regions against pre-existing pointers, which lets SROA /
     // mem2reg / GVN forward more loads.
-    out.push_str("declare noalias noundef ptr @malloc(i64 noundef)\n");
+    out.push_str(&format!("declare noalias noundef ptr @malloc({us} noundef)\n"));
     // v0.0.8 bench-gap fix B (finish): free is a no-capture deallocator
     // — `nocapture` says the function doesn't retain the pointer beyond
     // the call, so LLVM can keep deriving facts about prior pointers to
@@ -3719,7 +3722,9 @@ fn write_preamble(out: &mut String) {
     // params. `writeonly` on dst + `readonly` on src lets LLVM model the
     // call as not reading the destination and not writing through the
     // source, which is necessary for SROA / DSE around the copy.
-    out.push_str("declare ptr @memcpy(ptr noalias noundef writeonly, ptr noalias noundef readonly, i64 noundef)\n");
+    out.push_str(&format!(
+        "declare ptr @memcpy(ptr noalias noundef writeonly, ptr noalias noundef readonly, {us} noundef)\n"
+    ));
     // Phase 8 slice 8.STR.6: snprintf for blessed `to_string()` on
     // numeric primitives. Returns the number of bytes that *would have*
     // been written (excluding NUL); we use that as the resulting
@@ -3729,10 +3734,10 @@ fn write_preamble(out: &mut String) {
     // v0.0.8 bench-gap fix B (finish): dst is writeonly, fmt is
     // readonly, and both carry noundef + the size param is noundef.
     // The two ptr params don't alias each other in any valid use.
-    out.push_str(
-        "declare i32 @snprintf(ptr noalias noundef writeonly, i64 noundef, \
-         ptr noalias noundef readonly, ...)\n",
-    );
+    out.push_str(&format!(
+        "declare i32 @snprintf(ptr noalias noundef writeonly, {us} noundef, \
+         ptr noalias noundef readonly, ...)\n"
+    ));
     // Format strings the to_string intrinsics use.
     out.push_str("@.fmt_i64    = private unnamed_addr constant [5 x i8] c\"%lld\\00\", align 1\n");
     out.push_str("@.fmt_u64    = private unnamed_addr constant [5 x i8] c\"%llu\\00\", align 1\n");
@@ -4638,6 +4643,7 @@ fn emit_statics(
     types: &TypeTable,
     md: &ModuleMetadata,
 ) {
+    let us = usize_llvm_ty();
     if statics_map.is_empty() {
         return;
     }
@@ -4654,7 +4660,7 @@ fn emit_statics(
                 let str_len = bytes_len.saturating_sub(1); // emit_cstr adds NUL terminator
                 let storage = if info.is_mut { "global" } else { "constant" };
                 out.push_str(&format!(
-                    "@{qname} = {storage} {{ ptr, i64 }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
+                    "@{qname} = {storage} {{ ptr, {us} }} {{ ptr @{bytes_sym}, i64 {str_len} }}\n"
                 ));
                 md.statics
                     .borrow_mut()
@@ -7835,11 +7841,12 @@ impl<'a> FnState<'a> {
     /// field is dropped by calling `Vec::drop` (frees the buffer); dropping each
     /// `T` element is a separate Vec enhancement.
     fn gen_drop_in_place(&mut self, ty: &Ty, p_val: &str) {
+        let us = usize_llvm_ty();
         match ty {
             Ty::String => {
                 let pp = self.next_tmp();
                 self.emit(&format!(
-                    "{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {p_val}, i32 0, i32 0"
+                    "{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {p_val}, i32 0, i32 0"
                 ));
                 let pv = self.next_tmp();
                 self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
@@ -7963,16 +7970,17 @@ impl<'a> FnState<'a> {
     /// borrow parameter: the caller still owns the original; the result
     /// must be an independent allocation or Drop double-frees.
     fn clone_string_aggregate(&mut self, src: &str) -> String {
+        let us = usize_llvm_ty();
         let src_ptr = self.next_tmp();
         self.emit(&format!(
-            "{src_ptr} = extractvalue {{ ptr, i64, i64 }} {src}, 0"
+            "{src_ptr} = extractvalue {{ ptr, {us}, {us} }} {src}, 0"
         ));
         let len = self.next_tmp();
         self.emit(&format!(
-            "{len} = extractvalue {{ ptr, i64, i64 }} {src}, 1"
+            "{len} = extractvalue {{ ptr, {us}, {us} }} {src}, 1"
         ));
         let new_ptr = self.next_tmp();
-        self.emit(&format!("{new_ptr} = call ptr @malloc(i64 {len})"));
+        self.emit(&format!("{new_ptr} = call ptr @malloc({us} {len})"));
         // `len == 0` → malloc may return null or a unique sentinel; either
         // way memcpy(_, _, 0) is a no-op, free(null) is a no-op. Skip the
         // zero-length branch — keeps the IR flat and matches what the
@@ -7981,19 +7989,19 @@ impl<'a> FnState<'a> {
         // memcpy intrinsic here.
         let _dummy = self.next_tmp();
         self.emit(&format!(
-            "{_dummy} = call ptr @memcpy(ptr {new_ptr}, ptr {src_ptr}, i64 {len})"
+            "{_dummy} = call ptr @memcpy(ptr {new_ptr}, ptr {src_ptr}, {us} {len})"
         ));
         let t1 = self.next_tmp();
         self.emit(&format!(
-            "{t1} = insertvalue {{ ptr, i64, i64 }} undef, ptr {new_ptr}, 0"
+            "{t1} = insertvalue {{ ptr, {us}, {us} }} undef, ptr {new_ptr}, 0"
         ));
         let t2 = self.next_tmp();
         self.emit(&format!(
-            "{t2} = insertvalue {{ ptr, i64, i64 }} {t1}, i64 {len}, 1"
+            "{t2} = insertvalue {{ ptr, {us}, {us} }} {t1}, {us} {len}, 1"
         ));
         let t3 = self.next_tmp();
         self.emit(&format!(
-            "{t3} = insertvalue {{ ptr, i64, i64 }} {t2}, i64 {len}, 2"
+            "{t3} = insertvalue {{ ptr, {us}, {us} }} {t2}, {us} {len}, 2"
         ));
         t3
     }
@@ -9009,6 +9017,7 @@ impl<'a> FnState<'a> {
     /// producing expressions, None for diverging or Unit-typed expressions
     /// where the caller can't use a value.
     fn gen_expr(&mut self, e: &Expr) -> Option<(String, Ty)> {
+        let us = usize_llvm_ty();
         match &e.kind {
             ExprKind::IntLit(v, suf) => {
                 use crate::lexer::NumSuffix;
@@ -9082,10 +9091,10 @@ impl<'a> FnState<'a> {
                 let t1 = self.next_tmp();
                 let t2 = self.next_tmp();
                 self.body.push_str(&format!(
-                    "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+                    "  {t1} = insertvalue {{ ptr, {us} }} undef, ptr {symbol}, 0\n"
                 ));
                 self.body.push_str(&format!(
-                    "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+                    "  {t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {len}, 1\n"
                 ));
                 Some((t2, Ty::Str))
             }
@@ -9110,10 +9119,10 @@ impl<'a> FnState<'a> {
                 let t1 = self.next_tmp();
                 let t2 = self.next_tmp();
                 self.body.push_str(&format!(
-                    "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+                    "  {t1} = insertvalue {{ ptr, {us} }} undef, ptr {symbol}, 0\n"
                 ));
                 self.body.push_str(&format!(
-                    "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+                    "  {t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {len}, 1\n"
                 ));
                 Some((t2, Ty::Str))
             }
@@ -9130,10 +9139,10 @@ impl<'a> FnState<'a> {
                 let t1 = self.next_tmp();
                 let t2 = self.next_tmp();
                 self.body.push_str(&format!(
-                    "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+                    "  {t1} = insertvalue {{ ptr, {us} }} undef, ptr {symbol}, 0\n"
                 ));
                 self.body.push_str(&format!(
-                    "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+                    "  {t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {len}, 1\n"
                 ));
                 Some((t2, Ty::Str))
             }
@@ -9653,16 +9662,24 @@ impl<'a> FnState<'a> {
     /// Void (returns no SSA value), so it has its own `gen_intrinsic` arm rather
     /// than going through `ffi_builtin_cg` (whose `None` means "not a builtin").
     fn gen_println(&mut self, args: &[Expr]) {
+        let us = usize_llvm_ty();
         let (av, aty) = self.gen_expr(&args[0]).expect("println arg");
         let v = self.next_tmp();
         match aty {
             Ty::Str => {
                 let ptr_tmp = self.next_tmp();
                 let len_tmp = self.next_tmp();
-                self.emit(&format!("{ptr_tmp} = extractvalue {{ ptr, i64 }} {av}, 0"));
-                self.emit(&format!("{len_tmp} = extractvalue {{ ptr, i64 }} {av}, 1"));
-                let len_i32 = self.next_tmp();
-                self.emit(&format!("{len_i32} = trunc i64 {len_tmp} to i32"));
+                self.emit(&format!("{ptr_tmp} = extractvalue {{ ptr, {us} }} {av}, 0"));
+                self.emit(&format!("{len_tmp} = extractvalue {{ ptr, {us} }} {av}, 1"));
+                // printf's `%.*s` precision is a C `int`; on 64-bit targets
+                // the usize len truncates down, on 32-bit it already is one.
+                let len_i32 = if us == "i64" {
+                    let t = self.next_tmp();
+                    self.emit(&format!("{t} = trunc i64 {len_tmp} to i32"));
+                    t
+                } else {
+                    len_tmp
+                };
                 self.emit(&format!(
                     "{v} = call i32 (ptr, ...) @printf(ptr noundef @.fmt_str_nl, i32 {len_i32}, ptr {ptr_tmp})"
                 ));
@@ -9680,16 +9697,17 @@ impl<'a> FnState<'a> {
     /// `#name` dispatch (`gen_intrinsic`) and the bare-call path during
     /// migration. Sema (`ffi_builtin_ty`) has already validated arg shapes.
     fn ffi_builtin_cg(&mut self, name: &str, args: &[Expr]) -> Option<(String, Ty)> {
+        let us = usize_llvm_ty();
         if name == "str_ptr" {
             let (av, _) = self.gen_expr(&args[0]).expect("str_ptr arg");
             let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
+            self.emit(&format!("{r} = extractvalue {{ ptr, {us} }} {av}, 0"));
             return Some((r, Ty::RawPtr(Box::new(Ty::U8))));
         }
         if name == "str_len" {
             let (av, _) = self.gen_expr(&args[0]).expect("str_len arg");
             let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
+            self.emit(&format!("{r} = extractvalue {{ ptr, {us} }} {av}, 1"));
             return Some((r, Ty::Usize));
         }
         if name == "str_from_raw_parts" {
@@ -9698,10 +9716,10 @@ impl<'a> FnState<'a> {
             let t1 = self.next_tmp();
             let t2 = self.next_tmp();
             self.emit(&format!(
-                "{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"
+                "{t1} = insertvalue {{ ptr, {us} }} undef, ptr {p_val}, 0"
             ));
             self.emit(&format!(
-                "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
+                "{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {n_val}, 1"
             ));
             return Some((t2, Ty::Str));
         }
@@ -9712,13 +9730,13 @@ impl<'a> FnState<'a> {
                 _ => unreachable!("sema validated slice_ptr arg type"),
             };
             let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 0"));
+            self.emit(&format!("{r} = extractvalue {{ ptr, {us} }} {av}, 0"));
             return Some((r, Ty::RawPtr(Box::new(elem_ty))));
         }
         if name == "slice_len" {
             let (av, _) = self.gen_expr(&args[0]).expect("slice_len arg");
             let r = self.next_tmp();
-            self.emit(&format!("{r} = extractvalue {{ ptr, i64 }} {av}, 1"));
+            self.emit(&format!("{r} = extractvalue {{ ptr, {us} }} {av}, 1"));
             // Publish the proven non-negative invariant via `llvm.assume`
             // (`!range` is illegal on `extractvalue`).
             let nn = self.next_tmp();
@@ -9736,10 +9754,10 @@ impl<'a> FnState<'a> {
             let t1 = self.next_tmp();
             let t2 = self.next_tmp();
             self.emit(&format!(
-                "{t1} = insertvalue {{ ptr, i64 }} undef, ptr {p_val}, 0"
+                "{t1} = insertvalue {{ ptr, {us} }} undef, ptr {p_val}, 0"
             ));
             self.emit(&format!(
-                "{t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {n_val}, 1"
+                "{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {n_val}, 1"
             ));
             return Some((t2, Ty::Slice(Box::new(elem_ty))));
         }
@@ -9791,6 +9809,7 @@ impl<'a> FnState<'a> {
     /// the same private `[N x i8]` global emitted by
     /// `emit_compile_time_blob_globals`. UTF-8 validated at sema time.
     fn gen_intrinsic_include_str(&mut self, span: crate::lexer::Span) -> (String, Ty) {
+        let us = usize_llvm_ty();
         let (symbol, len) = {
             let table = self.md.compile_time_blobs.borrow();
             table
@@ -9801,10 +9820,10 @@ impl<'a> FnState<'a> {
         let t1 = self.next_tmp();
         let t2 = self.next_tmp();
         self.body.push_str(&format!(
-            "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+            "  {t1} = insertvalue {{ ptr, {us} }} undef, ptr {symbol}, 0\n"
         ));
         self.body.push_str(&format!(
-            "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+            "  {t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {len}, 1\n"
         ));
         (t2, Ty::Str)
     }
@@ -9813,6 +9832,7 @@ impl<'a> FnState<'a> {
     /// `[N x i8]` global emitted by `emit_env_var_globals`. Value was
     /// read at sema time.
     fn gen_intrinsic_env(&mut self, span: crate::lexer::Span) -> (String, Ty) {
+        let us = usize_llvm_ty();
         let (symbol, len) = {
             let table = self.md.env_var_globals.borrow();
             table
@@ -9823,10 +9843,10 @@ impl<'a> FnState<'a> {
         let t1 = self.next_tmp();
         let t2 = self.next_tmp();
         self.body.push_str(&format!(
-            "  {t1} = insertvalue {{ ptr, i64 }} undef, ptr {symbol}, 0\n"
+            "  {t1} = insertvalue {{ ptr, {us} }} undef, ptr {symbol}, 0\n"
         ));
         self.body.push_str(&format!(
-            "  {t2} = insertvalue {{ ptr, i64 }} {t1}, i64 {len}, 1\n"
+            "  {t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {len}, 1\n"
         ));
         (t2, Ty::Str)
     }
@@ -10425,6 +10445,7 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_binary(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> (String, Ty) {
+        let us = usize_llvm_ty();
         // Short-circuit evaluation for && and ||.
         match op {
             BinOp::And => return self.gen_short_circuit(lhs, rhs, true),
@@ -10456,16 +10477,20 @@ impl<'a> FnState<'a> {
             if matches!(op, BinOp::Add | BinOp::Sub) {
                 let inner = (*inner_box).clone();
                 let inner_lt = self.lty(&inner);
+                // The GEP index uses the rhs's own integer width — a usize
+                // index is i32 on 32-bit targets, i64 on 64-bit ones (GEP
+                // accepts any index width).
+                let idx_ty = self.lty(&rt);
                 let idx = if matches!(op, BinOp::Sub) {
                     let neg = self.next_tmp();
-                    self.emit(&format!("{neg} = sub i64 0, {r}"));
+                    self.emit(&format!("{neg} = sub {idx_ty} 0, {r}"));
                     neg
                 } else {
                     r.clone()
                 };
                 let ptr = self.next_tmp();
                 self.emit(&format!(
-                    "{ptr} = getelementptr inbounds {inner_lt}, ptr {l}, i64 {idx}"
+                    "{ptr} = getelementptr inbounds {inner_lt}, ptr {l}, {idx_ty} {idx}"
                 ));
                 return (ptr, lt);
             }
@@ -10528,10 +10553,10 @@ impl<'a> FnState<'a> {
                     let ll = self.next_tmp();
                     let rp = self.next_tmp();
                     let rl = self.next_tmp();
-                    self.emit(&format!("{lp} = extractvalue {{ ptr, i64 }} {l}, 0"));
-                    self.emit(&format!("{ll} = extractvalue {{ ptr, i64 }} {l}, 1"));
-                    self.emit(&format!("{rp} = extractvalue {{ ptr, i64 }} {r}, 0"));
-                    self.emit(&format!("{rl} = extractvalue {{ ptr, i64 }} {r}, 1"));
+                    self.emit(&format!("{lp} = extractvalue {{ ptr, {us} }} {l}, 0"));
+                    self.emit(&format!("{ll} = extractvalue {{ ptr, {us} }} {l}, 1"));
+                    self.emit(&format!("{rp} = extractvalue {{ ptr, {us} }} {r}, 0"));
+                    self.emit(&format!("{rl} = extractvalue {{ ptr, {us} }} {r}, 1"));
                     let len_eq = self.next_tmp();
                     self.emit(&format!("{len_eq} = icmp eq i64 {ll}, {rl}"));
                     let cmp_lbl = self.next_block_label();
@@ -10543,7 +10568,7 @@ impl<'a> FnState<'a> {
                     self.open_block(&cmp_lbl);
                     let mc = self.next_tmp();
                     self.emit(&format!(
-                        "{mc} = call i32 @memcmp(ptr {lp}, ptr {rp}, i64 {ll})"
+                        "{mc} = call i32 @memcmp(ptr {lp}, ptr {rp}, {us} {ll})"
                     ));
                     let mc_eq = self.next_tmp();
                     self.emit(&format!("{mc_eq} = icmp eq i32 {mc}, 0"));
@@ -13333,6 +13358,7 @@ impl<'a> FnState<'a> {
     // policy; Drop integration is a follow-up.
 
     fn gen_interp_str(&mut self, parts: &[crate::ast::InterpStrPart]) -> (String, Ty) {
+        let us = usize_llvm_ty();
         use crate::ast::InterpStrPart;
         // First pass: produce a (ptr, len) pair per part.
         let mut piece_ptrs: Vec<String> = Vec::with_capacity(parts.len());
@@ -13401,25 +13427,25 @@ impl<'a> FnState<'a> {
         let mut total = String::from("0");
         for l in &piece_lens {
             let next = self.next_tmp();
-            self.emit(&format!("{next} = add i64 {total}, {l}"));
+            self.emit(&format!("{next} = add {us} {total}, {l}"));
             total = next;
         }
         // Allocate the output buffer.
         let buf = self.next_tmp();
-        self.emit(&format!("{buf} = call ptr @malloc(i64 {total})"));
+        self.emit(&format!("{buf} = call ptr @malloc({us} {total})"));
         // memcpy each piece at the running offset.
         let mut offset = String::from("0");
         for (ptr, len) in piece_ptrs.iter().zip(piece_lens.iter()) {
             let dst = self.next_tmp();
             self.emit(&format!(
-                "{dst} = getelementptr i8, ptr {buf}, i64 {offset}"
+                "{dst} = getelementptr i8, ptr {buf}, {us} {offset}"
             ));
             let _cpy = self.next_tmp();
             self.emit(&format!(
-                "{_cpy} = call ptr @memcpy(ptr {dst}, ptr {ptr}, i64 {len})"
+                "{_cpy} = call ptr @memcpy(ptr {dst}, ptr {ptr}, {us} {len})"
             ));
             let next_off = self.next_tmp();
-            self.emit(&format!("{next_off} = add i64 {offset}, {len}"));
+            self.emit(&format!("{next_off} = add {us} {offset}, {len}"));
             offset = next_off;
         }
         // All segment bytes are now copied into `buf`; release the scratch
@@ -13435,9 +13461,9 @@ impl<'a> FnState<'a> {
                 let v0 = self.next_tmp();
                 self.emit(&format!("{v0} = insertvalue {lty} undef, ptr {buf}, 0"));
                 let v1 = self.next_tmp();
-                self.emit(&format!("{v1} = insertvalue {lty} {v0}, i64 {total}, 1"));
+                self.emit(&format!("{v1} = insertvalue {lty} {v0}, {us} {total}, 1"));
                 let v2 = self.next_tmp();
-                self.emit(&format!("{v2} = insertvalue {lty} {v1}, i64 {total}, 2"));
+                self.emit(&format!("{v2} = insertvalue {lty} {v1}, {us} {total}, 2"));
                 (v2, text_ty)
             }
             None => {
@@ -13707,11 +13733,12 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_hash_str(&mut self, rv: &str) -> (String, Ty) {
+        let us = usize_llvm_ty();
         // Extract ptr + len from the fat-pointer aggregate.
         let p = self.next_tmp();
         let n = self.next_tmp();
-        self.emit(&format!("{p} = extractvalue {{ ptr, i64 }} {rv}, 0"));
-        self.emit(&format!("{n} = extractvalue {{ ptr, i64 }} {rv}, 1"));
+        self.emit(&format!("{p} = extractvalue {{ ptr, {us} }} {rv}, 0"));
+        self.emit(&format!("{n} = extractvalue {{ ptr, {us} }} {rv}, 1"));
         // Inline FNV-1a byte loop. Allocate stack slots for the running
         // hash + counter so we can re-load through the loop.
         let h_slot = self.alloca_anon(Ty::U64);
@@ -13773,15 +13800,16 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_eq_str(&mut self, lv: &str, rv: &str) -> (String, Ty) {
+        let us = usize_llvm_ty();
         let result_slot = self.alloca_anon(Ty::Bool);
         let lp = self.next_tmp();
         let ll = self.next_tmp();
         let rp = self.next_tmp();
         let rl = self.next_tmp();
-        self.emit(&format!("{lp} = extractvalue {{ ptr, i64 }} {lv}, 0"));
-        self.emit(&format!("{ll} = extractvalue {{ ptr, i64 }} {lv}, 1"));
-        self.emit(&format!("{rp} = extractvalue {{ ptr, i64 }} {rv}, 0"));
-        self.emit(&format!("{rl} = extractvalue {{ ptr, i64 }} {rv}, 1"));
+        self.emit(&format!("{lp} = extractvalue {{ ptr, {us} }} {lv}, 0"));
+        self.emit(&format!("{ll} = extractvalue {{ ptr, {us} }} {lv}, 1"));
+        self.emit(&format!("{rp} = extractvalue {{ ptr, {us} }} {rv}, 0"));
+        self.emit(&format!("{rl} = extractvalue {{ ptr, {us} }} {rv}, 1"));
         let len_eq = self.next_tmp();
         self.emit(&format!("{len_eq} = icmp eq i64 {ll}, {rl}"));
         let cmp_lbl = self.next_block_label();
@@ -13793,7 +13821,7 @@ impl<'a> FnState<'a> {
         self.open_block(&cmp_lbl);
         let mc = self.next_tmp();
         self.emit(&format!(
-            "{mc} = call i32 @memcmp(ptr {lp}, ptr {rp}, i64 {ll})"
+            "{mc} = call i32 @memcmp(ptr {lp}, ptr {rp}, {us} {ll})"
         ));
         let mc_eq = self.next_tmp();
         self.emit(&format!("{mc_eq} = icmp eq i32 {mc}, 0"));
@@ -13830,6 +13858,7 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_to_string_signed(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        let us = usize_llvm_ty();
         // Widen to i64 for the format spec.
         let widened = match rt {
             Ty::I64 | Ty::Isize => rv.to_string(),
@@ -13843,7 +13872,7 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{buf} = call ptr @malloc(i64 32)"));
         let written = self.next_tmp();
         self.emit(&format!(
-            "{written} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt_i64, i64 {widened})"
+            "{written} = call i32 (ptr, {us}, ptr, ...) @snprintf(ptr {buf}, {us} 32, ptr @.fmt_i64, i64 {widened})"
         ));
         let len = self.next_tmp();
         self.emit(&format!("{len} = sext i32 {written} to i64"));
@@ -13852,6 +13881,7 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_to_string_unsigned(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        let us = usize_llvm_ty();
         let widened = match rt {
             Ty::U64 | Ty::Usize => rv.to_string(),
             _ => {
@@ -13864,7 +13894,7 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{buf} = call ptr @malloc(i64 32)"));
         let written = self.next_tmp();
         self.emit(&format!(
-            "{written} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt_u64, i64 {widened})"
+            "{written} = call i32 (ptr, {us}, ptr, ...) @snprintf(ptr {buf}, {us} 32, ptr @.fmt_u64, i64 {widened})"
         ));
         let len = self.next_tmp();
         self.emit(&format!("{len} = sext i32 {written} to i64"));
@@ -13873,6 +13903,7 @@ impl<'a> FnState<'a> {
     }
 
     fn gen_to_string_float(&mut self, rv: &str, rt: &Ty) -> (String, Ty) {
+        let us = usize_llvm_ty();
         // Widen f32 → f64 for "%g".
         let widened = match rt {
             Ty::F64 => rv.to_string(),
@@ -13886,7 +13917,7 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{buf} = call ptr @malloc(i64 32)"));
         let written = self.next_tmp();
         self.emit(&format!(
-            "{written} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr {buf}, i64 32, ptr @.fmt_f64, double {widened})"
+            "{written} = call i32 (ptr, {us}, ptr, ...) @snprintf(ptr {buf}, {us} 32, ptr @.fmt_f64, double {widened})"
         ));
         let len = self.next_tmp();
         self.emit(&format!("{len} = sext i32 {written} to i64"));
@@ -13900,33 +13931,35 @@ impl<'a> FnState<'a> {
         // can later `free` it), so unconditionally malloc 5 bytes
         // (covers both `"true"` and `"false"`), pick which static blob
         // and how many bytes to copy via `select`, then memcpy.
+        let us = usize_llvm_ty();
         let len = self.next_tmp();
-        self.emit(&format!("{len} = select i1 {rv}, i64 4, i64 5"));
+        self.emit(&format!("{len} = select i1 {rv}, {us} 4, {us} 5"));
         let src = self.next_tmp();
         self.emit(&format!(
             "{src} = select i1 {rv}, ptr @.bool_true, ptr @.bool_false"
         ));
         let buf = self.next_tmp();
-        self.emit(&format!("{buf} = call ptr @malloc(i64 {len})"));
+        self.emit(&format!("{buf} = call ptr @malloc({us} {len})"));
         let _cpy = self.next_tmp();
         self.emit(&format!(
-            "{_cpy} = call ptr @memcpy(ptr {buf}, ptr {src}, i64 {len})"
+            "{_cpy} = call ptr @memcpy(ptr {buf}, ptr {src}, {us} {len})"
         ));
         let v = self.string_aggregate(&buf, &len, &len);
         (v, Ty::String)
     }
 
     fn gen_to_string_str(&mut self, rv: &str) -> (String, Ty) {
+        let us = usize_llvm_ty();
         // Extract ptr+len from the str fat-pointer, malloc(len), memcpy.
         let src_ptr = self.next_tmp();
-        self.emit(&format!("{src_ptr} = extractvalue {{ ptr, i64 }} {rv}, 0"));
+        self.emit(&format!("{src_ptr} = extractvalue {{ ptr, {us} }} {rv}, 0"));
         let len = self.next_tmp();
-        self.emit(&format!("{len} = extractvalue {{ ptr, i64 }} {rv}, 1"));
+        self.emit(&format!("{len} = extractvalue {{ ptr, {us} }} {rv}, 1"));
         let buf = self.next_tmp();
-        self.emit(&format!("{buf} = call ptr @malloc(i64 {len})"));
+        self.emit(&format!("{buf} = call ptr @malloc({us} {len})"));
         let _cpy = self.next_tmp();
         self.emit(&format!(
-            "{_cpy} = call ptr @memcpy(ptr {buf}, ptr {src_ptr}, i64 {len})"
+            "{_cpy} = call ptr @memcpy(ptr {buf}, ptr {src_ptr}, {us} {len})"
         ));
         let v = self.string_aggregate(&buf, &len, &len);
         (v, Ty::String)
@@ -13965,21 +13998,22 @@ impl<'a> FnState<'a> {
     /// layout), so `.to_text()` produces `Text`. Else returns it as the legacy
     /// `Ty::String`. The buffer is unchanged — only the LLVM aggregate type.
     fn lang_string_or_string(&mut self, sv: String) -> (String, Ty) {
+        let us = usize_llvm_ty();
         match self.lang_string_struct_ty() {
             Some(text_ty) => {
                 let lty = self.lty(&text_ty);
                 let p = self.next_tmp();
-                self.emit(&format!("{p} = extractvalue {{ ptr, i64, i64 }} {sv}, 0"));
+                self.emit(&format!("{p} = extractvalue {{ ptr, {us}, {us} }} {sv}, 0"));
                 let l = self.next_tmp();
-                self.emit(&format!("{l} = extractvalue {{ ptr, i64, i64 }} {sv}, 1"));
+                self.emit(&format!("{l} = extractvalue {{ ptr, {us}, {us} }} {sv}, 1"));
                 let c = self.next_tmp();
-                self.emit(&format!("{c} = extractvalue {{ ptr, i64, i64 }} {sv}, 2"));
+                self.emit(&format!("{c} = extractvalue {{ ptr, {us}, {us} }} {sv}, 2"));
                 let v0 = self.next_tmp();
                 self.emit(&format!("{v0} = insertvalue {lty} undef, ptr {p}, 0"));
                 let v1 = self.next_tmp();
-                self.emit(&format!("{v1} = insertvalue {lty} {v0}, i64 {l}, 1"));
+                self.emit(&format!("{v1} = insertvalue {lty} {v0}, {us} {l}, 1"));
                 let v2 = self.next_tmp();
-                self.emit(&format!("{v2} = insertvalue {lty} {v1}, i64 {c}, 2"));
+                self.emit(&format!("{v2} = insertvalue {lty} {v1}, {us} {c}, 2"));
                 (v2, text_ty)
             }
             None => (sv, Ty::String),
@@ -14009,6 +14043,7 @@ impl<'a> FnState<'a> {
     /// `Text` does; a malformed `#[lang("string")]` struct is the lang author's
     /// responsibility).
     fn gen_strlit_as_lang_string(&mut self, s: &str, struct_ty: &Ty) -> String {
+        let us = usize_llvm_ty();
         let (symbol, len) = self
             .str_lits
             .get(s)
@@ -14016,33 +14051,34 @@ impl<'a> FnState<'a> {
             .clone();
         let lty = self.lty(struct_ty);
         let buf = self.next_tmp();
-        self.emit(&format!("{buf} = call ptr @malloc(i64 {len})"));
+        self.emit(&format!("{buf} = call ptr @malloc({us} {len})"));
         let cpy = self.next_tmp();
         self.emit(&format!(
-            "{cpy} = call ptr @memcpy(ptr {buf}, ptr {symbol}, i64 {len})"
+            "{cpy} = call ptr @memcpy(ptr {buf}, ptr {symbol}, {us} {len})"
         ));
         let v0 = self.next_tmp();
         self.emit(&format!("{v0} = insertvalue {lty} undef, ptr {buf}, 0"));
         let v1 = self.next_tmp();
-        self.emit(&format!("{v1} = insertvalue {lty} {v0}, i64 {len}, 1"));
+        self.emit(&format!("{v1} = insertvalue {lty} {v0}, {us} {len}, 1"));
         let v2 = self.next_tmp();
-        self.emit(&format!("{v2} = insertvalue {lty} {v1}, i64 {len}, 2"));
+        self.emit(&format!("{v2} = insertvalue {lty} {v1}, {us} {len}, 2"));
         v2
     }
 
     /// Build a `string` SSA value from three components.
     fn string_aggregate(&mut self, ptr: &str, len: &str, cap: &str) -> String {
+        let us = usize_llvm_ty();
         let v0 = self.next_tmp();
         self.emit(&format!(
-            "{v0} = insertvalue {{ ptr, i64, i64 }} undef, ptr {ptr}, 0"
+            "{v0} = insertvalue {{ ptr, {us}, {us} }} undef, ptr {ptr}, 0"
         ));
         let v1 = self.next_tmp();
         self.emit(&format!(
-            "{v1} = insertvalue {{ ptr, i64, i64 }} {v0}, i64 {len}, 1"
+            "{v1} = insertvalue {{ ptr, {us}, {us} }} {v0}, {us} {len}, 1"
         ));
         let v2 = self.next_tmp();
         self.emit(&format!(
-            "{v2} = insertvalue {{ ptr, i64, i64 }} {v1}, i64 {cap}, 2"
+            "{v2} = insertvalue {{ ptr, {us}, {us} }} {v1}, {us} {cap}, 2"
         ));
         v2
     }
@@ -14078,11 +14114,12 @@ impl<'a> FnState<'a> {
         method: &str,
         args: &[Expr],
     ) -> (String, Ty) {
+        let us = usize_llvm_ty();
         let _ = args; // every v1 method is zero-arg
         match method {
             "len" => {
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 // v0.0.7 Slice 1.2: string fat-pointer len field — usize leaf.
                 self.gen_load(&lv, &Ty::Usize, &lp);
@@ -14090,7 +14127,7 @@ impl<'a> FnState<'a> {
             }
             "is_empty" => {
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.gen_load(&lv, &Ty::Usize, &lp);
                 let cmp = self.next_tmp();
@@ -14100,21 +14137,21 @@ impl<'a> FnState<'a> {
             "as_str" => {
                 // Extract ptr + len; package as `str` fat-pointer `{ ptr, i64 }`.
                 let pp = self.next_tmp();
-                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
+                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
                 // v0.0.7 Slice 1.2: string ptr field — ptr leaf.
                 self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.gen_load(&lv, &Ty::Usize, &lp);
                 let s0 = self.next_tmp();
                 self.emit(&format!(
-                    "{s0} = insertvalue {{ ptr, i64 }} undef, ptr {pv}, 0"
+                    "{s0} = insertvalue {{ ptr, {us} }} undef, ptr {pv}, 0"
                 ));
                 let s1 = self.next_tmp();
                 self.emit(&format!(
-                    "{s1} = insertvalue {{ ptr, i64 }} {s0}, i64 {lv}, 1"
+                    "{s1} = insertvalue {{ ptr, {us} }} {s0}, {us} {lv}, 1"
                 ));
                 (s1, Ty::Str)
             }
@@ -14122,12 +14159,12 @@ impl<'a> FnState<'a> {
                 // Load len, malloc a fresh buffer of size len (cap = len in
                 // the clone), memcpy bytes, build a new aggregate.
                 let pp = self.next_tmp();
-                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 0"));
+                self.emit(&format!("{pp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 0"));
                 let pv = self.next_tmp();
                 // v0.0.7 Slice 1.2: string.clone() — ptr + len reads.
                 self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::Unit)), &pp);
                 let lp = self.next_tmp();
-                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, i64, i64 }}, ptr {recv_ptr}, i32 0, i32 1"));
+                self.emit(&format!("{lp} = getelementptr inbounds {{ ptr, {us}, {us} }}, ptr {recv_ptr}, i32 0, i32 1"));
                 let lv = self.next_tmp();
                 self.gen_load(&lv, &Ty::Usize, &lp);
                 let buf = self.next_tmp();
