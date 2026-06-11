@@ -3,6 +3,43 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.21 — unreleased
+
+### Multi-backend: target model + iOS
+- New `--target NAME` on `build` / `check` / `--emit-ll` / `--emit-ll-opt` /
+  `--emit-asm` / `--emit-obj`. Named targets: `host` (the default),
+  `ios-arm64`, `ios-arm64-simulator`. An unknown name fails with the supported
+  list. Omitting `--target` reproduces the previous host behavior byte for
+  byte.
+- A `TargetSpec` (triple, pointer width, endianness, object format, ABI and
+  intrinsic selectors, handoff mode) now drives codegen's per-target decisions.
+  The former compile-time `cfg!` gates (HFA classification, Microsoft x64 size
+  buckets, SysV register pairs, `byval`, spin-loop hints, NEON `tbl1`, the
+  Windows binary-mode ctor) resolve against the selected target, so a cross
+  build emits the target's ABI and intrinsics, not the host's.
+- External-builder handoff: the iOS targets stop at object emission — cpc
+  never runs their final link (Xcode owns it). `cpc build` of a `[lib]`
+  staticlib emits the object, archive, and C header into
+  `target/<target-name>/<mode>/`; clang gets `-target <triple>` plus
+  `-isysroot` from `xcrun` when available. `[[bin]]` builds, `cdylib`
+  crate-types, `cpc test`, and single-file binaries are rejected for these
+  targets with the supported flow named in the message.
+- An explicit target pins `target triple = "<triple>"` in the emitted IR, so
+  handed-off `.ll` artifacts carry their target. Host IR is unchanged.
+- Bundled vendor artifacts resolve by the selected target's stable artifact
+  triple (`vendor/<dep>/src/lib/arm64-apple-ios/...`); only the host target
+  still consults `clang -print-target-triple`. E0862 now words the mismatch
+  as a host or target triple accordingly.
+
+### Bindings
+- New `vendor/uikit` package: UIKit bindings mirroring `vendor/appkit`
+  (ObjC-runtime FFI; `Window`, `ViewController`, `View`, `Label`, `Color`,
+  `Screen`, app-delegate synthesis). Includes the `cplus_app_main` entry
+  convention: a two-line C `main` shim in the Xcode target calls into the C+
+  staticlib, which registers the delegate and enters `UIApplicationMain`.
+  Verified on the iOS simulator: a C+-driven screen (white window, centered
+  label) renders on an iPhone 16 Pro simulator.
+
 ## v0.0.20 — 2026-06-11
 
 ### Agent surface (Theme B)

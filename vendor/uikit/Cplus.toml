@@ -1,0 +1,12 @@
+[package]
+name    = "uikit"
+version = "0.0.1"
+edition = "2026"
+
+# C+ bindings for UIKit (iOS), mirroring `vendor/appkit`. Built with
+# `cpc build --target ios-arm64` / `ios-arm64-simulator`; the consuming app's
+# external build system (Xcode) owns the final link, so these framework /
+# lib entries land on the consumer's link line, not cpc's.
+[link]
+frameworks = ["UIKit", "Foundation"]
+libs       = ["objc"]

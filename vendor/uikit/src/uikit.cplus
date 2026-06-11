@@ -1,0 +1,21 @@
+// Umbrella module: one import surfaces the whole binding set, mirroring
+// `vendor/appkit/src/appkit.cplus`.
+
+import "./runtime" as runtime;
+import "./convert" as convert;
+import "./application" as application;
+import "./screen" as screen;
+import "./window" as window;
+import "./controllers" as controllers;
+import "./view" as view;
+
+pub type Point = runtime::Point;
+pub type Size = runtime::Size;
+pub type Rect = runtime::Rect;
+
+pub type Screen = screen::Screen;
+pub type Window = window::Window;
+pub type ViewController = controllers::ViewController;
+pub type View = view::View;
+pub type Label = view::Label;
+pub type Color = view::Color;

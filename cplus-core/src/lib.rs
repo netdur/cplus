@@ -21,3 +21,4 @@ pub mod monomorphize;
 pub mod parser;
 pub mod resolver;
 pub mod sema;
+pub mod target;

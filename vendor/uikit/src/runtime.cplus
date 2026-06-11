@@ -1,0 +1,192 @@
+// ObjC runtime and typed objc_msgSend helpers shared by the UIKit bindings.
+// Mirrors `vendor/appkit/src/runtime.cplus`, trimmed to the surface the iOS
+// bindings use. arm64-only by construction (the `uikit` package builds with
+// `--target ios-arm64[-simulator]`), so every message goes through plain
+// `objc_msgSend` — arm64 has no `_stret` variant; large struct returns ride
+// the standard indirect-return ABI.
+
+extern fn objc_getClass(name: *u8) -> *u8;
+extern fn sel_registerName(name: *u8) -> *u8;
+extern fn objc_allocateClassPair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8;
+extern fn objc_registerClassPair(cls: *u8);
+
+// `(self, _cmd, application, launchOptions) -> BOOL` — the
+// `application:didFinishLaunchingWithOptions:` IMP shape. types "c@:@@".
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_did_finish(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8;
+
+// `(self, _cmd, sender) -> void` — the target-action shape. types "v@:@".
+#[link_name = "class_addMethod"]
+extern fn class_addMethod_action(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+// ARC primitives (libobjc), called by hand — same calls ARC would emit.
+#[link_name = "objc_retain"]
+extern fn objc_retain_raw(obj: *u8) -> *u8;
+
+#[link_name = "objc_release"]
+extern fn objc_release_raw(obj: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id(recv: *u8, sel: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_id(recv: *u8, sel: *u8, arg: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void(recv: *u8, sel: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_id(recv: *u8, sel: *u8, arg: *u8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i64(recv: *u8, sel: *u8, arg: i64);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_i8(recv: *u8, sel: *u8, arg: i8);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_f64(recv: *u8, sel: *u8, arg: f64);
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i8(recv: *u8, sel: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_i64(recv: *u8, sel: *u8) -> i64;
+
+// `initWithFrame:` and friends — one CGRect argument, id result.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rect(recv: *u8, sel: *u8, frame: Rect) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_void_rect(recv: *u8, sel: *u8, frame: Rect);
+
+// No-arg `CGRect` getter (`-[UIScreen bounds]`, `-[UIView frame]`). CGRect is
+// an HFA of four doubles, returned in v0–v3 on arm64 — plain objc_msgSend.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_rect(recv: *u8, sel: *u8) -> Rect;
+
+// `colorWithRed:green:blue:alpha:`.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_rgba(recv: *u8, sel: *u8, r: f64, g: f64, b: f64, a: f64) -> *u8;
+
+// `stringWithBytes:length:encoding:` — see convert.cplus.
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_id_ptr_len_enc(recv: *u8, sel: *u8, bytes: *u8, len: usize, enc: u64) -> *u8;
+
+// CoreGraphics geometry, `#[repr(C)]` so it crosses the C ABI verbatim.
+// CGFloat is f64 on every 64-bit Apple target.
+#[repr(C)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[repr(C)]
+pub struct Size {
+    pub width: f64,
+    pub height: f64,
+}
+
+#[repr(C)]
+pub struct Rect {
+    pub origin: Point,
+    pub size: Size,
+}
+
+pub fn make_rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
+    return Rect {
+        origin: Point { x: x, y: y },
+        size: Size { width: w, height: h },
+    };
+}
+
+pub fn get_class(name: *u8) -> *u8 {
+    return unsafe { objc_getClass(name) };
+}
+
+pub fn sel(name: *u8) -> *u8 {
+    return unsafe { sel_registerName(name) };
+}
+
+pub fn allocate_class_pair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8 {
+    return unsafe { objc_allocateClassPair(superclass, name, extra_bytes) };
+}
+
+pub fn register_class_pair(cls: *u8) {
+    unsafe { objc_registerClassPair(cls); };
+}
+
+// Add `application:didFinishLaunchingWithOptions:` (`(self, _cmd, app,
+// options) -> BOOL`) to a synthesized delegate class. `types` is "c@:@@".
+pub fn add_did_finish_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8, *u8) -> i8, types: *u8) -> i8 {
+    return unsafe { class_addMethod_did_finish(cls, selector, imp, types) };
+}
+
+// Add a `(self, _cmd, sender) -> void` method (target-action). `types` is "v@:@".
+pub fn add_action_method(cls: *u8, selector: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8 {
+    return unsafe { class_addMethod_action(cls, selector, imp, types) };
+}
+
+pub fn retain(obj: *u8) -> *u8 {
+    return unsafe { objc_retain_raw(obj) };
+}
+
+pub fn release(obj: *u8) {
+    unsafe { objc_release_raw(obj); };
+}
+
+pub fn msg_id(recv: *u8, selector: *u8) -> *u8 {
+    return unsafe { objc_msg_id(recv, selector) };
+}
+
+pub fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
+    return unsafe { objc_msg_id_id(recv, selector, arg) };
+}
+
+pub fn msg_void(recv: *u8, selector: *u8) {
+    unsafe { objc_msg_void(recv, selector); };
+}
+
+pub fn msg_void_id(recv: *u8, selector: *u8, arg: *u8) {
+    unsafe { objc_msg_void_id(recv, selector, arg); };
+}
+
+pub fn msg_void_i64(recv: *u8, selector: *u8, arg: i64) {
+    unsafe { objc_msg_void_i64(recv, selector, arg); };
+}
+
+pub fn msg_void_i8(recv: *u8, selector: *u8, arg: i8) {
+    unsafe { objc_msg_void_i8(recv, selector, arg); };
+}
+
+pub fn msg_void_f64(recv: *u8, selector: *u8, arg: f64) {
+    unsafe { objc_msg_void_f64(recv, selector, arg); };
+}
+
+pub fn msg_i8(recv: *u8, selector: *u8) -> i8 {
+    return unsafe { objc_msg_i8(recv, selector) };
+}
+
+pub fn msg_i64(recv: *u8, selector: *u8) -> i64 {
+    return unsafe { objc_msg_i64(recv, selector) };
+}
+
+pub fn msg_id_rect(recv: *u8, selector: *u8, frame: Rect) -> *u8 {
+    return unsafe { objc_msg_id_rect(recv, selector, frame) };
+}
+
+pub fn msg_void_rect(recv: *u8, selector: *u8, frame: Rect) {
+    unsafe { objc_msg_void_rect(recv, selector, frame); };
+}
+
+pub fn msg_rect(recv: *u8, selector: *u8) -> Rect {
+    return unsafe { objc_msg_rect(recv, selector) };
+}
+
+pub fn msg_id_rgba(recv: *u8, selector: *u8, r: f64, g: f64, b: f64, a: f64) -> *u8 {
+    return unsafe { objc_msg_id_rgba(recv, selector, r, g, b, a) };
+}
+
+pub fn msg_id_ptr_len_enc(recv: *u8, selector: *u8, bytes: *u8, len: usize, enc: u64) -> *u8 {
+    return unsafe { objc_msg_id_ptr_len_enc(recv, selector, bytes, len, enc) };
+}

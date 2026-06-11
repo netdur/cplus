@@ -22167,6 +22167,659 @@ fn stdlib_text_to_string_produces_owned_text() {
     assert_eq!(run.code(), Some(3), "to_string -> Text checks must pass");
 }
 
+// ---- v0.0.21 multi-backend slices 1-2: --target plumbing + iOS object emission ----
+//
+// `cpc --target NAME` selects a named TargetSpec (host, ios-arm64,
+// ios-arm64-simulator). External-builder targets stop at object emission —
+// cpc never runs their final link — and bundled vendor artifacts resolve by
+// the *selected* target's artifact triple instead of the host's.
+
+/// Probe: can the resolved clang emit an arm64-apple-ios object from IR?
+/// True for Apple clang, Homebrew clang, and the full LLVM builds Linux and
+/// Windows CI install; false only for a clang built without the AArch64
+/// backend or Mach-O support. Tests that need clang to *consume* an iOS
+/// target skip (loudly) when this fails; the pure-cpc assertions
+/// (diagnostics, IR text, dep-walk routing) never skip.
+fn clang_supports_ios_arm64() -> bool {
+    let clang = std::env::var("CPC_CLANG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "clang".to_string());
+    let dir = tempdir();
+    let ll = dir.join("probe.ll");
+    let obj = dir.join("probe.o");
+    std::fs::write(&ll, "define i32 @cpc_ios_probe() {\n  ret i32 0\n}\n").unwrap();
+    // `output()` (not `status()`) so the probe's clang chatter — e.g.
+    // -Wincompatible-sysroot when SDKROOT points at MacOSX — stays out of
+    // the test log; only the verdict matters here.
+    Command::new(&clang)
+        .arg("-Wno-override-module")
+        .arg("-target")
+        .arg("arm64-apple-ios13.0")
+        .arg("-c")
+        .arg(&ll)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn target_unknown_name_is_rejected_with_supported_list() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("ios9000")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "unknown target must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown target `ios9000`"),
+        "diagnostic must name the bad target: {stderr}"
+    );
+    for name in ["host", "ios-arm64", "ios-arm64-simulator"] {
+        assert!(
+            stderr.contains(name),
+            "diagnostic must list supported target `{name}`: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn target_flag_requires_an_argument() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let out = Command::new(cpc)
+        .arg("--target")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--target requires a NAME"),
+        "missing-argument diagnostic expected: {stderr}"
+    );
+}
+
+#[test]
+fn target_ios_emit_ll_pins_triple_and_target_arch() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    // `#cpu_relax()` makes the per-arch intrinsic choice observable: an iOS
+    // (arm64) build must emit the aarch64 hint even on an x86_64 host.
+    std::fs::write(&src, "fn main() -> i32 { #cpu_relax(); return 0; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("ios-arm64")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success(), "emit-ll --target ios-arm64 must succeed");
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("target triple = \"arm64-apple-ios13.0\""),
+        "iOS IR must pin its triple: {ir}"
+    );
+    assert!(
+        ir.contains("call void @llvm.aarch64.hint(i32 1)"),
+        "iOS IR must use the aarch64 spin hint regardless of host arch: {ir}"
+    );
+    assert!(
+        !ir.contains("llvm.x86.sse2.pause"),
+        "iOS IR must not reference x86 intrinsics: {ir}"
+    );
+    assert!(
+        !ir.contains("@_setmode"),
+        "iOS IR must not carry the Windows binary-mode ctor: {ir}"
+    );
+
+    // The `--target=NAME` spelling and the simulator triple.
+    let out = Command::new(cpc)
+        .arg("--target=ios-arm64-simulator")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(out.status.success());
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("target triple = \"arm64-apple-ios13.0-simulator\""),
+        "simulator IR must pin the -simulator triple: {ir}"
+    );
+}
+
+#[test]
+fn target_host_is_default_and_byte_identical_to_explicit_host() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 41 + 1; }\n").unwrap();
+    let default_out = Command::new(cpc)
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    let host_out = Command::new(cpc)
+        .arg("--target")
+        .arg("host")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(default_out.status.success() && host_out.status.success());
+    // Host-preserving exit criterion: `--target host` is today's behavior,
+    // byte-for-byte, and neither form pins an IR triple.
+    assert_eq!(
+        default_out.stdout, host_out.stdout,
+        "--target host must match the default output exactly"
+    );
+    let ir = String::from_utf8_lossy(&default_out.stdout);
+    assert!(
+        !ir.contains("target triple"),
+        "host IR must not pin a triple (clang's default applies): {ir}"
+    );
+}
+
+#[test]
+fn target_ios_emit_obj_produces_macho_arm64_object() {
+    if !clang_supports_ios_arm64() {
+        eprintln!("skipping: clang lacks arm64-apple-ios object support");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    for (target, obj_name) in [("ios-arm64", "t_ios.o"), ("ios-arm64-simulator", "t_sim.o")] {
+        let obj = dir.join(obj_name);
+        let out = Command::new(cpc)
+            .arg("--target")
+            .arg(target)
+            .arg("--emit-obj")
+            .arg(&src)
+            .arg("-o")
+            .arg(&obj)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            out.status.success(),
+            "--emit-obj --target {target} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let bytes = std::fs::read(&obj).expect("read emitted object");
+        // Mach-O 64-bit little-endian magic, then cputype CPU_TYPE_ARM64
+        // (0x0100000c) — both as they appear on disk.
+        assert!(
+            bytes.len() > 8,
+            "object for {target} is implausibly small ({} bytes)",
+            bytes.len()
+        );
+        assert_eq!(
+            &bytes[0..4],
+            &[0xcf, 0xfa, 0xed, 0xfe],
+            "object for {target} must be 64-bit Mach-O"
+        );
+        assert_eq!(
+            &bytes[4..8],
+            &[0x0c, 0x00, 0x00, 0x01],
+            "object for {target} must target arm64"
+        );
+    }
+}
+
+#[test]
+fn target_ios_single_file_binary_is_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("--target")
+        .arg("ios-arm64")
+        .arg("-o")
+        .arg(dir.join("t.bin"))
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "host-link path must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("stops at object emission"),
+        "rejection must explain the external-builder handoff: {stderr}"
+    );
+    assert!(
+        stderr.contains("--emit-obj"),
+        "rejection must point at the supported flows: {stderr}"
+    );
+}
+
+#[test]
+fn target_ios_bin_project_build_is_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("ios-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "[[bin]] + external-builder target must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("`[[bin]]` projects can't be built"),
+        "rejection must name the [[bin]] restriction: {stderr}"
+    );
+    assert!(
+        stderr.contains("staticlib"),
+        "rejection must point at the [lib] staticlib flow: {stderr}"
+    );
+}
+
+#[test]
+fn target_ios_cdylib_crate_type_is_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"shaky\"\n\n[lib]\nname = \"shaky\"\npath = \"src/lib.cplus\"\ncrate-type = \"cdylib\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub extern fn answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("ios-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "cdylib needs a final link — must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cdylib"),
+        "rejection must name the crate-type: {stderr}"
+    );
+    assert!(
+        stderr.contains("staticlib"),
+        "rejection must suggest staticlib: {stderr}"
+    );
+}
+
+#[test]
+fn target_ios_test_subcommand_is_rejected() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[test]\nfn passes() { assert 1 == 1; return; }\nfn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("test")
+        .arg(&src)
+        .arg("--target")
+        .arg("ios-arm64")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "cpc test --target must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("test binaries link and run on the host"),
+        "rejection must explain why: {stderr}"
+    );
+}
+
+#[test]
+fn target_check_accepts_explicit_target() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
+    let st = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .arg("--target")
+        .arg("ios-arm64")
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc check --target ios-arm64 must pass on clean source");
+}
+
+#[test]
+fn target_ios_staticlib_build_lands_in_per_target_tree() {
+    if !clang_supports_ios_arm64() {
+        eprintln!("skipping: clang lacks arm64-apple-ios object support");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"gadget\"\n\n[lib]\nname = \"gadget\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/lib.cplus"),
+        "pub extern fn gadget_answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("ios-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "iOS staticlib build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Explicit targets build into target/<target-name>/<mode>/ so host and
+    // iOS artifacts of one package never collide.
+    for artifact in ["gadget.o", "libgadget.a", "gadget.h"] {
+        let p = dir.join("target/ios-arm64/debug").join(artifact);
+        assert!(p.is_file(), "expected {} in the per-target tree", p.display());
+    }
+    // The object inside the per-target tree is an arm64 Mach-O.
+    let bytes = std::fs::read(dir.join("target/ios-arm64/debug/gadget.o")).unwrap();
+    assert_eq!(&bytes[0..4], &[0xcf, 0xfa, 0xed, 0xfe]);
+    assert_eq!(&bytes[4..8], &[0x0c, 0x00, 0x00, 0x01]);
+
+    // A host build of the same package keeps today's layout untouched.
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "host build of the same package must still work");
+    assert!(
+        dir.join("target/debug/libgadget.a").is_file(),
+        "host build must keep the target/<mode>/ layout"
+    );
+}
+
+#[test]
+fn target_dep_bundled_artifacts_resolve_by_selected_target() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    // Vendor ships a bundled archive *only* for arm64-apple-ios — the
+    // stable artifact triple, not a versioned clang triple.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ngadget = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::create_dir_all(dir.join("vendor/gadget/src/lib/arm64-apple-ios")).unwrap();
+    std::fs::write(
+        dir.join("vendor/gadget/Cplus.toml"),
+        "[package]\nname = \"gadget\"\n\n[link]\nbundled = [\"libgadget.a\"]\ntriples = [\"arm64-apple-ios\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/gadget/src/api.cplus"),
+        "pub fn answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/gadget/src/lib/arm64-apple-ios/libgadget.a"),
+        b"!<arch>\n",
+    )
+    .unwrap();
+
+    // Selected target ios-arm64: the dep walk resolves by the artifact
+    // triple `arm64-apple-ios` and passes. (--emit-ll-project exercises the
+    // walk without needing clang, and the IR pins the iOS triple.)
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("ios-arm64")
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "ios-arm64 dep walk must accept the arm64-apple-ios bundle: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(ir.contains("target triple = \"arm64-apple-ios13.0\""));
+
+    // Host target: the same package has no build for the host triple —
+    // E0862, worded for the *host* triple.
+    let out = Command::new(cpc)
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "host dep walk must reject the ios-only bundle"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
+    assert!(
+        stderr.contains("host triple"),
+        "host-side E0862 must say `host triple`: {stderr}"
+    );
+}
+
+#[test]
+fn target_dep_unsupported_target_triple_fires_e0862() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    // Vendor bundles a binary for some other triple only; selecting
+    // ios-arm64 must fail E0862 and word it for the *target* triple.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ngadget = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::create_dir_all(dir.join("vendor/gadget/src/lib/riscv32-unknown-none")).unwrap();
+    std::fs::write(
+        dir.join("vendor/gadget/Cplus.toml"),
+        "[package]\nname = \"gadget\"\n\n[link]\nbundled = [\"libgadget.a\"]\ntriples = [\"riscv32-unknown-none\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/gadget/src/api.cplus"),
+        "pub fn answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/gadget/src/lib/riscv32-unknown-none/libgadget.a"),
+        b"!<arch>\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("ios-arm64")
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0862"), "expected E0862, got: {stderr}");
+    assert!(
+        stderr.contains("target triple `arm64-apple-ios`"),
+        "target-side E0862 must name the selected artifact triple: {stderr}"
+    );
+}
+
+// ---- v0.0.21 multi-backend slice 3: the uikit package ----
+
+/// The minimal-screen demo from `vendor/uikit/README.md`: a white window
+/// with a centered label, built inside `application:didFinishLaunchingWith
+/// Options:`, exported through the `cplus_app_main` entry convention.
+const UIKIT_DEMO_LIB: &str = r#"
+import "uikit/runtime" as rt;
+import "uikit/application" as app;
+import "uikit/screen" as screen;
+import "uikit/window" as window;
+import "uikit/controllers" as controllers;
+import "uikit/view" as view;
+
+fn did_finish(this: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
+    let bounds: rt::Rect = screen::Screen::main().bounds();
+    let win: window::Window = window::Window::new(bounds);
+    let vc: controllers::ViewController = controllers::ViewController::new();
+    let root: view::View = vc.view();
+    root.set_background_color(view::Color::white());
+    let label_frame: rt::Rect = rt::make_rect(
+        0.0,
+        bounds.size.height / 2.0 - 40.0,
+        bounds.size.width,
+        80.0,
+    );
+    let label: view::Label = view::Label::new(label_frame);
+    label.set_text("Hello from C+");
+    label.set_text_alignment(view::text_alignment_center());
+    label.set_text_color(view::Color::system_blue());
+    root.add_subview(label.as_view_obj());
+    win.set_root_view_controller(vc);
+    win.make_key_and_visible();
+    return 1;
+}
+
+pub extern fn cplus_app_main(argc: i32, argv: *u8) -> i32 {
+    return app::run(argc, argv, did_finish);
+}
+"#;
+
+/// Stand up a tempdir staticlib project depending on the in-tree
+/// `vendor/uikit` (symlinked, so edits are picked up) with the demo source.
+fn uikit_demo_project() -> std::path::PathBuf {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hello_uikit\"\n\n[lib]\nname = \"hello_uikit\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n\n[dependencies]\nuikit = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::create_dir_all(dir.join("vendor")).unwrap();
+    symlink_dir(&root.join("vendor/uikit"), &dir.join("vendor/uikit"));
+    std::fs::write(dir.join("src/lib.cplus"), UIKIT_DEMO_LIB).unwrap();
+    dir
+}
+
+/// The uikit bindings and the demo consumer pass whole-project sema on
+/// every host — `cpc check` runs the front end only, so this guards the
+/// package source cross-platform without clang or an SDK.
+#[test]
+fn uikit_demo_project_passes_check() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = uikit_demo_project();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg("--target")
+        .arg("ios-arm64-simulator")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc check");
+    assert!(
+        out.status.success(),
+        "uikit demo must check clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Full external-builder handoff: the demo builds as an iOS-simulator
+/// staticlib, and an Xcode-style clang link (the two-line `main.c` shim +
+/// `-framework UIKit`) consumes it. A link failure here means a binding
+/// declares a symbol UIKit doesn't export — exactly what the handoff
+/// contract must catch. macOS-only (needs the iphonesimulator SDK); skips
+/// loudly when xcrun can't resolve it.
+#[test]
+#[cfg(target_os = "macos")]
+fn uikit_staticlib_links_into_simulator_app() {
+    let sdk = Command::new("xcrun")
+        .args(["--sdk", "iphonesimulator", "--show-sdk-path"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    let Some(sdk) = sdk else {
+        eprintln!("skipping: xcrun cannot resolve the iphonesimulator SDK");
+        return;
+    };
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = uikit_demo_project();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("ios-arm64-simulator")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "uikit staticlib build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let archive = dir.join("target/ios-arm64-simulator/debug/libhello_uikit.a");
+    assert!(archive.is_file(), "expected {}", archive.display());
+
+    std::fs::write(
+        dir.join("main.c"),
+        "extern int cplus_app_main(int argc, char **argv);\n\
+         int main(int argc, char **argv) { return cplus_app_main(argc, (void *)argv); }\n",
+    )
+    .unwrap();
+    let app_bin = dir.join("HelloCPlus");
+    let link = Command::new("clang")
+        .arg("-target")
+        .arg("arm64-apple-ios14.0-simulator")
+        .arg("-isysroot")
+        .arg(&sdk)
+        .arg(dir.join("main.c"))
+        .arg(&archive)
+        .args(["-framework", "UIKit", "-framework", "Foundation", "-lobjc"])
+        .arg("-o")
+        .arg(&app_bin)
+        .output()
+        .expect("invoke clang link");
+    assert!(
+        link.status.success(),
+        "external link of the uikit staticlib failed: {}",
+        String::from_utf8_lossy(&link.stderr)
+    );
+    assert!(app_bin.is_file(), "linked app binary missing");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-test-")

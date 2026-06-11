@@ -1,0 +1,21 @@
+// UIViewController.
+
+import "./runtime" as rt;
+import "./view" as view;
+
+pub struct ViewController {
+    pub opaque obj: *u8,
+}
+
+impl ViewController {
+    pub fn new() -> ViewController {
+        let cls: *u8 = rt::get_class(#str_ptr("UIViewController\0"));
+        let vc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
+        return ViewController { obj: vc };
+    }
+
+    pub fn view(self) -> view::View {
+        let v: *u8 = rt::msg_id(self.obj, rt::sel(#str_ptr("view\0")));
+        return view::View { obj: v };
+    }
+}

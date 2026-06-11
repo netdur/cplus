@@ -1,0 +1,28 @@
+// UIScreen.
+
+import "./runtime" as rt;
+
+pub struct Screen {
+    pub opaque obj: *u8,
+}
+
+impl Screen {
+    pub fn main() -> Screen {
+        let cls: *u8 = rt::get_class(#str_ptr("UIScreen\0"));
+        let screen: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("mainScreen\0")));
+        return Screen { obj: screen };
+    }
+
+    pub fn bounds(self) -> rt::Rect {
+        return rt::msg_rect(self.obj, rt::sel(#str_ptr("bounds\0")));
+    }
+
+    pub fn scale(self) -> f64 {
+        // `scale` returns CGFloat (f64 on arm64).
+        let scale_sel: *u8 = rt::sel(#str_ptr("scale\0"));
+        return unsafe { objc_msg_f64(self.obj, scale_sel) };
+    }
+}
+
+#[link_name = "objc_msgSend"]
+extern fn objc_msg_f64(recv: *u8, sel: *u8) -> f64;

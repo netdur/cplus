@@ -1,0 +1,84 @@
+// UIView, UILabel, UIColor.
+
+import "./runtime" as rt;
+import "./convert" as convert;
+
+pub struct View {
+    pub opaque obj: *u8,
+}
+
+impl View {
+    pub fn add_subview(self, child: *u8) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), child);
+    }
+
+    pub fn set_background_color(self, color: Color) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
+    }
+
+    pub fn bounds(self) -> rt::Rect {
+        return rt::msg_rect(self.obj, rt::sel(#str_ptr("bounds\0")));
+    }
+}
+
+pub struct Label {
+    pub opaque obj: *u8,
+}
+
+// NSTextAlignment values (UIKit's NSTextAlignmentCenter is 1 on iOS).
+pub fn text_alignment_left() -> i64 { return 0; }
+pub fn text_alignment_center() -> i64 { return 1; }
+pub fn text_alignment_right() -> i64 { return 2; }
+
+impl Label {
+    pub fn new(frame: rt::Rect) -> Label {
+        let cls: *u8 = rt::get_class(#str_ptr("UILabel\0"));
+        let alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+        let label: *u8 = rt::msg_id_rect(alloc, rt::sel(#str_ptr("initWithFrame:\0")), frame);
+        return Label { obj: label };
+    }
+
+    pub fn set_text(self, s: str) {
+        let ns: *u8 = convert::cplus_str_to_nsstring(s);
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setText:\0")), ns);
+    }
+
+    pub fn set_text_alignment(self, alignment: i64) {
+        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
+    }
+
+    pub fn set_text_color(self, color: Color) {
+        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
+    }
+
+    pub fn as_view_obj(self) -> *u8 {
+        return self.obj;
+    }
+}
+
+pub struct Color {
+    pub opaque obj: *u8,
+}
+
+impl Color {
+    pub fn white() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("whiteColor\0"))) };
+    }
+
+    pub fn black() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("blackColor\0"))) };
+    }
+
+    pub fn system_blue() -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("systemBlueColor\0"))) };
+    }
+
+    pub fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
+        let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
+        let selector: *u8 = rt::sel(#str_ptr("colorWithRed:green:blue:alpha:\0"));
+        return Color { obj: rt::msg_id_rgba(cls, selector, r, g, b, a) };
+    }
+}

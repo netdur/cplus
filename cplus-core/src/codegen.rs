@@ -10,6 +10,7 @@
 
 use crate::ast::*;
 use crate::sema::{EnumId, StructId, Ty};
+use crate::target::{active_target, TargetArch, TargetOs, TargetSpec};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -2491,6 +2492,17 @@ fn hfa_members(ty: &Ty, types: &TypeTable) -> Option<(&'static str, u64)> {
 }
 
 fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
+    classify_c_abi_for(ty, types, &active_target())
+}
+
+/// v0.0.21 multi-backend slice 1: the per-target ABI classification, with the
+/// target explicit. The arch/OS checks here were compile-time `cfg!` gates
+/// until v0.0.21; they resolve identically for the host spec (which is built
+/// from the same `cfg!`s), and let `--target` cross-classify — e.g. an
+/// x86_64 host emitting arm64-apple-ios IR takes the HFA path, not the SysV
+/// pair coercion. Unit tests call this form directly so they never mutate
+/// the process-global active target.
+fn classify_c_abi_for(ty: &Ty, types: &TypeTable, target: &TargetSpec) -> CAbiClass {
     // Aggregates only need ABI coercion. Everything else is a single
     // register class and passes through cleanly.
     let is_aggregate = match ty {
@@ -2521,7 +2533,7 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     // a crash when a following pointer arg reads the spilled struct pointer).
     // Gated to aarch64 — the target AppKit's float-struct args run on; other
     // targets keep the size-based classification their tests exercise.
-    if cfg!(target_arch = "aarch64") {
+    if target.arch == TargetArch::Aarch64 {
         if let Some((elem, n)) = hfa_members(ty, types) {
             return CAbiClass::Coerce {
                 llvm_ty: format!("[{n} x {elem}]"),
@@ -2538,7 +2550,7 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     // AArch64-Darwin (`[2 x i64]`). Getting this wrong makes a 16-byte struct
     // arrive in two registers where the callee expects a pointer — an
     // immediate access violation on the first field read.
-    if cfg!(all(target_arch = "x86_64", windows)) {
+    if target.arch == TargetArch::X86_64 && target.os == TargetOs::Windows {
         let coerce = |ty: &str, n: u64| CAbiClass::Coerce {
             llvm_ty: ty.to_string(),
             size: n,
@@ -2564,7 +2576,7 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
             align: 8,
         }
     } else if size <= 16 {
-        let llvm_ty = if cfg!(target_arch = "x86_64") {
+        let llvm_ty = if target.arch == TargetArch::X86_64 {
             "{ i64, i64 }".to_string()
         } else {
             "[2 x i64]".to_string()
@@ -3511,11 +3523,13 @@ fn ty_bit_width(ty: &Ty) -> u32 {
 /// `_setmode(fd, _O_BINARY)` lives in the UCRT (`_O_BINARY` == 0x8000); fd 1
 /// is stdout, fd 2 is stderr. The ctor is `internal` and `@llvm.global_ctors`
 /// is `appending`, so emitting it in every module is safe (LLVM merges them)
-/// and idempotent. Returns `""` on non-Windows hosts. Emitted by
+/// and idempotent. Returns `""` for non-Windows targets. Emitted by
 /// `write_preamble` and injected into the frozen `hello.ll` demo so the
-/// behavior is uniform across both codegen paths.
+/// behavior is uniform across both codegen paths. Keyed off the active
+/// *target* OS (v0.0.21): a `--target` build for a non-Windows platform
+/// must not pull in UCRT symbols, regardless of the host.
 pub fn windows_binary_mode_ctor_ir() -> &'static str {
-    if cfg!(windows) {
+    if active_target().os == TargetOs::Windows {
         "declare i32 @_setmode(i32, i32)\n\
          define internal void @__cpc_set_binary_mode() {\n\
          \x20 %1 = call i32 @_setmode(i32 1, i32 32768)\n\
@@ -3574,6 +3588,14 @@ fn coro_end_call_ir() -> String {
 
 fn write_preamble(out: &mut String) {
     out.push_str("; C+ Phase 1 codegen output\n");
+    // v0.0.21 multi-backend slice 1: an explicit `--target` pins the IR to
+    // its clang triple, so the handoff artifact (`--emit-ll` consumed by an
+    // external build system) carries the target instead of relying on the
+    // consumer's `-target` flag. Host builds emit no triple line — clang's
+    // default applies and the output stays byte-for-byte what it was.
+    if let Some(triple) = active_target().triple {
+        out.push_str(&format!("target triple = \"{triple}\"\n"));
+    }
     out.push_str("\n");
     out.push_str(windows_binary_mode_ctor_ir());
     // Format string used by `#println(i32)`. Module-private constant.
@@ -3663,13 +3685,18 @@ fn write_preamble(out: &mut String) {
     );
     // v0.0.12 G-031: per-arch spin-loop hint. Declared unconditionally
     // (DCE strips the unused one), used by `#cpu_relax()` codegen.
-    if cfg!(target_arch = "aarch64") {
-        out.push_str("declare void @llvm.aarch64.hint(i32 immarg)\n");
-        // v0.0.12 SIMD Tier-1 (G-040): NEON `vqtbl1q` byte table lookup,
-        // used by `i8x16/u8x16::table`. Out-of-range indices yield 0.
-        out.push_str("declare <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8>, <16 x i8>)\n");
-    } else if cfg!(target_arch = "x86_64") {
-        out.push_str("declare void @llvm.x86.sse2.pause()\n");
+    // v0.0.21: keyed off the active *target* arch so a cross build declares
+    // the intrinsics of the arch it emits for, not the host's.
+    match active_target().arch {
+        TargetArch::Aarch64 => {
+            out.push_str("declare void @llvm.aarch64.hint(i32 immarg)\n");
+            // v0.0.12 SIMD Tier-1 (G-040): NEON `vqtbl1q` byte table lookup,
+            // used by `i8x16/u8x16::table`. Out-of-range indices yield 0.
+            out.push_str("declare <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8>, <16 x i8>)\n");
+        }
+        TargetArch::X86_64 => {
+            out.push_str("declare void @llvm.x86.sse2.pause()\n");
+        }
     }
     // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
     // alloca helpers bracket each local's live range with these so
@@ -5255,7 +5282,7 @@ fn gen_function(
                 // caller-side copy that the callee can mutate. aarch64-darwin
                 // doesn't use byval — caller and callee implicitly share
                 // the layout via the bare pointer.
-                if cfg!(target_arch = "x86_64") {
+                if active_target().arch == TargetArch::X86_64 {
                     let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                     let inner = llvm_ty(pty, types);
                     write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
@@ -9886,13 +9913,10 @@ impl<'a> FnState<'a> {
     /// codegen module's preamble already declares many libc/llvm
     /// intrinsics; these two are added there as well.
     fn gen_intrinsic_cpu_relax(&mut self) {
-        if cfg!(target_arch = "aarch64") {
-            self.emit("call void @llvm.aarch64.hint(i32 1)");
-        } else if cfg!(target_arch = "x86_64") {
-            self.emit("call void @llvm.x86.sse2.pause()");
+        match active_target().arch {
+            TargetArch::Aarch64 => self.emit("call void @llvm.aarch64.hint(i32 1)"),
+            TargetArch::X86_64 => self.emit("call void @llvm.x86.sse2.pause()"),
         }
-        // else: emit nothing — the hint is a power optimization, not
-        // a correctness requirement.
     }
 
     /// `#selector("name") -> *u8`. Look up the cached-pointer pair
@@ -14569,7 +14593,7 @@ impl<'a> FnState<'a> {
             "table" => {
                 let (idx, _) = self.gen_expr(&args[0]).expect("table idx arg");
                 let result = self.next_tmp();
-                if cfg!(target_arch = "aarch64") {
+                if active_target().arch == TargetArch::Aarch64 {
                     self.emit(&format!(
                         "{result} = call <16 x i8> @llvm.aarch64.neon.tbl1.v16i8(<16 x i8> {recv}, <16 x i8> {idx})"
                     ));
@@ -18841,6 +18865,151 @@ mod tests {
                 assert_eq!(size, 16);
             }
             other => panic!("expected Coerce({expected}), got {other:?}"),
+        }
+    }
+
+    /// v0.0.21 multi-backend slice 1: cross-target ABI classification with
+    /// an explicit `TargetSpec`, independent of the host this test runs on.
+    /// These exercise `classify_c_abi_for` directly — never the process
+    /// global — so they are host-portable and parallel-safe.
+    mod classify_c_abi_for_target {
+        use super::super::*;
+        use crate::lexer::tokenize;
+        use crate::parser::parse;
+        use crate::sema;
+        use crate::target::{IOS_ARM64, IOS_ARM64_SIMULATOR};
+        use std::path::PathBuf;
+
+        /// An x86_64 Linux spec, for pinning the SysV pair coercion from
+        /// any host. Not a named `--target` yet — purely an ABI probe.
+        const X86_64_LINUX: TargetSpec = TargetSpec {
+            name: "x86_64-linux-test",
+            arch: TargetArch::X86_64,
+            os: TargetOs::Linux,
+            pointer_width: 64,
+            little_endian: true,
+            object_format: crate::target::ObjectFormat::Elf,
+            triple: Some("x86_64-unknown-linux-gnu"),
+            artifact_triple: Some("x86_64-unknown-linux-gnu"),
+            apple_sdk: None,
+            handoff: crate::target::Handoff::HostLink,
+        };
+
+        const X86_64_WINDOWS: TargetSpec = TargetSpec {
+            name: "x86_64-windows-test",
+            arch: TargetArch::X86_64,
+            os: TargetOs::Windows,
+            pointer_width: 64,
+            little_endian: true,
+            object_format: crate::target::ObjectFormat::Coff,
+            triple: Some("x86_64-pc-windows-msvc"),
+            artifact_triple: Some("x86_64-pc-windows-msvc"),
+            apple_sdk: None,
+            handoff: crate::target::Handoff::HostLink,
+        };
+
+        fn struct_ty(src: &str, name: &str) -> (Ty, TypeTable) {
+            let toks = tokenize(src).unwrap();
+            let prog = parse(toks).unwrap();
+            let diags = sema::check(&prog, PathBuf::from("t.cplus"), src);
+            assert!(diags.is_empty(), "sema must be clean: {diags:?}");
+            let types = collect_types(&prog);
+            let id = types.struct_by_name[name];
+            (Ty::Struct(id), types)
+        }
+
+        #[test]
+        fn ios_classifies_hfa_like_aarch64_darwin() {
+            // NSPoint/CGPoint shape: 2×f64 is an HFA on every AAPCS64
+            // target — it must coerce to `[2 x double]` (FP registers)
+            // under the iOS spec even when the host is x86_64.
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct CGPoint { x: f64, y: f64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "CGPoint",
+            );
+            for spec in [IOS_ARM64, IOS_ARM64_SIMULATOR] {
+                match classify_c_abi_for(&ty, &types, &spec) {
+                    CAbiClass::Coerce { llvm_ty, size, .. } => {
+                        assert_eq!(llvm_ty, "[2 x double]");
+                        assert_eq!(size, 16);
+                    }
+                    other => panic!("expected HFA coercion under {}, got {other:?}", spec.name),
+                }
+            }
+        }
+
+        #[test]
+        fn integer_pair_shape_follows_target_arch_not_host() {
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "Pair",
+            );
+            // aarch64 (iOS): array form, two integer registers.
+            match classify_c_abi_for(&ty, &types, &IOS_ARM64) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[2 x i64]"),
+                other => panic!("expected [2 x i64] on ios-arm64, got {other:?}"),
+            }
+            // x86_64 SysV: struct-pair form.
+            match classify_c_abi_for(&ty, &types, &X86_64_LINUX) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "{ i64, i64 }"),
+                other => panic!("expected {{ i64, i64 }} on x86_64-linux, got {other:?}"),
+            }
+            // Microsoft x64: 16 bytes is not 1/2/4/8 — indirect.
+            assert_eq!(
+                classify_c_abi_for(&ty, &types, &X86_64_WINDOWS),
+                CAbiClass::Indirect
+            );
+        }
+
+        #[test]
+        fn windows_size_buckets_apply_under_explicit_spec() {
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct Small { a: i32, b: i32 }\n\
+                 fn main() -> i32 { return 0; }",
+                "Small",
+            );
+            // 8 bytes: a single register on Microsoft x64.
+            match classify_c_abi_for(&ty, &types, &X86_64_WINDOWS) {
+                CAbiClass::Coerce { llvm_ty, size, .. } => {
+                    assert_eq!(llvm_ty, "i64");
+                    assert_eq!(size, 8);
+                }
+                other => panic!("expected Coerce(i64) on win64, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn large_struct_is_indirect_on_every_target() {
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct Big { a: i64, b: i64, c: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "Big",
+            );
+            for spec in [IOS_ARM64, X86_64_LINUX, X86_64_WINDOWS] {
+                assert_eq!(
+                    classify_c_abi_for(&ty, &types, &spec),
+                    CAbiClass::Indirect,
+                    "under {}",
+                    spec.name
+                );
+            }
+        }
+
+        #[test]
+        fn host_spec_matches_wrapper_classification() {
+            // The global default is HOST, so the wrapper and the explicit
+            // host-spec form must agree on everything the suite checks.
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct Pair { a: i64, b: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "Pair",
+            );
+            assert_eq!(
+                classify_c_abi(&ty, &types),
+                classify_c_abi_for(&ty, &types, &crate::target::HOST)
+            );
         }
     }
 

@@ -1,0 +1,49 @@
+// UIApplication entry. iOS apps start through `UIApplicationMain`, which
+// never returns — it installs the run loop and calls back into the app
+// delegate. The C+ entry convention for the external-builder handoff:
+//
+//   1. The C+ app exports `pub extern fn cplus_app_main(argc, argv) -> i32`
+//      (any name works; this is the convention the Xcode shim calls).
+//   2. That function registers a delegate class via `register_app_delegate`
+//      (passing the `application:didFinishLaunchingWithOptions:` IMP where
+//      the screen gets built) and tail-calls `run`.
+//   3. The Xcode target's `main.c` is two lines:
+//          extern int cplus_app_main(int, char **);
+//          int main(int argc, char **argv) { return cplus_app_main(argc, argv); }
+
+import "./runtime" as rt;
+import "./convert" as convert;
+
+// UIKit framework symbol. `argv` is the C `char **`, opaque to C+;
+// `principal` and `delegate_name` are NSString (nil principal = UIApplication).
+extern fn UIApplicationMain(argc: i32, argv: *u8, principal: *u8, delegate_name: *u8) -> i32;
+
+// Synthesize (once) and register an app-delegate class with the given
+// `application:didFinishLaunchingWithOptions:` implementation. The class
+// subclasses UIResponder, the canonical app-delegate superclass. Returns
+// the class object; `run` takes the matching class *name*.
+pub fn register_app_delegate(did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("CPlusAppDelegate\0"));
+    if existing != unsafe { 0 as *u8 } {
+        return existing;
+    }
+    let responder_cls: *u8 = rt::get_class(#str_ptr("UIResponder\0"));
+    let delegate_cls: *u8 = rt::allocate_class_pair(responder_cls, #str_ptr("CPlusAppDelegate\0"), 0 as usize);
+    let did_finish_sel: *u8 = rt::sel(#str_ptr("application:didFinishLaunchingWithOptions:\0"));
+    let _added: i8 = rt::add_did_finish_method(
+        delegate_cls,
+        did_finish_sel,
+        did_finish_imp,
+        #str_ptr("c@:@@\0"),
+    );
+    rt::register_class_pair(delegate_cls);
+    return delegate_cls;
+}
+
+// Hand control to UIKit. Registers the delegate and enters the run loop;
+// does not return until the app terminates.
+pub fn run(argc: i32, argv: *u8, did_finish_imp: fn(*u8, *u8, *u8, *u8) -> i8) -> i32 {
+    let _cls: *u8 = register_app_delegate(did_finish_imp);
+    let name: *u8 = convert::cplus_str_to_nsstring("CPlusAppDelegate");
+    return unsafe { UIApplicationMain(argc, argv, 0 as *u8, name) };
+}

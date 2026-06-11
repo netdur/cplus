@@ -1,5 +1,6 @@
 use cplus_core::codegen::BuildMode;
 use cplus_core::diagnostics::{self as diag, Diagnostic, LineMap, Severity};
+use cplus_core::target::{self, Handoff, TargetSpec};
 use cplus_core::{
     attrs, borrowck, codegen, doctest, fmt as cpfmt, lexer, lower, manifest, monomorphize, parser,
     resolver, sema,
@@ -70,6 +71,12 @@ build flags (apply to `cpc FILE` and `cpc build`):
   --asan | --ubsan | --tsan | --msan
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
                                     mutually exclusive; ubsan composes with any)
+  --target NAME                     compile for a named target: host (default), ios-arm64,
+                                    ios-arm64-simulator. External-builder targets (iOS) stop
+                                    at object emission — the external build system (Xcode)
+                                    owns the final link. Combine with --emit-obj / --emit-ll /
+                                    --emit-asm, or `cpc build` of a `[lib]` staticlib.
+                                    Place before --emit-ll/--emit-asm FILE.
 
 debug / introspection (single-file):
   cpc --emit-ir                     print the frozen Phase-0 LLVM IR to stdout
@@ -245,6 +252,12 @@ fn main() -> ExitCode {
     // instrumentation passes do the heavy lifting; cpc just plumbs
     // the `-fsanitize=...` flag through to clang.
     let mut sanitizers: Vec<&'static str> = Vec::new();
+    // v0.0.21 multi-backend slice 1: the compilation target. Defaults to
+    // the host spec, which reproduces pre-`--target` behavior byte-for-byte.
+    // Resolved (and installed as codegen's active target) at flag-parse
+    // time so the inline-dispatching `--emit-*` flags see it — hence the
+    // "place --target first" rule shared with --fp-contract.
+    let mut target_spec: TargetSpec = target::HOST;
     let mut subcommand: Option<Subcommand> = None;
     // Phase 5 Slice 5.A: deferred-dispatch input for `--emit-obj FILE`.
     // Order-independent with `-o OUT.o` because the FILE may appear before
@@ -435,6 +448,43 @@ fn main() -> ExitCode {
                 sanitizers.push("memory");
                 i += 1;
             }
+            // v0.0.21 multi-backend slice 1: `--target NAME` / `--target=NAME`.
+            // Resolves a named target and installs it as codegen's active
+            // target immediately, so the `--emit-*` flags (which dispatch
+            // inline during this loop) pick it up. An unknown name is a hard
+            // error listing the supported set.
+            Some("--target") => {
+                let Some(v) = args.get(i + 1).and_then(|v| v.to_str()) else {
+                    eprintln!(
+                        "cpc: --target requires a NAME argument (supported: {})",
+                        target::supported_names()
+                    );
+                    return ExitCode::FAILURE;
+                };
+                let Some(spec) = TargetSpec::from_name(v) else {
+                    eprintln!(
+                        "cpc: unknown target `{v}` (supported: {})",
+                        target::supported_names()
+                    );
+                    return ExitCode::FAILURE;
+                };
+                target_spec = spec;
+                target::set_active_target(spec);
+                i += 2;
+            }
+            Some(s) if s.starts_with("--target=") => {
+                let v = &s["--target=".len()..];
+                let Some(spec) = TargetSpec::from_name(v) else {
+                    eprintln!(
+                        "cpc: unknown target `{v}` (supported: {})",
+                        target::supported_names()
+                    );
+                    return ExitCode::FAILURE;
+                };
+                target_spec = spec;
+                target::set_active_target(spec);
+                i += 1;
+            }
             Some("-h" | "--help") => {
                 // Subcommand-aware: if we've already seen `cpc test`,
                 // `cpc fmt`, etc., print just that subcommand's slice
@@ -568,6 +618,35 @@ fn main() -> ExitCode {
                 exclusive.join(", ")
             );
             return ExitCode::FAILURE;
+        }
+    }
+
+    // v0.0.21 multi-backend slice 1: external-builder targets stop at object
+    // emission — cpc never runs their final link (Xcode/NDK/ESP-IDF own it).
+    // Reject the host-link entry points up front with a pointer to the
+    // supported flows. `--emit-obj` (checked via emit_obj_input) and the
+    // `--emit-ll`/`--emit-asm` flags (already dispatched inline above) are
+    // the handoff points; `build` enforces its own [lib]-vs-[[bin]] rule.
+    if target_spec.handoff == Handoff::ExternalBuilder && emit_obj_input.is_none() {
+        match (subcommand, &input) {
+            (Some(Subcommand::Test), _) => {
+                eprintln!(
+                    "cpc: `cpc test` does not support --target {} (test binaries link and run on the host)",
+                    target_spec.name
+                );
+                return ExitCode::FAILURE;
+            }
+            (None, Some(_)) | (None, None) => {
+                eprintln!(
+                    "cpc: target `{}` stops at object emission (the external builder owns the final link)",
+                    target_spec.name
+                );
+                eprintln!(
+                    "    use --emit-obj/--emit-ll/--emit-asm, or `cpc build` with a `[lib]` staticlib"
+                );
+                return ExitCode::FAILURE;
+            }
+            _ => {}
         }
     }
 
@@ -789,6 +868,50 @@ fn detect_host_triple() -> Result<String, ExitCode> {
     Ok(triple)
 }
 
+/// v0.0.21 multi-backend slice 1: clang arguments pinning an explicit
+/// `--target`: `-target <triple>`, plus `-isysroot <path>` when the target
+/// names an Apple SDK and `xcrun` can resolve it. Empty for the host spec,
+/// so every `--target`-less command line stays exactly what it was.
+///
+/// The `-isysroot` is best-effort by design: object emission from IR reads
+/// nothing out of the SDK (no headers, no libraries — the external builder
+/// links against the SDK later), so a host without `xcrun` (e.g. Linux CI
+/// cross-emitting iOS objects with mainline clang) simply omits the flag.
+fn clang_target_args(t: &TargetSpec) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let Some(triple) = t.triple else {
+        return args;
+    };
+    args.push("-target".to_string());
+    args.push(triple.to_string());
+    if let Some(sdk) = t.apple_sdk {
+        if let Some(path) = xcrun_sdk_path(sdk) {
+            args.push("-isysroot".to_string());
+            args.push(path);
+        }
+    }
+    args
+}
+
+/// `xcrun --sdk <name> --show-sdk-path`, or `None` when xcrun is missing,
+/// errors, or prints nothing (non-Apple host, SDK not installed).
+fn xcrun_sdk_path(sdk: &str) -> Option<String> {
+    let out = Command::new("xcrun")
+        .arg("--sdk")
+        .arg(sdk)
+        .arg("--show-sdk-path")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
 /// Phase 2 Slice 2C: build a `Diagnostic` anchored at a manifest file.
 /// Manifest-level driver errors (E0854/E0855/E0860/E0861/E0862) don't
 /// have meaningful byte spans yet; the primary location is the file at
@@ -849,7 +972,15 @@ fn collect_dep_link_args(
     if m.dependencies.is_empty() {
         return Ok(Vec::new());
     }
-    let host_triple = detect_host_triple()?;
+    // v0.0.21 multi-backend slice 1: bundled artifacts resolve by the
+    // *selected* target's stable artifact triple; only the host target
+    // still asks `clang -print-target-triple`. `triple_word` keeps the
+    // E0862 message precise ("host triple" vs "target triple").
+    let tgt = target::active_target();
+    let (link_triple, triple_word) = match tgt.artifact_triple {
+        Some(t) => (t.to_string(), "target"),
+        None => (detect_host_triple()?, "host"),
+    };
     let mut link_args: Vec<String> = Vec::new();
     for dep in &m.dependencies {
         let mut vendor_dir = m.root.join("vendor").join(&dep.name);
@@ -919,7 +1050,7 @@ fn collect_dep_link_args(
             .map(|l| l.triples.as_slice())
             .unwrap_or(&[]);
         if !bundled.is_empty() {
-            if !triples.iter().any(|t| t == &host_triple) {
+            if !triples.iter().any(|t| t == &link_triple) {
                 let supported = if triples.is_empty() {
                     "<none>".to_string()
                 } else {
@@ -933,26 +1064,26 @@ fn collect_dep_link_args(
                     "E0862",
                     &vendor_manifest,
                     format!(
-                        "package `{}` does not ship a build for host triple `{}` (supports: {})",
-                        dep.name, host_triple, supported
+                        "package `{}` does not ship a build for {} triple `{}` (supports: {})",
+                        dep.name, triple_word, link_triple, supported
                     ),
                     vec![
-                        "add the host triple to `[link].triples` and ship the matching binaries, or build the package from source on this host".to_string(),
+                        format!("add `{link_triple}` to `[link].triples` and ship the matching binaries, or build the package from source for this triple"),
                     ],
                 );
                 emit_diag(&d, diag_mode, "");
                 return Err(ExitCode::FAILURE);
             }
-            let host_lib_dir = lib_root.join(&host_triple);
+            let triple_lib_dir = lib_root.join(&link_triple);
             for basename in bundled {
-                let p = host_lib_dir.join(basename);
+                let p = triple_lib_dir.join(basename);
                 if !p.is_file() {
                     let d = manifest_diag(
                         "E0860",
                         &vendor_manifest,
                         format!(
                             "package `{}` declares bundled `{}` but `src/lib/{}/{}` is not present (the package manifest says you ship it for this triple, but the file is missing)",
-                            dep.name, basename, host_triple, basename
+                            dep.name, basename, link_triple, basename
                         ),
                         vec![
                             format!("expected at `{}`", p.display()),
@@ -1030,7 +1161,7 @@ fn collect_dep_link_args(
                 link_args.push(format!("-l{l}"));
             }
             for basename in &ls.bundled {
-                let p = lib_root.join(&host_triple).join(basename);
+                let p = lib_root.join(&link_triple).join(basename);
                 link_args.push(p.to_string_lossy().to_string());
             }
             // v0.0.9 Phase 8 (cpc-gaps G-001): vendor packages may also
@@ -1106,6 +1237,21 @@ fn build_project(
     // means no `[[bin]]` declared.
     if let Some(lib) = m.lib.clone() {
         return build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract);
+    }
+    // v0.0.21 multi-backend slice 1: an external-builder target has no app
+    // link inside cpc — Xcode (or the platform's build system) owns it. A
+    // `[[bin]]` build would end at exactly that link, so reject it with the
+    // supported flow instead of failing inside clang.
+    let tgt = target::active_target();
+    if tgt.handoff == Handoff::ExternalBuilder {
+        eprintln!(
+            "cpc: target `{}` stops at object emission (the external builder owns the final link); `[[bin]]` projects can't be built for it",
+            tgt.name
+        );
+        eprintln!(
+            "    declare a `[lib]` staticlib instead and link the archive from the external build system"
+        );
+        return ExitCode::FAILURE;
     }
     if m.bins.len() != 1 {
         eprintln!(
@@ -1309,6 +1455,25 @@ fn build_lib_project(
         emit_diag(&d, diag_mode, "");
         return ExitCode::FAILURE;
     }
+    // v0.0.21 multi-backend slice 1: for an external-builder target the
+    // library pipeline is the handoff point — object + static archive only.
+    // A cdylib is a *linked* product, and cpc never runs a final link for
+    // these targets, so `crate-type = "cdylib"` (or "both") is rejected
+    // before any work happens.
+    let tgt = target::active_target();
+    if tgt.handoff == Handoff::ExternalBuilder
+        && matches!(
+            lib.crate_type,
+            manifest::CrateType::Cdylib | manifest::CrateType::Both
+        )
+    {
+        eprintln!(
+            "cpc: target `{}` stops at object emission (the external builder owns the final link); `crate-type = \"cdylib\"` would require one",
+            tgt.name
+        );
+        eprintln!("    use `crate-type = \"staticlib\"` and link the archive from the external build system");
+        return ExitCode::FAILURE;
+    }
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
     let (program, _entry_file_id, mono) =
         match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names), m.realtime_profile.as_ref()) {
@@ -1363,10 +1528,20 @@ fn build_lib_project(
         BuildMode::Debug => "debug",
         BuildMode::Release => "release",
     };
+    // v0.0.21: explicit targets get their own artifact tree —
+    // `target/<target-name>/<mode>/` (the cargo convention) — so a host
+    // build and an iOS build of the same package never overwrite each
+    // other. The host target keeps `target/<mode>/` byte-for-byte.
     let target_dir = out_override
         .as_ref()
         .and_then(|p| p.parent().map(|x| x.to_path_buf()))
-        .unwrap_or_else(|| m.root.join("target").join(mode_subdir));
+        .unwrap_or_else(|| {
+            if tgt.is_host() {
+                m.root.join("target").join(mode_subdir)
+            } else {
+                m.root.join("target").join(tgt.name).join(mode_subdir)
+            }
+        });
     if let Err(e) = fs::create_dir_all(&target_dir) {
         eprintln!("cpc: creating {}: {e}", target_dir.display());
         return ExitCode::FAILURE;
@@ -1399,6 +1574,7 @@ fn build_lib_project(
     let obj_status = Command::new(clang_program())
         .arg(opt)
         .arg("-Wno-override-module")
+        .args(clang_target_args(&tgt))
         .arg("-c")
         .arg(&tmp_ll)
         .arg("-o")
@@ -3636,6 +3812,7 @@ fn dump_obj(
     let status = Command::new(clang_program())
         .arg(opt)
         .arg("-Wno-override-module")
+        .args(clang_target_args(&target::active_target()))
         .arg("-c")
         .arg(&tmp)
         .arg("-o")
@@ -3705,6 +3882,7 @@ fn run_clang_to_stdout(input_ll: &Path, mode: BuildMode, kind: ClangOutputKind) 
     };
     let mut cmd = Command::new(clang_program());
     cmd.arg(opt).arg("-Wno-override-module").arg("-S");
+    cmd.args(clang_target_args(&target::active_target()));
     if matches!(kind, ClangOutputKind::LlvmIr) {
         cmd.arg("-emit-llvm");
     }
