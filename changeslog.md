@@ -5,6 +5,33 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.21 — unreleased
 
+### Multi-backend: esp32-xtensa (first 32-bit target) + #[realtime] on-device
+- New `esp32-xtensa` target (rungs 3-4 collapsed: the local WROOM-32D spike
+  proved esp-clang accepts cpc's IR, so 32-bit support and the Xtensa rung
+  shipped together). `usize`/`isize`/pointers are 4 bytes: `llvm_ty`,
+  `ty_bit_width`, `static_layout`, and `#size_of`/`#align_of` consult the
+  target's pointer width (64-bit targets byte-identical). The Xtensa C ABI
+  is pinned against an empirical esp-clang 20.1.1 probe: aggregate args
+  ≤ 24 bytes coerce to arrays of align-sized chunks (`[3 x i32]`,
+  `[2 x i64]`), larger pass indirect `byval`; returns > 16 bytes use sret
+  (argument and return classification now split); no FP-register HFAs.
+  Heap/fat-pointer types (Text, Vec, str) are not yet supported on 32-bit
+  targets and fail loudly at IR verification rather than miscompile.
+- esp-clang resolution: `$CPC_ESP_CLANG` > `$IDF_TOOLS_PATH` (set-but-wrong
+  errors) > `~/.espressif`, newest `tools/esp-clang/` version, LLVM 19+
+  enforced; missing installs get the `idf_tools.py install esp-clang` hint.
+- Verified on hardware: a `#[realtime]` fixed-point PID (compile-time
+  no-alloc / no-block / bounded-recursion contract) built as an
+  `esp32-xtensa` staticlib, linked into an ESP-IDF firmware, runs closed
+  loop on an ESP32-D0WDQ6 at ~1.84 µs (442 cycles) per step; the same
+  contract rejects an allocating variant with E0901 at `cpc check`.
+- Fixed a `musttail` miscompile-rejection (host-affecting): a
+  `pub extern fn` wrapper tail-calling an internal fn returning the same
+  ≤16-byte aggregate emitted `musttail` across mismatched IR return types
+  (the export's return is ABI-coerced, the callee's is the bare struct);
+  clang rejected the module. musttail is now skipped when either side's
+  return is coerced.
+
 ### Multi-backend: target model + iOS + Android
 - New `--target NAME` on `build` / `check` / `--emit-ll` / `--emit-ll-opt` /
   `--emit-asm` / `--emit-obj`. Named targets: `host` (the default),

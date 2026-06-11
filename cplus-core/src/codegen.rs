@@ -2495,14 +2495,36 @@ fn classify_c_abi(ty: &Ty, types: &TypeTable) -> CAbiClass {
     classify_c_abi_for(ty, types, &active_target())
 }
 
+/// Return-position classification. Identical to the argument-position rule
+/// on aarch64 and x86_64 (both use a 16-byte threshold for arguments and
+/// returns alike); Xtensa differs — arguments stay direct up to 24 bytes
+/// (six words), returns only up to 16 (then sret).
+fn classify_c_abi_return(ty: &Ty, types: &TypeTable) -> CAbiClass {
+    classify_c_abi_return_for(ty, types, &active_target())
+}
+
 /// v0.0.21 multi-backend slice 1: the per-target ABI classification, with the
 /// target explicit. The arch/OS checks here were compile-time `cfg!` gates
 /// until v0.0.21; they resolve identically for the host spec (which is built
 /// from the same `cfg!`s), and let `--target` cross-classify — e.g. an
 /// x86_64 host emitting arm64-apple-ios IR takes the HFA path, not the SysV
 /// pair coercion. Unit tests call this form directly so they never mutate
-/// the process-global active target.
+/// the process-global active target. This is the argument-position form;
+/// see [`classify_c_abi_return_for`] for returns.
 fn classify_c_abi_for(ty: &Ty, types: &TypeTable, target: &TargetSpec) -> CAbiClass {
+    classify_c_abi_impl(ty, types, target, false)
+}
+
+fn classify_c_abi_return_for(ty: &Ty, types: &TypeTable, target: &TargetSpec) -> CAbiClass {
+    classify_c_abi_impl(ty, types, target, true)
+}
+
+fn classify_c_abi_impl(
+    ty: &Ty,
+    types: &TypeTable,
+    target: &TargetSpec,
+    is_return: bool,
+) -> CAbiClass {
     // Aggregates only need ABI coercion. Everything else is a single
     // register class and passes through cleanly.
     let is_aggregate = match ty {
@@ -2524,6 +2546,31 @@ fn classify_c_abi_for(ty: &Ty, types: &TypeTable, target: &TargetSpec) -> CAbiCl
     };
     if size == 0 {
         return CAbiClass::Direct;
+    }
+    // Xtensa (ESP32): empirical esp-clang 20.1.1 shapes (see the
+    // `ESP32_XTENSA` spec doc). Aggregates coerce to arrays of align-sized
+    // integer chunks — i32 chunks for align ≤ 4, i64 chunks for align 8 —
+    // with a single chunk passing as the bare integer. Arguments stay
+    // direct up to 24 bytes (six 32-bit words), then indirect with `byval`;
+    // returns stay direct up to 16 bytes, then sret. No FP-register HFAs:
+    // 2×f64 coerces to [2 x i64], not [2 x double].
+    if target.arch == TargetArch::Xtensa {
+        let limit: u64 = if is_return { 16 } else { 24 };
+        if size > limit {
+            return CAbiClass::Indirect;
+        }
+        let chunk: u64 = if _align >= 8 { 8 } else { 4 };
+        let k = (size + chunk - 1) / chunk;
+        let llvm_ty = if k == 1 {
+            format!("i{}", chunk * 8)
+        } else {
+            format!("[{} x i{}]", k, chunk * 8)
+        };
+        return CAbiClass::Coerce {
+            llvm_ty,
+            size: k * chunk,
+            align: chunk,
+        };
     }
     // AArch64 AAPCS64: HFAs (≤4 same-type floats/doubles) pass in FP registers
     // (d0–d3 / s0–s3), not integer-class or indirect. Coerce to `[N x <fp>]`,
@@ -2655,11 +2702,23 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
         Ty::I8 | Ty::U8 | Ty::Bool => Some((1, 1)),
         Ty::I16 | Ty::U16 | Ty::F16 => Some((2, 2)),
         Ty::I32 | Ty::U32 | Ty::F32 => Some((4, 4)),
-        Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => Some((8, 8)),
-        Ty::RawPtr(_) | Ty::FnPtr { .. } => Some((8, 8)),
-        // Fat pointers (Phase 8 / 11): { ptr, i64 } and { ptr, i64, i64 }.
-        Ty::Str | Ty::Slice(_) => Some((16, 8)),
-        Ty::String => Some((24, 8)),
+        Ty::I64 | Ty::U64 | Ty::F64 => Some((8, 8)),
+        // Pointer-sized (v0.0.21 32-bit slice): 8/8 on 64-bit targets
+        // (unchanged), 4/4 on 32-bit ones.
+        Ty::Isize | Ty::Usize | Ty::RawPtr(_) | Ty::FnPtr { .. } => {
+            let p = ptr_size_bytes();
+            Some((p, p))
+        }
+        // Fat pointers (Phase 8 / 11): { ptr, usize } and
+        // { ptr, usize, usize } — two/three pointer-sized words.
+        Ty::Str | Ty::Slice(_) => {
+            let p = ptr_size_bytes();
+            Some((2 * p, p))
+        }
+        Ty::String => {
+            let p = ptr_size_bytes();
+            Some((3 * p, p))
+        }
         Ty::Unit => Some((0, 1)),
         Ty::Array(elem, n) => {
             let (esz, ea) = static_layout(elem, types)?;
@@ -3433,12 +3492,30 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
     }
 }
 
+/// IR integer type for `usize`/`isize` on the active target. v0.0.21
+/// rung 3/4 (the 32-bit slice): pointer-sized integers come from the
+/// target's pointer width, not a fixed `i64`. 64-bit targets — every
+/// pre-existing one — keep `i64`, so host IR is unchanged byte for byte.
+fn usize_llvm_ty() -> &'static str {
+    if active_target().pointer_width == 32 {
+        "i32"
+    } else {
+        "i64"
+    }
+}
+
+/// Byte size of a pointer (and of `usize`/`isize`) on the active target.
+fn ptr_size_bytes() -> u64 {
+    (active_target().pointer_width / 8) as u64
+}
+
 fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
     match ty {
         Ty::I8 | Ty::U8 => "i8".to_string(),
         Ty::I16 | Ty::U16 => "i16".to_string(),
         Ty::I32 | Ty::U32 => "i32".to_string(),
-        Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize => "i64".to_string(),
+        Ty::I64 | Ty::U64 => "i64".to_string(),
+        Ty::Isize | Ty::Usize => usize_llvm_ty().to_string(),
         Ty::F16 => "half".to_string(),
         Ty::F32 => "float".to_string(),
         Ty::F64 => "double".to_string(),
@@ -3474,17 +3551,21 @@ fn llvm_ty(ty: &Ty, types: &TypeTable) -> String {
         // know the call signature from the FnPtr Ty, not from the LLVM IR.
         Ty::FnPtr { .. } => "ptr".to_string(),
         // Phase 8 slice 8.STR.1: `str` is a fat pointer { ptr, len }.
-        // 16 bytes on 64-bit platforms; passed by value.
-        Ty::Str => "{ ptr, i64 }".to_string(),
+        // 16 bytes on 64-bit platforms; passed by value. The len field is
+        // pointer-sized (v0.0.21 32-bit slice) — note the heap/fat-pointer
+        // runtime (string helpers, Vec) is not yet 32-bit-ready; on 32-bit
+        // targets those paths fail loudly at IR verification rather than
+        // miscompile.
+        Ty::Str => format!("{{ ptr, {} }}", usize_llvm_ty()),
         // Phase 8 slice 8.STR.3: owned `string` is { ptr, len, cap } —
         // 24 bytes on 64-bit. Passed by value; the ptr is the only field
         // codegen ever sees per-call, but the cap field is what `drop`
         // reads when freeing the buffer.
-        Ty::String => "{ ptr, i64, i64 }".to_string(),
+        Ty::String => format!("{{ ptr, {0}, {0} }}", usize_llvm_ty()),
         // Phase 11 polish (2026-05-14): slice type `T[]` is a fat
         // pointer { ptr, len } — same shape as `str`. The element type
         // `T` is sema-only; LLVM sees just the pair.
-        Ty::Slice(_) => "{ ptr, i64 }".to_string(),
+        Ty::Slice(_) => format!("{{ ptr, {} }}", usize_llvm_ty()),
         Ty::Error => panic!("codegen reached Ty::Error — sema should have rejected the program"),
         // Slice 7GEN.4: `Ty::Param` must not reach codegen. Until
         // monomorphization (slice 7GEN.5) lowers generic items, the
@@ -3510,7 +3591,8 @@ fn ty_bit_width(ty: &Ty) -> u32 {
         Ty::I8 | Ty::U8 => 8,
         Ty::I16 | Ty::U16 | Ty::F16 => 16,
         Ty::I32 | Ty::U32 | Ty::F32 | Ty::Enum(_) => 32,
-        Ty::I64 | Ty::U64 | Ty::Isize | Ty::Usize | Ty::F64 => 64,
+        Ty::I64 | Ty::U64 | Ty::F64 => 64,
+        Ty::Isize | Ty::Usize => active_target().pointer_width,
         Ty::Bool => 1,
         _ => 0,
     }
@@ -3697,6 +3779,10 @@ fn write_preamble(out: &mut String) {
         TargetArch::X86_64 => {
             out.push_str("declare void @llvm.x86.sse2.pause()\n");
         }
+        // Xtensa has no LLVM spin-loop hint intrinsic and no 128-bit SIMD;
+        // `#cpu_relax()` compiles to nothing and `table` takes the portable
+        // per-lane fallback, so there is nothing to declare.
+        TargetArch::Xtensa => {}
     }
     // v0.0.7 Slice 1.1: lifetime intrinsics. In release builds the
     // alloca helpers bracket each local's live range with these so
@@ -5098,7 +5184,7 @@ fn gen_function(
         // (caller wrote args into x0 where the callee expected the sret
         // pointer → SIGSEGV on first call). Mirroring `classify_c_abi`
         // here makes the two halves of the ABI agree.
-        let ret_abi = classify_c_abi(&return_ty, types);
+        let ret_abi = classify_c_abi_return(&return_ty, types);
         let uses_sret = matches!(ret_abi, CAbiClass::Indirect);
         let coerce_ret_ty: Option<String> = if let CAbiClass::Coerce { llvm_ty, .. } = &ret_abi {
             Some(llvm_ty.clone())
@@ -5172,7 +5258,7 @@ fn gen_function(
     // to integer-class types; scalar returns pass through.
     let is_c_export = f.is_extern && f.is_pub;
     let ret_abi = if is_c_export {
-        classify_c_abi(&return_ty, types)
+        classify_c_abi_return(&return_ty, types)
     } else {
         CAbiClass::Direct
     };
@@ -5281,8 +5367,9 @@ fn gen_function(
                 // on indirect args so the backend knows to materialize a
                 // caller-side copy that the callee can mutate. aarch64-darwin
                 // doesn't use byval — caller and callee implicitly share
-                // the layout via the bare pointer.
-                if active_target().arch == TargetArch::X86_64 {
+                // the layout via the bare pointer. Xtensa (per the esp-clang
+                // probe) passes >24-byte aggregates `byval` like sysv.
+                if matches!(active_target().arch, TargetArch::X86_64 | TargetArch::Xtensa) {
                     let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                     let inner = llvm_ty(pty, types);
                     write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
@@ -8248,12 +8335,34 @@ impl<'a> FnState<'a> {
                                                 .map(|(sz, _)| sz <= 16)
                                                 .unwrap_or(true)
                                         };
+                                        // v0.0.21: musttail also requires the
+                                        // *IR-level* return types to match, not
+                                        // just the C+ types. A C-export's
+                                        // aggregate return is ABI-coerced (e.g.
+                                        // `%PidOut` → `[2 x i64]`), while an
+                                        // internal callee returns the bare
+                                        // struct — LLVM rejects that pair
+                                        // ("cannot guarantee tail call due to
+                                        // mismatched return types"). Surfaced by
+                                        // the extern-wrapper shape
+                                        // `pub extern fn f(..) { return g(..); }`.
+                                        // Skip musttail when either side's
+                                        // return is coerced; a plain `call` is
+                                        // always correct.
+                                        let enclosing_ret_coerced = self.coerce_ret.is_some();
+                                        let callee_ret_coerced = sig.is_extern
+                                            && matches!(
+                                                classify_c_abi_return(&sig.return_type, self.types),
+                                                CAbiClass::Coerce { .. }
+                                            );
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
                                             && callee_params == enclosing
                                             && name != "println"
                                             && cc_matches
                                             && tail_return_ok
+                                            && !enclosing_ret_coerced
+                                            && !callee_ret_coerced
                                         {
                                             self.pending_musttail = true;
                                         }
@@ -9732,7 +9841,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{ptr_tmp} = getelementptr {llvm_t}, ptr null, i64 1"
         ));
-        self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
+        let usize_t = usize_llvm_ty();
+        self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to {usize_t}"));
         (int_tmp, Ty::Usize)
     }
 
@@ -9746,7 +9856,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{ptr_tmp} = getelementptr {{ i1, {llvm_t} }}, ptr null, i64 0, i32 1"
         ));
-        self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to i64"));
+        let usize_t = usize_llvm_ty();
+        self.emit(&format!("{int_tmp} = ptrtoint ptr {ptr_tmp} to {usize_t}"));
         (int_tmp, Ty::Usize)
     }
 
@@ -9916,6 +10027,9 @@ impl<'a> FnState<'a> {
         match active_target().arch {
             TargetArch::Aarch64 => self.emit("call void @llvm.aarch64.hint(i32 1)"),
             TargetArch::X86_64 => self.emit("call void @llvm.x86.sse2.pause()"),
+            // No spin hint on Xtensa — the hint is a power optimization,
+            // not a correctness requirement; emit nothing.
+            TargetArch::Xtensa => {}
         }
     }
 
@@ -11492,7 +11606,7 @@ impl<'a> FnState<'a> {
         let extern_sret = sig.is_extern
             && !sig.is_variadic
             && matches!(
-                classify_c_abi(&sig.return_type, self.types),
+                classify_c_abi_return(&sig.return_type, self.types),
                 CAbiClass::Indirect
             );
         let uses_sret = !sig.is_variadic
@@ -18996,6 +19110,109 @@ mod tests {
                 assert_eq!(
                     classify_c_abi_for(&ty, &types, &spec),
                     CAbiClass::Indirect,
+                    "under {}",
+                    spec.name
+                );
+            }
+        }
+
+        /// v0.0.21 rung 4: Xtensa shapes, pinned against the empirical
+        /// esp-clang 20.1.1 probe (see the `ESP32_XTENSA` spec doc). These
+        /// use pointer-free field types so `static_layout` is identical
+        /// under either pointer width (the explicit-spec test path doesn't
+        /// rebind the process-global active target).
+        #[test]
+        fn xtensa_aggregates_coerce_to_align_sized_chunks() {
+            use crate::target::ESP32_XTENSA;
+            // 12 bytes of i32 (align 4): three i32 chunks.
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct V3 { x: i32, y: i32, z: i32 }\n\
+                 fn main() -> i32 { return 0; }",
+                "V3",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32_XTENSA) {
+                CAbiClass::Coerce { llvm_ty, size, align } => {
+                    assert_eq!(llvm_ty, "[3 x i32]");
+                    assert_eq!(size, 12);
+                    assert_eq!(align, 4);
+                }
+                other => panic!("expected [3 x i32], got {other:?}"),
+            }
+            // 16 bytes of i64 (align 8): two i64 chunks — same for 2×f64
+            // (no FP-register HFAs on Xtensa).
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct P64 { a: i64, b: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "P64",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32_XTENSA) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[2 x i64]"),
+                other => panic!("expected [2 x i64], got {other:?}"),
+            }
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct Pt { x: f64, y: f64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "Pt",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32_XTENSA) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[2 x i64]"),
+                other => panic!("expected [2 x i64] (no HFA on Xtensa), got {other:?}"),
+            }
+            // A single chunk passes as the bare integer.
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct One { a: i32 }\n\
+                 fn main() -> i32 { return 0; }",
+                "One",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32_XTENSA) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "i32"),
+                other => panic!("expected bare i32, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn xtensa_argument_and_return_thresholds_differ() {
+            use crate::target::ESP32_XTENSA;
+            // 24 bytes: direct [3 x i64] as an argument, sret as a return.
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct T24 { a: i64, b: i64, c: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "T24",
+            );
+            match classify_c_abi_for(&ty, &types, &ESP32_XTENSA) {
+                CAbiClass::Coerce { llvm_ty, .. } => assert_eq!(llvm_ty, "[3 x i64]"),
+                other => panic!("expected [3 x i64] argument, got {other:?}"),
+            }
+            assert_eq!(
+                classify_c_abi_return_for(&ty, &types, &ESP32_XTENSA),
+                CAbiClass::Indirect,
+                "24-byte returns use sret on Xtensa"
+            );
+            // 32 bytes: indirect in both positions.
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct T32 { a: i64, b: i64, c: i64, d: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "T32",
+            );
+            assert_eq!(
+                classify_c_abi_for(&ty, &types, &ESP32_XTENSA),
+                CAbiClass::Indirect
+            );
+            assert_eq!(
+                classify_c_abi_return_for(&ty, &types, &ESP32_XTENSA),
+                CAbiClass::Indirect
+            );
+            // On the 16-byte-threshold targets, argument and return
+            // positions classify identically (no behavior change).
+            let (ty, types) = struct_ty(
+                "#[repr(C)] struct P { a: i64, b: i64 }\n\
+                 fn main() -> i32 { return 0; }",
+                "P",
+            );
+            for spec in [IOS_ARM64, X86_64_LINUX, X86_64_WINDOWS] {
+                assert_eq!(
+                    classify_c_abi_for(&ty, &types, &spec),
+                    classify_c_abi_return_for(&ty, &types, &spec),
                     "under {}",
                     spec.name
                 );

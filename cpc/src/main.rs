@@ -72,14 +72,18 @@ build flags (apply to `cpc FILE` and `cpc build`):
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
                                     mutually exclusive; ubsan composes with any)
   --target NAME                     compile for a named target: host (default), ios-arm64,
-                                    ios-arm64-simulator, android-arm64. External-builder
-                                    targets stop at object emission — the external build
-                                    system (Xcode, the Android NDK build) owns the final
-                                    link. Combine with --emit-obj / --emit-ll / --emit-asm,
-                                    or `cpc build` of a `[lib]` staticlib. android-arm64
-                                    uses the NDK's clang ($ANDROID_NDK_HOME, or the SDK's
-                                    newest ndk/; r28.2+). Place before --emit-ll/--emit-asm
-                                    FILE.
+                                    ios-arm64-simulator, android-arm64, esp32-xtensa.
+                                    External-builder targets stop at object emission — the
+                                    external build system (Xcode, the Android NDK build,
+                                    ESP-IDF) owns the final link. Combine with --emit-obj /
+                                    --emit-ll / --emit-asm, or `cpc build` of a `[lib]`
+                                    staticlib. android-arm64 uses the NDK's clang
+                                    ($ANDROID_NDK_HOME, or the SDK's newest ndk/; r28.2+);
+                                    esp32-xtensa uses esp-clang ($CPC_ESP_CLANG, or
+                                    ~/.espressif via `idf_tools.py install esp-clang`).
+                                    esp32-xtensa is 32-bit: usize/isize/pointers are 4
+                                    bytes; heap types (Text, Vec) are not yet supported
+                                    there. Place before --emit-ll/--emit-asm FILE.
 
 debug / introspection (single-file):
   cpc --emit-ir                     print the frozen Phase-0 LLVM IR to stdout
@@ -794,7 +798,108 @@ fn clang_program_for(t: &TargetSpec) -> Result<String, String> {
     match t.toolchain {
         target::ToolchainKind::HostClang => Ok(clang_program().to_string()),
         target::ToolchainKind::AndroidNdk => ndk_clang().clone(),
+        target::ToolchainKind::EspClang => esp_clang().clone(),
     }
+}
+
+/// Resolve Espressif's esp-clang (the LLVM fork with the Xtensa backend),
+/// cached per process. Order:
+///   1. `$CPC_ESP_CLANG` — an explicit clang path, trusted verbatim.
+///   2. `$IDF_TOOLS_PATH` — ESP-IDF's tools root override. Set-but-wrong is
+///      an error naming the variable, never a fallback.
+///   3. `~/.espressif` — the default `idf_tools.py` install root.
+/// Inside the root: `tools/esp-clang/<newest-version>/esp-clang/bin/clang`,
+/// which must report LLVM >= 19 (cpc's IR floor; esp-clang 20.1.1+ in
+/// practice).
+fn esp_clang() -> &'static Result<String, String> {
+    static RESOLVED: OnceLock<Result<String, String>> = OnceLock::new();
+    RESOLVED.get_or_init(|| {
+        if let Ok(p) = env::var("CPC_ESP_CLANG") {
+            if !p.is_empty() {
+                return Ok(p);
+            }
+        }
+        let tools_root: PathBuf = match env::var("IDF_TOOLS_PATH") {
+            Ok(v) if !v.is_empty() => {
+                let p = PathBuf::from(&v);
+                if !p.is_dir() {
+                    return Err(format!(
+                        "$IDF_TOOLS_PATH is set to `{v}`, which is not a directory; point it at the ESP-IDF tools root (the `.espressif` directory)"
+                    ));
+                }
+                p
+            }
+            _ => {
+                let Some(home) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))
+                else {
+                    return Err("cannot locate the ESP-IDF tools root (no $HOME)".to_string());
+                };
+                PathBuf::from(home).join(".espressif")
+            }
+        };
+        let esp_clang_dir = tools_root.join("tools").join("esp-clang");
+        let Some(version_dir) = newest_version_dir(&esp_clang_dir) else {
+            return Err(
+                "esp-clang was not found; install it with ESP-IDF's `python3 tools/idf_tools.py install esp-clang`, or set $CPC_ESP_CLANG to its clang binary".to_string(),
+            );
+        };
+        let clang_name = if cfg!(windows) { "clang.exe" } else { "clang" };
+        let clang = version_dir.join("esp-clang").join("bin").join(clang_name);
+        if !clang.is_file() {
+            return Err(format!(
+                "esp-clang install at `{}` has no clang at `{}`",
+                version_dir.display(),
+                clang.display()
+            ));
+        }
+        let clang_str = clang.to_string_lossy().to_string();
+        match clang_major(&clang_str) {
+            Some(m) if m >= 19 => Ok(clang_str),
+            Some(m) => Err(format!(
+                "the esp-clang at `{}` reports clang {m}, but cpc emits IR for LLVM 19+; update with `idf_tools.py install esp-clang`",
+                version_dir.display()
+            )),
+            None => Err(format!(
+                "could not run `{clang_str} --version` to verify esp-clang"
+            )),
+        }
+    })
+}
+
+/// The newest version directory under `dir`, comparing every numeric run in
+/// the name (handles `esp-20.1.1_20250829`-style names and plain dotted
+/// versions alike). `None` when the directory is missing or has no entries
+/// with a numeric component.
+fn newest_version_dir(dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(Vec<u64>, PathBuf)> = None;
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let mut nums: Vec<u64> = Vec::new();
+        let mut cur = String::new();
+        for c in name.chars() {
+            if c.is_ascii_digit() {
+                cur.push(c);
+            } else if !cur.is_empty() {
+                nums.push(cur.parse().unwrap_or(0));
+                cur.clear();
+            }
+        }
+        if !cur.is_empty() {
+            nums.push(cur.parse().unwrap_or(0));
+        }
+        if nums.is_empty() {
+            continue;
+        }
+        if best.as_ref().map_or(true, |(b, _)| nums > *b) {
+            best = Some((nums, path));
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 /// Resolve the Android NDK's clang, cached per process. Order:

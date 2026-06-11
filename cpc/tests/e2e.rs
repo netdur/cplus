@@ -22934,6 +22934,298 @@ fn target_android_staticlib_links_under_ndk_clang() {
     assert!(exe.is_file(), "linked Android executable missing");
 }
 
+// ---- v0.0.21 multi-backend rungs 3-4: esp32-xtensa (first 32-bit target) ----
+
+/// Probe: resolve esp-clang the way cpc does ($CPC_ESP_CLANG, $IDF_TOOLS_PATH,
+/// ~/.espressif), newest version, LLVM >= 19. Object-emission tests skip
+/// (loudly) without it; the pure-cpc 32-bit IR assertions never skip.
+fn esp_clang_for_test() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("CPC_ESP_CLANG") {
+        if !p.is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    let root = match std::env::var("IDF_TOOLS_PATH") {
+        Ok(v) if !v.is_empty() => std::path::PathBuf::from(v),
+        _ => std::path::PathBuf::from(std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?)
+            .join(".espressif"),
+    };
+    let tool_dir = root.join("tools/esp-clang");
+    let mut best: Option<(Vec<u64>, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(&tool_dir).ok()?.flatten() {
+        let path = entry.path();
+        let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
+            continue;
+        };
+        let nums: Vec<u64> = name
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if path.is_dir() && !nums.is_empty() && best.as_ref().map_or(true, |(b, _)| nums > *b) {
+            best = Some((nums, path));
+        }
+    }
+    let clang = best?
+        .1
+        .join("esp-clang/bin")
+        .join(if cfg!(windows) { "clang.exe" } else { "clang" });
+    if clang.is_file() {
+        Some(clang)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn target_esp32_emits_32_bit_ir_with_xtensa_abi() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[repr(C)] struct V3 { x: i32, y: i32, z: i32 }\n\
+         #[repr(C)] struct Big { a: i64, b: i64, c: i64, d: i64 }\n\
+         extern fn c_take_v3(v: V3) -> i32;\n\
+         extern fn c_take_big(b: Big) -> i64;\n\
+         pub extern fn use_usize(n: usize) -> usize {\n\
+             let sz: usize = #size_of::[*u8]();\n\
+             return n + sz;\n\
+         }\n\
+         pub extern fn drive() -> i64 {\n\
+             let v: V3 = V3 { x: 1, y: 2, z: 3 };\n\
+             let b: Big = Big { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 };\n\
+             let r1: i32 = unsafe { c_take_v3(v) };\n\
+             let r2: i64 = unsafe { c_take_big(b) };\n\
+             return (r1 as i64) + r2;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "emit-ll --target esp32-xtensa must succeed without esp-clang: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("target triple = \"xtensa-esp32-elf\""),
+        "esp32 IR must pin its triple: {ir}"
+    );
+    // 32-bit pointer-sized integers: usize lowers to i32, and #size_of
+    // computes through a 32-bit ptrtoint.
+    assert!(
+        ir.contains("define i32 @use_usize(i32"),
+        "usize must lower to i32 on esp32-xtensa: {ir}"
+    );
+    assert!(
+        ir.contains("ptrtoint ptr") && ir.contains("to i32"),
+        "#size_of must fold through a 32-bit ptrtoint: {ir}"
+    );
+    // Empirical Xtensa shapes: 12B → [3 x i32] argument, 32B → indirect.
+    assert!(
+        ir.contains("declare i32 @c_take_v3([3 x i32])"),
+        "12-byte aggregate must coerce to [3 x i32]: {ir}"
+    );
+    assert!(
+        ir.contains("declare i64 @c_take_big(ptr)"),
+        "32-byte aggregate must pass indirect: {ir}"
+    );
+    // No foreign-arch intrinsics in the preamble.
+    assert!(
+        !ir.contains("llvm.aarch64") && !ir.contains("llvm.x86"),
+        "esp32 IR must not declare aarch64/x86 intrinsics: {ir}"
+    );
+}
+
+#[test]
+fn target_esp32_realtime_contract_holds_across_targets() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    // The headline shape: a #[realtime] control step compiles for the
+    // 32-bit MCU target...
+    let good = dir.join("pid.cplus");
+    std::fs::write(
+        &good,
+        "#[repr(C)] pub struct PidOut { pub control: i32, pub integral: i32 }\n\
+         #[realtime]\n\
+         pub extern fn pid_step(setpoint: i32, measured: i32, integral: i32) -> PidOut {\n\
+             let err: i32 = setpoint - measured;\n\
+             return PidOut { control: (205 * err) / 256, integral: integral + err };\n\
+         }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("check")
+        .arg(&good)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "#[realtime] PID must check clean for esp32-xtensa");
+    // ...and the same contract rejects allocation regardless of target.
+    let bad = dir.join("bad.cplus");
+    std::fs::write(
+        &bad,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         #[realtime]\n\
+         pub fn rt_with_alloc() -> *u8 {\n\
+             return unsafe { malloc(64 as usize) };\n\
+         }\n\
+         fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&bad)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "allocation under #[realtime] must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0901"), "expected E0901, got: {stderr}");
+}
+
+#[test]
+fn target_esp32_missing_esp_clang_is_rejected_with_setup_hint() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(&src, "pub extern fn f() -> i32 { return 1; }\n").unwrap();
+    // Set-but-wrong $IDF_TOOLS_PATH errors naming the variable.
+    let out = Command::new(cpc)
+        .env_remove("CPC_ESP_CLANG")
+        .env("IDF_TOOLS_PATH", "/nonexistent/cpc-test-espressif")
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(dir.join("t.o"))
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("IDF_TOOLS_PATH") && stderr.contains("not a directory"),
+        "rejection must name the misconfigured variable: {stderr}"
+    );
+    // No esp-clang anywhere: the install hint.
+    let empty_home = tempdir();
+    let out = Command::new(cpc)
+        .env_remove("CPC_ESP_CLANG")
+        .env_remove("IDF_TOOLS_PATH")
+        .env("HOME", &empty_home)
+        .env("USERPROFILE", &empty_home)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(dir.join("t.o"))
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("idf_tools.py install esp-clang"),
+        "rejection must carry the install hint: {stderr}"
+    );
+}
+
+#[test]
+fn target_esp32_emit_obj_produces_xtensa_elf_object() {
+    if esp_clang_for_test().is_none() {
+        eprintln!("skipping: esp-clang not installed");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "pub extern fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
+    )
+    .unwrap();
+    let obj = dir.join("t_esp32.o");
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("esp32-xtensa")
+        .arg("--emit-obj")
+        .arg(&src)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "--emit-obj --target esp32-xtensa failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bytes = std::fs::read(&obj).expect("read emitted object");
+    assert!(bytes.len() > 20);
+    // ELF magic, 32-bit class, e_machine EM_XTENSA (94 = 0x5e) at offset 18.
+    assert_eq!(&bytes[0..4], b"\x7fELF", "object must be ELF");
+    assert_eq!(bytes[4], 1, "object must be ELFCLASS32 (the first 32-bit target)");
+    assert_eq!(
+        (bytes[18], bytes[19]),
+        (0x5e, 0x00),
+        "object must target Xtensa (EM_XTENSA)"
+    );
+}
+
+/// Regression: a `pub extern fn` wrapper tail-calling an internal fn that
+/// returns the same aggregate used to emit `musttail` even though the
+/// export's IR return is ABI-coerced (`[2 x i64]`) and the callee's is the
+/// bare struct — LLVM rejects the mismatch. Host-affecting bug, surfaced by
+/// the esp32 realtime demo's wrapper shape; the fix skips musttail when
+/// either side's return is coerced.
+#[test]
+fn extern_wrapper_tail_call_with_coerced_return_compiles_and_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("t.cplus");
+    std::fs::write(
+        &src,
+        "#[repr(C)] pub struct Out3 { pub a: i32, pub b: i32, pub c: i32 }\n\
+         pub extern fn wrapped(x: i32) -> Out3 {\n\
+             return inner(x);\n\
+         }\n\
+         pub fn inner(x: i32) -> Out3 {\n\
+             return Out3 { a: x + 1, b: x + 2, c: x + 3 };\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let r: Out3 = inner(10);\n\
+             if r.a != 11 { return 1; }\n\
+             if r.b != 12 { return 2; }\n\
+             if r.c != 13 { return 3; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("t.bin");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "extern wrapper with coerced aggregate return must compile: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(0), "wrapper program must run clean");
+}
+
 // ---- v0.0.21 multi-backend slice 3: the uikit package ----
 
 /// The minimal-screen demo from `vendor/uikit/README.md`: a white window

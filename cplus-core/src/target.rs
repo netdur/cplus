@@ -18,12 +18,14 @@
 use std::sync::Mutex;
 
 /// CPU architecture, as codegen's ABI classifier and intrinsic gating see it.
-/// C+ supports 64-bit little-endian targets today; 32-bit (ESP32) arrives in
-/// a later rung of the backends plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetArch {
     Aarch64,
     X86_64,
+    /// Xtensa LX6/LX7 (ESP32 classic / S2 / S3): 32-bit, windowed ABI, no
+    /// FP registers for doubles. Not in mainline LLVM — objects come from
+    /// Espressif's esp-clang.
+    Xtensa,
 }
 
 /// Operating system, as codegen's ABI classifier and the driver's link
@@ -35,6 +37,9 @@ pub enum TargetOs {
     Windows,
     Ios,
     Android,
+    /// ESP-IDF (FreeRTOS + newlib). Not a POSIX desktop OS: no processes,
+    /// no kqueue/epoll, heap discouraged in real-time contexts.
+    EspIdf,
 }
 
 /// Which clang consumes the IR cpc emits for this target. Rung 2 of the
@@ -51,6 +56,11 @@ pub enum ToolchainKind {
     /// `$ANDROID_NDK_HOME` / `$ANDROID_NDK_ROOT` / `$ANDROID_NDK_LATEST_HOME`,
     /// or the SDK's default `ndk/` directory (newest version).
     AndroidNdk,
+    /// Espressif's esp-clang (the LLVM fork carrying the Xtensa backend),
+    /// resolved from `$CPC_ESP_CLANG` or `~/.espressif/tools/esp-clang/`
+    /// (newest version) — the ESP-IDF `idf_tools.py install esp-clang`
+    /// location. Verified to accept cpc's textual IR (2026-06-11 spike).
+    EspClang,
 }
 
 /// Relocatable-object container format the target's toolchain consumes.
@@ -191,8 +201,37 @@ pub const ANDROID_ARM64: TargetSpec = TargetSpec {
     toolchain: ToolchainKind::AndroidNdk,
 };
 
+/// ESP32 classic (Xtensa LX6, the WROOM-32 module family) under ESP-IDF —
+/// rung 4 of the backends plan, and the first 32-bit target. cpc emits the
+/// object; ESP-IDF owns the firmware link, partition table, and flashing.
+/// The Xtensa ABI facts encoded in codegen come from an empirical probe of
+/// esp-clang 20.1.1 (`-target xtensa-esp32-elf`): datalayout
+/// `e-m:e-p:32:32-v1:8:8-i64:64-i128:128-n32` (pointers 32-bit, i64 aligns
+/// to 8), aggregate args ≤ 24 bytes coerce to arrays of align-sized chunks,
+/// larger pass indirect `byval`; aggregate returns > 16 bytes use sret; no
+/// FP-register HFAs.
+pub const ESP32_XTENSA: TargetSpec = TargetSpec {
+    name: "esp32-xtensa",
+    arch: TargetArch::Xtensa,
+    os: TargetOs::EspIdf,
+    pointer_width: 32,
+    little_endian: true,
+    object_format: ObjectFormat::Elf,
+    triple: Some("xtensa-esp32-elf"),
+    artifact_triple: Some("xtensa-esp32-elf"),
+    apple_sdk: None,
+    handoff: Handoff::ExternalBuilder,
+    toolchain: ToolchainKind::EspClang,
+};
+
 /// Every named target `--target` accepts, in the order help text lists them.
-pub const SUPPORTED: &[TargetSpec] = &[HOST, IOS_ARM64, IOS_ARM64_SIMULATOR, ANDROID_ARM64];
+pub const SUPPORTED: &[TargetSpec] = &[
+    HOST,
+    IOS_ARM64,
+    IOS_ARM64_SIMULATOR,
+    ANDROID_ARM64,
+    ESP32_XTENSA,
+];
 
 impl TargetSpec {
     /// Resolve a `--target` name. `None` means unknown — the driver owns the
@@ -326,9 +365,31 @@ mod tests {
     }
 
     #[test]
+    fn esp32_spec_is_the_first_32_bit_target() {
+        assert!(!ESP32_XTENSA.is_host());
+        assert_eq!(ESP32_XTENSA.pointer_width, 32);
+        assert_eq!(ESP32_XTENSA.arch, TargetArch::Xtensa);
+        assert_eq!(ESP32_XTENSA.os, TargetOs::EspIdf);
+        assert_eq!(ESP32_XTENSA.object_format, ObjectFormat::Elf);
+        assert_eq!(ESP32_XTENSA.handoff, Handoff::ExternalBuilder);
+        assert_eq!(ESP32_XTENSA.toolchain, ToolchainKind::EspClang);
+        assert_eq!(ESP32_XTENSA.triple, Some("xtensa-esp32-elf"));
+        assert_eq!(ESP32_XTENSA.artifact_triple, Some("xtensa-esp32-elf"));
+        // Every other supported target stays 64-bit.
+        for spec in SUPPORTED {
+            if spec.name != ESP32_XTENSA.name {
+                assert_eq!(spec.pointer_width, 64, "`{}` must be 64-bit", spec.name);
+            }
+        }
+    }
+
+    #[test]
     fn supported_names_lists_every_target_once() {
         let names = supported_names();
-        assert_eq!(names, "host, ios-arm64, ios-arm64-simulator, android-arm64");
+        assert_eq!(
+            names,
+            "host, ios-arm64, ios-arm64-simulator, android-arm64, esp32-xtensa"
+        );
     }
 
     #[test]
