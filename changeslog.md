@@ -3,6 +3,44 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.22 — unreleased
+
+### Multi-backend consolidation
+- New `--min-os VERSION` flag (after `--target`): overrides the OS floor
+  in versioned target triples — 13.0 default for the iOS targets, API 24
+  for android-arm64. Unversioned targets reject it.
+- New `esp32c3-riscv32` target (RV32IMC, ilp32, ESP-IDF): 32-bit IR and
+  RISC-V ELF objects through esp-clang, ABI pinned against an ilp32 probe
+  (8-byte direct window, bare-pointer indirect, no byval). The object
+  links into an ESP-IDF esp32c3 firmware. `TargetSpec` gains
+  `extra_clang_args` (-march/-mabi for the C3).
+- Windows/Linux CI now also run on main pushes, not only release tags.
+- New recipe `docs/examples/recipes/android_hello`: C+ source to a signed
+  APK (NDK link + script-assembled package), emulator-validated, with
+  Gradle integration notes.
+
+### Android UI (vendor/android_view + vendor/jni)
+- `vendor/android_view` adopted and validated on the emulator: a C+-built
+  View tree renders (nativeCreateView host contract), and Button taps
+  reach C+ two ways — a host-shipped adapter class, or the self-contained
+  `android_view/listener`, whose adapter ships in-package as a 976-byte
+  pre-compiled DEX (`#include_bytes`), loaded with InMemoryDexClassLoader
+  (API 26+) and bound via RegisterNatives; apps export one token-routed
+  `cplus_on_click` hook.
+- `vendor/jni` covers the full 233-slot JNI 1.6 function table (verified
+  against the NDK's jni.h; object arrays, RegisterNatives, ExceptionCheck,
+  NewDirectByteBuffer bound) and models `JNIEnv *` as the double pointer
+  JNI requires (the bare table pointer trips an ART abort).
+
+### Compiler
+- String literals accept a bare `$` (previously an error; `$$` and
+  `${...}` interpolation unchanged) — JNI descriptors for nested Java
+  classes (`android/view/View$OnClickListener`) need it.
+- Fixed an LLVM-redefinition error when a program both defines a C-ABI
+  symbol (`pub extern fn`) and declares it as an extern import elsewhere
+  (the app-provided-hook pattern): the import declare is now skipped for
+  program-defined symbols.
+
 ## v0.0.21 — 2026-06-11
 
 ### esp32: heap types + the espidf package
