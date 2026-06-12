@@ -872,7 +872,7 @@ pub enum ExprKind {
         operands: Vec<AsmOperand>,
         clobbers: Vec<String>,
     },
-    /// v0.0.23 DSL.1: contextual builder block `@ctx { ... }`. `context`
+    /// v0.0.22 DSL.1: contextual builder block `@ctx { ... }`. `context`
     /// is the `::`-separated path naming the builder context (`@view`,
     /// `@ui::view`). The body is a dedicated representation, not a
     /// reused `Block`, because leading-dot modifier lines are not
@@ -886,7 +886,7 @@ pub enum ExprKind {
     },
 }
 
-/// v0.0.23 DSL.1: the body of an `@ctx { ... }` builder block — an
+/// v0.0.22 DSL.1: the body of an `@ctx { ... }` builder block — an
 /// ordered list of entries, each a `let` setup binding or one item
 /// expression with its attached leading-dot modifier lines.
 #[derive(Debug, Clone, PartialEq)]

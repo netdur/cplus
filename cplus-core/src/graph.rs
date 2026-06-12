@@ -1511,7 +1511,7 @@ impl<'a> Resolver<'a> {
 
     fn walk_expr(&mut self, e: &Expr) {
         match &e.kind {
-            // v0.0.23 DSL.1: walk builder-block entries so references
+            // v0.0.22 DSL.1: walk builder-block entries so references
             // inside item expressions and modifier operands are indexed.
             // Contextual (`ctx::name`) resolution is DSL.3.
             ExprKind::BuilderBlock { body, .. } => {

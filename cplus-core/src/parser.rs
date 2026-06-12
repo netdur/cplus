@@ -52,7 +52,7 @@ struct Parser {
     /// followed by the body block, NOT a struct literal. Force the literal
     /// by parenthesizing.
     no_struct_lit: bool,
-    /// v0.0.23 DSL.1: true while parsing a builder-block entry expression
+    /// v0.0.22 DSL.1: true while parsing a builder-block entry expression
     /// (an item line or a modifier's right-hand side). In that position a
     /// line-leading `.` / `(` / `[` (token `nl_before`) ends the
     /// expression instead of continuing the postfix chain — that's what
@@ -82,7 +82,7 @@ impl Parser {
         r
     }
 
-    /// v0.0.23 DSL.1: run `f` with `stop_line_dot` flipped on, restoring
+    /// v0.0.22 DSL.1: run `f` with `stop_line_dot` flipped on, restoring
     /// it afterward. Used for builder-block item lines and modifier
     /// right-hand sides.
     fn with_stop_line_dot<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -93,7 +93,7 @@ impl Parser {
         r
     }
 
-    /// v0.0.23 DSL.1: run `f` with `stop_line_dot` off, restoring it
+    /// v0.0.22 DSL.1: run `f` with `stop_line_dot` off, restoring it
     /// afterward. Applied when recursing inside delimiters so a
     /// multi-line subexpression (wrapped call args, an index, a nested
     /// block) is not line-sensitive.
@@ -1659,7 +1659,7 @@ impl Parser {
     // ---- blocks and statements ----
 
     fn parse_block(&mut self) -> Result<Block, ParseError> {
-        // v0.0.23 DSL.1: a nested block body is never line-dot sensitive,
+        // v0.0.22 DSL.1: a nested block body is never line-dot sensitive,
         // even when the block appears inside a builder-entry expression.
         self.with_line_dots_allowed(|p| p.parse_block_body())
     }
@@ -2470,7 +2470,7 @@ impl Parser {
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut e = self.parse_primary()?;
         loop {
-            // v0.0.23 DSL.1: inside a builder-block entry, a line-leading
+            // v0.0.22 DSL.1: inside a builder-block entry, a line-leading
             // postfix opener ends the entry expression — the `.` begins a
             // modifier line, and a line-leading `(`/`[` would otherwise
             // silently chain onto the previous line's item, which is never
@@ -2596,7 +2596,7 @@ impl Parser {
         Ok(e)
     }
 
-    /// v0.0.23 DSL.1: contextual builder block — `@path { ... }`. Parses
+    /// v0.0.22 DSL.1: contextual builder block — `@path { ... }`. Parses
     /// the context path, then the body: item-expression lines with their
     /// attached leading-dot modifier lines, plus `let` setup statements.
     /// Produces `ExprKind::BuilderBlock`; lowering to ordinary C+ calls
@@ -2863,7 +2863,7 @@ impl Parser {
                     span: tok.span,
                 })
             }
-            // v0.0.23 DSL.1: `@ctx { ... }` contextual builder block.
+            // v0.0.22 DSL.1: `@ctx { ... }` contextual builder block.
             TokenKind::At => self.parse_builder_block(),
             TokenKind::Pound => {
                 // v0.0.10 Phase 4: `#name(args)` / `#name::[T](args) -> RetTy`
@@ -5287,7 +5287,7 @@ mod tests {
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
-    // ---- v0.0.23 DSL.1: contextual builder blocks `@ctx { ... }` ----
+    // ---- v0.0.22 DSL.1: contextual builder blocks `@ctx { ... }` ----
 
     /// The builder block from `let v = @... { ... };` in `src`.
     fn builder_of(src: &str) -> (Vec<Ident>, BuilderBlock) {

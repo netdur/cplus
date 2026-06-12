@@ -5476,7 +5476,7 @@ impl SemaCx<'_> {
 
     fn check_expr_kind(&mut self, e: &Expr, expected: Option<Ty>) -> Ty {
         match &e.kind {
-            // v0.0.23 DSL.1: `lower` rejects builder blocks (E0910) and
+            // v0.0.22 DSL.1: `lower` rejects builder blocks (E0910) and
             // replaces the node before sema runs. Hitting one here means
             // the driver skipped lowering; panic instead of silently
             // producing wrong diagnostics.
@@ -14601,7 +14601,7 @@ fn collect_effects_stmt(stmt: &Stmt, out: &mut BodyEffects) {
 
 fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
     match &e.kind {
-        // v0.0.23 DSL.1: never reached — `lower` replaces builder blocks
+        // v0.0.22 DSL.1: never reached — `lower` replaces builder blocks
         // (E0910) before any effects collection runs.
         ExprKind::BuilderBlock { .. } => {}
         ExprKind::Call { callee, args, .. } => {

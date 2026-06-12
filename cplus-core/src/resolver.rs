@@ -2137,7 +2137,7 @@ fn rewrite_expr(
                 *name = ctx.qualify_local(name);
             }
         }
-        // v0.0.23 DSL.1: a builder block is a scope — `let` entries bind
+        // v0.0.22 DSL.1: a builder block is a scope — `let` entries bind
         // for the following entries and don't leak out. Item expressions
         // and modifier operands get the same alias rewriting as any
         // expression. Contextual (`ctx::name`) lookup is DSL.3 and does

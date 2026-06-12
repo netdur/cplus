@@ -399,7 +399,7 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     // adjoins `[`. (Re-checked in pre-comments-special-case below.)
     if matches!(prev, Pound) { return false; }
 
-    // v0.0.23 DSL.1: builder-block opener `@ctx` is tight — `@`
+    // v0.0.22 DSL.1: builder-block opener `@ctx` is tight — `@`
     // immediately adjoins the context path. Full builder-block layout is
     // DSL.4; this only keeps the marker glued to its name.
     if matches!(prev, At) { return false; }
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn builder_block_at_marker_tight_and_idempotent() {
-        // v0.0.23 DSL.1: `@` adjoins the context path, and a builder
+        // v0.0.22 DSL.1: `@` adjoins the context path, and a builder
         // block with modifier lines round-trips unchanged (full builder
         // layout rules are DSL.4).
         let src = "fn f() -> i32 {\n    let v = @view {\n        text(\"a\")\n            .font = bigger\n    };\n    return 0;\n}\n";

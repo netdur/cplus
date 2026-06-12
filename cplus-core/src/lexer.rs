@@ -49,7 +49,7 @@ pub fn interned_file(file: u32) -> Option<String> {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
-    /// v0.0.23 DSL.1: true when this token is the first on its source
+    /// v0.0.22 DSL.1: true when this token is the first on its source
     /// line — a newline (possibly among other trivia) separates it from
     /// the previous token, or it is the first token of the input.
     /// Stamped centrally by `tokenize_inner`. Builder blocks consult it
@@ -149,7 +149,7 @@ pub enum TokenKind {
     Comma, Semi, Colon, Dot,
     /// `#` — opens an attribute (`#[...]`). Phase 5 slice 5ATTR.1.
     Pound,
-    /// `@` — opens a contextual builder block `@ctx { ... }`. v0.0.23
+    /// `@` — opens a contextual builder block `@ctx { ... }`. v0.0.22
     /// DSL.1. No other surface uses `@`.
     At,
 
@@ -232,7 +232,7 @@ fn tokenize_inner(src: &str, keep_comments: bool, file: u32) -> Result<Vec<Token
     let mut first = true;
     loop {
         let mut t = lx.next_token()?;
-        // v0.0.23 DSL.1: stamp the line-start bit. The gap between the
+        // v0.0.22 DSL.1: stamp the line-start bit. The gap between the
         // previous token's end and this token's start is all trivia
         // (whitespace/comments); a newline anywhere in it means this
         // token begins a line.
@@ -1623,7 +1623,7 @@ mod tests {
         );
     }
 
-    // ---- v0.0.23 DSL.1: `@` token + line-start stamping ----
+    // ---- v0.0.22 DSL.1: `@` token + line-start stamping ----
 
     #[test]
     fn at_lexes() {

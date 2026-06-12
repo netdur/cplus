@@ -307,7 +307,7 @@ impl Lower {
     }
 
     fn lower_expr(&mut self, e: &mut Expr) {
-        // v0.0.23 DSL.1: builder blocks parse but do not lower yet — the
+        // v0.0.22 DSL.1: builder blocks parse but do not lower yet — the
         // `Builder::new`/`add`/`finish` desugar is DSL.2. Reject the node
         // (E0910) and replace it with a placeholder literal so sema and
         // every later pass see only ordinary AST (the same invariant the
@@ -413,7 +413,7 @@ impl Lower {
         }
     }
 
-    /// v0.0.23 DSL.1: report E0910 for a builder block and replace it
+    /// v0.0.22 DSL.1: report E0910 for a builder block and replace it
     /// with a placeholder `0` literal. Entry expressions are still
     /// walked first so nested pattern-lets and nested builder blocks
     /// surface their own diagnostics alongside.
@@ -1471,7 +1471,7 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
                 subst_expr(&mut a.body, consts);
             }
         }
-        // v0.0.23 DSL.1: walk const uses inside builder entries — `lower_expr`
+        // v0.0.22 DSL.1: walk const uses inside builder entries — `lower_expr`
         // already rejected the block (E0910), but keep the substitution
         // total over the tree.
         ExprKind::BuilderBlock { body, .. } => {

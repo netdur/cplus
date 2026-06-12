@@ -3,9 +3,9 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
-## v0.0.23 — unreleased (contextual builder blocks)
+## v0.0.22 — unreleased
 
-### DSL.1 — parser and AST
+### Contextual builder blocks (DSL.1 — parser and AST)
 - New expression syntax `@ctx { ... }`: the contextual builder block.
   `ctx` is any module path (`@view`, `@ui::view`); the body holds item
   expressions, leading-dot modifier lines that apply to the item above
@@ -26,8 +26,6 @@ earlier history lives in each version's archived plan.
   `builder.add(item)` / `builder.finish()`; DSL.3 adds contextual name
   lookup; DSL.4 conditionals and formatter layout. `cpc fmt` already
   keeps `@ctx` glued and round-trips builder blocks unchanged.
-
-## v0.0.22 — unreleased
 
 ### Multi-backend consolidation
 - New `--min-os VERSION` flag (after `--target`): overrides the OS floor

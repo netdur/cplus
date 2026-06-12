@@ -24041,7 +24041,7 @@ fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
     }
 }
 
-/// v0.0.23 DSL.1: `@ctx { ... }` builder blocks parse end to end —
+/// v0.0.22 DSL.1: `@ctx { ... }` builder blocks parse end to end —
 /// context path, item lines, leading-dot modifiers, `let` setup, nested
 /// blocks — and are rejected by the lowering pass with E0910 until DSL.2
 /// ships the `Builder::new`/`add`/`finish` desugar. The diagnostic must
@@ -24098,7 +24098,7 @@ fn builder_block_parses_and_fires_e0910() {
     );
 }
 
-/// v0.0.23 DSL.1 negatives: a leading-dot modifier with no current item
+/// v0.0.22 DSL.1 negatives: a leading-dot modifier with no current item
 /// and control-flow statements inside a builder block are parse errors
 /// with builder-specific phrasing; a leading-dot line outside any builder
 /// block stays a plain parse error.

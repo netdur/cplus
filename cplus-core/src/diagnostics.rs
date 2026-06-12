@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn from_lex_assigns_correct_code() {
         // `` ` `` stays an invalid character (`@` became the builder-block
-        // opener in v0.0.23 DSL.1).
+        // opener in v0.0.22 DSL.1).
         let src = "`";
         let err = crate::lexer::tokenize(src).unwrap_err();
         let lm = LineMap::new(src);
