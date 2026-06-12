@@ -4287,6 +4287,9 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
 fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -> HashSet<String> {
     fn visit_expr(e: &Expr, sigs: &HashMap<String, FnSig>, taken: &mut HashSet<String>) {
         match &e.kind {
+            // v0.0.23 DSL.1: never reached — `lower` replaces builder
+            // blocks (E0910) long before codegen.
+            ExprKind::BuilderBlock { .. } => {}
             ExprKind::Ident(name) => {
                 if sigs.contains_key(name) {
                     taken.insert(name.clone());
@@ -9063,6 +9066,11 @@ impl<'a> FnState<'a> {
     fn gen_expr(&mut self, e: &Expr) -> Option<(String, Ty)> {
         let us = usize_llvm_ty();
         match &e.kind {
+            // v0.0.23 DSL.1: `lower` rejects builder blocks (E0910) and
+            // replaces the node; with errors present codegen never runs.
+            ExprKind::BuilderBlock { .. } => {
+                panic!("codegen saw an un-lowered builder block; driver must call crate::lower before codegen");
+            }
             ExprKind::IntLit(v, suf) => {
                 use crate::lexer::NumSuffix;
                 // Honor the literal's numeric suffix so downstream consumers

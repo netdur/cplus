@@ -3,6 +3,30 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.23 — unreleased (contextual builder blocks)
+
+### DSL.1 — parser and AST
+- New expression syntax `@ctx { ... }`: the contextual builder block.
+  `ctx` is any module path (`@view`, `@ui::view`); the body holds item
+  expressions, leading-dot modifier lines that apply to the item above
+  them (`.font = bigger`, `.on_click(f)`), `let` setup bindings, and
+  nested `@` blocks. `@` was previously an invalid character; no
+  existing source changes meaning.
+- Modifier lines are line-oriented: a `.name` that starts a line attaches
+  to the current item, while a same-line `.name` stays ordinary postfix
+  access on the item expression. Inside call arguments, indexing,
+  grouping parentheses, and nested blocks the rule is off, so wrapped
+  subexpressions are unaffected.
+- Parse-time rejections with builder-specific messages: a modifier with
+  no current item (including after an interposed `let`), and `return` /
+  `break` / `continue` / `yield` / `await` / loops / `defer` / `guard`
+  inside a block.
+- Blocks parse but do not lower yet: the compiler reports E0910 at the
+  block. DSL.2 ships the desugar to `ctx::Builder::new()` /
+  `builder.add(item)` / `builder.finish()`; DSL.3 adds contextual name
+  lookup; DSL.4 conditionals and formatter layout. `cpc fmt` already
+  keeps `@ctx` glued and round-trips builder blocks unchanged.
+
 ## v0.0.22 — unreleased
 
 ### Multi-backend consolidation

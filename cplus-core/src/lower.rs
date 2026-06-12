@@ -307,6 +307,16 @@ impl Lower {
     }
 
     fn lower_expr(&mut self, e: &mut Expr) {
+        // v0.0.23 DSL.1: builder blocks parse but do not lower yet — the
+        // `Builder::new`/`add`/`finish` desugar is DSL.2. Reject the node
+        // (E0910) and replace it with a placeholder literal so sema and
+        // every later pass see only ordinary AST (the same invariant the
+        // pattern-let desugar maintains: downstream matches panic on the
+        // original node).
+        if matches!(e.kind, ExprKind::BuilderBlock { .. }) {
+            self.reject_builder_block(e);
+            return;
+        }
         match &mut e.kind {
             ExprKind::IntLit(..)
             | ExprKind::FloatLit(..)
@@ -396,6 +406,55 @@ impl Lower {
                 self.lower_expr(scrutinee);
                 for a in arms {
                     self.lower_expr(&mut a.body);
+                }
+            }
+            // Handled by the pre-check above; never reached.
+            ExprKind::BuilderBlock { .. } => unreachable!("BuilderBlock handled in lower_expr pre-check"),
+        }
+    }
+
+    /// v0.0.23 DSL.1: report E0910 for a builder block and replace it
+    /// with a placeholder `0` literal. Entry expressions are still
+    /// walked first so nested pattern-lets and nested builder blocks
+    /// surface their own diagnostics alongside.
+    fn reject_builder_block(&mut self, e: &mut Expr) {
+        let span = e.span;
+        let kind = std::mem::replace(
+            &mut e.kind,
+            ExprKind::IntLit(0, crate::lexer::NumSuffix::None),
+        );
+        let ExprKind::BuilderBlock { context, mut body } = kind else {
+            unreachable!("reject_builder_block called on a non-builder expression");
+        };
+        let ctx_name = context
+            .iter()
+            .map(|i| i.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        self.err(
+            "E0910",
+            format!(
+                "builder block `@{ctx_name} {{ ... }}` is not supported yet: \
+                 parsing shipped in DSL.1; lowering to `{ctx_name}::Builder` \
+                 arrives in DSL.2"
+            ),
+            span,
+        );
+        for entry in &mut body.entries {
+            match entry {
+                BuilderEntry::Let(s) => self.lower_stmt(s),
+                BuilderEntry::Item { expr, modifiers } => {
+                    self.lower_expr(expr);
+                    for m in modifiers {
+                        match &mut m.kind {
+                            BuilderModifierKind::Assign(v) => self.lower_expr(v),
+                            BuilderModifierKind::Call(args) => {
+                                for a in args {
+                                    self.lower_expr(a);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1410,6 +1469,33 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
             subst_expr(scrutinee, consts);
             for a in arms {
                 subst_expr(&mut a.body, consts);
+            }
+        }
+        // v0.0.23 DSL.1: walk const uses inside builder entries — `lower_expr`
+        // already rejected the block (E0910), but keep the substitution
+        // total over the tree.
+        ExprKind::BuilderBlock { body, .. } => {
+            for entry in &mut body.entries {
+                match entry {
+                    BuilderEntry::Let(s) => {
+                        if let StmtKind::Let { init: Some(init), .. } = &mut s.kind {
+                            subst_expr(init, consts);
+                        }
+                    }
+                    BuilderEntry::Item { expr, modifiers } => {
+                        subst_expr(expr, consts);
+                        for m in modifiers {
+                            match &mut m.kind {
+                                BuilderModifierKind::Assign(v) => subst_expr(v, consts),
+                                BuilderModifierKind::Call(args) => {
+                                    for a in args {
+                                        subst_expr(a, consts);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -21,8 +21,9 @@
 //! back into source.
 
 use crate::ast::{
-    Block, Expr, ExprKind, ForLoop, Function, ImplBlock, InterpStrPart, ItemKind, Method, Param,
-    Pattern, PatternKind, Receiver, Stmt, StmtKind, Type, TypeKind,
+    Block, BuilderEntry, BuilderModifierKind, Expr, ExprKind, ForLoop, Function, ImplBlock,
+    InterpStrPart, ItemKind, Method, Param, Pattern, PatternKind, Receiver, Stmt, StmtKind, Type,
+    TypeKind,
 };
 use crate::diagnostics::LineMap;
 use crate::lexer::Span;
@@ -1510,6 +1511,29 @@ impl<'a> Resolver<'a> {
 
     fn walk_expr(&mut self, e: &Expr) {
         match &e.kind {
+            // v0.0.23 DSL.1: walk builder-block entries so references
+            // inside item expressions and modifier operands are indexed.
+            // Contextual (`ctx::name`) resolution is DSL.3.
+            ExprKind::BuilderBlock { body, .. } => {
+                for entry in &body.entries {
+                    match entry {
+                        BuilderEntry::Let(s) => self.walk_stmt(s),
+                        BuilderEntry::Item { expr, modifiers } => {
+                            self.walk_expr(expr);
+                            for m in modifiers {
+                                match &m.kind {
+                                    BuilderModifierKind::Assign(v) => self.walk_expr(v),
+                                    BuilderModifierKind::Call(args) => {
+                                        for a in args {
+                                            self.walk_expr(a);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             ExprKind::Call { callee, args, .. } => {
                 self.resolve_call(callee, e.span);
                 self.walk_expr(callee);

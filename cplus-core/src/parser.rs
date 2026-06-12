@@ -52,6 +52,15 @@ struct Parser {
     /// followed by the body block, NOT a struct literal. Force the literal
     /// by parenthesizing.
     no_struct_lit: bool,
+    /// v0.0.23 DSL.1: true while parsing a builder-block entry expression
+    /// (an item line or a modifier's right-hand side). In that position a
+    /// line-leading `.` / `(` / `[` (token `nl_before`) ends the
+    /// expression instead of continuing the postfix chain — that's what
+    /// separates `text("title")` from the `.font = bigger` modifier line
+    /// below it. Reset inside delimiter recursion (call args, indexing,
+    /// grouping, array literals, blocks) so only the entry's own
+    /// top-level postfix chain is line-sensitive.
+    stop_line_dot: bool,
 }
 
 impl Parser {
@@ -60,6 +69,7 @@ impl Parser {
             tokens,
             pos: 0,
             no_struct_lit: false,
+            stop_line_dot: false,
         }
     }
 
@@ -69,6 +79,29 @@ impl Parser {
         self.no_struct_lit = true;
         let r = f(self);
         self.no_struct_lit = prev;
+        r
+    }
+
+    /// v0.0.23 DSL.1: run `f` with `stop_line_dot` flipped on, restoring
+    /// it afterward. Used for builder-block item lines and modifier
+    /// right-hand sides.
+    fn with_stop_line_dot<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.stop_line_dot;
+        self.stop_line_dot = true;
+        let r = f(self);
+        self.stop_line_dot = prev;
+        r
+    }
+
+    /// v0.0.23 DSL.1: run `f` with `stop_line_dot` off, restoring it
+    /// afterward. Applied when recursing inside delimiters so a
+    /// multi-line subexpression (wrapped call args, an index, a nested
+    /// block) is not line-sensitive.
+    fn with_line_dots_allowed<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.stop_line_dot;
+        self.stop_line_dot = false;
+        let r = f(self);
+        self.stop_line_dot = prev;
         r
     }
 
@@ -1626,6 +1659,12 @@ impl Parser {
     // ---- blocks and statements ----
 
     fn parse_block(&mut self) -> Result<Block, ParseError> {
+        // v0.0.23 DSL.1: a nested block body is never line-dot sensitive,
+        // even when the block appears inside a builder-entry expression.
+        self.with_line_dots_allowed(|p| p.parse_block_body())
+    }
+
+    fn parse_block_body(&mut self) -> Result<Block, ParseError> {
         let start = self.expect(&TokenKind::LBrace, "`{`")?.span;
         let mut stmts = Vec::new();
         let mut tail: Option<Box<Expr>> = None;
@@ -2431,6 +2470,20 @@ impl Parser {
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut e = self.parse_primary()?;
         loop {
+            // v0.0.23 DSL.1: inside a builder-block entry, a line-leading
+            // postfix opener ends the entry expression — the `.` begins a
+            // modifier line, and a line-leading `(`/`[` would otherwise
+            // silently chain onto the previous line's item, which is never
+            // what a builder line means.
+            if self.stop_line_dot
+                && self.peek().nl_before
+                && matches!(
+                    self.peek_kind(),
+                    TokenKind::Dot | TokenKind::LParen | TokenKind::LBracket
+                )
+            {
+                break;
+            }
             // Slice 7GEN.5b: detect the `::[T1, T2]` turbofish.
             // Slice 7GEN.5e: widened from `Ident`-only to also admit
             // `Path` (assoc-fn call: `Type::method::[T]()`) and
@@ -2480,7 +2533,7 @@ impl Parser {
                     self.bump();
                     let mut args = Vec::new();
                     while !self.at(&TokenKind::RParen) {
-                        args.push(self.parse_expr()?);
+                        args.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
                         if !self.eat(&TokenKind::Comma) {
                             break;
                         }
@@ -2526,7 +2579,7 @@ impl Parser {
                 }
                 TokenKind::LBracket => {
                     self.bump();
-                    let index = self.parse_expr()?;
+                    let index = self.with_line_dots_allowed(|p| p.parse_expr())?;
                     let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                     let span = e.span.merge(end);
                     e = Expr {
@@ -2541,6 +2594,137 @@ impl Parser {
             }
         }
         Ok(e)
+    }
+
+    /// v0.0.23 DSL.1: contextual builder block — `@path { ... }`. Parses
+    /// the context path, then the body: item-expression lines with their
+    /// attached leading-dot modifier lines, plus `let` setup statements.
+    /// Produces `ExprKind::BuilderBlock`; lowering to ordinary C+ calls
+    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) is DSL.2 —
+    /// until that ships, `lower` rejects the node with E0910.
+    fn parse_builder_block(&mut self) -> Result<Expr, ParseError> {
+        let at_span = self.expect(&TokenKind::At, "`@`")?.span;
+        let mut context = vec![self.expect_ident()?];
+        while matches!(self.peek_kind(), TokenKind::ColonColon) {
+            self.bump();
+            context.push(self.expect_ident()?);
+        }
+        let lbrace = self.expect(&TokenKind::LBrace, "`{` after `@context`")?.span;
+        // Entries parse with the line-dot flag off at the boundary: each
+        // item line / modifier RHS turns it on for itself, and a nested
+        // builder block must not inherit the enclosing entry's state.
+        let entries = self.with_line_dots_allowed(|p| p.parse_builder_entries())?;
+        let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        Ok(Expr {
+            kind: ExprKind::BuilderBlock {
+                context,
+                body: BuilderBlock {
+                    entries,
+                    span: lbrace.merge(end),
+                },
+            },
+            span: at_span.merge(end),
+        })
+    }
+
+    fn parse_builder_entries(&mut self) -> Result<Vec<BuilderEntry>, ParseError> {
+        let mut entries: Vec<BuilderEntry> = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            if matches!(self.peek_kind(), TokenKind::Eof) {
+                return Err(self.err_at_peek("`}`"));
+            }
+            match self.peek_kind() {
+                TokenKind::Let => {
+                    entries.push(BuilderEntry::Let(self.parse_let_stmt()?));
+                }
+                TokenKind::Dot => {
+                    let m = self.parse_builder_modifier()?;
+                    match entries.last_mut() {
+                        Some(BuilderEntry::Item { modifiers, .. }) => modifiers.push(m),
+                        // First entry, or the previous entry is a `let` —
+                        // either way there is no current item to modify.
+                        _ => {
+                            return Err(ParseError {
+                                kind: ParseErrorKind::Unexpected {
+                                    found: format!("builder modifier `.{}`", m.name.name),
+                                    expected: "an item expression before the first `.modifier` line (a modifier needs a current item)",
+                                },
+                                span: m.span,
+                            });
+                        }
+                    }
+                }
+                TokenKind::Return
+                | TokenKind::Break
+                | TokenKind::Continue
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::Loop
+                | TokenKind::Defer
+                | TokenKind::Guard
+                | TokenKind::Yield
+                | TokenKind::Await => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: tok_name(self.peek_kind()).into(),
+                            expected: "a builder item expression, a `.modifier` line, or `let` (control flow, loops, and `defer`/`guard` are not allowed in a builder block)",
+                        },
+                        span: self.peek().span,
+                    });
+                }
+                _ => {
+                    let expr = self.with_stop_line_dot(|p| p.parse_expr())?;
+                    entries.push(BuilderEntry::Item {
+                        expr,
+                        modifiers: Vec::new(),
+                    });
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    /// One leading-dot modifier line: `.field = value` or `.method(args)`.
+    /// The caller has verified the cursor is on the `.`.
+    fn parse_builder_modifier(&mut self) -> Result<BuilderModifier, ParseError> {
+        let dot_span = self.expect(&TokenKind::Dot, "`.`")?.span;
+        let name = self.expect_ident()?;
+        match self.peek_kind() {
+            TokenKind::Eq => {
+                self.bump();
+                let value = self.with_stop_line_dot(|p| p.parse_expr())?;
+                let span = dot_span.merge(value.span);
+                Ok(BuilderModifier {
+                    name,
+                    kind: BuilderModifierKind::Assign(value),
+                    span,
+                })
+            }
+            TokenKind::LParen => {
+                self.bump();
+                let mut args = Vec::new();
+                while !self.at(&TokenKind::RParen) {
+                    args.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+                let span = dot_span.merge(end);
+                Ok(BuilderModifier {
+                    name,
+                    kind: BuilderModifierKind::Call(args),
+                    span,
+                })
+            }
+            _ => Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    found: tok_name(self.peek_kind()).into(),
+                    expected: "`= value` or `(args)` after the builder modifier name",
+                },
+                span: self.peek().span,
+            }),
+        }
     }
 
     /// Parse the body of a struct literal — `{ field: value, ... }` — given
@@ -2679,6 +2863,8 @@ impl Parser {
                     span: tok.span,
                 })
             }
+            // v0.0.23 DSL.1: `@ctx { ... }` contextual builder block.
+            TokenKind::At => self.parse_builder_block(),
             TokenKind::Pound => {
                 // v0.0.10 Phase 4: `#name(args)` / `#name::[T](args) -> RetTy`
                 // compiler-intrinsic call form. Items-level `#[attr]`
@@ -2999,11 +3185,11 @@ impl Parser {
                 // tuple. `()` (empty parens) would be the unit value
                 // but the parser doesn't accept that today — `()` is
                 // strictly a type-position spelling.
-                let first = self.parse_expr()?;
+                let first = self.with_line_dots_allowed(|p| p.parse_expr())?;
                 if self.eat(&TokenKind::Comma) {
                     let mut elements: Vec<Expr> = vec![first];
                     while !self.at(&TokenKind::RParen) {
-                        elements.push(self.parse_expr()?);
+                        elements.push(self.with_line_dots_allowed(|p| p.parse_expr())?);
                         if !self.eat(&TokenKind::Comma) {
                             break;
                         }
@@ -3035,7 +3221,7 @@ impl Parser {
                         span: start.merge(end),
                     });
                 }
-                let first = self.parse_expr()?;
+                let first = self.with_line_dots_allowed(|p| p.parse_expr())?;
                 if self.eat(&TokenKind::Semi) {
                     // Fill-array form: `[EXPR; N]`.
                     let count_tok = self.peek().clone();
@@ -3373,6 +3559,7 @@ fn peek_assign_op(kind: &TokenKind) -> Option<AssignOp> {
 
 fn tok_name(k: &TokenKind) -> &'static str {
     match k {
+        TokenKind::At => "`@`",
         TokenKind::Int(_, _) => "integer literal",
         TokenKind::Float(_, _) => "float literal",
         TokenKind::Str(_) => "string literal",
@@ -5098,5 +5285,188 @@ mod tests {
     fn static_without_type_annotation_rejected() {
         let err = parse_src("static FOO = 5;").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    // ---- v0.0.23 DSL.1: contextual builder blocks `@ctx { ... }` ----
+
+    /// The builder block from `let v = @... { ... };` in `src`.
+    fn builder_of(src: &str) -> (Vec<Ident>, BuilderBlock) {
+        let p = parse_src(src).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("expected fn");
+        };
+        let StmtKind::Let { init: Some(init), .. } = &f.body.stmts[0].kind else {
+            panic!("expected let with init");
+        };
+        let ExprKind::BuilderBlock { context, body } = &init.kind else {
+            panic!("expected BuilderBlock, got {:?}", init.kind);
+        };
+        (context.clone(), body.clone())
+    }
+
+    #[test]
+    fn builder_block_plain_items() {
+        let (context, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        text(\"title\")\n        button(\"OK\")\n    };\n    0\n}",
+        );
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].name, "view");
+        assert_eq!(body.entries.len(), 2);
+        for entry in &body.entries {
+            let BuilderEntry::Item { expr, modifiers } = entry else {
+                panic!("expected item entry");
+            };
+            assert!(matches!(expr.kind, ExprKind::Call { .. }));
+            assert!(modifiers.is_empty());
+        }
+    }
+
+    #[test]
+    fn builder_block_modifiers() {
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        text(\"title\")\n            .font = bigger\n            .color = red\n            .on_click(handler)\n        button(\"OK\")\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 2);
+        let BuilderEntry::Item { modifiers, .. } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        assert_eq!(modifiers.len(), 3);
+        assert_eq!(modifiers[0].name.name, "font");
+        assert!(matches!(modifiers[0].kind, BuilderModifierKind::Assign(_)));
+        assert_eq!(modifiers[1].name.name, "color");
+        assert!(matches!(modifiers[1].kind, BuilderModifierKind::Assign(_)));
+        assert_eq!(modifiers[2].name.name, "on_click");
+        let BuilderModifierKind::Call(args) = &modifiers[2].kind else {
+            panic!("expected call modifier");
+        };
+        assert_eq!(args.len(), 1);
+        // The second item carries no modifiers.
+        let BuilderEntry::Item { modifiers, .. } = &body.entries[1] else {
+            panic!("expected item entry");
+        };
+        assert!(modifiers.is_empty());
+    }
+
+    #[test]
+    fn builder_block_same_line_postfix_stays_on_item() {
+        // A same-line `.method()` is ordinary postfix on the item
+        // expression, not a modifier — only line-leading dots split.
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        text(\"a\").trimmed()\n            .font = bigger\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 1);
+        let BuilderEntry::Item { expr, modifiers } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        // Item is the full `text("a").trimmed()` call chain.
+        assert!(matches!(expr.kind, ExprKind::Call { .. }));
+        assert_eq!(modifiers.len(), 1);
+        assert_eq!(modifiers[0].name.name, "font");
+    }
+
+    #[test]
+    fn builder_block_let_and_nested() {
+        let (context, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @ui::view {\n        let title = 1;\n        item(title)\n        @ui::vstack {\n            item(2)\n        }\n    };\n    0\n}",
+        );
+        assert_eq!(context.len(), 2);
+        assert_eq!(context[0].name, "ui");
+        assert_eq!(context[1].name, "view");
+        assert_eq!(body.entries.len(), 3);
+        assert!(matches!(&body.entries[0], BuilderEntry::Let(_)));
+        assert!(matches!(&body.entries[1], BuilderEntry::Item { .. }));
+        let BuilderEntry::Item { expr, .. } = &body.entries[2] else {
+            panic!("expected nested builder item");
+        };
+        let ExprKind::BuilderBlock { context: inner, body: inner_body } = &expr.kind else {
+            panic!("expected nested BuilderBlock, got {:?}", expr.kind);
+        };
+        assert_eq!(inner[1].name, "vstack");
+        assert_eq!(inner_body.entries.len(), 1);
+    }
+
+    #[test]
+    fn builder_block_multiline_call_args_not_split() {
+        // Inside call parens the line-dot rule is off: a wrapped arg list
+        // with a line-leading method chain still parses as one item.
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        text(name\n            .trimmed())\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 1);
+        let BuilderEntry::Item { expr, modifiers } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        assert!(modifiers.is_empty());
+        let ExprKind::Call { args, .. } = &expr.kind else {
+            panic!("expected call item");
+        };
+        assert!(matches!(args[0].kind, ExprKind::Field { .. } | ExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn builder_modifier_without_item_rejected() {
+        let err = parse_src(
+            "fn main() -> i32 {\n    let v = @view {\n        .font = bigger\n    };\n    0\n}",
+        )
+        .unwrap_err();
+        let ParseErrorKind::Unexpected { found, .. } = &err.kind else {
+            panic!("expected Unexpected, got {:?}", err.kind);
+        };
+        assert!(found.contains(".font"), "found = {found}");
+    }
+
+    #[test]
+    fn builder_modifier_after_let_rejected() {
+        // A `let` line breaks the current-item attachment.
+        let err = parse_src(
+            "fn main() -> i32 {\n    let v = @view {\n        text(\"a\")\n        let x = 1;\n        .font = bigger\n    };\n    0\n}",
+        )
+        .unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn builder_control_flow_rejected() {
+        for kw in ["return 1;", "break;", "continue;", "while x { }", "loop { }", "defer f();"] {
+            let src = format!(
+                "fn main() -> i32 {{\n    let v = @view {{\n        {kw}\n    }};\n    0\n}}"
+            );
+            let err = parse_src(&src).unwrap_err();
+            assert!(
+                matches!(err.kind, ParseErrorKind::Unexpected { .. }),
+                "{kw} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn leading_dot_outside_builder_rejected() {
+        let err = parse_src("fn main() -> i32 {\n    .font = 1;\n    0\n}").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn builder_modifier_requires_assign_or_call() {
+        let err = parse_src(
+            "fn main() -> i32 {\n    let v = @view {\n        text(\"a\")\n            .font\n    };\n    0\n}",
+        )
+        .unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn builder_block_spans_cover_source() {
+        let src = "fn main() -> i32 {\n    let v = @view {\n        text(\"a\")\n            .font = bigger\n    };\n    0\n}";
+        let (_, body) = builder_of(src);
+        let BuilderEntry::Item { expr, modifiers } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        // Item span covers `text("a")` exactly.
+        let item_src = &src[expr.span.start as usize..expr.span.end as usize];
+        assert_eq!(item_src, "text(\"a\")");
+        // Modifier span starts at its `.` and ends at the value.
+        let m = &modifiers[0];
+        let mod_src = &src[m.span.start as usize..m.span.end as usize];
+        assert_eq!(mod_src, ".font = bigger");
     }
 }

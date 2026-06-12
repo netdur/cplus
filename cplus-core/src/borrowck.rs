@@ -2385,6 +2385,9 @@ impl Analyzer<'_> {
 
     fn apply_expr(&mut self, e: &Expr, state: &mut BTreeMap<Place, PlaceState>) {
         match &e.kind {
+            // v0.0.23 DSL.1: never reached — `lower` replaces builder
+            // blocks (E0910) before the borrow checker runs.
+            ExprKind::BuilderBlock { .. } => {}
             ExprKind::IntLit(_, _)
             | ExprKind::FloatLit(_, _)
             | ExprKind::BoolLit(_)
@@ -3227,6 +3230,9 @@ fn merge_branches(
 #[allow(dead_code)]
 fn expr_reads_ident(e: &Expr, name: &str) -> bool {
     match &e.kind {
+        // v0.0.23 DSL.1: never reached — `lower` replaces builder blocks
+        // (E0910) before the borrow checker runs.
+        ExprKind::BuilderBlock { .. } => false,
         ExprKind::Ident(n) => n == name,
         ExprKind::IntLit(_, _)
         | ExprKind::FloatLit(_, _)

@@ -872,6 +872,61 @@ pub enum ExprKind {
         operands: Vec<AsmOperand>,
         clobbers: Vec<String>,
     },
+    /// v0.0.23 DSL.1: contextual builder block `@ctx { ... }`. `context`
+    /// is the `::`-separated path naming the builder context (`@view`,
+    /// `@ui::view`). The body is a dedicated representation, not a
+    /// reused `Block`, because leading-dot modifier lines are not
+    /// general C+ statements. DSL.2 lowers this node to ordinary C+
+    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) before
+    /// sema; until then `lower` rejects it (E0910) so no later pass
+    /// observes one.
+    BuilderBlock {
+        context: Vec<Ident>,
+        body: BuilderBlock,
+    },
+}
+
+/// v0.0.23 DSL.1: the body of an `@ctx { ... }` builder block — an
+/// ordered list of entries, each a `let` setup binding or one item
+/// expression with its attached leading-dot modifier lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuilderBlock {
+    pub entries: Vec<BuilderEntry>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BuilderEntry {
+    /// `let NAME = EXPR;` — ordinary local setup. Carries a full `Stmt`
+    /// (always `StmtKind::Let`) so lowering can splice it through
+    /// unchanged.
+    Let(Stmt),
+    /// One item expression (`text("title")`, a nested `@` block, ...)
+    /// plus the leading-dot modifier lines that follow it. The
+    /// modifiers apply to the item value before it is added to the
+    /// builder.
+    Item {
+        expr: Expr,
+        modifiers: Vec<BuilderModifier>,
+    },
+}
+
+/// One leading-dot modifier line inside a builder block:
+/// `.field = value` or `.method(args)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuilderModifier {
+    pub name: Ident,
+    pub kind: BuilderModifierKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BuilderModifierKind {
+    /// `.field = value` — a field assignment on the current item.
+    Assign(Expr),
+    /// `.method(args)` — a method call on the current item; the result
+    /// is discarded.
+    Call(Vec<Expr>),
 }
 
 /// One operand of a Tier 2 `#asm`. `name` is the `{name}` placeholder; `dir`

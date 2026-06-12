@@ -5476,6 +5476,13 @@ impl SemaCx<'_> {
 
     fn check_expr_kind(&mut self, e: &Expr, expected: Option<Ty>) -> Ty {
         match &e.kind {
+            // v0.0.23 DSL.1: `lower` rejects builder blocks (E0910) and
+            // replaces the node before sema runs. Hitting one here means
+            // the driver skipped lowering; panic instead of silently
+            // producing wrong diagnostics.
+            ExprKind::BuilderBlock { .. } => {
+                panic!("sema saw an un-lowered builder block; driver must call crate::lower before sema::check");
+            }
             ExprKind::IntLit(_, suf) => self.check_int_lit(*suf, expected),
             ExprKind::FloatLit(_, suf) => self.check_float_lit(*suf, expected),
             ExprKind::BoolLit(_) => Ty::Bool,
@@ -14594,6 +14601,9 @@ fn collect_effects_stmt(stmt: &Stmt, out: &mut BodyEffects) {
 
 fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
     match &e.kind {
+        // v0.0.23 DSL.1: never reached — `lower` replaces builder blocks
+        // (E0910) before any effects collection runs.
+        ExprKind::BuilderBlock { .. } => {}
         ExprKind::Call { callee, args, .. } => {
             if let Some(name) = extract_call_name(callee) {
                 out.calls.push((name, e.span));

@@ -399,6 +399,11 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     // adjoins `[`. (Re-checked in pre-comments-special-case below.)
     if matches!(prev, Pound) { return false; }
 
+    // v0.0.23 DSL.1: builder-block opener `@ctx` is tight — `@`
+    // immediately adjoins the context path. Full builder-block layout is
+    // DSL.4; this only keeps the marker glued to its name.
+    if matches!(prev, At) { return false; }
+
     // Range operators `..` and `..=` are tight on both sides: `0..5`,
     // `1..=10`. Same convention as Rust.
     if matches!(prev, DotDot | DotDotEq) { return false; }
@@ -553,6 +558,18 @@ mod tests {
         let out = fmt("enum Color { Red, Blue }\nfn f() -> i32 { let c = Color::Red; return 0; }\n");
         assert!(out.contains("Color::Red"), "got: {out}");
         assert!(!out.contains("Color :: Red"), "got: {out}");
+    }
+
+    #[test]
+    fn builder_block_at_marker_tight_and_idempotent() {
+        // v0.0.23 DSL.1: `@` adjoins the context path, and a builder
+        // block with modifier lines round-trips unchanged (full builder
+        // layout rules are DSL.4).
+        let src = "fn f() -> i32 {\n    let v = @view {\n        text(\"a\")\n            .font = bigger\n    };\n    return 0;\n}\n";
+        let out = fmt(src);
+        assert!(out.contains("@view {"), "got: {out}");
+        assert!(!out.contains("@ view"), "got: {out}");
+        assert_eq!(fmt(&out), out, "format must be idempotent on builder blocks");
     }
 
     #[test]

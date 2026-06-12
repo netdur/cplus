@@ -49,6 +49,13 @@ pub fn interned_file(file: u32) -> Option<String> {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// v0.0.23 DSL.1: true when this token is the first on its source
+    /// line — a newline (possibly among other trivia) separates it from
+    /// the previous token, or it is the first token of the input.
+    /// Stamped centrally by `tokenize_inner`. Builder blocks consult it
+    /// to tell a leading-dot modifier line (`.font = bigger`) from
+    /// ordinary same-line postfix access; no other grammar reads it.
+    pub nl_before: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +149,9 @@ pub enum TokenKind {
     Comma, Semi, Colon, Dot,
     /// `#` — opens an attribute (`#[...]`). Phase 5 slice 5ATTR.1.
     Pound,
+    /// `@` — opens a contextual builder block `@ctx { ... }`. v0.0.23
+    /// DSL.1. No other surface uses `@`.
+    At,
 
     // operators
     Plus, Minus, Star, Slash, Percent,
@@ -216,14 +226,24 @@ fn tokenize_inner(src: &str, keep_comments: bool, file: u32) -> Result<Vec<Token
     let mut lx = Lexer::new(src);
     lx.keep_comments = keep_comments;
     lx.file = file;
-    let mut out = Vec::new();
+    let bytes = src.as_bytes();
+    let mut out: Vec<Token> = Vec::new();
+    let mut prev_end: usize = 0;
+    let mut first = true;
     loop {
-        match lx.next_token()? {
-            t if matches!(t.kind, TokenKind::Eof) => {
-                out.push(t);
-                return Ok(out);
-            }
-            t => out.push(t),
+        let mut t = lx.next_token()?;
+        // v0.0.23 DSL.1: stamp the line-start bit. The gap between the
+        // previous token's end and this token's start is all trivia
+        // (whitespace/comments); a newline anywhere in it means this
+        // token begins a line.
+        let start = (t.span.start as usize).min(bytes.len());
+        t.nl_before = first || bytes[prev_end.min(start)..start].contains(&b'\n');
+        first = false;
+        prev_end = (t.span.end as usize).min(bytes.len());
+        let is_eof = matches!(t.kind, TokenKind::Eof);
+        out.push(t);
+        if is_eof {
+            return Ok(out);
         }
     }
 }
@@ -305,7 +325,7 @@ impl<'a> Lexer<'a> {
         self.skip_trivia()?;
         let start = self.pos;
         let Some(c) = self.peek(0) else {
-            return Ok(Token { kind: TokenKind::Eof, span: self.span_from(start) });
+            return Ok(Token { kind: TokenKind::Eof, span: self.span_from(start), nl_before: false });
         };
 
         // Comments — only reachable in trivia-keeping mode; `skip_trivia`
@@ -321,6 +341,7 @@ impl<'a> Lexer<'a> {
             return Ok(Token {
                 kind: TokenKind::LineComment(body),
                 span: self.span_from(start),
+                nl_before: false,
             });
         }
         if self.keep_comments && c == b'/' && self.peek(1) == Some(b'*') {
@@ -332,6 +353,7 @@ impl<'a> Lexer<'a> {
             return Ok(Token {
                 kind: TokenKind::BlockComment(body),
                 span: self.span_from(start),
+                nl_before: false,
             });
         }
 
@@ -399,7 +421,7 @@ impl<'a> Lexer<'a> {
                 return Err(LexError {
                     kind: LexErrorKind::UnexpectedChar('\''),
                     span: self.span_from(start),
-                });
+                                    });
             }
             Some(b'\\') => {
                 self.pos += 1;
@@ -426,7 +448,7 @@ impl<'a> Lexer<'a> {
                                         self.peek(0).unwrap_or(b'\'') as char,
                                     ),
                                     span: self.span_from(start),
-                                });
+                                                                    });
                             }
                         }
                     }
@@ -440,7 +462,7 @@ impl<'a> Lexer<'a> {
                         return Err(LexError {
                             kind: LexErrorKind::UnterminatedString,
                             span: self.span_from(start),
-                        });
+                                                    });
                     }
                 }
             }
@@ -451,7 +473,7 @@ impl<'a> Lexer<'a> {
                 return Err(LexError {
                     kind: LexErrorKind::UnexpectedChar(b as char),
                     span: self.span_from(start),
-                });
+                                    });
             }
             Some(b) => {
                 self.pos += 1;
@@ -461,7 +483,7 @@ impl<'a> Lexer<'a> {
                 return Err(LexError {
                     kind: LexErrorKind::UnterminatedString,
                     span: self.span_from(start),
-                });
+                                    });
             }
         };
         // Require the closing quote. A `'ab'`-style multi-byte literal
@@ -472,6 +494,7 @@ impl<'a> Lexer<'a> {
                 Ok(Token {
                     kind: TokenKind::Int(byte as u64, NumSuffix::U8),
                     span: self.span_from(start),
+                    nl_before: false,
                 })
             }
             Some(other) => Err(LexError {
@@ -481,7 +504,7 @@ impl<'a> Lexer<'a> {
             None => Err(LexError {
                 kind: LexErrorKind::UnterminatedString,
                 span: self.span_from(start),
-            }),
+                            }),
         }
     }
 
@@ -500,7 +523,7 @@ impl<'a> Lexer<'a> {
                     return Err(LexError {
                         kind: LexErrorKind::UnterminatedString,
                         span: self.span_from(start),
-                    });
+                                            });
                 }
                 Some(b'"')
                     if self.peek(1) == Some(b'"') && self.peek(2) == Some(b'"') =>
@@ -510,6 +533,7 @@ impl<'a> Lexer<'a> {
                     return Ok(Token {
                         kind: TokenKind::Str(body),
                         span: self.span_from(start),
+                        nl_before: false,
                     });
                 }
                 Some(byte) => {
@@ -542,7 +566,7 @@ impl<'a> Lexer<'a> {
                     return Err(LexError {
                         kind: LexErrorKind::UnterminatedString,
                         span: self.span_from(start),
-                    });
+                                            });
                 }
                 Some(b'\\') => {
                     self.pos += 1;
@@ -578,7 +602,7 @@ impl<'a> Lexer<'a> {
                                         return Err(LexError {
                                             kind: LexErrorKind::UnexpectedChar(byte as char),
                                             span: self.span_from(start),
-                                        });
+                                                                                    });
                                     }
                                     decoded.push(byte);
                                 }
@@ -588,7 +612,7 @@ impl<'a> Lexer<'a> {
                                             self.peek(0).unwrap_or(b'"') as char,
                                         ),
                                         span: self.span_from(start),
-                                    });
+                                                                            });
                                 }
                             }
                         }
@@ -602,7 +626,7 @@ impl<'a> Lexer<'a> {
                             return Err(LexError {
                                 kind: LexErrorKind::UnterminatedString,
                                 span: self.span_from(start),
-                            });
+                                                            });
                         }
                     }
                 }
@@ -630,7 +654,7 @@ impl<'a> Lexer<'a> {
                                         return Err(LexError {
                                             kind: LexErrorKind::UnterminatedString,
                                             span: self.span_from(start),
-                                        });
+                                                                                    });
                                     }
                                     Some(b'{') => { brace_depth += 1; self.pos += 1; }
                                     Some(b'}') => { brace_depth -= 1; if brace_depth > 0 { self.pos += 1; } }
@@ -675,14 +699,14 @@ impl<'a> Lexer<'a> {
                         // No interpolation — emit a plain Str token to
                         // preserve the existing token shape.
                         let body = String::from_utf8(decoded).unwrap_or_default();
-                        return Ok(Token { kind: TokenKind::Str(body), span: self.span_from(start) });
+                        return Ok(Token { kind: TokenKind::Str(body), span: self.span_from(start), nl_before: false });
                     }
                     // Flush any trailing literal segment.
                     if !decoded.is_empty() {
                         let lit = String::from_utf8(decoded).unwrap_or_default();
                         parts.push(InterpPart::Lit(lit));
                     }
-                    return Ok(Token { kind: TokenKind::InterpStr(parts), span: self.span_from(start) });
+                    return Ok(Token { kind: TokenKind::InterpStr(parts), span: self.span_from(start), nl_before: false });
                 }
                 Some(b) => { decoded.push(b); self.pos += 1; }
             }
@@ -702,7 +726,7 @@ impl<'a> Lexer<'a> {
                     return Err(LexError {
                         kind: LexErrorKind::UnterminatedString,
                         span: self.span_from(start),
-                    });
+                                            });
                 }
                 Some(b'"') => {
                     self.pos += 1; // closing "
@@ -710,6 +734,7 @@ impl<'a> Lexer<'a> {
                     return Ok(Token {
                         kind: TokenKind::CStr(body),
                         span: self.span_from(start),
+                        nl_before: false,
                     });
                 }
                 Some(b'\\') => {
@@ -733,7 +758,7 @@ impl<'a> Lexer<'a> {
                                         return Err(LexError {
                                             kind: LexErrorKind::UnexpectedChar(byte as char),
                                             span: self.span_from(start),
-                                        });
+                                                                                    });
                                     }
                                     decoded.push(byte);
                                 }
@@ -743,7 +768,7 @@ impl<'a> Lexer<'a> {
                                             self.peek(0).unwrap_or(b'"') as char,
                                         ),
                                         span: self.span_from(start),
-                                    });
+                                                                            });
                                 }
                             }
                         }
@@ -757,7 +782,7 @@ impl<'a> Lexer<'a> {
                             return Err(LexError {
                                 kind: LexErrorKind::UnterminatedString,
                                 span: self.span_from(start),
-                            });
+                                                            });
                         }
                     }
                 }
@@ -820,7 +845,7 @@ impl<'a> Lexer<'a> {
             "await" => TokenKind::Await,
             _ => TokenKind::Ident(text.to_string()),
         };
-        Token { kind, span: self.span_from(start) }
+        Token { kind, span: self.span_from(start), nl_before: false }
     }
 
     fn lex_number(&mut self, start: usize) -> Result<Token, LexError> {
@@ -853,7 +878,7 @@ impl<'a> Lexer<'a> {
             return Err(LexError {
                 kind: LexErrorKind::InvalidNumber(self.text_from(start).to_string()),
                 span: self.span_from(start),
-            });
+                            });
         }
 
         // float? only base-10 supports floats
@@ -888,7 +913,7 @@ impl<'a> Lexer<'a> {
                     return Err(LexError {
                         kind: LexErrorKind::InvalidNumber(self.text_from(start).to_string()),
                         span: self.span_from(start),
-                    });
+                                            });
                 }
             }
         }
@@ -944,7 +969,7 @@ impl<'a> Lexer<'a> {
             })?;
             TokenKind::Int(v, suf)
         };
-        Ok(Token { kind, span: self.span_from(start) })
+        Ok(Token { kind, span: self.span_from(start), nl_before: false })
     }
 
     fn text_from(&self, start: usize) -> &str {
@@ -1033,12 +1058,13 @@ impl<'a> Lexer<'a> {
             b'^' => if self.peek(0) == Some(b'=') { self.pos += 1; TokenKind::CaretEq }
                     else { TokenKind::Caret },
             b'#' => TokenKind::Pound,
+            b'@' => TokenKind::At,
             other => return Err(LexError {
                 kind: LexErrorKind::UnexpectedChar(other as char),
                 span: self.span_from(start),
-            }),
+                            }),
         };
-        Ok(Token { kind, span: self.span_from(start) })
+        Ok(Token { kind, span: self.span_from(start), nl_before: false })
     }
 }
 
@@ -1595,5 +1621,51 @@ mod tests {
             matches!(&toks[0], TokenKind::InterpStr(parts) if parts.len() == 2),
             "expected InterpStr, got {toks:?}"
         );
+    }
+
+    // ---- v0.0.23 DSL.1: `@` token + line-start stamping ----
+
+    #[test]
+    fn at_lexes() {
+        assert_eq!(kinds("@"), vec![TokenKind::At, TokenKind::Eof]);
+        // `@view {` — the builder-block opener shape.
+        assert_eq!(kinds("@view {"), vec![
+            TokenKind::At,
+            TokenKind::Ident("view".into()),
+            TokenKind::LBrace,
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn nl_before_stamping() {
+        let toks = tokenize("a b\n  .c d\n\ne").unwrap();
+        let flags: Vec<(String, bool)> = toks
+            .iter()
+            .map(|t| (format!("{:?}", t.kind), t.nl_before))
+            .collect();
+        // First token of the input counts as starting a line.
+        assert!(flags[0].1, "first token: {flags:?}");
+        // `b` follows `a` on the same line.
+        assert!(!flags[1].1, "same-line ident: {flags:?}");
+        // `.` is the first token of line 2 (leading spaces are trivia).
+        assert!(flags[2].1, "line-leading dot: {flags:?}");
+        // `c` follows the dot on the same line.
+        assert!(!flags[3].1, "same-line after dot: {flags:?}");
+        assert!(!flags[4].1, "same-line `d`: {flags:?}");
+        // Blank lines still mean line-start.
+        assert!(flags[5].1, "after blank line: {flags:?}");
+    }
+
+    #[test]
+    fn nl_before_counts_newlines_inside_comment_gaps() {
+        // The gap between `a` and `b` is one block comment containing a
+        // newline — `b` begins a line even though no bare `\n` separates
+        // the tokens directly.
+        let toks = tokenize("a /* x\n y */ b").unwrap();
+        assert!(toks[1].nl_before, "token after newline-bearing comment gap");
+        // Same-line comment gap does not set the flag.
+        let toks = tokenize("a /* x */ b").unwrap();
+        assert!(!toks[1].nl_before, "same-line comment gap");
     }
 }

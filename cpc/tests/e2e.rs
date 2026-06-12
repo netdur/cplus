@@ -24040,3 +24040,108 @@ fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
         );
     }
 }
+
+/// v0.0.23 DSL.1: `@ctx { ... }` builder blocks parse end to end —
+/// context path, item lines, leading-dot modifiers, `let` setup, nested
+/// blocks — and are rejected by the lowering pass with E0910 until DSL.2
+/// ships the `Builder::new`/`add`/`finish` desugar. The diagnostic must
+/// carry the right source location and each nested block reports itself.
+#[test]
+fn builder_block_parses_and_fires_e0910() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("b.cplus");
+    std::fs::write(
+        &src,
+        "fn bigger() -> i32 { return 14; }\n\
+         fn text(s: str) -> i32 { return 1; }\n\
+         fn item(n: i32) -> i32 { return n; }\n\
+         fn main() -> i32 {\n\
+         \x20   let root = @view {\n\
+         \x20       let title = 7;\n\
+         \x20       text(\"title\")\n\
+         \x20           .font = bigger()\n\
+         \x20           .on_click(title)\n\
+         \x20       @ui::vstack {\n\
+         \x20           item(2)\n\
+         \x20       }\n\
+         \x20   };\n\
+         \x20   return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "builder block must be rejected in DSL.1");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0910"), "expected E0910: {stderr}");
+    assert!(
+        stderr.contains("`@view { ... }`"),
+        "E0910 names the context: {stderr}"
+    );
+    assert!(
+        stderr.contains("DSL.2"),
+        "E0910 points at the lowering slice: {stderr}"
+    );
+    // The nested block is walked and reports itself too.
+    assert!(
+        stderr.contains("`@ui::vstack { ... }`"),
+        "nested builder block reports its own E0910: {stderr}"
+    );
+    // Span routing: the outer diagnostic renders at the `@view` line.
+    assert!(
+        stderr.contains("b.cplus:5:"),
+        "E0910 renders at the builder-block line: {stderr}"
+    );
+}
+
+/// v0.0.23 DSL.1 negatives: a leading-dot modifier with no current item
+/// and control-flow statements inside a builder block are parse errors
+/// with builder-specific phrasing; a leading-dot line outside any builder
+/// block stays a plain parse error.
+#[test]
+fn builder_block_parse_negatives() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let check = |name: &str, body: &str| -> String {
+        let src = dir.join(name);
+        std::fs::write(&src, body).unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
+        assert!(!out.status.success(), "{name} must fail");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+
+    let stderr = check(
+        "no_item.cplus",
+        "fn main() -> i32 {\n    let v = @view {\n        .font = 1\n    };\n    return 0;\n}\n",
+    );
+    assert!(
+        stderr.contains("modifier needs a current item"),
+        "modifier-without-item phrasing: {stderr}"
+    );
+
+    let stderr = check(
+        "ctl.cplus",
+        "fn main() -> i32 {\n    let v = @view {\n        return 1;\n    };\n    return 0;\n}\n",
+    );
+    assert!(
+        stderr.contains("not allowed in a builder block"),
+        "control-flow phrasing: {stderr}"
+    );
+
+    let stderr = check(
+        "outside.cplus",
+        "fn main() -> i32 {\n    .font = 1;\n    return 0;\n}\n",
+    );
+    assert!(
+        stderr.contains("expected expression"),
+        "leading dot outside a builder block is a plain parse error: {stderr}"
+    );
+}
