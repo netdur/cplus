@@ -24041,60 +24041,181 @@ fn symlink_dir(target: &std::path::Path, link: &std::path::Path) {
     }
 }
 
-/// v0.0.22 DSL.1: `@ctx { ... }` builder blocks parse end to end —
-/// context path, item lines, leading-dot modifiers, `let` setup, nested
-/// blocks — and are rejected by the lowering pass with E0910 until DSL.2
-/// ships the `Builder::new`/`add`/`finish` desugar. The diagnostic must
-/// carry the right source location and each nested block reports itself.
+/// The shared pure-C+ builder package for the DSL.2 e2e tests: `Item`
+/// carries a value and a weight, `leaf(v)` constructs one, `boost(by)`
+/// is a method modifier, and `Builder::finish` returns an `Item` so
+/// nested `@group { ... }` blocks compose.
+const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
+     \x20   pub value: i32,\n\
+     \x20   pub weight: i32,\n\
+     }\n\
+     \n\
+     pub fn leaf(v: i32) -> Item {\n\
+     \x20   return Item { value: v, weight: 1 };\n\
+     }\n\
+     \n\
+     impl Item {\n\
+     \x20   pub fn boost(mut self, by: i32) {\n\
+     \x20       self.weight = self.weight + by;\n\
+     \x20       return;\n\
+     \x20   }\n\
+     }\n\
+     \n\
+     pub struct Builder {\n\
+     \x20   sum: i32,\n\
+     }\n\
+     \n\
+     impl Builder {\n\
+     \x20   pub fn new() -> Builder {\n\
+     \x20       return Builder { sum: 0 };\n\
+     \x20   }\n\
+     \n\
+     \x20   pub fn add(mut self, item: Item) {\n\
+     \x20       self.sum = self.sum + item.value * item.weight;\n\
+     \x20       return;\n\
+     \x20   }\n\
+     \n\
+     \x20   pub fn finish(move self) -> Item {\n\
+     \x20       return Item { value: self.sum, weight: 1 };\n\
+     \x20   }\n\
+     }\n";
+
+/// v0.0.22 DSL.2: `@ctx { ... }` lowers to the fixed builder protocol
+/// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) and runs end to
+/// end against a pure-C+ package: assign modifiers, method modifiers,
+/// `let` entries, an empty block, and a nested block all compose.
 #[test]
-fn builder_block_parses_and_fires_e0910() {
+fn builder_block_lowers_and_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    let src = dir.join("b.cplus");
     std::fs::write(
-        &src,
-        "fn bigger() -> i32 { return 14; }\n\
-         fn text(s: str) -> i32 { return 1; }\n\
-         fn item(n: i32) -> i32 { return n; }\n\
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bb\"\n\n[[bin]]\nname = \"bb\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
          fn main() -> i32 {\n\
-         \x20   let root = @view {\n\
-         \x20       let title = 7;\n\
-         \x20       text(\"title\")\n\
-         \x20           .font = bigger()\n\
-         \x20           .on_click(title)\n\
-         \x20       @ui::vstack {\n\
-         \x20           item(2)\n\
+         \x20   let zero = @group { };\n\
+         \x20   let base = 4;\n\
+         \x20   let tree = @group {\n\
+         \x20       let doubled = base * 2;\n\
+         \x20       group::leaf(doubled)\n\
+         \x20           .weight = 2\n\
+         \x20       group::leaf(3)\n\
+         \x20           .boost(1)\n\
+         \x20       @group {\n\
+         \x20           group::leaf(5)\n\
          \x20       }\n\
          \x20   };\n\
-         \x20   return 0;\n\
+         \x20   return tree.value + zero.value;\n\
          }\n",
     )
     .unwrap();
-    let out = Command::new(cpc)
-        .arg("check")
-        .arg(&src)
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/bb"))
         .output()
-        .expect("invoke cpc");
-    assert!(!out.status.success(), "builder block must be rejected in DSL.1");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0910"), "expected E0910: {stderr}");
-    assert!(
-        stderr.contains("`@view { ... }`"),
-        "E0910 names the context: {stderr}"
+        .expect("run binary");
+    // 8*2 + 3*2 + 5 = 27; the empty block contributes 0.
+    assert_eq!(out.status.code(), Some(27));
+}
+
+/// v0.0.22 DSL.2: sema's ordinary diagnostics render at the user-written
+/// DSL lines because the desugar reuses their spans — wrong item type at
+/// the item line, unknown modifier field at the modifier line, missing
+/// `Builder` at the `@ctx` line.
+#[test]
+fn builder_block_diagnostics_at_dsl_lines() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bd\"\n\n[[bin]]\nname = \"bd\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/empty.cplus"),
+        "pub fn nothing() -> i32 {\n    return 0;\n}\n",
+    )
+    .unwrap();
+    let check = |main_src: &str| -> String {
+        std::fs::write(dir.join("src/main.cplus"), main_src).unwrap();
+        let out = Command::new(cpc)
+            .arg("check")
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc");
+        assert!(!out.status.success(), "expected check failure");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+
+    // Wrong item type: `42` is not a group::Item — reported at the item
+    // line (line 5).
+    let stderr = check(
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let v = @group {\n\
+         \x20       42\n\
+         \x20   };\n\
+         \x20   return v.value;\n\
+         }\n",
     );
     assert!(
-        stderr.contains("DSL.2"),
-        "E0910 points at the lowering slice: {stderr}"
+        stderr.contains("main.cplus:5:"),
+        "wrong-item-type renders at the item line: {stderr}"
     );
-    // The nested block is walked and reports itself too.
-    assert!(
-        stderr.contains("`@ui::vstack { ... }`"),
-        "nested builder block reports its own E0910: {stderr}"
+
+    // Unknown modifier field — reported at the modifier line (line 6).
+    let stderr = check(
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let v = @group {\n\
+         \x20       group::leaf(1)\n\
+         \x20           .wieght = 2\n\
+         \x20   };\n\
+         \x20   return v.value;\n\
+         }\n",
     );
-    // Span routing: the outer diagnostic renders at the `@view` line.
     assert!(
-        stderr.contains("b.cplus:5:"),
-        "E0910 renders at the builder-block line: {stderr}"
+        stderr.contains("no field `wieght`"),
+        "unknown modifier field message: {stderr}"
+    );
+    assert!(
+        stderr.contains("main.cplus:6:"),
+        "unknown field renders at the modifier line: {stderr}"
+    );
+
+    // A context module without a Builder — reported at the `@ctx` line.
+    let stderr = check(
+        "import \"./empty\" as empty;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let v = @empty {\n\
+         \x20       empty::nothing()\n\
+         \x20   };\n\
+         \x20   return 0;\n\
+         }\n",
+    );
+    assert!(
+        stderr.contains("Builder"),
+        "missing-Builder message names the protocol type: {stderr}"
+    );
+    assert!(
+        stderr.contains("main.cplus:4:"),
+        "missing Builder renders at the @ctx line: {stderr}"
     );
 }
 

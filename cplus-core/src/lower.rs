@@ -307,14 +307,16 @@ impl Lower {
     }
 
     fn lower_expr(&mut self, e: &mut Expr) {
-        // v0.0.22 DSL.1: builder blocks parse but do not lower yet — the
-        // `Builder::new`/`add`/`finish` desugar is DSL.2. Reject the node
-        // (E0910) and replace it with a placeholder literal so sema and
-        // every later pass see only ordinary AST (the same invariant the
-        // pattern-let desugar maintains: downstream matches panic on the
-        // original node).
+        // v0.0.22 DSL.2: desugar builder blocks to the ordinary
+        // `Builder::new`/`add`/`finish` block. Multi-file projects
+        // already desugared during the resolver's rewrite walk (the
+        // synthesized `ctx::Builder::new()` path needs alias rewriting);
+        // this covers paths that skip the resolver, e.g. single-file
+        // mode. Either way, sema and every later pass see only ordinary
+        // AST — the same invariant the pattern-let desugar maintains.
         if matches!(e.kind, ExprKind::BuilderBlock { .. }) {
-            self.reject_builder_block(e);
+            desugar_builder_block(e);
+            self.lower_expr(e);
             return;
         }
         match &mut e.kind {
@@ -410,53 +412,6 @@ impl Lower {
             }
             // Handled by the pre-check above; never reached.
             ExprKind::BuilderBlock { .. } => unreachable!("BuilderBlock handled in lower_expr pre-check"),
-        }
-    }
-
-    /// v0.0.22 DSL.1: report E0910 for a builder block and replace it
-    /// with a placeholder `0` literal. Entry expressions are still
-    /// walked first so nested pattern-lets and nested builder blocks
-    /// surface their own diagnostics alongside.
-    fn reject_builder_block(&mut self, e: &mut Expr) {
-        let span = e.span;
-        let kind = std::mem::replace(
-            &mut e.kind,
-            ExprKind::IntLit(0, crate::lexer::NumSuffix::None),
-        );
-        let ExprKind::BuilderBlock { context, mut body } = kind else {
-            unreachable!("reject_builder_block called on a non-builder expression");
-        };
-        let ctx_name = context
-            .iter()
-            .map(|i| i.name.as_str())
-            .collect::<Vec<_>>()
-            .join("::");
-        self.err(
-            "E0910",
-            format!(
-                "builder block `@{ctx_name} {{ ... }}` is not supported yet: \
-                 parsing shipped in DSL.1; lowering to `{ctx_name}::Builder` \
-                 arrives in DSL.2"
-            ),
-            span,
-        );
-        for entry in &mut body.entries {
-            match entry {
-                BuilderEntry::Let(s) => self.lower_stmt(s),
-                BuilderEntry::Item { expr, modifiers } => {
-                    self.lower_expr(expr);
-                    for m in modifiers {
-                        match &mut m.kind {
-                            BuilderModifierKind::Assign(v) => self.lower_expr(v),
-                            BuilderModifierKind::Call(args) => {
-                                for a in args {
-                                    self.lower_expr(a);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1471,9 +1426,8 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
                 subst_expr(&mut a.body, consts);
             }
         }
-        // v0.0.22 DSL.1: walk const uses inside builder entries — `lower_expr`
-        // already rejected the block (E0910), but keep the substitution
-        // total over the tree.
+        // v0.0.22 DSL.2: never reached — builder blocks desugar before
+        // const substitution runs. Kept total over the tree anyway.
         ExprKind::BuilderBlock { body, .. } => {
             for entry in &mut body.entries {
                 match entry {
@@ -1498,6 +1452,167 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
                 }
             }
         }
+    }
+}
+
+/// v0.0.22 DSL.2: desugar a builder block `@ctx { ... }` into an
+/// ordinary block expression over the fixed builder protocol:
+///
+/// ```text
+/// {
+///     let mut __bS = ctx::Builder::new();
+///     let mut __iS0 = <item 0>;        // one per item entry
+///     __iS0.field = value;             // assign modifiers, in order
+///     __iS0.method(args);              // call modifiers, in order
+///     __bS.add(__iS0);
+///     <let entries spliced verbatim where they appear>
+///     __bS.finish()                    // block tail = the result
+/// }
+/// ```
+///
+/// Temporary names derive from byte offsets (`__b<block-start>`,
+/// `__i<item-start>`), which are unique within any one function body —
+/// deterministic across builds, no counter state. Synthesized nodes
+/// reuse the user's spans (item lets and `add` calls carry the item
+/// expression's span; modifier statements carry the modifier line's
+/// span; `Builder::new` carries the context path's span) so sema's
+/// ordinary diagnostics — unknown `ctx::Builder`, `add` argument type
+/// mismatch, no such field/method on the item — render at the
+/// user-written DSL line.
+///
+/// Called from the resolver's rewrite walk (multi-file: the synthesized
+/// `ctx::Builder::new()` path still needs alias rewriting) and from
+/// `lower_expr` (single-file mode). Nested builder blocks sit inside
+/// item initializers and desugar when the caller's walk reaches them.
+pub fn desugar_builder_block(e: &mut Expr) {
+    let block_span = e.span;
+    let kind = std::mem::replace(
+        &mut e.kind,
+        ExprKind::IntLit(0, crate::lexer::NumSuffix::None),
+    );
+    let ExprKind::BuilderBlock { context, body } = kind else {
+        unreachable!("desugar_builder_block called on a non-builder expression");
+    };
+
+    let ctx_span = context.last().map(|i| i.span).unwrap_or(block_span);
+    let b_name = format!("__b{}", block_span.start);
+
+    // let mut __bS = ctx::Builder::new();
+    let mut new_path = context;
+    new_path.push(Ident { name: "Builder".to_string(), span: ctx_span });
+    new_path.push(Ident { name: "new".to_string(), span: ctx_span });
+    let mut stmts: Vec<Stmt> = Vec::new();
+    stmts.push(Stmt {
+        kind: StmtKind::Let {
+            mutable: true,
+            name: Ident { name: b_name.clone(), span: ctx_span },
+            ty: None,
+            init: Some(Expr {
+                kind: ExprKind::Call {
+                    callee: Box::new(Expr {
+                        kind: ExprKind::Path { segments: new_path },
+                        span: ctx_span,
+                    }),
+                    args: Vec::new(),
+                    type_args: Vec::new(),
+                },
+                span: ctx_span,
+            }),
+        },
+        span: ctx_span,
+    });
+
+    for entry in body.entries {
+        match entry {
+            BuilderEntry::Let(s) => stmts.push(s),
+            BuilderEntry::Item { expr, modifiers } => {
+                let item_span = expr.span;
+                let i_name = format!("__i{}", item_span.start);
+                // let mut __iSn = <item>;
+                stmts.push(Stmt {
+                    kind: StmtKind::Let {
+                        mutable: true,
+                        name: Ident { name: i_name.clone(), span: item_span },
+                        ty: None,
+                        init: Some(expr),
+                    },
+                    span: item_span,
+                });
+                for m in modifiers {
+                    let place = Expr {
+                        kind: ExprKind::Field {
+                            receiver: Box::new(Expr {
+                                kind: ExprKind::Ident(i_name.clone()),
+                                span: m.name.span,
+                            }),
+                            name: m.name.clone(),
+                        },
+                        span: m.name.span,
+                    };
+                    let stmt_expr = match m.kind {
+                        // __iSn.field = value;
+                        BuilderModifierKind::Assign(value) => Expr {
+                            kind: ExprKind::Assign {
+                                op: AssignOp::Assign,
+                                target: Box::new(place),
+                                value: Box::new(value),
+                            },
+                            span: m.span,
+                        },
+                        // __iSn.method(args);
+                        BuilderModifierKind::Call(args) => Expr {
+                            kind: ExprKind::Call {
+                                callee: Box::new(place),
+                                args,
+                                type_args: Vec::new(),
+                            },
+                            span: m.span,
+                        },
+                    };
+                    stmts.push(Stmt {
+                        kind: StmtKind::Expr(stmt_expr),
+                        span: m.span,
+                    });
+                }
+                // __bS.add(__iSn);
+                stmts.push(Stmt {
+                    kind: StmtKind::Expr(method_call(&b_name, "add", vec![Expr {
+                        kind: ExprKind::Ident(i_name),
+                        span: item_span,
+                    }], item_span)),
+                    span: item_span,
+                });
+            }
+        }
+    }
+
+    // Tail: __bS.finish()
+    let finish = method_call(&b_name, "finish", Vec::new(), block_span);
+    e.kind = ExprKind::Block(Block {
+        stmts,
+        tail: Some(Box::new(finish)),
+        span: body.span,
+    });
+}
+
+/// `recv.method(args)` with every synthesized node stamped `span`.
+fn method_call(recv: &str, method: &str, args: Vec<Expr>, span: Span) -> Expr {
+    Expr {
+        kind: ExprKind::Call {
+            callee: Box::new(Expr {
+                kind: ExprKind::Field {
+                    receiver: Box::new(Expr {
+                        kind: ExprKind::Ident(recv.to_string()),
+                        span,
+                    }),
+                    name: Ident { name: method.to_string(), span },
+                },
+                span,
+            }),
+            args,
+            type_args: Vec::new(),
+        },
+        span,
     }
 }
 
@@ -1994,5 +2109,152 @@ mod tests {
         });
         let fld_ty = &s.unwrap().fields[0].ty;
         assert!(matches!(&fld_ty.kind, TypeKind::Array { len: 16, len_name: None, .. }));
+    }
+
+    // ---- v0.0.22 DSL.2: builder-block desugar ----
+
+    /// The desugared block from `let v = @... { ... };` in `src`, after
+    /// running the lowering pass.
+    fn desugared_builder(src: &str) -> Block {
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let ItemKind::Function(f) = &prog.items[0].kind else {
+            panic!("expected fn");
+        };
+        let StmtKind::Let { init: Some(init), .. } = &f.body.stmts[0].kind else {
+            panic!("expected let with init");
+        };
+        let ExprKind::Block(b) = &init.kind else {
+            panic!("expected desugared Block, got {:?}", init.kind);
+        };
+        b.clone()
+    }
+
+    /// `stmt` is `recv.method(...)`; return (recv, method).
+    fn as_method_call(s: &Stmt) -> (String, String) {
+        let StmtKind::Expr(e) = &s.kind else {
+            panic!("expected expression statement, got {:?}", s.kind);
+        };
+        let ExprKind::Call { callee, .. } = &e.kind else {
+            panic!("expected call, got {:?}", e.kind);
+        };
+        let ExprKind::Field { receiver, name } = &callee.kind else {
+            panic!("expected method callee, got {:?}", callee.kind);
+        };
+        let ExprKind::Ident(recv) = &receiver.kind else {
+            panic!("expected ident receiver, got {:?}", receiver.kind);
+        };
+        (recv.clone(), name.name.clone())
+    }
+
+    #[test]
+    fn builder_block_desugars_to_protocol_calls() {
+        let src = "fn main() -> i32 {\n    let v = @view {\n        text(1)\n            .font = 2\n            .pad(3)\n        text(4)\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        // let mut __b = view::Builder::new();
+        let StmtKind::Let { mutable: true, name, init: Some(init), .. } = &b.stmts[0].kind else {
+            panic!("expected builder let, got {:?}", b.stmts[0].kind);
+        };
+        assert!(name.name.starts_with("__b"), "builder temp: {}", name.name);
+        let ExprKind::Call { callee, .. } = &init.kind else {
+            panic!("expected Builder::new call");
+        };
+        let ExprKind::Path { segments } = &callee.kind else {
+            panic!("expected path callee, got {:?}", callee.kind);
+        };
+        let path: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(path, ["view", "Builder", "new"]);
+        // let mut __i = text(1);
+        let StmtKind::Let { mutable: true, name: item_name, .. } = &b.stmts[1].kind else {
+            panic!("expected item let, got {:?}", b.stmts[1].kind);
+        };
+        assert!(item_name.name.starts_with("__i"), "item temp: {}", item_name.name);
+        // __i.font = 2;
+        let StmtKind::Expr(assign) = &b.stmts[2].kind else {
+            panic!("expected assign stmt");
+        };
+        let ExprKind::Assign { op: AssignOp::Assign, target, .. } = &assign.kind else {
+            panic!("expected plain assign, got {:?}", assign.kind);
+        };
+        let ExprKind::Field { name: fld, .. } = &target.kind else {
+            panic!("expected field target");
+        };
+        assert_eq!(fld.name, "font");
+        // __i.pad(3); then __b.add(__i);
+        assert_eq!(as_method_call(&b.stmts[3]).1, "pad");
+        let (recv, m) = as_method_call(&b.stmts[4]);
+        assert_eq!((recv.starts_with("__b"), m.as_str()), (true, "add"));
+        // second item: let + add
+        assert!(matches!(&b.stmts[5].kind, StmtKind::Let { .. }));
+        assert_eq!(as_method_call(&b.stmts[6]).1, "add");
+        assert_eq!(b.stmts.len(), 7);
+        // tail: __b.finish()
+        let tail = b.tail.as_ref().expect("finish tail");
+        let ExprKind::Call { callee, .. } = &tail.kind else {
+            panic!("expected finish call");
+        };
+        let ExprKind::Field { name, .. } = &callee.kind else {
+            panic!("expected method callee");
+        };
+        assert_eq!(name.name, "finish");
+    }
+
+    #[test]
+    fn builder_block_let_entries_splice_in_order() {
+        let src = "fn main() -> i32 {\n    let v = @view {\n        let x = 1;\n        text(x)\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        // builder let, user let, item let, add — in that order.
+        assert_eq!(b.stmts.len(), 4);
+        let StmtKind::Let { name, .. } = &b.stmts[1].kind else {
+            panic!("expected spliced user let");
+        };
+        assert_eq!(name.name, "x");
+        assert_eq!(as_method_call(&b.stmts[3]).1, "add");
+    }
+
+    #[test]
+    fn nested_builder_blocks_desugar_recursively() {
+        let src = "fn main() -> i32 {\n    let v = @view {\n        @row {\n            text(1)\n        }\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        // The nested block is the item initializer — itself a desugared
+        // Block whose builder path is row::Builder::new.
+        let StmtKind::Let { init: Some(inner), .. } = &b.stmts[1].kind else {
+            panic!("expected nested item let");
+        };
+        let ExprKind::Block(inner) = &inner.kind else {
+            panic!("nested builder must desugar too, got {:?}", inner.kind);
+        };
+        let StmtKind::Let { init: Some(new_call), .. } = &inner.stmts[0].kind else {
+            panic!("expected inner builder let");
+        };
+        let ExprKind::Call { callee, .. } = &new_call.kind else {
+            panic!("expected inner Builder::new call");
+        };
+        let ExprKind::Path { segments } = &callee.kind else {
+            panic!("expected inner path callee");
+        };
+        assert_eq!(segments[0].name, "row");
+    }
+
+    #[test]
+    fn builder_temps_are_span_derived_and_distinct() {
+        let src = "fn main() -> i32 {\n    let a = @view {\n        text(1)\n    };\n    let b = @view {\n        text(2)\n    };\n    return 0;\n}\n";
+        let (prog, diags) = run(src);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        let ItemKind::Function(f) = &prog.items[0].kind else {
+            panic!("expected fn");
+        };
+        let mut names = Vec::new();
+        for s in &f.body.stmts {
+            if let StmtKind::Let { init: Some(init), .. } = &s.kind {
+                if let ExprKind::Block(b) = &init.kind {
+                    if let StmtKind::Let { name, .. } = &b.stmts[0].kind {
+                        names.push(name.name.clone());
+                    }
+                }
+            }
+        }
+        assert_eq!(names.len(), 2);
+        assert_ne!(names[0], names[1], "builder temps must not collide");
     }
 }

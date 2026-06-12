@@ -876,10 +876,11 @@ pub enum ExprKind {
     /// is the `::`-separated path naming the builder context (`@view`,
     /// `@ui::view`). The body is a dedicated representation, not a
     /// reused `Block`, because leading-dot modifier lines are not
-    /// general C+ statements. DSL.2 lowers this node to ordinary C+
-    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) before
-    /// sema; until then `lower` rejects it (E0910) so no later pass
-    /// observes one.
+    /// general C+ statements. DSL.2's `lower::desugar_builder_block`
+    /// rewrites this node to an ordinary block over the fixed protocol
+    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) during the
+    /// resolver walk (multi-file) or the lowering pass (single-file),
+    /// always before sema — no later pass observes one.
     BuilderBlock {
         context: Vec<Ident>,
         body: BuilderBlock,

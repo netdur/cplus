@@ -2599,9 +2599,9 @@ impl Parser {
     /// v0.0.22 DSL.1: contextual builder block — `@path { ... }`. Parses
     /// the context path, then the body: item-expression lines with their
     /// attached leading-dot modifier lines, plus `let` setup statements.
-    /// Produces `ExprKind::BuilderBlock`; lowering to ordinary C+ calls
-    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) is DSL.2 —
-    /// until that ships, `lower` rejects the node with E0910.
+    /// Produces `ExprKind::BuilderBlock`; DSL.2's
+    /// `lower::desugar_builder_block` rewrites it to ordinary C+ calls
+    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) before sema.
     fn parse_builder_block(&mut self) -> Result<Expr, ParseError> {
         let at_span = self.expect(&TokenKind::At, "`@`")?.span;
         let mut context = vec![self.expect_ident()?];

@@ -5,7 +5,7 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.22 — unreleased
 
-### Contextual builder blocks (DSL.1 — parser and AST)
+### Contextual builder blocks (DSL.1 parser + DSL.2 lowering)
 - New expression syntax `@ctx { ... }`: the contextual builder block.
   `ctx` is any module path (`@view`, `@ui::view`); the body holds item
   expressions, leading-dot modifier lines that apply to the item above
@@ -21,11 +21,23 @@ earlier history lives in each version's archived plan.
   no current item (including after an interposed `let`), and `return` /
   `break` / `continue` / `yield` / `await` / loops / `defer` / `guard`
   inside a block.
-- Blocks parse but do not lower yet: the compiler reports E0910 at the
-  block. DSL.2 ships the desugar to `ctx::Builder::new()` /
-  `builder.add(item)` / `builder.finish()`; DSL.3 adds contextual name
-  lookup; DSL.4 conditionals and formatter layout. `cpc fmt` already
-  keeps `@ctx` glued and round-trips builder blocks unchanged.
+- Blocks lower to the fixed builder protocol — ordinary package code,
+  no macros: `ctx::Builder::new()`, one temporary per item with its
+  modifiers applied (`__i.font = v`, `__i.method(args)`), `add(item)`
+  per item, and `finish()` as the block's value. `let` entries splice
+  through with ordinary block scoping; nested `@` blocks compose when
+  `finish` returns the item type; the empty block is `new` + `finish`.
+  Any package that ships `Builder` (`new`/`add`/`finish`), an item
+  type, and constructor functions becomes a construction DSL.
+- Synthesized nodes reuse the user's spans, so sema's ordinary
+  diagnostics land on the DSL lines: a wrong item type reports at the
+  item line, an unknown modifier field at the modifier line, a context
+  module without `Builder` at the `@ctx` line.
+- In this slice item constructors are written qualified
+  (`view::text(...)`); DSL.3 adds contextual lookup so bare
+  `text(...)` resolves through the context. DSL.4 covers conditionals
+  and formatter layout. `cpc fmt` already keeps `@ctx` glued and
+  round-trips builder blocks unchanged.
 
 ### Multi-backend consolidation
 - New `--min-os VERSION` flag (after `--target`): overrides the OS floor

@@ -2137,32 +2137,16 @@ fn rewrite_expr(
                 *name = ctx.qualify_local(name);
             }
         }
-        // v0.0.22 DSL.1: a builder block is a scope — `let` entries bind
-        // for the following entries and don't leak out. Item expressions
-        // and modifier operands get the same alias rewriting as any
-        // expression. Contextual (`ctx::name`) lookup is DSL.3 and does
-        // not affect alias rewriting.
-        ExprKind::BuilderBlock { body, .. } => {
-            let snapshot = scope.clone();
-            for entry in &mut body.entries {
-                match entry {
-                    BuilderEntry::Let(s) => rewrite_stmt(s, ctx, scope)?,
-                    BuilderEntry::Item { expr, modifiers } => {
-                        rewrite_expr(expr, ctx, scope)?;
-                        for m in modifiers {
-                            match &mut m.kind {
-                                BuilderModifierKind::Assign(v) => rewrite_expr(v, ctx, scope)?,
-                                BuilderModifierKind::Call(args) => {
-                                    for a in args {
-                                        rewrite_expr(a, ctx, scope)?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            *scope = snapshot;
+        // v0.0.22 DSL.2: desugar the builder block to its ordinary
+        // `Builder::new`/`add`/`finish` block BEFORE alias rewriting, so
+        // the synthesized `ctx::Builder::new()` path is rewritten like
+        // any user-written path, and `let` entries get ordinary block
+        // scoping. Contextual (`ctx::name`) lookup for bare item names
+        // is DSL.3.
+        ExprKind::BuilderBlock { .. } => {
+            crate::lower::desugar_builder_block(e);
+            // Re-dispatch on the freshly synthesized Block.
+            rewrite_expr(e, ctx, scope)?;
         }
         ExprKind::Block(b) => rewrite_block(b, ctx, scope)?,
         ExprKind::Unsafe(b) => rewrite_block(b, ctx, scope)?,
