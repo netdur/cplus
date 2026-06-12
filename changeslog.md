@@ -33,6 +33,12 @@ earlier history lives in each version's archived plan.
   JNI requires (the bare table pointer trips an ART abort).
 
 ### Compiler
+- File-aware spans: every span carries its source file (stamped at lex
+  time), so cross-file diagnostics route themselves, monomorphization's
+  call-site records cannot collide across files by construction (the
+  v0.0.20 `(origin_file, span)` compound key is gone), and
+  `#include_bytes`-style relative paths resolve against the call's own
+  file. Internal-only; no language-visible change.
 - String literals accept a bare `$` (previously an error; `$$` and
   `${...}` interpolation unchanged) — JNI descriptors for nested Java
   classes (`android/view/View$OnClickListener`) need it.

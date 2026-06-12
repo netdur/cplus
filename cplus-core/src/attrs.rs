@@ -432,9 +432,18 @@ impl Ctx {
         }
     }
 
-    /// Get the (path, source, LineMap) for the current item's file.
-    /// Falls back to the entry file (single-file mode, or pre-resolver items).
-    fn file_ctx(&self) -> (PathBuf, &str, &LineMap) {
+    /// Get the (path, source, LineMap) a span renders against. v0.0.22
+    /// file-aware: a stamped span (`span.file != 0`) routes itself; the
+    /// 0 sentinel falls back to the resolver-tagged current item's file,
+    /// then the entry file (single-file mode, or pre-resolver items).
+    fn file_ctx_for(&self, span: crate::lexer::Span) -> (PathBuf, &str, &LineMap) {
+        if span.file != 0 {
+            if let Some(fid) = crate::lexer::interned_file(span.file) {
+                if let Some((path, src, lm)) = self.files.get(&fid) {
+                    return (path.clone(), src.as_str(), lm);
+                }
+            }
+        }
         if let Some(id) = self.current_file.as_deref() {
             if let Some((path, src, lm)) = self.files.get(id) {
                 return (path.clone(), src.as_str(), lm);
@@ -448,7 +457,7 @@ impl Ctx {
     }
 
     fn make_span(&self, span: crate::lexer::Span) -> SourceSpan {
-        let (path, src, lm) = self.file_ctx();
+        let (path, src, lm) = self.file_ctx_for(span);
         lm.span(&path, span, src)
     }
 

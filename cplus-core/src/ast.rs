@@ -2,7 +2,10 @@ use crate::lexer::{NumSuffix, Span};
 
 impl Span {
     pub fn merge(self, other: Span) -> Span {
-        Span::new(self.start.min(other.start), self.end.max(other.end))
+        // File-aware: a merged span keeps the real file id when either
+        // side has one (synthesized 0-spans merge transparently).
+        let file = if self.file != 0 { self.file } else { other.file };
+        Span::in_file(file, self.start.min(other.start), self.end.max(other.end))
     }
 }
 

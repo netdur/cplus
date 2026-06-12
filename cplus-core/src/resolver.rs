@@ -954,7 +954,14 @@ impl Loader {
         // first parse error hits the entry file.
         self.raw_sources
             .insert(canonical.clone(), source.clone());
-        let tokens = crate::lexer::tokenize(&source).map_err(|e| ResolveError::Lex {
+        // v0.0.22 file-aware spans: derive + intern the file id BEFORE
+        // lexing so every span this file produces carries it. Diagnostics
+        // and monomorphization route by `span.file` from here on; the
+        // per-item `origin_file` strings remain as the fallback for
+        // synthesized (file-less) spans.
+        let file_id = derive_file_id(&canonical, &self.manifest_root);
+        let file_idx = crate::lexer::intern_file(&file_id);
+        let tokens = crate::lexer::tokenize_with_file(&source, file_idx).map_err(|e| ResolveError::Lex {
             path: canonical.clone(),
             source: e,
         })?;
@@ -962,8 +969,6 @@ impl Loader {
             path: canonical.clone(),
             source: e,
         })?;
-
-        let file_id = derive_file_id(&canonical, &self.manifest_root);
 
         self.by_canonical.insert(canonical.clone(), file_id.clone());
         let unit = FileUnit {

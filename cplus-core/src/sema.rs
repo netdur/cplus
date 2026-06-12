@@ -471,20 +471,13 @@ pub fn check(program: &Program, file: PathBuf, src: &str) -> Vec<Diagnostic> {
 #[derive(Debug, Default, Clone)]
 pub struct MonoInfo {
     pub instantiations: std::collections::BTreeSet<(String, Vec<Ty>)>,
-    /// Maps each generic-fn call site to its concrete arg list. Keyed by
-    /// `(origin_file, span)`: a `ByteSpan` is file-less (`{start, end}`
-    /// byte offsets), so two inferred generic calls at the same byte offset
-    /// in different files would otherwise collide and select the wrong
-    /// instantiation. The file component (sema's `current_file` at record
-    /// time; the rewriter's per-item `call_mono_file` at lookup time)
-    /// disambiguates them. Turbofish calls don't consult this map — they
-    /// mangle directly from the AST type-args (collision-free).
-    pub call_monos: HashMap<(Option<String>, ByteSpan), Vec<Ty>>,
-    /// Rewriter scratch (monomorphize only): the `origin_file` of the item
-    /// currently being rewritten, set per-item so the `call_monos` lookup
-    /// can supply the matching file component. Interior-mutable because the
-    /// rewriter threads `&MonoInfo` everywhere; never read by sema.
-    pub call_mono_file: std::cell::RefCell<Option<String>>,
+    /// Maps each generic-fn call site to its concrete arg list, keyed by
+    /// the call expression's span. v0.0.22 file-aware spans carry their
+    /// file id, so same-offset calls in different files no longer collide
+    /// (the v0.0.20 fix keyed this by `(origin_file, span)`; the span now
+    /// disambiguates itself). Turbofish calls don't consult this map —
+    /// they mangle directly from the AST type-args (collision-free).
+    pub call_monos: HashMap<ByteSpan, Vec<Ty>>,
     /// Slice 7GEN.5c: generic-struct instantiations. Maps
     /// `(generic_name, [concrete_args])` to the synthesized
     /// `StructDef` (cloned out of sema's table so monomorphize can
@@ -872,7 +865,6 @@ fn check_with_files_inner<'a>(
     let mono = MonoInfo {
         instantiations: std::mem::take(&mut cx.fn_instantiations),
         call_monos: std::mem::take(&mut cx.call_monos),
-        call_mono_file: std::cell::RefCell::new(None),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
         struct_instantiations,
         enum_instantiations,
@@ -1073,7 +1065,7 @@ struct SemaCx<'a> {
     /// callee name. Keyed by `(origin_file, span)` so same-offset call
     /// sites in different files don't collide (a `ByteSpan` is file-less);
     /// the file component is `current_file` at record time.
-    call_monos: HashMap<(Option<String>, ByteSpan), Vec<Ty>>,
+    call_monos: HashMap<ByteSpan, Vec<Ty>>,
     /// v0.0.4 Phase 1C: `Type[args]::name(...)` call sites that resolved
     /// to a free generic fn (not an impl method). Maps the
     /// `GenericEnumCall`'s span to the qualified free fn name sema
@@ -1179,15 +1171,32 @@ pub struct GenericImplMethodTemplate {
 impl SemaCx<'_> {
     // ---- diagnostic helpers ----
 
-    fn err(&mut self, code: &'static str, msg: String, span: ByteSpan) {
-        // Slice 4C: route through `current_file` so a span belonging to
-        // an imported file renders with that file's path + line/col.
-        // Falls back to the entry/default context for any item that
-        // wasn't tagged by the resolver (single-file mode, builtins).
-        let primary = match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
+    /// v0.0.22 file-aware spans: the FileCtx a span stamps itself with
+    /// (`span.file` → intern table → files map). `None` for the 0
+    /// sentinel (synthesized spans, single-file mode) or unknown ids.
+    fn span_file_ctx(&self, span: ByteSpan) -> Option<&FileCtx> {
+        if span.file == 0 {
+            return None;
+        }
+        let fid = crate::lexer::interned_file(span.file)?;
+        self.files.get(&fid)
+    }
+
+    /// Render `span` against its own file when stamped, else through the
+    /// resolver-tagged `current_file` (synthesized spans inherit the
+    /// surrounding item's file), else the entry/default context.
+    fn primary_for(&self, span: ByteSpan) -> crate::diagnostics::SourceSpan {
+        if let Some(fc) = self.span_file_ctx(span) {
+            return fc.lm.span(&fc.path, span, &fc.src);
+        }
+        match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
             Some(fc) => fc.lm.span(&fc.path, span, &fc.src),
             None => self.lm.span(&self.file, span, self.src),
-        };
+        }
+    }
+
+    fn err(&mut self, code: &'static str, msg: String, span: ByteSpan) {
+        let primary = self.primary_for(span);
         self.sink.emit(Diagnostic {
             severity: Severity::Error,
             code: DiagCode(code),
@@ -1205,10 +1214,7 @@ impl SemaCx<'_> {
     /// obvious — e.g. the removed `string` type (v0.0.18) pointing at the
     /// stdlib `Text` replacement.
     fn err_note(&mut self, code: &'static str, msg: String, span: ByteSpan, notes: Vec<String>) {
-        let primary = match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
-            Some(fc) => fc.lm.span(&fc.path, span, &fc.src),
-            None => self.lm.span(&self.file, span, self.src),
-        };
+        let primary = self.primary_for(span);
         self.sink.emit(Diagnostic {
             severity: Severity::Error,
             code: DiagCode(code),
@@ -1240,10 +1246,7 @@ impl SemaCx<'_> {
     /// Used for lints that flag a likely mistake without rejecting code that
     /// is occasionally legitimate.
     fn warn(&mut self, code: &'static str, msg: String, span: ByteSpan) {
-        let primary = match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
-            Some(fc) => fc.lm.span(&fc.path, span, &fc.src),
-            None => self.lm.span(&self.file, span, self.src),
-        };
+        let primary = self.primary_for(span);
         self.sink.emit(Diagnostic {
             severity: Severity::Warning,
             code: DiagCode(code),
@@ -6724,19 +6727,23 @@ impl SemaCx<'_> {
         span: ByteSpan,
         macro_name: &'static str,
     ) -> Option<(std::path::PathBuf, Vec<u8>)> {
-        let base_dir: std::path::PathBuf =
-            match self.current_file.as_ref().and_then(|f| self.files.get(f)) {
-                Some(fc) => fc
-                    .path
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_default(),
-                None => self
-                    .file
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_default(),
-            };
+        // File-aware: the intrinsic call's span routes the relative-path
+        // base to its own file (falling back to current_file / entry).
+        let base_dir: std::path::PathBuf = match self
+            .span_file_ctx(span)
+            .or_else(|| self.current_file.as_ref().and_then(|f| self.files.get(f)))
+        {
+            Some(fc) => fc
+                .path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default(),
+            None => self
+                .file
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default(),
+        };
         let raw = std::path::PathBuf::from(path);
         let resolved = if raw.is_absolute() {
             raw
@@ -8857,8 +8864,7 @@ impl SemaCx<'_> {
             );
             self.fn_instantiations
                 .insert((name.to_string(), concrete_args.clone()));
-            self.call_monos
-            .insert((self.current_file.clone(), call_span), concrete_args.clone());
+            self.call_monos.insert(call_span, concrete_args.clone());
             return self.subst_ty_deep(&gsig.return_type, &subst);
         }
         // Infer concrete types per param position, then unify.
@@ -8916,8 +8922,7 @@ impl SemaCx<'_> {
         // monomorphize pass; sema only records the concrete args.
         self.fn_instantiations
             .insert((name.to_string(), concrete_args.clone()));
-        self.call_monos
-            .insert((self.current_file.clone(), call_span), concrete_args.clone());
+        self.call_monos.insert(call_span, concrete_args.clone());
         // Substitute the return type and return it as the call's type.
         self.subst_ty_deep(&gsig.return_type, &subst)
     }
@@ -9473,8 +9478,7 @@ impl SemaCx<'_> {
         );
         let key = (struct_id, name.name.clone(), arg_tys.clone());
         self.method_instantiations.insert(key);
-        self.call_monos
-            .insert((self.current_file.clone(), call_span), arg_tys);
+        self.call_monos.insert(call_span, arg_tys);
         self.subst_ty_deep(&sig.return_type, &subst)
     }
 

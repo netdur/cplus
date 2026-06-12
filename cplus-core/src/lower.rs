@@ -119,10 +119,17 @@ impl Lower {
         self.current_file = id.map(String::from);
     }
 
-    /// (path, source, LineMap) for the current item's file, falling back to the
-    /// entry file (single-file mode, or items synthesized after resolver merge
-    /// that carry no `origin_file`).
-    fn file_ctx(&self) -> (&PathBuf, &str, &LineMap) {
+    /// (path, source, LineMap) a span renders against. v0.0.22
+    /// file-aware: a stamped span routes itself; the 0 sentinel falls
+    /// back to the current item's file, then the entry file.
+    fn file_ctx_for(&self, span: Span) -> (&PathBuf, &str, &LineMap) {
+        if span.file != 0 {
+            if let Some(fid) = crate::lexer::interned_file(span.file) {
+                if let Some((path, src, lm)) = self.files.get(&fid) {
+                    return (path, src.as_str(), lm);
+                }
+            }
+        }
         if let Some(id) = self.current_file.as_deref() {
             if let Some((path, src, lm)) = self.files.get(id) {
                 return (path, src.as_str(), lm);
@@ -133,7 +140,7 @@ impl Lower {
 
     fn err(&mut self, code: &'static str, message: String, span: Span) {
         let primary = {
-            let (path, src, lm) = self.file_ctx();
+            let (path, src, lm) = self.file_ctx_for(span);
             lm.span(path, span, src)
         };
         self.diags.push(Diagnostic {

@@ -4,12 +4,45 @@ use std::fmt;
 pub struct Span {
     pub start: u32,
     pub end: u32,
+    /// v0.0.22 file-aware spans: the intern id of the file this span
+    /// points into (see [`intern_file`]), stamped at tokenize time.
+    /// `0` = no file info — synthesized spans and single-file mode —
+    /// which falls back to the consumer's entry/default context.
+    pub file: u32,
 }
 
 impl Span {
     pub fn new(start: u32, end: u32) -> Self {
-        Self { start, end }
+        Self { start, end, file: 0 }
     }
+
+    pub fn in_file(file: u32, start: u32, end: u32) -> Self {
+        Self { start, end, file }
+    }
+}
+
+/// Process-global file intern table for [`Span::file`]. Ids start at 1
+/// (0 is the no-info sentinel). Interning is idempotent per name, so a
+/// long-lived process (the LSP) grows the table only with its workspace.
+static FILE_TABLE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn intern_file(id: &str) -> u32 {
+    let mut table = FILE_TABLE.lock().unwrap();
+    if let Some(pos) = table.iter().position(|e| e == id) {
+        return (pos + 1) as u32;
+    }
+    table.push(id.to_string());
+    table.len() as u32
+}
+
+/// The file id interned as `file`, or `None` for the 0 sentinel /
+/// unknown ids.
+pub fn interned_file(file: u32) -> Option<String> {
+    if file == 0 {
+        return None;
+    }
+    let table = FILE_TABLE.lock().unwrap();
+    table.get((file - 1) as usize).cloned()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,7 +192,15 @@ impl fmt::Display for LexError {
 }
 
 pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
-    tokenize_inner(src, false)
+    tokenize_inner(src, false, 0)
+}
+
+/// v0.0.22 file-aware spans: like `tokenize`, with every span stamped
+/// with `file` (an id from [`intern_file`]). The resolver lexes each
+/// project file through this so diagnostics and monomorphization route
+/// by the span itself instead of per-item `origin_file` bookkeeping.
+pub fn tokenize_with_file(src: &str, file: u32) -> Result<Vec<Token>, LexError> {
+    tokenize_inner(src, false, file)
 }
 
 /// Like `tokenize`, but emits `LineComment` and `BlockComment` tokens
@@ -168,12 +209,13 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
 /// discarded — the formatter recovers newline placement by inspecting
 /// byte gaps between consecutive token spans against the original source.
 pub fn tokenize_with_trivia(src: &str) -> Result<Vec<Token>, LexError> {
-    tokenize_inner(src, true)
+    tokenize_inner(src, true, 0)
 }
 
-fn tokenize_inner(src: &str, keep_comments: bool) -> Result<Vec<Token>, LexError> {
+fn tokenize_inner(src: &str, keep_comments: bool, file: u32) -> Result<Vec<Token>, LexError> {
     let mut lx = Lexer::new(src);
     lx.keep_comments = keep_comments;
+    lx.file = file;
     let mut out = Vec::new();
     loop {
         match lx.next_token()? {
@@ -193,11 +235,13 @@ struct Lexer<'a> {
     /// `BlockComment` tokens instead of being silently skipped. Default
     /// false to preserve the existing token-stream contract.
     keep_comments: bool,
+    /// v0.0.22: the [`intern_file`] id stamped into every produced span.
+    file: u32,
 }
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, keep_comments: false }
+        Self { src: src.as_bytes(), pos: 0, keep_comments: false, file: 0 }
     }
 
     fn peek(&self, off: usize) -> Option<u8> {
@@ -211,7 +255,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn span_from(&self, start: usize) -> Span {
-        Span::new(start as u32, self.pos as u32)
+        Span::in_file(self.file, start as u32, self.pos as u32)
     }
 
     /// Skip whitespace and (when `keep_comments` is false) comments.
@@ -250,7 +294,7 @@ impl<'a> Lexer<'a> {
                 (Some(_), _) => { self.pos += 1; }
                 (None, _) => return Err(LexError {
                     kind: LexErrorKind::UnterminatedBlockComment,
-                    span: Span::new(start as u32, self.pos as u32),
+                    span: Span::in_file(self.file, start as u32, self.pos as u32),
                 }),
             }
         }
@@ -389,7 +433,7 @@ impl<'a> Lexer<'a> {
                     Some(other) => {
                         return Err(LexError {
                             kind: LexErrorKind::UnexpectedChar(other as char),
-                            span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                            span: Span::in_file(self.file, self.pos as u32, self.pos as u32 + 1),
                         });
                     }
                     None => {
@@ -432,7 +476,7 @@ impl<'a> Lexer<'a> {
             }
             Some(other) => Err(LexError {
                 kind: LexErrorKind::UnexpectedChar(other as char),
-                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                span: Span::in_file(self.file, self.pos as u32, self.pos as u32 + 1),
             }),
             None => Err(LexError {
                 kind: LexErrorKind::UnterminatedString,
@@ -551,7 +595,7 @@ impl<'a> Lexer<'a> {
                         Some(other) => {
                             return Err(LexError {
                                 kind: LexErrorKind::UnexpectedChar(other as char),
-                                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                                span: Span::in_file(self.file, self.pos as u32, self.pos as u32 + 1),
                             });
                         }
                         None => {
@@ -597,7 +641,7 @@ impl<'a> Lexer<'a> {
                                         // design doc spells this out.
                                         return Err(LexError {
                                             kind: LexErrorKind::UnexpectedChar('"'),
-                                            span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                                            span: Span::in_file(self.file, self.pos as u32, self.pos as u32 + 1),
                                         });
                                     }
                                     Some(_) => { self.pos += 1; }
@@ -609,7 +653,7 @@ impl<'a> Lexer<'a> {
                                 .to_string();
                             parts.push(InterpPart::Expr {
                                 source: inner_source,
-                                span: Span::new(inner_start as u32, inner_end as u32),
+                                span: Span::in_file(self.file, inner_start as u32, inner_end as u32),
                             });
                             self.pos += 1; // skip the closing `}`
                         }
@@ -706,7 +750,7 @@ impl<'a> Lexer<'a> {
                         Some(other) => {
                             return Err(LexError {
                                 kind: LexErrorKind::UnexpectedChar(other as char),
-                                span: Span::new(self.pos as u32, self.pos as u32 + 1),
+                                span: Span::in_file(self.file, self.pos as u32, self.pos as u32 + 1),
                             });
                         }
                         None => {
@@ -857,7 +901,7 @@ impl<'a> Lexer<'a> {
                     if is_ident_continue(c) { self.pos += 1; } else { break; }
                 }
                 let s = std::str::from_utf8(&self.src[suf_start..self.pos]).unwrap();
-                Some((s.to_string(), Span::new(suf_start as u32, self.pos as u32)))
+                Some((s.to_string(), Span::in_file(self.file, suf_start as u32, self.pos as u32)))
             } else { None }
         } else { None };
 
@@ -1494,6 +1538,32 @@ mod tests {
     /// `$`) is a literal `$` — JNI descriptors for nested Java classes
     /// need it (`android/view/View$OnClickListener`). `$$` stays the
     /// escape and `${...}` stays interpolation.
+    /// v0.0.22 file-aware spans: `tokenize_with_file` stamps every span
+    /// (including interpolation parts) with the given intern id; plain
+    /// `tokenize` keeps the 0 sentinel; `intern_file` is idempotent.
+    #[test]
+    fn tokenize_with_file_stamps_every_span() {
+        let f = intern_file("test/span_stamp.cplus");
+        assert_eq!(intern_file("test/span_stamp.cplus"), f, "interning is idempotent");
+        assert_eq!(interned_file(f).as_deref(), Some("test/span_stamp.cplus"));
+        assert_eq!(interned_file(0), None, "0 is the no-info sentinel");
+
+        let toks = tokenize_with_file("fn main() { let s = \"n is ${n}\"; }", f).unwrap();
+        for t in &toks {
+            assert_eq!(t.span.file, f, "token {:?} missing file stamp", t.kind);
+            if let TokenKind::InterpStr(parts) = &t.kind {
+                for part in parts {
+                    if let InterpPart::Expr { span, .. } = part {
+                        assert_eq!(span.file, f, "interp expr span missing file stamp");
+                    }
+                }
+            }
+        }
+        // The default path keeps the sentinel.
+        let toks = tokenize("fn f() {}").unwrap();
+        assert!(toks.iter().all(|t| t.span.file == 0));
+    }
+
     #[test]
     fn bare_dollar_in_string_is_literal() {
         assert_eq!(

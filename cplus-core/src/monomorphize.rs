@@ -150,16 +150,6 @@ pub fn monomorphize(
         })
         .collect();
     for item in program.items {
-        // Carry the current item's source file into the rewriter so the
-        // `call_monos` lookup in `rewrite_expr` can supply the matching file
-        // component — `Span` is file-less, and two inferred generic calls at
-        // the same byte offset in different files would otherwise resolve to
-        // the same (wrong) instantiation. Set once here so every rewrite path
-        // below (synthesize_fn / synthesize_generic_typed_impls /
-        // rewrite_item_calls) sees the right file. Synthesized generic-body
-        // calls carry their template's file and find no `call_monos` entry
-        // (sema doesn't record generic bodies), so this never mis-hits.
-        *mono.call_mono_file.borrow_mut() = item.origin_file.clone();
         match &item.kind {
             ItemKind::Function(f) if !f.generic_params.is_empty() => {
                 // Generic template — emit one synthesized concrete fn
@@ -1099,7 +1089,7 @@ fn visit_ident_calls_in_block(
 fn propagate_fn_instantiations(
     program: &Program,
     initial: &std::collections::BTreeSet<(String, Vec<Ty>)>,
-    _call_monos: &std::collections::HashMap<(Option<String>, crate::lexer::Span), Vec<Ty>>,
+    _call_monos: &std::collections::HashMap<crate::lexer::Span, Vec<Ty>>,
     struct_instantiations: &std::collections::BTreeMap<
         (String, Vec<Ty>),
         crate::sema::StructInstantiationInfo,
@@ -1938,11 +1928,10 @@ fn rewrite_expr(
             // Slice 7GEN.5e: extended from generic-fn (Ident callee) only
             // to also include generic methods (Field callee) and
             // generic associated functions (Path callee).
-            // Keyed by `(origin_file, span)` — the rewriter loop set
-            // `call_mono_file` to this item's file so a same-offset call site
-            // in another file can't shadow this one's recorded type-args.
-            let call_mono_key = (mono.call_mono_file.borrow().clone(), expr.span);
-            let args_for_call_opt = mono.call_monos.get(&call_mono_key);
+            // v0.0.22 file-aware spans: the span carries its file id, so
+            // same-offset call sites in different files key distinctly on
+            // their own.
+            let args_for_call_opt = mono.call_monos.get(&expr.span);
             // v0.0.4 Phase 1B: resolve the call site's effective concrete
             // type-args. Two sources:
             //   - `call_monos`: sema's record (may contain `Ty::Param(T)`
@@ -1969,8 +1958,7 @@ fn rewrite_expr(
             let new_callee: Expr = match (&callee.kind, resolved_args_for_call.as_ref()) {
                 // v0.0.19: a turbofish generic-fn call mangles its callee
                 // directly from the (collision-free) AST type-args, never
-                // consulting the file-less-span `call_monos`. See
-                // `mangle_call_from_ast`.
+                // consulting `call_monos`. See `mangle_call_from_ast`.
                 (ExprKind::Ident(cname), _)
                     if generic_names.contains(cname) && !type_args.is_empty() =>
                 {
