@@ -9,6 +9,7 @@ C+ is an experimental, safety-oriented systems programming language and toolchai
 C+ provides the necessary primitives for low-level systems programming:
 - **Safety**: Ownership, borrow checking, memory-safe abstractions, and raw-pointer accountability (every `*T` field must be released or marked `opaque`). No `null` in safe code.
 - **Modern Constructs**: Structs, tagged enums, generics, interfaces, methods, and modules.
+- **Package-extensible DSLs**: `@view { ... }` contextual builder blocks let a package expose concise declarative construction syntax (UI trees, route tables, config) without macros, closures, or compiler plugins. The compiler owns only the `@context { ... }` syntax, contextual name lookup, leading-dot modifiers, and `if`/`for` item-control; a package supplies ordinary builder types and element constructors. Bare child elements (`vstack { ... }`) nest within the same context.
 - **Low-Level Control**: Raw pointers, `unsafe` blocks, `#[repr(C)]`, SIMD primitives, atomics, threads, compiler-checked real-time contracts (`#[no_alloc]` / `#[realtime]`), and direct LLVM IR generation.
 - **C Interoperability**: Seamless C ABI interop, `extern fn`, and clang-based linking.
 - **Multi-target**: `--target` cross-compiles for iOS (`ios-arm64`), Android (`android-arm64`, via the NDK's clang), and ESP32 (`esp32-xtensa`, 32-bit, via Espressif's esp-clang). cpc emits the object or static library; the platform's build system (Xcode, Gradle/NDK, ESP-IDF) owns the final link. Compiler-checked `#[realtime]` code runs on a $4 microcontroller.

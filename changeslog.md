@@ -3,7 +3,14 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
-## v0.0.22 — unreleased
+## v0.0.22 — 2026-06-13
+
+> **Language feature freeze.** v0.0.22 is the last release to add language
+> surface (syntax or semantics). From here on the language itself accepts
+> **bug fixes only** — no new keywords, expressions, or type-system
+> changes. New capability goes into **packages** (`vendor/`) and tooling,
+> never the core language. The contextual builder-block DSL below is the
+> final language feature to land.
 
 ### Contextual builder blocks (DSL.1–4: parser, lowering, lookup, containers + flow control)
 - New expression syntax `@ctx { ... }`: the contextual builder block.
