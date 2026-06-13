@@ -2134,6 +2134,80 @@ fn rewrite_stmt(
 /// written qualified; that is consistent with DSL.3's scope (item
 /// constructors and modifier operands) and avoids tracking inner-block
 /// bindings here.
+/// v0.0.22 DSL.3/DSL.4: apply contextual lookup across a builder body.
+/// Walks entries in source order, tracking block-level locals (each `let`
+/// binding extends them for following entries). Leaf item exprs and
+/// modifier operands are contextualized; `if`/`for` bodies recurse (the
+/// `for` var binds inside its body). A container item expr is itself a
+/// builder block — its bare names resolve in the SAME enclosing context,
+/// so we just propagate the context into its (currently empty) `context`
+/// field and leave its own entries to its later arm.
+fn contextualize_entries(
+    entries: &mut [BuilderEntry],
+    context: &[Ident],
+    locals: &HashSet<String>,
+    ctx: &RewriteCtx,
+) {
+    let mut locals = locals.clone();
+    for entry in entries {
+        match entry {
+            BuilderEntry::Let(s) => {
+                if let StmtKind::Let { init: Some(init), .. } = &mut s.kind {
+                    contextualize_builder_idents(init, context, &locals, ctx);
+                }
+                if let StmtKind::Let { name, .. } = &s.kind {
+                    locals.insert(name.name.clone());
+                }
+            }
+            BuilderEntry::Item { expr, modifiers } => {
+                if let ExprKind::BuilderBlock {
+                    context: cctx,
+                    container: Some(_),
+                    ..
+                } = &mut expr.kind
+                {
+                    // Container element: inherit the enclosing context so its
+                    // later arm builds `ctx::name` and resolves its children
+                    // in `ctx`. Its own entries are contextualized then.
+                    if cctx.is_empty() {
+                        *cctx = context.to_vec();
+                    }
+                } else {
+                    contextualize_builder_idents(expr, context, &locals, ctx);
+                }
+                for m in modifiers {
+                    // The modifier name itself (`m.name`) is a field/method on
+                    // the current item, never a contextual lookup — only its
+                    // operands are.
+                    match &mut m.kind {
+                        BuilderModifierKind::Assign(v) => {
+                            contextualize_builder_idents(v, context, &locals, ctx)
+                        }
+                        BuilderModifierKind::Call(args) => {
+                            for a in args {
+                                contextualize_builder_idents(a, context, &locals, ctx);
+                            }
+                        }
+                    }
+                }
+            }
+            BuilderEntry::If { cond, then, else_ } => {
+                contextualize_builder_idents(cond, context, &locals, ctx);
+                contextualize_entries(then, context, &locals, ctx);
+                if let Some(eb) = else_ {
+                    contextualize_entries(eb, context, &locals, ctx);
+                }
+            }
+            BuilderEntry::For { var, iter, body } => {
+                contextualize_builder_idents(iter, context, &locals, ctx);
+                let mut body_locals = locals.clone();
+                body_locals.insert(var.name.clone());
+                contextualize_entries(body, context, &body_locals, ctx);
+            }
+        }
+    }
+}
+
 fn contextualize_builder_idents(
     e: &mut Expr,
     context: &[Ident],
@@ -2273,44 +2347,20 @@ fn rewrite_expr(
         // like any user-written path. `let` entries get ordinary block
         // scoping.
         ExprKind::BuilderBlock { .. } => {
-            if let ExprKind::BuilderBlock { context, body } = &mut e.kind {
+            if let ExprKind::BuilderBlock { context, body, .. } = &mut e.kind {
+                // For a root `@`-block this is its own context path; for a
+                // container element the parent's pass already filled it
+                // (the inherited context). Block-level locals start from the
+                // outer scope; `let` entries extend them in source order.
                 let context = context.clone();
-                // Block-level locals: outer scope, plus each `let` entry
-                // binding as it is introduced (so later items see it).
-                let mut locals: HashSet<String> = scope.clone();
-                for entry in &mut body.entries {
-                    match entry {
-                        BuilderEntry::Let(s) => {
-                            if let StmtKind::Let { init: Some(init), .. } = &mut s.kind {
-                                contextualize_builder_idents(init, &context, &locals, ctx);
-                            }
-                            if let StmtKind::Let { name, .. } = &s.kind {
-                                locals.insert(name.name.clone());
-                            }
-                        }
-                        BuilderEntry::Item { expr, modifiers } => {
-                            contextualize_builder_idents(expr, &context, &locals, ctx);
-                            for m in modifiers {
-                                // The modifier name itself (`m.name`) is a
-                                // field/method on the current item, never a
-                                // contextual lookup — only its operands are.
-                                match &mut m.kind {
-                                    BuilderModifierKind::Assign(v) => {
-                                        contextualize_builder_idents(v, &context, &locals, ctx)
-                                    }
-                                    BuilderModifierKind::Call(args) => {
-                                        for a in args {
-                                            contextualize_builder_idents(a, &context, &locals, ctx);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                let locals: HashSet<String> = scope.clone();
+                contextualize_entries(&mut body.entries, &context, &locals, ctx);
             }
             crate::lower::desugar_builder_block(e);
-            // Re-dispatch on the freshly synthesized Block.
+            // Re-dispatch on the freshly synthesized Block. Container item
+            // exprs are still `BuilderBlock` nodes (their context was set
+            // by `contextualize_entries`); this recursion reaches each one
+            // and runs the same arm — contextual lookup + desugar.
             rewrite_expr(e, ctx, scope)?;
         }
         ExprKind::Block(b) => rewrite_block(b, ctx, scope)?,

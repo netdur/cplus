@@ -563,13 +563,21 @@ mod tests {
     #[test]
     fn builder_block_at_marker_tight_and_idempotent() {
         // v0.0.22 DSL.1: `@` adjoins the context path, and a builder
-        // block with modifier lines round-trips unchanged (full builder
-        // layout rules are DSL.4).
+        // block with modifier lines round-trips unchanged.
         let src = "fn f() -> i32 {\n    let v = @view {\n        text(\"a\")\n            .font = bigger\n    };\n    return 0;\n}\n";
         let out = fmt(src);
         assert!(out.contains("@view {"), "got: {out}");
         assert!(!out.contains("@ view"), "got: {out}");
         assert_eq!(fmt(&out), out, "format must be idempotent on builder blocks");
+    }
+
+    #[test]
+    fn builder_block_containers_and_flow_idempotent() {
+        // v0.0.22 DSL.4: bare container elements and `if`/`for`
+        // item-control round-trip unchanged (token-level formatting).
+        let src = "fn f() -> i32 {\n    let v = @view {\n        vstack {\n            text(1)\n            if flag {\n                text(2)\n            }\n            for x in xs {\n                row(x)\n            }\n        }\n    };\n    return 0;\n}\n";
+        let out = fmt(src);
+        assert_eq!(fmt(&out), out, "format must be idempotent on DSL.4 builder blocks");
     }
 
     #[test]

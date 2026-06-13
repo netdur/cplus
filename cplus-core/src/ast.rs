@@ -872,24 +872,36 @@ pub enum ExprKind {
         operands: Vec<AsmOperand>,
         clobbers: Vec<String>,
     },
-    /// v0.0.22 DSL.1: contextual builder block `@ctx { ... }`. `context`
-    /// is the `::`-separated path naming the builder context (`@view`,
-    /// `@ui::view`). The body is a dedicated representation, not a
-    /// reused `Block`, because leading-dot modifier lines are not
-    /// general C+ statements. DSL.2's `lower::desugar_builder_block`
-    /// rewrites this node to an ordinary block over the fixed protocol
-    /// (`ctx::Builder::new()` / `.add(item)` / `.finish()`) during the
-    /// resolver walk (multi-file) or the lowering pass (single-file),
-    /// always before sema — no later pass observes one.
+    /// v0.0.22 DSL.1–4: contextual builder block. Two surface forms share
+    /// this node:
+    ///   - the root `@ctx { ... }` (`container` is `None`): `context` is
+    ///     the explicit `::`-separated path (`@view`, `@ui::view`);
+    ///   - a bare container element `name { ... }` written *inside* a
+    ///     builder block (`container` is `Some(name)`, DSL.4): `context`
+    ///     is empty at parse time and filled with the *enclosing* block's
+    ///     context during resolution (a `vstack` inside `@view` builds
+    ///     `view::vstack`, and its children resolve in `view` too).
+    ///
+    /// The body is a dedicated representation, not a reused `Block`,
+    /// because leading-dot modifier lines and `if`/`for` item-control are
+    /// not general C+ statements. `lower::desugar_builder_block` (run in
+    /// the resolver walk for projects, the lowering pass for single-file,
+    /// always before sema) rewrites the node to an ordinary block over
+    /// the fixed protocol: the root finishes with `ctx::Builder::finish()`,
+    /// a container finishes with `ctx::name(builder)`. No later pass sees
+    /// one.
     BuilderBlock {
         context: Vec<Ident>,
         body: BuilderBlock,
+        /// `None` for a root `@`-block; `Some(name)` for a bare
+        /// container element (DSL.4).
+        container: Option<Ident>,
     },
 }
 
-/// v0.0.22 DSL.1: the body of an `@ctx { ... }` builder block — an
-/// ordered list of entries, each a `let` setup binding or one item
-/// expression with its attached leading-dot modifier lines.
+/// v0.0.22 DSL.1: the body of a builder block — an ordered list of
+/// entries (item lines with modifiers, `let` setup, and DSL.4 `if`/`for`
+/// item-control).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuilderBlock {
     pub entries: Vec<BuilderEntry>,
@@ -902,13 +914,32 @@ pub enum BuilderEntry {
     /// (always `StmtKind::Let`) so lowering can splice it through
     /// unchanged.
     Let(Stmt),
-    /// One item expression (`text("title")`, a nested `@` block, ...)
+    /// One item expression (`text("title")`, a bare container block, ...)
     /// plus the leading-dot modifier lines that follow it. The
     /// modifiers apply to the item value before it is added to the
     /// builder.
     Item {
         expr: Expr,
         modifiers: Vec<BuilderModifier>,
+    },
+    /// v0.0.22 DSL.4: `if COND { ENTRIES } [else { ENTRIES }]` — Flutter
+    /// "collection-if". Each branch is itself a sequence of builder
+    /// entries; the branch's items are added to the enclosing builder
+    /// only when the condition selects it. No `else` is required (the
+    /// zero-or-more-items case). `else if` is represented as an `else_`
+    /// holding a single nested `If` entry.
+    If {
+        cond: Expr,
+        then: Vec<BuilderEntry>,
+        else_: Option<Vec<BuilderEntry>>,
+    },
+    /// v0.0.22 DSL.4: `for VAR in ITER { ENTRIES }` — Flutter
+    /// "collection-for". The body's items are added to the enclosing
+    /// builder once per iteration.
+    For {
+        var: Ident,
+        iter: Expr,
+        body: Vec<BuilderEntry>,
     },
 }
 

@@ -24078,6 +24078,12 @@ const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
      \x20   pub fn finish(move self) -> Item {\n\
      \x20       return Item { value: self.sum, weight: 1 };\n\
      \x20   }\n\
+     }\n\
+     \n\
+     // A container element: takes a filled Builder, folds its children\n\
+     // into one Item (weight 1).\n\
+     pub fn nest(b: Builder) -> Item {\n\
+     \x20   return Item { value: b.sum, weight: 1 };\n\
      }\n";
 
 /// v0.0.22 DSL.2: `@ctx { ... }` lowers to the fixed builder protocol
@@ -24108,7 +24114,7 @@ fn builder_block_lowers_and_runs() {
          \x20           .weight = 2\n\
          \x20       group::leaf(3)\n\
          \x20           .boost(1)\n\
-         \x20       @group {\n\
+         \x20       nest {\n\
          \x20           group::leaf(5)\n\
          \x20       }\n\
          \x20   };\n\
@@ -24125,7 +24131,8 @@ fn builder_block_lowers_and_runs() {
     let out = Command::new(dir.join("target/debug/bb"))
         .output()
         .expect("run binary");
-    // 8*2 + 3*2 + 5 = 27; the empty block contributes 0.
+    // 8*2 + 3*2 + (nest folds leaf(5) -> value 5, added as 5*1) = 16+6+5 = 27;
+    // the empty block contributes 0.
     assert_eq!(out.status.code(), Some(27));
 }
 
@@ -24336,6 +24343,101 @@ fn builder_block_contextual_precedence_and_unknown() {
     assert!(
         stderr.contains("tabel") && stderr.contains("main.cplus:5:"),
         "unknown contextual name reports located at the item line: {stderr}"
+    );
+}
+
+/// v0.0.22 DSL.4: a bare container element `nest { ... }` (same context,
+/// no `@`), `if`/`else` and `for` item-control, all run end to end against
+/// the pure-C+ package — items from every construct add into the same
+/// builder.
+#[test]
+fn builder_block_containers_and_flow_control_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bf\"\n\n[[bin]]\nname = \"bf\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let flag = true;\n\
+         \x20   let tree = @group {\n\
+         \x20       leaf(1)\n\
+         \x20       if flag {\n\
+         \x20           leaf(2)\n\
+         \x20       } else {\n\
+         \x20           leaf(99)\n\
+         \x20       }\n\
+         \x20       for k in 0..3 {\n\
+         \x20           leaf(10)\n\
+         \x20       }\n\
+         \x20       nest {\n\
+         \x20           leaf(4)\n\
+         \x20           leaf(5)\n\
+         \x20       }\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/bf"))
+        .output()
+        .expect("run binary");
+    // leaf(1)=1, if-true leaf(2)=2, for 3x leaf(10)=30, nest folds 4+5=9.
+    // All weight 1. tree.value = 1 + 2 + 30 + 9 = 42.
+    assert_eq!(out.status.code(), Some(42));
+}
+
+/// v0.0.22 DSL.4: a nested `@`-DSL block is rejected with a message that
+/// points at the bare-container alternative; the error sits at the inner
+/// `@` line.
+#[test]
+fn builder_block_nested_at_rejected_e2e() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bn\"\n\n[[bin]]\nname = \"bn\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let tree = @group {\n\
+         \x20       @group {\n\
+         \x20           leaf(1)\n\
+         \x20       }\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "nested @ must be rejected");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("without `@`") && stderr.contains("main.cplus:5:"),
+        "nested-@ rejection points at the inner @ and suggests bare container: {stderr}"
     );
 }
 

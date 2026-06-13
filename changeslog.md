@@ -5,7 +5,7 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.22 — unreleased
 
-### Contextual builder blocks (DSL.1 parser + DSL.2 lowering + DSL.3 lookup)
+### Contextual builder blocks (DSL.1–4: parser, lowering, lookup, containers + flow control)
 - New expression syntax `@ctx { ... }`: the contextual builder block.
   `ctx` is any module path (`@view`, `@ui::view`); the body holds item
   expressions, leading-dot modifier lines that apply to the item above
@@ -44,9 +44,22 @@ earlier history lives in each version's archived plan.
   rewrite produces real `view::text` references before the graph
   builds, code-graph/LSP navigation resolves them to the package
   symbols automatically.
-- DSL.4 (still open) covers conditionals and formatter layout. `cpc
-  fmt` already keeps `@ctx` glued and round-trips builder blocks
-  unchanged.
+- Container elements and item-control (DSL.4): a bare `name { ... }`
+  inside a builder block is a *container element of the same context*
+  (`vstack { ... }` builds `view::vstack`, its children resolve in
+  `view`) — not a nested DSL. Containers take a filled `Builder`
+  (`fn vstack(b: Builder) -> Item`), so the whole feature lowers to
+  `Builder::new`/`add` plus a finisher (the root calls `.finish()`, a
+  container calls `ctx::name(builder)`) — the compiler's output never
+  names a collection type, so DSL packages work even on targets where
+  `Vec` is gated. `if`/`else` and `for` are Flutter-style collection
+  control flow: their items add into the same builder
+  (`if logged_in { logout_button() }`, `for row in rows { item(row) }`),
+  `if` needs no `else`. A nested *different* `@`-DSL block is rejected
+  (write a same-context container without `@`); revisit if a real
+  cross-DSL nesting use case appears.
+- `cpc fmt` keeps `@ctx` glued and round-trips builder blocks —
+  containers and `if`/`for` included — unchanged.
 
 ### Multi-backend consolidation
 - New `--min-os VERSION` flag (after `--target`): overrides the OS floor

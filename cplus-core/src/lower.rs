@@ -1426,79 +1426,55 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
                 subst_expr(&mut a.body, consts);
             }
         }
-        // v0.0.22 DSL.2: never reached — builder blocks desugar before
-        // const substitution runs. Kept total over the tree anyway.
-        ExprKind::BuilderBlock { body, .. } => {
-            for entry in &mut body.entries {
-                match entry {
-                    BuilderEntry::Let(s) => {
-                        if let StmtKind::Let { init: Some(init), .. } = &mut s.kind {
-                            subst_expr(init, consts);
-                        }
-                    }
-                    BuilderEntry::Item { expr, modifiers } => {
-                        subst_expr(expr, consts);
-                        for m in modifiers {
-                            match &mut m.kind {
-                                BuilderModifierKind::Assign(v) => subst_expr(v, consts),
-                                BuilderModifierKind::Call(args) => {
-                                    for a in args {
-                                        subst_expr(a, consts);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // v0.0.22 DSL.2: never reached — the per-item lower pass desugars
+        // builder blocks before `substitute_consts` runs, so no
+        // `BuilderBlock` node survives to here.
+        ExprKind::BuilderBlock { .. } => {}
     }
 }
 
-/// v0.0.22 DSL.2: desugar a builder block `@ctx { ... }` into an
-/// ordinary block expression over the fixed builder protocol:
+/// v0.0.22 DSL.2/DSL.4: desugar a builder block into an ordinary block
+/// expression over the fixed builder protocol. Both surface forms share
+/// the same accumulator (`ctx::Builder::new()` + `.add(item)`); only the
+/// finisher differs:
 ///
 /// ```text
-/// {
-///     let mut __bS = ctx::Builder::new();
-///     let mut __iS0 = <item 0>;        // one per item entry
-///     __iS0.field = value;             // assign modifiers, in order
-///     __iS0.method(args);              // call modifiers, in order
-///     __bS.add(__iS0);
-///     <let entries spliced verbatim where they appear>
-///     __bS.finish()                    // block tail = the result
-/// }
+/// // @view { ... }  (root, container = None)        // vstack { ... }  (container)
+/// {                                                 {
+///     let mut __b = view::Builder::new();               let mut __b = view::Builder::new();
+///     ... entries add into __b ...                      ... entries add into __b ...
+///     __b.finish()        // -> Root                    view::vstack(__b)   // -> Item
+/// }                                                 }
 /// ```
 ///
-/// Temporary names derive from byte offsets (`__b<block-start>`,
-/// `__i<item-start>`), which are unique within any one function body —
-/// deterministic across builds, no counter state. Synthesized nodes
-/// reuse the user's spans (item lets and `add` calls carry the item
-/// expression's span; modifier statements carry the modifier line's
-/// span; `Builder::new` carries the context path's span) so sema's
-/// ordinary diagnostics — unknown `ctx::Builder`, `add` argument type
-/// mismatch, no such field/method on the item — render at the
-/// user-written DSL line.
+/// Each item entry becomes `let mut __i = <item>; <modifiers>; __b.add(__i);`.
+/// `if` / `for` entries (DSL.4) lower to an ordinary `if`/`for` whose body
+/// adds into the *same* `__b` — Flutter-style collection-if/for. A
+/// container item's expr is itself a builder block; it is left in place
+/// and desugared when the caller's post-desugar walk reaches it.
 ///
-/// Called from the resolver's rewrite walk (multi-file: the synthesized
-/// `ctx::Builder::new()` path still needs alias rewriting) and from
-/// `lower_expr` (single-file mode). Nested builder blocks sit inside
-/// item initializers and desugar when the caller's walk reaches them.
+/// Temporary names derive from byte offsets (`__b<block-start>`,
+/// `__i<item-start>`), unique within any one function body — deterministic,
+/// no counter state. Synthesized nodes reuse the user's spans so sema's
+/// ordinary diagnostics render at the user-written DSL line.
+///
+/// Called from the resolver's rewrite walk (multi-file: synthesized paths
+/// still need alias rewriting) and from `lower_expr` (single-file mode).
 pub fn desugar_builder_block(e: &mut Expr) {
     let block_span = e.span;
     let kind = std::mem::replace(
         &mut e.kind,
         ExprKind::IntLit(0, crate::lexer::NumSuffix::None),
     );
-    let ExprKind::BuilderBlock { context, body } = kind else {
+    let ExprKind::BuilderBlock { context, body, container } = kind else {
         unreachable!("desugar_builder_block called on a non-builder expression");
     };
 
     let ctx_span = context.last().map(|i| i.span).unwrap_or(block_span);
     let b_name = format!("__b{}", block_span.start);
 
-    // let mut __bS = ctx::Builder::new();
-    let mut new_path = context;
+    // let mut __b = ctx::Builder::new();
+    let mut new_path = context.clone();
     new_path.push(Ident { name: "Builder".to_string(), span: ctx_span });
     new_path.push(Ident { name: "new".to_string(), span: ctx_span });
     let mut stmts: Vec<Stmt> = Vec::new();
@@ -1523,76 +1499,169 @@ pub fn desugar_builder_block(e: &mut Expr) {
     });
 
     for entry in body.entries {
-        match entry {
-            BuilderEntry::Let(s) => stmts.push(s),
-            BuilderEntry::Item { expr, modifiers } => {
-                let item_span = expr.span;
-                let i_name = format!("__i{}", item_span.start);
-                // let mut __iSn = <item>;
-                stmts.push(Stmt {
-                    kind: StmtKind::Let {
-                        mutable: true,
-                        name: Ident { name: i_name.clone(), span: item_span },
-                        ty: None,
-                        init: Some(expr),
-                    },
-                    span: item_span,
-                });
-                for m in modifiers {
-                    let place = Expr {
-                        kind: ExprKind::Field {
-                            receiver: Box::new(Expr {
-                                kind: ExprKind::Ident(i_name.clone()),
-                                span: m.name.span,
-                            }),
-                            name: m.name.clone(),
-                        },
-                        span: m.name.span,
-                    };
-                    let stmt_expr = match m.kind {
-                        // __iSn.field = value;
-                        BuilderModifierKind::Assign(value) => Expr {
-                            kind: ExprKind::Assign {
-                                op: AssignOp::Assign,
-                                target: Box::new(place),
-                                value: Box::new(value),
-                            },
-                            span: m.span,
-                        },
-                        // __iSn.method(args);
-                        BuilderModifierKind::Call(args) => Expr {
-                            kind: ExprKind::Call {
-                                callee: Box::new(place),
-                                args,
-                                type_args: Vec::new(),
-                            },
-                            span: m.span,
-                        },
-                    };
-                    stmts.push(Stmt {
-                        kind: StmtKind::Expr(stmt_expr),
-                        span: m.span,
-                    });
-                }
-                // __bS.add(__iSn);
-                stmts.push(Stmt {
-                    kind: StmtKind::Expr(method_call(&b_name, "add", vec![Expr {
-                        kind: ExprKind::Ident(i_name),
-                        span: item_span,
-                    }], item_span)),
-                    span: item_span,
-                });
-            }
-        }
+        desugar_builder_entry(entry, &b_name, &mut stmts);
     }
 
-    // Tail: __bS.finish()
-    let finish = method_call(&b_name, "finish", Vec::new(), block_span);
+    // Finisher: root -> `__b.finish()`; container -> `ctx::name(__b)`.
+    let tail = match container {
+        None => method_call(&b_name, "finish", Vec::new(), block_span),
+        Some(name) => {
+            let mut path = context;
+            path.push(name);
+            Expr {
+                kind: ExprKind::Call {
+                    callee: Box::new(Expr {
+                        kind: ExprKind::Path { segments: path },
+                        span: block_span,
+                    }),
+                    args: vec![Expr {
+                        kind: ExprKind::Ident(b_name.clone()),
+                        span: block_span,
+                    }],
+                    type_args: Vec::new(),
+                },
+                span: block_span,
+            }
+        }
+    };
     e.kind = ExprKind::Block(Block {
         stmts,
-        tail: Some(Box::new(finish)),
+        tail: Some(Box::new(tail)),
         span: body.span,
     });
+}
+
+/// Desugar one builder entry, appending the resulting statements to `out`.
+/// Every produced item is added into the builder local named `b_name` —
+/// so `if`/`for` bodies add into the same accumulator as their siblings.
+fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>) {
+    match entry {
+        BuilderEntry::Let(s) => out.push(s),
+        BuilderEntry::Item { expr, modifiers } => {
+            let item_span = expr.span;
+            let i_name = format!("__i{}", item_span.start);
+            // let mut __i = <item>;  (a container item's expr is itself a
+            // builder block, desugared later by the caller's walk.)
+            out.push(Stmt {
+                kind: StmtKind::Let {
+                    mutable: true,
+                    name: Ident { name: i_name.clone(), span: item_span },
+                    ty: None,
+                    init: Some(expr),
+                },
+                span: item_span,
+            });
+            for m in modifiers {
+                let place = Expr {
+                    kind: ExprKind::Field {
+                        receiver: Box::new(Expr {
+                            kind: ExprKind::Ident(i_name.clone()),
+                            span: m.name.span,
+                        }),
+                        name: m.name.clone(),
+                    },
+                    span: m.name.span,
+                };
+                let stmt_expr = match m.kind {
+                    BuilderModifierKind::Assign(value) => Expr {
+                        kind: ExprKind::Assign {
+                            op: AssignOp::Assign,
+                            target: Box::new(place),
+                            value: Box::new(value),
+                        },
+                        span: m.span,
+                    },
+                    BuilderModifierKind::Call(args) => Expr {
+                        kind: ExprKind::Call {
+                            callee: Box::new(place),
+                            args,
+                            type_args: Vec::new(),
+                        },
+                        span: m.span,
+                    },
+                };
+                out.push(Stmt {
+                    kind: StmtKind::Expr(stmt_expr),
+                    span: m.span,
+                });
+            }
+            // __b.add(__i);
+            out.push(Stmt {
+                kind: StmtKind::Expr(method_call(
+                    b_name,
+                    "add",
+                    vec![Expr {
+                        kind: ExprKind::Ident(i_name),
+                        span: item_span,
+                    }],
+                    item_span,
+                )),
+                span: item_span,
+            });
+        }
+        // `if COND { ... } [else { ... }]` — branches add into the same __b.
+        BuilderEntry::If { cond, then, else_ } => {
+            let span = cond.span;
+            let mut then_stmts = Vec::new();
+            for e in then {
+                desugar_builder_entry(e, b_name, &mut then_stmts);
+            }
+            let then_block = Block {
+                stmts: then_stmts,
+                tail: None,
+                span,
+            };
+            let else_branch = else_.map(|eb| {
+                let mut else_stmts = Vec::new();
+                for e in eb {
+                    desugar_builder_entry(e, b_name, &mut else_stmts);
+                }
+                Box::new(Expr {
+                    kind: ExprKind::Block(Block {
+                        stmts: else_stmts,
+                        tail: None,
+                        span,
+                    }),
+                    span,
+                })
+            });
+            out.push(Stmt {
+                kind: StmtKind::Expr(Expr {
+                    kind: ExprKind::If {
+                        cond: Box::new(cond),
+                        then: then_block,
+                        else_branch,
+                    },
+                    span,
+                }),
+                span,
+            });
+        }
+        // `for VAR in ITER { ... }` — body adds into the same __b.
+        BuilderEntry::For { var, iter, body } => {
+            let span = iter.span;
+            let mut body_stmts = Vec::new();
+            for e in body {
+                desugar_builder_entry(e, b_name, &mut body_stmts);
+            }
+            let body_block = Block {
+                stmts: body_stmts,
+                tail: None,
+                span,
+            };
+            out.push(Stmt {
+                kind: StmtKind::For(
+                    ForLoop::Range {
+                        var,
+                        iter,
+                        body: body_block,
+                    },
+                    Vec::new(),
+                ),
+                span,
+            });
+        }
+    }
 }
 
 /// `recv.method(args)` with every synthesized node stamped `span`.
@@ -2213,27 +2282,66 @@ mod tests {
     }
 
     #[test]
-    fn nested_builder_blocks_desugar_recursively() {
-        let src = "fn main() -> i32 {\n    let v = @view {\n        @row {\n            text(1)\n        }\n    };\n    return 0;\n}\n";
+    fn container_desugars_to_builder_plus_constructor() {
+        // A bare container `row { ... }` desugars to its own Builder block
+        // whose finisher is the container constructor `row(__b)` (vs the
+        // root's `.finish()`). Single-file lower has no resolver context
+        // inheritance, so the path is the bare container name.
+        let src = "fn main() -> i32 {\n    let v = @view {\n        row {\n            text(1)\n        }\n    };\n    return 0;\n}\n";
         let b = desugared_builder(src);
-        // The nested block is the item initializer — itself a desugared
-        // Block whose builder path is row::Builder::new.
+        // outer stmts[1] is the item-let; its init is the container's block.
         let StmtKind::Let { init: Some(inner), .. } = &b.stmts[1].kind else {
-            panic!("expected nested item let");
+            panic!("expected container item let");
         };
         let ExprKind::Block(inner) = &inner.kind else {
-            panic!("nested builder must desugar too, got {:?}", inner.kind);
+            panic!("container must desugar to a Block, got {:?}", inner.kind);
         };
+        // Inner accumulator: `let mut __b = Builder::new();`
         let StmtKind::Let { init: Some(new_call), .. } = &inner.stmts[0].kind else {
             panic!("expected inner builder let");
         };
-        let ExprKind::Call { callee, .. } = &new_call.kind else {
-            panic!("expected inner Builder::new call");
+        assert!(matches!(new_call.kind, ExprKind::Call { .. }), "Builder::new call");
+        // Inner finisher (tail) is the container constructor call `row(__b)`,
+        // NOT `.finish()`.
+        let tail = inner.tail.as_ref().expect("container finisher tail");
+        let ExprKind::Call { callee, args, .. } = &tail.kind else {
+            panic!("container tail must be a constructor call, got {:?}", tail.kind);
         };
         let ExprKind::Path { segments } = &callee.kind else {
-            panic!("expected inner path callee");
+            panic!("container constructor must be a path, got {:?}", callee.kind);
         };
-        assert_eq!(segments[0].name, "row");
+        assert_eq!(segments.last().unwrap().name, "row");
+        assert_eq!(args.len(), 1, "constructor takes the filled Builder");
+    }
+
+    #[test]
+    fn builder_if_for_lower_to_guarded_looped_adds() {
+        // `if`/`for` entries add into the SAME builder as their siblings.
+        let src = "fn main() -> i32 {\n    let v = @view {\n        text(0)\n        if flag {\n            text(1)\n        }\n        for x in xs {\n            text(2)\n        }\n    };\n    return 0;\n}\n";
+        let b = desugared_builder(src);
+        // Locate the `if` statement and the `for` statement among the block.
+        let has_if = b.stmts.iter().any(|s| matches!(
+            &s.kind,
+            StmtKind::Expr(e) if matches!(e.kind, ExprKind::If { .. })
+        ));
+        let has_for = b.stmts.iter().any(|s| matches!(&s.kind, StmtKind::For(..)));
+        assert!(has_if, "if entry lowers to an if statement");
+        assert!(has_for, "for entry lowers to a for statement");
+        // The if's then-block contains an `__b.add(...)` (adds into the
+        // enclosing builder, not a fresh one).
+        let if_stmt = b.stmts.iter().find_map(|s| match &s.kind {
+            StmtKind::Expr(e) => match &e.kind {
+                ExprKind::If { then, .. } => Some(then),
+                _ => None,
+            },
+            _ => None,
+        }).expect("if statement");
+        let add_call = if_stmt.stmts.iter().any(|s| matches!(
+            &s.kind,
+            StmtKind::Expr(e) if matches!(&e.kind, ExprKind::Call { callee, .. }
+                if matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "add"))
+        ));
+        assert!(add_call, "if-branch items add into the enclosing builder");
     }
 
     #[test]

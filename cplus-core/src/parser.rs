@@ -2622,9 +2622,20 @@ impl Parser {
                     entries,
                     span: lbrace.merge(end),
                 },
+                container: None,
             },
             span: at_span.merge(end),
         })
+    }
+
+    /// Parse `{ ENTRIES }` (the braces around a builder body) — used for
+    /// `if`/`for` branches and bare container elements. Entries parse with
+    /// the line-dot flag reset, same as the top-level block boundary.
+    fn parse_builder_braced_entries(&mut self) -> Result<(Span, Vec<BuilderEntry>, Span), ParseError> {
+        let lbrace = self.expect(&TokenKind::LBrace, "`{`")?.span;
+        let entries = self.with_line_dots_allowed(|p| p.parse_builder_entries())?;
+        let rbrace = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        Ok((lbrace, entries, rbrace))
     }
 
     fn parse_builder_entries(&mut self) -> Result<Vec<BuilderEntry>, ParseError> {
@@ -2641,8 +2652,9 @@ impl Parser {
                     let m = self.parse_builder_modifier()?;
                     match entries.last_mut() {
                         Some(BuilderEntry::Item { modifiers, .. }) => modifiers.push(m),
-                        // First entry, or the previous entry is a `let` —
-                        // either way there is no current item to modify.
+                        // First entry, or the previous entry is not a
+                        // modifiable item (a `let`, `if`, or `for`) — either
+                        // way there is no current item to modify.
                         _ => {
                             return Err(ParseError {
                                 kind: ParseErrorKind::Unexpected {
@@ -2654,11 +2666,24 @@ impl Parser {
                         }
                     }
                 }
+                // v0.0.22 DSL.4: `if`/`for` item-control (collection-if/for).
+                TokenKind::If => entries.push(self.parse_builder_if()?),
+                TokenKind::For => entries.push(self.parse_builder_for()?),
+                // v0.0.22 DSL.4: a nested `@`-DSL block is not allowed; a
+                // same-context child element is written without `@`.
+                TokenKind::At => {
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: "`@`".into(),
+                            expected: "a same-context child element written without `@` (e.g. `vstack { ... }`); a nested `@`-DSL block is not allowed",
+                        },
+                        span: self.peek().span,
+                    });
+                }
                 TokenKind::Return
                 | TokenKind::Break
                 | TokenKind::Continue
                 | TokenKind::While
-                | TokenKind::For
                 | TokenKind::Loop
                 | TokenKind::Defer
                 | TokenKind::Guard
@@ -2667,9 +2692,19 @@ impl Parser {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             found: tok_name(self.peek_kind()).into(),
-                            expected: "a builder item expression, a `.modifier` line, or `let` (control flow, loops, and `defer`/`guard` are not allowed in a builder block)",
+                            expected: "a builder item, `.modifier`, `let`, `if`, or `for` (loops other than `for`, `return`/`break`/`continue`, and `defer`/`guard` are not allowed in a builder block)",
                         },
                         span: self.peek().span,
+                    });
+                }
+                // v0.0.22 DSL.4: a bare `name { ... }` in item position is a
+                // container element of the same context (not a struct
+                // literal): an identifier immediately followed by `{`.
+                TokenKind::Ident(_) if matches!(self.peek_kind_n(1), TokenKind::LBrace) => {
+                    let expr = self.parse_builder_container()?;
+                    entries.push(BuilderEntry::Item {
+                        expr,
+                        modifiers: Vec::new(),
                     });
                 }
                 _ => {
@@ -2682,6 +2717,56 @@ impl Parser {
             }
         }
         Ok(entries)
+    }
+
+    /// v0.0.22 DSL.4: `if COND { ENTRIES } [else { ENTRIES } | else if ...]`
+    /// as builder item-control. The condition parses in a struct-lit-
+    /// suppressing context so the `{` opens the branch, not a literal.
+    fn parse_builder_if(&mut self) -> Result<BuilderEntry, ParseError> {
+        self.expect(&TokenKind::If, "`if`")?;
+        let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let (_, then, _) = self.parse_builder_braced_entries()?;
+        let else_ = if self.eat(&TokenKind::Else) {
+            if self.at(&TokenKind::If) {
+                // `else if` — a single nested `If` entry.
+                Some(vec![self.parse_builder_if()?])
+            } else {
+                let (_, entries, _) = self.parse_builder_braced_entries()?;
+                Some(entries)
+            }
+        } else {
+            None
+        };
+        Ok(BuilderEntry::If { cond, then, else_ })
+    }
+
+    /// v0.0.22 DSL.4: `for VAR in ITER { ENTRIES }` as builder item-control.
+    fn parse_builder_for(&mut self) -> Result<BuilderEntry, ParseError> {
+        self.expect(&TokenKind::For, "`for`")?;
+        let var = self.expect_ident()?;
+        self.expect(&TokenKind::In, "`in`")?;
+        let iter = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let (_, body, _) = self.parse_builder_braced_entries()?;
+        Ok(BuilderEntry::For { var, iter, body })
+    }
+
+    /// v0.0.22 DSL.4: a bare container element `name { ENTRIES }`. The
+    /// `context` is left empty here and filled with the enclosing block's
+    /// context during resolution; `container` carries the element name.
+    fn parse_builder_container(&mut self) -> Result<Expr, ParseError> {
+        let name = self.expect_ident()?;
+        let (lbrace, entries, end) = self.parse_builder_braced_entries()?;
+        Ok(Expr {
+            kind: ExprKind::BuilderBlock {
+                context: Vec::new(),
+                body: BuilderBlock {
+                    entries,
+                    span: lbrace.merge(end),
+                },
+                container: Some(name.clone()),
+            },
+            span: name.span.merge(end),
+        })
     }
 
     /// One leading-dot modifier line: `.field = value` or `.method(args)`.
@@ -5298,7 +5383,7 @@ mod tests {
         let StmtKind::Let { init: Some(init), .. } = &f.body.stmts[0].kind else {
             panic!("expected let with init");
         };
-        let ExprKind::BuilderBlock { context, body } = &init.kind else {
+        let ExprKind::BuilderBlock { context, body, .. } = &init.kind else {
             panic!("expected BuilderBlock, got {:?}", init.kind);
         };
         (context.clone(), body.clone())
@@ -5365,9 +5450,13 @@ mod tests {
     }
 
     #[test]
-    fn builder_block_let_and_nested() {
+    fn builder_block_let_and_container() {
+        // v0.0.22 DSL.4: a nested same-context child is a bare container
+        // element (`vstack { ... }`), not a marked `@`-block. The
+        // container parses as a `BuilderBlock` with `container: Some(name)`
+        // and an empty (to-be-inherited) context.
         let (context, body) = builder_of(
-            "fn main() -> i32 {\n    let v = @ui::view {\n        let title = 1;\n        item(title)\n        @ui::vstack {\n            item(2)\n        }\n    };\n    0\n}",
+            "fn main() -> i32 {\n    let v = @ui::view {\n        let title = 1;\n        item(title)\n        vstack {\n            item(2)\n        }\n    };\n    0\n}",
         );
         assert_eq!(context.len(), 2);
         assert_eq!(context[0].name, "ui");
@@ -5376,13 +5465,84 @@ mod tests {
         assert!(matches!(&body.entries[0], BuilderEntry::Let(_)));
         assert!(matches!(&body.entries[1], BuilderEntry::Item { .. }));
         let BuilderEntry::Item { expr, .. } = &body.entries[2] else {
-            panic!("expected nested builder item");
+            panic!("expected nested container item");
         };
-        let ExprKind::BuilderBlock { context: inner, body: inner_body } = &expr.kind else {
+        let ExprKind::BuilderBlock { context: inner, body: inner_body, container } = &expr.kind
+        else {
             panic!("expected nested BuilderBlock, got {:?}", expr.kind);
         };
-        assert_eq!(inner[1].name, "vstack");
+        // Container: name carried in `container`, context empty until resolve.
+        assert!(inner.is_empty(), "container context is inherited at resolve");
+        let Some(name) = container else {
+            panic!("expected container name");
+        };
+        assert_eq!(name.name, "vstack");
         assert_eq!(inner_body.entries.len(), 1);
+    }
+
+    #[test]
+    fn builder_block_nested_at_rejected() {
+        // A nested `@`-DSL block is rejected; use a bare container instead.
+        let err = parse_src(
+            "fn main() -> i32 {\n    let v = @view {\n        @row {\n            text(1)\n        }\n    };\n    0\n}",
+        )
+        .unwrap_err();
+        let ParseErrorKind::Unexpected { expected, .. } = &err.kind else {
+            panic!("expected Unexpected, got {:?}", err.kind);
+        };
+        assert!(
+            expected.contains("without `@`"),
+            "nested-@ error should suggest the bare-container form: {expected}"
+        );
+    }
+
+    #[test]
+    fn builder_block_if_and_for_entries() {
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        if flag {\n            text(1)\n        } else {\n            text(2)\n        }\n        for x in items {\n            row(x)\n        }\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 2);
+        let BuilderEntry::If { then, else_, .. } = &body.entries[0] else {
+            panic!("expected If entry, got {:?}", body.entries[0]);
+        };
+        assert_eq!(then.len(), 1);
+        assert_eq!(else_.as_ref().map(|e| e.len()), Some(1));
+        let BuilderEntry::For { var, body: for_body, .. } = &body.entries[1] else {
+            panic!("expected For entry, got {:?}", body.entries[1]);
+        };
+        assert_eq!(var.name, "x");
+        assert_eq!(for_body.len(), 1);
+    }
+
+    #[test]
+    fn builder_block_else_if_chain() {
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        if a {\n            text(1)\n        } else if b {\n            text(2)\n        }\n    };\n    0\n}",
+        );
+        let BuilderEntry::If { else_, .. } = &body.entries[0] else {
+            panic!("expected If");
+        };
+        // `else if` is a single nested `If` entry in the else arm.
+        let Some(else_entries) = else_ else {
+            panic!("expected else arm");
+        };
+        assert_eq!(else_entries.len(), 1);
+        assert!(matches!(else_entries[0], BuilderEntry::If { .. }));
+    }
+
+    #[test]
+    fn builder_container_takes_modifiers() {
+        // A container element can carry leading-dot modifiers like any item.
+        let (_, body) = builder_of(
+            "fn main() -> i32 {\n    let v = @view {\n        vstack {\n            text(1)\n        }\n            .spacing = 8\n    };\n    0\n}",
+        );
+        assert_eq!(body.entries.len(), 1);
+        let BuilderEntry::Item { expr, modifiers } = &body.entries[0] else {
+            panic!("expected item entry");
+        };
+        assert!(matches!(expr.kind, ExprKind::BuilderBlock { container: Some(_), .. }));
+        assert_eq!(modifiers.len(), 1);
+        assert_eq!(modifiers[0].name.name, "spacing");
     }
 
     #[test]

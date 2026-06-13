@@ -1509,6 +1509,40 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// v0.0.22 DSL.4: walk a builder body's entries (forward-defensive;
+    /// post-resolver the block is already desugared — see `walk_expr`).
+    fn walk_builder_entries(&mut self, entries: &[BuilderEntry]) {
+        for entry in entries {
+            match entry {
+                BuilderEntry::Let(s) => self.walk_stmt(s),
+                BuilderEntry::Item { expr, modifiers } => {
+                    self.walk_expr(expr);
+                    for m in modifiers {
+                        match &m.kind {
+                            BuilderModifierKind::Assign(v) => self.walk_expr(v),
+                            BuilderModifierKind::Call(args) => {
+                                for a in args {
+                                    self.walk_expr(a);
+                                }
+                            }
+                        }
+                    }
+                }
+                BuilderEntry::If { cond, then, else_ } => {
+                    self.walk_expr(cond);
+                    self.walk_builder_entries(then);
+                    if let Some(eb) = else_ {
+                        self.walk_builder_entries(eb);
+                    }
+                }
+                BuilderEntry::For { iter, body, .. } => {
+                    self.walk_expr(iter);
+                    self.walk_builder_entries(body);
+                }
+            }
+        }
+    }
+
     fn walk_expr(&mut self, e: &Expr) {
         match &e.kind {
             // v0.0.22 DSL.3: the graph builds on the resolved program, by
@@ -1519,24 +1553,7 @@ impl<'a> Resolver<'a> {
             // symbols. This arm is the forward-defensive fallback for any
             // path that walks a pre-desugar AST; it walks entries directly.
             ExprKind::BuilderBlock { body, .. } => {
-                for entry in &body.entries {
-                    match entry {
-                        BuilderEntry::Let(s) => self.walk_stmt(s),
-                        BuilderEntry::Item { expr, modifiers } => {
-                            self.walk_expr(expr);
-                            for m in modifiers {
-                                match &m.kind {
-                                    BuilderModifierKind::Assign(v) => self.walk_expr(v),
-                                    BuilderModifierKind::Call(args) => {
-                                        for a in args {
-                                            self.walk_expr(a);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                self.walk_builder_entries(&body.entries);
             }
             ExprKind::Call { callee, args, .. } => {
                 self.resolve_call(callee, e.span);
