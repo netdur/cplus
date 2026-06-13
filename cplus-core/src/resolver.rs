@@ -1648,6 +1648,38 @@ impl RewriteCtx {
         Ok(())
     }
 
+    /// v0.0.22 DSL.3: contextual builder lookup. Given a builder
+    /// context path and a bare item name, return the qualified path
+    /// segments to use (`[alias, name]`) if `name` is a top-level item
+    /// of the context package — or `None` if there is no such member
+    /// (bare name then falls through to normal/local resolution, which
+    /// usually means a "no such identifier" sema error).
+    ///
+    /// Only single-segment contexts (`@view`) are resolved this way;
+    /// multi-segment contexts (`@ui::view`) return `None` and require
+    /// the item to be written qualified, matching the path-resolution
+    /// limits noted in DSL.2. Membership uses `item_kind` (existence,
+    /// pub or not) so a private member still rewrites and then earns the
+    /// precise PrivateAccess error from the ordinary path rewrite, not a
+    /// vaguer "unknown identifier".
+    fn builder_context_member(&self, context: &[Ident], name: &str) -> Option<Vec<Ident>> {
+        let [alias] = context else {
+            return None;
+        };
+        let target_id = self.imports.get(&alias.name)?;
+        let is_member = self
+            .item_kind
+            .get(target_id)
+            .is_some_and(|m| m.contains_key(name));
+        if !is_member {
+            return None;
+        }
+        Some(vec![
+            alias.clone(),
+            Ident { name: name.to_string(), span: alias.span },
+        ])
+    }
+
     /// Check that method `method` on type `type_name` is `pub` in
     /// `target_id` (cross-file). Same-file access is never blocked.
     fn check_pub_method(
@@ -2087,6 +2119,100 @@ fn rewrite_stmt(
     Ok(())
 }
 
+/// v0.0.22 DSL.3: rewrite bare item names inside a builder-block entry
+/// expression to contextual paths (`text` → `view::text`). Applies the
+/// precedence locals → same-file top-level → contextual: a name in
+/// `locals` or `ctx.local_items` is left bare (normal resolution wins);
+/// otherwise, if it is a member of the context package, it becomes a
+/// two-segment `Path` that the ordinary path rewrite then resolves.
+///
+/// Walks the direct expression structure (calls, operators, indexing,
+/// field receivers, literals' elements) but stops at nested
+/// block-introducing constructs — `Block`, `Unsafe`, `If`, `Match`, and
+/// nested `@`-blocks — which own their own scopes (and, for nested
+/// builder blocks, their own context). Names inside those must be
+/// written qualified; that is consistent with DSL.3's scope (item
+/// constructors and modifier operands) and avoids tracking inner-block
+/// bindings here.
+fn contextualize_builder_idents(
+    e: &mut Expr,
+    context: &[Ident],
+    locals: &HashSet<String>,
+    ctx: &RewriteCtx,
+) {
+    match &mut e.kind {
+        ExprKind::Ident(name) => {
+            if locals.contains(name) || ctx.local_items.contains(name) {
+                return;
+            }
+            if let Some(segments) = ctx.builder_context_member(context, name) {
+                e.kind = ExprKind::Path { segments };
+            }
+        }
+        ExprKind::Call { callee, args, .. } => {
+            contextualize_builder_idents(callee, context, locals, ctx);
+            for a in args {
+                contextualize_builder_idents(a, context, locals, ctx);
+            }
+        }
+        ExprKind::Field { receiver, .. } => {
+            contextualize_builder_idents(receiver, context, locals, ctx)
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            contextualize_builder_idents(lhs, context, locals, ctx);
+            contextualize_builder_idents(rhs, context, locals, ctx);
+        }
+        ExprKind::Unary { operand, .. } => {
+            contextualize_builder_idents(operand, context, locals, ctx)
+        }
+        ExprKind::Index { receiver, index } => {
+            contextualize_builder_idents(receiver, context, locals, ctx);
+            contextualize_builder_idents(index, context, locals, ctx);
+        }
+        ExprKind::Cast { expr, .. } => {
+            contextualize_builder_idents(expr, context, locals, ctx)
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                contextualize_builder_idents(s, context, locals, ctx);
+            }
+            if let Some(en) = end {
+                contextualize_builder_idents(en, context, locals, ctx);
+            }
+        }
+        ExprKind::ArrayLit { elements }
+        | ExprKind::TupleLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. } => {
+            for el in elements {
+                contextualize_builder_idents(el, context, locals, ctx);
+            }
+        }
+        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            for f in fields {
+                contextualize_builder_idents(&mut f.value, context, locals, ctx);
+            }
+        }
+        ExprKind::ArrayFill { fill, .. } => {
+            contextualize_builder_idents(fill, context, locals, ctx)
+        }
+        ExprKind::Intrinsic { args, .. } => {
+            for a in args {
+                contextualize_builder_idents(a, context, locals, ctx);
+            }
+        }
+        ExprKind::InterpStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(inner) = p {
+                    contextualize_builder_idents(inner, context, locals, ctx);
+                }
+            }
+        }
+        // Leaves, already-qualified paths, and nested scope/context
+        // boundaries: nothing to rewrite here.
+        _ => {}
+    }
+}
+
 fn rewrite_expr(
     e: &mut Expr,
     ctx: &RewriteCtx,
@@ -2137,13 +2263,52 @@ fn rewrite_expr(
                 *name = ctx.qualify_local(name);
             }
         }
-        // v0.0.22 DSL.2: desugar the builder block to its ordinary
-        // `Builder::new`/`add`/`finish` block BEFORE alias rewriting, so
-        // the synthesized `ctx::Builder::new()` path is rewritten like
-        // any user-written path, and `let` entries get ordinary block
-        // scoping. Contextual (`ctx::name`) lookup for bare item names
-        // is DSL.3.
+        // v0.0.22 DSL.2/DSL.3: first apply contextual lookup (DSL.3) —
+        // rewrite a bare item name `text` to `ctx::text` when it is a
+        // member of the context package and is not shadowed by a local
+        // or a same-file top-level item (locals → normal → contextual).
+        // Then desugar (DSL.2) to the ordinary `Builder::new`/`add`/
+        // `finish` block BEFORE alias rewriting, so both the synthesized
+        // protocol paths and the contextual item paths are rewritten
+        // like any user-written path. `let` entries get ordinary block
+        // scoping.
         ExprKind::BuilderBlock { .. } => {
+            if let ExprKind::BuilderBlock { context, body } = &mut e.kind {
+                let context = context.clone();
+                // Block-level locals: outer scope, plus each `let` entry
+                // binding as it is introduced (so later items see it).
+                let mut locals: HashSet<String> = scope.clone();
+                for entry in &mut body.entries {
+                    match entry {
+                        BuilderEntry::Let(s) => {
+                            if let StmtKind::Let { init: Some(init), .. } = &mut s.kind {
+                                contextualize_builder_idents(init, &context, &locals, ctx);
+                            }
+                            if let StmtKind::Let { name, .. } = &s.kind {
+                                locals.insert(name.name.clone());
+                            }
+                        }
+                        BuilderEntry::Item { expr, modifiers } => {
+                            contextualize_builder_idents(expr, &context, &locals, ctx);
+                            for m in modifiers {
+                                // The modifier name itself (`m.name`) is a
+                                // field/method on the current item, never a
+                                // contextual lookup — only its operands are.
+                                match &mut m.kind {
+                                    BuilderModifierKind::Assign(v) => {
+                                        contextualize_builder_idents(v, &context, &locals, ctx)
+                                    }
+                                    BuilderModifierKind::Call(args) => {
+                                        for a in args {
+                                            contextualize_builder_idents(a, &context, &locals, ctx);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             crate::lower::desugar_builder_block(e);
             // Re-dispatch on the freshly synthesized Block.
             rewrite_expr(e, ctx, scope)?;

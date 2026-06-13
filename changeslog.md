@@ -5,7 +5,7 @@ earlier history lives in each version's archived plan.
 
 ## v0.0.22 — unreleased
 
-### Contextual builder blocks (DSL.1 parser + DSL.2 lowering)
+### Contextual builder blocks (DSL.1 parser + DSL.2 lowering + DSL.3 lookup)
 - New expression syntax `@ctx { ... }`: the contextual builder block.
   `ctx` is any module path (`@view`, `@ui::view`); the body holds item
   expressions, leading-dot modifier lines that apply to the item above
@@ -33,11 +33,20 @@ earlier history lives in each version's archived plan.
   diagnostics land on the DSL lines: a wrong item type reports at the
   item line, an unknown modifier field at the modifier line, a context
   module without `Builder` at the `@ctx` line.
-- In this slice item constructors are written qualified
-  (`view::text(...)`); DSL.3 adds contextual lookup so bare
-  `text(...)` resolves through the context. DSL.4 covers conditionals
-  and formatter layout. `cpc fmt` already keeps `@ctx` glued and
-  round-trips builder blocks unchanged.
+- Contextual name lookup: inside `@view { ... }` a bare item name
+  (`text(...)`) and a bare context member used as a modifier value
+  resolve through the context as `view::text` without qualification.
+  Precedence is locals → same-file top-level → contextual, so a `let`
+  binding or a same-file function of the same name shadows the package
+  member; a bare name that is no member at all falls through to the
+  ordinary located "undefined" error. Item field/method names in
+  modifiers (`.font`, `.boost(...)`) are never contextual. Because the
+  rewrite produces real `view::text` references before the graph
+  builds, code-graph/LSP navigation resolves them to the package
+  symbols automatically.
+- DSL.4 (still open) covers conditionals and formatter layout. `cpc
+  fmt` already keeps `@ctx` glued and round-trips builder blocks
+  unchanged.
 
 ### Multi-backend consolidation
 - New `--min-os VERSION` flag (after `--target`): overrides the OS floor

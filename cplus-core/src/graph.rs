@@ -1511,9 +1511,13 @@ impl<'a> Resolver<'a> {
 
     fn walk_expr(&mut self, e: &Expr) {
         match &e.kind {
-            // v0.0.22 DSL.1: walk builder-block entries so references
-            // inside item expressions and modifier operands are indexed.
-            // Contextual (`ctx::name`) resolution is DSL.3.
+            // v0.0.22 DSL.3: the graph builds on the resolved program, by
+            // which point the resolver has contextual-rewritten bare item
+            // names to real `ctx::name` paths and desugared the block to
+            // ordinary calls — so those references are already indexed via
+            // the normal Call/Path arms and resolve to the real package
+            // symbols. This arm is the forward-defensive fallback for any
+            // path that walks a pre-desugar AST; it walks entries directly.
             ExprKind::BuilderBlock { body, .. } => {
                 for entry in &body.entries {
                     match entry {

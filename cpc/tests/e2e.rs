@@ -24219,6 +24219,126 @@ fn builder_block_diagnostics_at_dsl_lines() {
     );
 }
 
+/// v0.0.22 DSL.3: inside `@group { ... }` a bare item name (`leaf`) and a
+/// bare context member used as a modifier value resolve through the
+/// context (`group::leaf`, `group::...`) without qualification, while a
+/// local binding shadows the context. Runs end to end against the pure-C+
+/// package.
+#[test]
+fn builder_block_contextual_lookup_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bc\"\n\n[[bin]]\nname = \"bc\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let seed = 5;\n\
+         \x20   let tree = @group {\n\
+         \x20       leaf(seed)\n\
+         \x20           .boost(2)\n\
+         \x20       leaf(1)\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/bc"))
+        .output()
+        .expect("run binary");
+    // bare `leaf` → group::leaf; `seed` is the local; .boost(2) makes the
+    // first item's weight 3. sum = 5*3 + 1*1 = 16.
+    assert_eq!(out.status.code(), Some(16));
+}
+
+/// v0.0.22 DSL.3 precedence: a same-file top-level `leaf` shadows the
+/// context member `group::leaf` (locals → normal → contextual), and a
+/// bare name that is no member at all falls through to the ordinary
+/// located "undefined function" error rather than a path-rewrite error.
+#[test]
+fn builder_block_contextual_precedence_and_unknown() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"bp\"\n\n[[bin]]\nname = \"bp\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/group.cplus"), DSL_GROUP_PACKAGE).unwrap();
+
+    // Same-file `leaf` doubles the value; if it (not group::leaf) is used,
+    // the result is 20, not 10.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn leaf(v: i32) -> group::Item {\n\
+         \x20   return group::leaf(v * 2);\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let tree = @group {\n\
+         \x20       leaf(10)\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(status.success(), "cpc build failed: {status}");
+    let out = Command::new(dir.join("target/debug/bp"))
+        .output()
+        .expect("run binary");
+    assert_eq!(
+        out.status.code(),
+        Some(20),
+        "same-file leaf must win over the contextual group::leaf"
+    );
+
+    // Unknown bare name in the block → normal located error.
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./group\" as group;\n\
+         \n\
+         fn main() -> i32 {\n\
+         \x20   let tree = @group {\n\
+         \x20       tabel(1)\n\
+         \x20   };\n\
+         \x20   return tree.value;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("check")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "unknown bare name must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("tabel") && stderr.contains("main.cplus:5:"),
+        "unknown contextual name reports located at the item line: {stderr}"
+    );
+}
+
 /// v0.0.22 DSL.1 negatives: a leading-dot modifier with no current item
 /// and control-flow statements inside a builder block are parse errors
 /// with builder-specific phrasing; a leading-dot line outside any builder
