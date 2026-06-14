@@ -6880,6 +6880,26 @@ impl SemaCx<'_> {
                 return Ty::Error;
             }
         }
+        // #7 fix: a fill-array `[expr; N]` evaluates `expr` once and copies
+        // that single value into every slot. For a non-Copy / owning element
+        // that bit-copy mints N owners of one resource → a double-free when
+        // the elements are dropped. Require the element type to be `Copy`
+        // (consistent with the language's no-implicit-clone rule); an owning
+        // element must be constructed per-slot with an explicit array literal
+        // `[expr0, expr1, ...]`. `Ty::Error` is already poisoned upstream, so
+        // skip it to avoid a cascading second diagnostic.
+        if !matches!(fill_ty, Ty::Error) && !self.is_copy(&fill_ty) {
+            self.err(
+                "E0339",
+                format!(
+                    "fill-array `[expr; N]` requires a `Copy` element type, but `{}` is not `Copy`; \
+build each element explicitly with `[expr0, expr1, ...]` instead",
+                    self.render_ty(&fill_ty)
+                ),
+                span,
+            );
+            return Ty::Error;
+        }
         Ty::Array(Box::new(fill_ty), count)
     }
 
@@ -16750,6 +16770,27 @@ mod tests {
             "fn first(xs: [i32; 3]) -> i32 { return xs[0 as usize]; }\n\
              fn main() -> i32 { return first([10, 20, 30]); }",
         );
+    }
+
+    #[test]
+    fn array_fill_noncopy_element_rejected_e0339() {
+        // #7: `[expr; N]` evaluates `expr` once and copies it into every slot.
+        // For a non-Copy / owning element that bit-copy mints N owners of one
+        // resource → a double-free when the elements drop. Reject it.
+        let codes = errors(
+            "struct Owner { id: i32 }\n\
+             impl Owner { fn drop(mut self) { return; } }\n\
+             fn mk() -> Owner { return Owner { id: 1 }; }\n\
+             fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }",
+        );
+        assert!(codes.contains(&"E0339"), "expected E0339, got: {codes:?}");
+    }
+
+    #[test]
+    fn array_fill_copy_scalar_element_clean() {
+        // A Copy element is safe to duplicate into every slot — the common
+        // `[0u8; N]` / `[7; N]` shape must still type-check.
+        assert_clean("fn main() -> i32 { let _a: [i32; 4] = [7; 4]; return 0; }");
     }
 
     #[test]

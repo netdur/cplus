@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **145 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **113** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **146 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **114** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -486,6 +486,21 @@ fn main() -> i32 { let _xs: [i32; 0] = []; return 0; }
 **Fix.** Provide at least one element.
 
 <sub>repro: checked · cplus-core/src/sema.rs:6809 · test cplus-core/src/sema.rs:empty_array_literal_e0332</sub>
+
+### E0339 · Fill-array element type is not `Copy`
+
+A fill-array literal `[expr; N]` has a non-`Copy` (owning / `drop`-carrying) element type. The fill expression is evaluated once and copied into every slot, which would make N elements share one owned resource and double-free when they are dropped.
+
+```cplus
+struct Owner { id: i32 }
+impl Owner { fn drop(mut self) {} }
+fn mk() -> Owner { return Owner { id: 1 }; }
+fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
+```
+
+**Fix.** Use a `Copy` element type, or construct each element explicitly with `[expr0, expr1, ...]`.
+
+<sub>repro: checked · cplus-core/src/sema.rs:6892 · test cplus-core/src/sema.rs:array_fill_noncopy_element_rejected_e0339</sub>
 
 ## Control flow and matching
 

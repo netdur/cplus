@@ -732,6 +732,25 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0339"
+title = "Fill-array element type is not `Copy`"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:6892"
+test = "cplus-core/src/sema.rs:array_fill_noncopy_element_rejected_e0339"
+cause = "A fill-array literal `[expr; N]` has a non-`Copy` (owning / `drop`-carrying) element type. The fill expression is evaluated once and copied into every slot, which would make N elements share one owned resource and double-free when they are dropped."
+fix = "Use a `Copy` element type, or construct each element explicitly with `[expr0, expr1, ...]`."
+example = '''
+struct Owner { id: i32 }
+impl Owner { fn drop(mut self) {} }
+fn mk() -> Owner { return Owner { id: 1 }; }
+fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
+'''
+
+[[code]]
 id = "E0340"
 title = "Non-exhaustive `match`"
 category = "Control flow and matching"

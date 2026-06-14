@@ -3195,6 +3195,17 @@ fn scan_moves_in_expr(
                 if let ExprKind::Ident(n) = &value.kind {
                     set.insert(n.clone());
                 }
+                // #8 fix: a plain `=` to a bare-Ident target overwrites
+                // whatever the binding currently owns; a Drop binding must
+                // drop that old value first (else it leaks). That pre-drop is
+                // gated on a runtime liveness flag (a deferred-init
+                // `let mut x: T;` has nothing to drop on its first assignment),
+                // so force the target onto the Runtime-drop-flag path here, the
+                // same way a moved binding is. `register_drop_kind` ignores
+                // this for non-Drop bindings, so it is a no-op for `i32` etc.
+                if let ExprKind::Ident(n) = &target.kind {
+                    set.insert(n.clone());
+                }
             }
             scan_moves_in_expr(target, sigs, types, set);
             scan_moves_in_expr(value, sigs, types, set);
@@ -5548,7 +5559,8 @@ fn gen_function(
             // flips to a runtime drop flag when the binding is forwarded out, so
             // a `string` param stored into a Vec/field (v0.0.17, the
             // bugs/string-param-store-double-free fix) is freed exactly once.
-            state.register_value_drop(&param.name.name, &slot, pty);
+            // A parameter always holds a live value on entry → initialized.
+            state.register_value_drop(&param.name.name, &slot, pty, true);
         }
     }
 
@@ -7066,7 +7078,8 @@ fn gen_method(
                         state.register_drop("self", &recv_name, *id);
                     }
                     Ty::Enum(id) if state.needs_drop(&struct_ty) => {
-                        state.register_drop_kind("self", &recv_name, DropKind::Enum(*id));
+                        // A `move self` receiver always holds a live value.
+                        state.register_drop_kind("self", &recv_name, DropKind::Enum(*id), true);
                     }
                     _ => {}
                 }
@@ -7121,7 +7134,8 @@ fn gen_method(
             // flips to a runtime drop flag when the binding is forwarded out, so
             // a `string` param stored into a Vec/field (v0.0.17, the
             // bugs/string-param-store-double-free fix) is freed exactly once.
-            state.register_value_drop(&param.name.name, &slot, pty);
+            // A parameter always holds a live value on entry → initialized.
+            state.register_value_drop(&param.name.name, &slot, pty, true);
         }
     }
 
@@ -7219,7 +7233,7 @@ struct DropEntry {
     disposition: DropDisposition,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum DropKind {
     Struct(StructId),
     /// Phase 8 slice 8.STR.3 follow-up: owned `string`. The drop body
@@ -7230,6 +7244,14 @@ enum DropKind {
     /// v0.0.14 enum-variant drop: a tagged enum with owning payloads. The
     /// drop body switches on the tag and tears down the active payload.
     Enum(EnumId),
+    /// #6 fix: a local fixed-size array whose element type carries Drop.
+    /// `needs_drop` and `gen_drop_in_place` already understood arrays
+    /// (the latter tears down each element), but `register_value_drop`
+    /// declined to register array *locals* — so their elements were never
+    /// dropped at scope exit. The drop body reconstructs
+    /// `Ty::Array(elem, count)` and routes through `gen_drop_in_place`.
+    /// Array *fields* of a struct stay reached via struct field recursion.
+    Array { elem: Box<Ty>, count: u32 },
 }
 
 /// Slice 6BC.opt: per-Drop-binding lowering choice.
@@ -7697,7 +7719,9 @@ impl<'a> FnState<'a> {
         value_slot: &str,
         struct_id: StructId,
     ) -> String {
-        self.register_drop_kind(binding_name, value_slot, DropKind::Struct(struct_id))
+        // `self` receivers / struct bindings reached here always hold a live
+        // value at registration → `initialized: true`.
+        self.register_drop_kind(binding_name, value_slot, DropKind::Struct(struct_id), true)
     }
 
     /// v0.0.14 auto field-drop: register a scope-exit drop for a binding of any
@@ -7705,7 +7729,13 @@ impl<'a> FnState<'a> {
     /// explicit `drop`), or a tagged enum with owning payloads. No-op for
     /// trivially-droppable types. Used where the binding's full `Ty` is known
     /// (lets); the param/self sites that predate enums inline their own match.
-    fn register_value_drop(&mut self, binding_name: &str, value_slot: &str, ty: &Ty) {
+    fn register_value_drop(
+        &mut self,
+        binding_name: &str,
+        value_slot: &str,
+        ty: &Ty,
+        initialized: bool,
+    ) {
         if !self.needs_drop(ty) {
             return;
         }
@@ -7713,11 +7743,18 @@ impl<'a> FnState<'a> {
             Ty::String => DropKind::String,
             Ty::Struct(id) => DropKind::Struct(*id),
             Ty::Enum(id) => DropKind::Enum(*id),
-            // Array locals aren't drop-registered (pre-existing gap); array
-            // *fields* are reached via struct field recursion at drop time.
+            // #6 fix: a local array whose elements carry Drop. `needs_drop`
+            // gated us in above, and `gen_drop_in_place` already tears down
+            // each element; register a scope-exit hook so that teardown runs.
+            // (Array *fields* of a struct are still reached via the struct's
+            // own field recursion at drop time.)
+            Ty::Array(elem, count) => DropKind::Array {
+                elem: elem.clone(),
+                count: *count,
+            },
             _ => return,
         };
-        self.register_drop_kind(binding_name, value_slot, kind);
+        self.register_drop_kind(binding_name, value_slot, kind, initialized);
     }
 
     fn register_drop_kind(
@@ -7725,6 +7762,7 @@ impl<'a> FnState<'a> {
         binding_name: &str,
         value_slot: &str,
         kind: DropKind,
+        initialized: bool,
     ) -> String {
         let disposition = if self.moved_bindings.contains(binding_name) {
             DropDisposition::Runtime
@@ -7741,7 +7779,14 @@ impl<'a> FnState<'a> {
                 let s = format!("%{}.drop_flag{}", sanitize(binding_name), self.tmp_counter);
                 self.allocas.push(format!("{s} = alloca i1"));
                 // v0.0.7 Slice 1.2: drop-flag init store — bool leaf.
-                self.gen_store(&Ty::Bool, "true", &s);
+                // #8 fix: the flag doubles as a liveness bit. A binding
+                // initialized at its `let` (or a param / match payload, always
+                // present) starts owning a value → `true`. A deferred-init
+                // `let mut x: T;` starts empty → `false`, so the first `x = ...`
+                // (see `gen_assign`) does not pre-drop uninitialized stack
+                // garbage. The reassignment path re-arms the flag after storing.
+                let init = if initialized { "true" } else { "false" };
+                self.gen_store(&Ty::Bool, init, &s);
                 s
             }
             DropDisposition::Always => {
@@ -8047,10 +8092,11 @@ impl<'a> FnState<'a> {
         // of teardown logic: a struct runs its user `drop` then auto-drops
         // owning fields; `string` frees its buffer; a tagged enum switches on
         // the tag and drops the active payload.
-        let drop_ty = match entry.kind {
-            DropKind::Struct(id) => Ty::Struct(id),
+        let drop_ty = match &entry.kind {
+            DropKind::Struct(id) => Ty::Struct(*id),
             DropKind::String => Ty::String,
-            DropKind::Enum(id) => Ty::Enum(id),
+            DropKind::Enum(id) => Ty::Enum(*id),
+            DropKind::Array { elem, count } => Ty::Array(elem.clone(), *count),
         };
         let value_slot = entry.value_slot.clone();
         let body = |state: &mut Self| {
@@ -8073,6 +8119,25 @@ impl<'a> FnState<'a> {
                 self.open_block(&skip_lbl);
             }
         }
+    }
+
+    /// #8 fix: emit a drop of the value at `slot` (type `ty`) gated on the
+    /// runtime liveness flag `flag` — drop only if the flag is currently
+    /// `true`. Used by `gen_assign` to tear down the old occupant of a Drop
+    /// binding before an `=` overwrites it, without dropping uninitialized /
+    /// already-moved storage. Mirrors `emit_conditional_drop`'s Runtime branch
+    /// (the auto-`br` emitted by `open_block` joins the skip path).
+    fn emit_flag_gated_drop(&mut self, ty: &Ty, slot: &str, flag: &str) {
+        let flag_val = self.next_tmp();
+        self.gen_load(&flag_val, &Ty::Bool, flag);
+        let drop_lbl = self.next_block_label();
+        let skip_lbl = self.next_block_label();
+        self.emit_terminator(&format!(
+            "br i1 {flag_val}, label %{drop_lbl}, label %{skip_lbl}"
+        ));
+        self.open_block(&drop_lbl);
+        self.gen_drop_in_place(ty, slot);
+        self.open_block(&skip_lbl);
     }
 
     /// Dispatch one scope-exit entry: Drop → conditional call;
@@ -8229,7 +8294,8 @@ impl<'a> FnState<'a> {
                                 self.mark_moved(src);
                             }
                         }
-                        self.register_value_drop(&name.name, &slot, &val_ty);
+                        // Inferred `let` always has an initializer → live.
+                        self.register_value_drop(&name.name, &slot, &val_ty, true);
                         self.bind(&name.name, slot, val_ty);
                         return;
                     }
@@ -8279,11 +8345,15 @@ impl<'a> FnState<'a> {
                 }
                 // If the type carries a destructor, register a scope-exit
                 // drop hook before binding the name (so the flag exists by
-                // the time anything references this binding). For an
-                // uninitialized Drop binding this is currently safe because
-                // sema rejects any path that would read it before it's
-                // assigned — so drop only runs after assignment.
-                self.register_value_drop(&name.name, &slot, &var_ty);
+                // the time anything references this binding).
+                //
+                // #8 fix: pass the binding's init state. A deferred-init
+                // `let mut x: T;` registers with `initialized: false` so its
+                // runtime drop flag starts `false` — the first `x = ...` then
+                // skips the pre-drop (there is nothing to tear down yet), and
+                // `gen_assign` re-arms the flag after the store. An initialized
+                // `let x: T = e;` registers `true` (unchanged behavior).
+                self.register_value_drop(&name.name, &slot, &var_ty, init.is_some());
                 self.bind(&name.name, slot, var_ty);
             }
             StmtKind::Return(value) => {
@@ -11156,7 +11226,9 @@ impl<'a> FnState<'a> {
                             // (no leak). A non-drop payload registers nothing.
                             self.bind(&name.name, local_slot.clone(), pty.clone());
                             if consumed {
-                                self.register_value_drop(&name.name, &local_slot, &pty);
+                                // A match payload binding is initialized from the
+                                // extracted payload at bind time → live.
+                                self.register_value_drop(&name.name, &local_slot, &pty, true);
                             }
                         }
                         // Wildcard payload patterns bind nothing.
@@ -13260,25 +13332,33 @@ impl<'a> FnState<'a> {
                 if let Some(&id) = self.types.struct_by_name.get(&name.name) {
                     let info = self.types.struct_defs[id.0 as usize].clone();
                     let struct_ty = Ty::Struct(id);
-                    let llvm_struct = self.lty(&struct_ty);
-                    let (dest_slot, _dest_ty) = self.gen_place(target);
-                    for f in fields {
-                        let (val, _) = self
-                            .gen_expr(&f.value)
-                            .expect("struct-literal field init has value");
-                        let idx = info.field_index(&f.name.name);
-                        let field_ty = info.field_type(&f.name.name);
-                        let ptr = self.next_tmp();
-                        self.emit(&format!(
-                            "{ptr} = getelementptr inbounds {llvm_struct}, ptr {dest_slot}, i32 0, i32 {idx}"
-                        ));
-                        self.gen_store(&field_ty, &val, &ptr);
-                        // G-023 fix: same mark_moved as gen_struct_lit.
-                        if let ExprKind::Ident(n) = &f.value.kind {
-                            self.mark_moved(n);
+                    // #8 fix: this fast path writes the literal's fields straight
+                    // into the destination, which would overwrite (and leak) the
+                    // Drop value the destination currently owns. Drop bindings
+                    // are rare assignment targets and never the hot insert path
+                    // this optimization targets, so route them through the
+                    // general path below, which drops the old value first.
+                    if !self.needs_drop(&struct_ty) {
+                        let llvm_struct = self.lty(&struct_ty);
+                        let (dest_slot, _dest_ty) = self.gen_place(target);
+                        for f in fields {
+                            let (val, _) = self
+                                .gen_expr(&f.value)
+                                .expect("struct-literal field init has value");
+                            let idx = info.field_index(&f.name.name);
+                            let field_ty = info.field_type(&f.name.name);
+                            let ptr = self.next_tmp();
+                            self.emit(&format!(
+                                "{ptr} = getelementptr inbounds {llvm_struct}, ptr {dest_slot}, i32 0, i32 {idx}"
+                            ));
+                            self.gen_store(&field_ty, &val, &ptr);
+                            // G-023 fix: same mark_moved as gen_struct_lit.
+                            if let ExprKind::Ident(n) = &f.value.kind {
+                                self.mark_moved(n);
+                            }
                         }
+                        return;
                     }
-                    return;
                 }
             }
         }
@@ -13299,7 +13379,32 @@ impl<'a> FnState<'a> {
             self.gen_load(&cur, &target_ty, &slot);
             self.gen_compound_op(op, &target_ty, &cur, &rhs_v)
         };
-        self.gen_store(&target_ty, &to_store, &slot);
+        // #8 fix: a plain `=` to a Drop binding overwrites the value it
+        // currently owns — tear that old value down first, or it leaks. Only
+        // for a bare-Ident target of a Drop type: a field/index place belongs
+        // to an aggregate whose own scope-exit drop still covers it, and a
+        // raw-pointer deref store (`unsafe { *p = v; }`, Box::new / arena
+        // alloc) writes into *uninitialized* heap, where pre-dropping would
+        // read garbage. The RHS is already evaluated above, so if it moved the
+        // target out (e.g. `x = f(move x)`) the flag is already `false` and the
+        // pre-drop is correctly skipped. After the store the binding owns a
+        // fresh value, so re-arm the flag to `true`.
+        let mut stored = false;
+        if matches!(op, AssignOp::Assign) {
+            if let ExprKind::Ident(n) = &target.kind {
+                if self.needs_drop(&target_ty) {
+                    if let Some(flag) = self.find_drop_flag(n) {
+                        self.emit_flag_gated_drop(&target_ty, &slot, &flag);
+                        self.gen_store(&target_ty, &to_store, &slot);
+                        self.gen_store(&Ty::Bool, "true", &flag);
+                        stored = true;
+                    }
+                }
+            }
+        }
+        if !stored {
+            self.gen_store(&target_ty, &to_store, &slot);
+        }
         // G-023 fix: a plain `=` whose RHS was a bare-Ident source
         // consumes that binding into the destination slot. The most-
         // cited surface is the raw-pointer store inside
@@ -16277,6 +16382,65 @@ mod tests {
         assert!(
             ir.contains("switch i32") && ir.contains("@Inner.drop"),
             "enum-variant drop must switch on the tag and drop the payload, got:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn array_local_with_drop_elements_drops_each_at_scope_exit() {
+        // #6: a local `[T; N]` whose element type has Drop must tear down every
+        // element when the binding goes out of scope. Pre-fix,
+        // `register_value_drop` declined array locals (the `_ => return` arm),
+        // so `needs_drop`/`gen_drop_in_place` knew how to drop arrays but were
+        // never reached — the elements leaked.
+        let ir = gen_src(
+            "struct Cell { id: i32 }\n\
+             impl Cell { fn drop(mut self) { return; } }\n\
+             fn mk(i: i32) -> Cell { return Cell { id: i }; }\n\
+             fn scope_array() { let _cells: [Cell; 2] = [mk(1), mk(2)]; return; }\n\
+             fn main() -> i32 { scope_array(); return 0; }",
+        );
+        let drops = ir.matches("call preserve_nonecc void @Cell.drop").count();
+        assert!(
+            drops >= 2,
+            "a [Cell; 2] local must drop both elements at scope exit (>=2 calls), got {drops}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn reassign_drop_binding_drops_old_value_before_overwrite() {
+        // #8: `x = new` on a Drop binding must drop the value `x` currently
+        // owns before storing the new one. Pre-fix, `gen_assign` stored over
+        // the slot directly and emitted exactly one drop (scope exit), leaking
+        // the overwritten value. Post-fix there are two: the flag-gated
+        // pre-drop at the `=`, and the scope-exit drop of the final value.
+        let ir = gen_src(
+            "struct Owner { id: i32 }\n\
+             impl Owner { fn drop(mut self) { return; } }\n\
+             fn reassign() { let mut x: Owner = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
+             fn main() -> i32 { reassign(); return 0; }",
+        );
+        let drops = ir.matches("call preserve_nonecc void @Owner.drop").count();
+        assert!(
+            drops >= 2,
+            "reassigning a Drop binding must pre-drop the old value (>=2 calls), got {drops}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn deferred_init_drop_binding_flag_starts_false() {
+        // #8 edge: a deferred-init `let mut x: T;` registers its runtime
+        // liveness flag as `false`, so the first `x = ...` skips the pre-drop
+        // (there is no value yet — dropping would tear down uninitialized stack
+        // garbage). `gen_assign` re-arms the flag to `true` after each store.
+        let ir = gen_src(
+            "struct Owner { id: i32 }\n\
+             impl Owner { fn drop(mut self) { return; } }\n\
+             fn f() { let mut x: Owner; x = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        assert!(
+            ir.contains("store i1 false, ptr %x.drop_flag"),
+            "deferred-init Drop binding must start its liveness flag false:\n{ir}"
         );
     }
 
