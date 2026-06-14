@@ -9282,6 +9282,69 @@ fn stdlib_hash_map_generic_k_v() {
     assert_eq!(run.code(), Some(0), "generic HashMap round-trip failed");
 }
 
+/// `HashMap[K, V]` declares `K: Copy, V: Copy` because insert/overwrite/get
+/// bit-copy and overwrite slots without running destructors. A non-Copy
+/// (owning / `drop`-carrying) value must be rejected at the use site with
+/// E0502 — NOT silently miscompiled into a double-free, and NOT a compiler
+/// panic (the pre-fix behavior: codegen hit `Ty::Error` and aborted). This is
+/// the soundness counterpart to the plan's long-deferred "non-Copy V revisit".
+#[test]
+fn stdlib_hash_map_noncopy_value_rejected_e0502() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"hmnc\"\n\n[[bin]]\nname = \"hmnc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/hash_map.cplus"),
+        include_str!("../../vendor/stdlib/src/hash_map.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/result.cplus"),
+        include_str!("../../vendor/stdlib/src/result.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/hash_map\" as hm;\n\
+         struct Owner { p: *u8 }\n\
+         impl Owner {\n\
+             fn drop(mut self) { unsafe { free(self.p); } return; }\n\
+             fn hash(self) -> u64 { return 7 as u64; }\n\
+             fn eq(self, other: Self) -> bool { return true; }\n\
+         }\n\
+         extern fn free(p: *u8);\n\
+         fn main() -> i32 {\n\
+             let mut m: hm::HashMap[i32, Owner] = hm::new::[i32, Owner]();\n\
+             return 0 as i32;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for a non-Copy HashMap value"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0502"),
+        "expected E0502 (Copy bound not satisfied) in stderr, got: {stderr}"
+    );
+}
+
 /// v0.0.3 Slice 1C: stdlib/net round-trip — fork() a server, parent acts
 /// as client, send "HELLO" (5 bytes), receive echo, assert len.
 #[test]

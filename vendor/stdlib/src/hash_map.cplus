@@ -4,8 +4,8 @@
 //
 // **Type parameters and bounds.**
 //
-//   - `K: Copy` — keys are bitwise-copied into the table on insert.
-//     Primitive types (`i32`, `i64`, `u64`, `usize`, `str`, ...) are
+//   - `K: Copy` (enforced) — keys are bitwise-copied into the table on
+//     insert. Primitive types (`i32`, `i64`, `u64`, `usize`, `str`, ...) are
 //     Copy structurally. User struct types are Copy iff every field is
 //     Copy. For `K = str`, the table stores the str's fat pointer
 //     verbatim — **the caller is responsible for keeping the underlying
@@ -13,9 +13,13 @@
 //     or pre-allocated buffers; never store a str backed by a heap
 //     string that drops before the map.
 //
-//   - `V: Copy` — same bitwise-copy semantics on insert and `get`.
-//     Non-Copy `V` (like `string` or `Vec[T]`) would need Drop hooks
-//     on overwrite and on map-Drop; forward-pointed to a future slice.
+//   - `V: Copy` (enforced) — same bitwise-copy semantics on insert and
+//     `get`. The bound is declared on the `HashMap` struct and `new`, so a
+//     non-Copy (owning / `drop`-carrying) `K` or `V` — `string`, `Vec[T]`,
+//     any type with `fn drop` — is rejected at the use site with E0502.
+//     Without it, insert/overwrite/get bit-copy or overwrite owned values
+//     and double-free or leak. A Drop-aware map (drop-on-overwrite +
+//     drop-all-on-map-drop, like `Vec`) is a separate feature, not yet built.
 //
 // **Hashing and equality.**
 //
@@ -57,7 +61,7 @@ extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memset(b: *u8, c: i32, len: usize) -> *u8;
 
-pub struct HashMap[K, V] {
+pub struct HashMap[K: Copy, V: Copy] {
     keys: *K,
     vals: *V,
     occupied: *u8,
@@ -65,10 +69,14 @@ pub struct HashMap[K, V] {
     len: usize,
 }
 
-// Empty map; first insert allocates. `K` and `V` must both satisfy the
-// blessed bounds documented at the top of this file — sema enforces
-// them at use-site monomorphization.
-pub fn new[K, V]() -> HashMap[K, V] {
+// Empty map; first insert allocates. The `K: Copy` / `V: Copy` bounds are
+// load-bearing, not cosmetic: insert bit-copies keys/values into the table,
+// overwrite stores over the old slot without running a destructor, and `get`
+// bit-copies the value out. A non-Copy (owning / `drop`-carrying) `K` or `V`
+// would therefore double-free or leak. The bound makes sema reject such an
+// instantiation (E0502) at the use site instead of miscompiling it. Drop-aware
+// keys/values are a separate feature, not a soundness patch.
+pub fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
     return HashMap[K, V] {
         keys: unsafe { 0 as *K },
         vals: unsafe { 0 as *V },
