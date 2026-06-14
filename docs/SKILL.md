@@ -14,6 +14,8 @@ This file is a standalone reference dropped into your project; the C+ repo (exam
 
 Systems language. LLVM backend. Manual memory, no GC. Rust-style borrow checker. One-way C ABI (cpc emits standard object files; `.c` doesn't compile). Designed for LLMs to write correctly: explicit beats clever, locality is paramount, the type system carries weight.
 
+**The language is feature-frozen as of v0.0.22** (the contextual builder-block DSL, §16, was the last feature). The core takes bug fixes only — no new keywords, syntax, or type-system changes. New capability lives in **packages** (`vendor/`, §9) and tooling, never the language. Don't propose language features; propose a package.
+
 File extension `.cplus`. Compiler `cpc`. Project layout: `Cplus.toml` at root, sources in `src/`, deps in `vendor/`. Imports are explicit + aliased, no `.cplus` extension:
 
 ```cplus
@@ -741,7 +743,82 @@ Canonical patterns: [cpc/tests/e2e.rs](cpc/tests/e2e.rs) for the compiler; in-pa
 
 ---
 
-## 16. When in doubt
+## 16. Contextual builder blocks — `@ctx { ... }` (v0.0.22)
+
+A package-extensible *declarative construction* syntax (UI trees, route tables, config) with **no macros, closures, or compiler plugins**. The compiler owns only the syntax + lowering; a package supplies ordinary types and functions. `@` was an unused character — purely additive.
+
+```cplus
+import "ui/view" as view;
+
+let screen = @view {                 // @ctx opens a builder block; ctx is a module path
+    text("Inbox")                    // leaf element; bare name resolves as view::text
+        .font = bigger               // leading-dot modifier: field assign on the item
+        .on_click(refresh)           // leading-dot modifier: method call on the item
+    let n = unread_count();          // `let` setup is allowed
+    if n > 0 {                       // collection-if: body items add into THIS block
+        badge(n)
+    }
+    vstack {                         // container element (same context) — NO `@`
+        for row in rows {            // collection-for: one+ items per iteration
+            item(row)
+        }
+    }
+};
+```
+
+**Name lookup inside a block:** bare names resolve **locals → same-file top-level → `ctx::name`**. So `text`/`vstack`/`badge`/`item` above are `view::*`; `n`/`row` are locals; a same-file `fn` of the same name shadows the package. A bare name that is no member at all is the ordinary "undefined" error. Modifier names (`.font`, `.on_click`) are fields/methods on the item, never contextual.
+
+**Leading-dot modifiers** attach to the item on the line(s) above. The rule is line-oriented: a *line-leading* `.x` is a modifier; a *same-line* `.x` is ordinary postfix (`text("a").trimmed()` is one item, then a newline `.font = …` modifies it).
+
+**Container elements** are a bare `name { ... }` (never `@name`) — a child of the *same* context, not a nested DSL. A nested *different* `@`-DSL block is **rejected** (parse error): write a same-context container without `@`.
+
+**Allowed in a block:** item lines, `.modifier` lines, `let`, `if`/`else`/`else if`, `for … in …`, nested container elements. **Rejected:** `while`/`loop`, `return`/`break`/`continue`, `defer`/`guard`, `yield`/`await`, and nested `@`.
+
+### The package contract (what a builder package author writes)
+
+Fixed protocol names, single `Item` type per context (C+ has no overloading):
+
+```cplus
+pub struct Item { ... }                       // one element type for the context
+
+pub fn text(s: str) -> Item { ... }           // leaf constructor (any args)
+pub fn badge(n: i32) -> Item { ... }
+
+pub struct Builder { ... }                     // the accumulator
+impl Builder {
+    pub fn new() -> Builder { ... }
+    pub fn add(mut self, item: Item) { ... }   // called once per item
+    pub fn finish(move self) -> Root { ... }   // root finisher (Root may differ from Item)
+}
+
+pub fn vstack(b: Builder) -> Item { ... }      // CONTAINER: takes a filled Builder -> Item
+```
+
+A container constructor takes a **`Builder`** (not a collection): the author stores children however they like, so the compiler's lowering never names `Vec` — DSL packages work even where stdlib `Vec` is gated (esp32). Modifier fields/methods are just fields/methods on `Item`.
+
+### What it lowers to (before sema — ordinary C+)
+
+Everything reduces to `Builder::new` + `add`, differing only in the finisher (root `.finish()`, container `ctx::name(builder)`); `if`/`for` add into the same builder:
+
+```cplus
+// @view { text("Inbox").font=bigger  if n>0 { badge(n) }  vstack { for r in rows { item(r) } } }
+let mut __b = view::Builder::new();
+let mut __i = view::text("Inbox");
+__i.font = bigger;
+__b.add(__i);
+if n > 0 { __b.add(view::badge(n)); }
+let __c = { let mut __cb = view::Builder::new();
+            for r in rows { __cb.add(view::item(r)); }
+            view::vstack(__cb) };           // container finisher
+__b.add(__c);
+let screen = __b.finish();
+```
+
+No new codegen: sema and the borrow checker see only ordinary locals, calls, and blocks. Diagnostics land on the user-written DSL line (the desugar reuses spans).
+
+---
+
+## 17. When in doubt
 
 1. **Read a recipe / example online** — <https://github.com/netdur/cplus/tree/main/docs/examples> (`recipes/` are task-shaped, every file compiles and runs).
 2. **Read a design note online** — <https://github.com/netdur/cplus/tree/main/plans> (or the site, <https://cplus-lang.dev>).
