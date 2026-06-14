@@ -739,7 +739,7 @@ Every new feature ships with **three** test shapes:
 2. **Negative-with-code** — rejects with the specific Exxxx code (assert on `status != 0` + stderr contains the code).
 3. **End-to-end** — drives `cpc build` from start to finish.
 
-Canonical patterns: [cpc/tests/e2e.rs](cpc/tests/e2e.rs) for the compiler; in-package `#[test]` fns for vendor pkgs.
+Canonical patterns: [`cpc/tests/e2e.rs`](https://github.com/netdur/cplus/blob/main/cpc/tests/e2e.rs) for the compiler; in-package `#[test]` fns for vendor pkgs.
 
 ---
 
