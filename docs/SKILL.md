@@ -1,6 +1,6 @@
 # SKILL — writing C+ source
 
-Dense reference for an LLM about to write or edit C+ code. Not a tutorial; not the spec.
+Dense reference for an LLM about to write or edit C+ code. Not a tutorial; for the normative spec (exact syntax + semantics) see [SPEC.md](SPEC.md).
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 

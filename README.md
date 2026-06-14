@@ -112,5 +112,6 @@ To be a truly great community, C+ needs to welcome developers from all walks of 
 
 ## Learning More
 
+- Read [`docs/SPEC.md`](docs/SPEC.md) — the normative language specification (syntax, semantics, ownership model, the builder-block DSL, error-code catalog).
 - Check the [`docs/`](docs/) directory — runnable [`docs/examples/`](docs/examples/), design deep-dives in [`docs/design/`](docs/design/), and [`docs/SKILL.md`](docs/SKILL.md) (a dense reference for LLMs writing C+).
 - See the [`vendor/`](vendor/) directory to explore how major language features (stdlib, SIMD, GPU, AppKit, JNI) are implemented purely through the package system.
