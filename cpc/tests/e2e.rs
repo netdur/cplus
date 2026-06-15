@@ -117,7 +117,10 @@ fn static_narrowing_literal_cast_runs() {
 /// (catch-all) / the scrutinee value (wildcard) / registers the payload
 /// (variant), for both an owned binding and an owned temporary — while a moved
 /// payload isn't double-dropped and a borrowed-place scrutinee is left to its
-/// owner. Each phase must leave the drop counter at exactly 1; ASan-clean.
+/// owner. Also covers wildcard *payload* positions (`E::A(_)`, `Pair(r, _)`),
+/// which discard an owning payload and otherwise leaked it. Each phase leaves
+/// the drop counter at its expected value (1, or 2 for the two-payload enum);
+/// ASan-clean.
 #[test]
 fn match_consumes_owned_scrutinee_exactly_once() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -129,7 +132,9 @@ fn match_consumes_owned_scrutinee_exactly_once() {
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum E { A(R), B }\n\
+         enum P { Pair(R, R), None }\n\
          fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
+         fn mkp() -> P { return P::Pair(R { data: unsafe { 0 as *u8 } }, R { data: unsafe { 0 as *u8 } }); }\n\
          fn consume(move r: R) -> i32 { return 0; }\n\
          struct H { e: E }\n\
          impl H { fn drop(mut self) { return; } }\n\
@@ -138,12 +143,20 @@ fn match_consumes_owned_scrutinee_exactly_once() {
          fn p_temp_var() { let _n: i32 = match mke() { E::A(r) => 7, E::B => 0 }; return; }\n\
          fn p_temp_moved() { let _n: i32 = match mke() { E::A(r) => consume(r), E::B => 0 }; return; }\n\
          fn p_field() { let h: H = H { e: mke() }; let _n: i32 = match h.e { _ => 7 }; return; }\n\
+         fn p_wc_payload() { let e: E = mke(); let _n: i32 = match e { E::A(_) => 7, E::B => 0 }; return; }\n\
+         fn p_wc_temp() { let _n: i32 = match mke() { E::A(_) => 7, E::B => 0 }; return; }\n\
+         fn p_pair_mixed() { let p: P = mkp(); let _n: i32 = match p { P::Pair(r, _) => 7, P::None => 0 }; return; }\n\
+         fn p_pair_moved() { let p: P = mkp(); let _n: i32 = match p { P::Pair(r, _) => consume(r), P::None => 0 }; return; }\n\
          fn main() -> i32 {\n\
              p_bind();      if unsafe { DROPS } != 1 { return 1; } unsafe { DROPS = 0; }\n\
              p_wild();      if unsafe { DROPS } != 1 { return 2; } unsafe { DROPS = 0; }\n\
              p_temp_var();  if unsafe { DROPS } != 1 { return 3; } unsafe { DROPS = 0; }\n\
              p_temp_moved();if unsafe { DROPS } != 1 { return 4; } unsafe { DROPS = 0; }\n\
              p_field();     if unsafe { DROPS } != 1 { return 5; } unsafe { DROPS = 0; }\n\
+             p_wc_payload();if unsafe { DROPS } != 1 { return 6; } unsafe { DROPS = 0; }\n\
+             p_wc_temp();   if unsafe { DROPS } != 1 { return 7; } unsafe { DROPS = 0; }\n\
+             p_pair_mixed();if unsafe { DROPS } != 2 { return 8; } unsafe { DROPS = 0; }\n\
+             p_pair_moved();if unsafe { DROPS } != 2 { return 9; } unsafe { DROPS = 0; }\n\
              return 0;\n\
          }\n",
     )

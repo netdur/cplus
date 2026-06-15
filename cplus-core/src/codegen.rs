@@ -11306,6 +11306,29 @@ impl<'a> FnState<'a> {
                         .cloned()
                         .unwrap_or_default();
                     for (pi, pp) in payload.iter().enumerate() {
+                        if !matches!(pp.kind, PatternKind::Binding(_)) {
+                            // Wildcard (or other non-binding) payload position:
+                            // not bound, so not moved out. When the scrutinee is
+                            // consumed, this owning payload would otherwise leak
+                            // (the scrutinee's whole-enum drop is disarmed / it's
+                            // an owned temporary) — drop it in place. `E::A(_)`
+                            // and the `_` half of `Pair(r, _)` both hit this.
+                            // No-op for a non-Drop payload or a borrow scrutinee.
+                            if consumed {
+                                let pty =
+                                    variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
+                                if self.needs_drop(&pty) {
+                                    let slot_ptr = self.payload_slot_ptr(
+                                        &llvm_enum,
+                                        &scr_ptr,
+                                        &variant_payload_tys,
+                                        pi,
+                                    );
+                                    self.gen_drop_in_place(&pty, &slot_ptr);
+                                }
+                            }
+                            continue;
+                        }
                         if let PatternKind::Binding(name) = &pp.kind {
                             let pty = variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
                             // Byte-offset GEP (shared with construct/drop) so a
