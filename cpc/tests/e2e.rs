@@ -10952,6 +10952,85 @@ fn stdlib_for_in_break_does_not_crash() {
     }
 }
 
+/// `break`-ing out of a `for x in g()` over a `gen fn` that holds Drop locals
+/// across a yield must DROP those locals (not leak them). The destroy edge of
+/// each yield routes to a per-yield cancel block that drops the in-scope locals
+/// before freeing the frame. Verifies exactly-once teardown via an alloc/free
+/// counter (balance 0), including the staggered-init case (a local declared
+/// after the break point must NOT be dropped), and that full drain does not
+/// double-free. ASan-clean.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"brkd\"\n\n[[bin]]\nname = \"brkd\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    // `phase` selects: 0 = break with one Drop local; 1 = staggered (second
+    // local declared after the break point, must not drop); 2 = full drain
+    // (must not double-free). All must leave alloc/free balanced (exit 0).
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as iterator;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         static mut A: i32 = 0;\n\
+         static mut F: i32 = 0;\n\
+         struct R { p: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { F = F +% 1; free(self.p); } return; } }\n\
+         fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         gen fn one() -> i32 { let r: R = mk(); yield 1; yield 2; return; }\n\
+         gen fn staggered() -> i32 { let r1: R = mk(); yield 1; let r2: R = mk(); yield 2; return; }\n\
+         fn main() -> i32 {\n\
+             { for x in one() { if x == 1 { break; } } }\n\
+             if unsafe { A -% F } != 0 { return 1; }\n\
+             unsafe { A = 0; F = 0; }\n\
+             { for x in staggered() { if x == 1 { break; } } }\n\
+             if unsafe { A -% F } != 0 { return 2; }\n\
+             unsafe { A = 0; F = 0; }\n\
+             { let mut s: i32 = 0; for x in one() { s = s +% x; } }\n\
+             if unsafe { A -% F } != 0 { return 3; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(dir.join("target/debug/brkd")).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged coroutine cancel-drop ({sanitizer}): {stderr}");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "coroutine locals must drop exactly once on early break (incl. staggered + full-drain) ({sanitizer})"
+        );
+    }
+}
+
 /// `executor::block_on(amain())` must type-check and run *without* a turbofish —
 /// the type arg `T` is inferred from the `Future[i32]` argument. Before the
 /// generic-struct unification fix, `block_on(f())` failed (E0302 "struct vs

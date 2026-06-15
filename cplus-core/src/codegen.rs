@@ -8169,6 +8169,30 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// v0.0.23: drop the Drop locals currently in scope, for a coroutine that
+    /// is being destroyed while suspended at a yield (early-cancel of a `for-in`
+    /// over a `gen fn`). Walks `scope_exits` like `emit_all_scope_exits` but
+    /// (a) runs only Drop hooks, not `defer` (cancellation is not normal scope
+    /// exit), and (b) does NOT pop the scopes — the resume path still needs
+    /// them. Reuses `emit_conditional_drop`, so a moved-out binding (flag false)
+    /// is skipped and a not-yet-declared local simply isn't in scope. The
+    /// normal-completion path still drops via the body's own scope exit, and
+    /// `.coro.final_suspend`'s cleanup is bare (its scope is already popped), so
+    /// this adds no double-free.
+    fn emit_coro_cancel_drops(&mut self) {
+        let frames: Vec<Vec<ScopeExit>> = self.scope_exits.iter().rev().cloned().collect();
+        for frame in &frames {
+            for entry in frame.iter().rev() {
+                if self.terminated {
+                    return;
+                }
+                if let ScopeExit::Drop(d) = entry {
+                    self.emit_conditional_drop(d);
+                }
+            }
+        }
+    }
+
     /// v0.0.16: emit scope-exit hooks for frames from the innermost down to (and
     /// including) `frame_index`, WITHOUT popping them. Used by `break`/`continue`
     /// to drop the loop body's (and any inner) owned locals before the jump; the
@@ -12181,26 +12205,36 @@ impl<'a> FnState<'a> {
         let suspend_v = self.next_tmp();
         let resume_bb = self.next_block_label();
         let ramp_bb = self.next_block_label();
+        let cancel_bb = self.next_block_label();
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         // default → ramp-return (suspend back to the caller); 0 → resume the
-        // body; 1 → destroy. The destroy edge MUST route to the gen fn's
-        // `.coro.cleanup` (frame free + `coro.end`), the same place the
-        // final-suspend destroy edge goes — NOT a trap. `coro.destroy` on a
-        // coroutine suspended *at a yield* is exactly what a `for-in` loop does
-        // when it ends early (`break`, or the iterator being dropped undrained);
-        // trapping there made every such `break` SIGTRAP. (Locals held live
-        // across the yield are not run through Drop on this early-destroy path
-        // yet — they leak rather than crash; per-suspend-point cleanup is a
-        // follow-up.)
+        // body; 1 → destroy. `coro.destroy` on a coroutine suspended *at a
+        // yield* is exactly what a `for-in` loop does when it ends early
+        // (`break`, or the iterator dropped undrained). Route the destroy edge
+        // to a per-yield cancel block that drops the locals currently in scope,
+        // then frees the frame via `.coro.cleanup` — so those locals are torn
+        // down once rather than leaked. (Trapping here was the original SIGTRAP
+        // bug; routing straight to cleanup fixed the crash but leaked the
+        // locals; this drops them.)
         self.emit_terminator(&format!(
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
         ));
         // Ramp-return path: branch to the gen fn's .coro.end (emitted by
         // gen_gen_function's epilogue).
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
+        // Cancel (destroy-while-suspended) path: drop the in-scope Drop locals
+        // (flag-gated, so moved-out / not-yet-initialized ones are skipped),
+        // then fall into the frame-free cleanup. The normal-completion path
+        // still drops via the body's own scope exit, and final_suspend's
+        // cleanup is bare, so this is the only place these locals drop on
+        // cancel — no double-free.
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
         // Normal-resume branch: continue with the body.
         self.body.push_str(&format!("{resume_bb}:\n"));
         self.terminated = false;
