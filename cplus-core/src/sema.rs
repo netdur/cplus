@@ -11897,6 +11897,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
+    /// TEXT.R1 (assignment): a bare string literal assigned into a binding of
+    /// the designated owned-string type (`Text`) is constructed into an owned
+    /// `Text`, exactly like the `let`-init and `return` sites already do. Only a
+    /// literal coerces — an arbitrary `str` value still needs `.to_text()`. Used
+    /// to skip the would-be `str`-vs-`struct` mismatch at the assignment site so
+    /// `let mut s: Text = "a"; s = "b";` works like the `let`.
+    fn is_str_lit_to_lang_string(&self, value: &Expr, target_ty: &Ty) -> bool {
+        matches!(value.kind, ExprKind::StrLit(_))
+            && matches!(target_ty, Ty::Struct(id) if self.designated_string_struct == Some(*id))
+    }
+
     fn check_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr, span: ByteSpan) -> Ty {
         // v0.0.9 Phase 4: assignment to a module-scope `static`.
         // Routed before the local-binding path because static names
@@ -11946,7 +11957,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .map(|i| i.ty.clone())
                         .unwrap_or(Ty::Error);
                     if target_ty != Ty::Error {
-                        self.check_expr(value, Some(target_ty.clone()));
+                        // TEXT.R1: `let mut s: Text; s = "lit";` — the literal
+                        // constructs an owned Text; don't run the str-vs-struct
+                        // check that would reject it.
+                        if !self.is_str_lit_to_lang_string(value, &target_ty) {
+                            self.check_expr(value, Some(target_ty.clone()));
+                        }
                     } else {
                         let _ = self.check_expr(value, None);
                     }
@@ -11994,14 +12010,24 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // type-rules as the standalone binary op. The +%/-%/*%/etc. wrapping
         // variants are NOT covered — wrapping ops don't have compound forms
         // in C+ (use `a = a +% b` explicitly).
-        let value_ty = self.check_expr(
-            value,
-            if target_ty == Ty::Error {
-                None
-            } else {
-                Some(target_ty.clone())
-            },
-        );
+        // TEXT.R1 (assignment): a bare literal into a `Text` binding is built as
+        // an owned Text (same as `let`/`return`), so accept it instead of
+        // running the str-vs-struct check. Plain `=` only; a compound op on a
+        // `Text` is still rejected by the op-type check below.
+        let value_ty = if matches!(op, AssignOp::Assign)
+            && self.is_str_lit_to_lang_string(value, &target_ty)
+        {
+            target_ty.clone()
+        } else {
+            self.check_expr(
+                value,
+                if target_ty == Ty::Error {
+                    None
+                } else {
+                    Some(target_ty.clone())
+                },
+            )
+        };
         // v0.0.14 soundness: a plain `=` moves the RHS into the target. Moving a
         // non-Copy field/index out of a Drop aggregate is E0509 here too (same
         // as `let` / `return`) — otherwise the source's destructor double-frees
@@ -18207,6 +18233,39 @@ mod tests {
              }",
         );
         assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
+    }
+
+    #[test]
+    fn text_reassign_str_literal_coerces() {
+        // TEXT.R1 at the assignment site: `let mut s: Text = "a"; s = "b";`
+        // builds — the literal constructs an owned Text, matching the
+        // `let`-init coercion. Before the fix this was E0302 (str vs struct).
+        assert_clean(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let mut s: Text = \"a\"; s = \"b\"; return 0; }",
+        );
+    }
+
+    #[test]
+    fn text_reassign_to_immutable_still_errors_e0305() {
+        // The coercion must not paper over immutability: a non-`mut` binding
+        // still rejects reassignment (the immutability check fires first).
+        let codes = errors(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let s: Text = \"a\"; s = \"b\"; return 0; }",
+        );
+        assert!(codes.contains(&"E0305"), "expected E0305, got: {codes:?}");
+    }
+
+    #[test]
+    fn text_assign_str_value_still_rejected_e0302() {
+        // Only a literal coerces; an arbitrary `str` *value* still needs
+        // `.to_text()` — assigning one to a Text binding is a type error.
+        let codes = errors(
+            "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
+             fn main() -> i32 { let mut s: Text = \"a\"; let v: str = \"b\"; s = v; return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
     #[test]

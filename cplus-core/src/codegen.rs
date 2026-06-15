@@ -13414,7 +13414,20 @@ impl<'a> FnState<'a> {
         // Compute the place slot (Ident or Field chain). gen_place returns
         // a pointer that we can store to directly.
         let (slot, target_ty) = self.gen_place(target);
-        let (rhs_v, _) = self.gen_expr(value).expect("assigned value");
+        // TEXT.R1 (assignment): a bare string literal assigned into a `Text`
+        // place is built into an owned heap Text, mirroring the `let`-init and
+        // `return` sites (sema accepts it via `is_str_lit_to_lang_string`).
+        // Without this the literal would lower as a `str` and mismatch the Text
+        // slot. The constructed value then flows through the normal Drop-aware
+        // store below (the old Text is pre-dropped for an Ident/field target).
+        let rhs_v = match &value.kind {
+            ExprKind::StrLit(s)
+                if matches!(op, AssignOp::Assign) && self.is_lang_string_ty(&target_ty) =>
+            {
+                self.gen_strlit_as_lang_string(s, &target_ty)
+            }
+            _ => self.gen_expr(value).expect("assigned value").0,
+        };
         let _ = self.lty(&target_ty);
         // v0.0.3 Slice 3A: compound assigns. For `a OP= b`, lower as
         // load + binary op + store. Plain `=` is just store.

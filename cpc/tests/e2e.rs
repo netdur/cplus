@@ -10755,6 +10755,66 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
     );
 }
 
+/// TEXT.R1 at the assignment site: a bare string literal assigned into a `Text`
+/// binding is constructed into an owned `Text`, like the `let`-init coercion —
+/// so `let mut s: Text = "a"; s = "bb";` works. The reassignment must also drop
+/// the old `Text`'s heap buffer first (the #8 pre-drop), so repeated literal
+/// reassignment is leak- and double-free-free. Runs clean under ASan and the
+/// final value is correct.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_text_reassign_str_literal_coerces() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"txtre\"\n\n[[bin]]\nname = \"txtre\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["text", "vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             let mut s: text::Text = \"a\";\n\
+             s = \"bb\";\n\
+             s = \"ccc\";\n\
+             s = 9.to_text();\n\
+             s = \"dddd\";\n\
+             if s.len() != (4 as usize) { return 1; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(dir.join("target/debug/txtre")).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged Text reassign ({sanitizer}): {stderr}");
+        assert_eq!(run.status.code(), Some(0), "Text literal reassignment must coerce + drop old cleanly ({sanitizer})");
+    }
+}
+
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
 ///
 /// Two producers each push 100 values; two consumers drain until Closed.
