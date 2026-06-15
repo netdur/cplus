@@ -7067,6 +7067,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
         };
 
+        // A projection scrutinee (`obj.f`, `arr[i]`, `*p`) is borrowed by the
+        // match, not owned by it — its owner (the aggregate / pointee) still
+        // drops it. Binding an owning payload for *read* is fine (a borrow), but
+        // moving one OUT is a partial move of that place, which Phase 3 defers
+        // (E0337) — exactly like `take(obj.f)`. Detected per-arm below: if a
+        // bound payload of a non-Copy type escapes (is moved) in the arm body.
+        // Without this, the move slipped through and the payload was dropped
+        // twice (once by the move target, once by the place's owner) — a
+        // double-free the direct-move path (E0337) already prevents.
+        let scrutinee_is_projection = matches!(
+            &scrutinee.kind,
+            ExprKind::Field { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        );
+
         let enum_name = self.enums[enum_id.0 as usize].name.clone();
         let variant_names: Vec<String> = self.enums[enum_id.0 as usize]
             .variants
@@ -7131,6 +7150,41 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         );
                     }
                     _ => {}
+                }
+            }
+            // E0337 (match path): moving an owning payload out of a borrowed-
+            // place scrutinee is a partial move — reject it, mirroring the
+            // direct `take(obj.f)` path. Checked after the body so a read-only
+            // binding (never moved) stays allowed; only an escaped non-Copy
+            // binding fires. Closes the double-free where the moved payload and
+            // the place's owner both dropped it.
+            if scrutinee_is_projection {
+                // A bare-Ident arm body (`E::A(x) => x`) returns the binding as
+                // the match value — an escape the move-checker doesn't record on
+                // the binding itself (unlike `=> consume(move x)` / `=> Wrap(x)`,
+                // which set `moved`). Treat both as escapes.
+                let returned = match &arm.body.kind {
+                    ExprKind::Ident(n) => Some(n.clone()),
+                    _ => None,
+                };
+                for bn in match_pattern_binding_names(&arm.pattern) {
+                    let (moved, ty) = match self.lookup_local(&bn) {
+                        Some(i) => (i.moved, i.ty.clone()),
+                        None => continue,
+                    };
+                    let escaped = moved || returned.as_deref() == Some(bn.as_str());
+                    let moved_owning = escaped && !self.is_copy(&ty);
+                    if moved_owning {
+                        self.err(
+                            "E0337",
+                            "cannot move a value out of a `match` on a place (a field, array \
+                             element, or `*p`); that would partially move the matched place. \
+                             Phase 3 defers partial moves — match a whole binding instead, or \
+                             leave the payload in place (a read-only binding is allowed)."
+                                .to_string(),
+                            arm.pattern.span,
+                        );
+                    }
                 }
             }
             self.scopes.pop();
@@ -13287,6 +13341,23 @@ fn op_str(op: BinOp) -> &'static str {
 /// - `Array(elem_a, len_a)` against `Array(elem_b, len_b)` → match
 ///   lengths and recurse on element types.
 /// - Concrete-against-concrete → equality check.
+/// Names bound by a match arm pattern: the catch-all binding `x`, or the
+/// binding payload slots of a variant pattern (`E::A(x)` → `x`; `_` slots bind
+/// nothing). Used to check whether a payload escaped a borrowed-place scrutinee.
+fn match_pattern_binding_names(p: &Pattern) -> Vec<String> {
+    match &p.kind {
+        PatternKind::Binding(n) => vec![n.name.clone()],
+        PatternKind::Variant { payload, .. } => payload
+            .iter()
+            .filter_map(|pp| match &pp.kind {
+                PatternKind::Binding(n) => Some(n.name.clone()),
+                _ => None,
+            })
+            .collect(),
+        PatternKind::Wildcard => Vec::new(),
+    }
+}
+
 fn unify_param_against_concrete(
     param_ty: &Ty,
     arg_ty: &Ty,
@@ -18375,6 +18446,62 @@ mod tests {
              fn main() -> i32 { let a: Box2[bool] = Box2[bool] { v: true }; let r: i32 = get(a); return r; }",
         );
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
+    }
+
+    #[test]
+    fn match_move_payload_out_of_field_scrutinee_rejected_e0337() {
+        // Root fix: `match` on a borrowed-place scrutinee (`h.e`) that moves an
+        // owning payload OUT is a partial move — E0337, same as `take(obj.f)`.
+        // Before, the match path skipped the move-check and double-freed (the
+        // moved payload and the field's owner both dropped it).
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct H { e: E } \
+             fn main() -> i32 { \
+                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let _r: R = match h.e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn match_read_only_payload_of_field_scrutinee_clean() {
+        // The fix must reject only the *escaping* move, not a borrow-read: a
+        // payload bound from a field scrutinee and only read (passed `borrow`)
+        // is sound (the field's owner drops it) and stays accepted.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct H { e: E } \
+             fn rd(borrow r: R) -> i32 { return 0; } \
+             fn main() -> i32 { \
+                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let _n: i32 = match h.e { E::A(x) => rd(x), E::B => 0 }; \
+                 return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn match_move_payload_out_of_owned_scrutinee_clean() {
+        // The reject is scoped to *projection* scrutinees: moving a payload out
+        // of an owned-binding scrutinee (the match consumes the whole value) is
+        // fine and must not be over-rejected.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn main() -> i32 { \
+                 let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
+                 let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 return 0; \
+             }",
+        );
     }
 
     // v0.0.19: the E0502 message names the *actual* offending type, not the
