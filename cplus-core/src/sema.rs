@@ -1163,6 +1163,12 @@ pub struct GenericImplMethodTemplate {
     pub params: Vec<ParamSig>,              // may contain Ty::Param
     pub return_type: Ty,                    // may contain Ty::Param
     pub impl_generic_params: Vec<String>,   // T from `impl Vec[T]`
+    /// v0.0.23: bounds on each impl-level generic param, positionally parallel
+    /// to `impl_generic_params` (empty inner vec = unbounded). Enforced at the
+    /// method-call site so `impl Box[T: Copy] { fn get }` rejects a non-Copy
+    /// `T` with E0502. Before this, impl-block bounds parsed but were never
+    /// checked (only struct-declaration bounds, checked at instantiation, were).
+    pub impl_param_bounds: Vec<Vec<String>>,
     pub method_generic_params: Vec<String>, // U from `fn map[U]`
     pub is_drop: bool, // marker for cached Drop bookkeeping (always false today)
     pub is_unsafe: bool, // TEXT.1: `unsafe fn` method, propagated to MethodSig
@@ -2453,6 +2459,13 @@ impl SemaCx<'_> {
             .iter()
             .map(|g| g.name.name.clone())
             .collect();
+        // v0.0.23: capture the per-param bounds (`impl Box[T: Copy]`) so the
+        // method-call site can enforce them. Parallel to `impl_param_names`.
+        let impl_param_bounds: Vec<Vec<String>> = b
+            .target_generic_params
+            .iter()
+            .map(|g| g.bounds.iter().map(|i| i.name.clone()).collect())
+            .collect();
         let mut impl_scope = std::collections::HashSet::new();
         for n in &impl_param_names {
             impl_scope.insert(n.clone());
@@ -2520,6 +2533,7 @@ impl SemaCx<'_> {
                 params,
                 return_type,
                 impl_generic_params: impl_param_names.clone(),
+                impl_param_bounds: impl_param_bounds.clone(),
                 method_generic_params: method_param_names,
                 is_drop: false,
                 is_unsafe: m.is_unsafe,
@@ -9230,6 +9244,33 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         };
+        // v0.0.23: enforce impl-block generic bounds at the call site. A method
+        // from `impl Box[T: Copy] { fn get }` requires the receiver's concrete
+        // `T` to satisfy `Copy` — but only when *that* method is called, so a
+        // non-Copy `Box[R]` stays usable through its unbounded methods (`new`,
+        // `set`, `unwrap`). The struct's `generic_origin` carries the concrete
+        // args; the method's originating impl bounds live on its template.
+        // (Struct-declaration bounds are enforced separately at instantiation;
+        // before this, impl-block bounds parsed but were silently ignored.)
+        if let Some((tmpl_name, concrete_args)) =
+            self.structs[id.0 as usize].generic_origin.clone()
+        {
+            let tmpl = self
+                .generic_impl_methods
+                .get(&tmpl_name)
+                .and_then(|ts| ts.iter().find(|t| t.name == name.name).cloned());
+            if let Some(t) = tmpl {
+                if t.impl_param_bounds.iter().any(|b| !b.is_empty()) {
+                    self.check_generic_bounds(
+                        &t.impl_generic_params,
+                        &t.impl_param_bounds,
+                        &concrete_args,
+                        call_span,
+                        &format!("method `{}::{}`", tmpl_name, name.name),
+                    );
+                }
+            }
+        }
         // TEXT.1: `unsafe fn` method call requires `unsafe { ... }`. Checked
         // once here so it covers both the generic-method and plain paths.
         if sig.is_unsafe && self.unsafe_depth == 0 {
@@ -18146,6 +18187,45 @@ mod tests {
              }",
         );
         assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
+    }
+
+    #[test]
+    fn bound_violation_on_impl_block_method_e0502() {
+        // v0.0.23: a method from a Copy-bounded impl block (`impl W[T: Copy]`)
+        // must reject a non-Copy receiver at the call site. Before this fix,
+        // impl-block bounds parsed but were never enforced — only
+        // struct-declaration bounds were. (`NC` is non-Copy: it has a `drop`.)
+        let codes = errors(
+            "struct W[T] { v: T } \
+             impl W[T: Copy] { fn dup(self) -> T { return self.v; } } \
+             struct NC { x: i32 } \
+             impl NC { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let w: W[NC] = W[NC] { v: NC { x: 1 } }; \
+                 let _d: NC = w.dup(); \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
+    }
+
+    #[test]
+    fn impl_block_bound_does_not_over_reject_sibling_unbounded_method() {
+        // The Copy bound on one impl block must not leak onto a sibling
+        // unbounded block: a non-Copy instantiation stays usable through the
+        // unbounded methods. Only `dup` requires Copy; `store` does not.
+        assert_clean(
+            "struct W[T] { v: T } \
+             impl W[T] { fn store(mut self, x: T) { self.v = x; return; } } \
+             impl W[T: Copy] { fn dup(self) -> T { return self.v; } } \
+             struct NC { x: i32 } \
+             impl NC { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let mut w: W[NC] = W[NC] { v: NC { x: 1 } }; \
+                 w.store(NC { x: 2 }); \
+                 return 0; \
+             }",
+        );
     }
 
     // v0.0.19: the E0502 message names the *actual* offending type, not the
