@@ -10815,6 +10815,71 @@ fn stdlib_text_reassign_str_literal_coerces() {
     }
 }
 
+/// `Vec[T]::new()` (associated-fn-call syntax) with a *nominal* element type —
+/// e.g. a user struct — used to crash the compiler: the call parses as a
+/// `GenericEnumCall`, and the monomorphize free-fn-dispatch rewrite re-derived
+/// the element `Ty` from the AST (which can't resolve a nominal name), so the
+/// constructor was left mangled to the bare generic `vec.new` and codegen
+/// panicked. Primitives (`Vec[u8]::new()`) and the free-fn form
+/// (`vec::new::[T]()`) happened to work. The fix keys the rewrite off sema's
+/// authoritative `call_monos` args. Here a non-Copy Drop struct is stored via
+/// the assoc form and all elements drop cleanly (ASan).
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_vec_assoc_new_with_struct_element() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"vecassoc\"\n\n[[bin]]\nname = \"vecassoc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/vec\" as vec;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         static mut A: i32 = 0;\n\
+         static mut F: i32 = 0;\n\
+         struct R { p: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { F = F +% 1; free(self.p); } return; } }\n\
+         fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         fn main() -> i32 {\n\
+             { let mut v: vec::Vec[R] = vec::Vec[R]::new(); v.push(mk()); v.push(mk()); v.push(mk()); }\n\
+             return unsafe { A -% F };\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer}) — Vec[Struct]::new() regressed");
+        let run = Command::new(dir.join("target/debug/vecassoc")).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged Vec[Struct] assoc ({sanitizer}): {stderr}");
+        assert_eq!(run.status.code(), Some(0), "Vec[Struct]::new() assoc form must build + drop all elements ({sanitizer})");
+    }
+}
+
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
 ///
 /// Two producers each push 100 values; two consumers drain until Closed.

@@ -2350,10 +2350,27 @@ fn rewrite_expr(
                 // outer rewrite_expr doesn't re-process the Call we
                 // construct here, so this mangling needs to land
                 // inline.
-                let arg_tys: Option<Vec<Ty>> = resolved_args
-                    .iter()
-                    .map(|t| type_ast_to_ty_with_subst(t, subst))
-                    .collect();
+                //
+                // Prefer sema's authoritative resolved type-args (recorded in
+                // `call_monos` for this call's span) over re-deriving them from
+                // the AST. `type_ast_to_ty_with_subst` mis-resolves a *nominal*
+                // type-arg (a user struct/enum) — it can't see the type table —
+                // producing a `Ty` that doesn't equal the `Ty::Struct(id)` sema
+                // used to key `inst_lookup`. That mismatch left a struct-element
+                // `Vec[Point]::new()` mangled to the bare generic name, which
+                // codegen then can't find (panic). Primitives matched by luck
+                // (their AST→Ty mapping is exact). The AST path stays as a
+                // fallback for spans sema didn't record (calls synthesized
+                // inside generic bodies, reached via the outer `subst`).
+                let arg_tys: Option<Vec<Ty>> = match mono.call_monos.get(&expr.span) {
+                    Some(recorded) => {
+                        Some(recorded.iter().map(|t| subst_ty_plain(t, subst)).collect())
+                    }
+                    None => resolved_args
+                        .iter()
+                        .map(|t| type_ast_to_ty_with_subst(t, subst))
+                        .collect(),
+                };
                 let final_name = if let Some(tys) = arg_tys {
                     inst_lookup
                         .get(&(qualified_fn_name.clone(), tys))
