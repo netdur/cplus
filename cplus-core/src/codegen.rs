@@ -12181,21 +12181,26 @@ impl<'a> FnState<'a> {
         let suspend_v = self.next_tmp();
         let resume_bb = self.next_block_label();
         let ramp_bb = self.next_block_label();
-        let trap_bb = self.next_block_label();
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
+        // default → ramp-return (suspend back to the caller); 0 → resume the
+        // body; 1 → destroy. The destroy edge MUST route to the gen fn's
+        // `.coro.cleanup` (frame free + `coro.end`), the same place the
+        // final-suspend destroy edge goes — NOT a trap. `coro.destroy` on a
+        // coroutine suspended *at a yield* is exactly what a `for-in` loop does
+        // when it ends early (`break`, or the iterator being dropped undrained);
+        // trapping there made every such `break` SIGTRAP. (Locals held live
+        // across the yield are not run through Drop on this early-destroy path
+        // yet — they leak rather than crash; per-suspend-point cleanup is a
+        // follow-up.)
         self.emit_terminator(&format!(
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
         ));
         // Ramp-return path: branch to the gen fn's .coro.end (emitted by
         // gen_gen_function's epilogue).
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
-        // Trap branch: should be unreachable.
-        self.body.push_str(&format!("{trap_bb}:\n"));
-        self.body
-            .push_str("  call void @llvm.trap()\n  unreachable\n");
         // Normal-resume branch: continue with the body.
         self.body.push_str(&format!("{resume_bb}:\n"));
         self.terminated = false;

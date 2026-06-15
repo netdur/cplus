@@ -10880,6 +10880,78 @@ fn stdlib_vec_assoc_new_with_struct_element() {
     }
 }
 
+/// `break` out of an iterator-protocol `for x in <iter>` loop must not crash.
+/// The gen-fn / iterator coroutine's yield-suspend mapped its destroy edge to
+/// `llvm.trap`, so abandoning the loop early (`break`) — which calls
+/// `coro.destroy` on the still-suspended coroutine — SIGTRAPped (exit 133).
+/// Full-drain, `continue`, and early `return` worked; only `break` (and a
+/// dropped-undrained iterator) hit the trap. The destroy edge now routes to the
+/// coroutine cleanup, like the final-suspend edge. Covers both a user `gen fn`
+/// and `Vec::iter`, and checks the partial result is correct.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_for_in_break_does_not_crash() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"brk\"\n\n[[bin]]\nname = \"brk\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["vec", "option", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/iterator\" as iterator;\n\
+         import \"stdlib/vec\" as vec;\n\
+         gen fn upto(n: i32) -> i32 { let mut i: i32 = 0; while i < n { yield i; i = i +% 1; } return; }\n\
+         fn main() -> i32 {\n\
+             // break out of a user gen-fn loop after summing 0+1+2 = 3\n\
+             let mut a: i32 = 0;\n\
+             for x in upto(100) { if x == 3 { break; } a = a +% x; }\n\
+             if a != 3 { return 1; }\n\
+             // break out of a Vec::iter loop\n\
+             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             v.push(10); v.push(20); v.push(30);\n\
+             let mut b: i32 = 0;\n\
+             for y in v.iter() { if y == 20 { break; } b = b +% y; }\n\
+             if b != 10 { return 2; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(dir.join("target/debug/brk")).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged for-in break ({sanitizer}): {stderr}");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "break out of a for-in iterator loop must not crash and must yield the right partial ({sanitizer})"
+        );
+    }
+}
+
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
 ///
 /// Two producers each push 100 values; two consumers drain until Closed.
