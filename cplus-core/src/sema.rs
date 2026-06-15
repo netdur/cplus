@@ -7067,6 +7067,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
         };
 
+        // A *value-form* scrutinee (block, `if`, nested `match`, call, ...) is
+        // not a place: codegen evaluates it and spills the result into a temp by
+        // bit-copy (`enum_scrutinee_ptr`'s non-place path). If that value is —
+        // through transparent block/if/match wrappers — a non-Copy field/index
+        // of a Drop aggregate, the bit-copy aliases live owned storage and
+        // double-frees, exactly the partial move E0509 rejects at every other
+        // value site. Place-form scrutinees (Ident/Field/Index/`*p`) are read in
+        // place (no copy); a move *out of* a projection place is the separate
+        // E0337 arm check below. Mirrors codegen's place-vs-value split so the
+        // checker and the lowering agree on which scrutinees alias.
+        let scrutinee_is_place_form = matches!(
+            &scrutinee.kind,
+            ExprKind::Ident(_)
+                | ExprKind::Field { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        );
+        if !scrutinee_is_place_form {
+            self.reject_partial_move_of_drop(scrutinee, &Ty::Enum(enum_id));
+        }
+
         // A projection scrutinee (`obj.f`, `arr[i]`, `*p`) is borrowed by the
         // match, not owned by it — its owner (the aggregate / pointee) still
         // drops it. Binding an owning payload for *read* is fine (a borrow), but
@@ -7616,6 +7640,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         // Drop aggregate would double-free (E0509), as let/return.
                         if vty != Ty::Error {
                             self.reject_partial_move_of_drop(&lit_field.value, &vty);
+                            // v0.0.23 soundness: the value is *moved* into the
+                            // field (codegen disarms the source) — consume a
+                            // non-Copy whole-binding arg so it can't also be
+                            // moved into another aggregate (bit-copy-alias →
+                            // double-free) or read after the move. Mirrors a
+                            // `move` call arg and the enum-construction path.
+                            if !self.is_copy(&vty)
+                                && matches!(lit_field.value.kind, ExprKind::Ident(_))
+                            {
+                                self.consume_arg_place(&lit_field.value);
+                            }
                         }
                     }
                 }
@@ -11161,6 +11196,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // of a Drop aggregate (E0509), as at every other value site.
                 if vty != Ty::Error {
                     self.reject_partial_move_of_drop(a, &vty);
+                    // v0.0.23 soundness: the payload is *moved* into the variant
+                    // (codegen disarms the source's drop), so consume a non-Copy
+                    // whole-binding arg — otherwise the same binding could be
+                    // constructed into a second aggregate and both would
+                    // bit-copy-alias it (double-free), or read after the move
+                    // (use-after-move). Mirrors a `move` call arg
+                    // (`check_arg_with_move`). Field/index/`*p` partial moves are
+                    // handled above (E0509) / left to the unsafe pointer model.
+                    if !self.is_copy(&vty) && matches!(a.kind, ExprKind::Ident(_)) {
+                        self.consume_arg_place(a);
+                    }
                 }
             }
             for a in args.iter().skip(vdef.payload.len()) {
@@ -11428,6 +11474,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.is_copy(moved_ty) {
             return;
         }
+        // A value is produced not only by a bare place expression but by any
+        // *value-transparent* wrapper around one: a block yields its tail, an
+        // `if`/`match` yields each branch/arm body. Codegen lowers all of these
+        // by **bit-copying** the wrapped value into a temp (no move-out, no
+        // source disarm — see `enum_scrutinee_ptr`'s non-place path and the
+        // generic value lowering), so a non-Copy field/index of a Drop
+        // aggregate reached through any wrapper is the *same* double-free as a
+        // bare `let q = obj.f` (E0509). Without peeling, `let q = { obj.f }` /
+        // `match { obj.f } { .. }` / `if c { obj.f } else { .. }` slipped past
+        // the chain-walk (which bails on the wrapper node) and aliased live
+        // owned storage. Peel to each leaf, then walk that leaf's chain.
+        let mut leaves: Vec<&Expr> = Vec::new();
+        collect_value_leaves(e, &mut leaves);
+        for leaf in leaves {
+            self.reject_partial_move_of_drop_leaf(leaf);
+        }
+    }
+
+    /// Walk one already-peeled value leaf's projection chain (`obj.f`,
+    /// `arr[i]`, `*p`, nested). If any base in the chain carries `drop`,
+    /// moving the leaf out is a partial move of a live destructor's field
+    /// (E0509). `reject_partial_move_of_drop` is the entry point; it peels
+    /// value-transparent wrappers and calls this per leaf.
+    fn reject_partial_move_of_drop_leaf(&mut self, e: &Expr) {
         let mut cur = e;
         loop {
             match &cur.kind {
@@ -13344,6 +13414,41 @@ fn op_str(op: BinOp) -> &'static str {
 /// Names bound by a match arm pattern: the catch-all binding `x`, or the
 /// binding payload slots of a variant pattern (`E::A(x)` → `x`; `_` slots bind
 /// nothing). Used to check whether a payload escaped a borrowed-place scrutinee.
+/// Peel value-transparent wrappers to the leaf expressions that actually
+/// produce the value. A block's value is its `tail`; an `if`/`match`'s value
+/// is each branch / arm body. Anything else (a place projection, a literal, a
+/// call, an enum constructor, ...) is itself a leaf. Used by
+/// `reject_partial_move_of_drop` so a partial move of a Drop field reached
+/// through `{ obj.f }` / `if c { obj.f } else ..` / `match .. { _ => obj.f }`
+/// is caught the same as the bare `obj.f` — codegen bit-copies all of them.
+fn collect_value_leaves<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
+    match &e.kind {
+        ExprKind::Block(b) => {
+            if let Some(t) = &b.tail {
+                collect_value_leaves(t, out);
+            }
+            // A tail-less block evaluates to unit — no value to move.
+        }
+        ExprKind::If {
+            then, else_branch, ..
+        } => {
+            if let Some(t) = &then.tail {
+                collect_value_leaves(t, out);
+            }
+            if let Some(eb) = else_branch {
+                collect_value_leaves(eb, out);
+            }
+            // A then-only `if` is unit-typed (not a value position); ignore.
+        }
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                collect_value_leaves(&arm.body, out);
+            }
+        }
+        _ => out.push(e),
+    }
+}
+
 fn match_pattern_binding_names(p: &Pattern) -> Vec<String> {
     match &p.kind {
         PatternKind::Binding(n) => vec![n.name.clone()],
@@ -18499,6 +18604,137 @@ mod tests {
              fn main() -> i32 { \
                  let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
                  let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 return 0; \
+             }",
+        );
+    }
+
+    // v0.0.23 root #1: value-transparent wrappers (`{ .. }`, `if`, `match`)
+    // peel to their leaf value, so a partial move of a Drop field reached
+    // through one is the same E0509 as the bare `obj.f`. Codegen bit-copies all
+    // of these into a temp, so without peeling the copy aliased live storage
+    // and double-freed. Covers let-init and the match scrutinee.
+    #[test]
+    fn block_wrapped_field_move_rejected_e0509() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct H { e: E } \
+             fn main() -> i32 { \
+                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let _r: E = { h.e }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0509"), "expected E0509, got: {codes:?}");
+    }
+
+    #[test]
+    fn match_on_block_wrapped_field_scrutinee_rejected() {
+        // The originally-reported repro: `match { h.e } { .. }`. The block makes
+        // the scrutinee a value (bit-copied temp), not a place, so the field
+        // move is caught at scrutinee evaluation (E0509), not the arm.
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct H { e: E } \
+             fn main() -> i32 { \
+                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let _r: R = match { h.e } { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0509"), "expected E0509, got: {codes:?}");
+    }
+
+    #[test]
+    fn if_wrapped_field_move_rejected_e0509() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct H { e: E } \
+             fn main() -> i32 { \
+                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let _r: E = if unsafe { 0 as i32 } == 0 { h.e } else { E::B }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0509"), "expected E0509, got: {codes:?}");
+    }
+
+    // v0.0.23 root #2: enum/struct construction *moves* its non-Copy args (codegen
+    // disarms the source), so sema must consume a non-Copy whole-binding arg.
+    // Without it the binding could be constructed into two aggregates (both
+    // bit-copy-alias it → double-free) or read after the move.
+    #[test]
+    fn enum_construction_consumes_noncopy_arg_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn main() -> i32 { \
+                 let y: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _z1: E = E::A(y); \
+                 let _z2: E = E::A(y); \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn struct_construction_consumes_noncopy_arg_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             struct W { r: R } \
+             fn main() -> i32 { \
+                 let y: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _w1: W = W { r: y }; \
+                 let _w2: W = W { r: y }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn match_arm_reconstructs_payload_from_field_scrutinee_rejected() {
+        // `match h.e { E::A(y) => E::A(y) }` rebinds the payload of a *place*
+        // scrutinee into a new enum. Now that construction consumes `y`, the
+        // payload escapes a borrowed place → E0337 (root #1's arm check fires
+        // because root #2 marks `y` moved). Previously double-freed (DROPS=2).
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct H { e: E } \
+             fn main() -> i32 { \
+                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let _r: E = match h.e { E::A(y) => E::A(y), E::B => E::B }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn single_construction_move_of_noncopy_binding_clean() {
+        // The consume must not over-reject the legitimate single move: a binding
+        // moved into exactly one aggregate, never used again, is sound.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             struct W { r: R } \
+             fn main() -> i32 { \
+                 let y: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _z: E = E::A(y); \
+                 let y2: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _w: W = W { r: y2 }; \
                  return 0; \
              }",
         );
