@@ -8918,7 +8918,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 had_err = true;
                 continue;
             }
-            if !unify_param_against_concrete(&param.ty, arg_ty, &mut subst) {
+            if !unify_param_against_concrete(
+                &param.ty,
+                arg_ty,
+                &mut subst,
+                &self.structs,
+                &self.enums,
+            ) {
                 self.err(
                     "E0302",
                     format!(
@@ -9491,7 +9497,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if matches!(arg_ty, Ty::Error) {
                     continue;
                 }
-                unify_param_against_concrete(&param_sig.ty, &arg_ty, &mut subst);
+                unify_param_against_concrete(
+                    &param_sig.ty,
+                    &arg_ty,
+                    &mut subst,
+                    &self.structs,
+                    &self.enums,
+                );
             }
             // Every declared generic param must be pinned.
             for gp in &sig.generic_params {
@@ -13279,6 +13291,8 @@ fn unify_param_against_concrete(
     param_ty: &Ty,
     arg_ty: &Ty,
     subst: &mut HashMap<String, Ty>,
+    structs: &[StructDef],
+    enums: &[EnumDef],
 ) -> bool {
     match (param_ty, arg_ty) {
         (Ty::Param(name), concrete) => {
@@ -13290,10 +13304,59 @@ fn unify_param_against_concrete(
             }
         }
         (Ty::Array(a_elem, a_len), Ty::Array(b_elem, b_len)) => {
-            if a_len != b_len {
-                return false;
+            *a_len == *b_len && unify_param_against_concrete(a_elem, b_elem, subst, structs, enums)
+        }
+        (Ty::RawPtr(a), Ty::RawPtr(b)) => {
+            unify_param_against_concrete(a, b, subst, structs, enums)
+        }
+        (Ty::Slice(a), Ty::Slice(b)) => {
+            unify_param_against_concrete(a, b, subst, structs, enums)
+        }
+        // v0.0.23: a generic struct/enum parameter unifies against a concrete
+        // instantiation of the *same template* by matching their type-args
+        // pairwise — so a generic fn over a container parameter
+        // (`fn first[T](v: Vec[T])`, `block_on[T](f: Future[T])`) infers `T`
+        // from the argument without a turbofish. Before this, two `Ty::Struct`s
+        // fell through to `a == b`, which fails (template id != instantiation
+        // id), forcing `::[T]` at every such call. Same-id short-circuits the
+        // already-concrete / identical case.
+        (Ty::Struct(pa), Ty::Struct(ba)) => {
+            if pa == ba {
+                return true;
             }
-            unify_param_against_concrete(a_elem, b_elem, subst)
+            match (
+                &structs[pa.0 as usize].generic_origin,
+                &structs[ba.0 as usize].generic_origin,
+            ) {
+                (Some((pt, pargs)), Some((bt, bargs)))
+                    if pt == bt && pargs.len() == bargs.len() =>
+                {
+                    pargs
+                        .iter()
+                        .zip(bargs.iter())
+                        .all(|(p, b)| unify_param_against_concrete(p, b, subst, structs, enums))
+                }
+                _ => false,
+            }
+        }
+        (Ty::Enum(pa), Ty::Enum(ba)) => {
+            if pa == ba {
+                return true;
+            }
+            match (
+                &enums[pa.0 as usize].generic_origin,
+                &enums[ba.0 as usize].generic_origin,
+            ) {
+                (Some((pt, pargs)), Some((bt, bargs)))
+                    if pt == bt && pargs.len() == bargs.len() =>
+                {
+                    pargs
+                        .iter()
+                        .zip(bargs.iter())
+                        .all(|(p, b)| unify_param_against_concrete(p, b, subst, structs, enums))
+                }
+                _ => false,
+            }
         }
         (a, b) => a == b,
     }
@@ -18285,6 +18348,33 @@ mod tests {
                  return 0; \
              }",
         );
+    }
+
+    #[test]
+    fn generic_fn_infers_type_arg_from_generic_struct_argument() {
+        // v0.0.23: `fn get[T](b: Box2[T]) -> T` called as `get(a)` infers T from
+        // the concrete `Box2[i32]` argument — no turbofish. Before, the param
+        // `Box2[T]` (template id) and the arg `Box2[i32]` (instantiation id)
+        // were two distinct `Ty::Struct`s that fell through to `a == b` and
+        // failed (E0302), forcing `::[T]` at every generic-over-container call.
+        assert_clean(
+            "struct Box2[T] { v: T } \
+             fn get[T](b: Box2[T]) -> T { return b.v; } \
+             fn main() -> i32 { let a: Box2[i32] = Box2[i32] { v: 5 }; let r: i32 = get(a); return r -% 5; }",
+        );
+    }
+
+    #[test]
+    fn generic_struct_inference_still_rejects_mismatched_arg() {
+        // The new generic-struct unification must not over-unify: inferring
+        // T = bool from a `Box2[bool]` arg, then using the bool result where an
+        // i32 is wanted, is still a type error.
+        let codes = errors(
+            "struct Box2[T] { v: T } \
+             fn get[T](b: Box2[T]) -> T { return b.v; } \
+             fn main() -> i32 { let a: Box2[bool] = Box2[bool] { v: true }; let r: i32 = get(a); return r; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
 
     // v0.0.19: the E0502 message names the *actual* offending type, not the

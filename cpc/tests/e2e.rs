@@ -10952,6 +10952,56 @@ fn stdlib_for_in_break_does_not_crash() {
     }
 }
 
+/// `executor::block_on(amain())` must type-check and run *without* a turbofish —
+/// the type arg `T` is inferred from the `Future[i32]` argument. Before the
+/// generic-struct unification fix, `block_on(f())` failed (E0302 "struct vs
+/// struct") and every async entry point needed `block_on::[T](...)`. This is
+/// the canonical async-entry idiom (see the "no async main" decision: keep the
+/// entry point a library call, but make it ergonomic).
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_block_on_infers_type_arg_no_turbofish() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"boninf\"\n\n[[bin]]\nname = \"boninf\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["future", "executor", "reactor", "reactor_linux", "reactor_windows"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/future\" as future;\n\
+         import \"stdlib/executor\" as executor;\n\
+         async fn amain() -> i32 { return 42; }\n\
+         fn main() -> i32 {\n\
+             let r: i32 = executor::block_on(amain());\n\
+             if r != 42 { return 1; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
+    assert!(st.success(), "block_on without turbofish must type-check (generic-struct inference)");
+    let run = Command::new(dir.join("target/debug/boninf")).status().expect("run");
+    assert_eq!(run.code(), Some(0), "block_on(amain()) must run and return the inner result");
+}
+
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
 ///
 /// Two producers each push 100 values; two consumers drain until Closed.
