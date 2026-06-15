@@ -14,8 +14,6 @@ name: Windows CI
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
