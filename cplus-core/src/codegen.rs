@@ -11139,10 +11139,30 @@ impl<'a> FnState<'a> {
             _ => None,
         };
         let (scr_ptr, enum_id) = self.enum_scrutinee_ptr(scrutinee);
-        let consumed = scrutinee_name
+        // The match owns (and must tear down) the scrutinee in two cases:
+        //  - an owned binding (has a scope-exit drop flag): consume it and
+        //    disarm the source so it isn't dropped twice; or
+        //  - an owned *temporary* — an rvalue (call / constructor / block),
+        //    not a borrowed place — of a Drop enum: there's no source binding,
+        //    the spilled value is the match's to drop. A borrowed-place
+        //    scrutinee (`obj.f`, `arr[i]`, `*p`) is NOT ours; its owner drops
+        //    it, so leave it alone. (`match f() { ... }` leaked before this.)
+        let consumed_binding = scrutinee_name
             .as_ref()
             .map(|n| self.find_drop_flag(n).is_some())
             .unwrap_or(false);
+        let scrutinee_is_place = matches!(
+            &scrutinee.kind,
+            ExprKind::Ident(_)
+                | ExprKind::Field { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        );
+        let consumed_temp = !scrutinee_is_place && self.needs_drop(&Ty::Enum(enum_id));
+        let consumed = consumed_binding || consumed_temp;
         let info = self.types.enum_defs[enum_id.0 as usize].clone();
         let llvm_enum = self.lty(&Ty::Enum(enum_id));
 
@@ -11183,8 +11203,9 @@ impl<'a> FnState<'a> {
         // v0.0.14: disarm the consumed scrutinee's scope-exit drop. Emitted in
         // this pre-switch block (which dominates every arm) and path-sensitive
         // via the runtime flag — if the match isn't reached, the flag stays set
-        // and the scrutinee drops normally.
-        if consumed {
+        // and the scrutinee drops normally. Only a real binding has a source to
+        // disarm; an owned temporary (`consumed_temp`) has none.
+        if consumed_binding {
             if let Some(n) = &scrutinee_name {
                 self.mark_moved(n);
             }
@@ -11235,7 +11256,18 @@ impl<'a> FnState<'a> {
             self.push_scope();
             // Bind pattern values into the arm scope.
             match &arm.pattern.kind {
-                PatternKind::Wildcard => {}
+                PatternKind::Wildcard => {
+                    // A wildcard arm binds nothing, but matching *consumed* the
+                    // scrutinee (its scope-exit drop was disarmed above). Drop
+                    // the matched value here so an owned scrutinee isn't leaked
+                    // (`match e { _ => ... }` for a Drop `e`). Only when consumed
+                    // — a borrow scrutinee is not ours to drop. `gen_drop_in_place`
+                    // is a no-op for a non-Drop enum.
+                    if consumed {
+                        let enum_ty = Ty::Enum(enum_id);
+                        self.gen_drop_in_place(&enum_ty, &scr_ptr);
+                    }
+                }
                 PatternKind::Binding(name) => {
                     // Bind the whole scrutinee to `name`. For an enum that's
                     // a load of the aggregate from the slot we already have.
@@ -11246,11 +11278,17 @@ impl<'a> FnState<'a> {
                     self.gen_load(&v, &enum_ty, &scr_ptr);
                     let local_slot = self.alloca_named(&name.name, enum_ty.clone());
                     self.gen_store(&enum_ty, &v, &local_slot);
-                    // A whole-enum catch-all binding rebinds the (consumed)
-                    // scrutinee; the new binding is itself a normal owned local
-                    // and is drop-registered through the usual let/bind path, so
-                    // nothing extra to do here.
-                    self.bind(&name.name, local_slot, enum_ty);
+                    self.bind(&name.name, local_slot.clone(), enum_ty.clone());
+                    // The catch-all binding now owns the (consumed) scrutinee, so
+                    // register it for scope-exit drop — mirror of the variant
+                    // payload path; without this `match e { x => 7 }` leaked the
+                    // bound enum (and its Drop payload). If the arm moves `x` out
+                    // (`x => consume(x)`), scan_moves gave it a Runtime flag and
+                    // the move site disarms it (no double-free). No-op for a
+                    // non-Drop enum.
+                    if consumed {
+                        self.register_value_drop(&name.name, &local_slot, &enum_ty, true);
+                    }
                 }
                 PatternKind::Variant {
                     variant_name,

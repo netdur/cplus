@@ -110,6 +110,63 @@ fn static_narrowing_literal_cast_runs() {
     assert_eq!(run.code(), Some(8), "got {:?}", run.code());
 }
 
+/// A `match` consumes its owned scrutinee, so it must tear it down exactly once
+/// regardless of arm shape. Catch-all (`x =>`) and wildcard (`_ =>`) arms used
+/// to leak the consumed enum (and its Drop payload); a *temporary* scrutinee
+/// (`match f() { ... }`) leaked in every arm kind. The fix drops the bound enum
+/// (catch-all) / the scrutinee value (wildcard) / registers the payload
+/// (variant), for both an owned binding and an owned temporary — while a moved
+/// payload isn't double-dropped and a borrowed-place scrutinee is left to its
+/// owner. Each phase must leave the drop counter at exactly 1; ASan-clean.
+#[test]
+fn match_consumes_owned_scrutinee_exactly_once() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("m.cplus");
+    std::fs::write(
+        &src,
+        "static mut DROPS: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         enum E { A(R), B }\n\
+         fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
+         fn consume(move r: R) -> i32 { return 0; }\n\
+         struct H { e: E }\n\
+         impl H { fn drop(mut self) { return; } }\n\
+         fn p_bind() { let e: E = mke(); let _n: i32 = match e { x => 7 }; return; }\n\
+         fn p_wild() { let e: E = mke(); let _n: i32 = match e { _ => 7 }; return; }\n\
+         fn p_temp_var() { let _n: i32 = match mke() { E::A(r) => 7, E::B => 0 }; return; }\n\
+         fn p_temp_moved() { let _n: i32 = match mke() { E::A(r) => consume(r), E::B => 0 }; return; }\n\
+         fn p_field() { let h: H = H { e: mke() }; let _n: i32 = match h.e { _ => 7 }; return; }\n\
+         fn main() -> i32 {\n\
+             p_bind();      if unsafe { DROPS } != 1 { return 1; } unsafe { DROPS = 0; }\n\
+             p_wild();      if unsafe { DROPS } != 1 { return 2; } unsafe { DROPS = 0; }\n\
+             p_temp_var();  if unsafe { DROPS } != 1 { return 3; } unsafe { DROPS = 0; }\n\
+             p_temp_moved();if unsafe { DROPS } != 1 { return 4; } unsafe { DROPS = 0; }\n\
+             p_field();     if unsafe { DROPS } != 1 { return 5; } unsafe { DROPS = 0; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("m");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(&bin).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged match scrutinee teardown ({sanitizer}): {stderr}");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "every match arm must drop the owned scrutinee exactly once; failing phase = exit code ({sanitizer})"
+        );
+    }
+}
+
 // v0.0.19: a polymorphic backend built on a user-defined interface bound
 // compiles and runs — generic fn (inference + turbofish), a generic struct
 // whose field is the bounded type, and a generic impl calling the interface
