@@ -10569,6 +10569,83 @@ fn stdlib_mutex_cross_thread_increment() {
     }
 }
 
+/// #5: a `MutexGuard` takes its own refcount in `lock`, so it can outlive the
+/// `Mutex` handle that produced it without dangling. Here `make_locked`'s only
+/// `Mutex` handle drops at function exit, yet the returned guard stays valid;
+/// the inner Drop-carrying value is torn down exactly once when the guard
+/// finally drops. Pre-fix the guard held no reference, so the handle's drop
+/// freed the heap block and the escaped guard was a use-after-free / would
+/// double-drop the inner value. Builds and runs clean under ASan; the program
+/// returns the inner-Drop count, which must be exactly 1.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_mutex_guard_outlives_handle_no_uaf() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"muxesc\"\n\n[[bin]]\nname = \"muxesc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/mutex.cplus"),
+        include_str!("../../vendor/stdlib/src/mutex.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/atomic.cplus"),
+        include_str!("../../vendor/stdlib/src/atomic.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/mutex\" as mutex;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         static mut FREES: i32 = 0;\n\
+         struct Res { p: *u8 }\n\
+         impl Res { fn drop(mut self) { unsafe { FREES = FREES +% 1; free(self.p); } return; } }\n\
+         fn make_locked() -> mutex::MutexGuard[Res] {\n\
+             let m: mutex::Mutex[Res] = mutex::new::[Res](Res { p: unsafe { malloc(8 as usize) } });\n\
+             return m.lock();\n\
+         }\n\
+         fn main() -> i32 {\n\
+             { let _g: mutex::MutexGuard[Res] = make_locked(); }\n\
+             return unsafe { FREES };\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        let st = cmd.status().expect("invoke cpc");
+        assert!(st.success(), "cpc build failed with {}", sanitizer);
+        let bin = dir.join("target/debug/muxesc");
+        let run = Command::new(&bin).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged the escaped guard ({}): {stderr}",
+            sanitizer
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(1),
+            "escaped guard must drop its inner value exactly once ({}): stderr={stderr}",
+            sanitizer
+        );
+    }
+}
+
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
 ///
 /// Two producers each push 100 values; two consumers drain until Closed.
