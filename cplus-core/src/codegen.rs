@@ -12284,8 +12284,14 @@ impl<'a> FnState<'a> {
         self.body.push_str(&format!(
             "  {suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)\n"
         ));
+        // i8 1 = destroy (outer future cancelled while suspended at this await)
+        // → run cleanup, never trap. Same fix as gen_yield_expr. The dead
+        // `{trap_bb}` block below is left unreferenced (valid, DCE'd). Note: the
+        // registered inner awaiter (`inner_hdl`) is not torn down on this
+        // cancellation path yet — it leaks rather than crashes; full cancel
+        // semantics are a follow-up (no executor cancellation API exists today).
         self.body.push_str(&format!(
-            "  switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{loop_bb} i8 1, label %{trap_bb}]\n"
+            "  switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{loop_bb} i8 1, label %.coro.cleanup]\n"
         ));
 
         // Ramp-return path — exited via the surrounding fn's coro.end.
@@ -12450,7 +12456,10 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         self.emit_terminator(&format!(
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
+            // never trap. Same fix as gen_yield_expr; see its note. The dead
+            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
         ));
         // Ramp-return path: yield Pending up to the outer awaiter (or
         // block_on). Falls into the standard `.coro.end` block emitted
@@ -12484,7 +12493,10 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         self.emit_terminator(&format!(
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
+            // never trap. Same fix as gen_yield_expr; see its note. The dead
+            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
         ));
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
@@ -12514,7 +12526,10 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         self.emit_terminator(&format!(
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
+            // never trap. Same fix as gen_yield_expr; see its note. The dead
+            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
         ));
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
@@ -12555,7 +12570,10 @@ impl<'a> FnState<'a> {
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
         self.emit_terminator(&format!(
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{trap_bb}]"
+            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
+            // never trap. Same fix as gen_yield_expr; see its note. The dead
+            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
         ));
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
