@@ -10450,6 +10450,54 @@ impl<'a> FnState<'a> {
         }
     }
 
+    /// Pure (non-emitting) type of a place expression — for codegen decisions
+    /// that must run before lowering it. Mirrors the type transitions in
+    /// `gen_place`; returns None for non-place / unresolvable shapes.
+    fn place_ty(&self, e: &Expr) -> Option<Ty> {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                if let Some(ty) = self.md.statics.borrow().get(name).cloned() {
+                    return Some(ty);
+                }
+                self.lookup(name).map(|(_, ty)| ty.clone())
+            }
+            ExprKind::Field { receiver, name } => match self.place_ty(receiver)? {
+                Ty::Struct(id) => {
+                    Some(self.types.struct_defs[id.0 as usize].field_type(&name.name))
+                }
+                _ => None,
+            },
+            ExprKind::Index { receiver, .. } => match self.place_ty(receiver)? {
+                Ty::Array(elem, _) => Some(*elem),
+                Ty::RawPtr(inner) => Some(*inner),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A1/A2: is this assignment target a *safe owned* place whose current
+    /// contents are always live, so an overwrite must drop them first? True for
+    /// a binding/static reached only through struct fields and array elements;
+    /// false for anything reached through a raw pointer (`*p`, `ptr[i]`), which
+    /// may point at uninitialized memory (Box::new / arena / a Vec's buffer) —
+    /// there the store is the caller's `unsafe` responsibility and a pre-drop
+    /// would read garbage. The bare-Ident case is handled separately (it uses a
+    /// liveness flag for deferred-init / moved-out bindings).
+    fn place_is_safe_owned(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                self.lookup(name).is_some() || self.md.statics.borrow().contains_key(name)
+            }
+            ExprKind::Field { receiver, .. } => self.place_is_safe_owned(receiver),
+            ExprKind::Index { receiver, .. } => {
+                self.place_is_safe_owned(receiver)
+                    && matches!(self.place_ty(receiver), Some(Ty::Array(_, _)))
+            }
+            _ => false,
+        }
+    }
+
     /// B-10: fast-math flag prefix for floating-point arithmetic.
     /// Returns `"contract "` when fp-contraction is on (the default,
     /// matching clang's `-ffp-contract=on`) and `""` under
@@ -13379,20 +13427,19 @@ impl<'a> FnState<'a> {
             self.gen_load(&cur, &target_ty, &slot);
             self.gen_compound_op(op, &target_ty, &cur, &rhs_v)
         };
-        // #8 fix: a plain `=` to a Drop binding overwrites the value it
-        // currently owns — tear that old value down first, or it leaks. Only
-        // for a bare-Ident target of a Drop type: a field/index place belongs
-        // to an aggregate whose own scope-exit drop still covers it, and a
-        // raw-pointer deref store (`unsafe { *p = v; }`, Box::new / arena
-        // alloc) writes into *uninitialized* heap, where pre-dropping would
-        // read garbage. The RHS is already evaluated above, so if it moved the
-        // target out (e.g. `x = f(move x)`) the flag is already `false` and the
-        // pre-drop is correctly skipped. After the store the binding owns a
-        // fresh value, so re-arm the flag to `true`.
+        // A plain `=` to a Drop place overwrites the value it currently owns —
+        // tear that old value down first, or it leaks (#8 for bindings; A1/A2
+        // for fields/elements). The RHS is already evaluated above, so a move
+        // of the target out of the RHS (`x = f(move x)`) has already cleared
+        // the binding's flag and the pre-drop is correctly skipped.
         let mut stored = false;
-        if matches!(op, AssignOp::Assign) {
-            if let ExprKind::Ident(n) = &target.kind {
-                if self.needs_drop(&target_ty) {
+        if matches!(op, AssignOp::Assign) && self.needs_drop(&target_ty) {
+            match &target.kind {
+                // #8: a bare-Ident Drop binding. Gate the pre-drop on its
+                // liveness flag — a deferred-init `let mut x: T;` or a
+                // moved-out binding owns nothing yet — then re-arm after the
+                // store. (`register_drop_kind` set the flag's initial value.)
+                ExprKind::Ident(n) => {
                     if let Some(flag) = self.find_drop_flag(n) {
                         self.emit_flag_gated_drop(&target_ty, &slot, &flag);
                         self.gen_store(&target_ty, &to_store, &slot);
@@ -13400,6 +13447,23 @@ impl<'a> FnState<'a> {
                         stored = true;
                     }
                 }
+                // A1/A2: a struct-field or array-element place of a Drop type.
+                // Inside a constructed aggregate such a place is always live, so
+                // an overwrite leaks the old value unless we drop it first —
+                // unconditionally (no liveness flag; unlike a binding it cannot
+                // be deferred-init or moved-out in safe code).
+                // `place_is_safe_owned` excludes raw-pointer stores
+                // (`*p = v;`, `ptr[i] = v;`), which may target uninitialized
+                // memory (Box::new / arena / a Vec's buffer) and are the
+                // caller's `unsafe` responsibility.
+                ExprKind::Field { .. } | ExprKind::Index { .. } => {
+                    if self.place_is_safe_owned(target) {
+                        self.gen_drop_in_place(&target_ty, &slot);
+                        self.gen_store(&target_ty, &to_store, &slot);
+                        stored = true;
+                    }
+                }
+                _ => {}
             }
         }
         if !stored {
@@ -16441,6 +16505,79 @@ mod tests {
         assert!(
             ir.contains("store i1 false, ptr %x.drop_flag"),
             "deferred-init Drop binding must start its liveness flag false:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn field_overwrite_drops_old_value() {
+        // A1: `obj.f = new` where field `f` is a Drop type must tear down the
+        // value the field currently owns before storing, or it leaks. Pre-fix
+        // gen_assign only pre-dropped bare-Ident targets, so field places
+        // stored straight over the old value.
+        let ir = gen_src(
+            "struct R { id: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             struct Holder { r: R }\n\
+             fn mk() -> R { return R { id: 0 }; }\n\
+             fn f() { let mut h: Holder = Holder { r: mk() }; h.r = mk(); return; }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        // In f(): the pre-drop at `h.r = mk()` plus the scope-exit drop of the
+        // Holder (auto-drops its `r` field) = 2 calls. Pre-fix there was 1.
+        let drops = ir.matches("call preserve_nonecc void @R.drop").count();
+        assert!(
+            drops >= 2,
+            "field overwrite must pre-drop the old value (>=2 R.drop), got {drops}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn array_element_overwrite_drops_old_value() {
+        // A2: `arr[i] = new` on a fixed-size array of a Drop element type must
+        // pre-drop the old element. The bounds-checked array place is always
+        // live (sema's definite-assignment forbids partial-init), so the drop
+        // is unconditional — distinct from the raw-pointer `ptr[i] = v` store,
+        // which is excluded by `place_is_safe_owned`.
+        let ir = gen_src(
+            "struct R { id: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             fn mk() -> R { return R { id: 0 }; }\n\
+             fn f() { let mut a: [R; 2] = [mk(), mk()]; a[0 as usize] = mk(); return; }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        // pre-drop at `a[0] = mk()` (1) + scope-exit drop of [R; 2] (2) = 3.
+        let drops = ir.matches("call preserve_nonecc void @R.drop").count();
+        assert!(
+            drops >= 3,
+            "array element overwrite must pre-drop the old element (>=3 R.drop), got {drops}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn raw_pointer_store_is_not_pre_dropped() {
+        // Safety boundary for A1/A2: a raw-pointer deref store `*p = v` targets
+        // possibly-uninitialized memory (the Box::new / arena pattern), so it
+        // must NOT pre-drop. Here the only `R.drop` is the explicit
+        // `#drop_in_place` the program performs — the assignment adds none.
+        let ir = gen_src(
+            "extern fn malloc(n: usize) -> *u8;\n\
+             struct R { id: i32 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             fn mk() -> R { return R { id: 0 }; }\n\
+             fn f() {\n\
+                 let pr: *R = unsafe { malloc(#size_of::[R]()) as *R };\n\
+                 unsafe { *pr = mk(); }\n\
+                 unsafe { #drop_in_place::[R](pr); }\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        // Exactly one drop — the explicit #drop_in_place. A spurious pre-drop on
+        // the `*pr = mk()` store (reading uninitialized heap) would make it 2.
+        let drops = ir.matches("call preserve_nonecc void @R.drop").count();
+        assert_eq!(
+            drops, 1,
+            "raw-pointer store must not pre-drop uninitialized memory; expected 1 R.drop, got {drops}:\n{ir}"
         );
     }
 
