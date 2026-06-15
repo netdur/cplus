@@ -450,6 +450,56 @@ struct LocalInfo {
     /// means literal/static/unknown provenance. Non-empty roots are used
     /// to reject returning views into locals that will be dropped.
     borrow_roots: BTreeSet<String>,
+    /// True iff this binding OWNS the value it holds — a `let` local, a
+    /// by-value or `move` parameter, `move self`, or a `match` payload bound
+    /// from an owned scrutinee. False for `borrow`/`mut` parameters, `self` /
+    /// `mut self` receivers, and payloads bound from a borrowed-place
+    /// scrutinee — those name a value owned elsewhere. The match ownership
+    /// model (`classify_scrutinee`) reads this to decide whether moving a
+    /// payload out is a legitimate move (owned) or a partial move of a place
+    /// the binding doesn't own (E0337). Irrelevant for `Copy` types (no drop).
+    owns_value: bool,
+}
+
+/// THE ownership relationship between a `match` and its scrutinee's storage —
+/// the single model the whole match path is built on. Computed once per match
+/// by [`SemaCtx::classify_scrutinee`] (which peels value-transparent wrappers
+/// to the leaf that produces the value) and kept in lockstep with codegen's
+/// `gen_match` lowering — when the two disagree, drop accounting drifts and a
+/// non-Copy value gets owned in two places (the v0.0.23 double-free class).
+enum ScrutineeClass {
+    /// The match OWNS the value — an owning binding it consumes (drop disarmed)
+    /// or a genuine temporary (call / constructor / arithmetic / a binding
+    /// moved out through a wrapper). Payload and catch-all bindings own their
+    /// values and may be moved out; an unconsumed payload is dropped by the
+    /// match.
+    Owned,
+    /// The match BORROWS a value owned elsewhere — a field/index projection, or
+    /// a `borrow`/`mut`/`self` binding. The owner still drops it. Payload
+    /// bindings are borrows (no drop obligation); moving one out is a partial
+    /// move of the place (E0337).
+    Borrowed,
+    /// Evaluating the scrutinee would move a non-Copy value out of a place
+    /// owned elsewhere: a wrapper-forced bit-copy of a projection
+    /// (`match { h.e }`), a raw-pointer deref (`match unsafe { *p }`), or a
+    /// borrowed binding copied out. The copy aliases live storage → double-free.
+    /// Rejected at the scrutinee, with the leaf span + reason.
+    Forbidden { span: ByteSpan, kind: PartialMoveKind },
+}
+
+/// Why consuming an expression's value would be an illegitimate partial move —
+/// produced by [`SemaCtx::classify_partial_move`] and mapped to a diagnostic by
+/// [`SemaCtx::emit_partial_move`]. Every consuming position (let-init, return,
+/// construction, call arg, and a value-form match scrutinee) classifies its
+/// source through the same path, so a new spelling can't reopen the hole.
+enum PartialMoveKind {
+    /// A field/index of an aggregate whose type carries `drop` — stealing it
+    /// from under the destructor double-frees (E0509). Carries the base name.
+    DropField(String),
+    /// A raw-pointer dereference of a non-Copy value (`*p`): `unsafe` permits
+    /// the read, not ownership transfer — the pointee's owner drops it again
+    /// (E0337, a non-binding place).
+    RawDeref,
 }
 
 /// Run sema on a parsed program. Returns all diagnostics produced;
@@ -3032,6 +3082,9 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
+                    // `move self` owns the value inside the body; `self` / `mut
+                    // self` borrow it (the caller still owns and drops it).
+                    owns_value: matches!(rcv, Receiver::Move),
                 },
             );
         }
@@ -3077,6 +3130,11 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
+                    // A by-value or `move` parameter owns its value; `borrow`
+                    // and `mut` parameters are shared/exclusive borrows the
+                    // caller still owns (so a payload moved out of a matched
+                    // borrow param is a partial move → E0337).
+                    owns_value: !param.borrow_ && !param.mutable,
                 },
             );
         }
@@ -3177,6 +3235,9 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
+                    // `move self` owns the value inside the body; `self` / `mut
+                    // self` borrow it (the caller still owns and drops it).
+                    owns_value: matches!(rcv, Receiver::Move),
                 },
             );
         }
@@ -3223,6 +3284,11 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
+                    // A by-value or `move` parameter owns its value; `borrow`
+                    // and `mut` parameters are shared/exclusive borrows the
+                    // caller still owns (so a payload moved out of a matched
+                    // borrow param is a partial move → E0337).
+                    owns_value: !param.borrow_ && !param.mutable,
                 },
             );
         }
@@ -4809,6 +4875,11 @@ impl SemaCx<'_> {
                     moved: false,
                     assigned: true,
                     borrow_roots: BTreeSet::new(),
+                    // A by-value or `move` parameter owns its value; `borrow`
+                    // and `mut` parameters are shared/exclusive borrows the
+                    // caller still owns (so a payload moved out of a matched
+                    // borrow param is a partial move → E0337).
+                    owns_value: !param.borrow_ && !param.mutable,
                 },
             );
         }
@@ -5139,6 +5210,8 @@ impl SemaCx<'_> {
                         moved: false,
                         assigned,
                         borrow_roots,
+                        // A `let` local owns its initializer's value.
+                        owns_value: true,
                     },
                 );
             }
@@ -5327,6 +5400,7 @@ impl SemaCx<'_> {
                             moved: false,
                             assigned: true,
                             borrow_roots: BTreeSet::new(),
+                            owns_value: true, // loop index (Copy)
                         },
                     );
                     self.check_loop_body(body);
@@ -5363,6 +5437,8 @@ impl SemaCx<'_> {
                         moved: false,
                         assigned: true,
                         borrow_roots: BTreeSet::new(),
+                        // The loop owns each yielded element.
+                        owns_value: true,
                     },
                 );
                 self.check_loop_body(body);
@@ -7067,48 +7143,29 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
         };
 
-        // A *value-form* scrutinee (block, `if`, nested `match`, call, ...) is
-        // not a place: codegen evaluates it and spills the result into a temp by
-        // bit-copy (`enum_scrutinee_ptr`'s non-place path). If that value is —
-        // through transparent block/if/match wrappers — a non-Copy field/index
-        // of a Drop aggregate, the bit-copy aliases live owned storage and
-        // double-frees, exactly the partial move E0509 rejects at every other
-        // value site. Place-form scrutinees (Ident/Field/Index/`*p`) are read in
-        // place (no copy); a move *out of* a projection place is the separate
-        // E0337 arm check below. Mirrors codegen's place-vs-value split so the
-        // checker and the lowering agree on which scrutinees alias.
-        let scrutinee_is_place_form = matches!(
-            &scrutinee.kind,
-            ExprKind::Ident(_)
-                | ExprKind::Field { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::Unary {
-                    op: UnaryOp::Deref,
-                    ..
-                }
-        );
-        if !scrutinee_is_place_form {
-            self.reject_partial_move_of_drop(scrutinee, &Ty::Enum(enum_id));
+        // THE ownership model: classify the scrutinee once (see
+        // `classify_scrutinee` / `ScrutineeClass`). Everything below — whether
+        // payload bindings own their values, whether a move-out is legal, and
+        // whether the scrutinee itself is a forbidden partial move — is driven
+        // from this single classification, kept in lockstep with codegen's
+        // `gen_match` lowering.
+        let scrutinee_class = self.classify_scrutinee(scrutinee);
+        if let ScrutineeClass::Forbidden { span, kind } = &scrutinee_class {
+            // A wrapper-forced bit-copy of a projection (`match { h.e }`), a raw
+            // deref (`match unsafe { *p }`), or a borrowed binding — evaluating
+            // it aliases a value owned elsewhere. Reject at the scrutinee.
+            // (`kind` borrows the local `scrutinee_class`, not `self`.)
+            self.emit_partial_move(*span, kind);
         }
-
-        // A projection scrutinee (`obj.f`, `arr[i]`, `*p`) is borrowed by the
-        // match, not owned by it — its owner (the aggregate / pointee) still
-        // drops it. Binding an owning payload for *read* is fine (a borrow), but
-        // moving one OUT is a partial move of that place, which Phase 3 defers
-        // (E0337) — exactly like `take(obj.f)`. Detected per-arm below: if a
-        // bound payload of a non-Copy type escapes (is moved) in the arm body.
-        // Without this, the move slipped through and the payload was dropped
-        // twice (once by the move target, once by the place's owner) — a
-        // double-free the direct-move path (E0337) already prevents.
-        let scrutinee_is_projection = matches!(
-            &scrutinee.kind,
-            ExprKind::Field { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::Unary {
-                    op: UnaryOp::Deref,
-                    ..
-                }
-        );
+        // An owned scrutinee (an owning binding the match consumes, or an owned
+        // temporary) makes payload / catch-all bindings OWN their values — they
+        // may be moved out. A borrowed scrutinee (a field/index projection or a
+        // `borrow`/`mut`/`self` binding) makes them borrows; a move-out is a
+        // partial move of the place (E0337), checked per-arm below. A forbidden
+        // scrutinee is already rejected; treat its hypothetical value as owned
+        // so arms don't cascade spurious errors.
+        let scrutinee_borrowed = matches!(scrutinee_class, ScrutineeClass::Borrowed);
+        let scrutinee_owned = !scrutinee_borrowed;
 
         let enum_name = self.enums[enum_id.0 as usize].name.clone();
         let variant_names: Vec<String> = self.enums[enum_id.0 as usize]
@@ -7146,6 +7203,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 &enum_name,
                 &mut covered,
                 &mut has_catchall,
+                scrutinee_owned,
             );
             // Check the arm body with the expected result type.
             let arm_ty = self.check_expr(&arm.body, expected.clone());
@@ -7176,17 +7234,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     _ => {}
                 }
             }
-            // E0337 (match path): moving an owning payload out of a borrowed-
-            // place scrutinee is a partial move — reject it, mirroring the
-            // direct `take(obj.f)` path. Checked after the body so a read-only
-            // binding (never moved) stays allowed; only an escaped non-Copy
-            // binding fires. Closes the double-free where the moved payload and
-            // the place's owner both dropped it.
-            if scrutinee_is_projection {
+            // BORROWED scrutinee, pattern position = MOVED: moving an owning
+            // payload out of a value the match only borrows (a field/index
+            // projection, or a `borrow`/`mut`/`self` binding) is a partial move
+            // of a value owned elsewhere — both the move target and the owner
+            // would drop it. Reject (E0337). Checked after the body so a
+            // read-only (borrowed) payload stays allowed; only an escaped
+            // non-Copy binding fires. An OWNED scrutinee skips this — its
+            // payloads are the match's to move.
+            if scrutinee_borrowed {
                 // A bare-Ident arm body (`E::A(x) => x`) returns the binding as
                 // the match value — an escape the move-checker doesn't record on
                 // the binding itself (unlike `=> consume(move x)` / `=> Wrap(x)`,
-                // which set `moved`). Treat both as escapes.
+                // which mark it moved at the consuming site). Treat both as
+                // escapes.
                 let returned = match &arm.body.kind {
                     ExprKind::Ident(n) => Some(n.clone()),
                     _ => None,
@@ -7201,10 +7262,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     if moved_owning {
                         self.err(
                             "E0337",
-                            "cannot move a value out of a `match` on a place (a field, array \
-                             element, or `*p`); that would partially move the matched place. \
-                             Phase 3 defers partial moves — match a whole binding instead, or \
-                             leave the payload in place (a read-only binding is allowed)."
+                            "cannot move a value out of a `match` on a value the match does not \
+                             own (a field, array element, `*p`, or a `borrow`/`mut` binding); that \
+                             would partially move a value owned elsewhere. Phase 3 defers partial \
+                             moves — match an owned binding instead, or leave the payload in place \
+                             (a read-only binding is allowed)."
                                 .to_string(),
                             arm.pattern.span,
                         );
@@ -7275,6 +7337,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         enum_name: &str,
         covered: &mut HashMap<String, ()>,
         has_catchall: &mut bool,
+        // True iff the scrutinee is owned by the match (an owned binding or
+        // temporary). Payload / catch-all bindings then OWN their value and
+        // may be moved out; a borrowed-place scrutinee makes them borrows
+        // (a move-out is a partial move → E0337, enforced in `check_match`).
+        scrutinee_owned: bool,
     ) {
         match &pat.kind {
             PatternKind::Wildcard => {
@@ -7292,6 +7359,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         moved: false,
                         assigned: true,
                         borrow_roots: BTreeSet::new(),
+                        owns_value: scrutinee_owned,
                     },
                 );
             }
@@ -7401,6 +7469,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                                     moved: false,
                                     assigned: true,
                                     borrow_roots: BTreeSet::new(),
+                                    owns_value: scrutinee_owned,
                                 },
                             );
                         }
@@ -11474,30 +11543,87 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.is_copy(moved_ty) {
             return;
         }
-        // A value is produced not only by a bare place expression but by any
-        // *value-transparent* wrapper around one: a block yields its tail, an
-        // `if`/`match` yields each branch/arm body. Codegen lowers all of these
-        // by **bit-copying** the wrapped value into a temp (no move-out, no
-        // source disarm — see `enum_scrutinee_ptr`'s non-place path and the
-        // generic value lowering), so a non-Copy field/index of a Drop
-        // aggregate reached through any wrapper is the *same* double-free as a
-        // bare `let q = obj.f` (E0509). Without peeling, `let q = { obj.f }` /
-        // `match { obj.f } { .. }` / `if c { obj.f } else { .. }` slipped past
-        // the chain-walk (which bails on the wrapper node) and aliased live
-        // owned storage. Peel to each leaf, then walk that leaf's chain.
-        let mut leaves: Vec<&Expr> = Vec::new();
-        collect_value_leaves(e, &mut leaves);
-        for leaf in leaves {
-            self.reject_partial_move_of_drop_leaf(leaf);
+        if let Some((span, kind)) = self.classify_partial_move(e) {
+            self.emit_partial_move(span, &kind);
         }
     }
 
-    /// Walk one already-peeled value leaf's projection chain (`obj.f`,
-    /// `arr[i]`, `*p`, nested). If any base in the chain carries `drop`,
-    /// moving the leaf out is a partial move of a live destructor's field
-    /// (E0509). `reject_partial_move_of_drop` is the entry point; it peels
-    /// value-transparent wrappers and calls this per leaf.
-    fn reject_partial_move_of_drop_leaf(&mut self, e: &Expr) {
+    /// Map a classified partial move to its diagnostic. One place so every
+    /// consuming position phrases the same violation identically.
+    fn emit_partial_move(&mut self, span: ByteSpan, kind: &PartialMoveKind) {
+        let (code, msg) = match kind {
+            PartialMoveKind::DropField(base) => (
+                "E0509",
+                format!(
+                    "cannot move a field out of `{base}` because its type implements `drop` — the destructor would free the moved field a second time. Clone the field instead, or restructure so the value isn't owned by a Drop type."
+                ),
+            ),
+            PartialMoveKind::RawDeref => (
+                "E0337",
+                "cannot move a non-Copy value out of a raw-pointer dereference (`*p`); \
+                 `unsafe` permits the read, not the ownership transfer — the pointee's \
+                 owner would drop the value a second time (double-free). Match the owned \
+                 value directly, or use `Box[T]` for heap ownership."
+                    .to_string(),
+            ),
+        };
+        self.err(code, msg, span);
+    }
+
+    /// THE shared partial-move classifier. A value is produced not only by a
+    /// bare place but by any *value-transparent* wrapper around one: a block /
+    /// `unsafe` block yields its tail, an `if`/`match` yields each branch / arm
+    /// body. Codegen lowers all of these by **bit-copying** the value into a
+    /// temp (no move-out, no source disarm). So if any leaf moves a non-Copy
+    /// value out of a place owned elsewhere — a field/index of a Drop aggregate
+    /// (`{ obj.f }`), a raw-pointer deref (`unsafe { *p }`), or a borrowed
+    /// binding — the copy aliases live storage and double-frees. Returns the
+    /// first offending leaf's span + kind, or `None` if every leaf is an owned
+    /// binding / temporary the consumer may legitimately take. Callers gate on
+    /// the consumed type being non-Copy before calling.
+    fn classify_partial_move(&self, e: &Expr) -> Option<(ByteSpan, PartialMoveKind)> {
+        let mut leaves: Vec<&Expr> = Vec::new();
+        collect_value_leaves(e, &mut leaves);
+        for leaf in leaves {
+            if let Some(found) = self.classify_partial_move_leaf(leaf) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Classify one already-peeled value leaf. Walks a projection chain
+    /// (`obj.f`, `arr[i]`, `*p`, nested) and inspects the leaf itself.
+    fn classify_partial_move_leaf(&self, e: &Expr) -> Option<(ByteSpan, PartialMoveKind)> {
+        // A raw-pointer deref `*p` whose pointee CARRIES DROP: bit-copying it
+        // out of `*p` makes a second owner of an owned value → double-free. A
+        // Copy or merely drop-free pointee (a non-Copy-but-no-destructor POD,
+        // e.g. `*p` of a `{usize, Verb}` event) bit-copies harmlessly — no
+        // destructor runs twice — so reading it through a pointer is allowed
+        // (the established FFI/value-read pattern). Gate on `ty_carries_drop`,
+        // not `!is_copy`, so drop-free reads aren't spuriously rejected.
+        if let ExprKind::Unary {
+            op: UnaryOp::Deref,
+            operand,
+        } = &e.kind
+        {
+            if let Some(Ty::RawPtr(pointee)) = self.place_ty_quiet(operand) {
+                if self.ty_carries_drop(&pointee) {
+                    return Some((e.span, PartialMoveKind::RawDeref));
+                }
+            }
+        }
+        // Reading a *Copy* value is a harmless bit-copy, never a partial move —
+        // even out of a Drop aggregate (e.g. a Copy `Option[usize]` field of a
+        // Drop struct read via `(*p).f`). Gate the field/index chain on the
+        // *leaf's* type, mirroring `reject_partial_move_of_drop`'s entry gate.
+        if let Some(leaf_ty) = self.place_ty_quiet(e) {
+            if self.is_copy(&leaf_ty) {
+                return None;
+            }
+        }
+        // Walk the projection chain: any base that carries `drop` makes a
+        // non-Copy field/index move-out an E0509 partial move.
         let mut cur = e;
         loop {
             match &cur.kind {
@@ -11509,14 +11635,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                                 Ty::Array(elem, _) => format!("[{}; N]", elem.name()),
                                 _ => base_ty.name().to_string(),
                             };
-                            self.err(
-                                "E0509",
-                                format!(
-                                    "cannot move a field out of `{base_name}` because its type implements `drop` — the destructor would free the moved field a second time. Clone the field instead, or restructure so the value isn't owned by a Drop type."
-                                ),
-                                e.span,
-                            );
-                            return;
+                            return Some((e.span, PartialMoveKind::DropField(base_name)));
                         }
                     }
                     cur = receiver;
@@ -11527,8 +11646,40 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 } => {
                     cur = operand;
                 }
-                _ => return,
+                _ => return None,
             }
+        }
+    }
+
+    /// Classify how a `match` relates to its scrutinee's storage — the single
+    /// entry point to the ownership model ([`ScrutineeClass`]). Mirrors
+    /// codegen's place-vs-temp split in `enum_scrutinee_ptr`: a bare
+    /// Ident/Field/Index is read in place (no copy); everything else is spilled
+    /// to a temp by value, so it must not move a non-Copy value out of a place
+    /// owned elsewhere.
+    fn classify_scrutinee(&self, e: &Expr) -> ScrutineeClass {
+        match &e.kind {
+            // Bare in-place place forms (codegen `gen_place`):
+            ExprKind::Ident(name) => {
+                // An owning binding is consumed by the match (its drop is
+                // disarmed). A `borrow`/`mut`/`self` binding names a value owned
+                // elsewhere — only borrowed (a payload move-out is E0337).
+                if self.lookup_local(name).map_or(true, |i| i.owns_value) {
+                    ScrutineeClass::Owned
+                } else {
+                    ScrutineeClass::Borrowed
+                }
+            }
+            ExprKind::Field { .. } | ExprKind::Index { .. } => ScrutineeClass::Borrowed,
+            // Everything else is read into a temp by value (codegen
+            // `gen_expr` + spill). A genuine rvalue is an owned temporary; a
+            // wrapper-forced bit-copy of a projection / raw-deref / borrowed
+            // binding is a forbidden partial move (a Copy scrutinee never trips
+            // this — every `classify_partial_move` trigger requires non-Copy).
+            _ => match self.classify_partial_move(e) {
+                Some((span, kind)) => ScrutineeClass::Forbidden { span, kind },
+                None => ScrutineeClass::Owned,
+            },
         }
     }
 
@@ -13423,11 +13574,13 @@ fn op_str(op: BinOp) -> &'static str {
 /// is caught the same as the bare `obj.f` — codegen bit-copies all of them.
 fn collect_value_leaves<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
     match &e.kind {
-        ExprKind::Block(b) => {
+        ExprKind::Block(b) | ExprKind::Unsafe(b) => {
             if let Some(t) = &b.tail {
                 collect_value_leaves(t, out);
             }
-            // A tail-less block evaluates to unit — no value to move.
+            // A tail-less block evaluates to unit — no value to move. An
+            // `unsafe { .. }` block is value-transparent like a plain block:
+            // `unsafe { *p }` yields `*p`, so a raw-deref move-out is caught.
         }
         ExprKind::If {
             then, else_branch, ..
@@ -18735,6 +18888,117 @@ mod tests {
                  let _z: E = E::A(y); \
                  let y2: R = R { data: unsafe { 0 as *u8 } }; \
                  let _w: W = W { r: y2 }; \
+                 return 0; \
+             }",
+        );
+    }
+
+    // v0.0.23 unified match ownership model (`classify_scrutinee`) + the
+    // raw-deref partial move. The following pin down the model's four-way
+    // scrutinee classification and both over- and under-rejection edges.
+
+    #[test]
+    fn match_raw_deref_of_drop_type_rejected_e0337() {
+        // `match unsafe { *p }` for a Drop-carrying pointee bit-copies the value
+        // out of a place the deref doesn't own → double-free. Rejected (E0337).
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn main() -> i32 { \
+                 let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
+                 let p: *E = unsafe { #addr_of(e) }; \
+                 let _r: R = match unsafe { *p } { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn let_raw_deref_of_drop_type_rejected_e0337() {
+        // The same partial move at a let-init value site (not a match).
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn main() -> i32 { \
+                 let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
+                 let p: *E = unsafe { #addr_of(e) }; \
+                 let _x: E = unsafe { *p }; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn match_move_out_of_borrow_param_scrutinee_rejected_e0337() {
+        // A `borrow` parameter is owned by the caller; matching it and moving a
+        // payload out is a partial move of a value owned elsewhere (E0337). This
+        // is the `owns_value=false` branch of `classify_scrutinee`.
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn take(borrow e: E) -> i32 { \
+                 let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 return 0; \
+             } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn match_read_only_of_borrow_param_scrutinee_clean() {
+        // Reading (not moving) a payload of a borrowed-param scrutinee is sound —
+        // the payload binding is itself a borrow. Must not be over-rejected.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn rd(borrow r: R) -> i32 { return 0; } \
+             fn take(borrow e: E) -> i32 { \
+                 let n: i32 = match e { E::A(x) => rd(x), E::B => 1 }; \
+                 return n; \
+             } \
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn match_copy_field_of_drop_struct_via_deref_clean() {
+        // FALSE-POSITIVE GUARD (agent_core::identity repro): reading a *Copy*
+        // field (`Option[usize]`-shaped) out of a Drop struct through `(*p).f` is
+        // a harmless bit-copy, never a partial move. Must compile.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum Opt { Some(usize), None } \
+             struct NodeView { id: R, parent: Opt } \
+             fn main() -> i32 { \
+                 let nv: NodeView = NodeView { id: R { data: unsafe { 0 as *u8 } }, parent: Opt::Some(5 as usize) }; \
+                 let p: *NodeView = unsafe { #addr_of(nv) }; \
+                 let _parent: usize = match unsafe { (*p).parent } { Opt::Some(x) => x, Opt::None => 0 as usize }; \
+                 return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn match_raw_deref_of_drop_free_pod_clean() {
+        // FALSE-POSITIVE GUARD (agent_core::events repro): copying a non-Copy but
+        // *drop-free* value (`{usize, ...}` with no destructor) out of `*p` is
+        // harmless — no destructor runs twice — so the gate is `ty_carries_drop`,
+        // not `!is_copy`. Must compile.
+        assert_clean(
+            "struct PodS { a: usize } \
+             enum Pod { X(PodS), Y } \
+             fn main() -> i32 { \
+                 let pd: Pod = Pod::X(PodS { a: 1 as usize }); \
+                 let pp: *Pod = unsafe { #addr_of(pd) }; \
+                 let _out: Pod = match unsafe { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y }; \
                  return 0; \
              }",
         );

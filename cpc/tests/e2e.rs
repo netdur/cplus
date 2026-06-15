@@ -180,6 +180,75 @@ fn match_consumes_owned_scrutinee_exactly_once() {
     }
 }
 
+/// v0.0.23 unified match ownership model: the paths the model *allows* (after
+/// fixing the over-rejections that the model's first cut caused) must run clean
+/// under ASan. Compile-time rejections (raw-deref of a Drop type, move-out of a
+/// borrowed scrutinee) are covered by sema unit tests — they don't compile, so
+/// can't be e2e'd. Here we lock in that the ALLOWED reads are sound:
+///   - a *Copy* field of a Drop struct read via `(*p).f` (agent_core::identity);
+///   - a non-Copy but *drop-free* POD copied out of `*p` (agent_core::events);
+///   - a correct owned-match move-out drops the payload exactly once.
+#[test]
+fn match_model_allowed_reads_runtime_safe() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("m.cplus");
+    std::fs::write(
+        &src,
+        "static mut DROPS: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         enum Opt { Some(usize), None }\n\
+         struct NodeView { id: R, parent: Opt }\n\
+         struct PodS { a: usize }\n\
+         enum Pod { X(PodS), Y }\n\
+         enum E { A(R), B }\n\
+         fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
+         // Copy field of a Drop struct via raw deref → reads the Copy value, the\n\
+         // struct still drops its R exactly once.\n\
+         fn copy_field_via_deref() {\n\
+             let nv: NodeView = NodeView { id: R { data: unsafe { 0 as *u8 } }, parent: Opt::Some(7 as usize) };\n\
+             let p: *NodeView = unsafe { #addr_of(nv) };\n\
+             let _parent: usize = match unsafe { (*p).parent } { Opt::Some(x) => x, Opt::None => 0 as usize };\n\
+             return;\n\
+         }\n\
+         // Drop-free POD copied out of *p → harmless bit-copy, no destructor.\n\
+         fn pod_via_deref() -> i32 {\n\
+             let pd: Pod = Pod::X(PodS { a: 9 as usize });\n\
+             let pp: *Pod = unsafe { #addr_of(pd) };\n\
+             let out: Pod = match unsafe { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y };\n\
+             let v: usize = match out { Pod::X(s) => s.a, Pod::Y => 0 as usize };\n\
+             return v as i32;\n\
+         }\n\
+         // Correct owned-match move-out: drops the R exactly once.\n\
+         fn owned_move_once() { let e: E = mke(); let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; return; }\n\
+         fn main() -> i32 {\n\
+             copy_field_via_deref(); if unsafe { DROPS } != 1 { return 1; } unsafe { DROPS = 0; }\n\
+             if pod_via_deref() != 9 { return 2; }\n\
+             owned_move_once();      if unsafe { DROPS } != 1 { return 3; } unsafe { DROPS = 0; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("m");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(&bin).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged an allowed model read ({sanitizer}): {stderr}");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "model-allowed read mis-dropped; failing phase = exit code ({sanitizer})"
+        );
+    }
+}
+
 // v0.0.19: a polymorphic backend built on a user-defined interface bound
 // compiles and runs — generic fn (inference + turbofish), a generic struct
 // whose field is the bounded type, and a generic impl calling the interface

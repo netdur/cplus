@@ -11105,25 +11105,24 @@ impl<'a> FnState<'a> {
     /// return its slot directly. Otherwise compute the value into a temp
     /// alloca and return that pointer.
     fn enum_scrutinee_ptr(&mut self, scrutinee: &Expr) -> (String, EnumId) {
-        // Try a place-form first.
-        match &scrutinee.kind {
-            ExprKind::Ident(_) | ExprKind::Field { .. } | ExprKind::Index { .. } => {
-                let (ptr, ty) = self.gen_place(scrutinee);
-                let Ty::Enum(id) = ty else {
-                    unreachable!("sema validated")
-                };
-                (ptr, id)
-            }
-            _ => {
-                let (val, ty) = self.gen_expr(scrutinee).expect("match scrutinee has value");
-                let Ty::Enum(id) = ty.clone() else {
-                    unreachable!("sema validated")
-                };
-                let slot = self.alloca_anon(ty.clone());
-                // v0.0.7 Slice 1.2: match scrutinee spill — aggregate enum.
-                self.gen_store(&ty, &val, &slot);
-                (slot, id)
-            }
+        // Place-form scrutinees are read in place; everything else is spilled
+        // to a temp. Shared with sema via `scrutinee_reads_in_place` so the two
+        // passes agree on which scrutinees alias (no drift → no double-free).
+        if crate::ast::scrutinee_reads_in_place(scrutinee) {
+            let (ptr, ty) = self.gen_place(scrutinee);
+            let Ty::Enum(id) = ty else {
+                unreachable!("sema validated")
+            };
+            (ptr, id)
+        } else {
+            let (val, ty) = self.gen_expr(scrutinee).expect("match scrutinee has value");
+            let Ty::Enum(id) = ty.clone() else {
+                unreachable!("sema validated")
+            };
+            let slot = self.alloca_anon(ty.clone());
+            // v0.0.7 Slice 1.2: match scrutinee spill — aggregate enum.
+            self.gen_store(&ty, &val, &slot);
+            (slot, id)
         }
     }
 
@@ -11151,16 +11150,14 @@ impl<'a> FnState<'a> {
             .as_ref()
             .map(|n| self.find_drop_flag(n).is_some())
             .unwrap_or(false);
-        let scrutinee_is_place = matches!(
-            &scrutinee.kind,
-            ExprKind::Ident(_)
-                | ExprKind::Field { .. }
-                | ExprKind::Index { .. }
-                | ExprKind::Unary {
-                    op: UnaryOp::Deref,
-                    ..
-                }
-        );
+        // An owned *temporary* — a non-place scrutinee spilled to a temp (call,
+        // constructor, block, `if`, ...) of a Drop enum — is the match's to tear
+        // down. Same `scrutinee_reads_in_place` predicate as `enum_scrutinee_ptr`
+        // and sema's `classify_scrutinee`, so all three agree on which
+        // scrutinees the match owns (no drift → no double-free). A raw deref
+        // `*p` is non-place here too: sema forbids a non-Copy `*p` scrutinee
+        // (E0337), so a Drop enum never reaches this by-deref.
+        let scrutinee_is_place = crate::ast::scrutinee_reads_in_place(scrutinee);
         let consumed_temp = !scrutinee_is_place && self.needs_drop(&Ty::Enum(enum_id));
         let consumed = consumed_binding || consumed_temp;
         let info = self.types.enum_defs[enum_id.0 as usize].clone();

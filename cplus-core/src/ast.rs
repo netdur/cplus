@@ -646,6 +646,26 @@ pub struct Expr {
     pub span: Span,
 }
 
+/// Whether a `match` scrutinee is read **in place** (no copy) rather than
+/// evaluated into a temporary. THE shared predicate behind the match ownership
+/// model: sema's `classify_scrutinee` and codegen's `enum_scrutinee_ptr` /
+/// consume logic both consult it, so they cannot drift on which scrutinees
+/// alias storage (the drift that caused the v0.0.23 match double-free class).
+///
+/// Only a bare whole binding or a field/index projection is read in place
+/// (codegen `gen_place`). Everything else — a block, `unsafe` block, `if`,
+/// nested `match`, call, constructor, **or a raw-pointer deref `*p`** — is
+/// evaluated by value into a temp (codegen `gen_expr` + spill). A `*p` is
+/// deliberately NOT in-place: spilling it bit-copies the pointee, which sema
+/// then forbids for a non-Copy pointee (E0337), so it never reaches a buggy
+/// drop path.
+pub fn scrutinee_reads_in_place(e: &Expr) -> bool {
+    matches!(
+        &e.kind,
+        ExprKind::Ident(_) | ExprKind::Field { .. } | ExprKind::Index { .. }
+    )
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     IntLit(u64, NumSuffix),
