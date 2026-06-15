@@ -42,12 +42,23 @@ impl Rc[T] {
         return Rc[T] { ctrl: self.ctrl };
     }
 
+}
+
+// `get` bitwise-copies the shared value out, sound only for `Copy` T: an Rc is
+// shared ownership, so a non-Copy T can never be safely extracted (it would
+// double-free against the storage and other handles). The `T: Copy` bound makes
+// a non-Copy `get` a compile error (E0502); it lives in its own impl block so
+// `Rc[NonCopy]` still works through `clone` / `strong_count` / Drop.
+impl Rc[T: Copy] {
     // Read inner T (bitwise copy).
     pub fn get(self) -> T {
         let header: usize = 8 as usize;
         let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
         return unsafe { *value_ptr };
     }
+}
+
+impl Rc[T] {
 
     // Current strong-reference count (single-threaded, exact).
     pub fn strong_count(self) -> u64 {

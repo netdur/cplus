@@ -35,19 +35,28 @@ pub fn new[T](move v: T) -> Box[T] {
     return Box[T] { p: p };
 }
 
-impl Box[T] {
-    // Read the boxed value (does not consume the box; pointer stays
-    // valid). Returns a fresh `T` — for Copy T this is a value-copy;
-    // for non-Copy T the inner storage now has a *bitwise-duplicated*
-    // copy whose ownership is ambiguous, so callers should immediately
-    // `unwrap()` or replace via `set()` to avoid double-free.
+// `get` reads the boxed value by bitwise copy without consuming the box, so it
+// is sound only for `Copy` T — a non-Copy T would be duplicated, double-freeing
+// when both copies drop. The `T: Copy` bound makes that a compile error
+// (E0502); non-Copy callers move the value out with `unwrap()` instead. (Bound
+// lives on its own impl block so `Box[NonCopy]` stays usable via `new` / `set`
+// / `unwrap` / Drop below.)
+impl Box[T: Copy] {
+    // Read the boxed value (does not consume the box; the pointer stays valid).
     pub fn get(self) -> T {
         return unsafe { *self.p };
     }
+}
 
-    // Overwrite the boxed value. Existing T is replaced; if T was Drop
-    // the previous value is *not* destructed (v0.0.4 limitation).
+impl Box[T] {
+    // Overwrite the boxed value, dropping the value previously there first
+    // (mirrors `Vec::set`). The box always holds an initialized T by the time
+    // `set` is callable (`new` initialized it), so the drop-then-store is sound
+    // for any T — for Copy T the `#drop_in_place` is a no-op the optimizer
+    // elides; for a Drop T it frees the old value's resources before the new
+    // value moves in, so there is no leak and no double-free.
     pub fn set(mut self, v: T) {
+        unsafe { #drop_in_place::[T](self.p); }
         unsafe { *self.p = v; }
         return;
     }

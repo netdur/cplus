@@ -10646,6 +10646,115 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
     }
 }
 
+/// `Box::set` now drops the value the box currently owns before storing the new
+/// one (mirrors `Vec::set`). Pre-fix it overwrote the old value, leaking it for
+/// a Drop `T`. The program boxes one resource, `set`s a second, then drops the
+/// box in an inner scope; the alloc/free counter must balance (exactly two
+/// allocs, two frees). Runs clean under ASan.
+#[test]
+#[cfg(target_os = "macos")]
+fn stdlib_box_set_drops_old_value() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"boxset\"\n\n[[bin]]\nname = \"boxset\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/box.cplus"),
+        include_str!("../../vendor/stdlib/src/box.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/box\" as box;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         static mut A: i32 = 0;\n\
+         static mut F: i32 = 0;\n\
+         struct R { p: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { F = F +% 1; free(self.p); } return; } }\n\
+         fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         fn main() -> i32 {\n\
+             { let mut b: box::Box[R] = box::new::[R](mk()); b.set(mk()); }\n\
+             return unsafe { A -% F };\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let mut cmd = Command::new(cpc);
+        cmd.arg("build").current_dir(&dir);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(dir.join("target/debug/boxset")).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged Box::set ({sanitizer}): {stderr}");
+        assert_eq!(run.status.code(), Some(0), "Box::set must drop the old value (balanced alloc/free) ({sanitizer})");
+    }
+}
+
+/// `Box::get` bit-copies the boxed value out without consuming the box, so it
+/// lives in a `Copy`-bounded impl block (`impl Box[T: Copy]`). Calling it on a
+/// non-Copy `T` is rejected with E0502 — pre-fix it silently bit-duplicated an
+/// owner and double-freed. (This also exercises impl-block bound enforcement.)
+/// Non-Copy boxes remain usable via `new` / `set` / `unwrap`, covered above.
+#[test]
+fn stdlib_box_get_noncopy_rejected_e0502() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"boxget\"\n\n[[bin]]\nname = \"boxget\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    ).unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/src/box.cplus"),
+        include_str!("../../vendor/stdlib/src/box.cplus"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/box\" as box;\n\
+         extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct R { p: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { free(self.p); } return; } }\n\
+         fn mk() -> R { return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         fn main() -> i32 {\n\
+             let b: box::Box[R] = box::new::[R](mk());\n\
+             let _r: R = b.get();\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success(), "expected compile failure for Box::get on a non-Copy T");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E0502"),
+        "expected E0502 (Copy bound not satisfied) in stderr, got: {stderr}"
+    );
+}
+
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
 ///
 /// Two producers each push 100 values; two consumers drain until Closed.

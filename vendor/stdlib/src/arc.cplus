@@ -70,15 +70,6 @@ impl Arc[T] {
         return Arc[T] { ctrl: self.ctrl };
     }
 
-    // Read inner T (bitwise copy). For Copy T this is a true value
-    // copy; for non-Copy T the underlying buffer is shared and the
-    // caller must avoid double-free until proper inner-Drop landed.
-    pub fn get(self) -> T {
-        let header: usize = 8 as usize;
-        let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
-        return unsafe { *value_ptr };
-    }
-
     // Current strong-reference count (snapshot — racy under load,
     // useful for tests + debugging only).
     pub fn strong_count(self) -> u64 {
@@ -104,5 +95,19 @@ impl Arc[T] {
             unsafe { free(self.ctrl); }
         }
         return;
+    }
+}
+
+// `get` bitwise-copies the shared value out, sound only for `Copy` T: an Arc is
+// shared ownership, so a non-Copy T can never be safely extracted (it would
+// double-free against the storage and other handles). The `T: Copy` bound makes
+// a non-Copy `get` a compile error (E0502); kept in its own impl block so
+// `Arc[NonCopy]` still works through `clone` / `strong_count` / Drop.
+impl Arc[T: Copy] {
+    // Read inner T (bitwise copy).
+    pub fn get(self) -> T {
+        let header: usize = 8 as usize;
+        let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
+        return unsafe { *value_ptr };
     }
 }
