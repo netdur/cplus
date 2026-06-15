@@ -11251,6 +11251,19 @@ impl<'a> FnState<'a> {
         ));
 
         // Emit each arm body.
+        //
+        // OWNERSHIP INVARIANT (keep this exhaustive): a `match` *consumes* an
+        // owned scrutinee (`consumed` — an owned binding, disarmed above, or an
+        // owned temporary). Every owning position must then be torn down exactly
+        // once: a position **bound** to a name is copied into a drop-registered
+        // local (the binding owns it; a move-out is flag-disarmed); a position
+        // **not** bound (wildcard arm `_`, or a `_` payload slot) is dropped in
+        // place. Today's grammar has only two position kinds — the whole
+        // scrutinee (`x` / `_`) and each variant payload slot (`name` / `_`);
+        // nested / or / struct-destructure patterns are rejected by sema
+        // (E0341, etc.). If a new pattern shape is ever added, account for its
+        // owning positions HERE or it will silently leak the consumed scrutinee.
+        // Covered end-to-end by `match_consumes_owned_scrutinee_exactly_once`.
         for (i, arm) in arms.iter().enumerate() {
             self.open_block(&arm_labels[i]);
             self.push_scope();
