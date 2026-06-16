@@ -340,7 +340,7 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
 ### 4.3 Strings
 
 - **`str`** — a borrowed fat-pointer view `{ptr, len}` over UTF-8 bytes
-  (string literals, `include_str!`, `env!`). Copy.
+  (string literals, `#include_str`, `#env`). Copy.
 - **`Text`** — the owned, growable string type. `Text` is a library type
   with one compiler lang-item hook (interpolation builds a `Text`); it
   must be imported like any other type. (The earlier owned `string` type
@@ -596,10 +596,14 @@ and/or a return-type ascription. An unknown intrinsic is **E0905**.
 Three compile-time *file* builtins read at build time, resolving paths
 relative to the containing source file:
 
-- `include_bytes!("path")` → `*const [u8; N]`
-- `include_str!("path")` → `str` (UTF-8 validated; **E0875** on invalid)
-- `env!("NAME")` → `str` (**E0876** if the variable is unset at build
+- `#include_bytes("path")` → `*[u8; N]`
+- `#include_str("path")` → `str` (UTF-8 validated; **E0875** on invalid)
+- `#env("NAME")` → `str` (**E0876** if the variable is unset at build
   time)
+
+These are ordinary `#name(...)` intrinsics (§12), not macros — C+ has no
+macro system. The legacy `include_bytes!(...)` macro spelling is a parse
+error.
 
 Module-scope `#asm("...");` emits raw assembly at module level.
 

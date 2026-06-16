@@ -836,33 +836,33 @@ pub enum ExprKind {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
     },
-    /// v0.0.6 Slice 1A: `include_bytes!("relative/path")` compiler builtin.
-    /// `path` is the raw string-literal payload (lexer-decoded). Sema
-    /// resolves it relative to the containing source file, reads the bytes
-    /// at compile time, stashes them in the compile-time-blob table, and
-    /// assigns type `*const [u8; N]`. Codegen emits a private constant
-    /// `[N x i8]` global and returns its address. The `!` token after
-    /// `include_bytes` marks the form as a compiler builtin — no
-    /// user-defined macros.
+    /// v0.0.6 Slice 1A: `#include_bytes("relative/path")` compiler
+    /// intrinsic. `path` is the raw string-literal payload (lexer-decoded).
+    /// Sema resolves it relative to the containing source file, reads the
+    /// bytes at compile time, stashes them in the compile-time-blob table,
+    /// and assigns type `*[u8; N]`. Codegen emits a private constant
+    /// `[N x i8]` global and returns its address. Spelled as a `#name(...)`
+    /// intrinsic (§12) — C+ has no macros; the legacy `include_bytes!(...)`
+    /// form is a parse error.
     IncludeBytes {
         path: String,
     },
-    /// v0.0.7 Slice 3.1: `include_str!("relative/path")` companion to
-    /// `include_bytes!`. Same path resolution + same compile-time read,
+    /// v0.0.7 Slice 3.1: `#include_str("relative/path")` companion to
+    /// `#include_bytes`. Same path resolution + same compile-time read,
     /// but the bytes are UTF-8-validated at sema time (E0875 on invalid)
     /// and the result type is `str` (the fat-pointer view). Codegen
-    /// shares the underlying `[N x i8]` global with any `include_bytes!`
+    /// shares the underlying `[N x i8]` global with any `#include_bytes`
     /// call on the same path and builds the `{ ptr, i64 }` aggregate.
     IncludeStr {
         path: String,
     },
-    /// v0.0.8 Phase 4: `env!("NAME")` compile-time environment-variable
+    /// v0.0.8 Phase 4: `#env("NAME")` compile-time environment-variable
     /// read. Resolves at sema time via `std::env::var(name)`. Errors:
     ///   - **E0871** at parse time — non-string-literal argument.
     ///   - **E0876** at sema time — environment variable not set in the
     ///     compiler's environment at build time.
     /// Result type is `str` (a `.rodata` global plus its UTF-8 byte
-    /// length). Same dedup behavior as `include_str!` — two `env!("X")`
+    /// length). Same dedup behavior as `#include_str` — two `#env("X")`
     /// calls on the same name share one underlying byte global.
     EnvVar {
         name: String,
