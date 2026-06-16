@@ -500,6 +500,11 @@ enum PartialMoveKind {
     /// the read, not ownership transfer — the pointee's owner drops it again
     /// (E0337, a non-binding place).
     RawDeref,
+    /// A non-owning, Drop-carrying binding (a `borrow`/`mut`/`self` parameter,
+    /// or a payload bound from a borrowed `match`) read by value into an owned
+    /// location — the binding's real owner still drops it, so the copy is a
+    /// second owner (double-free). E0337. Carries the binding name.
+    BorrowedBinding(String),
 }
 
 /// Run sema on a parsed program. Returns all diagnostics produced;
@@ -7240,23 +7245,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // non-Copy binding fires. An OWNED scrutinee skips this — its
             // payloads are the match's to move.
             if scrutinee_borrowed {
-                // A bare-Ident arm body (`E::A(x) => x`) returns the binding as
-                // the match value — an escape the move-checker doesn't record on
-                // the binding itself (unlike `=> consume(move x)` / `=> Wrap(x)`,
-                // which mark it moved at the consuming site). Treat both as
-                // escapes.
+                // A bare-Ident arm body (`E::A(x) => x`) returns the borrowed
+                // payload AS the match value — an escape no consuming *site*
+                // sees (the match-result consumption happens outside this arm
+                // scope, where `x` is no longer visible), so it must be caught
+                // here. Every OTHER escape — `=> consume(move x)`, `=> Wrap(x)`,
+                // `=> { let q = x; .. }` — moves `x` at a consuming site that now
+                // rejects it as a `BorrowedBinding` partial move (E0337), so this
+                // check handles only the bare return (no double-report).
                 let returned = match &arm.body.kind {
                     ExprKind::Ident(n) => Some(n.clone()),
                     _ => None,
                 };
                 for bn in match_pattern_binding_names(&arm.pattern) {
-                    let (moved, ty) = match self.lookup_local(&bn) {
-                        Some(i) => (i.moved, i.ty.clone()),
+                    let ty = match self.lookup_local(&bn) {
+                        Some(i) => i.ty.clone(),
                         None => continue,
                     };
-                    let escaped = moved || returned.as_deref() == Some(bn.as_str());
-                    let moved_owning = escaped && !self.is_copy(&ty);
-                    if moved_owning {
+                    let escaped = returned.as_deref() == Some(bn.as_str());
+                    if escaped && !self.is_copy(&ty) {
                         self.err(
                             "E0337",
                             "cannot move a value out of a `match` on a value the match does not \
@@ -11560,6 +11567,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                  value directly, or use `Box[T]` for heap ownership."
                     .to_string(),
             ),
+            PartialMoveKind::BorrowedBinding(name) => (
+                "E0337",
+                format!(
+                    "cannot move `{name}` into an owned value: it is a borrowed binding (a \
+                     `borrow`/`mut`/`self` parameter, or a payload matched from a borrowed value) \
+                     whose owner still drops it — the move would create a second owner \
+                     (double-free). Take ownership by value (drop the `borrow`/`mut`), or clone."
+                ),
+            ),
         };
         self.err(code, msg, span);
     }
@@ -11604,6 +11620,19 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if let Some(Ty::RawPtr(pointee)) = self.place_ty_quiet(operand) {
                 if self.ty_carries_drop(&pointee) {
                     return Some((e.span, PartialMoveKind::RawDeref));
+                }
+            }
+        }
+        // A non-owning, Drop-carrying binding read by value: a `borrow`/`mut`/
+        // `self` parameter, or a payload bound from a borrowed `match`
+        // (`owns_value == false`). Its real owner still drops it, so copying it
+        // into an owned location is a second owner → double-free. Gate on
+        // `ty_carries_drop` (a Copy or drop-free borrow copies harmlessly — the
+        // owner's teardown is a no-op).
+        if let ExprKind::Ident(name) = &e.kind {
+            if let Some(info) = self.lookup_local(name) {
+                if !info.owns_value && self.ty_carries_drop(&info.ty) {
+                    return Some((e.span, PartialMoveKind::BorrowedBinding(name.clone())));
                 }
             }
         }
@@ -19140,6 +19169,77 @@ mod tests {
              fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
              fn sink(move r: R) -> i32 { return 0; } \
              fn main() -> i32 { let _n: i32 = sink(mkR()); return 0; }",
+        );
+    }
+
+    // v0.0.23 returned borrows: returning/moving a `borrow`/`mut` *marker*
+    // parameter of a Drop type into an owned value is unsound (it bit-copies a
+    // value the caller still owns → double-free; C+ has no copy ctor) → E0337.
+    // The SHARED region-typed form (`b: borrow A T -> borrow A T`, no `mut`)
+    // stays sound (codegen returns a non-owning reference) and is accepted.
+
+    #[test]
+    fn return_borrow_marker_param_rejected_e0337() {
+        let codes = errors(
+            "struct B { x: i32 } \
+             impl B { fn drop(mut self) { return; } } \
+             fn steal(borrow r: B) -> B { let out: B = r; return out; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn return_mut_marker_param_rejected_e0337() {
+        let codes = errors(
+            "struct B { x: i32 } \
+             impl B { fn drop(mut self) { return; } } \
+             fn cursor(mut b: B) -> B { return b; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn return_mut_region_borrow_rejected_e0337() {
+        // The EXCLUSIVE region form double-frees today (codegen drops the
+        // result) — rejected under feature freeze.
+        let codes = errors(
+            "struct B { x: i32 } \
+             impl B { fn drop(mut self) { return; } } \
+             fn cursor(mut b: borrow A B) -> borrow A B { return b; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn return_shared_region_borrow_clean() {
+        // SOUND form: a shared region-typed borrow (`b: borrow A B`, no `mut`)
+        // returned as `borrow A B` is a non-owning reference (codegen handles it;
+        // drops exactly once). Must NOT be rejected — it's the surviving cursor.
+        assert_clean(
+            "struct B { x: i32 } \
+             impl B { fn drop(mut self) { return; } } \
+             fn cursor(b: borrow A B) -> borrow A B { return b; } \
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn read_only_borrow_param_reusable_clean() {
+        // A `borrow` param read-only and not moved out: the caller keeps it,
+        // reusable. Must not be over-rejected by the returned-borrow check.
+        assert_clean(
+            "struct B { x: i32 } \
+             impl B { fn drop(mut self) { return; } } \
+             fn rd(borrow b: B) -> i32 { return b.x; } \
+             fn main() -> i32 { \
+                 let v: B = B { x: 1 }; \
+                 let a: i32 = rd(v); \
+                 let c: i32 = rd(v); \
+                 return a + c; \
+             }",
         );
     }
 

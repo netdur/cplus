@@ -3745,15 +3745,17 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor(self) -> VecI32` returns `self` (a borrow) by value →
+    // E0337 (VecI32 has a Drop impl), rejected before the iterator-invalidation
+    // (E0381) conflict is reached.
     assert!(
         !out.status.success(),
-        "Phase-6 exit: iterator invalidation must reject; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        "returning `self` by value from a Drop type must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("E0381"),
-        "expected E0381 on iterator-invalidation; got: {stderr}"
+        stderr.contains("E0337"),
+        "expected E0337, got: {stderr}"
     );
 }
 
@@ -4738,12 +4740,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a region borrow (`-> borrow A B`) of a Drop type
+    // → E0337 (would double-free), rejected before the E0383 read-conflict.
     assert!(
         !out.status.success(),
-        "expected compile failure for read while exclusively borrowed"
+        "returning a region borrow of a Drop type must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0383"), "expected E0383, got: {stderr}");
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -4813,7 +4817,64 @@ fn main() -> i32 { return 0; }
     );
 }
 
-// ---- Phase 6 slice 6BC.4 — Rule E3-mut + E0384 ----
+// ---- Phase 6 borrow-region tests (v0.0.23 feature-freeze note) ----
+//
+// These exercise the returned-borrow / borrow-region machinery: a function
+// returns a `mut`/`borrow`/`self` parameter (a borrow), and the caller's source
+// is then tracked as borrowed for the result's lifetime (E0372/E0374/E0381/
+// E0383 conflict detection). For a *Drop* type that pattern double-frees today —
+// the returned value is an owned bitwise copy that drops alongside the source,
+// and C+ has no copy constructor to make the copy real. Making the returned
+// borrow non-owning is unfinished codegen; under feature freeze the unsound
+// pattern is REJECTED instead: returning a borrow of a Drop type by value is
+// E0337 (see `BorrowedBinding` in sema). So these now assert that the
+// returned-borrow function itself is rejected (E0337), which fires before any
+// conflict is reached. The region/conflict machinery remains in the compiler
+// (sound for Copy borrow-shapes like `str`/`T[]`, which never drop).
+
+#[test]
+fn shared_region_borrow_return_drops_once() {
+    // The SURVIVING sound cursor: a SHARED region-typed borrow
+    // (`b: borrow A B`, no `mut`) returned as `borrow A B` is a non-owning
+    // reference — codegen returns the pointer, so only the original owner drops.
+    // Compiles, runs, drops exactly once (ASan-clean). Contrast the rejected
+    // unsound forms below (marker/`mut`/plain return).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("m.cplus");
+    std::fs::write(
+        &src,
+        "static mut DROPS: i32 = 0;\n\
+         struct B { x: i32 }\n\
+         impl B { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         fn cursor(b: borrow A B) -> borrow A B { return b; }\n\
+         fn run() {\n\
+             let v: B = B { x: 7 };\n\
+             let cur: B = cursor(v);\n\
+             let _n: i32 = cur.x;\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 { run(); return unsafe { DROPS }; }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("m");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(&bin).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged shared region borrow return ({sanitizer}): {stderr}");
+        assert_eq!(
+            run.status.code(),
+            Some(1),
+            "shared region borrow return must drop the source exactly once ({sanitizer})"
+        );
+    }
+}
 
 #[test]
 fn e3_mut_longest_pattern_compiles_cleanly() {
@@ -4845,11 +4906,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `longest_mut` returns a `mut` param (a borrow) by value → E0337
+    // (would double-free). Rejected at the function, before any region check.
     assert!(
-        out.status.success(),
-        "E3-mut should admit the longest-mut pattern; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "returning a `mut` param by value must be rejected"
     );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -4884,16 +4948,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `longest_mut` returns a `mut` param by value → E0337, rejected
+    // before the move-while-borrowed (E0372) conflict is reached.
     assert!(
         !out.status.success(),
-        "expected compile failure for move-while-multi-borrowed"
+        "returning a `mut` param by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
-    assert!(
-        stderr.contains("exclusively borrowed"),
-        "E0372 should report exclusive flavor under E3-mut; got: {stderr}"
-    );
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -5073,12 +5135,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a `mut` param by value → E0337, rejected before
+    // the parent/sub-place conflict (E0374) is reached.
     assert!(
         !out.status.success(),
-        "expected compile failure for read of parent while sub-place borrowed"
+        "returning a `mut` param by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0374"), "expected E0374, got: {stderr}");
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -5111,11 +5175,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a `mut` param (a borrow) by value → E0337,
+    // regardless of the disjoint sub-place; the function is rejected.
     assert!(
-        out.status.success(),
-        "disjoint sub-places should admit cross-statement; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "returning a `mut` param by value must be rejected"
     );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 // ---- Phase 6 slice 6BC.2 — cross-statement exclusive-borrow tracking ----
@@ -5148,12 +5215,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a `mut` param by value → E0337, rejected before
+    // the read-of-exclusively-borrowed (E0383) conflict is reached.
     assert!(
         !out.status.success(),
-        "expected compile failure for read of exclusively-borrowed place"
+        "returning a `mut` param by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0383"), "expected E0383, got: {stderr}");
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -5186,11 +5255,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a `mut` param (a borrow) by value → E0337,
+    // so the program is rejected at the function (before the borrow-release).
     assert!(
-        out.status.success(),
-        "moving the exclusive borrower should release the borrow; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "returning a `mut` param by value must be rejected"
     );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -5221,21 +5293,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a `mut` param by value → E0337, rejected before
+    // the move-while-exclusive (E0372) conflict is reached.
     assert!(
         !out.status.success(),
-        "expected compile failure for move while exclusively borrowed"
+        "returning a `mut` param by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
-    assert!(
-        stderr.contains("exclusively borrowed"),
-        "E0372 should report 'exclusively borrowed' for the mut-borrow case; got: {stderr}"
-    );
-    // E0383 must NOT fire for the same conflict.
-    assert!(
-        !stderr.contains("E0383"),
-        "E0383 should be suppressed for move-while-exclusive; got: {stderr}"
-    );
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -5268,12 +5333,14 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: the `cursor(mut self) -> B` method returns `self` (a borrow) by
+    // value → E0337, rejected before the read-while-borrowed (E0383) conflict.
     assert!(
         !out.status.success(),
-        "expected compile failure for read while mut-self method's return is alive"
+        "returning `mut self` by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0383"), "expected E0383, got: {stderr}");
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -5305,11 +5372,13 @@ fn main() -> i32 {
         .arg(&bin)
         .output()
         .expect("invoke cpc");
+    // v0.0.23: `cursor` returns a `mut` param (a borrow) by value → E0337.
     assert!(
-        out.status.success(),
-        "reading the borrower itself should compile; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "returning a `mut` param by value must be rejected"
     );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 // ---- Phase 5 slice 5DOC — doctest extraction ----
