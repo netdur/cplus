@@ -9289,11 +9289,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             );
         }
         // `move self` consumes the receiver place — but only for a non-Copy
-        // receiver (`is_copy` is bound-aware for a `Ty::Param`). Routes through
-        // `classify_partial_move`, so a borrowed/Drop-field/raw-deref receiver
-        // is the same E0337 here as anywhere else.
+        // receiver (`is_copy` is bound-aware for a `Ty::Param`). `consume_place`
+        // runs the shared move/borrow path, so a borrowed/Drop-field/raw-deref
+        // receiver is the same E0337/E0509 here as at any other consuming site,
+        // and a fresh rvalue receiver passes through.
         if matches!(rcv, Receiver::Move) && !self.is_copy(recv_ty) {
-            self.consume_place(receiver, display_ty, &name.name);
+            self.consume_place(receiver, recv_ty);
         }
         if args.len() != sig.params.len() {
             self.err(
@@ -11556,35 +11557,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    /// Consume the receiver in a `move self` method call. Diagnostic phrasing
-    /// names the method for clarity.
-    fn consume_place(&mut self, receiver: &Expr, type_name: &str, method_name: &str) {
-        // A `move self` method *consumes* the receiver — the same as moving it
-        // into any owned slot. So a forbidden partial move (a field of a Drop
-        // value, a raw deref, or a borrowed binding) is the same double-free
-        // here, and `r.take()` on a `borrow`/`mut` `r` would otherwise launder
-        // the borrow into an owned value (the receiver's owner still drops it).
-        if let Some((span, kind)) = self.classify_partial_move(receiver) {
-            self.emit_partial_move(span, &kind);
-            return;
-        }
-        match &receiver.kind {
-            ExprKind::Ident(name) => {
-                for scope in self.scopes.iter_mut().rev() {
-                    if let Some(info) = scope.get_mut(name) {
-                        info.moved = true;
-                        return;
-                    }
-                }
-            }
-            _ => {
-                self.err(
-                    "E0337",
-                    format!("method `{}::{}` consumes `self`; the receiver must be a whole binding (partial moves are deferred to a later phase)", type_name, method_name),
-                    receiver.span,
-                );
-            }
-        }
+    /// Consume the receiver in a `move self` method call. Runs the SAME path as
+    /// let-init / call args / construction (`reject_partial_move_of_drop` +
+    /// `mark_moved_through_wrappers`): it rejects a forbidden receiver (a Drop
+    /// field → E0509, a Drop-carrying raw deref or a borrowed binding → E0337)
+    /// and marks a whole-binding receiver moved, while a fresh rvalue receiver
+    /// (`mkr().sink()`) owns its value and passes through. This is the
+    /// receiver-side analogue of the arg-path fix in 2a908ba — the old
+    /// hand-rolled "Ident-or-E0337" fallback wrongly rejected every rvalue
+    /// receiver (caught by the ownership coverage matrix).
+    fn consume_place(&mut self, receiver: &Expr, recv_ty: &Ty) {
+        self.reject_partial_move_of_drop(receiver, recv_ty);
+        self.mark_moved_through_wrappers(receiver, recv_ty);
     }
 
     /// Resolve the type of a *place* expression by lookup only — no error
@@ -15772,6 +15756,163 @@ mod tests {
              fn main() -> i32 { return 0; }",
             "E0337",
         );
+    }
+
+    // ---- ownership coverage matrix (consuming site × value form) ----
+    //
+    // ONE invariant — "a value is owned by exactly one place; consuming a
+    // non-owning / partial / aliased value is a double-free" — must hold at
+    // EVERY value-consuming SITE. Historically each bug was a single missing
+    // cell (array/tuple literals, struct/enum construction, assignment,
+    // move-self receiver, the generic paths each had to be fixed separately).
+    // These grids cross each site with each forbidden value FORM so a NEW site
+    // or form can't silently skip a cell — a regression shows up as a failing
+    // cell with the exact program that slipped through.
+
+    #[test]
+    fn ownership_consume_site_matrix_concrete() {
+        const PRELUDE: &str = "\
+static mut DROPS: i32 = 0;\n\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; }; return; } fn sink(move self) -> i32 { return 0; } }\n\
+struct H { e: R }\n\
+struct W { r: R }\n\
+enum E { A(R) }\n\
+fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
+fn take(x: R) -> i32 { return 0; }\n\
+fn main() -> i32 { return 0; }\n";
+
+        // (name, body template with `{V}` for the consumed value, returns_R)
+        let sites: &[(&str, &str, bool)] = &[
+            ("let", "let _x: R = {V};", false),
+            ("return", "return {V};", true),
+            ("call_arg", "let _c: i32 = take({V});", false),
+            ("struct_field", "let _w: W = W { r: {V} };", false),
+            ("enum_arg", "let _e: E = E::A({V});", false),
+            ("tuple_elem", "let _t: (R, i32) = ({V}, 0);", false),
+            ("array_elem", "let _a: [R; 1] = [{V}];", false),
+            ("move_self_recv", "let _m: i32 = ({V}).sink();", false),
+            ("assign", "let mut _s: R = mkr(); _s = {V};", false),
+            ("field_assign", "let mut _hh: H = H { e: mkr() }; _hh.e = {V};", false),
+        ];
+
+        // (name, fn params, setup stmts, value expr, expected code | "" = clean)
+        let forms: &[(&str, &str, &str, &str, &str)] = &[
+            ("borrow_param", "borrow r: R", "", "r", "E0337"),
+            ("drop_field", "", "let h: H = H { e: mkr() };", "h.e", "E0509"),
+            ("raw_deref", "p: *R", "", "unsafe { *p }", "E0337"),
+            ("safe_rvalue", "", "", "mkr()", ""),
+        ];
+
+        for (sname, stmpl, returns_r) in sites {
+            for (fname, params, setup, value, expected) in forms {
+                let body = stmpl.replace("{V}", value);
+                let ret = if *returns_r { " -> R" } else { "" };
+                let prog = format!(
+                    "{PRELUDE}fn grid_{sname}_{fname}({params}){ret} {{ {setup} {body} }}\n"
+                );
+                let codes = errors(&prog);
+                if expected.is_empty() {
+                    assert!(
+                        codes.is_empty(),
+                        "[{sname} x {fname}] expected CLEAN, got {codes:?}\n--- program ---\n{prog}"
+                    );
+                } else {
+                    assert!(
+                        codes.contains(expected),
+                        "[{sname} x {fname}] expected {expected}, got {codes:?}\n--- program ---\n{prog}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ownership_consume_site_matrix_generic() {
+        // Same grid, but the consumed value is an abstract `T` (generic-body
+        // checking). Unbounded `T` is move-only → moving a `borrow t: T` into
+        // an owned slot is E0337; `T: Copy` is a harmless bit-copy → clean.
+        const PRELUDE: &str = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(mut self) { return; } }\n\
+struct GW[U] { v: U }\n\
+fn gtake[U](x: U) -> i32 { return 0; }\n\
+fn main() -> i32 { return 0; }\n";
+
+        // (name, body template with `{V}`, returns_T)
+        let sites: &[(&str, &str, bool)] = &[
+            ("let", "let _x: T = {V};", false),
+            ("return", "return {V};", true),
+            ("call_arg", "let _c: i32 = gtake::[T]({V});", false),
+            ("struct_field", "let _w: GW[T] = GW[T] { v: {V} };", false),
+            ("tuple_elem", "let _t: (T, i32) = ({V}, 0);", false),
+            ("array_elem", "let _a: [T; 1] = [{V}];", false),
+        ];
+
+        // (name, fn generics, fn params, value, expected | "" = clean)
+        let forms: &[(&str, &str, &str, &str, &str)] = &[
+            ("borrow_unbounded", "[T]", "borrow t: T", "t", "E0337"),
+            ("copy_borrow_safe", "[T: Copy]", "borrow t: T", "t", ""),
+        ];
+
+        for (sname, stmpl, returns_t) in sites {
+            for (fname, generics, params, value, expected) in forms {
+                let body = stmpl.replace("{V}", value);
+                let ret = if *returns_t { " -> T" } else { "" };
+                let prog = format!(
+                    "{PRELUDE}fn g_{sname}_{fname}{generics}({params}){ret} {{ {body} }}\n"
+                );
+                let codes = errors(&prog);
+                if expected.is_empty() {
+                    assert!(
+                        codes.is_empty(),
+                        "[generic {sname} x {fname}] expected CLEAN, got {codes:?}\n--- program ---\n{prog}"
+                    );
+                } else {
+                    assert!(
+                        codes.contains(expected),
+                        "[generic {sname} x {fname}] expected {expected}, got {codes:?}\n--- program ---\n{prog}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ownership_consume_site_matrix_marks_move() {
+        // The dual of the grids above: a site must also *mark* a legit move so a
+        // LATER use of the same binding is caught (E0335). This is the half that
+        // the `[p, q]` codegen double-free was missing — the site moved the
+        // value but never recorded it. Move a fresh owned `r` via each site,
+        // then read it again.
+        const PRELUDE: &str = "\
+struct R { opaque data: *u8 }\n\
+impl R { fn drop(mut self) { return; } }\n\
+struct W { r: R }\n\
+enum E { A(R) }\n\
+fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
+fn take(x: R) -> i32 { return 0; }\n\
+fn main() -> i32 { return 0; }\n";
+
+        let sites: &[(&str, &str)] = &[
+            ("let", "let _x: R = r;"),
+            ("call_arg", "let _c: i32 = take(r);"),
+            ("struct_field", "let _w: W = W { r: r };"),
+            ("enum_arg", "let _e: E = E::A(r);"),
+            ("tuple_elem", "let _t: (R, i32) = (r, 0);"),
+            ("array_elem", "let _a: [R; 1] = [r];"),
+        ];
+
+        for (sname, consume) in sites {
+            let prog = format!(
+                "{PRELUDE}fn grid_mark_{sname}() {{ let r: R = mkr(); {consume} let _again: R = r; }}\n"
+            );
+            let codes = errors(&prog);
+            assert!(
+                codes.contains(&"E0335"),
+                "[mark-move {sname}] expected E0335 (use after move), got {codes:?}\n--- program ---\n{prog}"
+            );
+        }
     }
 
     // ---- `f16` literal suffix ----
