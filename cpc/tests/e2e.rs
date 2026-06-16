@@ -1889,6 +1889,75 @@ fn fn_pointer_to_c_struct_by_value_c_abi() {
 }
 
 #[test]
+fn fn_pointer_to_c_struct_return_c_abi() {
+    // C-ABI unification (returns): a fn-pointer to a C function RETURNING a
+    // struct by value must use the platform C ABI — large (>16B → sret), small
+    // (≤16B → coerced register pair), and HFA float ({f64,f64} → FP registers).
+    // A raw aggregate return segfaults. Ground-truth: links a clang C object.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let c_src = dir.join("c_side.c");
+    let cplus_src = dir.join("m.cplus");
+    let c_obj = dir.join("c_side.o");
+    let cplus_obj = dir.join("m.o");
+    let bin = dir.join("fpr_abi");
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         struct Big { int64_t a, b, c, d; };\n\
+         struct Big c_make(void) { struct Big r; r.a=10; r.b=20; r.c=30; r.d=40; return r; }\n\
+         struct P16 { int64_t a, b; };\n\
+         struct P16 c_p16(void) { struct P16 r; r.a=7; r.b=9; return r; }\n\
+         struct Pf { double x, y; };\n\
+         struct Pf c_pf(void) { struct Pf r; r.x=2.0; r.y=8.0; return r; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &cplus_src,
+        "#[repr(C)] struct Big { a: i64, b: i64, c: i64, d: i64 }\n\
+         #[repr(C)] struct P16 { a: i64, b: i64 }\n\
+         #[repr(C)] struct Pf { x: f64, y: f64 }\n\
+         extern fn c_make() -> Big;\n\
+         extern fn c_p16() -> P16;\n\
+         extern fn c_pf() -> Pf;\n\
+         fn main() -> i32 {\n\
+             let f1: fn() -> Big = c_make;\n\
+             let b: Big = unsafe { f1() };\n\
+             if b.a != (10 as i64) { return 1; }\n\
+             if b.d != (40 as i64) { return 2; }\n\
+             let f2: fn() -> P16 = c_p16;\n\
+             let p: P16 = unsafe { f2() };\n\
+             if p.a != (7 as i64) { return 3; }\n\
+             if p.b != (9 as i64) { return 4; }\n\
+             let f3: fn() -> Pf = c_pf;\n\
+             let q: Pf = unsafe { f3() };\n\
+             if q.x != 2.0 { return 5; }\n\
+             if q.y != 8.0 { return 6; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    assert!(
+        Command::new("clang").args(["-c", "-o"]).arg(&c_obj).arg(&c_src).status().expect("clang").success(),
+        "clang -c failed"
+    );
+    assert!(
+        Command::new(cpc).arg("--emit-obj").arg(&cplus_src).arg("-o").arg(&cplus_obj).status().expect("cpc").success(),
+        "cpc --emit-obj failed"
+    );
+    assert!(
+        Command::new("clang").arg(&cplus_obj).arg(&c_obj).arg("-o").arg(&bin).status().expect("link").success(),
+        "link failed"
+    );
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "fn-pointer to C struct-RETURN used the wrong ABI (raw aggregate vs C ABI sret/coerce)"
+    );
+}
+
+#[test]
 fn fn_pointer_call_moves_arg_no_double_free() {
     // A non-Copy value passed by value through a fn-pointer (Ident-bound and
     // struct-field forms) is MOVED into the call — the callee drops it once, the

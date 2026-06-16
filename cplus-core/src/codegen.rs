@@ -5342,7 +5342,16 @@ fn gen_function(
     // existing Slice 1D `sret` path; ≤16-byte aggregate returns coerce
     // to integer-class types; scalar returns pass through.
     let is_c_export = f.is_extern && f.is_pub;
-    let ret_abi = if is_c_export {
+    // C-ABI unification (returns): a by-value COPY struct return uses the C-ABI
+    // classification (coerce ≤16B / sret >16B), matching clang, so a fn-pointer
+    // returning a struct is a real C function pointer. Gated on `!fastcc`: a
+    // `fastcc` fn is internal-only (its address is never taken, never C-called),
+    // so it keeps the raw aggregate return — preserving tail-call (musttail)
+    // optimization, which a coerce-reconstruct can't do. Non-Copy struct returns
+    // keep cpc's widened-sret (ownership/drop-after-move).
+    let ret_is_copy_struct = matches!(return_ty, Ty::Struct(_)) && is_copy_ty(&return_ty, types);
+    let want_c_abi_ret = is_c_export || (ret_is_copy_struct && !md.is_fastcc(&f.name.name));
+    let ret_abi = if want_c_abi_ret {
         classify_c_abi_return(&return_ty, types)
     } else {
         CAbiClass::Direct
@@ -5373,7 +5382,7 @@ fn gen_function(
     // sret for any C-export with an Indirect-class return (>16 bytes).
     // v0.0.3 Slice 1P widens to non-Copy structs for non-C-export fns
     // (cross-module heap-owning struct return drop-after-move).
-    let uses_sret = if is_c_export {
+    let uses_sret = if want_c_abi_ret {
         return_passes_by_sret(&return_ty) || matches!(ret_abi, CAbiClass::Indirect)
     } else {
         return_passes_by_sret_widened(&return_ty, types)
@@ -11728,6 +11737,49 @@ impl<'a> FnState<'a> {
             }
             arg_str.push_str(&format!("{t} {v}"));
         }
+        // C-ABI unification (returns): a by-value COPY struct return uses the C
+        // ABI — Indirect (>16B) → sret (caller-allocated slot passed as the
+        // hidden first arg; the fn returns void), Coerce (≤16B) → the call
+        // returns the coerced integer class and we reconstruct the struct. A raw
+        // aggregate return mismatches a C target (segfault).
+        let ret_is_copy_struct =
+            matches!(return_type, Ty::Struct(_)) && is_copy_ty(return_type, self.types);
+        if ret_is_copy_struct {
+            match classify_c_abi_return(return_type, self.types) {
+                CAbiClass::Indirect => {
+                    let (sz, al) = static_layout(return_type, self.types)
+                        .expect("sret return type has layout");
+                    let inner = self.lty(return_type);
+                    let slot = self.alloca_anon(return_type.clone());
+                    let sret_arg = format!(
+                        "ptr sret({inner}) noalias nonnull noundef writable dereferenceable({sz}) align {al} {slot}"
+                    );
+                    let head = if arg_str.is_empty() {
+                        sret_arg
+                    } else {
+                        format!("{sret_arg}, {arg_str}")
+                    };
+                    self.emit(&format!("call void {callee_val}({head})"));
+                    let v = self.next_tmp();
+                    self.gen_load(&v, return_type, &slot);
+                    return Some((v, return_type.clone()));
+                }
+                CAbiClass::Coerce {
+                    llvm_ty: clty,
+                    align,
+                    ..
+                } => {
+                    let cv = self.next_tmp();
+                    self.emit(&format!("{cv} = call {clty} {callee_val}({arg_str})"));
+                    let slot = self.alloca_named_raw("ret.coerce", &clty, align);
+                    self.emit(&format!("store {clty} {cv}, ptr {slot}, align {align}"));
+                    let v = self.next_tmp();
+                    self.gen_load(&v, return_type, &slot);
+                    return Some((v, return_type.clone()));
+                }
+                CAbiClass::Direct => {}
+            }
+        }
         match return_type {
             Ty::Unit => {
                 self.emit(&format!("call void {callee_val}({arg_str})"));
@@ -12015,17 +12067,27 @@ impl<'a> FnState<'a> {
         // the sret shape clang emitted on the C side → SIGSEGV. The
         // import-declaration path was just updated to emit the matching
         // sret signature; this is the call-side companion.
-        let extern_sret = sig.is_extern
-            && !sig.is_variadic
-            && matches!(
-                classify_c_abi_return(&sig.return_type, self.types),
-                CAbiClass::Indirect
-            );
+        // C-ABI unification (returns): a by-value COPY struct return uses the
+        // C ABI — Indirect (>16B) → sret, Coerce (≤16B) → reconstruct below.
+        // Extern struct returns are always Copy (sema bars Drop), so this
+        // subsumes the old `extern_sret`. Non-Copy struct returns keep cpc's
+        // widened sret (ownership / drop-after-move).
+        let ret_c_abi = classify_c_abi_return(&sig.return_type, self.types);
+        let ret_is_copy_struct =
+            matches!(sig.return_type, Ty::Struct(_)) && is_copy_ty(&sig.return_type, self.types);
+        // C-ABI return iff the callee crosses the C boundary: extern, or a
+        // non-`fastcc` (address-taken / exported) native fn. A `fastcc` internal
+        // fn keeps its raw aggregate return (musttail-able). Must match the
+        // def-side gate in `gen_function`.
+        let want_c_abi_ret = sig.is_extern || (ret_is_copy_struct && !self.md.is_fastcc(symbol));
+        let c_abi_sret =
+            !sig.is_variadic && want_c_abi_ret && matches!(ret_c_abi, CAbiClass::Indirect);
         let uses_sret = !sig.is_variadic
             && ((sig.link_name.is_none()
                 && !sig.is_extern
+                && !want_c_abi_ret
                 && return_passes_by_sret_widened(&sig.return_type, self.types))
-                || extern_sret);
+                || c_abi_sret);
         if uses_sret {
             // musttail + sret would require the caller's own sret slot to
             // be forwarded as the callee's sret arg. Supported when caller
@@ -12097,6 +12159,25 @@ impl<'a> FnState<'a> {
             let _ = lty;
             self.gen_load(&v, &ret, &slot);
             return Some((v, ret));
+        }
+        // C-ABI unification: a Copy-struct return that COERCES (≤16B) — the
+        // callee returns the coerced integer class; reconstruct the struct in a
+        // slot. Can't musttail (the caller's return shape differs). Gated like
+        // the sret case (extern / non-fastcc only).
+        if want_c_abi_ret {
+            if let CAbiClass::Coerce { llvm_ty: clty, align, .. } = &ret_c_abi {
+                let ret = sig.return_type.clone();
+                let cc = self.md.fastcc_prefix(symbol);
+                let cv = self.next_tmp();
+                self.emit(&format!(
+                    "{cv} = call {cc}{clty}{type_prefix} @{symbol}({arg_str})"
+                ));
+                let slot = self.alloca_named_raw("ret.coerce", clty, *align);
+                self.emit(&format!("store {clty} {cv}, ptr {slot}, align {align}"));
+                let v = self.next_tmp();
+                self.gen_load(&v, &ret, &slot);
+                return Some((v, ret));
+            }
         }
         let call_kind = if want_musttail {
             "musttail call"
