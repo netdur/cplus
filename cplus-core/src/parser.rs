@@ -305,7 +305,7 @@ impl Parser {
                 }
                 self.parse_impl_block(false)
             }
-            // v0.0.14: `unsafe impl Send for T {}` — an unsafe marker impl.
+            // v0.0.14: `unsafe impl T for Send {}` — an unsafe marker impl.
             // TEXT.1: `unsafe fn name(...)` — an unsafe free function whose
             // call site requires an `unsafe { ... }` block. At item scope
             // `unsafe` therefore precedes either `impl` or a `fn` opener
@@ -331,7 +331,7 @@ impl Parser {
                     self.bump(); // `unsafe`
                     if !self.at(&TokenKind::Impl) {
                         return Err(self.err_at_peek(
-                            "item — `unsafe` at item scope precedes `impl` (e.g. `unsafe impl Send for T {}`) or `fn` (an unsafe function)",
+                            "item — `unsafe` at item scope precedes `impl` (e.g. `unsafe impl T for Send {}`) or `fn` (an unsafe function)",
                         ));
                     }
                     self.parse_impl_block(true)
@@ -466,7 +466,7 @@ impl Parser {
     }
 
     /// Parse an optional `[T, U: Bound + Bound2]` generic-param list. Shared
-    /// by inherent-impl targets and `unsafe impl Send for Arc[T: Send + Sync]`
+    /// by inherent-impl targets and `unsafe impl Arc[T: Send + Sync] for Send`
     /// conditional marker impls. Returns an empty Vec when no `[` follows.
     fn parse_optional_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
         if !self.at(&TokenKind::LBracket) {
@@ -595,34 +595,27 @@ impl Parser {
 
     fn parse_impl_block(&mut self, is_unsafe: bool) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Impl, "`impl`")?.span;
-        let first_ident = self.expect_ident()?;
-        // Slice 7GEN.3: `impl Interface for Target { ... }` syntax.
-        // The two ident shapes:
-        //   - `impl Target { ... }`            → inherent impl
-        //   - `impl Interface for Target { ... }` → interface impl
-        // Disambiguate by peeking for the `for` keyword. C+ doesn't
-        // have a free-standing `for` keyword in item position other
-        // than as the for-loop statement opener inside fn bodies, so
-        // `for` here unambiguously means interface-impl syntax.
+        // Impl-order is `impl TYPE for INTERFACE` — the TARGET TYPE comes first,
+        // an optional `for INTERFACE` names the interface it implements:
+        //   - `impl Target { ... }`               → inherent impl
+        //   - `impl Target for Interface { ... }` → interface impl
+        // (This reverses the Rust-style `impl Interface for Type`: that order
+        // was a misread of the intended design — C+ reads "implement TYPE for
+        // INTERFACE".) Disambiguate by peeking for `for`, which in item
+        // position only ever opens the interface clause.
         //
-        // Slice 7GEN.5e: `impl Generic[T] { ... }` — the target carries
-        // generic params. Type args appear on inherent impls only;
-        // interface impls (`impl Iface for Target`) keep their plain
-        // form for now (generic interface impls deferred).
-        let (interface_name, target, target_generic_params) = if self.eat(&TokenKind::For) {
-            let target = self.expect_ident()?;
-            // v0.0.14: a conditional marker impl carries bounds on the
-            // target's params — `unsafe impl Send for Arc[T: Send + Sync] {}`
-            // means "Arc[X] is Send iff X is Send + Sync". The bracketed
-            // params record that condition; empty for a concrete
-            // `unsafe impl Send for Handle {}`.
-            let params = self.parse_optional_generic_params()?;
-            (Some(first_ident), target, params)
+        // The target carries any generic params (`impl Vec[T] { ... }`,
+        // `impl Vec[T] for Iterator { ... }`) and, for a conditional marker
+        // impl, the bound that gates it (`unsafe impl Arc[T: Send + Sync] for
+        // Send {}` — "Arc[X] is Send iff X is Send + Sync"). Interfaces stay
+        // plain (generic interface impls deferred), so params always bind to
+        // the target, parsed right after its ident.
+        let target = self.expect_ident()?;
+        let target_generic_params = self.parse_optional_generic_params()?;
+        let interface_name = if self.eat(&TokenKind::For) {
+            Some(self.expect_ident()?)
         } else {
-            // Optional `[T, U]` after the target ident, declaring
-            // impl-level generic params bound for all methods inside.
-            let params = self.parse_optional_generic_params()?;
-            (None, first_ident, params)
+            None
         };
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut methods = Vec::new();
@@ -3935,7 +3928,7 @@ mod tests {
     #[test]
     fn unsafe_impl_still_parses() {
         // The `unsafe impl` marker path must be untouched by the `unsafe fn` add.
-        assert!(parse_src("struct S {} unsafe impl Send for S {}").is_ok());
+        assert!(parse_src("struct S {} unsafe impl S for Send {}").is_ok());
     }
 
     #[test]
@@ -4439,7 +4432,7 @@ mod tests {
     fn impl_interface_for_target_parses() {
         let p = parse_src(
             "struct Point { x: i32, y: i32 }\n\
-             impl Ord for Point {\n\
+             impl Point for Ord {\n\
                  fn compare(self, other: Point) -> i32 { return 0; }\n\
              }",
         )

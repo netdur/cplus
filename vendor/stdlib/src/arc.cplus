@@ -38,8 +38,8 @@ pub struct Arc[T] {
 // itself is thread-safe, so we vouch for it conditionally: `Arc[T]` is
 // `Send`/`Sync` iff `T: Send + Sync` (the value can be touched from another
 // thread, and shared `&Arc` reaches the value).
-unsafe impl Send for Arc[T: Send + Sync] {}
-unsafe impl Sync for Arc[T: Send + Sync] {}
+unsafe impl Arc[T: Send + Sync] for Send {}
+unsafe impl Arc[T: Send + Sync] for Sync {}
 
 // Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an

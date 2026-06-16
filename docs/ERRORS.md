@@ -931,12 +931,12 @@ fn merge(a: B, b: B) -> B {
 
 ### E0503 · Interface impl missing a required method
 
-An `impl Interface for Type` block omits a method that the interface declares.
+An `impl Type for Interface` block omits a method that the interface declares.
 
 ```cplus
 interface Two { fn first(self) -> i32; fn second(self) -> i32; }
 struct P { x: i32 }
-impl Two for P { fn first(self) -> i32 { return 0; } }
+impl P for Two { fn first(self) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -946,12 +946,12 @@ fn main() -> i32 { return 0; }
 
 ### E0504 · Interface impl declares a method the interface does not
 
-An `impl Interface for Type` block contains a method that the interface does not declare.
+An `impl Type for Interface` block contains a method that the interface does not declare.
 
 ```cplus
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl One for P { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
+impl P for One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -966,7 +966,7 @@ An impl method's signature does not match the interface's declared signature aft
 ```cplus
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl One for P { fn a(self) -> bool { return true; } }
+impl P for One { fn a(self) -> bool { return true; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -976,13 +976,13 @@ fn main() -> i32 { return 0; }
 
 ### E0506 · Duplicate interface impl for the same type
 
-Two `impl Interface for Type` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface.
+Two `impl Type for Interface` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface.
 
 ```cplus
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl One for P { fn a(self) -> i32 { return 0; } }
-impl One for P { fn a(self) -> i32 { return 1; } }
+impl P for One { fn a(self) -> i32 { return 0; } }
+impl P for One { fn a(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -992,11 +992,11 @@ fn main() -> i32 { return 0; }
 
 ### E0507 · Orphan-rule violation for an interface impl
 
-An `impl Interface for Type` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them.
+An `impl Type for Interface` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them.
 
 ```cplus
 // in a third file that imports both Iface and Ty:
-impl Iface for Ty { fn a(self) -> i32 { return 0; } }
+impl Ty for Iface { fn a(self) -> i32 { return 0; } }
 ```
 
 **Fix.** Declare the impl in the same file as either the interface or the type.
@@ -1340,7 +1340,7 @@ struct Point { x: i32 }
 fn main() -> i32 { let p: Point = Point { x: 0 }; let r: Point = max(p, p); return 0; }
 ```
 
-**Fix.** `T: Ord` requires `impl Ord for Point`; provide the impl, or for thread-crossing use `unsafe impl Send for T {}` when the marker holds.
+**Fix.** `T: Ord` requires `impl Point for Ord`; provide the impl, or for thread-crossing use `unsafe impl T for Send {}` when the marker holds.
 
 <sub>repro: checked · cplus-core/src/sema.rs:1838 · test cplus-core/src/sema.rs:bound_violation_at_generic_fn_call_e0502</sub>
 
@@ -1959,12 +1959,12 @@ A `Send` or `Sync` marker is implemented with a bare `impl` (no `unsafe`), or wi
 
 ```cplus
 struct Handle { opaque p: *u8 }
-impl Send for Handle {}
+impl Handle for Send {}
 fn main() -> i32 { return 0; }
-// -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Send for Handle {}`
+// -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Handle for Send {}`
 ```
 
-**Fix.** Write `unsafe impl Send for T {}` — the marker is a promise you make.
+**Fix.** Write `unsafe impl T for Send {}` — the marker is a promise you make.
 
 <sub>repro: checked · cplus-core/src/sema.rs:2773 · test cplus-core/src/sema.rs:safe_impl_send_rejected_e0860</sub>
 
@@ -1975,7 +1975,7 @@ An `impl` block carries `unsafe` but the interface being implemented is somethin
 ```cplus
 interface Greet { fn hi(self) -> i32; }
 struct S { x: i32 }
-unsafe impl Greet for S { fn hi(self) -> i32 { return self.x; } }
+unsafe impl S for Greet { fn hi(self) -> i32 { return self.x; } }
 fn main() -> i32 { return 0; }
 // -> [E0861] `unsafe impl` applies only to the `Send` / `Sync` markers
 ```
@@ -2113,7 +2113,7 @@ A raw-pointer field in a `Drop` type is freed inside `drop` only under some cond
 
 ```cplus
 struct Cell { p: *u8 }
-impl Drop for Cell {
+impl Cell for Drop {
     fn drop(self) {
         if some_condition() { free(self.p); }  // freed only conditionally
     }

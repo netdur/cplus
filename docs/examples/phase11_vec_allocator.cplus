@@ -37,7 +37,7 @@ interface Allocator {
 // allocator (e.g. an Arena with `bump_ptr: *u8`) would use `mut self`.
 struct CMalloc {}
 
-impl Allocator for CMalloc {
+impl CMalloc for Allocator {
     fn allocate(self, bytes: usize) -> *u8 {
         return unsafe { malloc(bytes) };
     }

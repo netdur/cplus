@@ -1524,7 +1524,7 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:1838"
 test = "cplus-core/src/sema.rs:bound_violation_at_generic_fn_call_e0502"
 cause = "A concrete type argument does not satisfy a declared bound on its type parameter (also fired for a `!Send` / `!Sync` type passed where `Send` / `Sync` is required across threads)."
-fix = "`T: Ord` requires `impl Ord for Point`; provide the impl, or for thread-crossing use `unsafe impl Send for T {}` when the marker holds."
+fix = "`T: Ord` requires `impl Point for Ord`; provide the impl, or for thread-crossing use `unsafe impl T for Send {}` when the marker holds."
 example = '''
 fn max[T: Ord](a: T, b: T) -> T { return a; }
 struct Point { x: i32 }
@@ -1541,12 +1541,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2895"
 test = "cplus-core/src/sema.rs:impl_interface_missing_method_e0503"
-cause = "An `impl Interface for Type` block omits a method that the interface declares."
+cause = "An `impl Type for Interface` block omits a method that the interface declares."
 fix = "Implement every method the interface declares."
 example = '''
 interface Two { fn first(self) -> i32; fn second(self) -> i32; }
 struct P { x: i32 }
-impl Two for P { fn first(self) -> i32 { return 0; } }
+impl P for Two { fn first(self) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1560,12 +1560,12 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2931"
 test = "cplus-core/src/sema.rs:impl_interface_extra_method_e0504"
-cause = "An `impl Interface for Type` block contains a method that the interface does not declare."
+cause = "An `impl Type for Interface` block contains a method that the interface does not declare."
 fix = "Move the extra method to an inherent `impl Type { ... }` block."
 example = '''
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl One for P { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
+impl P for One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1584,7 +1584,7 @@ fix = "Make the impl method's signature match the interface declaration exactly.
 example = '''
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl One for P { fn a(self) -> bool { return true; } }
+impl P for One { fn a(self) -> bool { return true; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1598,13 +1598,13 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:2871"
 test = "cplus-core/src/sema.rs:impl_interface_duplicate_e0506"
-cause = "Two `impl Interface for Type` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface."
+cause = "Two `impl Type for Interface` blocks exist for the same (interface, type) pair; a type may have at most one impl of any given interface."
 fix = "Remove the duplicate impl block."
 example = '''
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl One for P { fn a(self) -> i32 { return 0; } }
-impl One for P { fn a(self) -> i32 { return 1; } }
+impl P for One { fn a(self) -> i32 { return 0; } }
+impl P for One { fn a(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1617,11 +1617,11 @@ repro = "source"
 lang = "cplus"
 verified = false
 emit_site = "cplus-core/src/sema.rs:2857"
-cause = "An `impl Interface for Type` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them."
+cause = "An `impl Type for Interface` block lives in a file that declares neither the interface nor the type; the orphan rule requires the impl to be co-located with one of them."
 fix = "Declare the impl in the same file as either the interface or the type."
 example = '''
 // in a third file that imports both Iface and Ty:
-impl Iface for Ty { fn a(self) -> i32 { return 0; } }
+impl Ty for Iface { fn a(self) -> i32 { return 0; } }
 '''
 
 [[code]]
@@ -1986,12 +1986,12 @@ verified = true
 emit_site = "cplus-core/src/sema.rs:2773"
 test = "cplus-core/src/sema.rs:safe_impl_send_rejected_e0860"
 cause = "A `Send` or `Sync` marker is implemented with a bare `impl` (no `unsafe`), or with a non-empty body — both are rejected because the marker is an unverifiable thread-safety promise that must be a method-less `unsafe impl`."
-fix = "Write `unsafe impl Send for T {}` — the marker is a promise you make."
+fix = "Write `unsafe impl T for Send {}` — the marker is a promise you make."
 example = '''
 struct Handle { opaque p: *u8 }
-impl Send for Handle {}
+impl Handle for Send {}
 fn main() -> i32 { return 0; }
-// -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Send for Handle {}`
+// -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Handle for Send {}`
 '''
 
 [[code]]
@@ -2009,7 +2009,7 @@ fix = "Remove `unsafe`; it applies only to those two markers."
 example = '''
 interface Greet { fn hi(self) -> i32; }
 struct S { x: i32 }
-unsafe impl Greet for S { fn hi(self) -> i32 { return self.x; } }
+unsafe impl S for Greet { fn hi(self) -> i32 { return self.x; } }
 fn main() -> i32 { return 0; }
 // -> [E0861] `unsafe impl` applies only to the `Send` / `Sync` markers
 '''
@@ -2654,7 +2654,7 @@ cause = "A raw-pointer field in a `Drop` type is freed inside `drop` only under 
 fix = "Confirm it frees on every owning path (expected for refcounted types)."
 example = '''
 struct Cell { p: *u8 }
-impl Drop for Cell {
+impl Cell for Drop {
     fn drop(self) {
         if some_condition() { free(self.p); }  // freed only conditionally
     }

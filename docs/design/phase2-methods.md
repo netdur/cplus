@@ -8,7 +8,7 @@
 
 Slice 2B added structs but only as data. Real systems work needs methods: `point.translate(dx, dy)`, `vec.push(x)`, `Type::new(...)`. We resolved the open `§11` method-syntax question in favor of Rust-style `impl` because: the borrow checker (Phase 5/6) needs `&self`/`&mut self` to express ownership in signatures; Phase 7 traits use the same `impl` syntax; UFCS conflicts with the §2.8 no-overloading rule.
 
-This slice is *only* inherent methods — no traits, no defaults. Phase 7 will add `impl Trait for Type` using the same machinery.
+This slice is *only* inherent methods — no traits, no defaults. Phase 7 will add `impl T for Traitype` using the same machinery.
 
 ## 2. Syntax
 

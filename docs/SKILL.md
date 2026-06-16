@@ -565,10 +565,10 @@ When you know a pointer-holding type is safe to move/share across threads, vouch
 
 ```cplus
 struct Handle { opaque h: *u8 }
-unsafe impl Send for Handle {}                 // must be `unsafe` (E0860 otherwise)
+unsafe impl Handle for Send {}                 // must be `unsafe` (E0860 otherwise)
 
 // Conditional generic form — the bounds ARE the condition:
-unsafe impl Send for Arc[T: Send + Sync] {}    // Arc[X] is Send iff X is Send + Sync
+unsafe impl Arc[T: Send + Sync] for Send {}    // Arc[X] is Send iff X is Send + Sync
 ```
 
 `unsafe impl` applies only to `Send`/`Sync` (E0861 elsewhere); the body is empty. `Arc`/`Mutex`/`Channel` already carry the right conditional impls, so they work across threads when their payload does.

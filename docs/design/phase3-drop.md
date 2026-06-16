@@ -274,7 +274,7 @@ Drop unlocks the dormant tests. No code change to move tracking itself.
 
 ### 7.5 Phase 7 traits
 
-In Phase 7, `Drop` becomes a real trait (`impl Drop for T { fn drop(mut self) { ... } }`) rather than a magic method name. The migration is purely syntactic — semantics stay identical. Either:
+In Phase 7, `Drop` becomes a real trait (`impl T for Drop { fn drop(mut self) { ... } }`) rather than a magic method name. The migration is purely syntactic — semantics stay identical. Either:
 
 - Keep magic-method form forever and never trait-ify (cleanest, smallest spec).
 - Or convert at trait-introduction time (more uniform with Phase 7's other traits).

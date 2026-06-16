@@ -120,7 +120,7 @@ Receivers in interface methods: `self`, `mut self`, `move self`, or no receiver 
 ```cp
 struct Point { x: i32, y: i32 }
 
-impl Ord for Point {
+impl P for Ordoint {
     fn compare(self, other: Point) -> i32 {
         let dx: i32 = self.x - other.x;
         if dx != 0 { return dx; }
@@ -128,16 +128,16 @@ impl Ord for Point {
     }
 }
 
-impl Eq for Point {
+impl P for Eqoint {
     fn eq(self, other: Point) -> bool {
         return self.x == other.x && self.y == other.y;
     }
 }
 ```
 
-The `impl InterfaceName for TypeName { ... }` block lists method implementations. Every method declared in the interface must be implemented (**E0503**). Extra methods (not in the interface) are rejected — they belong in an inherent `impl Type { ... }` block (**E0504**). Method signatures must match exactly, with `Self` substituted to the implementing type (**E0505**).
+The `impl T for InterfaceNameypeName { ... }` block lists method implementations. Every method declared in the interface must be implemented (**E0503**). Extra methods (not in the interface) are rejected — they belong in an inherent `impl Type { ... }` block (**E0504**). Method signatures must match exactly, with `Self` substituted to the implementing type (**E0505**).
 
-A type can have multiple `impl Interface for Type` blocks for different interfaces, but at most one `impl Interface for Type` for any given (interface, type) pair (**E0506**).
+A type can have multiple `impl T for Interfaceype` blocks for different interfaces, but at most one `impl T for Interfaceype` for any given (interface, type) pair (**E0506**).
 
 ### 2.5 Multiple bounds
 
@@ -238,7 +238,7 @@ Why not just `name[T](args)` at the call site? Because `name[T]` collides with a
 When a generic function or type declares a bound `T: Ord`, the type checker verifies at each instantiation that the concrete type implements `Ord`:
 
 1. Inferred `T = Point`.
-2. Scan for an `impl Ord for Point` block.
+2. Scan for an `impl P for Ordoint` block.
 3. If found, the call resolves; method calls like `a.compare(b)` inside the generic body resolve to `Point.compare` via the impl.
 4. If not found, fire **E0502** ("type `Point` does not implement interface `Ord`") at the call site.
 
@@ -246,14 +246,14 @@ Multiple bounds (`T: Ord + Eq`) require every named interface to have an impl fo
 
 ### 3.5 Self in interface methods
 
-In an interface method, `Self` is a placeholder. At `impl Interface for Type`, every `Self` is substituted to `Type`. The implementation's method signature must match the substituted interface signature exactly:
+In an interface method, `Self` is a placeholder. At `impl T for Interfaceype`, every `Self` is substituted to `Type`. The implementation's method signature must match the substituted interface signature exactly:
 
 ```cp
 interface Clone {
     fn clone(self) -> Self;
 }
 
-impl Clone for Point {
+impl P for Cloneoint {
     fn clone(self) -> Point { return Point { x: self.x, y: self.y }; }
     //               ^^^^^ Self substituted to Point
 }
@@ -263,9 +263,9 @@ Signature mismatch (wrong receiver kind, wrong parameter types, wrong return typ
 
 ### 3.6 Coherence (orphan rule)
 
-An `impl InterfaceName for TypeName` can be defined only in the file that defines `InterfaceName` *or* the file that defines `TypeName`. A third file that imports both cannot add the impl.
+An `impl T for InterfaceNameypeName` can be defined only in the file that defines `InterfaceName` *or* the file that defines `TypeName`. A third file that imports both cannot add the impl.
 
-This prevents incoherent overlap: two different files providing different `impl Ord for Point` blocks. Rust calls this the "orphan rule" and ships it for the same reason. Loosening (negative reasoning, specialization, fundamental types) deferred indefinitely — first cut keeps the strict version.
+This prevents incoherent overlap: two different files providing different `impl P for Ordoint` blocks. Rust calls this the "orphan rule" and ships it for the same reason. Loosening (negative reasoning, specialization, fundamental types) deferred indefinitely — first cut keeps the strict version.
 
 Fires **E0507** at the orphan `impl`.
 
@@ -273,8 +273,8 @@ Fires **E0507** at the orphan `impl`.
 
 Some interfaces have semantic meaning the compiler enforces, distinct from user-defined interfaces:
 
-- **`Copy`** — already structural per §2.9. Phase 7 surfaces it as an interface name for bound purposes (`fn duplicate[T: Copy](x: T) -> T`), but **users cannot write `impl Copy for X { }`**. Auto-derived structurally; a manual impl fires a "Copy is structural — derived automatically, not implemented" diagnostic.
-- **`Drop`** — magic method (Phase 3 slice 3F). Phase 7 surfaces it as an interface, but `impl Drop for X { fn drop(mut self) { ... } }` is the existing magic-method form — same shape, just nominally an interface impl. The compiler recognizes the impl by name and folds it into the existing Drop machinery.
+- **`Copy`** — already structural per §2.9. Phase 7 surfaces it as an interface name for bound purposes (`fn duplicate[T: Copy](x: T) -> T`), but **users cannot write `impl X for Copy { }`**. Auto-derived structurally; a manual impl fires a "Copy is structural — derived automatically, not implemented" diagnostic.
+- **`Drop`** — magic method (Phase 3 slice 3F). Phase 7 surfaces it as an interface, but `impl X for Drop { fn drop(mut self) { ... } }` is the existing magic-method form — same shape, just nominally an interface impl. The compiler recognizes the impl by name and folds it into the existing Drop machinery.
 
 The other interfaces (Eq, Ord, Hash, Clone, Display) have no compiler magic — they're user-declared and user-implemented. The compiler ships the *declarations* in a blessed module so users don't have to redefine them; the implementations are the user's job. (Auto-impl for primitives is a compiler-internal hack — primitives implement Eq/Ord/Hash via codegen-generated impls that user code can rely on.)
 
@@ -328,11 +328,11 @@ No new LLVM features for Phase 7 itself — monomorphization happens at AST leve
 | E0503 | Interface implementation missing required methods |
 | E0504 | Interface implementation has extra methods |
 | E0505 | Interface method signature mismatch |
-| E0506 | Duplicate `impl Interface for Type` blocks |
+| E0506 | Duplicate `impl T for Interfaceype` blocks |
 | E0507 | Orphan `impl` — interface and type defined in other files |
 | E0508 | Use of `Self` outside an interface/impl context |
 | E0509 | Type inference fails — explicit `::[T]` arguments required |
-| E0510 | Cannot manually `impl Copy for X` — Copy is structural |
+| E0510 | Cannot manually `impl X for Copy` — Copy is structural |
 | E0511 | `interface` keyword expected (parser-level) |
 
 The numbering picks up from Phase 6's E0386 with a gap (E0500 is round enough to leave room for Phase 7 polish slices).
@@ -383,13 +383,13 @@ Phase 7 work is naturally sliced 5–7 sub-slices.
 
 **Slice 7GEN.2 — Generic-type parsing.** Same for `struct Name[T] { ... }` and `enum Name[T] { ... }`. AST gains parallel `generic_params` field on struct/enum decls.
 
-**Slice 7GEN.3 — Interface declaration + impl.** New `interface` keyword. New `interface Name { fn ... }` syntax and `impl Interface for Type { fn ... }` syntax. AST `Item::Interface(InterfaceDecl)` variant. Sema validates: every interface-declared method has a matching impl (E0503), no extras (E0504), signature exact match with Self substituted (E0505), single-impl-per-(interface, type) (E0506), coherence (E0507).
+**Slice 7GEN.3 — Interface declaration + impl.** New `interface` keyword. New `interface Name { fn ... }` syntax and `impl T for Interfaceype { fn ... }` syntax. AST `Item::Interface(InterfaceDecl)` variant. Sema validates: every interface-declared method has a matching impl (E0503), no extras (E0504), signature exact match with Self substituted (E0505), single-impl-per-(interface, type) (E0506), coherence (E0507).
 
 **Slice 7GEN.4 — Sema integration: type-parameter substitution + bound checking.** When sema sees a generic-fn call or generic-type instantiation, it builds a substitution map (param → concrete type) and verifies each declared bound has a matching impl (E0502). When inference fails, emits E0509 with a `name::[T]`-form suggestion. Self resolves inside interface/impl bodies (E0508 outside). Wrong arg count: E0501.
 
 **Slice 7GEN.5 — Codegen monomorphization.** Work-queue, name mangling, per-instantiation IR generation. Generic struct types get unique LLVM `%Type__args` definitions. Methods on generic types mangle to `Type__args.method` form. Copy oracle generalizes to consult substituted concrete fields.
 
-**Slice 7GEN.6 — Blessed interface declarations.** Compiler ships built-in declarations of `Copy`, `Drop`, `Eq`, `Ord`, `Hash`, `Clone` in a synthetic module. Primitives auto-impl Eq/Ord/Hash via compiler-internal codegen. User `impl Copy for X` rejected with E0510. User `impl Drop for X { fn drop(mut self) { ... } }` folds into the existing magic-method path.
+**Slice 7GEN.6 — Blessed interface declarations.** Compiler ships built-in declarations of `Copy`, `Drop`, `Eq`, `Ord`, `Hash`, `Clone` in a synthetic module. Primitives auto-impl Eq/Ord/Hash via compiler-internal codegen. User `impl X for Copy` rejected with E0510. User `impl X for Drop { fn drop(mut self) { ... } }` folds into the existing magic-method path.
 
 **Slice 7HEAP — Heap allocation primitives** (parallel slice — may land before or after Phase 7 work depending on `Vec[T]` exit-criterion sequencing). Adds an `Allocator` interface and the `Box[T]` / `Vec[T]` types that use it. The §2.2 commitment to allocator-as-parameter (Zig pattern) realizes here. Its own design note.
 

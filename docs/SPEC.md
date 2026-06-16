@@ -518,7 +518,7 @@ error.
 
 ### 9.3 Impls
 
-`impl Type { ... }` adds methods; `impl Interface for Type { ... }`
+`impl Type { ... }` adds methods; `impl Type for Interface { ... }`
 provides an interface. Both may be generic.
 
 ### 9.4 Marker interfaces
@@ -537,9 +537,9 @@ interfaces with structural inference:
 
 `Send`/`Sync` gate cross-thread transfer and sharing (§16). A type that
 hides a raw pointer is `!Send`/`!Sync`; to vouch for one, write
-`unsafe impl Send for T {}` (the body MUST be empty, and `unsafe impl`
+`unsafe impl T for Send {}` (the body MUST be empty, and `unsafe impl`
 applies only to `Send`/`Sync` — **E0860**/**E0861**). Conditional forms
-are allowed: `unsafe impl Send for Arc[T: Send + Sync] {}`.
+are allowed: `unsafe impl Arc[T: Send + Sync] for Send {}`.
 
 ---
 

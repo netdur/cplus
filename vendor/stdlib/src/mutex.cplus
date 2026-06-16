@@ -52,8 +52,8 @@ pub struct Mutex[T] {
 // time. The raw `ctrl` pointer makes the structural rule reject it by default;
 // this vouches for the locking discipline. (`MutexGuard[T]` stays `!Send` — it
 // is bound to the acquiring thread — via the builtin name rule.)
-unsafe impl Send for Mutex[T: Send] {}
-unsafe impl Sync for Mutex[T: Send] {}
+unsafe impl Mutex[T: Send] for Send {}
+unsafe impl Mutex[T: Send] for Sync {}
 
 pub struct MutexGuard[T] {
     // Same heap block the originating Mutex carries. #5: the guard co-owns a

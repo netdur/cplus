@@ -56,13 +56,13 @@ Blessed impls shipped with the slice:
 - `f32`, `f64` (uses `%g`-style formatting)
 - `bool` (`"true"` / `"false"`)
 
-User-defined types provide `impl ToString for MyType { ... }`. Same shape
-as `impl Copy for MyType {}` from Phase 7.
+User-defined types provide `impl M for ToStringyType { ... }`. Same shape
+as `impl M for CopyyType {}` from Phase 7.
 
 **Fires E0612** ("type `Foo` does not implement `ToString`") on a use
 site where the embedded expression's type lacks an impl. The suggestion
 points at the type's declaration site with a quick-fix to insert an
-`impl ToString for Foo` stub.
+`impl F for ToStringoo` stub.
 
 ## Owned `string` is part of this slice
 

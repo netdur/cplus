@@ -32,7 +32,7 @@ struct Point {
 }
 
 // User impl of the blessed Ord interface.
-impl Ord for Point {
+impl Point for Ord {
     fn cmp(self, other: Point) -> i32 {
         if self.x < other.x { return 0 -% 1; }
         if self.x > other.x { return 1; }

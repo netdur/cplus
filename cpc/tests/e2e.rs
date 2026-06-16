@@ -262,7 +262,7 @@ fn interface_bound_generic_backend_runs() {
         &src,
         "interface Backend { fn flush(self) -> i32; }\n\
          struct Mac { fd: i32 }\n\
-         impl Backend for Mac { fn flush(self) -> i32 { return self.fd; } }\n\
+         impl Mac for Backend { fn flush(self) -> i32 { return self.fd; } }\n\
          struct App[B: Backend] { backend: B }\n\
          impl App[B: Backend] { fn run(self) -> i32 { return self.backend.flush(); } }\n\
          fn render[B: Backend](b: B) -> i32 { return b.flush(); }\n\
@@ -5615,7 +5615,7 @@ fn phase7_generic_decls_and_impl_interface_clean() {
          struct Pair[A, B] { first: A, second: B }\n\
          enum Maybe[T] { Some(T), None }\n\
          struct Point { x: i32, y: i32 }\n\
-         impl Compare for Point { fn compare(self, other: i32) -> i32 { return 0; } }\n\
+         impl Point for Compare { fn compare(self, other: i32) -> i32 { return 0; } }\n\
          fn identity[T](x: T) -> T { return x; }\n\
          fn main() -> i32 { return 7; }\n",
     )
@@ -5645,7 +5645,7 @@ fn phase7_impl_interface_missing_method_rejected_e0503() {
         &src,
         "interface Two { fn a(self) -> i32; fn b(self) -> i32; }\n\
          struct P { x: i32 }\n\
-         impl Two for P { fn a(self) -> i32 { return 0; } }\n\
+         impl P for Two { fn a(self) -> i32 { return 0; } }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -12692,7 +12692,7 @@ fn generic_max_with_ord_bound_calls_cmp_in_body() {
         &src,
         "\
 struct Point { x: i32, y: i32 }
-impl Ord for Point {
+impl Point for Ord {
     fn cmp(self, other: Point) -> i32 {
         if self.x < other.x { return 0 -% 1; }
         if self.x > other.x { return 1; }
@@ -20457,7 +20457,7 @@ fn unsafe_impl_send_compiles_and_runs_end_to_end() {
         &src,
         "\
 struct Handle { opaque p: *u8 }
-unsafe impl Send for Handle {}
+unsafe impl Handle for Send {}
 fn ship[T: Send](v: T) -> T { return v; }
 fn main() -> i32 {
     let h: Handle = Handle { p: unsafe { 7 as *u8 } };
