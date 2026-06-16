@@ -385,7 +385,9 @@ pointers, and between raw pointer types. Casts that the language forbids
 ## 6. Ownership and memory
 
 This is the part of C+ that differs most from C. There is no garbage
-collector; memory safety is established statically.
+collector; memory safety is established statically. The parameter modes,
+borrows, and the absence of value-site references are described in full in
+[MEMORY-MODEL.md](MEMORY-MODEL.md).
 
 ### 6.1 Move and copy
 
