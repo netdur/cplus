@@ -4833,6 +4833,50 @@ fn main() -> i32 { return 0; }
 // (sound for Copy borrow-shapes like `str`/`T[]`, which never drop).
 
 #[test]
+fn array_and_tuple_of_owned_values_drop_once() {
+    // v0.0.23 codegen fix: building an array or tuple from owned (non-Copy)
+    // bindings moves each element in — the source binding's drop must be
+    // disarmed, or both the source and the aggregate element free it
+    // (pre-existing `let a: [R; 2] = [p, q]` double-free: DROPS was 4). Verify
+    // each element drops exactly once, ASan-clean.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("m.cplus");
+    std::fs::write(
+        &src,
+        "static mut DROPS: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
+         fn arr() { let p: R = mkR(); let q: R = mkR(); let _a: [R; 2] = [p, q]; return; }\n\
+         fn tup() { let p: R = mkR(); let q: R = mkR(); let _t: (R, R) = (p, q); return; }\n\
+         fn main() -> i32 {\n\
+             arr(); if unsafe { DROPS } != 2 { return 1; } unsafe { DROPS = 0; }\n\
+             tup(); if unsafe { DROPS } != 2 { return 2; } unsafe { DROPS = 0; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("m");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        let run = Command::new(&bin).output().expect("run");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged array/tuple element teardown ({sanitizer}): {stderr}");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "array/tuple elements must drop exactly once; failing phase = exit code ({sanitizer})"
+        );
+    }
+}
+
+#[test]
 fn shared_region_borrow_return_drops_once() {
     // The SURVIVING sound cursor: a SHARED region-typed borrow
     // (`b: borrow A B`, no `mut`) returned as `borrow A B` is a non-owning

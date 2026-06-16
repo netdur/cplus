@@ -6911,6 +6911,15 @@ impl SemaCx<'_> {
             _ => None,
         };
         let first_ty = self.check_expr(&elements[0], expected_elem.clone());
+        // v0.0.23: each element is MOVED into the array — run the shared
+        // consuming-site classifier (reject a borrow / partial move → E0337 /
+        // E0509) and mark a whole-binding element moved, in order, so a reused
+        // binding (`[x, x]`) is a use-after-move on the second mention. Mirrors
+        // construction / call-arg consumption; Copy elements no-op.
+        if first_ty != Ty::Error {
+            self.reject_partial_move_of_drop(&elements[0], &first_ty);
+            self.mark_moved_through_wrappers(&elements[0], &first_ty);
+        }
         for e in &elements[1..] {
             let got = self.check_expr(e, Some(first_ty.clone()));
             if got != first_ty && got != Ty::Error && first_ty != Ty::Error {
@@ -6923,6 +6932,10 @@ impl SemaCx<'_> {
                     ),
                     e.span,
                 );
+            }
+            if first_ty != Ty::Error {
+                self.reject_partial_move_of_drop(e, &first_ty);
+                self.mark_moved_through_wrappers(e, &first_ty);
             }
         }
         let len = elements.len() as u32;
@@ -7023,11 +7036,19 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             _ => vec![None; elements.len()],
         };
-        let elem_tys: Vec<Ty> = elements
-            .iter()
-            .zip(expected_elem_tys.iter())
-            .map(|(e, exp)| self.check_expr(e, exp.clone()))
-            .collect();
+        // v0.0.23: each element is MOVED into the tuple — check and consume in
+        // order through the shared classifier (reject a borrow / partial move;
+        // mark a whole-binding element moved), so `(x, x)` is a use-after-move on
+        // the second mention. Mirrors the array-literal / construction paths.
+        let mut elem_tys: Vec<Ty> = Vec::with_capacity(elements.len());
+        for (e, exp) in elements.iter().zip(expected_elem_tys.iter()) {
+            let ty = self.check_expr(e, exp.clone());
+            if ty != Ty::Error {
+                self.reject_partial_move_of_drop(e, &ty);
+                self.mark_moved_through_wrappers(e, &ty);
+            }
+            elem_tys.push(ty);
+        }
         if elem_tys.iter().any(|t| matches!(t, Ty::Error)) {
             return Ty::Error;
         }
@@ -19232,6 +19253,72 @@ mod tests {
              impl B { fn drop(mut self) { return; } } \
              fn cursor(b: borrow A B) -> borrow A B { return b; } \
              fn main() -> i32 { return 0; }",
+        );
+    }
+
+    // v0.0.23 sibling holes: array and tuple literal elements are moved into the
+    // aggregate, so they run the shared consuming-site classifier too — a borrow
+    // element is E0337, a Drop-field element is E0509, and a reused binding is a
+    // use-after-move (E0335).
+
+    #[test]
+    fn array_literal_borrow_element_rejected_e0337() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn f(borrow r: R) -> i32 { let _a: [R; 1] = [r]; return 0; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn array_literal_reused_binding_rejected_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn main() -> i32 { let x: R = mkR(); let _a: [R; 2] = [x, x]; return 0; }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn array_literal_drop_field_element_rejected_e0509() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             struct H { r: R } \
+             impl H { fn drop(mut self) { return; } } \
+             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn main() -> i32 { let h: H = H { r: mkR() }; let _a: [R; 1] = [h.r]; return 0; }",
+        );
+        assert!(codes.contains(&"E0509"), "expected E0509, got: {codes:?}");
+    }
+
+    #[test]
+    fn tuple_literal_borrow_element_rejected_e0337() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn f(borrow r: R) -> i32 { let _t: (R, i32) = (r, 0); return 0; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn array_literal_owned_elements_clean() {
+        // Distinct owned values into an array is a legitimate move of each.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn main() -> i32 { \
+                 let p: R = mkR(); let q: R = mkR(); \
+                 let _a: [R; 2] = [p, q]; \
+                 return 0; \
+             }",
         );
     }
 

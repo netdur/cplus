@@ -3154,8 +3154,18 @@ fn scan_moves_in_expr(
                 scan_moves_in_expr(&f.value, sigs, types, set);
             }
         }
-        ExprKind::ArrayLit { elements } | ExprKind::GenericEnumCall { args: elements, .. } => {
+        ExprKind::ArrayLit { elements }
+        | ExprKind::TupleLit { elements }
+        | ExprKind::GenericEnumCall { args: elements, .. } => {
+            // Each element/arg is moved into the aggregate — register a bare-Ident
+            // source so it gets a Runtime drop flag the gen-side `mark_moved` can
+            // flip (mirrors the `StructLit` arm above). Without it the source is
+            // bitwise-copied into the slot AND dropped at scope exit (double-free,
+            // e.g. `let a: [R; 2] = [p, q]` freeing p and q twice).
             for el in elements {
+                if let ExprKind::Ident(n) = &el.kind {
+                    set.insert(n.clone());
+                }
                 scan_moves_in_expr(el, sigs, types, set);
             }
         }
@@ -9507,6 +9517,12 @@ impl<'a> FnState<'a> {
         // v0.0.7 Slice 1.2: array literal init — per-element store
         // through GEP. gen_store picks up the element-type TBAA leaf.
         self.gen_store(&elem_ty, &first_val, &p0);
+        // G-023-style: a bare-Ident element is moved into the array — flip its
+        // drop flag so the scope-exit drop doesn't free storage the element now
+        // aliases (no-op for a non-Drop binding). Mirrors gen_struct_lit.
+        if let ExprKind::Ident(n) = &elements[0].kind {
+            self.mark_moved(n);
+        }
         // Store the rest.
         for (i, e) in elements.iter().enumerate().skip(1) {
             let (v, _) = self.gen_expr(e).expect("array lit element");
@@ -9515,6 +9531,9 @@ impl<'a> FnState<'a> {
                 "{p} = getelementptr inbounds {llvm_arr}, ptr {slot}, i32 0, i32 {i}"
             ));
             self.gen_store(&elem_ty, &v, &p);
+            if let ExprKind::Ident(n) = &e.kind {
+                self.mark_moved(n);
+            }
         }
         let v = self.next_tmp();
         // Whole-array load is aggregate-shaped; gen_load skips TBAA.
@@ -9678,6 +9697,11 @@ impl<'a> FnState<'a> {
             ));
             // v0.0.7 Slice 1.2: TBAA-tagged tuple-struct field write.
             self.gen_store(t, val, &ptr);
+            // A bare-Ident element is moved into the tuple — flip its drop flag
+            // (mirrors gen_struct_lit / gen_array_lit), else it double-frees.
+            if let ExprKind::Ident(n) = &elements[i].kind {
+                self.mark_moved(n);
+            }
         }
         let v = self.next_tmp();
         // v0.0.7 Slice 1.2: tuple-struct value load — aggregate, no TBAA.
