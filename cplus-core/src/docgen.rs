@@ -270,13 +270,16 @@ fn update_impl_tracker(line: &str, current: &mut Option<String>) {
             .collect::<String>()
             .trim()
             .to_string();
-        // `impl Foo for Bar` → use Bar as the target (the implementing type).
-        // Heuristic: split on " for " and take the second half if present.
-        let target = if let Some(idx) = name.find(" for ") {
-            name[idx + 5..].trim().to_string()
-        } else {
-            name.split('[').next().unwrap_or(&name).trim().to_string()
+        // `impl TYPE for INTERFACE` → use TYPE (the part before " for ") as the
+        // implementing type. The order is type-first (`impl Counter for Display`
+        // means "Counter implements Display"), so the type, not the interface,
+        // qualifies the method name. Strip any generic params off the type
+        // (`impl Vec[T] for Iterator` → `Vec`).
+        let type_part = match name.find(" for ") {
+            Some(idx) => name[..idx].trim(),
+            None => name.trim(),
         };
+        let target = type_part.split('[').next().unwrap_or(type_part).trim().to_string();
         if !target.is_empty() {
             *current = Some(target);
         }
@@ -402,7 +405,7 @@ impl Point {
         let src = "\
 pub interface Display { fn show(self) -> i32 }
 
-impl Display for Counter {
+impl Counter for Display {
     /// Show the counter's value.
     pub fn show(self) -> i32 { return self.value; }
 }
