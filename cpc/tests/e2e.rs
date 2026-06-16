@@ -1744,6 +1744,21 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
 }
 
 #[test]
+fn generic_bound_method_arity_mismatch_rejected_e0308() {
+    // A bound method called with the wrong arg count is E0308, exactly like a
+    // concrete call — the generic and concrete paths now share one checker, so
+    // the generic path can't silently accept it (it used to).
+    assert_compile_fails_with(
+        "struct P { x: i32 }\n\
+         interface Add { fn add(self, rhs: i32) -> i32; }\n\
+         impl P for Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+         fn call_add[T: Add](t: T) -> i32 { return t.add(2, 3); }\n\
+         fn main() -> i32 { let p: P = P { x: 4 }; return call_add::[P](p); }\n",
+        "E0308",
+    );
+}
+
+#[test]
 fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
     // `t.take()` where the bound interface method is `take(move self)` and `t`
     // is a `borrow` param: the receiver is moved out of the borrow (the caller

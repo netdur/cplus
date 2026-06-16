@@ -9238,6 +9238,125 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         self.subst_ty_deep(&gsig.return_type, &subst)
     }
 
+    /// Shared receiver + arity checks for a resolved method call. The concrete
+    /// struct path and the generic `Ty::Param` bound-method path BOTH go
+    /// through this (and `check_method_args_and_return`) so they cannot drift —
+    /// every gap in the generic path (E0327/E0328/E0308, move-self consume) was
+    /// a check the concrete path had and the hand-rolled generic copy lacked.
+    /// Returns `false` if it bailed (E0327: args already drained); the caller
+    /// then returns `Ty::Error`. `display_ty` is the receiver name for
+    /// diagnostics (the struct name, or the type-param name `T`).
+    fn check_method_receiver(
+        &mut self,
+        receiver: &Expr,
+        recv_ty: &Ty,
+        name: &Ident,
+        sig: &MethodSig,
+        args: &[Expr],
+        call_span: ByteSpan,
+        display_ty: &str,
+    ) -> bool {
+        // TEXT.1: `unsafe fn` method call requires an enclosing `unsafe { ... }`.
+        if sig.is_unsafe && self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                format!(
+                    "calling `unsafe fn {}::{}` requires an enclosing `unsafe {{ ... }}` block",
+                    display_ty, name.name
+                ),
+                call_span,
+            );
+        }
+        let Some(rcv) = sig.receiver else {
+            self.err(
+                "E0327",
+                format!(
+                    "`{}::{}` is an associated function; call it as `{}::{}(...)`",
+                    display_ty, name.name, display_ty, name.name
+                ),
+                call_span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return false;
+        };
+        if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
+            self.err(
+                "E0328",
+                format!("method `{}::{}` requires a mutable receiver", display_ty, name.name),
+                receiver.span,
+            );
+        }
+        // `move self` consumes the receiver place — but only for a non-Copy
+        // receiver (`is_copy` is bound-aware for a `Ty::Param`). Routes through
+        // `classify_partial_move`, so a borrowed/Drop-field/raw-deref receiver
+        // is the same E0337 here as anywhere else.
+        if matches!(rcv, Receiver::Move) && !self.is_copy(recv_ty) {
+            self.consume_place(receiver, display_ty, &name.name);
+        }
+        if args.len() != sig.params.len() {
+            self.err(
+                "E0308",
+                format!(
+                    "method `{}::{}` takes {} argument(s), got {}",
+                    display_ty,
+                    name.name,
+                    sig.params.len(),
+                    args.len()
+                ),
+                call_span,
+            );
+        }
+        true
+    }
+
+    /// Shared arg-checking + return-type resolution for a NON-generic resolved
+    /// method call (companion to `check_method_receiver`). `subst` maps `Self`
+    /// to the receiver type so one code path serves the concrete case (empty,
+    /// no-op subst) and the interface-bound case (`Self -> T`). Each by-value
+    /// non-Copy arg consumes the caller's binding via `check_arg_with_move`.
+    fn check_method_args_and_return(
+        &mut self,
+        name: &Ident,
+        sig: &MethodSig,
+        subst: &HashMap<String, Ty>,
+        type_args: &[Type],
+        args: &[Expr],
+        display_ty: &str,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err(
+                "E0501",
+                format!(
+                    "method `{}::{}` takes no type arguments but {} were provided",
+                    display_ty,
+                    name.name,
+                    type_args.len()
+                ),
+                name.span,
+            );
+        }
+        let mut idx = 0;
+        for psig in &sig.params {
+            if idx >= args.len() {
+                break;
+            }
+            let expected = ParamSig {
+                ty: self.subst_ty_deep(&psig.ty, subst),
+                mutable: psig.mutable,
+                move_: psig.move_,
+                borrow_: psig.borrow_,
+            };
+            self.check_arg_with_move(&args[idx], &expected);
+            idx += 1;
+        }
+        for a in &args[idx..] {
+            let _ = self.check_expr(a, None);
+        }
+        self.subst_ty_deep(&sig.return_type, subst)
+    }
+
     fn check_method_call(
         &mut self,
         receiver: &Expr,
@@ -9467,67 +9586,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // receiver's `Ty::Param(name)`). Codegen then handles the dispatch
         // through monomorphization — each instantiation calls the concrete
         // impl's method directly.
+        // A method call on a generic type parameter `T` resolves through `T`'s
+        // interface bounds. It runs the SAME shared checks as a concrete call
+        // (`check_method_receiver` + `check_method_args_and_return`) with `Self`
+        // substituted to `Ty::Param(T)` — so receiver-less (E0327), arity
+        // (E0308), `mut`-receiver (E0328), unsafe (E0801), and arg/receiver
+        // move-consumption (E0335/E0337) are all covered, not a hand-rolled
+        // subset. Codegen dispatches each monomorphized instantiation to the
+        // concrete impl's method.
         if let Ty::Param(ref pname) = recv_ty {
             if let Some(msig) = self.lookup_bound_method(pname, &name.name) {
-                // A receiver-less interface method is an associated function;
-                // calling it as `t.method()` is E0327, exactly as for a
-                // concrete type. Without this the call slips through to
-                // monomorphization, where the concrete impl method also has no
-                // receiver, and codegen panics ("sema validated instance call").
-                if msig.receiver.is_none() {
-                    self.err(
-                        "E0327",
-                        format!(
-                            "`{}::{}` is an associated function; call it as `{}::{}(...)`",
-                            pname, name.name, pname, name.name
-                        ),
-                        call_span,
-                    );
-                    for a in args {
-                        let _ = self.check_expr(a, None);
-                    }
+                if !self.check_method_receiver(receiver, &recv_ty, name, &msig, args, call_span, pname)
+                {
                     return Ty::Error;
                 }
-                // A `move self` bound method consumes the receiver, exactly like
-                // the concrete path. On a `borrow`/`mut`-bound receiver that is a
-                // move-out-of-borrow (E0337): without this `t.take()` where
-                // `take(move self)` launders the borrow into an owned value the
-                // caller still drops (double-free). `consume_place` routes through
-                // `classify_partial_move`, so it also catches a Drop field / raw
-                // deref receiver. Copy `T` (bound-aware) is never consumed.
-                if matches!(msig.receiver, Some(Receiver::Move)) && !self.is_copy(&recv_ty) {
-                    self.consume_place(receiver, pname, &name.name);
-                }
-                // Substitute `Self` → `Ty::Param(pname)` in the interface
-                // method signature so arg-type checks match what the user
-                // wrote (`other: T` not `other: Self`).
                 let mut subst = HashMap::new();
                 subst.insert("Self".to_string(), recv_ty.clone());
-                let mut arg_idx = 0;
-                for psig in &msig.params {
-                    if arg_idx >= args.len() {
-                        break;
-                    }
-                    // Apply the SAME move-consumption as a concrete call: a
-                    // non-Copy by-value (implicit-move / `move`) arg consumes the
-                    // caller's binding. This is what catches a use-after-move
-                    // (E0335) or a move-out-of-borrow inside a generic body —
-                    // previously these slipped to codegen as silent double-frees.
-                    let psig_subst = ParamSig {
-                        ty: self.subst_ty_deep(&psig.ty, &subst),
-                        mutable: psig.mutable,
-                        move_: psig.move_,
-                        borrow_: psig.borrow_,
-                    };
-                    self.check_arg_with_move(&args[arg_idx], &psig_subst);
-                    arg_idx += 1;
-                }
-                // Drain any extra args (sema-error fallback) so type
-                // checking still walks them.
-                for a in &args[arg_idx..] {
-                    let _ = self.check_expr(a, None);
-                }
-                return self.subst_ty_deep(&msig.return_type, &subst);
+                return self.check_method_args_and_return(
+                    name, &msig, &subst, type_args, args, pname,
+                );
             }
         }
         let Ty::Struct(id) = recv_ty else {
@@ -9580,66 +9657,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
-        // TEXT.1: `unsafe fn` method call requires `unsafe { ... }`. Checked
-        // once here so it covers both the generic-method and plain paths.
-        if sig.is_unsafe && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!(
-                    "calling `unsafe fn {}::{}` requires an enclosing `unsafe {{ ... }}` block",
-                    struct_name, name.name
-                ),
-                call_span,
-            );
-        }
-        let Some(rcv) = sig.receiver else {
-            self.err(
-                "E0327",
-                format!(
-                    "`{}::{}` is an associated function; call it as `{}::{}(...)`",
-                    struct_name, name.name, struct_name, name.name
-                ),
-                call_span,
-            );
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
+        if !self.check_method_receiver(
+            receiver,
+            &Ty::Struct(id),
+            name,
+            &sig,
+            args,
+            call_span,
+            &struct_name,
+        ) {
             return Ty::Error;
-        };
-        if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
-            self.err(
-                "E0328",
-                format!(
-                    "method `{}::{}` requires a mutable receiver",
-                    struct_name, name.name
-                ),
-                receiver.span,
-            );
         }
-        // `move self` consumes the receiver place — but only if the struct
-        // is non-`Copy`. For a `Copy` struct, `move self` is a redundant
-        // marker (the receiver is bitwise-copied); leave the binding usable.
-        // Same rule as for `move`-marked parameters.
-        if matches!(rcv, Receiver::Move) && !self.structs[id.0 as usize].is_copy {
-            self.consume_place(receiver, &struct_name, &name.name);
-        }
-        if args.len() != sig.params.len() {
-            self.err(
-                "E0308",
-                format!(
-                    "method `{}::{}` takes {} argument(s), got {}",
-                    struct_name,
-                    name.name,
-                    sig.params.len(),
-                    args.len()
-                ),
-                call_span,
-            );
-        }
-        // Slice 7GEN.5e: generic-method dispatch. Non-generic methods
-        // (most of them) fall through to plain arg-by-arg type checking;
-        // generic methods route through inference + monomorphization
-        // bookkeeping.
+        // Slice 7GEN.5e: generic-method dispatch (method-level type params)
+        // routes through inference + monomorphization; non-generic methods fall
+        // through to the shared arg/return path.
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
                 id,
@@ -9651,25 +9682,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 call_span,
             );
         }
-        if !type_args.is_empty() {
-            self.err(
-                "E0501",
-                format!(
-                    "method `{}::{}` takes no type arguments but {} were provided",
-                    struct_name,
-                    name.name,
-                    type_args.len()
-                ),
-                name.span,
-            );
-        }
-        for (a, expected) in args.iter().zip(sig.params.iter()) {
-            self.check_arg_with_move(a, expected);
-        }
-        for a in args.iter().skip(sig.params.len()) {
-            let _ = self.check_expr(a, None);
-        }
-        sig.return_type
+        // A concrete impl sig carries no `Self` placeholder, so an empty subst
+        // is a no-op — identical behavior, shared code with the generic path.
+        self.check_method_args_and_return(name, &sig, &HashMap::new(), type_args, args, &struct_name)
     }
 
     /// v0.0.5 Phase 2C: type-check a method call on an enum receiver.
@@ -9687,64 +9702,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         call_span: ByteSpan,
         receiver: &Expr,
     ) -> Ty {
-        // TEXT.1: `unsafe fn` method on an enum requires `unsafe { ... }`.
-        if sig.is_unsafe && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!(
-                    "calling `unsafe fn {}::{}` requires an enclosing `unsafe {{ ... }}` block",
-                    enum_name, name.name
-                ),
-                call_span,
-            );
-        }
-        let Some(rcv) = sig.receiver else {
-            self.err(
-                "E0327",
-                format!(
-                    "`{}::{}` is an associated function; call it as `{}::{}(...)`",
-                    enum_name, name.name, enum_name, name.name
-                ),
-                call_span,
-            );
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
+        // Same shared checks as the struct + generic paths (the third copy of
+        // this logic, now unified). Enum methods take no type arguments and
+        // their sigs carry no `Self` placeholder, so an empty subst / type-arg
+        // list is a no-op.
+        if !self.check_method_receiver(
+            receiver,
+            &Ty::Enum(enum_id),
+            name,
+            sig,
+            args,
+            call_span,
+            enum_name,
+        ) {
             return Ty::Error;
-        };
-        if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
-            self.err(
-                "E0328",
-                format!(
-                    "method `{}::{}` requires a mutable receiver",
-                    enum_name, name.name
-                ),
-                receiver.span,
-            );
         }
-        if matches!(rcv, Receiver::Move) && !self.enums[enum_id.0 as usize].is_copy {
-            self.consume_place(receiver, enum_name, &name.name);
-        }
-        if args.len() != sig.params.len() {
-            self.err(
-                "E0308",
-                format!(
-                    "method `{}::{}` takes {} argument(s), got {}",
-                    enum_name,
-                    name.name,
-                    sig.params.len(),
-                    args.len()
-                ),
-                call_span,
-            );
-        }
-        for (a, expected) in args.iter().zip(sig.params.iter()) {
-            self.check_arg_with_move(a, expected);
-        }
-        for a in args.iter().skip(sig.params.len()) {
-            let _ = self.check_expr(a, None);
-        }
-        sig.return_type.clone()
+        self.check_method_args_and_return(name, sig, &HashMap::new(), &[], args, enum_name)
     }
 
     /// Slice 7GEN.5e: type-check a generic-method call.
@@ -15740,6 +15713,32 @@ mod tests {
         // `T: Copy` is bound-aware Copy: returning the borrow bit-copies
         // harmlessly (no destructor), so this is allowed.
         assert_clean("fn ok[T: Copy](borrow t: T) -> T { return t; }");
+    }
+
+    #[test]
+    fn generic_body_method_arity_mismatch_e0308() {
+        // Wrong arg count on a bound method call: E0308, the same as a concrete
+        // call. The generic path inherits this from the SHARED checker — it was
+        // a gap when the generic path hand-rolled its own arg loop.
+        assert_has_code(
+            "struct P { x: i32 }\n\
+             interface Add { fn add(self, rhs: i32) -> i32; }\n\
+             impl P for Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+             fn call_add[T: Add](t: T) -> i32 { return t.add(2, 3); }\n\
+             fn main() -> i32 { return 0; }",
+            "E0308",
+        );
+    }
+
+    #[test]
+    fn generic_body_correct_arity_method_clean() {
+        assert_clean(
+            "struct P { x: i32 }\n\
+             interface Add { fn add(self, rhs: i32) -> i32; }\n\
+             impl P for Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+             fn call_add[T: Add](t: T) -> i32 { return t.add(2); }\n\
+             fn main() -> i32 { let p: P = P { x: 4 }; return call_add::[P](p); }",
+        );
     }
 
     #[test]
