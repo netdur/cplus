@@ -265,7 +265,7 @@ Methods are stored per-target in `methods_per_struct` / `methods_per_enum`. For 
 1. **Collect type declarations** — `StructDef` / `EnumDef` / `TypeAlias` registered without bodies.
 2. **Resolve type aliases** transitively. Cycle detection here.
 3. **Collect struct fields** with full type resolution. This is where field types may trigger generic-struct instantiation (the source of G-022 — see §15).
-4. **Collect methods** — both inherent (`impl T { ... }`) and interface (`impl Interface for T { ... }`). Two-phase: register all generic-impl-method templates first, then resolve their signatures.
+4. **Collect methods** — both inherent (`impl T { ... }`) and interface (`impl T for Interface { ... }`). Two-phase: register all generic-impl-method templates first, then resolve their signatures.
 5. **Backfill generic struct methods** (G-022 fix) — re-runs the impl-template substitution for any struct whose `methods` table was populated empty by a field-driven instantiation that ran before `collect_methods`.
 6. **Resolve function signatures** — param types, return type, generic bounds.
 7. **Check function bodies** — the main type-checking pass. Each fn gets its own `FunctionChecker` with a stack of local scopes.

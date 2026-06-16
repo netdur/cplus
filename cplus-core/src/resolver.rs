@@ -1367,7 +1367,7 @@ fn merge(
                     }
                 }
                 // Slice 7GEN.3: interface declarations register as items.
-                // Cross-file `impl Interface for Type` blocks reference
+                // Cross-file `impl Type for Interface` blocks reference
                 // the interface by name; pub-status gates cross-file use.
                 ItemKind::Interface(i) => {
                     all.insert(i.name.name.clone());

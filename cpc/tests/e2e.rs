@@ -5601,7 +5601,7 @@ fn doctest_does_not_interfere_with_cpc_build() {
 #[test]
 fn phase7_generic_decls_and_impl_interface_clean() {
     // Parses + sema-checks a file exercising generic fns, generic types,
-    // an interface decl, and an `impl Interface for Type` block with a
+    // an interface decl, and an `impl Type for Interface` block with a
     // matching method signature. Pre-monomorphization (7GEN.5) the
     // generic items are codegen-skipped; the concrete `main` runs.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -12683,7 +12683,7 @@ fn stdlib_qualified_generic_enum_construct_and_match() {
 /// bound's interface signature, so the call type-checks at sema time
 /// instead of failing as "no method `cmp` on type `type-param`".
 /// Monomorphization then substitutes T → concrete type and the call
-/// dispatches to that type's `impl Ord for T` method.
+/// dispatches to that type's `impl T for Ord` method.
 fn generic_max_with_ord_bound_calls_cmp_in_body() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();

@@ -258,16 +258,16 @@ pub struct ImplBlock {
     /// parameterized by these params during monomorphization.
     pub target_generic_params: Vec<GenericParam>,
     pub methods: Vec<Method>,
-    /// Slice 7GEN.3: when present, this `impl Interface for Type`
+    /// Slice 7GEN.3: when present, this `impl Type for Interface`
     /// block claims that `target` implements `interface_name`'s method
     /// set. Sema validates method-coverage / signature-match (E0503 /
     /// E0504 / E0505) and coherence (E0507). `None` for plain inherent
     /// `impl Type { ... }` blocks.
     pub interface_name: Option<Ident>,
-    /// v0.0.14: `unsafe impl Send for T {}` / `unsafe impl Sync for T {}`.
+    /// v0.0.14: `unsafe impl T for Send {}` / `unsafe impl T for Sync {}`.
     /// `Send`/`Sync` are unsafe assertions (the author vouches for thread
     /// safety the compiler can't prove), so their impls must carry `unsafe`.
-    /// `false` for every ordinary `impl` / `impl Interface for Type`.
+    /// `false` for every ordinary `impl` / `impl Type for Interface`.
     pub is_unsafe: bool,
 }
 

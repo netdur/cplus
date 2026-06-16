@@ -4371,7 +4371,7 @@ mod tests {
         assert_eq!(s.generic_params.len(), 1);
     }
 
-    // ---- 7GEN.3 — interface declarations + impl Interface for Type ----
+    // ---- 7GEN.3 — interface declarations + impl Type for Interface ----
 
     #[test]
     fn interface_decl_parses_with_single_method() {

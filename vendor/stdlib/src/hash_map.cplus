@@ -26,8 +26,8 @@
 //   - `K.hash() -> u64` and `K.eq(other) -> bool` are required. The
 //     compiler ships blessed implementations for every integer
 //     primitive plus `str` — those just work. User types provide their
-//     own via `impl Hash for MyType { fn hash(self) -> u64 { ... } }`
-//     and `impl Eq for MyType { fn eq(self, other: Self) -> bool { ... } }`.
+//     own via `impl MyType for Hash { fn hash(self) -> u64 { ... } }`
+//     and `impl MyType for Eq { fn eq(self, other: Self) -> bool { ... } }`.
 //
 //     The generic body in this module calls `k.hash()` and `k.eq(stored)`
 //     directly; monomorphization picks the right lowering per

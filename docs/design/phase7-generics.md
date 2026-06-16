@@ -120,7 +120,7 @@ Receivers in interface methods: `self`, `mut self`, `move self`, or no receiver 
 ```cp
 struct Point { x: i32, y: i32 }
 
-impl P for Ordoint {
+impl Point for Ord {
     fn compare(self, other: Point) -> i32 {
         let dx: i32 = self.x - other.x;
         if dx != 0 { return dx; }
@@ -128,16 +128,16 @@ impl P for Ordoint {
     }
 }
 
-impl P for Eqoint {
+impl Point for Eq {
     fn eq(self, other: Point) -> bool {
         return self.x == other.x && self.y == other.y;
     }
 }
 ```
 
-The `impl T for InterfaceNameypeName { ... }` block lists method implementations. Every method declared in the interface must be implemented (**E0503**). Extra methods (not in the interface) are rejected — they belong in an inherent `impl Type { ... }` block (**E0504**). Method signatures must match exactly, with `Self` substituted to the implementing type (**E0505**).
+The `impl TypeName for InterfaceName { ... }` block lists method implementations. Every method declared in the interface must be implemented (**E0503**). Extra methods (not in the interface) are rejected — they belong in an inherent `impl Type { ... }` block (**E0504**). Method signatures must match exactly, with `Self` substituted to the implementing type (**E0505**).
 
-A type can have multiple `impl T for Interfaceype` blocks for different interfaces, but at most one `impl T for Interfaceype` for any given (interface, type) pair (**E0506**).
+A type can have multiple `impl Type for Interface` blocks for different interfaces, but at most one `impl Type for Interface` for any given (interface, type) pair (**E0506**).
 
 ### 2.5 Multiple bounds
 
@@ -238,7 +238,7 @@ Why not just `name[T](args)` at the call site? Because `name[T]` collides with a
 When a generic function or type declares a bound `T: Ord`, the type checker verifies at each instantiation that the concrete type implements `Ord`:
 
 1. Inferred `T = Point`.
-2. Scan for an `impl P for Ordoint` block.
+2. Scan for an `impl Point for Ord` block.
 3. If found, the call resolves; method calls like `a.compare(b)` inside the generic body resolve to `Point.compare` via the impl.
 4. If not found, fire **E0502** ("type `Point` does not implement interface `Ord`") at the call site.
 
@@ -246,14 +246,14 @@ Multiple bounds (`T: Ord + Eq`) require every named interface to have an impl fo
 
 ### 3.5 Self in interface methods
 
-In an interface method, `Self` is a placeholder. At `impl T for Interfaceype`, every `Self` is substituted to `Type`. The implementation's method signature must match the substituted interface signature exactly:
+In an interface method, `Self` is a placeholder. At `impl Type for Interface`, every `Self` is substituted to `Type`. The implementation's method signature must match the substituted interface signature exactly:
 
 ```cp
 interface Clone {
     fn clone(self) -> Self;
 }
 
-impl P for Cloneoint {
+impl Point for Clone {
     fn clone(self) -> Point { return Point { x: self.x, y: self.y }; }
     //               ^^^^^ Self substituted to Point
 }
@@ -263,9 +263,9 @@ Signature mismatch (wrong receiver kind, wrong parameter types, wrong return typ
 
 ### 3.6 Coherence (orphan rule)
 
-An `impl T for InterfaceNameypeName` can be defined only in the file that defines `InterfaceName` *or* the file that defines `TypeName`. A third file that imports both cannot add the impl.
+An `impl TypeName for InterfaceName` can be defined only in the file that defines `InterfaceName` *or* the file that defines `TypeName`. A third file that imports both cannot add the impl.
 
-This prevents incoherent overlap: two different files providing different `impl P for Ordoint` blocks. Rust calls this the "orphan rule" and ships it for the same reason. Loosening (negative reasoning, specialization, fundamental types) deferred indefinitely — first cut keeps the strict version.
+This prevents incoherent overlap: two different files providing different `impl Point for Ord` blocks. Rust calls this the "orphan rule" and ships it for the same reason. Loosening (negative reasoning, specialization, fundamental types) deferred indefinitely — first cut keeps the strict version.
 
 Fires **E0507** at the orphan `impl`.
 
@@ -328,7 +328,7 @@ No new LLVM features for Phase 7 itself — monomorphization happens at AST leve
 | E0503 | Interface implementation missing required methods |
 | E0504 | Interface implementation has extra methods |
 | E0505 | Interface method signature mismatch |
-| E0506 | Duplicate `impl T for Interfaceype` blocks |
+| E0506 | Duplicate `impl Type for Interface` blocks |
 | E0507 | Orphan `impl` — interface and type defined in other files |
 | E0508 | Use of `Self` outside an interface/impl context |
 | E0509 | Type inference fails — explicit `::[T]` arguments required |
@@ -383,7 +383,7 @@ Phase 7 work is naturally sliced 5–7 sub-slices.
 
 **Slice 7GEN.2 — Generic-type parsing.** Same for `struct Name[T] { ... }` and `enum Name[T] { ... }`. AST gains parallel `generic_params` field on struct/enum decls.
 
-**Slice 7GEN.3 — Interface declaration + impl.** New `interface` keyword. New `interface Name { fn ... }` syntax and `impl T for Interfaceype { fn ... }` syntax. AST `Item::Interface(InterfaceDecl)` variant. Sema validates: every interface-declared method has a matching impl (E0503), no extras (E0504), signature exact match with Self substituted (E0505), single-impl-per-(interface, type) (E0506), coherence (E0507).
+**Slice 7GEN.3 — Interface declaration + impl.** New `interface` keyword. New `interface Name { fn ... }` syntax and `impl Type for Interface { fn ... }` syntax. AST `Item::Interface(InterfaceDecl)` variant. Sema validates: every interface-declared method has a matching impl (E0503), no extras (E0504), signature exact match with Self substituted (E0505), single-impl-per-(interface, type) (E0506), coherence (E0507).
 
 **Slice 7GEN.4 — Sema integration: type-parameter substitution + bound checking.** When sema sees a generic-fn call or generic-type instantiation, it builds a substitution map (param → concrete type) and verifies each declared bound has a matching impl (E0502). When inference fails, emits E0509 with a `name::[T]`-form suggestion. Self resolves inside interface/impl bodies (E0508 outside). Wrong arg count: E0501.
 
