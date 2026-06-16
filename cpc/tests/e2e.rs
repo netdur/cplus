@@ -5032,12 +5032,14 @@ fn main() -> i32 {
         "expected compile failure for parent+sub-place"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // Rejected either as a parent+subfield borrow conflict (E0374) or, with
-    // v0.0.14's stricter value-passing, as a partial move of `p.left` out of a
-    // Drop aggregate (E0337). Both are correct refusals of `write_pair(p, p.left)`.
+    // Rejected as a parent+subfield borrow conflict (E0374) or as a partial move
+    // of `p.left` out of a Drop aggregate. v0.0.23 routes call args through the
+    // same drop-aware path as let/construction, so the partial move is now the
+    // precise E0509 ("move a field out of a Drop type") rather than the generic
+    // E0337 — all three are correct refusals of `write_pair(p, p.left)`.
     assert!(
-        stderr.contains("E0374") || stderr.contains("E0337"),
-        "expected E0374 or E0337, got: {stderr}"
+        stderr.contains("E0374") || stderr.contains("E0337") || stderr.contains("E0509"),
+        "expected E0374 / E0337 / E0509, got: {stderr}"
     );
 }
 

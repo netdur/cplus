@@ -5150,19 +5150,12 @@ impl SemaCx<'_> {
                         // binding *moves* it — consume the source so a later use
                         // is E0335 (matching codegen's drop-flag transfer; an
                         // un-consumed `let`-move was a use-after-move / double-free
-                        // hole, e.g. re-moving the same binding each loop
-                        // iteration). Field/index projections stay with
-                        // reject_partial_move_of_drop above.
-                        if !self.is_copy(&final_ty) {
-                            if let ExprKind::Ident(src) = &init_expr.kind {
-                                for scope in self.scopes.iter_mut().rev() {
-                                    if let Some(info) = scope.get_mut(src) {
-                                        info.moved = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                        // hole). v0.0.23: peel value-transparent wrappers so
+                        // `let y = { x }` / `if c { x } else ..` consume `x` too —
+                        // codegen moves through the wrapper, sema must match or the
+                        // source is owned twice. Field/index projections are caught
+                        // by reject_partial_move_of_drop above (no binding to mark).
+                        self.mark_moved_through_wrappers(init_expr, &final_ty);
                         (final_ty, true)
                     }
                     None => {
@@ -5235,6 +5228,10 @@ impl SemaCx<'_> {
                             ret.clone()
                         };
                         self.reject_partial_move_of_drop(e, &moved_ty);
+                        // v0.0.23: `return x` / `return { x }` moves `x` out of the
+                        // function — consume it (through wrappers) so a sibling use
+                        // can't alias the returned value.
+                        self.mark_moved_through_wrappers(e, &moved_ty);
                         // E0512/E0513: returned borrow must outlive the call —
                         // region-matched (#2) and not rooted at a dropped local (#3).
                         self.check_returned_borrow(e);
@@ -7711,15 +7708,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             self.reject_partial_move_of_drop(&lit_field.value, &vty);
                             // v0.0.23 soundness: the value is *moved* into the
                             // field (codegen disarms the source) — consume a
-                            // non-Copy whole-binding arg so it can't also be
-                            // moved into another aggregate (bit-copy-alias →
-                            // double-free) or read after the move. Mirrors a
-                            // `move` call arg and the enum-construction path.
-                            if !self.is_copy(&vty)
-                                && matches!(lit_field.value.kind, ExprKind::Ident(_))
-                            {
-                                self.consume_arg_place(&lit_field.value);
-                            }
+                            // non-Copy whole-binding arg, through any wrapper, so
+                            // it can't also be moved into another aggregate
+                            // (bit-copy-alias → double-free) or read after the
+                            // move. Mirrors let/return and the enum-construction
+                            // path.
+                            self.mark_moved_through_wrappers(&lit_field.value, &vty);
                         }
                     }
                 }
@@ -9035,19 +9029,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 // v0.0.14 soundness: consume non-Copy args, matching the
                 // non-generic path. A `move` param OR an implicit-move (bare)
-                // param consumes a *place* arg — a whole-binding Ident moves;
-                // a Field/Index/Deref projection is a partial move and is
-                // rejected (E0337 via consume_arg_place). Rvalues (struct/enum
-                // literals, fresh call results — e.g.
-                // `io_ok::[File](File { fd: fd })`) aren't places, so they own
-                // their value outright and pass through untouched.
+                // param moves the arg. `consume_arg_place` peels wrappers and
+                // handles each leaf: a whole-binding Ident moves; a
+                // Field/Index/Deref projection is a partial move (E0337);
+                // rvalues (struct/enum literals, fresh call results) own their
+                // value and pass through untouched. v0.0.23: peel closes the
+                // `g({ x })` hole (no `is_addr_of_place` gate, which skipped
+                // wrapped bindings).
                 let implicit_move = !param.mutable && !param.borrow_;
                 if (param.move_ || implicit_move)
                     && !self.is_copy(&expected)
                     && !matches!(actual_before, Ty::Error)
-                    && is_addr_of_place(arg)
                 {
-                    self.consume_arg_place(arg);
+                    self.reject_partial_move_of_drop(arg, &expected);
+                    self.mark_moved_through_wrappers(arg, &expected);
                 }
             }
             if had_err {
@@ -11267,15 +11262,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.reject_partial_move_of_drop(a, &vty);
                     // v0.0.23 soundness: the payload is *moved* into the variant
                     // (codegen disarms the source's drop), so consume a non-Copy
-                    // whole-binding arg — otherwise the same binding could be
-                    // constructed into a second aggregate and both would
-                    // bit-copy-alias it (double-free), or read after the move
-                    // (use-after-move). Mirrors a `move` call arg
-                    // (`check_arg_with_move`). Field/index/`*p` partial moves are
-                    // handled above (E0509) / left to the unsafe pointer model.
-                    if !self.is_copy(&vty) && matches!(a.kind, ExprKind::Ident(_)) {
-                        self.consume_arg_place(a);
-                    }
+                    // whole-binding arg — through any wrapper — otherwise the same
+                    // binding could be constructed into a second aggregate and
+                    // both would bit-copy-alias it (double-free), or read after
+                    // the move (use-after-move). Field/index/`*p` partial moves
+                    // are handled above (E0509) / left to the unsafe pointer model.
+                    self.mark_moved_through_wrappers(a, &vty);
                 }
             }
             for a in args.iter().skip(vdef.payload.len()) {
@@ -11428,53 +11420,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         let implicit_move = !expected.mutable && !expected.borrow_;
         let explicit_move = expected.move_;
-        if explicit_move {
-            self.consume_arg_place(arg);
-        } else if implicit_move && is_addr_of_place(arg) {
-            // v0.0.14 soundness fix: a non-Copy *place* passed by value to a
-            // value param is a move — a whole-binding Ident is consumed, a
-            // Field/Index/Deref projection is a partial move and rejected with
-            // E0337 (`consume_arg_place`). Previously only whole-binding Idents
-            // were consumed, so a non-Copy field/element arg was silently
-            // bit-copied (aliased) — sound only while nothing dropped; under
-            // auto field-drop it double-freed. Rvalues (struct/enum literals,
-            // call results) aren't places, so they fall through untouched —
-            // they own their value outright.
-            self.consume_arg_place(arg);
+        if explicit_move || implicit_move {
+            // A non-Copy value passed by value to an owning param is moved. Use
+            // the SAME drop-aware path as let/return/construction: reject a
+            // forbidden partial move (a non-Copy field/index of a Drop aggregate
+            // → E0509, a Drop-carrying raw deref → E0337) and mark a whole-binding
+            // move consumed — peeling value-transparent wrappers so `f({ x })`
+            // consumes `x` (codegen moves through the wrapper). A drop-free read
+            // (a POD field/deref) and an rvalue own their value and pass through.
+            self.reject_partial_move_of_drop(arg, &expected.ty);
+            self.mark_moved_through_wrappers(arg, &expected.ty);
         }
     }
 
-    /// Mark the source binding of an argument as moved. Used by both
-    /// `move`-param calls and `move self` receivers. Only plain Ident
-    /// references to a local binding are accepted; anything else triggers
-    /// E0337 (partial moves deferred).
-    fn consume_arg_place(&mut self, arg: &Expr) {
-        match &arg.kind {
-            ExprKind::Ident(name) => {
-                // Find the binding's scope and mark moved. `resolve_value_ident`
-                // already ran via `check_expr` and would have produced E0335
-                // if the binding was *already* moved; here we just record the
-                // new move state.
-                for scope in self.scopes.iter_mut().rev() {
-                    if let Some(info) = scope.get_mut(name) {
-                        info.moved = true;
-                        return;
-                    }
-                }
-                // Unknown name — error was already produced by check_expr.
-            }
-            _ => {
-                self.err(
-                    "E0337",
-                    "cannot move out of this expression; only whole-binding moves are supported in Phase 3 (partial moves of fields or array slots are deferred)".to_string(),
-                    arg.span,
-                );
-            }
-        }
-    }
-
-    /// Same as `consume_arg_place` but for the receiver in a `move self`
-    /// method call. Diagnostic phrasing names the method for clarity.
+    /// Consume the receiver in a `move self` method call. Diagnostic phrasing
+    /// names the method for clarity.
     fn consume_place(&mut self, receiver: &Expr, type_name: &str, method_name: &str) {
         match &receiver.kind {
             ExprKind::Ident(name) => {
@@ -11545,6 +11505,40 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         if let Some((span, kind)) = self.classify_partial_move(e) {
             self.emit_partial_move(span, &kind);
+        }
+    }
+
+    /// Mark whole-binding moves consumed when a non-Copy value is taken
+    /// by-value at a consuming site (let-init, return, construction, assignment,
+    /// call arg). The move-marking must peel value-transparent wrappers (`{}`,
+    /// `unsafe {}`, `if`, `match`) the SAME way `classify_partial_move`
+    /// (detection) does — otherwise `let y = { x }` consumes `x` in codegen but
+    /// not in sema, so a later `let z = x` slips through as a use-after-move and
+    /// `x` is owned twice (double-free). Marks every whole-binding `Ident` leaf
+    /// moved; partial moves and rvalues are handled by `reject_partial_move_of_drop`
+    /// / `classify_partial_move` and need no marking (a projection has no whole
+    /// binding to consume; an rvalue owns its value outright).
+    fn mark_moved_through_wrappers(&mut self, e: &Expr, moved_ty: &Ty) {
+        if self.is_copy(moved_ty) {
+            return;
+        }
+        let mut leaves: Vec<&Expr> = Vec::new();
+        collect_value_leaves(e, &mut leaves);
+        // Collect names first — the leaves borrow `e`, not `self`.
+        let names: Vec<String> = leaves
+            .iter()
+            .filter_map(|l| match &l.kind {
+                ExprKind::Ident(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        for n in names {
+            for scope in self.scopes.iter_mut().rev() {
+                if let Some(info) = scope.get_mut(&n) {
+                    info.moved = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -12321,6 +12315,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // the moved field. (Compound ops read a Copy numeric, so they're exempt.)
         if matches!(op, AssignOp::Assign) && value_ty != Ty::Error {
             self.reject_partial_move_of_drop(value, &value_ty);
+            // v0.0.23: a plain `=` moves the RHS in — consume a whole-binding RHS
+            // (through wrappers) so a later use of it is E0335, like `let`.
+            self.mark_moved_through_wrappers(value, &value_ty);
         }
         if !matches!(op, AssignOp::Assign) && target_ty != Ty::Error && value_ty != Ty::Error {
             // Check the op is type-compatible with target_ty. For arithmetic
@@ -17538,7 +17535,13 @@ mod tests {
              fn take(move i: Inner) -> i32 { return i.x; }\n\
              fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }",
         );
-        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+        // v0.0.23: moving the Drop field `o.i` through a call is now the precise
+        // E0509 (drop-aware classifier, shared with let/construction) rather than
+        // the generic E0337 — both correctly refuse the partial move.
+        assert!(
+            codes.contains(&"E0509") || codes.contains(&"E0337"),
+            "expected E0509 or E0337, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -17637,7 +17640,14 @@ mod tests {
              fn take(move b: B) -> i32 { return b.x; }\n\
              fn main() -> i32 { let c: C = C { b: B { x: 1 } }; return take(c.b); }",
         );
-        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+        // v0.0.23: call args now use the drop-aware partial-move classifier
+        // (shared with let/construction), so moving the Drop field `c.b` is the
+        // precise E0509 ("move a field out of a Drop type") rather than the
+        // generic E0337 — both are correct refusals.
+        assert!(
+            codes.contains(&"E0509") || codes.contains(&"E0337"),
+            "expected E0509 or E0337, got: {codes:?}"
+        );
     }
 
     #[test]
@@ -19001,6 +19011,135 @@ mod tests {
                  let _out: Pod = match unsafe { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y }; \
                  return 0; \
              }",
+        );
+    }
+
+    // v0.0.23 whole-binding move through value-transparent wrappers: the move
+    // *marking* must peel `{}`/`unsafe {}`/`if`/`match` the SAME way partial-move
+    // *detection* does, or codegen consumes the binding through the wrapper while
+    // sema doesn't → a later use slips through and the value is owned twice
+    // (double-free). These pin every consuming site.
+
+    #[test]
+    fn let_block_wrapped_move_then_reuse_rejected_e0335() {
+        // The reporter's repro: `let y = { x }; let z = x;`.
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _y: R = { x }; \
+                 let _z: R = x; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn let_if_wrapped_move_then_reuse_rejected_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _y: R = if unsafe { 0 as i32 } == 0 { x } else { R { data: unsafe { 0 as *u8 } } }; \
+                 let _z: R = x; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn enum_construct_wrapped_move_then_reuse_rejected_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             enum E { A(R), B } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _a: E = E::A({ x }); \
+                 let _z: R = x; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn struct_construct_wrapped_move_then_reuse_rejected_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             struct W { r: R } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _w: W = W { r: { x } }; \
+                 let _z: R = x; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn call_arg_wrapped_move_then_reuse_rejected_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn sink(r: R) -> i32 { return 0; } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _n: i32 = sink({ x }); \
+                 let _z: R = x; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn assign_wrapped_move_then_reuse_rejected_e0335() {
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let mut t: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 t = { x }; \
+                 let _z: R = x; \
+                 return 0; \
+             }",
+        );
+        assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
+    }
+
+    #[test]
+    fn single_wrapped_move_clean() {
+        // The wrapped move itself (no reuse) is sound — `x` moves into `y`.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _y: R = { x }; \
+                 return 0; \
+             }",
+        );
+    }
+
+    #[test]
+    fn rvalue_arg_to_move_param_clean() {
+        // FALSE-POSITIVE GUARD: passing a fresh rvalue to an explicit `move`
+        // param is a legitimate ownership transfer — must not be rejected (the
+        // old immediate-Ident-only `consume_arg_place` wrongly E0337'd it).
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn sink(move r: R) -> i32 { return 0; } \
+             fn main() -> i32 { let _n: i32 = sink(mkR()); return 0; }",
         );
     }
 
