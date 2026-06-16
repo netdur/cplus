@@ -11306,6 +11306,67 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return self.check_simd_assoc_call(&recv, method_seg, args, call_span);
         }
+        // `T::func(...)` — an associated (receiver-less) interface function
+        // called through a generic type parameter's bound. The path-call
+        // analogue of the `t.method()` bound dispatch: resolve `func` from `T`'s
+        // interface bounds (codegen routes each monomorphization to the concrete
+        // impl's associated function). Without this, `T` falls through to the
+        // concrete type resolution below and fails E0303 — and the E0327 we emit
+        // for `t.make()` (no receiver) literally suggests `T::make(...)`, so that
+        // suggested fix has to work.
+        if self.type_param_in_scope(&type_seg.name) {
+            let Some(msig) = self.lookup_bound_method(&type_seg.name, &method_seg.name) else {
+                self.err(
+                    "E0324",
+                    format!(
+                        "no associated function `{}` on type parameter `{}` (not declared by any of its interface bounds)",
+                        method_seg.name, type_seg.name
+                    ),
+                    method_seg.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Ty::Error;
+            };
+            if msig.receiver.is_some() {
+                self.err(
+                    "E0327",
+                    format!(
+                        "`{}::{}` is an instance method; call it as `value.{}(...)`",
+                        type_seg.name, method_seg.name, method_seg.name
+                    ),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Ty::Error;
+            }
+            if args.len() != msig.params.len() {
+                self.err(
+                    "E0308",
+                    format!(
+                        "function `{}::{}` takes {} argument(s), got {}",
+                        type_seg.name,
+                        method_seg.name,
+                        msig.params.len(),
+                        args.len()
+                    ),
+                    call_span,
+                );
+            }
+            let mut subst = HashMap::new();
+            subst.insert("Self".to_string(), Ty::Param(type_seg.name.clone()));
+            return self.check_method_args_and_return(
+                method_seg,
+                &msig,
+                &subst,
+                type_args,
+                args,
+                &type_seg.name,
+            );
+        }
         // Enums: a call shape `Name::Variant(args)` constructs a tagged
         // variant. Look up the variant; verify it has a payload (call form
         // is illegal for payload-less variants — use the bare path); check
@@ -15697,6 +15758,57 @@ mod tests {
         // `T: Copy` is bound-aware Copy: returning the borrow bit-copies
         // harmlessly (no destructor), so this is allowed.
         assert_clean("fn ok[T: Copy](borrow t: T) -> T { return t; }");
+    }
+
+    #[test]
+    fn generic_body_path_assoc_fn_through_bound_clean() {
+        // `T::make()` — a receiver-less interface fn called via the path form
+        // through `T`'s bound. This is the form E0327 suggests for `t.make()`,
+        // so it must resolve (codegen routes each instantiation to the concrete
+        // impl's associated fn).
+        assert_clean(
+            "struct P { x: i32 }\n\
+             interface Maker { fn make() -> i32; }\n\
+             impl P for Maker { fn make() -> i32 { return 7; } }\n\
+             fn call_make[T: Maker]() -> i32 { return T::make(); }\n\
+             fn main() -> i32 { return call_make::[P](); }",
+        );
+    }
+
+    #[test]
+    fn generic_body_path_assoc_instance_method_e0327() {
+        // `T::val()` where `val` takes `self` is an instance method called via
+        // the path form — E0327.
+        assert_has_code(
+            "struct P { x: i32 }\n\
+             interface I { fn val(self) -> i32; }\n\
+             impl P for I { fn val(self) -> i32 { return self.x; } }\n\
+             fn f[T: I]() -> i32 { return T::val(); }\n\
+             fn main() -> i32 { return 0; }",
+            "E0327",
+        );
+    }
+
+    #[test]
+    fn generic_body_path_assoc_not_in_bound_e0324() {
+        // `T::nope()` — `nope` isn't declared by any of `T`'s bounds: E0324.
+        assert_has_code(
+            "interface Maker { fn make() -> i32; }\n\
+             fn f[T: Maker]() -> i32 { return T::nope(); }\n\
+             fn main() -> i32 { return 0; }",
+            "E0324",
+        );
+    }
+
+    #[test]
+    fn generic_body_path_assoc_arity_e0308() {
+        // Wrong arg count on a path-form bound assoc call: E0308.
+        assert_has_code(
+            "interface Maker { fn make() -> i32; }\n\
+             fn f[T: Maker]() -> i32 { return T::make(99); }\n\
+             fn main() -> i32 { return 0; }",
+            "E0308",
+        );
     }
 
     #[test]

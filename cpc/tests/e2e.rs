@@ -1744,6 +1744,35 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
 }
 
 #[test]
+fn generic_path_assoc_fn_through_bound_compiles_and_runs() {
+    // `T::make()` — a receiver-less interface fn called through the bound, the
+    // path form E0327 suggests. Must compile through monomorphization (the
+    // segment `T` rewrites to the concrete type) and run.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("passoc.cplus");
+    std::fs::write(
+        &src,
+        "struct P { x: i32 }\n\
+         interface Maker { fn make() -> i32; }\n\
+         impl P for Maker { fn make() -> i32 { return 7; } }\n\
+         fn call_make[T: Maker]() -> i32 { return T::make(); }\n\
+         fn main() -> i32 { return call_make::[P](); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("passoc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for T::make() through bound");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(7), "expected exit 7 from call_make::[P]()");
+}
+
+#[test]
 fn generic_bound_method_arity_mismatch_rejected_e0308() {
     // A bound method called with the wrong arg count is E0308, exactly like a
     // concrete call — the generic and concrete paths now share one checker, so

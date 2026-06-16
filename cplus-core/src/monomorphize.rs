@@ -2030,24 +2030,39 @@ fn rewrite_expr(
                         )
                     }
                 }
-                (ExprKind::Path { segments }, Some(args_for_call)) if segments.len() == 2 => {
-                    let method_seg_name = segments[1].name.clone();
-                    let is_generic = mono.method_instantiations.iter().any(|(_, mname, margs)| {
-                        mname == &method_seg_name && margs == args_for_call
-                    });
-                    if is_generic {
-                        let mangled = mangle_name(&method_seg_name, args_for_call, type_name_of);
-                        let mut new_segs = segments.clone();
-                        new_segs[1] = Ident {
-                            name: mangled,
-                            span: segments[1].span,
+                (ExprKind::Path { segments }, maybe_args) if segments.len() == 2 => {
+                    let mut new_segs = segments.clone();
+                    // `T::func()` — substitute a generic type-param TYPE segment
+                    // to its concrete type name so codegen's `Type::func` lookup
+                    // resolves it. Done for ANY arg shape (a no-arg `T::make()`
+                    // has no resolved call-args, so this must not depend on them);
+                    // without it the literal `T` reaches codegen and panics
+                    // ("sema validated"). A non-param segment (a concrete
+                    // `P::func()` in a generic body) isn't in `subst`, so it is
+                    // left unchanged.
+                    if let Some(concrete) = subst.get(&segments[0].name) {
+                        new_segs[0] = Ident {
+                            name: type_name_of(concrete),
+                            span: segments[0].span,
                         };
-                        Expr {
-                            kind: ExprKind::Path { segments: new_segs },
-                            span: callee.span,
+                    }
+                    // A method-level-generic associated fn also mangles the
+                    // method segment by its type-arg instantiation.
+                    if let Some(args_for_call) = maybe_args {
+                        let method_seg_name = &segments[1].name;
+                        let is_generic = mono.method_instantiations.iter().any(|(_, mname, margs)| {
+                            mname == method_seg_name && margs == args_for_call
+                        });
+                        if is_generic {
+                            new_segs[1] = Ident {
+                                name: mangle_name(method_seg_name, args_for_call, type_name_of),
+                                span: segments[1].span,
+                            };
                         }
-                    } else {
-                        (**callee).clone()
+                    }
+                    Expr {
+                        kind: ExprKind::Path { segments: new_segs },
+                        span: callee.span,
                     }
                 }
                 _ => rewrite_expr(
