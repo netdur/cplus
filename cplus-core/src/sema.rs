@@ -11443,6 +11443,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// Consume the receiver in a `move self` method call. Diagnostic phrasing
     /// names the method for clarity.
     fn consume_place(&mut self, receiver: &Expr, type_name: &str, method_name: &str) {
+        // A `move self` method *consumes* the receiver — the same as moving it
+        // into any owned slot. So a forbidden partial move (a field of a Drop
+        // value, a raw deref, or a borrowed binding) is the same double-free
+        // here, and `r.take()` on a `borrow`/`mut` `r` would otherwise launder
+        // the borrow into an owned value (the receiver's owner still drops it).
+        if let Some((span, kind)) = self.classify_partial_move(receiver) {
+            self.emit_partial_move(span, &kind);
+            return;
+        }
         match &receiver.kind {
             ExprKind::Ident(name) => {
                 for scope in self.scopes.iter_mut().rev() {
@@ -19223,6 +19232,34 @@ mod tests {
              impl B { fn drop(mut self) { return; } } \
              fn cursor(b: borrow A B) -> borrow A B { return b; } \
              fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn move_self_method_on_borrow_param_rejected_e0337() {
+        // Laundering path: `r.take()` where `take(move self)` consumes the
+        // receiver. Calling it on a `borrow` param moves the borrow out into an
+        // owned value (the caller still drops it) → E0337, same as `return r`.
+        let codes = errors(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } fn take(move self) -> R { return self; } } \
+             fn steal(borrow r: R) -> R { return r.take(); } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
+    }
+
+    #[test]
+    fn move_self_method_on_owned_local_clean() {
+        // The same `move self` call on an OWNED local is a legitimate move.
+        assert_clean(
+            "struct R { opaque data: *u8 } \
+             impl R { fn drop(mut self) { return; } fn take(move self) -> R { return self; } } \
+             fn main() -> i32 { \
+                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let _y: R = x.take(); \
+                 return 0; \
+             }",
         );
     }
 
