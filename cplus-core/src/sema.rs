@@ -18866,6 +18866,25 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
+    fn impl_interface_receiver_convention_mismatch_e0505() {
+        // Receiver convention is part of the contract too: `self` (borrow, caller
+        // keeps) vs `move self` (consume) vs `mut self` differ. A mismatch lets a
+        // generic caller drop a receiver the impl consumed (double-free), so it
+        // must be E0505 — in both directions and for `mut self`.
+        let mism = |iface_recv: &str, impl_recv: &str| {
+            errors(&format!(
+                "struct P {{ x: i32 }} \
+                 interface I {{ fn m({iface_recv}) -> i32; }} \
+                 impl P for I {{ fn m({impl_recv}) -> i32 {{ return 0; }} }} \
+                 fn main() -> i32 {{ return 0; }}"
+            ))
+        };
+        assert!(mism("self", "move self").contains(&"E0505"), "self vs move self");
+        assert!(mism("move self", "self").contains(&"E0505"), "move self vs self");
+        assert!(mism("self", "mut self").contains(&"E0505"), "self vs mut self");
+    }
+
+    #[test]
     fn impl_interface_matching_borrow_param_clean() {
         // Same `borrow` convention on both sides type-checks.
         assert_clean(
