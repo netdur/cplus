@@ -13739,6 +13739,30 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let want_fn_ptr = matches!(expected, Some(Ty::FnPtr { .. }));
         if let Some(sig) = self.fns.get(name).cloned() {
             if want_fn_ptr {
+                // A fn-pointer's params are BY VALUE — the `fn(T)` type carries
+                // no `borrow`/`mut` convention (it can't express by-pointer
+                // passing). Taking a pointer to a function whose param IS
+                // `borrow`/`mut` would form a `fn(T)` whose call sites pass that
+                // arg by value while the callee expects a pointer — an ABI
+                // mismatch that segfaults at runtime. Reject it (a `fn(borrow T)`
+                // pointer type would be a language feature, not a bug fix).
+                if let Some((i, p)) = sig
+                    .params
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.borrow_ || p.mutable)
+                {
+                    let conv = if p.mutable { "mut" } else { "borrow" };
+                    self.err(
+                        "E0312",
+                        format!(
+                            "cannot take a fn-pointer to `{name}`: parameter {} is `{conv}` (passed by pointer), which a `fn(...)` type cannot express",
+                            i + 1
+                        ),
+                        span,
+                    );
+                    return Ty::Error;
+                }
                 let params: Vec<Ty> = sig.params.iter().map(|p| p.ty.clone()).collect();
                 return Ty::FnPtr {
                     params,
@@ -16131,6 +16155,29 @@ fn main() -> i32 { return 0; }\n";
                 }
             }
         }
+    }
+
+    #[test]
+    fn fn_pointer_coercion_rejects_by_pointer_params() {
+        // A `fn(...)` type is BY VALUE — it can't express a `borrow`/`mut`
+        // by-pointer param convention. Coercing such a function to a fn-pointer
+        // would form a type whose call sites pass by value while the callee
+        // expects a pointer (ABI mismatch → segfault), so it's rejected. A
+        // by-value param (plain or `move`) is fine.
+        const DECLS: &str = "\
+struct R { tag: i32 }\n\
+impl R { fn drop(mut self) { return; } }\n\
+fn peek(borrow r: R) -> i32 { return r.tag; }\n\
+fn pm(mut r: R) -> i32 { return 0; }\n\
+fn sink(r: R) -> i32 { return 0; }\n\
+fn mv(move r: R) -> i32 { return 0; }\n";
+        let prog = |take: &str| {
+            format!("{DECLS}fn u() {{ let _f: fn(R) -> i32 = {take}; return; }}\nfn main() -> i32 {{ return 0; }}")
+        };
+        assert!(errors(&prog("peek")).contains(&"E0312"), "borrow param must reject");
+        assert!(errors(&prog("pm")).contains(&"E0312"), "mut param must reject");
+        assert!(errors(&prog("sink")).is_empty(), "by-value param must be accepted");
+        assert!(errors(&prog("mv")).is_empty(), "move param must be accepted");
     }
 
     // ---- `f16` literal suffix ----
