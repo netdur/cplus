@@ -3003,7 +3003,7 @@ impl SemaCx<'_> {
                         code: "E0505",
                         msg: format!(
                             "method `{}` in `impl {} for {}` does not match the interface signature",
-                            mname, iface_name.name, b.target.name
+                            mname, b.target.name, iface_name.name
                         ),
                         span,
                         origin_file: item.origin_file.clone(),
@@ -14662,8 +14662,13 @@ fn subst_self(ty: &Ty, target: &Ty) -> Ty {
 /// Slice 7GEN.4: compare an interface method's signature against an
 /// impl method's signature after substituting `Self -> target`. The
 /// comparison is strict — receiver kind, parameter count, parameter
-/// markers (`mut` / `move`), parameter types, and return type all must
-/// match.
+/// markers (`mut` / `move` / `borrow`), parameter types, and return type
+/// all must match. The convention markers are load-bearing: a `borrow`
+/// param (caller keeps ownership) vs a by-value `move` param (callee
+/// consumes) is a DIFFERENT ownership contract — accepting the mismatch
+/// lets a generic caller dispatch through the interface (which says
+/// `borrow`, so it keeps + drops the value) while the impl consumed it,
+/// a double-free.
 fn method_sig_matches(iface: &MethodSig, impl_: &MethodSig, target: &Ty) -> bool {
     if iface.receiver != impl_.receiver {
         return false;
@@ -14676,6 +14681,9 @@ fn method_sig_matches(iface: &MethodSig, impl_: &MethodSig, target: &Ty) -> bool
             return false;
         }
         if a.move_ != b.move_ {
+            return false;
+        }
+        if a.borrow_ != b.borrow_ {
             return false;
         }
         if subst_self(&a.ty, target) != b.ty {
@@ -18822,6 +18830,51 @@ fn mv(move r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0505"), "expected E0505, got: {codes:?}");
+    }
+
+    #[test]
+    fn impl_interface_borrow_vs_move_param_mismatch_e0505() {
+        // Interface declares `borrow r: R` (caller keeps ownership); impl
+        // declares `r: R` (by-value move, callee consumes). Different ownership
+        // contract — a generic caller dispatching via the interface keeps and
+        // drops `r` while the impl already consumed it (double-free). The
+        // signature check must compare the `borrow`/`move` convention, not just
+        // the type. Must be E0505.
+        let codes = errors(
+            "struct R { tag: i32 } \
+             struct P {} \
+             interface UseR { fn use_r(self, borrow r: R) -> i32; } \
+             impl P for UseR { fn use_r(self, r: R) -> i32 { return r.tag; } } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0505"),
+            "borrow-vs-move param mismatch must be E0505, got: {codes:?}"
+        );
+        // The reverse (interface by-value, impl `borrow`) is also a mismatch.
+        let codes_rev = errors(
+            "struct R { tag: i32 } \
+             struct P {} \
+             interface UseR { fn use_r(self, r: R) -> i32; } \
+             impl P for UseR { fn use_r(self, borrow r: R) -> i32 { return r.tag; } } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes_rev.contains(&"E0505"),
+            "reverse convention mismatch must be E0505, got: {codes_rev:?}"
+        );
+    }
+
+    #[test]
+    fn impl_interface_matching_borrow_param_clean() {
+        // Same `borrow` convention on both sides type-checks.
+        assert_clean(
+            "struct R { tag: i32 } \
+             struct P {} \
+             interface UseR { fn use_r(self, borrow r: R) -> i32; } \
+             impl P for UseR { fn use_r(self, borrow r: R) -> i32 { return r.tag; } } \
+             fn main() -> i32 { return 0; }",
+        );
     }
 
     #[test]
