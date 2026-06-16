@@ -5347,14 +5347,27 @@ fn gen_function(
     } else {
         CAbiClass::Direct
     };
-    let param_abis: Vec<CAbiClass> = if is_c_export {
-        sig.params
-            .iter()
-            .map(|(pty, _, _, _)| classify_c_abi(pty, types))
-            .collect()
-    } else {
-        vec![CAbiClass::Direct; sig.params.len()]
-    };
+    // C-ABI unification: a by-value COPY struct uses the C-ABI classification
+    // (Coerce/Indirect) in EVERY function — not just `pub extern fn` — so a cpc
+    // fn taking a `#[repr(C)]`-style value struct is C-callable and a fn-pointer
+    // to it is a real C function pointer. Non-Copy structs keep cpc's ownership
+    // ABI (plain → `ptr`, `move` → raw value): they carry `Drop`, which sema
+    // bars from the C boundary, so they never cross to C. Scalars are `Direct`.
+    let _ = is_c_export;
+    let param_abis: Vec<CAbiClass> = sig
+        .params
+        .iter()
+        .map(|(pty, move_, mut_, _)| {
+            if matches!(pty, Ty::Struct(_))
+                && is_copy_ty(pty, types)
+                && !param_passes_by_ptr(pty, *move_, *mut_, types)
+            {
+                classify_c_abi(pty, types)
+            } else {
+                CAbiClass::Direct
+            }
+        })
+        .collect();
 
     // Existing Slice 1D path: owned `string` returns use sret. 5.D adds
     // sret for any C-export with an Indirect-class return (>16 bytes).
@@ -11663,6 +11676,43 @@ impl<'a> FnState<'a> {
         // (double-free). All callable signatures here are C-ABI (ccc).
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         for (a, pty) in args.iter().zip(params.iter()) {
+            // A by-value COPY struct arg lowers through the C ABI so the indirect
+            // call matches a C (or unified cpc) callee — a raw aggregate
+            // segfaults a C target (the headline fn-pointer ABI bug). Non-Copy
+            // structs and scalars keep the existing value-pass (they don't cross
+            // to C). Mirrors the Copy-struct arm of `gen_named_call`.
+            if matches!(pty, Ty::Struct(_)) && is_copy_ty(pty, self.types) {
+                match classify_c_abi(pty, self.types) {
+                    CAbiClass::Coerce {
+                        llvm_ty,
+                        size,
+                        align,
+                    } => {
+                        let (v, _) = self.gen_expr(a).expect("indirect call arg is a value");
+                        let pty_lty = self.lty(pty);
+                        let (_, struct_al) = static_layout(pty, self.types).unwrap_or((size, align));
+                        let slot = self.alloca_named_raw("arg.coerce", &llvm_ty, align);
+                        self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {struct_al}"));
+                        let coerced = self.next_tmp();
+                        self.emit(&format!(
+                            "{coerced} = load {llvm_ty}, ptr {slot}, align {align}"
+                        ));
+                        arg_vals.push((coerced, llvm_ty));
+                        continue;
+                    }
+                    CAbiClass::Indirect => {
+                        let (v, _) = self.gen_expr(a).expect("indirect call arg is a value");
+                        let pty_lty = self.lty(pty);
+                        let (_, al) =
+                            static_layout(pty, self.types).expect("indirect arg has layout");
+                        let slot = self.alloca_anon(pty.clone());
+                        self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
+                        arg_vals.push((slot, "ptr".to_string()));
+                        continue;
+                    }
+                    CAbiClass::Direct => {}
+                }
+            }
             let (v, _) = self.gen_value_arg(a, pty);
             arg_vals.push((v, self.lty(pty)));
             if !is_copy_ty(pty, self.types) {
@@ -11824,7 +11874,13 @@ impl<'a> FnState<'a> {
                 // passed the raw `%T` aggregate, silently mismatching the
                 // callee's coerced/indirect signature → SIGSEGV on the
                 // first real call.
-                if sig.is_extern {
+                // C-ABI unification: a by-value COPY struct arg uses the C ABI
+                // for EVERY call (native + extern), matching the unified callee
+                // signature — a raw aggregate would mismatch the coerced/indirect
+                // param and segfault. Non-Copy structs keep cpc's ABI (they don't
+                // cross to C). Extern callees only ever take Copy structs (sema
+                // bars Drop), so this subsumes the old `sig.is_extern` gate.
+                if matches!(pty, Ty::Struct(_)) && is_copy_ty(pty, self.types) {
                     match classify_c_abi(pty, self.types) {
                         CAbiClass::Coerce {
                             llvm_ty,
@@ -17286,7 +17342,9 @@ mod tests {
     #[test]
     fn struct_passed_by_value_in_signature() {
         let ir = gen_src(include_str!("../../docs/examples/point.cplus"));
-        assert!(ir.contains("i32 @distance_squared(%Point"));
+        // C-ABI unification: `Point {x:i32,y:i32}` (8 bytes) is passed coerced to
+        // `i64` per the platform C ABI (matches clang), not as a raw aggregate.
+        assert!(ir.contains("i32 @distance_squared(i64"));
     }
 
     #[test]
@@ -17666,18 +17724,19 @@ mod tests {
     }
 
     #[test]
-    fn mut_param_copy_struct_stays_value_passed() {
-        // Copy structs: `mut p: P` is local mutability per §2.9, not an
-        // exclusive borrow. The LLVM signature must remain by-value so the
-        // caller's storage is unaffected by the callee's writes.
+    fn mut_param_copy_struct_passed_by_value_c_abi() {
+        // Copy structs: `mut p: P` is local mutability per §2.9, not an exclusive
+        // borrow — the value is passed BY VALUE (a copy), so the caller's storage
+        // is unaffected. Under the C-ABI unification that by-value pass is the
+        // coerced C-ABI form (`i64`), matching clang, not a raw aggregate.
         let ir = gen_src(
             "struct P { v: i32 }\n\
              fn bump(mut p: P) -> i32 { p.v = p.v + 1; return p.v; }\n\
              fn main() -> i32 { let q: P = P { v: 5 }; return bump(q); }",
         );
         assert!(
-            ir.contains("i32 @bump(%P "),
-            "expected `mut p: P` on Copy struct to stay struct-by-value, got: {ir}"
+            ir.contains("i32 @bump(i64"),
+            "expected `mut p: P` on Copy struct to be passed by value via the C ABI (coerced i64), got: {ir}"
         );
     }
 
@@ -18007,8 +18066,10 @@ mod tests {
     }
 
     #[test]
-    fn copy_struct_value_param_no_aggregate_noundef() {
-        // Copy struct stays value-passed; aggregate value → no noundef.
+    fn copy_struct_value_param_coerced_per_c_abi() {
+        // C-ABI unification: a by-value Copy struct is coerced to the platform
+        // C-ABI integer class (a ≤8-byte struct → `i64`), matching clang — not a
+        // raw aggregate. It's a plain scalar param (no `noundef`/aggregate attrs).
         let ir = gen_src(
             "struct P { v: i32 }\n\
              fn use_p(p: P) -> i32 { return p.v; }\n\
@@ -18018,10 +18079,10 @@ mod tests {
             .lines()
             .find(|l| l.contains("i32 @use_p("))
             .expect("@use_p must be emitted");
-        assert!(line.contains("%P "), "expected by-value P param: {line}");
+        assert!(line.contains("i64"), "expected C-ABI-coerced i64 param: {line}");
         assert!(
             !line.contains("noundef"),
-            "value-passed aggregate must not carry noundef: {line}"
+            "coerced scalar param must not carry noundef: {line}"
         );
     }
 
@@ -19977,19 +20038,21 @@ mod tests {
     }
 
     #[test]
-    fn non_extern_fn_unaffected_by_5d() {
-        // Regression guard: 5.D coercion fires ONLY on `pub extern fn`.
-        // A regular C+ fn `fn use_p(p: Point) -> i32` keeps the C+ ABI
-        // (LLVM first-class aggregate, `%Point %0`).
+    fn non_extern_copy_struct_param_uses_c_abi() {
+        // C-ABI unification: a regular (non-extern) C+ fn taking a by-value COPY
+        // struct now lowers it per the platform C ABI — an 8-byte {i32,i32}
+        // coerces to `i64`, the SAME as `pub extern fn` and as clang — so the fn
+        // is C-callable and a fn-pointer to it is a real C function pointer.
+        // (Previously native fns kept the raw `%Point` aggregate, diverging from
+        // C and segfaulting fn-pointer-to-C calls.)
         let ir = gen_src(
             "#[repr(C)] struct Point { x: i32, y: i32 }\n\
              fn use_p(p: Point) -> i32 { return p.x; }\n\
              fn main() -> i32 { let q: Point = Point { x: 1, y: 2 }; return use_p(q); }",
         );
-        // The non-extern path keeps `%Point %0` (Copy struct, by-value).
         assert!(
-            ir.contains("i32 @use_p(%Point"),
-            "non-extern fn must keep C+ ABI, got:\n{ir}"
+            ir.contains("@use_p(i64"),
+            "native fn must use the C ABI (coerced i64) for a by-value Copy struct, got:\n{ir}"
         );
     }
 

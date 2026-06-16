@@ -1809,6 +1809,86 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
 }
 
 #[test]
+fn fn_pointer_to_c_struct_by_value_c_abi() {
+    // C-ABI unification: a fn-pointer to a real C function that takes a struct
+    // BY VALUE must use the platform C ABI for the arg — a raw aggregate
+    // segfaults (the reported bug). Covers a large struct (>16B → passed
+    // indirectly) and an HFA float struct ({f64,f64} → FP registers). Links
+    // against a clang-compiled C object: this is the ground-truth ABI check.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let c_src = dir.join("c_side.c");
+    let cplus_src = dir.join("m.cplus");
+    let c_obj = dir.join("c_side.o");
+    let cplus_obj = dir.join("m.o");
+    let bin = dir.join("fpc_abi");
+    std::fs::write(
+        &c_src,
+        "#include <stdint.h>\n\
+         struct Big { int64_t a, b, c, d; };\n\
+         int64_t c_sum(struct Big x) { return x.a + x.b + x.c + x.d; }\n\
+         struct Pf { double x, y; };\n\
+         double c_f(struct Pf p) { return p.x * 1000.0 + p.y; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &cplus_src,
+        "#[repr(C)] struct Big { a: i64, b: i64, c: i64, d: i64 }\n\
+         #[repr(C)] struct Pf { x: f64, y: f64 }\n\
+         extern fn c_sum(x: Big) -> i64;\n\
+         extern fn c_f(p: Pf) -> f64;\n\
+         fn main() -> i32 {\n\
+             let f1: fn(Big) -> i64 = c_sum;\n\
+             let b: Big = Big { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 };\n\
+             if unsafe { f1(b) } != (10 as i64) { return 1; }\n\
+             let f2: fn(Pf) -> f64 = c_f;\n\
+             let p: Pf = Pf { x: 3.0, y: 4.0 };\n\
+             if unsafe { f2(p) } != 3004.0 { return 2; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    assert!(
+        Command::new("clang")
+            .args(["-c", "-o"])
+            .arg(&c_obj)
+            .arg(&c_src)
+            .status()
+            .expect("clang")
+            .success(),
+        "clang -c failed"
+    );
+    assert!(
+        Command::new(cpc)
+            .arg("--emit-obj")
+            .arg(&cplus_src)
+            .arg("-o")
+            .arg(&cplus_obj)
+            .status()
+            .expect("cpc")
+            .success(),
+        "cpc --emit-obj failed"
+    );
+    assert!(
+        Command::new("clang")
+            .arg(&cplus_obj)
+            .arg(&c_obj)
+            .arg("-o")
+            .arg(&bin)
+            .status()
+            .expect("link")
+            .success(),
+        "link failed"
+    );
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "fn-pointer to C struct-by-value used the wrong ABI (raw aggregate vs C ABI)"
+    );
+}
+
+#[test]
 fn fn_pointer_call_moves_arg_no_double_free() {
     // A non-Copy value passed by value through a fn-pointer (Ident-bound and
     // struct-field forms) is MOVED into the call — the callee drops it once, the
@@ -4817,8 +4897,10 @@ fn main() -> i32 {
 
 #[test]
 fn copy_struct_param_stays_by_value_no_attr() {
-    // `mut p: Point` on a Copy struct is local-mutability, not a
-    // borrow. Stays struct-by-value, no LLVM attribute.
+    // `mut p: Point` on a Copy struct is local-mutability, not a borrow — passed
+    // BY VALUE (a copy), so the caller's storage is unaffected. Under the C-ABI
+    // unification that by-value pass is the coerced C-ABI form (8-byte
+    // {i32,i32} → `i64`), matching clang.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("t.cplus");
@@ -4842,8 +4924,8 @@ fn main() -> i32 {
     assert!(out.status.success());
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
-        ir.contains("i32 @shift(%Point "),
-        "Copy struct should stay struct-by-value; got: {ir}"
+        ir.contains("i32 @shift(i64"),
+        "Copy struct should be passed by value via the C ABI (coerced i64); got: {ir}"
     );
 }
 
