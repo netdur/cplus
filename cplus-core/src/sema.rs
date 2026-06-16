@@ -16027,6 +16027,71 @@ fn main() -> i32 { return 0; }\n";
         }
     }
 
+    // ---- call resolution matrix (form × receiver-ness × context × arity) ----
+    //
+    // Call RESOLUTION must behave IDENTICALLY whether the type is concrete (`P`)
+    // or a generic param (`T: I`). The axes: method-form (`recv.f()`) vs
+    // path-form (`Type::f()`); an instance method (declared with `self`) vs an
+    // associated fn (no receiver); right vs wrong arity; and unknown names.
+    // The `t.make()` / `T::make()` bugs were missing cells of exactly this grid
+    // — method-form and path-form are twin resolution surfaces, and a
+    // generic-param fix to one needs its twin. This locks the full truth table.
+
+    #[test]
+    fn call_resolution_matrix() {
+        const PRELUDE: &str = "\
+interface I { fn inst(self, a: i32) -> i32; fn assoc(a: i32) -> i32; }\n\
+struct P { x: i32 }\n\
+impl P for I { fn inst(self, a: i32) -> i32 { return self.x + a; } fn assoc(a: i32) -> i32 { return a; } }\n\
+fn main() -> i32 { return 0; }\n";
+
+        // (name, call template — `{V}` value receiver, `{T}` type — needs a
+        //  value receiver in scope, expected code | "" = clean)
+        let cases: &[(&str, &str, bool, &str)] = &[
+            // instance method (`self`): correct via method-form, wrong via path
+            ("inst_method_ok", "{V}.inst(1)", true, ""),
+            ("inst_method_arity", "{V}.inst(1, 2)", true, "E0308"),
+            ("inst_via_path", "{T}::inst(1)", false, "E0327"),
+            // associated fn (no receiver): correct via path-form, wrong via method
+            ("assoc_path_ok", "{T}::assoc(1)", false, ""),
+            ("assoc_path_arity", "{T}::assoc(1, 2)", false, "E0308"),
+            ("assoc_via_method", "{V}.assoc(1)", true, "E0327"),
+            // unknown name on either surface
+            ("unknown_method", "{V}.nope(1)", true, "E0324"),
+            ("unknown_path", "{T}::nope(1)", false, "E0324"),
+        ];
+
+        for ctx in &["concrete", "generic"] {
+            let (vtok, ttok) = if *ctx == "concrete" { ("p", "P") } else { ("t", "T") };
+            for (name, tmpl, needs_recv, expected) in cases {
+                let call = tmpl.replace("{V}", vtok).replace("{T}", ttok);
+                let prog = if *ctx == "concrete" {
+                    let decl = if *needs_recv { "let p: P = P { x: 4 };" } else { "" };
+                    format!(
+                        "{PRELUDE}fn c_{name}() -> i32 {{ {decl} let _r: i32 = {call}; return 0; }}\n"
+                    )
+                } else {
+                    let params = if *needs_recv { "t: T" } else { "" };
+                    format!(
+                        "{PRELUDE}fn g_{name}[T: I]({params}) -> i32 {{ let _r: i32 = {call}; return 0; }}\n"
+                    )
+                };
+                let codes = errors(&prog);
+                if expected.is_empty() {
+                    assert!(
+                        codes.is_empty(),
+                        "[{ctx} {name}] expected CLEAN, got {codes:?}\n--- program ---\n{prog}"
+                    );
+                } else {
+                    assert!(
+                        codes.contains(expected),
+                        "[{ctx} {name}] expected {expected}, got {codes:?}\n--- program ---\n{prog}"
+                    );
+                }
+            }
+        }
+    }
+
     // ---- `f16` literal suffix ----
 
     #[test]
