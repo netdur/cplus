@@ -9488,6 +9488,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     }
                     return Ty::Error;
                 }
+                // A `move self` bound method consumes the receiver, exactly like
+                // the concrete path. On a `borrow`/`mut`-bound receiver that is a
+                // move-out-of-borrow (E0337): without this `t.take()` where
+                // `take(move self)` launders the borrow into an owned value the
+                // caller still drops (double-free). `consume_place` routes through
+                // `classify_partial_move`, so it also catches a Drop field / raw
+                // deref receiver. Copy `T` (bound-aware) is never consumed.
+                if matches!(msig.receiver, Some(Receiver::Move)) && !self.is_copy(&recv_ty) {
+                    self.consume_place(receiver, pname, &name.name);
+                }
                 // Substitute `Self` → `Ty::Param(pname)` in the interface
                 // method signature so arg-type checks match what the user
                 // wrote (`other: T` not `other: Self`).
@@ -11773,7 +11783,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // owner's teardown is a no-op).
         if let ExprKind::Ident(name) = &e.kind {
             if let Some(info) = self.lookup_local(name) {
-                if !info.owns_value && self.ty_carries_drop(&info.ty) {
+                // An abstract generic `T` (`Ty::Param`) might be instantiated
+                // with a Drop type, so `ty_carries_drop` (which reads `false`
+                // for `Param`) can't clear it: a non-owning, non-Copy `T`
+                // binding moved into an owned slot is a potential double-free.
+                // `T: Copy` (bound-aware `is_copy`) is safe — a Copy type has no
+                // destructor, so the owner's teardown is a no-op.
+                let abstract_param_may_drop =
+                    matches!(info.ty, Ty::Param(_)) && !self.is_copy(&info.ty);
+                if !info.owns_value
+                    && (self.ty_carries_drop(&info.ty) || abstract_param_may_drop)
+                {
                     return Some((e.span, PartialMoveKind::BorrowedBinding(name.clone())));
                 }
             }
@@ -15702,6 +15722,40 @@ mod tests {
              }\n\
              fn main() -> i32 { return 0; }",
             "E0335",
+        );
+    }
+
+    #[test]
+    fn generic_borrow_param_returned_as_owned_e0337() {
+        // Returning an unbounded-`T` `borrow` param as an owned value: the
+        // caller still owns+drops it, so for a Drop instantiation this is a
+        // double-free. Abstract `T` can't be cleared by `ty_carries_drop`
+        // (which reads false for `Param`), so a non-Copy `Param` borrow is
+        // flagged conservatively.
+        assert_has_code("fn leak[T](borrow t: T) -> T { return t; }", "E0337");
+    }
+
+    #[test]
+    fn generic_copy_borrow_param_returned_clean() {
+        // `T: Copy` is bound-aware Copy: returning the borrow bit-copies
+        // harmlessly (no destructor), so this is allowed.
+        assert_clean("fn ok[T: Copy](borrow t: T) -> T { return t; }");
+    }
+
+    #[test]
+    fn generic_move_self_method_through_bound_on_borrow_e0337() {
+        // `t.take()` where `take(move self)` consumes the receiver, but `t` is
+        // a `borrow` param: moving it out launders the borrow into an owned
+        // value the caller still drops (double-free). Must be E0337 — the
+        // receiver path, not just args, runs the move classifier.
+        assert_has_code(
+            "interface Take { fn take(move self) -> i32; }\n\
+             struct R { opaque data: *u8 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             impl R for Take { fn take(move self) -> i32 { return 0; } }\n\
+             fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
+             fn main() -> i32 { return 0; }",
+            "E0337",
         );
     }
 

@@ -1744,6 +1744,27 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
 }
 
 #[test]
+fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
+    // `t.take()` where the bound interface method is `take(move self)` and `t`
+    // is a `borrow` param: the receiver is moved out of the borrow (the caller
+    // still drops it). Must be rejected (E0337), not compiled into a
+    // double-free. Exercises the `move self` receiver path of the bound-method
+    // checker, not just its args.
+    assert_compile_fails_with(
+        "interface Take { fn take(move self) -> i32; }\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { return; } }\n\
+         impl R for Take { fn take(move self) -> i32 { return 0; } }\n\
+         fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
+         fn main() -> i32 {\n\
+           let r: R = R { data: unsafe { 0 as *u8 } };\n\
+           return steal::[R](r);\n\
+         }\n",
+        "E0337",
+    );
+}
+
+#[test]
 fn generic_body_copy_bound_reuse_compiles_and_runs() {
     // A `T: Copy` generic fn may reuse its value (bound-aware Copy); it must
     // compile through codegen and run with the expected value.
