@@ -1809,6 +1809,55 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
 }
 
 #[test]
+fn fn_pointer_call_moves_arg_no_double_free() {
+    // A non-Copy value passed by value through a fn-pointer (Ident-bound and
+    // struct-field forms) is MOVED into the call — the callee drops it once, the
+    // source must NOT drop it again. `tag` makes a double-free observable: a
+    // single drop adds 7, a double adds 14. Expect DROPS=7 + n(=1) = 8.
+    for (label, run_body) in [
+        (
+            "ident",
+            "let f: fn(R) -> i32 = sink; let r: R = R { tag: 7 }; return f(r);",
+        ),
+        (
+            "field",
+            "let h: Handler = Handler { cb: sink }; let r: R = R { tag: 7 }; return h.cb(r);",
+        ),
+    ] {
+        let cpc = env!("CARGO_BIN_EXE_cpc");
+        let dir = tempdir();
+        let src = dir.join("fnptr.cplus");
+        std::fs::write(
+            &src,
+            format!(
+                "static mut DROPS: i32 = 0;\n\
+                 struct R {{ tag: i32 }}\n\
+                 impl R {{ fn drop(mut self) {{ unsafe {{ DROPS = DROPS + self.tag; }}; return; }} }}\n\
+                 fn sink(r: R) -> i32 {{ return 1; }}\n\
+                 struct Handler {{ cb: fn(R) -> i32 }}\n\
+                 fn run() -> i32 {{ {run_body} }}\n\
+                 fn main() -> i32 {{ let n: i32 = run(); return unsafe {{ DROPS + n }}; }}\n"
+            ),
+        )
+        .unwrap();
+        let bin = dir.join("fnptr");
+        let st = Command::new(cpc)
+            .arg(&src)
+            .arg("-o")
+            .arg(&bin)
+            .status()
+            .expect("invoke cpc");
+        assert!(st.success(), "cpc build failed ({label})");
+        let run = Command::new(&bin).status().expect("run");
+        assert_eq!(
+            run.code(),
+            Some(8),
+            "fn-pointer {label} call double-freed (expected 8 = DROPS 7 + n 1)"
+        );
+    }
+}
+
+#[test]
 fn generic_body_copy_bound_reuse_compiles_and_runs() {
     // A `T: Copy` generic fn may reuse its value (bound-aware Copy); it must
     // compile through codegen and run with the expected value.

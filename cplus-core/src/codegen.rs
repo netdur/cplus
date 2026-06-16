@@ -3059,6 +3059,19 @@ fn scan_moves_in_expr(
                             }
                         }
                     }
+                } else {
+                    // Indirect call through a fn-pointer local. By codegen time
+                    // (post-monomorphization) any Ident callee not in `sigs` is a
+                    // fn-pointer value, and its by-value non-Copy args are moved
+                    // into the call. Register the bare-Ident args as move sources
+                    // so a flippable drop flag is allocated — otherwise
+                    // `gen_indirect_call`'s `mark_moved` hits the `.unused`
+                    // sentinel (undefined SSA) and the source double-frees.
+                    for arg in args {
+                        if let ExprKind::Ident(n) = &arg.kind {
+                            set.insert(n.clone());
+                        }
+                    }
                 }
                 // v0.0.19: the move-consuming `#thread_join` / `#thread_spawn_with`
                 // are now `ExprKind::Intrinsic` (handled in that arm below); the
@@ -3119,6 +3132,25 @@ fn scan_moves_in_expr(
                                     set.insert(n.clone());
                                 }
                             }
+                        }
+                    }
+                }
+                // fn-pointer FIELD call (struct-of-callbacks): `s.cb(r)` where
+                // `cb` is a fn-pointer field, not a method. Its by-value non-Copy
+                // args are moved into the indirect call (`gen_indirect_call`
+                // disarms them), so register the bare-Ident args as move sources
+                // — else `mark_moved` hits the `.unused` sentinel (undefined SSA)
+                // and the source double-frees. Conservative walk (any struct with
+                // a fn-pointer field of this name); over-registration is safe.
+                let is_fn_ptr_field = types.struct_defs.iter().any(|sdef| {
+                    sdef.fields
+                        .iter()
+                        .any(|(fname, fty)| fname == &m.name && matches!(fty, Ty::FnPtr { .. }))
+                });
+                if is_fn_ptr_field {
+                    for a in args {
+                        if let ExprKind::Ident(n) = &a.kind {
+                            set.insert(n.clone());
                         }
                     }
                 }
@@ -11622,14 +11654,22 @@ impl<'a> FnState<'a> {
         return_type: &Ty,
         args: &[Expr],
     ) -> Option<(String, Ty)> {
-        // Evaluate each arg to a value. FnPtr params are always value-passed
-        // (no `mut`/`move` machinery at the call site — those are call-site
-        // contracts, not type-level facts; the fn-pointer abstraction
-        // erases them). All callable signatures here are C-ABI (ccc).
+        // Evaluate each arg to a value. FnPtr params are value-passed (the
+        // fn-pointer type carries no `mut`/`borrow` markers). The type erases
+        // those markers, but a non-Copy value passed BY VALUE is still moved
+        // into the call (the callee owns and drops it), so disarm the source
+        // binding's scope-exit drop — exactly as a direct call does for a move
+        // param. Without this, the source and the callee both drop it
+        // (double-free). All callable signatures here are C-ABI (ccc).
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         for (a, pty) in args.iter().zip(params.iter()) {
             let (v, _) = self.gen_value_arg(a, pty);
             arg_vals.push((v, self.lty(pty)));
+            if !is_copy_ty(pty, self.types) {
+                if let ExprKind::Ident(name) = &a.kind {
+                    self.mark_moved(name);
+                }
+            }
         }
         let mut arg_str = String::new();
         for (i, (v, t)) in arg_vals.iter().enumerate() {

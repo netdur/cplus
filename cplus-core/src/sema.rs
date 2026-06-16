@@ -8179,8 +8179,23 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         }
                         return *return_type;
                     }
+                    // A fn-pointer's params are by-value (the `Ty::FnPtr` type
+                    // carries no borrow/mut markers), so a non-Copy arg is moved
+                    // into the call — consume the caller's binding via the shared
+                    // path (E0335 use-after-move, E0509/E0337 partial moves),
+                    // exactly like a direct call. Without this an indirect call
+                    // neither caught a use-after-move nor disarmed the source's
+                    // drop (double-free).
                     for (a, p) in args.iter().zip(params.iter()) {
-                        let _ = self.check_expr(a, Some(p.clone()));
+                        self.check_arg_with_move(
+                            a,
+                            &ParamSig {
+                                ty: p.clone(),
+                                mutable: false,
+                                move_: false,
+                                borrow_: false,
+                            },
+                        );
                     }
                     return *return_type;
                 }
@@ -8224,8 +8239,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             }
                             return *return_type;
                         }
+                        // By-value fn-pointer params consume non-Copy args (see
+                        // the Ident fn-pointer branch above).
                         for (a, p) in args.iter().zip(params.iter()) {
-                            let _ = self.check_expr(a, Some(p.clone()));
+                            self.check_arg_with_move(
+                                a,
+                                &ParamSig {
+                                    ty: p.clone(),
+                                    mutable: false,
+                                    move_: false,
+                                    borrow_: false,
+                                },
+                            );
                         }
                         return *return_type;
                     }
@@ -9798,7 +9823,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
         }
-        // Type-check each arg against the *substituted* parameter type.
+        // Type-check each arg against the *substituted* parameter type, then
+        // consume it (move semantics) via the shared `consume_value_arg` — a
+        // generic method call moves its by-value non-Copy args exactly like a
+        // concrete one; without this a use-after-move through a generic method
+        // slipped (the arg was never marked moved).
         for (a, expected) in args.iter().zip(sig.params.iter()) {
             let expected_ty = self.subst_ty_deep(&expected.ty, &subst);
             let arg_ty = self.check_expr(a, Some(expected_ty.clone()));
@@ -9815,6 +9844,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     a.span,
                 );
             }
+            let expected_subst = ParamSig {
+                ty: expected_ty,
+                mutable: expected.mutable,
+                move_: expected.move_,
+                borrow_: expected.borrow_,
+            };
+            self.consume_value_arg(a, &expected_subst);
         }
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
@@ -11586,33 +11622,28 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return;
         }
         let _ = self.check_expr(arg, Some(expected.ty.clone()));
-        // v0.0.10 Phase 5: non-Copy params consume the caller's binding by
-        // default. `move x: T` is the explicit spelling (kept for
-        // back-compat); `mut x: T` is the exclusive-borrow form (no
-        // consume); `borrow x: T` is the new shared-borrow opt-out for
-        // non-Copy types. Copy types are never consumed (no Drop, the
-        // marker is just informational).
-        //
-        // Rvalues (struct literals, generic struct literals, enum
-        // constructors, calls returning by value, etc.) own their value
-        // outright — there's no caller binding to mark moved, so the
-        // "implicit move" default is a no-op for them. Only explicit
-        // `move x: T` (which would have errored before, and still does
-        // for Field/Index partial moves) and named-binding arguments
-        // exercise consume_arg_place.
+        self.consume_value_arg(arg, expected);
+    }
+
+    /// Apply by-value move-consumption for one argument, given the (already
+    /// type-checked) arg and its parameter signature. THE single place every
+    /// call form runs arg-consumption — direct (`check_arg_with_move`), generic
+    /// method (`check_generic_method_call`), and indirect fn-pointer calls all
+    /// route through here so none can skip it (each that hand-rolled its own arg
+    /// loop was a use-after-move / double-free hole).
+    ///
+    /// v0.0.10 Phase 5: a non-Copy by-value param consumes the caller's binding;
+    /// `mut`/`borrow` opt out (by-pointer, caller keeps ownership); `move x: T`
+    /// is the explicit spelling. Copy types are never consumed. Rvalues own
+    /// their value outright, so the move-marking is a no-op for them; a forbidden
+    /// partial move (Drop field/index → E0509, Drop-carrying raw deref or a
+    /// borrowed binding → E0337) is rejected.
+    fn consume_value_arg(&mut self, arg: &Expr, expected: &ParamSig) {
         if self.is_copy(&expected.ty) {
             return;
         }
         let implicit_move = !expected.mutable && !expected.borrow_;
-        let explicit_move = expected.move_;
-        if explicit_move || implicit_move {
-            // A non-Copy value passed by value to an owning param is moved. Use
-            // the SAME drop-aware path as let/return/construction: reject a
-            // forbidden partial move (a non-Copy field/index of a Drop aggregate
-            // → E0509, a Drop-carrying raw deref → E0337) and mark a whole-binding
-            // move consumed — peeling value-transparent wrappers so `f({ x })`
-            // consumes `x` (codegen moves through the wrapper). A drop-free read
-            // (a POD field/deref) and an rvalue own their value and pass through.
+        if expected.move_ || implicit_move {
             self.reject_partial_move_of_drop(arg, &expected.ty);
             self.mark_moved_through_wrappers(arg, &expected.ty);
         }
@@ -15890,6 +15921,7 @@ impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; }; return; } fn sink(mo
 struct H { e: R }\n\
 struct W { r: R }\n\
 enum E { A(R) }\n\
+struct Hdlr { cb: fn(R) -> i32 }\n\
 fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
 fn take(x: R) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
@@ -15906,6 +15938,9 @@ fn main() -> i32 { return 0; }\n";
             ("move_self_recv", "let _m: i32 = ({V}).sink();", false),
             ("assign", "let mut _s: R = mkr(); _s = {V};", false),
             ("field_assign", "let mut _hh: H = H { e: mkr() }; _hh.e = {V};", false),
+            // indirect calls through a fn-pointer (by-value param = move)
+            ("fnptr_ident_call", "let _fp: fn(R) -> i32 = take; let _c: i32 = _fp({V});", false),
+            ("fnptr_field_call", "let _h: Hdlr = Hdlr { cb: take }; let _c: i32 = _h.cb({V});", false),
         ];
 
         // (name, fn params, setup stmts, value expr, expected code | "" = clean)
@@ -15948,6 +15983,8 @@ fn main() -> i32 { return 0; }\n";
 struct R { opaque data: *u8 }\n\
 impl R { fn drop(mut self) { return; } }\n\
 struct GW[U] { v: U }\n\
+struct GM { v: i32 }\n\
+impl GM { fn take2[U](self, x: U) -> i32 { return 0; } }\n\
 fn gtake[U](x: U) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
 
@@ -15956,6 +15993,7 @@ fn main() -> i32 { return 0; }\n";
             ("let", "let _x: T = {V};", false),
             ("return", "return {V};", true),
             ("call_arg", "let _c: i32 = gtake::[T]({V});", false),
+            ("generic_method_call", "let _w: GM = GM { v: 0 }; let _c: i32 = _w.take2::[T]({V});", false),
             ("struct_field", "let _w: GW[T] = GW[T] { v: {V} };", false),
             ("tuple_elem", "let _t: (T, i32) = ({V}, 0);", false),
             ("array_elem", "let _a: [T; 1] = [{V}];", false),
@@ -16002,6 +16040,7 @@ struct R { opaque data: *u8 }\n\
 impl R { fn drop(mut self) { return; } }\n\
 struct W { r: R }\n\
 enum E { A(R) }\n\
+struct Hdlr { cb: fn(R) -> i32 }\n\
 fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
 fn take(x: R) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
@@ -16013,6 +16052,8 @@ fn main() -> i32 { return 0; }\n";
             ("enum_arg", "let _e: E = E::A(r);"),
             ("tuple_elem", "let _t: (R, i32) = (r, 0);"),
             ("array_elem", "let _a: [R; 1] = [r];"),
+            ("fnptr_ident_call", "let _fp: fn(R) -> i32 = take; let _c: i32 = _fp(r);"),
+            ("fnptr_field_call", "let _h: Hdlr = Hdlr { cb: take }; let _c: i32 = _h.cb(r);"),
         ];
 
         for (sname, consume) in sites {
