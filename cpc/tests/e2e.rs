@@ -1662,6 +1662,112 @@ fn use_after_move_rejected_at_compile_time() {
     );
 }
 
+// ---- generic-fn-body soundness (previously generic bodies were unchecked) ----
+
+/// Helper: compile `src` and assert it fails with `code` in stderr.
+fn assert_compile_fails_with(src: &str, code: &str) {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let path = dir.join("g.cplus");
+    std::fs::write(&path, src).unwrap();
+    let out = Command::new(cpc)
+        .arg(&path)
+        .arg("-o")
+        .arg(dir.join("g"))
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "expected compile failure ({code}) for:\n{src}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(code),
+        "expected {code} in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn generic_body_receiver_less_interface_call_rejected_e0327() {
+    // `t.make()` where the interface method `make()` has no receiver: E0327,
+    // not a codegen panic.
+    assert_compile_fails_with(
+        "struct P { x: i32 }\n\
+         interface Maker { fn make() -> i32; }\n\
+         impl P for Maker { fn make() -> i32 { return 7; } }\n\
+         fn call_make[T: Maker](t: T) -> i32 { return t.make(); }\n\
+         fn main() -> i32 { let p: P = P { x: 1 }; return call_make::[P](p); }\n",
+        "E0327",
+    );
+}
+
+#[test]
+fn generic_body_use_after_move_rejected_e0335() {
+    // Reusing a value after it was moved into a bound method's by-value arg:
+    // E0335 (would otherwise double-free at run time).
+    assert_compile_fails_with(
+        "struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { return; } }\n\
+         struct P {}\n\
+         interface Sink { fn sink(self, r: R); }\n\
+         impl P for Sink { fn sink(self, r: R) { return; } }\n\
+         fn use_twice[T: Sink](t: T) -> i32 {\n\
+           let r: R = R { data: unsafe { 0 as *u8 } };\n\
+           t.sink(r);\n\
+           let y: R = r;\n\
+           return 0;\n\
+         }\n\
+         fn main() -> i32 { let p: P = P {}; return use_twice::[P](p); }\n",
+        "E0335",
+    );
+}
+
+#[test]
+fn generic_body_move_out_of_borrow_rejected_e0337() {
+    // Moving a `borrow` parameter by value into a bound method's by-value arg:
+    // E0337 (would otherwise double-free — both the callee and the owner drop).
+    assert_compile_fails_with(
+        "struct R { opaque data: *u8 }\n\
+         impl R { fn drop(mut self) { return; } }\n\
+         struct P {}\n\
+         interface Sink { fn sink(self, r: R); }\n\
+         impl P for Sink { fn sink(self, r: R) { return; } }\n\
+         fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
+         fn main() -> i32 {\n\
+           let p: P = P {};\n\
+           let r: R = R { data: unsafe { 0 as *u8 } };\n\
+           steal::[P](p, r);\n\
+           return 0;\n\
+         }\n",
+        "E0337",
+    );
+}
+
+#[test]
+fn generic_body_copy_bound_reuse_compiles_and_runs() {
+    // A `T: Copy` generic fn may reuse its value (bound-aware Copy); it must
+    // compile through codegen and run with the expected value.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("copyparam.cplus");
+    std::fs::write(
+        &src,
+        "fn pick[T: Copy](a: T, b: T) -> T { let c: T = a; return c; }\n\
+         fn main() -> i32 { return pick::[i32](42, 0); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("copyparam");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for T: Copy reuse");
+    let run = Command::new(&bin).status().expect("run");
+    assert_eq!(run.code(), Some(42), "expected exit 42 from pick::[i32]");
+}
+
 #[test]
 fn move_param_use_after_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -12699,7 +12805,7 @@ impl Point for Ord {
         return 0;
     }
 }
-fn max[T: Ord](a: T, b: T) -> T {
+fn max[T: Ord + Copy](a: T, b: T) -> T {
     if a.cmp(b) < 0 { return b; }
     return a;
 }

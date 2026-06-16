@@ -1623,8 +1623,28 @@ impl SemaCx<'_> {
             Ty::Array(elem, _) => self.is_copy(elem),
             Ty::Struct(id) => self.structs[id.0 as usize].is_copy,
             Ty::Enum(id) => self.enums[id.0 as usize].is_copy,
+            // Bound-aware Copy for a generic type parameter (the deferred
+            // work `is_atomic_copy`'s `Ty::Param => false` comment anticipated).
+            // A `T: Copy` bound means every instantiation is Copy, so a `T`
+            // value is bitwise-duplicated, not moved. This is essential once
+            // generic bodies are move-checked: without it, a `fn dup[T: Copy]`
+            // that uses its argument twice would false-positive (E0335).
+            // Unbounded `T` stays non-Copy (move-only) — the sound default.
+            Ty::Param(name) => self.param_has_copy_bound(name),
             _ => ty.is_atomic_copy(),
         }
+    }
+
+    /// True iff the generic type parameter `name` is in scope with a `Copy`
+    /// bound (`fn f[T: Copy]` / `impl X[T: Copy]`). Walks the bound stack
+    /// newest-first, mirroring `lookup_bound_method`.
+    fn param_has_copy_bound(&self, name: &str) -> bool {
+        for frame in self.param_bounds_stack.iter().rev() {
+            if let Some(bounds) = frame.get(name) {
+                return bounds.iter().any(|b| b == "Copy");
+            }
+        }
+        false
     }
 
     /// Structural Send membership.
@@ -4737,7 +4757,25 @@ impl SemaCx<'_> {
                 return;
             }
         }
-        let sig = self.fns.get(&f.name.name).cloned();
+        let sig = self.fns.get(&f.name.name).cloned().or_else(|| {
+            // Slice 7GEN.x: generic free fns live in `fns_generic`, not `fns`.
+            // Build an `FnSig` view so their bodies get the SAME move /
+            // borrow / method-resolution checking as concrete fns, with the
+            // generic params treated abstractly (pushed via `push_type_params`
+            // below; `is_copy(Ty::Param)` is `false`, so a `T`-typed value is
+            // move-only — the sound rule for "valid across all instantiations").
+            // Previously generic bodies were skipped entirely: use-after-move
+            // and move-out-of-borrow inside a generic body went uncaught
+            // (silent double-frees), and a receiver-less interface call
+            // reached codegen and panicked ("sema validated instance call").
+            self.fns_generic.get(&f.name.name).map(|g| FnSig {
+                params: g.params.clone(),
+                return_type: g.return_type.clone(),
+                is_variadic: false,
+                link_name: None,
+                is_unsafe: g.is_unsafe,
+            })
+        });
         let Some(sig) = sig else {
             return;
         }; // duplicate def already errored
@@ -8578,27 +8616,68 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return Ty::Error;
         }
         let o_ty = self.resolve_type(&type_args[0]);
-        let Some(template) = self.struct_generic_templates.get("JoinHandle").cloned() else {
+        // Resolve `JoinHandle[O]` through the normal type path. The bespoke
+        // `struct_generic_templates.get("JoinHandle")` lookup only sees bare
+        // local names, so it broke once generic bodies started being checked
+        // and `thread.cplus`'s `spawn` was reached as an IMPORTED generic fn.
+        // `resolve_type` handles the imported-module case and an abstract `O`
+        // (it's what the `-> JoinHandle[O]` signature already resolves to).
+        let jh_ty = self.resolve_join_handle_ty(&type_args[0], call_span);
+        if matches!(jh_ty, Ty::Error) {
             self.err(
                 "E0300",
                 format!("`{}` requires `JoinHandle[O]` from `stdlib/thread`", name),
                 call_span,
             );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
             return Ty::Error;
-        };
+        }
         if name == "__cplus_thread_spawn" {
             let expected_f = Ty::FnPtr {
                 params: vec![],
                 return_type: Box::new(o_ty.clone()),
             };
             let _f_ty = self.check_expr(&args[0], Some(expected_f));
-            return self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty]);
+            return jh_ty;
         }
         // __cplus_thread_join
-        let expected_h =
-            self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty.clone()]);
-        let _h_ty = self.check_expr(&args[0], Some(expected_h));
+        let _h_ty = self.check_expr(&args[0], Some(jh_ty));
         o_ty
+    }
+
+    /// Resolve `JoinHandle[O]` for the thread intrinsics via the normal type
+    /// path, so it works whether `thread.cplus` is the entry file or an
+    /// imported module and whether `O` is concrete or an abstract type
+    /// parameter (generic-body checking). Returns `Ty::Error` if `JoinHandle`
+    /// can't be resolved (the caller then emits the helpful E0300).
+    fn resolve_join_handle_ty(&mut self, o_arg: &Type, span: ByteSpan) -> Ty {
+        // The template is keyed bare ("JoinHandle") when `thread.cplus` is the
+        // entry file, but module-qualified ("vendor.stdlib.src.thread.JoinHandle")
+        // when it is imported — the resolver qualifies user AST type references,
+        // but the intrinsic's hardcoded name is not qualified. Find the key
+        // either way (prefer an exact bare match, else a unique `.JoinHandle`
+        // suffix).
+        let key = if self.struct_generic_templates.contains_key("JoinHandle") {
+            Some("JoinHandle".to_string())
+        } else {
+            self.struct_generic_templates
+                .keys()
+                .find(|k| k.ends_with(".JoinHandle"))
+                .cloned()
+        };
+        let Some(key) = key else {
+            return Ty::Error;
+        };
+        let jh_ast = crate::ast::Type {
+            kind: crate::ast::TypeKind::Generic {
+                name: key,
+                args: vec![o_arg.clone()],
+            },
+            span,
+        };
+        self.resolve_type(&jh_ast)
     }
 
     /// v0.0.3 Phase 5 Slice 5E.5: type-check
@@ -8956,7 +9035,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return_type: Box::new(o_ty.clone()),
         };
         let _f = self.check_expr(&args[1], Some(expected_f));
-        let Some(template) = self.struct_generic_templates.get("JoinHandle").cloned() else {
+        // Resolve `JoinHandle[O]` via the normal type path (see
+        // `resolve_join_handle_ty`): works for the imported-module + abstract-O
+        // case that generic-body checking now exercises.
+        let jh_ty = self.resolve_join_handle_ty(&type_args[1], call_span);
+        if matches!(jh_ty, Ty::Error) {
             self.err(
                 "E0300",
                 "`__cplus_thread_spawn_with` requires `JoinHandle[O]` from `stdlib/thread`"
@@ -8964,8 +9047,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 call_span,
             );
             return Ty::Error;
-        };
-        self.instantiate_struct_from_arg_tys("JoinHandle", &template, vec![o_ty])
+        }
+        jh_ty
     }
 
     fn check_generic_named_call(
@@ -9386,6 +9469,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // impl's method directly.
         if let Ty::Param(ref pname) = recv_ty {
             if let Some(msig) = self.lookup_bound_method(pname, &name.name) {
+                // A receiver-less interface method is an associated function;
+                // calling it as `t.method()` is E0327, exactly as for a
+                // concrete type. Without this the call slips through to
+                // monomorphization, where the concrete impl method also has no
+                // receiver, and codegen panics ("sema validated instance call").
+                if msig.receiver.is_none() {
+                    self.err(
+                        "E0327",
+                        format!(
+                            "`{}::{}` is an associated function; call it as `{}::{}(...)`",
+                            pname, name.name, pname, name.name
+                        ),
+                        call_span,
+                    );
+                    for a in args {
+                        let _ = self.check_expr(a, None);
+                    }
+                    return Ty::Error;
+                }
                 // Substitute `Self` → `Ty::Param(pname)` in the interface
                 // method signature so arg-type checks match what the user
                 // wrote (`other: T` not `other: Self`).
@@ -9396,8 +9498,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     if arg_idx >= args.len() {
                         break;
                     }
-                    let want = self.subst_ty_deep(&psig.ty, &subst);
-                    let _ = self.check_expr(&args[arg_idx], Some(want));
+                    // Apply the SAME move-consumption as a concrete call: a
+                    // non-Copy by-value (implicit-move / `move`) arg consumes the
+                    // caller's binding. This is what catches a use-after-move
+                    // (E0335) or a move-out-of-borrow inside a generic body —
+                    // previously these slipped to codegen as silent double-frees.
+                    let psig_subst = ParamSig {
+                        ty: self.subst_ty_deep(&psig.ty, &subst),
+                        mutable: psig.mutable,
+                        move_: psig.move_,
+                        borrow_: psig.borrow_,
+                    };
+                    self.check_arg_with_move(&args[arg_idx], &psig_subst);
                     arg_idx += 1;
                 }
                 // Drain any extra args (sema-error fallback) so type
@@ -15505,6 +15617,108 @@ mod tests {
             diags
         );
         assert_eq!(diags[0].code.0, code);
+    }
+
+    fn assert_has_code(src: &str, code: &str) {
+        let codes = errors(src);
+        assert!(
+            codes.contains(&code),
+            "expected error {code}, got: {:#?}",
+            check_src(src)
+        );
+    }
+
+    // ---- generic-fn-body move / borrow / method checking ----
+    //
+    // Generic free-fn bodies are now type-/move-/borrow-checked with their
+    // type params treated abstractly (unbounded `T` is move-only; `T: Copy`
+    // is Copy). Before, generic bodies were skipped entirely, so these bugs
+    // reached codegen (a panic, or a silent double-free).
+
+    #[test]
+    fn generic_body_use_after_move_via_let_e0335() {
+        // Unbounded `T` is move-only: `let y = x` consumes `x`, so the
+        // following `return x` is a use-after-move.
+        assert_has_code(
+            "fn dup_bug[T](x: T) -> T { let y: T = x; return x; }",
+            "E0335",
+        );
+    }
+
+    #[test]
+    fn generic_body_copy_bound_allows_reuse_clean() {
+        // `T: Copy` makes `x` bitwise-duplicated, so reusing it is fine
+        // (bound-aware Copy). Without it this would false-positive E0335.
+        assert_clean("fn dup_ok[T: Copy](x: T) -> T { let y: T = x; return x; }");
+    }
+
+    #[test]
+    fn generic_body_single_move_is_clean() {
+        // Moving a `T` value exactly once (into the return) is fine.
+        assert_clean("fn id[T](x: T) -> T { return x; }");
+    }
+
+    #[test]
+    fn generic_body_generic_struct_literal_is_clean() {
+        // Constructing a generic struct (`Box[T] { ... }`) inside a generic
+        // free-fn body resolves and type-checks.
+        assert_clean(
+            "struct Box[T] { v: T }\n\
+             fn wrap[T](x: T) -> Box[T] { return Box[T] { v: x }; }",
+        );
+    }
+
+    #[test]
+    fn generic_body_receiver_less_interface_method_e0327() {
+        // Calling a receiver-less interface method (`make()`) as an instance
+        // method (`t.make()`) through a bound is E0327 — the same diagnostic a
+        // concrete `p.make()` already gets. Previously this slipped to codegen
+        // and panicked ("sema validated instance call").
+        assert_has_code(
+            "struct P { x: i32 }\n\
+             interface Maker { fn make() -> i32; }\n\
+             impl P for Maker { fn make() -> i32 { return 7; } }\n\
+             fn call_make[T: Maker](t: T) -> i32 { return t.make(); }\n\
+             fn main() -> i32 { return 0; }",
+            "E0327",
+        );
+    }
+
+    #[test]
+    fn generic_body_use_after_move_into_method_arg_e0335() {
+        // Passing a non-Copy value by value to a bound method consumes it, so
+        // reusing it afterward is a use-after-move (would double-free at run).
+        assert_has_code(
+            "struct R { opaque data: *u8 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             struct P {}\n\
+             interface Sink { fn sink(self, r: R); }\n\
+             impl P for Sink { fn sink(self, r: R) { return; } }\n\
+             fn use_twice[T: Sink](t: T) -> i32 {\n\
+                 let r: R = R { data: unsafe { 0 as *u8 } };\n\
+                 t.sink(r);\n\
+                 let y: R = r;\n\
+                 return 0;\n\
+             }\n\
+             fn main() -> i32 { return 0; }",
+            "E0335",
+        );
+    }
+
+    #[test]
+    fn generic_body_move_out_of_borrow_e0337() {
+        // Moving a `borrow` parameter by value into a bound method's by-value
+        // arg would create a second owner (the caller still drops it): E0337.
+        assert_has_code(
+            "struct R { opaque data: *u8 }\n\
+             impl R { fn drop(mut self) { return; } }\n\
+             struct P {}\n\
+             interface Sink { fn sink(self, r: R); }\n\
+             impl P for Sink { fn sink(self, r: R) { return; } }\n\
+             fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
+             fn main() -> i32 { return 0; }",
+            "E0337",
+        );
     }
 
     // ---- `f16` literal suffix ----
