@@ -2498,10 +2498,13 @@ fn rewrite_expr(
                     },
                     variant_ident,
                 ];
-                // For payload-less variants written without parens (args is
-                // empty), rewrite to a bare Path expression (e.g.
-                // `Maybe::None`). Otherwise rewrite to a Call.
-                if args.is_empty() {
+                // A payload-less variant written without parens (`Maybe::None`)
+                // lowers to a bare Path. An associated FUNCTION lowers to a
+                // Call even with no args — the AST can't tell `Type[..]::None`
+                // from `Type[..]::make()` (both have empty args), so sema's
+                // `assoc_method_dispatches` is the deciding signal.
+                let is_assoc_fn = mono.assoc_method_dispatches.contains(&expr.span);
+                if args.is_empty() && !is_assoc_fn {
                     ExprKind::Path { segments }
                 } else {
                     let path_expr = Expr {

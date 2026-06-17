@@ -13414,40 +13414,54 @@ impl<'a> FnState<'a> {
             return Some(self.gen_simd_assoc_call(&simd_ty, method_name, args));
         }
         if let Some(&enum_id) = self.types.enum_by_name.get(type_name) {
-            // Tagged-enum variant construction with payload.
-            let info = &self.types.enum_defs[enum_id.0 as usize];
-            let tag = *info
+            // Tagged-enum variant construction with payload — only when
+            // `method_name` is actually a variant. An enum associated
+            // function (`Maybe[i32]::make(..)`) falls through to the shared
+            // assoc-fn emission below, same as a struct.
+            if let Some(&tag) = self.types.enum_defs[enum_id.0 as usize]
                 .variants
                 .get(method_name)
-                .expect("sema validated variant");
-            let mut payload_vals: Vec<(String, Ty)> = Vec::new();
-            for a in args {
-                let (v, t) = self.gen_expr(a).expect("variant payload has value");
-                // v0.0.3 drop-tracking fix: when a non-Copy value is consumed
-                // by a variant constructor (`Result::Ok(local_vec)`), the
-                // source binding's drop must be disarmed — the new enum value
-                // now owns the heap allocation. Without this, both the
-                // source local and the enum's payload free at scope exit.
-                if !is_copy_ty(&t, self.types) {
-                    if let ExprKind::Ident(name) = &a.kind {
-                        self.mark_moved(name);
+            {
+                let mut payload_vals: Vec<(String, Ty)> = Vec::new();
+                for a in args {
+                    let (v, t) = self.gen_expr(a).expect("variant payload has value");
+                    // v0.0.3 drop-tracking fix: when a non-Copy value is consumed
+                    // by a variant constructor (`Result::Ok(local_vec)`), the
+                    // source binding's drop must be disarmed — the new enum value
+                    // now owns the heap allocation. Without this, both the
+                    // source local and the enum's payload free at scope exit.
+                    if !is_copy_ty(&t, self.types) {
+                        if let ExprKind::Ident(name) = &a.kind {
+                            self.mark_moved(name);
+                        }
                     }
+                    payload_vals.push((v, t));
                 }
-                payload_vals.push((v, t));
+                let (v, ty) = self.gen_tagged_construct(enum_id, tag, &payload_vals);
+                return Some((v, ty));
             }
-            let (v, ty) = self.gen_tagged_construct(enum_id, tag, &payload_vals);
-            return Some((v, ty));
         }
-        let id = *self
-            .types
-            .struct_by_name
-            .get(type_name)
-            .expect("sema validated");
-        let info = self.types.struct_defs[id.0 as usize]
-            .methods
-            .get(method_name)
-            .expect("sema validated")
-            .clone();
+        // Associated-function call (`Type::func(..)`) — look the sig up from
+        // the struct OR enum method table. The symbol is `mangle(type,
+        // method)` either way (both gen_method and gen_enum_method use it).
+        let info = if let Some(&enum_id) = self.types.enum_by_name.get(type_name) {
+            self.types.enum_defs[enum_id.0 as usize]
+                .methods
+                .get(method_name)
+                .expect("sema validated enum assoc fn")
+                .clone()
+        } else {
+            let id = *self
+                .types
+                .struct_by_name
+                .get(type_name)
+                .expect("sema validated");
+            self.types.struct_defs[id.0 as usize]
+                .methods
+                .get(method_name)
+                .expect("sema validated")
+                .clone()
+        };
         let mangled = mangle(type_name, method_name);
 
         // v0.0.8 fix B (finish): mirror the callee's param attrs at the

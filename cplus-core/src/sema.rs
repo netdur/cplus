@@ -557,6 +557,14 @@ pub struct MonoInfo {
     /// of the default enum/struct-variant lowering. Keyed by the
     /// outer call's span (matching the AST node's span).
     pub assoc_free_fn_dispatches: HashMap<ByteSpan, String>,
+    /// Spans of `GenericEnumCall` nodes that resolved to an associated
+    /// FUNCTION (`Box[i32]::make(..)` / `Maybe[i32]::make(..)`) rather than
+    /// a variant constructor. Monomorphize consults this to emit a `Call`
+    /// (not a bare variant `Path`) even when the call has no arguments —
+    /// the AST collapses `Type[..]::None` and `Type[..]::make()` to the
+    /// same empty-args shape, so this is the only signal distinguishing a
+    /// no-arg assoc fn from a payload-less variant.
+    pub assoc_method_dispatches: std::collections::HashSet<ByteSpan>,
     /// v0.0.6 Slice 1A / v0.0.7 Slice 3.1: `include_bytes!("path")` and
     /// `include_str!("path")` resolved entries. Keyed by the call
     /// expression's span. Each entry carries the resolved absolute path
@@ -748,6 +756,7 @@ fn check_with_files_inner<'a>(
         fn_instantiations: std::collections::BTreeSet::new(),
         call_monos: HashMap::new(),
         assoc_free_fn_dispatches: HashMap::new(),
+        assoc_method_dispatches: std::collections::HashSet::new(),
         struct_generic_templates: HashMap::new(),
         struct_instantiations: std::collections::BTreeMap::new(),
         enum_generic_templates: HashMap::new(),
@@ -928,6 +937,7 @@ fn check_with_files_inner<'a>(
         instantiations: std::mem::take(&mut cx.fn_instantiations),
         call_monos: std::mem::take(&mut cx.call_monos),
         assoc_free_fn_dispatches: std::mem::take(&mut cx.assoc_free_fn_dispatches),
+        assoc_method_dispatches: std::mem::take(&mut cx.assoc_method_dispatches),
         struct_instantiations,
         enum_instantiations,
         method_instantiations,
@@ -1134,6 +1144,9 @@ struct SemaCx<'a> {
     /// dispatched to. Monomorphize uses this to lower the AST node
     /// to the right Call shape.
     assoc_free_fn_dispatches: HashMap<ByteSpan, String>,
+    /// Spans of `GenericEnumCall`s resolved to an associated function (not
+    /// a variant); see the MonoInfo field of the same name.
+    assoc_method_dispatches: std::collections::HashSet<ByteSpan>,
     /// Slice 7GEN.5c: generic-struct templates. Keyed by source name.
     /// Holds the cloned AST `StructDecl` so on-demand instantiation
     /// (`resolve_generic_instantiation`) can substitute Param types in
@@ -7631,6 +7644,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // A method-level turbofish (`Box[i32]::make::[U](..)`) flows
                 // through as the assoc-call's type args; an empty list lets
                 // the generic-method path infer `U` from the arguments.
+                // Mark this span as an assoc-fn call so monomorphize emits a
+                // `Call` even when there are no args (vs a bare variant path).
+                self.assoc_method_dispatches.insert(span);
                 return self.check_assoc_call(
                     &segments,
                     method_type_args,
@@ -7689,30 +7705,23 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Slice 7GEN.5d: for payload-less variants accessed without
         // parens (parser produces args=[]), short-circuit to the bare
         // variant value — no E0327 since the user didn't write parens.
-        // Multi-payload + parens path delegates to check_assoc_call.
-        //
-        // NOTE: an enum *associated function* (no `self`,
-        // `Maybe[i32]::make(..)`) is not supported here — the methods
-        // aren't collected onto the generic-enum instance and neither mono
-        // nor the assoc-call codegen path handle an enum-typed assoc call
-        // (they assume a struct). It errors E0317 ("no variant"). Distinct,
-        // deeper gap than the generic-struct assoc-fn this node now handles;
-        // `method_type_args` is therefore consumed only on the struct path.
-        let def = &self.enums[id.0 as usize];
-        if let Some(vdef) = def.variants.iter().find(|v| v.name == variant.name) {
-            if vdef.payload.is_empty() && args.is_empty() {
-                return Ty::Enum(id);
-            }
-        } else {
-            self.err(
-                "E0317",
-                format!("enum `{}` has no variant `{}`", def.name, variant.name),
-                variant.span,
-            );
-            for a in args {
-                let _ = self.check_expr(a, None);
-            }
-            return Ty::Error;
+        // Everything else (a variant with a payload, OR an enum associated
+        // function `Maybe[i32]::make(..)`) delegates to the shared
+        // `check_assoc_call`, which now dispatches enum assoc fns too — so
+        // the method turbofish flows through on the assoc-fn path and a
+        // missing name lands on the same diagnostic as the struct path.
+        let is_variant = self.enums[id.0 as usize]
+            .variants
+            .iter()
+            .any(|v| v.name == variant.name);
+        let payload_less_noargs = self.enums[id.0 as usize]
+            .variants
+            .iter()
+            .find(|v| v.name == variant.name)
+            .map(|vdef| vdef.payload.is_empty() && args.is_empty())
+            .unwrap_or(false);
+        if is_variant && payload_less_noargs {
+            return Ty::Enum(id);
         }
         let mangled = self.enums[id.0 as usize].name.clone();
         let segments = vec![
@@ -7722,7 +7731,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             },
             variant.clone(),
         ];
-        self.check_assoc_call(&segments, &[], args, enum_name.span, span)
+        // Variant constructors take no method-level turbofish; assoc fns do.
+        let assoc_type_args: &[Type] = if is_variant { &[] } else { method_type_args };
+        if !is_variant {
+            // An associated function — mark the span so monomorphize emits a
+            // `Call` even with no args (a bare path would lower as a variant).
+            self.assoc_method_dispatches.insert(span);
+        }
+        self.check_assoc_call(&segments, assoc_type_args, args, enum_name.span, span)
     }
 
     /// Slice 7GEN.5c: type-check `Pair[i32, bool] { first: 7, second: true }`.
@@ -11509,10 +11525,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let enum_def = self.enums[id.0 as usize].clone();
             let variant = enum_def.variants.iter().find(|v| v.name == method_seg.name);
             let Some(vdef) = variant else {
+                // Not a variant — an enum can also have associated functions
+                // (`impl Maybe[T] { fn make() }`); dispatch them through the
+                // same shared path as structs. Only if that misses too is it
+                // a real "no variant / no assoc fn" error.
+                if let Some(sig) = enum_def.methods.get(&method_seg.name).cloned() {
+                    return self.check_assoc_fn_dispatch(
+                        MethodOwner::Enum(id),
+                        &enum_def.name,
+                        method_seg,
+                        &sig,
+                        type_args,
+                        args,
+                        call_span,
+                    );
+                }
                 self.err(
                     "E0317",
                     format!(
-                        "enum `{}` has no variant `{}`",
+                        "enum `{}` has no variant or associated function `{}`",
                         type_seg.name, method_seg.name
                     ),
                     method_seg.span,
@@ -11612,12 +11643,39 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         };
+        self.check_assoc_fn_dispatch(
+            MethodOwner::Struct(id),
+            &struct_name,
+            method_seg,
+            &sig,
+            type_args,
+            args,
+            call_span,
+        )
+    }
+
+    /// Shared associated-function (receiver-less `Type::func(..)`) dispatch
+    /// for a concrete struct OR enum. `owner` routes generic-method
+    /// instantiation recording (struct vs enum table); `type_name` is the
+    /// (mangled) type name used in diagnostics. Both the struct and enum
+    /// assoc-call branches funnel through here so they can't drift — enum
+    /// associated fns silently not dispatching was exactly that drift.
+    fn check_assoc_fn_dispatch(
+        &mut self,
+        owner: MethodOwner,
+        type_name: &str,
+        method_seg: &Ident,
+        sig: &MethodSig,
+        type_args: &[Type],
+        args: &[Expr],
+        call_span: ByteSpan,
+    ) -> Ty {
         if sig.receiver.is_some() {
             self.err(
                 "E0327",
                 format!(
                     "`{}::{}` is an instance method; call it as `value.{}(...)`",
-                    struct_name, method_seg.name, method_seg.name
+                    type_name, method_seg.name, method_seg.name
                 ),
                 call_span,
             );
@@ -11631,7 +11689,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 "E0308",
                 format!(
                     "function `{}::{}` takes {} argument(s), got {}",
-                    struct_name,
+                    type_name,
                     method_seg.name,
                     sig.params.len(),
                     args.len()
@@ -11643,10 +11701,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // (`Type::method(...)` / `Type::method::[T](...)`).
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
-                MethodOwner::Struct(id),
-                &struct_name,
+                owner,
+                type_name,
                 method_seg,
-                &sig,
+                sig,
                 type_args,
                 args,
                 call_span,
@@ -11657,7 +11715,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 "E0501",
                 format!(
                     "associated function `{}::{}` takes no type arguments but {} were provided",
-                    struct_name,
+                    type_name,
                     method_seg.name,
                     type_args.len()
                 ),
@@ -11670,7 +11728,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         for a in args.iter().skip(sig.params.len()) {
             let _ = self.check_expr(a, None);
         }
-        sig.return_type
+        sig.return_type.clone()
     }
 
     /// Type-check a single call argument and apply move tracking. If the
@@ -13531,6 +13589,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     ) -> Ty {
         let key = (name.to_string(), arg_tys.clone());
         if let Some(&existing) = self.enum_instantiations.get(&key) {
+            // Backfill: an instance created method-less while this enum's own
+            // generic-impl templates were still being collected (a method
+            // whose signature names the enum's concrete instance, e.g.
+            // `fn of(v: T) -> Maybe[i32]`, instantiates it mid-collection
+            // before the templates are registered). Once the templates exist,
+            // populate the methods on the cached instance.
+            if self.enums[existing.0 as usize].methods.is_empty() {
+                self.populate_generic_enum_methods(existing, name, &arg_tys);
+            }
             return Ty::Enum(existing);
         }
         // Build subst map and synthesize variant payloads.
@@ -13566,60 +13633,63 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         });
         self.enum_by_name.insert(mangled, id);
         self.enum_instantiations.insert(key, id);
-        // v0.0.5 generic-enum impl carry-over: populate methods on the
-        // synthesized concrete enum from any `impl Option[T] { ... }`
-        // generic impl block registered for this template. Mirror of
-        // the struct-side population path; substitutes impl-level `T`
-        // refs (Ty::Param) with the concrete arg types, `Self` refs
-        // resolve to the new Ty::Enum(id).
-        if let Some(templates) = self.generic_impl_methods.get(name).cloned() {
-            let self_ty = Ty::Enum(id);
-            for t in &templates {
-                let mut method_subst: HashMap<String, Ty> = HashMap::new();
-                // `Self` substitutes to the receiver type, folded into the
-                // same map so `subst_ty_deep` reaches it inside compound and
-                // generic-instantiation types (`fn(Self)`, `Vec[Self]`, ...),
-                // not just at the top level.
-                method_subst.insert("Self".to_string(), self_ty.clone());
-                for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
-                    method_subst.insert(gp.clone(), arg.clone());
-                }
-                let resolved_params: Vec<ParamSig> = {
-                    let raw: Vec<(Ty, bool, bool, bool)> = t
-                        .params
-                        .iter()
-                        .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
-                        .collect();
-                    raw.into_iter()
-                        .map(|(ty, mutable, move_, borrow_)| {
-                            let s = self.subst_ty_deep(&ty, &method_subst);
-                            ParamSig {
-                                ty: s,
-                                mutable,
-                                move_,
-                                borrow_,
-                            }
-                        })
-                        .collect()
-                };
-                let resolved_return = {
-                    let s = self.subst_ty_deep(&t.return_type, &method_subst);
-                    s
-                };
-                self.enums[id.0 as usize].methods.insert(
-                    t.name.clone(),
-                    MethodSig {
-                        receiver: t.receiver,
-                        params: resolved_params,
-                        return_type: resolved_return,
-                        generic_params: t.method_generic_params.clone(),
-                        generic_bounds: Vec::new(),
-                        is_unsafe: t.is_unsafe,
-                    },
-                );
-            }
-        }
+        self.populate_generic_enum_methods(id, name, &arg_tys);
         Ty::Enum(id)
+    }
+
+    /// v0.0.5 generic-enum impl carry-over: populate methods on the
+    /// synthesized concrete enum `id` from any `impl Option[T] { ... }`
+    /// generic impl block registered for `name`. Mirror of the struct-side
+    /// population path; substitutes impl-level `T` refs (Ty::Param) with the
+    /// concrete arg types, `Self` refs resolve to the new Ty::Enum(id). Run
+    /// at instantiation, and re-run as a backfill when an instance was
+    /// created before its templates were registered (see the dedup path).
+    fn populate_generic_enum_methods(&mut self, id: EnumId, name: &str, arg_tys: &[Ty]) {
+        let Some(templates) = self.generic_impl_methods.get(name).cloned() else {
+            return;
+        };
+        let self_ty = Ty::Enum(id);
+        for t in &templates {
+            let mut method_subst: HashMap<String, Ty> = HashMap::new();
+            // `Self` substitutes to the receiver type, folded into the same
+            // map so `subst_ty_deep` reaches it inside compound and
+            // generic-instantiation types (`fn(Self)`, `Vec[Self]`, ...), not
+            // just at the top level.
+            method_subst.insert("Self".to_string(), self_ty.clone());
+            for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
+                method_subst.insert(gp.clone(), arg.clone());
+            }
+            let resolved_params: Vec<ParamSig> = {
+                let raw: Vec<(Ty, bool, bool, bool)> = t
+                    .params
+                    .iter()
+                    .map(|p| (p.ty.clone(), p.mutable, p.move_, p.borrow_))
+                    .collect();
+                raw.into_iter()
+                    .map(|(ty, mutable, move_, borrow_)| {
+                        let s = self.subst_ty_deep(&ty, &method_subst);
+                        ParamSig {
+                            ty: s,
+                            mutable,
+                            move_,
+                            borrow_,
+                        }
+                    })
+                    .collect()
+            };
+            let resolved_return = self.subst_ty_deep(&t.return_type, &method_subst);
+            self.enums[id.0 as usize].methods.insert(
+                t.name.clone(),
+                MethodSig {
+                    receiver: t.receiver,
+                    params: resolved_params,
+                    return_type: resolved_return,
+                    generic_params: t.method_generic_params.clone(),
+                    generic_bounds: Vec::new(),
+                    is_unsafe: t.is_unsafe,
+                },
+            );
+        }
     }
 
     fn resolve_field_type_with_subst(&mut self, ty: &Type, subst: &HashMap<String, Ty>) -> Ty {
@@ -19280,6 +19350,44 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for assoc-fn turbofish arity mismatch, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn assoc_fn_on_enum_clean() {
+        // Enum associated functions (`impl E { fn make() }` /
+        // `impl Maybe[T] { fn make() }`) dispatch through the same shared
+        // assoc-call path as structs — non-generic, generic, and a factory
+        // that returns the enum's own concrete instance (exercises the
+        // method-backfill on the instantiation dedup path).
+        assert_clean(
+            "enum E { A, B } \
+             impl E { fn make() -> i32 { return 7; } } \
+             fn main() -> i32 { return E::make(); }",
+        );
+        assert_clean(
+            "enum Maybe[T] { Some(T), None } \
+             impl Maybe[T] { fn make() -> i32 { return 7; } } \
+             fn main() -> i32 { return Maybe[i32]::make(); }",
+        );
+        assert_clean(
+            "enum Maybe[T] { Some(T), None } \
+             impl Maybe[T] { fn of(v: i32) -> Maybe[i32] { return Maybe[i32]::Some(v); } } \
+             fn main() -> i32 { let m: Maybe[i32] = Maybe[i32]::of(7); return 0; }",
+        );
+    }
+
+    #[test]
+    fn assoc_fn_on_enum_missing_name_e0317() {
+        // A name that is neither a variant nor an associated function still
+        // errors cleanly (no panic).
+        let codes = errors(
+            "enum E { A } \
+             fn main() -> i32 { return E::nope(); }",
+        );
+        assert!(
+            codes.contains(&"E0317"),
+            "expected E0317 for missing variant/assoc fn, got: {codes:?}"
         );
     }
 

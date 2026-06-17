@@ -7116,6 +7116,115 @@ fn phase7_generic_assoc_fn_on_generic_struct_inferred() {
 }
 
 #[test]
+fn phase7_no_arg_assoc_fn_on_generic_struct_runs() {
+    // A NO-ARG associated function on a generic struct: `Box[i32]::make()`.
+    // Monomorphize used to lower an empty-args `Type[..]::name()` to a bare
+    // variant Path (it can't tell `None` from `make()` in the AST), so codegen
+    // hit `gen_path` and panicked on a struct name. Now sema marks the span as
+    // an assoc-fn dispatch so it lowers to a Call.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("noarg_struct.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         impl Box[T] { fn make() -> i32 { return 7; } }\n\
+         fn main() -> i32 { return Box[i32]::make(); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("noarg_struct");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "no-arg assoc fn on generic struct should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "Box[i32]::make() → 7");
+}
+
+#[test]
+fn phase7_assoc_fn_on_generic_enum_runs() {
+    // Associated functions on ENUMS were unsupported (`Enum[args]::name`
+    // assumed a variant → E0317). Now the resolution, mono, and codegen
+    // paths fall back to the enum's method table. `Maybe[i32]::make()` → 7.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("enum_assoc.cplus");
+    std::fs::write(
+        &src,
+        "enum Maybe[T] { Some(T), None }\n\
+         impl Maybe[T] { fn make() -> i32 { return 7; } }\n\
+         fn main() -> i32 { return Maybe[i32]::make(); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("enum_assoc");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "assoc fn on generic enum should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "Maybe[i32]::make() → 7");
+}
+
+#[test]
+fn phase7_assoc_fn_on_generic_enum_factory_self_instance() {
+    // The factory pattern — an enum assoc fn that constructs and returns its
+    // OWN concrete instance (`fn of(v: i32) -> Maybe[i32]`). The return type
+    // names the instance being built, which created it method-less mid-
+    // template-collection; the dedup-path backfill repopulates its methods.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("enum_factory.cplus");
+    std::fs::write(
+        &src,
+        "enum Maybe[T] { Some(T), None }\n\
+         impl Maybe[T] { fn of(v: i32) -> Maybe[i32] { return Maybe[i32]::Some(v); } }\n\
+         fn unwrap(m: Maybe[i32]) -> i32 {\n\
+             let r: i32 = match m { Maybe[i32]::Some(v) => v, Maybe[i32]::None => 0, };\n\
+             return r;\n\
+         }\n\
+         fn main() -> i32 { return unwrap(Maybe[i32]::of(7)); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("enum_factory");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "enum assoc-fn factory returning own instance should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "Maybe[i32]::of(7) round-trip → 7");
+}
+
+#[test]
+fn phase7_assoc_fn_on_nongeneric_enum_runs() {
+    // Non-generic enum assoc fn `E::make()` (the 2-segment path form).
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("ng_enum_assoc.cplus");
+    std::fs::write(
+        &src,
+        "enum E { A, B }\n\
+         impl E { fn make() -> i32 { return 7; } }\n\
+         fn main() -> i32 { return E::make(); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("ng_enum_assoc");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "assoc fn on non-generic enum should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "E::make() → 7");
+}
+
+#[test]
 fn phase7_generic_assoc_call_with_turbofish_runs() {
     // Slice 7GEN.5e: generic associated function with turbofish.
     let cpc = env!("CARGO_BIN_EXE_cpc");
