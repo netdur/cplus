@@ -468,6 +468,59 @@ fn synthesize_generic_typed_impls(
         let mangled_name = info_mangled.clone();
         let mut new_methods: Vec<Method> = Vec::with_capacity(b.methods.len());
         for m in &b.methods {
+            if !m.generic_params.is_empty() {
+                // Slice 7GEN.5e: a method-level-generic method (`fn id[U]`)
+                // on a generic-struct impl carries TWO substitutions — the
+                // struct's `T` (from this instantiation) and the method's
+                // own `U` (from each call site). Synthesize one concrete copy
+                // per method instantiation recorded for THIS struct instance,
+                // applying both substitutions, mangling the name to match the
+                // call-site rewrite (`b.id::[i32]` → `b.id__i32`), and
+                // clearing the method's generic params. Without this the
+                // generic template leaked into the concrete impl unexpanded
+                // and codegen couldn't find the mangled callee (it panicked
+                // with "sema validated"). The non-generic-struct path does
+                // the same at the `ItemKind::Impl` arm; this is its
+                // generic-struct counterpart.
+                for (msname, mname, margs) in &mono.method_instantiations {
+                    if msname != &mangled_name || mname != &m.name.name {
+                        continue;
+                    }
+                    let mut method_subst = subst.clone();
+                    method_subst.extend(build_subst(&m.generic_params, margs));
+                    let mut clone = m.clone();
+                    clone.name = Ident {
+                        name: mangle_name(&m.name.name, margs, type_name_of),
+                        span: m.name.span,
+                    };
+                    clone.generic_params = Vec::new();
+                    for p in &mut clone.params {
+                        p.ty = rewrite_self_in_type(
+                            &subst_type_ast(&p.ty, &method_subst, type_name_of, struct_lookup),
+                            &mangled_name,
+                        );
+                    }
+                    if let Some(rt) = &mut clone.return_type {
+                        *rt = rewrite_self_in_type(
+                            &subst_type_ast(rt, &method_subst, type_name_of, struct_lookup),
+                            &mangled_name,
+                        );
+                    }
+                    clone.body = rewrite_block_with_self(
+                        &m.body,
+                        &method_subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                        &mangled_name,
+                    );
+                    new_methods.push(clone);
+                }
+                // Drop the template (no push).
+                continue;
+            }
             let mut m2 = m.clone();
             // Substitute impl-level T in param types + return type.
             for p in &mut m2.params {

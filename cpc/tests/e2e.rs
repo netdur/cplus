@@ -6891,6 +6891,87 @@ fn phase7_generic_method_with_turbofish_runs() {
 }
 
 #[test]
+fn phase7_generic_method_on_generic_struct_runs() {
+    // Regression: a method-level generic (`fn id[U]`) on a GENERIC struct
+    // impl (`impl Box[T]`) carries two substitutions — the struct's `T`
+    // and the method's `U`. The generic-struct instantiation path used to
+    // clone the method template verbatim (keeping `[U]` and an
+    // unsubstituted `U` param) instead of expanding it per call, so the
+    // mangled callee (`id__i32`) was never produced and codegen panicked
+    // with "sema validated". `b.id::[i32](7)` must build and return 7.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("gms_id.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         impl Box[T] {\n\
+             fn id[U](self, x: U) -> U { return x; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let b: Box[i32] = Box[i32] { value: 0 };\n\
+             return b.id::[i32](7);\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("gms_id");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic method on generic struct should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "expected b.id::[i32](7) → 7");
+}
+
+#[test]
+fn phase7_generic_method_on_generic_struct_uses_both_type_params() {
+    // The method body reads the struct's `T` (via `self.value`) AND takes
+    // a method-`U` arg, and the same method is instantiated with two
+    // different `U` on the same struct instance — exercising the combined
+    // T+U substitution and multiple per-method instantiations. `get[U]`
+    // ignores its `U` arg and returns `self.value` (i32 42); calling it
+    // with `U = bool` then `U = i32` must both resolve and return 42.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("gms_both.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         impl Box[T] {\n\
+             fn get[U](self, x: U) -> T { return self.value; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let b: Box[i32] = Box[i32] { value: 42 };\n\
+             let a: i32 = b.get::[bool](true);\n\
+             let c: i32 = b.get::[i32](0);\n\
+             return a + c -% 42;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("gms_both");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic method using both T and U should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(42), "expected 42 + 42 - 42 = 42");
+}
+
+#[test]
 fn phase7_generic_assoc_call_with_turbofish_runs() {
     // Slice 7GEN.5e: generic associated function with turbofish.
     let cpc = env!("CARGO_BIN_EXE_cpc");
