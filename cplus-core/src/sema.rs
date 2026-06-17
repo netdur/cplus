@@ -13908,6 +13908,23 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let want_fn_ptr = matches!(expected, Some(Ty::FnPtr { .. }));
         if let Some(sig) = self.fns.get(name).cloned() {
             if want_fn_ptr {
+                // TEXT.1 soundness: coercing an `unsafe fn` to a (safe) `fn(...)`
+                // pointer launders its unsafe-ness — the resulting `fn(T) -> R`
+                // type carries no `unsafe`, so a later call through it would
+                // bypass the E0801 gate a direct call hits. C+ has no
+                // `unsafe fn(...)` pointer type, so taking the pointer is itself
+                // the unsafe act and must be acknowledged with `unsafe { ... }`,
+                // mirroring the direct-call rule.
+                if sig.is_unsafe && self.unsafe_depth == 0 {
+                    self.err(
+                        "E0801",
+                        format!(
+                            "taking a fn-pointer to `unsafe fn {name}` requires an enclosing `unsafe {{ ... }}` block (the `fn(...)` pointer type cannot carry `unsafe`, so the pointer launders it)"
+                        ),
+                        span,
+                    );
+                    return Ty::Error;
+                }
                 // A fn-pointer's params are BY VALUE — the `fn(T)` type carries
                 // no `borrow`/`mut` convention (it can't express by-pointer
                 // passing). Taking a pointer to a function whose param IS
@@ -16880,6 +16897,48 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "fn calm() -> i32 { return 1; }\n\
              fn main() -> i32 { let d: i32 = calm(); return d; }",
+        );
+    }
+
+    #[test]
+    fn unsafe_fn_to_fn_ptr_in_safe_code_e0801() {
+        // SOUNDNESS: coercing an `unsafe fn` to a (safe) `fn(...)` pointer
+        // launders its unsafe-ness — the pointer type can't carry `unsafe`,
+        // so a later `f(x)` call would bypass the E0801 gate a direct call
+        // hits. Taking the pointer must itself require `unsafe`.
+        let codes = errors(
+            "unsafe fn danger(x: i32) -> i32 { return x + 1; }\n\
+             fn main() -> i32 { let f: fn(i32) -> i32 = danger; return f(6); }",
+        );
+        assert!(
+            codes.contains(&"E0801"),
+            "coercing an unsafe fn to a fn-ptr in safe code must be E0801, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn unsafe_fn_to_fn_ptr_inside_unsafe_clean() {
+        // The escape hatch: take the pointer inside an `unsafe` block (where
+        // the `let` annotation supplies the `fn(...)` type hint). The danger
+        // is acknowledged at the coercion site.
+        assert_clean(
+            "unsafe fn danger(x: i32) -> i32 { return x + 1; }\n\
+             fn main() -> i32 {\n\
+                 let r: i32 = unsafe {\n\
+                     let f: fn(i32) -> i32 = danger;\n\
+                     f(6)\n\
+                 };\n\
+                 return r;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn safe_fn_to_fn_ptr_needs_no_unsafe() {
+        // A pointer to a SAFE fn is unaffected.
+        assert_clean(
+            "fn add1(x: i32) -> i32 { return x + 1; }\n\
+             fn main() -> i32 { let f: fn(i32) -> i32 = add1; return f(6); }",
         );
     }
 

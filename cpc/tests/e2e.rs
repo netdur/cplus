@@ -2032,6 +2032,38 @@ fn generic_body_copy_bound_reuse_compiles_and_runs() {
 }
 
 #[test]
+fn unsafe_fn_pointer_inside_unsafe_runs() {
+    // Soundness regression: taking a fn-pointer to an `unsafe fn` requires
+    // `unsafe` (a safe `fn(...)` pointer can't carry the unsafe-ness, so it
+    // would launder it). Inside an `unsafe` block the coercion is allowed and
+    // the call through the pointer runs: `f(6)` → danger(6) → 7.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("unsafe_fnptr.cplus");
+    std::fs::write(
+        &src,
+        "unsafe fn danger(x: i32) -> i32 { return x + 1; }\n\
+         fn main() -> i32 {\n\
+             let r: i32 = unsafe {\n\
+                 let f: fn(i32) -> i32 = danger;\n\
+                 f(6)\n\
+             };\n\
+             return r;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("unsafe_fnptr");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "unsafe-fn pointer taken inside unsafe block should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "f(6) → danger(6) → 7");
+}
+
+#[test]
 fn move_param_use_after_call_rejected() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
