@@ -753,6 +753,7 @@ fn check_with_files_inner<'a>(
         enum_generic_templates: HashMap::new(),
         enum_instantiations: std::collections::BTreeMap::new(),
         method_instantiations: std::collections::BTreeSet::new(),
+        enum_method_instantiations: std::collections::BTreeSet::new(),
         generic_impl_methods: HashMap::new(),
         compile_time_blobs_table: HashMap::new(),
         env_vars_table: HashMap::new(),
@@ -902,8 +903,10 @@ fn check_with_files_inner<'a>(
             (key.clone(), info)
         })
         .collect();
-    // Slice 7GEN.5e: convert internal (StructId, ...) keys to
-    // (struct_name, ...) for export.
+    // Slice 7GEN.5e: convert internal (StructId/EnumId, ...) keys to
+    // (type_name, ...) for export. Struct and enum method instantiations
+    // merge into one String-keyed set (type names share a namespace);
+    // monomorphize matches by the receiver instance's mangled name.
     let method_instantiations: std::collections::BTreeSet<(String, String, Vec<Ty>)> = cx
         .method_instantiations
         .iter()
@@ -911,6 +914,10 @@ fn check_with_files_inner<'a>(
             let sname = cx.structs[sid.0 as usize].name.clone();
             (sname, mname.clone(), args.clone())
         })
+        .chain(cx.enum_method_instantiations.iter().map(|(eid, mname, args)| {
+            let ename = cx.enums[eid.0 as usize].name.clone();
+            (ename, mname.clone(), args.clone())
+        }))
         .collect();
     let type_aliases: std::collections::BTreeMap<String, Type> = cx
         .type_aliases
@@ -1151,6 +1158,10 @@ struct SemaCx<'a> {
     /// At export time `(struct_id, ...)` is converted to
     /// `(struct_name, ...)` for the MonoInfo entry.
     method_instantiations: std::collections::BTreeSet<(StructId, String, Vec<Ty>)>,
+    /// The enum counterpart of `method_instantiations` (method-level
+    /// generics on enum receivers). Merged into the same String-keyed
+    /// MonoInfo set at export (enum/struct names share one namespace).
+    enum_method_instantiations: std::collections::BTreeSet<(EnumId, String, Vec<Ty>)>,
     /// Slice 7GEN.5e step 3: methods declared inside generic-typed
     /// impl blocks (`impl Vec[T] { fn push(self, item: T) }`). Keyed
     /// by the generic struct/enum template name (e.g. `"Vec"`). Each
@@ -1227,6 +1238,18 @@ pub struct GenericImplMethodTemplate {
     pub method_generic_params: Vec<String>, // U from `fn map[U]`
     pub is_drop: bool, // marker for cached Drop bookkeeping (always false today)
     pub is_unsafe: bool, // TEXT.1: `unsafe fn` method, propagated to MethodSig
+}
+
+/// Which receiver kind owns a method-level-generic call, so the shared
+/// `check_generic_method_call` records the instantiation against the right
+/// table (`method_instantiations` for structs, `enum_method_instantiations`
+/// for enums). Both export to the same String-keyed MonoInfo set; this just
+/// keeps one code path for struct and enum generic-method dispatch instead
+/// of two that drift.
+#[derive(Clone, Copy)]
+enum MethodOwner {
+    Struct(StructId),
+    Enum(EnumId),
 }
 
 impl SemaCx<'_> {
@@ -9607,8 +9630,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
                 return Ty::Error;
             };
-            return self
-                .check_enum_method_call(eid, &enum_name, name, &sig, args, call_span, receiver);
+            return self.check_enum_method_call(
+                eid, &enum_name, name, &sig, type_args, args, call_span, receiver,
+            );
         }
         // v0.0.5: method call on a generic-parameter receiver — `t.cmp(o)`
         // where `t: T` and the enclosing fn declared `T: Ord`. Resolve via
@@ -9704,7 +9728,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // through to the shared arg/return path.
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
-                id,
+                MethodOwner::Struct(id),
                 &struct_name,
                 name,
                 &sig,
@@ -9720,23 +9744,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     /// v0.0.5 Phase 2C: type-check a method call on an enum receiver.
     /// Mirrors the struct path (`check_method_call`'s tail) but uses
-    /// `EnumDef::methods` for sig lookup. Generic-method dispatch on
-    /// enums isn't supported yet (no `impl Option[T] { fn map[U](...) }`);
-    /// that requires the generic-enum impl synthesis still pending.
+    /// `EnumDef::methods` for sig lookup. Method-level generics
+    /// (`impl Maybe[T] { fn id[U](...) }`) route through the same shared
+    /// `check_generic_method_call` as structs — the generic-enum impl
+    /// synthesis (monomorphize) handles enums too.
     fn check_enum_method_call(
         &mut self,
         enum_id: EnumId,
         enum_name: &str,
         name: &Ident,
         sig: &MethodSig,
+        type_args: &[Type],
         args: &[Expr],
         call_span: ByteSpan,
         receiver: &Expr,
     ) -> Ty {
-        // Same shared checks as the struct + generic paths (the third copy of
-        // this logic, now unified). Enum methods take no type arguments and
-        // their sigs carry no `Self` placeholder, so an empty subst / type-arg
-        // list is a no-op.
+        // Same shared receiver check as the struct + generic paths.
         if !self.check_method_receiver(
             receiver,
             &Ty::Enum(enum_id),
@@ -9748,6 +9771,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         ) {
             return Ty::Error;
         }
+        // Method-level generics dispatch through the shared path (records
+        // against `enum_method_instantiations` via MethodOwner::Enum).
+        if !sig.generic_params.is_empty() {
+            return self.check_generic_method_call(
+                MethodOwner::Enum(enum_id),
+                enum_name,
+                name,
+                sig,
+                type_args,
+                args,
+                call_span,
+            );
+        }
+        // A concrete enum-method sig carries no `Self` placeholder, so an
+        // empty subst / type-arg list is a no-op.
         self.check_method_args_and_return(name, sig, &HashMap::new(), &[], args, enum_name)
     }
 
@@ -9757,7 +9795,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// concrete arg type (mirrors the top-level generic-fn flow).
     fn check_generic_method_call(
         &mut self,
-        struct_id: StructId,
+        owner: MethodOwner,
         struct_name: &str,
         name: &Ident,
         sig: &MethodSig,
@@ -9874,8 +9912,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             call_span,
             &format!("method `{}::{}`", struct_name, name.name),
         );
-        let key = (struct_id, name.name.clone(), arg_tys.clone());
-        self.method_instantiations.insert(key);
+        match owner {
+            MethodOwner::Struct(sid) => {
+                self.method_instantiations
+                    .insert((sid, name.name.clone(), arg_tys.clone()));
+            }
+            MethodOwner::Enum(eid) => {
+                self.enum_method_instantiations
+                    .insert((eid, name.name.clone(), arg_tys.clone()));
+            }
+        }
         self.call_monos.insert(call_span, arg_tys);
         self.subst_ty_deep(&sig.return_type, &subst)
     }
@@ -11571,7 +11617,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // (`Type::method(...)` / `Type::method::[T](...)`).
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
-                id,
+                MethodOwner::Struct(id),
                 &struct_name,
                 method_seg,
                 &sig,
@@ -19141,6 +19187,42 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for arity mismatch, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn generic_method_on_generic_enum_clean() {
+        // Regression: a method-level generic (`fn id[U]`) on a GENERIC enum
+        // impl (`impl Maybe[T]`) used to fail type-checking with E0302 —
+        // the enum method-call path called the shared arg checker with an
+        // empty subst, so `U` was never substituted from the turbofish.
+        // Now it routes through the same `check_generic_method_call` as
+        // structs. Must type-check clean.
+        assert_clean(
+            "enum Maybe[T] { Some(T), None } \
+             impl Maybe[T] { fn id[U](self, x: U) -> U { return x; } } \
+             fn main() -> i32 { \
+                 let m: Maybe[i32] = Maybe[i32]::Some(0); \
+                 return m.id::[i32](7); \
+             }",
+        );
+    }
+
+    #[test]
+    fn generic_method_on_generic_enum_wrong_arity_e0501() {
+        // The enum generic-method path enforces turbofish arity the same as
+        // the struct path (it shares `check_generic_method_call`).
+        let codes = errors(
+            "enum Maybe[T] { Some(T), None } \
+             impl Maybe[T] { fn id[U](self, x: U) -> U { return x; } } \
+             fn main() -> i32 { \
+                 let m: Maybe[i32] = Maybe[i32]::Some(0); \
+                 return m.id::[i32, bool](7); \
+             }",
+        );
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 for method turbofish arity mismatch, got: {codes:?}"
         );
     }
 

@@ -6972,6 +6972,85 @@ fn phase7_generic_method_on_generic_struct_uses_both_type_params() {
 }
 
 #[test]
+fn phase7_generic_method_on_generic_enum_runs() {
+    // Sibling of the generic-struct case: a method-level generic (`fn id[U]`)
+    // on a GENERIC ENUM impl (`impl Maybe[T]`). The enum method-call path
+    // used to ignore method generics entirely (empty subst → E0302 at sema);
+    // it now routes through the same shared generic-method dispatch as
+    // structs, and the generic-enum impl synthesis (which already covers
+    // enums) produces the mangled callee. `m.id::[i32](7)` → 7.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("gme_id.cplus");
+    std::fs::write(
+        &src,
+        "enum Maybe[T] { Some(T), None }\n\
+         impl Maybe[T] {\n\
+             fn id[U](self, x: U) -> U { return x; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let m: Maybe[i32] = Maybe[i32]::Some(0);\n\
+             return m.id::[i32](7);\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("gme_id");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic method on generic enum should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "expected m.id::[i32](7) → 7");
+}
+
+#[test]
+fn phase7_generic_method_on_generic_enum_two_instantiations() {
+    // The same enum-method generic instantiated with two different `U` on
+    // one instance — exercises per-method instantiation synthesis and both
+    // turbofish resolutions on the enum path. `id::[i32](5)` then
+    // `id::[bool](true)`; returns 5.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("gme_two.cplus");
+    std::fs::write(
+        &src,
+        "enum Maybe[T] { Some(T), None }\n\
+         impl Maybe[T] {\n\
+             fn id[U](self, x: U) -> U { return x; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             let m: Maybe[i32] = Maybe[i32]::Some(0);\n\
+             let a: i32 = m.id::[i32](5);\n\
+             let b: bool = m.id::[bool](true);\n\
+             if b { return a; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("gme_two");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "enum generic method with two instantiations should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(5), "expected 5 (a, guarded by b==true)");
+}
+
+#[test]
 fn phase7_generic_assoc_call_with_turbofish_runs() {
     // Slice 7GEN.5e: generic associated function with turbofish.
     let cpc = env!("CARGO_BIN_EXE_cpc");
