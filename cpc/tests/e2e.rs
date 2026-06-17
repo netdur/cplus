@@ -6931,6 +6931,41 @@ fn phase7_generic_method_on_generic_struct_runs() {
 }
 
 #[test]
+fn phase7_method_generic_interface_bound_satisfied_runs() {
+    // A method-level generic with an interface bound (`fn run[U: Show]`) on a
+    // generic struct, called with a satisfying type, dispatches the bound
+    // method and runs. (The negative — a type not satisfying the bound — is
+    // covered by sema unit tests; the bound used to be dropped during generic
+    // instantiation, so this confirms the satisfying path still works.)
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("mgbound.cplus");
+    std::fs::write(
+        &src,
+        "interface Show { fn show(self) -> i32; }\n\
+         struct Box[T] { value: T }\n\
+         impl Box[T] { fn run[U: Show](self, x: U) -> i32 { return x.show(); } }\n\
+         struct W { n: i32 }\n\
+         impl W for Show { fn show(self) -> i32 { return self.n; } }\n\
+         fn main() -> i32 {\n\
+             let b: Box[i32] = Box[i32] { value: 0 };\n\
+             let w: W = W { n: 7 };\n\
+             return b.run::[W](w);\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("mgbound");
+    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "satisfying interface bound on generic-struct method should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "b.run::[W](w) → w.show() → 7");
+}
+
+#[test]
 fn phase7_generic_method_on_generic_struct_uses_both_type_params() {
     // The method body reads the struct's `T` (via `self.value`) AND takes
     // a method-`U` arg, and the same method is instantiated with two

@@ -1249,6 +1249,12 @@ pub struct GenericImplMethodTemplate {
     /// checked (only struct-declaration bounds, checked at instantiation, were).
     pub impl_param_bounds: Vec<Vec<String>>,
     pub method_generic_params: Vec<String>, // U from `fn map[U]`
+    /// v0.0.23: bounds on each method-level generic param, positionally
+    /// parallel to `method_generic_params` (empty inner vec = unbounded).
+    /// Without carrying these, `impl Box[T] { fn f[U: Copy] }` lost the
+    /// `U: Copy` bound when the generic struct/enum was instantiated, so a
+    /// non-Copy `U` (e.g. a Drop type) was accepted — a double-free hole.
+    pub method_generic_bounds: Vec<Vec<String>>,
     pub is_drop: bool, // marker for cached Drop bookkeeping (always false today)
     pub is_unsafe: bool, // TEXT.1: `unsafe fn` method, propagated to MethodSig
 }
@@ -2445,7 +2451,7 @@ impl SemaCx<'_> {
                         params: resolved_params,
                         return_type: resolved_return,
                         generic_params: t.method_generic_params.clone(),
-                        generic_bounds: Vec::new(),
+                        generic_bounds: t.method_generic_bounds.clone(),
                         is_unsafe: t.is_unsafe,
                     },
                 );
@@ -2605,11 +2611,16 @@ impl SemaCx<'_> {
                 );
                 continue;
             }
-            // Method-level generic params.
+            // Method-level generic params + their bounds (parallel).
             let method_param_names: Vec<String> = m
                 .generic_params
                 .iter()
                 .map(|g| g.name.name.clone())
+                .collect();
+            let method_param_bounds: Vec<Vec<String>> = m
+                .generic_params
+                .iter()
+                .map(|g| g.bounds.iter().map(|i| i.name.clone()).collect())
                 .collect();
             let mut method_scope = std::collections::HashSet::new();
             for n in &method_param_names {
@@ -2651,6 +2662,7 @@ impl SemaCx<'_> {
                 impl_generic_params: impl_param_names.clone(),
                 impl_param_bounds: impl_param_bounds.clone(),
                 method_generic_params: method_param_names,
+                method_generic_bounds: method_param_bounds,
                 is_drop: false,
                 is_unsafe: m.is_unsafe,
             });
@@ -13292,7 +13304,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         // Method-level generic params survive — a method
                         // can still be `fn map[U]` inside `impl Vec[T]`.
                         generic_params: t.method_generic_params.clone(),
-                        generic_bounds: Vec::new(),
+                        generic_bounds: t.method_generic_bounds.clone(),
                         is_unsafe: t.is_unsafe,
                     },
                 );
@@ -13685,7 +13697,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     params: resolved_params,
                     return_type: resolved_return,
                     generic_params: t.method_generic_params.clone(),
-                    generic_bounds: Vec::new(),
+                    generic_bounds: t.method_generic_bounds.clone(),
                     is_unsafe: t.is_unsafe,
                 },
             );
@@ -19867,6 +19879,92 @@ fn mv(move r: R) -> i32 { return 0; }\n";
              }",
         );
         assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
+    }
+
+    #[test]
+    fn method_level_generic_bound_on_generic_struct_enforced_e0502() {
+        // SOUNDNESS: a method-level generic bound (`fn f[U: Copy]`) on a
+        // GENERIC struct was dropped when the struct was instantiated — the
+        // synthesized method sig had empty `generic_bounds`, so a non-Copy
+        // `U` (a Drop type) was accepted. The body `let a = x; let b = x;`
+        // then bit-copies a non-Copy value → double drop. Must be E0502.
+        let copy_bound = errors(
+            "struct Box[T] { value: T } \
+             impl Box[T] { fn dup_arg[U: Copy](self, x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
+             struct R { tag: i32 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let b: Box[i32] = Box[i32] { value: 0 }; \
+                 let r: R = R { tag: 5 }; \
+                 return b.dup_arg::[R](r); \
+             }",
+        );
+        assert!(
+            copy_bound.contains(&"E0502"),
+            "method `U: Copy` bound on generic struct must reject a Drop type, got: {copy_bound:?}"
+        );
+        // Interface bound is enforced the same way.
+        let iface_bound = errors(
+            "interface Show { fn show(self) -> i32; } \
+             struct Box[T] { value: T } \
+             impl Box[T] { fn run[U: Show](self, x: U) -> i32 { return x.show(); } } \
+             struct NoShow { n: i32 } \
+             fn main() -> i32 { \
+                 let b: Box[i32] = Box[i32] { value: 0 }; \
+                 let w: NoShow = NoShow { n: 7 }; \
+                 return b.run::[NoShow](w); \
+             }",
+        );
+        assert!(
+            iface_bound.contains(&"E0502"),
+            "method `U: Show` bound on generic struct must reject a non-Show type, got: {iface_bound:?}"
+        );
+    }
+
+    #[test]
+    fn method_level_generic_bound_on_generic_enum_enforced_e0502() {
+        // Same soundness fix on the enum instantiation path — both a method
+        // and an associated function.
+        let method = errors(
+            "enum Box[T] { V(T) } \
+             impl Box[T] { fn dup[U: Copy](self, x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
+             struct R { tag: i32 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { \
+                 let b: Box[i32] = Box[i32]::V(0); \
+                 let r: R = R { tag: 5 }; \
+                 return b.dup::[R](r); \
+             }",
+        );
+        assert!(
+            method.contains(&"E0502"),
+            "enum method `U: Copy` bound must reject a Drop type, got: {method:?}"
+        );
+        let assoc = errors(
+            "enum Box[T] { V(T) } \
+             impl Box[T] { fn mk[U: Copy](x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
+             struct R { tag: i32 } \
+             impl R { fn drop(mut self) { return; } } \
+             fn main() -> i32 { let r: R = R { tag: 5 }; return Box[i32]::mk::[R](r); }",
+        );
+        assert!(
+            assoc.contains(&"E0502"),
+            "enum assoc-fn `U: Copy` bound must reject a Drop type, got: {assoc:?}"
+        );
+    }
+
+    #[test]
+    fn method_level_generic_bound_on_generic_struct_satisfied_clean() {
+        // The bound is checked, not blanket-rejected: a satisfying type
+        // (Copy `i32`, or a type that impls the interface) type-checks.
+        assert_clean(
+            "struct Box[T] { value: T } \
+             impl Box[T] { fn dup_arg[U: Copy](self, x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
+             fn main() -> i32 { \
+                 let b: Box[i32] = Box[i32] { value: 0 }; \
+                 return b.dup_arg::[i32](5); \
+             }",
+        );
     }
 
     #[test]
