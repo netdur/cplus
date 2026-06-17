@@ -1612,10 +1612,26 @@ impl Parser {
             // E0508 outside any impl/interface context.
             TokenKind::SelfUpper => {
                 let span = self.bump().span;
-                Ok(Type {
+                let base = Type {
                     kind: TypeKind::Path("Self".to_string()),
                     span,
-                })
+                };
+                // `Self[]` — a slice of `Self`, the same surface as `Name[]`.
+                // (Only empty brackets: `Self[args]` is nonsensical since
+                // `Self` is a concrete type, not a generic template.) Without
+                // this the `[` is left dangling and `Self[]` fails to parse,
+                // an inconsistency with every other slice element type.
+                if matches!(self.peek_kind(), TokenKind::LBracket)
+                    && matches!(self.peek_kind_n(1), TokenKind::RBracket)
+                {
+                    self.bump();
+                    let end = self.bump().span;
+                    return Ok(Type {
+                        kind: TypeKind::Slice(Box::new(base)),
+                        span: span.merge(end),
+                    });
+                }
+                Ok(base)
             }
             TokenKind::LBracket => {
                 let start = self.bump().span;

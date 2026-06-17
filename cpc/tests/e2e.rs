@@ -13096,6 +13096,88 @@ fn main() -> i32 {
 }
 
 #[test]
+/// Regression: `Self` nested inside a fn-pointer parameter type. An
+/// interface method `fn apply(self, f: fn(Self) -> i32) -> i32` whose impl
+/// writes the same param as `fn(P) -> i32` used to be rejected (false
+/// E0505) because the `Self`-substitution helper stopped at the top level
+/// and never recursed into `FnPtr`. With the recursion fixed, the fn
+/// pointer flows through generic dispatch (`call[T: Apply]`) and the
+/// indirect call runs. End-to-end value: `call::[P](p, read)` =
+/// `p.apply(read)` = `read(p)` = `p.x` = 7.
+fn interface_self_in_fn_ptr_through_generic_dispatch() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("applyself.cplus");
+    std::fs::write(
+        &src,
+        "\
+struct P { x: i32 }
+interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; }
+impl P for Apply {
+    fn apply(self, f: fn(P) -> i32) -> i32 { return f(self); }
+}
+fn read(p: P) -> i32 { return p.x; }
+fn call[T: Apply](t: T, f: fn(T) -> i32) -> i32 { return t.apply(f); }
+fn main() -> i32 {
+    let p: P = P { x: 7 };
+    return call::[P](p, read);
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("applyself");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for Self-in-fn-ptr interface");
+    let run = Command::new(&bin).status().expect("run applyself");
+    assert_eq!(run.code(), Some(7), "call::[P](p, read) should be 7 (p.x)");
+}
+
+#[test]
+/// Companion: `Self` nested inside a generic *instantiation*. Interface
+/// `fn wrap(self) -> Holder[Self]`, impl returns `Holder[P]`. The match
+/// compares the instantiation by origin (name + recursive args) so the
+/// buried `Self` substitutes, then the value flows back through a generic
+/// `run[T: Wrap]`. `run::[P](p).v.x` = 9.
+fn interface_self_in_generic_instantiation_return() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("holderself.cplus");
+    std::fs::write(
+        &src,
+        "\
+struct Holder[A] { v: A }
+struct P { x: i32 }
+interface Wrap { fn wrap(self) -> Holder[Self]; }
+impl P for Wrap {
+    fn wrap(self) -> Holder[P] { return Holder[P] { v: self }; }
+}
+fn run[T: Wrap](t: T) -> Holder[T] { return t.wrap(); }
+fn main() -> i32 {
+    let p: P = P { x: 9 };
+    let h: Holder[P] = run::[P](p);
+    return h.v.x;
+}
+",
+    )
+    .unwrap();
+    let bin = dir.join("holderself");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for Self-in-generic-instantiation");
+    let run = Command::new(&bin).status().expect("run holderself");
+    assert_eq!(run.code(), Some(9), "run::[P](p).v.x should be 9");
+}
+
+#[test]
 /// v0.0.5: `<` / `<=` / `>` / `>=` on a generic-parameter operand is
 /// rejected at sema time with E0302 and a helpful message pointing at
 /// the `.cmp()` idiom. Before this lint, sema let the comparison

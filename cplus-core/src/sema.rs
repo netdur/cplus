@@ -2372,6 +2372,11 @@ impl SemaCx<'_> {
             let self_ty = Ty::Struct(id);
             for t in &templates {
                 let mut method_subst: HashMap<String, Ty> = HashMap::new();
+                // `Self` substitutes to the receiver type, folded into the
+                // same map so `subst_ty_deep` reaches it inside compound and
+                // generic-instantiation types (`fn(Self)`, `Vec[Self]`, ...),
+                // not just at the top level.
+                method_subst.insert("Self".to_string(), self_ty.clone());
                 for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
@@ -2385,7 +2390,7 @@ impl SemaCx<'_> {
                         .map(|(ty, mutable, move_, borrow_)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
-                                ty: subst_self(&s, &self_ty),
+                                ty: s,
                                 mutable,
                                 move_,
                                 borrow_,
@@ -2395,7 +2400,7 @@ impl SemaCx<'_> {
                 };
                 let resolved_return = {
                     let s = self.subst_ty_deep(&t.return_type, &method_subst);
-                    subst_self(&s, &self_ty)
+                    s
                 };
                 self.structs[id.0 as usize].methods.insert(
                     t.name.clone(),
@@ -2960,7 +2965,7 @@ impl SemaCx<'_> {
                     code: "E0506",
                     msg: format!(
                         "duplicate `impl {} for {}` — a type may have at most one impl of any given interface",
-                        iface_name.name, b.target.name
+                        b.target.name, iface_name.name
                     ),
                     span: iface_name.span,
                     origin_file: item.origin_file.clone(),
@@ -2984,7 +2989,7 @@ impl SemaCx<'_> {
                         code: "E0503",
                         msg: format!(
                             "`impl {} for {}` is missing method `{}` required by interface",
-                            iface_name.name, b.target.name, mname
+                            b.target.name, iface_name.name, mname
                         ),
                         span,
                         origin_file: item.origin_file.clone(),
@@ -2992,7 +2997,7 @@ impl SemaCx<'_> {
                     continue;
                 };
                 // E0505 — signature equality after Self substitution.
-                if !method_sig_matches(iface_sig, impl_sig, &target_ty) {
+                if !method_sig_matches(&self.structs, &self.enums, iface_sig, impl_sig, &target_ty) {
                     let span = b
                         .methods
                         .iter()
@@ -13114,6 +13119,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let self_ty = Ty::Struct(id);
             for t in &templates {
                 let mut method_subst: HashMap<String, Ty> = HashMap::new();
+                // `Self` substitutes to the receiver type, folded into the
+                // same map so `subst_ty_deep` reaches it inside compound and
+                // generic-instantiation types (`fn(Self)`, `Vec[Self]`, ...),
+                // not just at the top level.
+                method_subst.insert("Self".to_string(), self_ty.clone());
                 for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
@@ -13131,7 +13141,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .map(|(ty, mutable, move_, borrow_)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
-                                ty: subst_self(&s, &self_ty),
+                                ty: s,
                                 mutable,
                                 move_,
                                 borrow_,
@@ -13141,7 +13151,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 };
                 let resolved_return = {
                     let s = self.subst_ty_deep(&t.return_type, &method_subst);
-                    subst_self(&s, &self_ty)
+                    s
                 };
                 self.structs[id.0 as usize].methods.insert(
                     t.name.clone(),
@@ -13494,6 +13504,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let self_ty = Ty::Enum(id);
             for t in &templates {
                 let mut method_subst: HashMap<String, Ty> = HashMap::new();
+                // `Self` substitutes to the receiver type, folded into the
+                // same map so `subst_ty_deep` reaches it inside compound and
+                // generic-instantiation types (`fn(Self)`, `Vec[Self]`, ...),
+                // not just at the top level.
+                method_subst.insert("Self".to_string(), self_ty.clone());
                 for (gp, arg) in t.impl_generic_params.iter().zip(arg_tys.iter()) {
                     method_subst.insert(gp.clone(), arg.clone());
                 }
@@ -13507,7 +13522,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .map(|(ty, mutable, move_, borrow_)| {
                             let s = self.subst_ty_deep(&ty, &method_subst);
                             ParamSig {
-                                ty: subst_self(&s, &self_ty),
+                                ty: s,
                                 mutable,
                                 move_,
                                 borrow_,
@@ -13517,7 +13532,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 };
                 let resolved_return = {
                     let s = self.subst_ty_deep(&t.return_type, &method_subst);
-                    subst_self(&s, &self_ty)
+                    s
                 };
                 self.enums[id.0 as usize].methods.insert(
                     t.name.clone(),
@@ -14643,19 +14658,86 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
     }
 }
 
-/// Slice 7GEN.4: walk a `Ty` replacing every occurrence of
-/// `Ty::Param("Self")` with the concrete `target` type. Used during
-/// interface-impl signature comparison so the interface's abstract
-/// `Self`-typed slots line up against the impl's concrete types.
-/// Recurses into `Array`'s element type. Other `Ty::Param` names
-/// (proper generics like `T`) are left alone — they're already
-/// concrete-relative-to-the-impl since impls don't introduce fresh
-/// type params in this slice's surface.
-fn subst_self(ty: &Ty, target: &Ty) -> Ty {
-    match ty {
-        Ty::Param(name) if name == "Self" => target.clone(),
-        Ty::Array(elem, len) => Ty::Array(Box::new(subst_self(elem, target)), *len),
-        other => other.clone(),
+/// Slice 7GEN.4: read-only structural equality of an interface method
+/// type (`iface_ty`, which may mention `Self`) against the corresponding
+/// impl type (`impl_ty`), with `Self` mapped to `target`. Recurses into
+/// EVERY compound type that can nest `Self` — array, slice, raw pointer,
+/// fn-pointer params/return — so `fn(Self) -> i32`, `Self[]`, `*Self`,
+/// etc. line up; a nested `Self` left unmatched spuriously fails the impl
+/// signature match (E0505). Generic *instantiations* (`Vec[Self]` vs
+/// `Vec[P]`) are compared by their `generic_origin` (name + recursive
+/// args) rather than by synthesized id, so a `Self` buried in a generic
+/// argument is handled too — without re-instantiating, which keeps this
+/// borrow-only (`&[StructDef]` / `&[EnumDef]`) and composable with the
+/// borrowed sigs at the call site. Other `Ty::Param` names (proper
+/// generics like `T`) compare by plain equality.
+fn ty_eq_modulo_self(
+    structs: &[StructDef],
+    enums: &[EnumDef],
+    iface_ty: &Ty,
+    impl_ty: &Ty,
+    target: &Ty,
+) -> bool {
+    match iface_ty {
+        Ty::Param(name) if name == "Self" => impl_ty == target,
+        Ty::Array(elem, len) => {
+            matches!(impl_ty, Ty::Array(belem, blen)
+                if len == blen && ty_eq_modulo_self(structs, enums, elem, belem, target))
+        }
+        Ty::Slice(elem) => {
+            matches!(impl_ty, Ty::Slice(belem)
+                if ty_eq_modulo_self(structs, enums, elem, belem, target))
+        }
+        Ty::RawPtr(inner) => {
+            matches!(impl_ty, Ty::RawPtr(binner)
+                if ty_eq_modulo_self(structs, enums, inner, binner, target))
+        }
+        Ty::FnPtr {
+            params,
+            return_type,
+        } => match impl_ty {
+            Ty::FnPtr {
+                params: bparams,
+                return_type: breturn,
+            } => {
+                params.len() == bparams.len()
+                    && params
+                        .iter()
+                        .zip(bparams.iter())
+                        .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target))
+                    && ty_eq_modulo_self(structs, enums, return_type, breturn, target)
+            }
+            _ => false,
+        },
+        Ty::Struct(iid) => {
+            if let (Ty::Struct(bid), Some((iname, iargs))) =
+                (impl_ty, structs[iid.0 as usize].generic_origin.as_ref())
+            {
+                if let Some((bname, bargs)) = structs[bid.0 as usize].generic_origin.as_ref() {
+                    return iname == bname
+                        && iargs.len() == bargs.len()
+                        && iargs.iter().zip(bargs.iter()).all(|(p, b)| {
+                            ty_eq_modulo_self(structs, enums, p, b, target)
+                        });
+                }
+            }
+            iface_ty == impl_ty
+        }
+        Ty::Enum(iid) => {
+            if let (Ty::Enum(bid), Some((iname, iargs))) =
+                (impl_ty, enums[iid.0 as usize].generic_origin.as_ref())
+            {
+                if let Some((bname, bargs)) = enums[bid.0 as usize].generic_origin.as_ref() {
+                    return iname == bname
+                        && iargs.len() == bargs.len()
+                        && iargs.iter().zip(bargs.iter()).all(|(p, b)| {
+                            ty_eq_modulo_self(structs, enums, p, b, target)
+                        });
+                }
+            }
+            iface_ty == impl_ty
+        }
+        _ => iface_ty == impl_ty,
     }
 }
 
@@ -14669,7 +14751,13 @@ fn subst_self(ty: &Ty, target: &Ty) -> Ty {
 /// lets a generic caller dispatch through the interface (which says
 /// `borrow`, so it keeps + drops the value) while the impl consumed it,
 /// a double-free.
-fn method_sig_matches(iface: &MethodSig, impl_: &MethodSig, target: &Ty) -> bool {
+fn method_sig_matches(
+    structs: &[StructDef],
+    enums: &[EnumDef],
+    iface: &MethodSig,
+    impl_: &MethodSig,
+    target: &Ty,
+) -> bool {
     if iface.receiver != impl_.receiver {
         return false;
     }
@@ -14686,11 +14774,11 @@ fn method_sig_matches(iface: &MethodSig, impl_: &MethodSig, target: &Ty) -> bool
         if a.borrow_ != b.borrow_ {
             return false;
         }
-        if subst_self(&a.ty, target) != b.ty {
+        if !ty_eq_modulo_self(structs, enums, &a.ty, &b.ty, target) {
             return false;
         }
     }
-    subst_self(&iface.return_type, target) == impl_.return_type
+    ty_eq_modulo_self(structs, enums, &iface.return_type, &impl_.return_type, target)
 }
 
 fn cast_allowed(from: &Ty, to: &Ty) -> bool {
@@ -18929,6 +19017,99 @@ fn mv(move r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0505"), "expected E0505, got: {codes:?}");
+    }
+
+    #[test]
+    fn interface_method_self_in_fn_ptr_param_matches() {
+        // Interface says `fn apply(self, f: fn(Self) -> i32) -> i32`; the impl
+        // writes the same param as `fn(P) -> i32`. `Self` nested inside a
+        // fn-pointer parameter type must be substituted when matching the
+        // signature — otherwise the (valid) impl is spuriously rejected (a
+        // false E0505). Regression: `subst_self`/`ty_eq_modulo_self` used to
+        // stop at the top level and not recurse into `FnPtr`.
+        assert_clean(
+            "struct P { x: i32 } \
+             interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; } \
+             impl P for Apply { fn apply(self, f: fn(P) -> i32) -> i32 { return f(self); } } \
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn interface_method_self_in_raw_ptr_and_slice_match() {
+        // `Self` nested in a raw pointer (`*Self`) and a slice (`Self[]`) is
+        // substituted the same way — the impl's `*P` / `P[]` lines up.
+        assert_clean(
+            "struct P { x: i32 } \
+             interface IPtr { fn m(self, p: *Self) -> i32; } \
+             impl P for IPtr { fn m(self, p: *P) -> i32 { return unsafe { (*p).x }; } } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert_clean(
+            "struct P { x: i32 } \
+             interface ISlice { fn m(self, s: Self[]) -> i32; } \
+             impl P for ISlice { fn m(self, s: P[]) -> i32 { return 0; } } \
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn interface_method_self_in_generic_instantiation_matches() {
+        // `Self` buried in a generic instantiation argument (`Holder[Self]`,
+        // `Pair[Self]`) must be substituted too — compared by `generic_origin`
+        // (name + recursive args), so the impl's `Holder[P]` / `Pair[P]`
+        // matches. Both an argument position and a return position.
+        assert_clean(
+            "struct Pair[A] { a: A } \
+             struct P { x: i32 } \
+             interface I { fn m(self, p: Pair[Self]) -> i32; } \
+             impl P for I { fn m(self, p: Pair[P]) -> i32 { return p.a.x; } } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert_clean(
+            "struct Holder[A] { v: A } \
+             struct P { x: i32 } \
+             interface Wrap { fn wrap(self) -> Holder[Self]; } \
+             impl P for Wrap { fn wrap(self) -> Holder[P] { return Holder[P] { v: self }; } } \
+             fn main() -> i32 { return 0; }",
+        );
+    }
+
+    #[test]
+    fn interface_method_self_in_fn_ptr_wrong_inner_type_e0505() {
+        // The recursion must still REJECT a genuine mismatch: interface
+        // `fn(Self) -> i32`, impl `fn(Q) -> i32` (Q != the target P). The
+        // nested type is wrong, so it is a real E0505 — the fix widens what
+        // matches, it does not make every fn-ptr param match.
+        let codes = errors(
+            "struct P { x: i32 } \
+             struct Q { y: i32 } \
+             interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; } \
+             impl P for Apply { fn apply(self, f: fn(Q) -> i32) -> i32 { return 0; } } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0505"),
+            "fn-ptr with wrong nested type must still be E0505, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn interface_method_self_in_generic_instantiation_wrong_arg_e0505() {
+        // Likewise for generic instantiations: interface `Pair[Self]`, impl
+        // `Pair[Q]` (Q != P) is a real mismatch — must stay E0505.
+        let codes = errors(
+            "struct Pair[A] { a: A } \
+             struct P { x: i32 } \
+             struct Q { y: i32 } \
+             interface I { fn m(self, p: Pair[Self]) -> i32; } \
+             impl P for I { fn m(self, p: Pair[Q]) -> i32 { return 0; } } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0505"),
+            "generic instantiation with wrong arg must still be E0505, got: {codes:?}"
+        );
     }
 
     #[test]
