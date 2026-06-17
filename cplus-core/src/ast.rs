@@ -781,10 +781,17 @@ pub enum ExprKind {
     /// `resolve_generic_instantiation_enum`. Monomorphize rewrites
     /// this node to a regular `Path { [mangled_enum, variant] }`-call
     /// or path expression.
+    ///
+    /// `method_type_args` carries a method-level turbofish when the node is
+    /// a generic-struct ASSOCIATED-fn call with its own type params —
+    /// `Box[i32]::make::[bool](x)`. Empty for enum variant constructors and
+    /// for the inferred form (`Box[i32]::make(x)`, where sema infers the
+    /// method args). Only meaningful on the struct-assoc-call path.
     GenericEnumCall {
         enum_name: Ident,
         type_args: Vec<Type>,
         variant: Ident,
+        method_type_args: Vec<Type>,
         args: Vec<Expr>,
     },
     /// Field access: `expr.name`. Phase 2B.

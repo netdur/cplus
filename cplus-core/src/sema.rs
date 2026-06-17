@@ -5750,8 +5750,16 @@ impl SemaCx<'_> {
                 enum_name,
                 type_args,
                 variant,
+                method_type_args,
                 args,
-            } => self.check_generic_enum_call(enum_name, type_args, variant, args, e.span),
+            } => self.check_generic_enum_call(
+                enum_name,
+                type_args,
+                variant,
+                method_type_args,
+                args,
+                e.span,
+            ),
             ExprKind::Field { receiver, name } => self.check_field(receiver, name),
             ExprKind::ArrayLit { elements } => self.check_array_lit(elements, expected, e.span),
             ExprKind::ArrayFill { fill, count, .. } => {
@@ -7586,6 +7594,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         enum_name: &Ident,
         type_args: &[Type],
         variant: &Ident,
+        method_type_args: &[Type],
         args: &[Expr],
         span: ByteSpan,
     ) -> Ty {
@@ -7619,7 +7628,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     },
                     variant.clone(),
                 ];
-                return self.check_assoc_call(&segments, &[], args, enum_name.span, span);
+                // A method-level turbofish (`Box[i32]::make::[U](..)`) flows
+                // through as the assoc-call's type args; an empty list lets
+                // the generic-method path infer `U` from the arguments.
+                return self.check_assoc_call(
+                    &segments,
+                    method_type_args,
+                    args,
+                    enum_name.span,
+                    span,
+                );
             }
             // v0.0.4 Phase 1C: free-fn fallback for `Type[args]::name(...)`.
             // Many constructor-shaped fns (`Vec::with_capacity`, `string::new`)
@@ -7672,6 +7690,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // parens (parser produces args=[]), short-circuit to the bare
         // variant value — no E0327 since the user didn't write parens.
         // Multi-payload + parens path delegates to check_assoc_call.
+        //
+        // NOTE: an enum *associated function* (no `self`,
+        // `Maybe[i32]::make(..)`) is not supported here — the methods
+        // aren't collected onto the generic-enum instance and neither mono
+        // nor the assoc-call codegen path handle an enum-typed assoc call
+        // (they assume a struct). It errors E0317 ("no variant"). Distinct,
+        // deeper gap than the generic-struct assoc-fn this node now handles;
+        // `method_type_args` is therefore consumed only on the struct path.
         let def = &self.enums[id.0 as usize];
         if let Some(vdef) = def.variants.iter().find(|v| v.name == variant.name) {
             if vdef.payload.is_empty() && args.is_empty() {
@@ -19223,6 +19249,37 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert!(
             codes.contains(&"E0501"),
             "expected E0501 for method turbofish arity mismatch, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn generic_assoc_fn_on_generic_struct_clean() {
+        // A generic associated function (no `self`) on a generic struct,
+        // both the explicit method turbofish and the inferred form, must
+        // type-check clean. The turbofish form used to be a parse error.
+        assert_clean(
+            "struct Box[T] { value: T } \
+             impl Box[T] { fn make[U](x: U) -> U { return x; } } \
+             fn main() -> i32 { return Box[i32]::make::[i32](7); }",
+        );
+        assert_clean(
+            "struct Box[T] { value: T } \
+             impl Box[T] { fn pick[U, V](a: U, b: V) -> V { return b; } } \
+             fn main() -> i32 { return Box[i32]::pick(true, 7); }",
+        );
+    }
+
+    #[test]
+    fn generic_assoc_fn_on_generic_struct_wrong_arity_e0501() {
+        // The assoc-fn turbofish enforces method type-arg arity.
+        let codes = errors(
+            "struct Box[T] { value: T } \
+             impl Box[T] { fn make[U](x: U) -> U { return x; } } \
+             fn main() -> i32 { return Box[i32]::make::[i32, bool](7); }",
+        );
+        assert!(
+            codes.contains(&"E0501"),
+            "expected E0501 for assoc-fn turbofish arity mismatch, got: {codes:?}"
         );
     }
 

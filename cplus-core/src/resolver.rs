@@ -2548,6 +2548,7 @@ fn rewrite_expr(
         ExprKind::GenericEnumCall {
             enum_name,
             type_args,
+            method_type_args,
             args,
             ..
         } => {
@@ -2565,6 +2566,9 @@ fn rewrite_expr(
                 }
             }
             for ta in type_args.iter_mut() {
+                rewrite_type(ta, ctx)?;
+            }
+            for ta in method_type_args.iter_mut() {
                 rewrite_type(ta, ctx)?;
             }
             for el in args {

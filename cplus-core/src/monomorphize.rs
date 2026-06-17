@@ -2392,6 +2392,7 @@ fn rewrite_expr(
             enum_name,
             type_args,
             variant,
+            method_type_args,
             args,
         } => {
             let resolved_args: Vec<Type> = type_args
@@ -2464,12 +2465,38 @@ fn rewrite_expr(
                     .get(&(enum_name.name.clone(), arg_names))
                     .cloned()
                     .unwrap_or_else(|| enum_name.name.clone());
+                // A generic-struct ASSOCIATED-fn call with a method-level
+                // generic (`Box[i32]::make::[U](..)`, or inferred
+                // `Box[i32]::make(..)`) must mangle the method name to the
+                // monomorphized callee (`make__i32`), matching the synthesized
+                // method. Sema's authoritative record (`call_monos` at this
+                // span) is preferred; the AST turbofish is the fallback for
+                // spans inside generic bodies sema didn't type-check. A
+                // non-generic method / enum-variant constructor has neither,
+                // so the name passes through unchanged.
+                let method_arg_tys: Option<Vec<Ty>> = match mono.call_monos.get(&expr.span) {
+                    Some(m) if !m.is_empty() => {
+                        Some(m.iter().map(|t| subst_ty_plain(t, subst)).collect())
+                    }
+                    _ if !method_type_args.is_empty() => method_type_args
+                        .iter()
+                        .map(|t| type_ast_to_ty_with_subst(t, subst))
+                        .collect(),
+                    _ => None,
+                };
+                let variant_ident = match &method_arg_tys {
+                    Some(tys) if !tys.is_empty() => Ident {
+                        name: mangle_name(&variant.name, tys, type_name_of),
+                        span: variant.span,
+                    },
+                    _ => variant.clone(),
+                };
                 let segments = vec![
                     Ident {
                         name: mangled_enum,
                         span: enum_name.span,
                     },
-                    variant.clone(),
+                    variant_ident,
                 ];
                 // For payload-less variants written without parens (args is
                 // empty), rewrite to a bare Path expression (e.g.
@@ -2918,9 +2945,15 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
             }
         }
         ExprKind::GenericEnumCall {
-            type_args, args, ..
+            type_args,
+            method_type_args,
+            args,
+            ..
         } => {
             for t in type_args {
+                rewrite_alias_type(t, aliases);
+            }
+            for t in method_type_args {
                 rewrite_alias_type(t, aliases);
             }
             for a in args {

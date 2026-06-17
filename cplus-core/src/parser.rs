@@ -2476,6 +2476,28 @@ impl Parser {
         self.parse_postfix()
     }
 
+    /// Parse an optional method-level turbofish `::[T1, T2, ...]` that can
+    /// follow a method name in a generic-type associated-call path
+    /// (`Box[i32]::make::[U](..)`). Returns the type args, or empty if the
+    /// next tokens aren't `::[`.
+    fn parse_opt_method_turbofish(&mut self) -> Result<Vec<Type>, ParseError> {
+        let mut type_args = Vec::new();
+        if matches!(self.peek_kind(), TokenKind::ColonColon)
+            && self.peek_kind_n(1) == &TokenKind::LBracket
+        {
+            self.bump(); // `::`
+            self.bump(); // `[`
+            while !self.at(&TokenKind::RBracket) {
+                type_args.push(self.parse_type()?);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RBracket, "`]` after method `::[...]` turbofish")?;
+        }
+        Ok(type_args)
+    }
+
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut e = self.parse_primary()?;
         loop {
@@ -3107,6 +3129,7 @@ impl Parser {
                                 self.expect(&TokenKind::RBracket, "`]`")?;
                                 self.expect(&TokenKind::ColonColon, "`::`")?;
                                 let variant = self.expect_ident()?;
+                                let method_type_args = self.parse_opt_method_turbofish()?;
                                 let mut args = Vec::new();
                                 let end_span = if self.eat(&TokenKind::LParen) {
                                     while !self.at(&TokenKind::RParen) {
@@ -3132,6 +3155,7 @@ impl Parser {
                                         },
                                         type_args,
                                         variant,
+                                        method_type_args,
                                         args,
                                     },
                                     span: tok.span.merge(end_span),
@@ -3190,6 +3214,7 @@ impl Parser {
                             self.expect(&TokenKind::RBracket, "`]`")?;
                             self.expect(&TokenKind::ColonColon, "`::`")?;
                             let variant = self.expect_ident()?;
+                            let method_type_args = self.parse_opt_method_turbofish()?;
                             let mut args = Vec::new();
                             let end_span = if self.eat(&TokenKind::LParen) {
                                 while !self.at(&TokenKind::RParen) {
@@ -3210,6 +3235,7 @@ impl Parser {
                                     },
                                     type_args,
                                     variant,
+                                    method_type_args,
                                     args,
                                 },
                                 span: tok.span.merge(end_span),

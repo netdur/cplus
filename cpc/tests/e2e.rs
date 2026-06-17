@@ -7051,6 +7051,71 @@ fn phase7_generic_method_on_generic_enum_two_instantiations() {
 }
 
 #[test]
+fn phase7_generic_assoc_fn_on_generic_struct_turbofish() {
+    // Regression: a generic ASSOCIATED function (no `self`) on a GENERIC
+    // struct, called with a method-level turbofish:
+    // `Box[i32]::make::[i32](7)`. The `Type[args]::method::[targs]` form
+    // used to be a parse error (the method turbofish after the variant was
+    // never accepted); the inferred form panicked codegen (un-mangled
+    // method name). Now both resolve to the synthesized `make__i32`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("gas_tf.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         impl Box[T] { fn make[U](x: U) -> U { return x; } }\n\
+         fn main() -> i32 { return Box[i32]::make::[i32](7); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("gas_tf");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic assoc fn on generic struct (turbofish) should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "Box[i32]::make::[i32](7) → 7");
+}
+
+#[test]
+fn phase7_generic_assoc_fn_on_generic_struct_inferred() {
+    // Companion of the turbofish case: the inferred form
+    // `Box[i32]::make(7)` (sema infers the method `U` from the arg). Used
+    // to panic codegen because the rewrite kept the un-mangled `make`.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("gas_inf.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { value: T }\n\
+         impl Box[T] { fn pick[U, V](a: U, b: V) -> V { return b; } }\n\
+         fn main() -> i32 { return Box[i32]::pick(true, 7); }\n",
+    )
+    .unwrap();
+    let bin = dir.join("gas_inf");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "generic assoc fn on generic struct (inferred) should build: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).status().expect("run binary");
+    assert_eq!(run.code(), Some(7), "Box[i32]::pick(true, 7) → 7");
+}
+
+#[test]
 fn phase7_generic_assoc_call_with_turbofish_runs() {
     // Slice 7GEN.5e: generic associated function with turbofish.
     let cpc = env!("CARGO_BIN_EXE_cpc");
