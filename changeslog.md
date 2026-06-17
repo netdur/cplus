@@ -3,6 +3,78 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
+## v0.0.23 — 2026-06-17
+
+> First release under the **language feature freeze**: no new syntax or
+> semantics. This is a soundness, correctness, and C-ABI hardening release.
+> Code that compiled before still compiles; several programs that *wrongly*
+> compiled (unsound) are now correctly rejected.
+
+### Ownership & Drop soundness
+- Closed multiple double-free / use-after-move holes: `match` now drops a
+  consumed or wildcard-discarded owning scrutinee in every arm shape, and
+  moving an owning payload out of a match on a place is rejected (E0337);
+  array and tuple literal elements are consumed (closes the `[p, q]`
+  double-free); whole-binding moves through value-transparent wrappers are
+  consumed; constructing into an aggregate consumes the source; overwriting
+  a Drop field or array element drops the old value first.
+- A `move self` method call consumes its receiver and is rejected on a
+  `borrow` receiver (E0337); turning a borrow into an owned value is
+  rejected, while sound shared-region borrows are preserved.
+- Fixed three Drop / ownership accounting holes (#6, #7, #8).
+- stdlib made sound for non-Copy element types: `Box` / `Rc` / `Arc` /
+  `Mutex` (set drops the old value, get is Copy-only),
+  `HashMap[K: Copy, V: Copy]`, and the `MutexGuard` refcount (closes a
+  guard-escape use-after-free).
+
+### Generics, methods & dispatch
+- Generic function *bodies* are now type-checked (closed the
+  unchecked-generic-body hole).
+- `Self` nested in a compound or generic type (`fn(Self)`, `*Self`,
+  `Self[]`, `Pair[Self]`) is substituted in interface/impl matching.
+- Method-level generics work on generic struct and enum impls
+  (`impl Box[T] { fn f[U](...) }`); generic and enum associated functions
+  work (`Box[i32]::make::[U]()`, `Maybe[i32]::make()`, including
+  self-returning factories).
+- Method-level generic bounds are enforced at the call site on generic
+  struct/enum methods: `fn f[U: Copy]` rejects a non-Copy type (E0502),
+  closing a double-free; impl-block generic bounds (`impl Box[T: Copy]`)
+  likewise.
+- `T::func()` path-form associated calls through a bound resolve; a generic
+  function's type argument is inferred from a generic struct/enum argument;
+  `Vec[Struct]::new()` no longer panics.
+
+### unsafe & function pointers
+- Taking a fn-pointer to an `unsafe fn` requires `unsafe` (a safe `fn(...)`
+  pointer cannot carry the unsafe-ness), closing a laundering hole.
+- Taking a fn-pointer to a `borrow`/`mut`-param function is rejected (ABI
+  mismatch); indirect (fn-pointer) and generic-method calls consume their
+  by-value arguments.
+
+### C ABI
+- Struct-by-value argument and return passing is unified onto the platform
+  C ABI across native function definitions, direct calls, and fn-pointer
+  calls, so a cpc function is C-callable and a fn-pointer is a real C
+  function pointer (verified against clang in both directions).
+
+### interface / impl
+- Interface impls are written type-first: `impl TYPE for INTERFACE`.
+- Interface/impl signature matching compares the `borrow` / `mut` / `move`
+  receiver and parameter conventions, not only the types (E0505).
+
+### Coroutines / codegen
+- `for-in` early `break` no longer crashes (SIGTRAP) and drops in-scope
+  coroutine locals (leak-on-cancel); await/reactor destroy edges route to
+  cleanup instead of trapping.
+
+### Text
+- A string literal coerces to `Text` at assignment, matching `let` / `return`.
+
+### Docs & tooling
+- Added the normative language specification (`docs/SPEC.md`), a
+  single-source diagnostic catalog (`errors.toml` + generator), and
+  `MEMORY-MODEL.md`. CI runs all workflows on release tags only.
+
 ## v0.0.22 — 2026-06-13
 
 > **Language feature freeze.** v0.0.22 is the last release to add language
