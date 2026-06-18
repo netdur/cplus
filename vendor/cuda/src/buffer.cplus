@@ -58,7 +58,7 @@ impl DeviceBuffer {
         return unsafe { cudaMemcpy(dst, this.dptr, n, runtime::memcpy_device_to_host()) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         device_free(this.dptr);
         this.dptr = unsafe { 0 as *u8 };
         return;

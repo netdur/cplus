@@ -17,7 +17,7 @@ pub fn create_window_delegate(
     will_close_imp: fn(*u8, *u8, *u8),
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CWindowDelegate\0"));
-    let mut cls: *u8 = existing;
+    var cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
         let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
         cls = rt::allocate_class_pair(nsobject, #str_ptr("CWindowDelegate\0"), 0 as usize);

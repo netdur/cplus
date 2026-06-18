@@ -168,8 +168,8 @@ fn register_fd(fd: i32, hdl: *u8) {
     let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
     let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
-    let mut n: i32 = unsafe { *nw_slot };
-    let mut cap: i32 = unsafe { *cw_slot };
+    var n: i32 = unsafe { *nw_slot };
+    var cap: i32 = unsafe { *cw_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_fds: *u8 = unsafe { realloc(*wf_slot, (cap *% 4) as usize) };
@@ -195,8 +195,8 @@ pub fn register_timer(ms: u64, hdl: *u8) {
     let ct_slot: *i32 = unsafe { (state + off_cap_timers()) as *i32 };
     let td_slot: **u8 = unsafe { (state + off_timer_deadlines()) as **u8 };
     let th_slot: **u8 = unsafe { (state + off_timer_hdls()) as **u8 };
-    let mut n: i32 = unsafe { *nt_slot };
-    let mut cap: i32 = unsafe { *ct_slot };
+    var n: i32 = unsafe { *nt_slot };
+    var cap: i32 = unsafe { *ct_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_d: *u8 = unsafe { realloc(*td_slot, (cap *% 8) as usize) };
@@ -228,9 +228,9 @@ pub fn poll_one_event() -> bool {
     let deadlines: *u64 = unsafe { *td_slot as *u64 };
     let hdls: **u8 = unsafe { *th_slot as **u8 };
     // Find the earliest deadline.
-    let mut best: i32 = 0;
-    let mut best_dl: u64 = unsafe { *(deadlines + (0 as usize)) };
-    let mut i: i32 = 1;
+    var best: i32 = 0;
+    var best_dl: u64 = unsafe { *(deadlines + (0 as usize)) };
+    var i: i32 = 1;
     while i < n {
         let dl: u64 = unsafe { *(deadlines + (i as usize)) };
         if dl < best_dl {
@@ -266,7 +266,7 @@ pub fn drain_pending() -> i32 {
     let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
     let hdls: **u8 = unsafe { *ph_slot as **u8 };
     unsafe { *np_slot = 0 as i32; }
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < n {
         let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
         let done: i32 = unsafe { #coro_done(hdl) };
@@ -284,8 +284,8 @@ pub fn enqueue_pending(hdl: *u8) {
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
     let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
-    let mut n: i32 = unsafe { *np_slot };
-    let mut cap: i32 = unsafe { *cp_slot };
+    var n: i32 = unsafe { *np_slot };
+    var cap: i32 = unsafe { *cp_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_p: *u8 = unsafe { realloc(*ph_slot, (cap *% 8) as usize) };
@@ -320,8 +320,8 @@ pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
     let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
     let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
-    let mut n: i32 = unsafe { *na_slot };
-    let mut cap: i32 = unsafe { *ca_slot };
+    var n: i32 = unsafe { *na_slot };
+    var cap: i32 = unsafe { *ca_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_ae: *u8 = unsafe { realloc(*ae_slot, (cap *% 8) as usize) };
@@ -349,7 +349,7 @@ pub fn notify_completed(awaitee: *u8) {
     if n == (0 as i32) { return; }
     let aes: **u8 = unsafe { *ae_slot as **u8 };
     let ars: **u8 = unsafe { *ar_slot as **u8 };
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < n {
         let cur_ae: *u8 = unsafe { *(aes + (i as usize)) };
         if cur_ae == awaitee {

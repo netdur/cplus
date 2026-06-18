@@ -44,8 +44,8 @@ fn build_b() -> [f32; 16] {
 // auto-vectorize this loop too, but we keep it explicitly scalar so we
 // have an independent oracle for the SIMD path.
 fn dot_scalar(a: [f32; 16], b: [f32; 16]) -> f32 {
-    let mut total: f32 = 0.0f32;
-    let mut i: i32 = 0;
+    var total: f32 = 0.0f32;
+    var i: i32 = 0;
     while i < 16 {
         total = total + a[i as usize] * b[i as usize];
         i = i +% 1;
@@ -58,8 +58,8 @@ fn dot_scalar(a: [f32; 16], b: [f32; 16]) -> f32 {
 // summing them. Compiles to native NEON / SSE / AVX vector
 // instructions at `--release` on every supported target.
 fn dot_simd(a: [f32; 16], b: [f32; 16]) -> f32 {
-    let mut acc: f32x4 = f32x4::splat(0.0f32);
-    let mut i: i32 = 0;
+    var acc: f32x4 = f32x4::splat(0.0f32);
+    var i: i32 = 0;
     while i < 16 {
         let av: f32x4 = f32x4::new(
             a[(i +% 0) as usize],

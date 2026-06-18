@@ -21,7 +21,7 @@ impl VisualEffectView {
         return VisualEffectView { obj: obj };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -66,7 +66,7 @@ impl TableViewCell {
         return TableViewCell { obj: cell };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

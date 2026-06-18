@@ -84,7 +84,7 @@ pub fn set_use_colors(b: bool) {
 fn write_str(fd: i32, s: str) {
     let p: *u8 = #str_ptr(s);
     let n: usize = #str_len(s);
-    let mut written: usize = 0;
+    var written: usize = 0;
     while written < n {
         let q: *u8 = unsafe { p + written };
         let w: isize = unsafe { write(fd, q, n -% written) };
@@ -98,14 +98,14 @@ fn print_timestamp(fd: i32) {
     // v0.0.9 follow-up (addr_of): both the `time_t` slot and the
     // snprintf scratch buffer now live on the stack — pre-`addr_of`
     // this function did two mallocs per log call.
-    let mut t: i64 = unsafe { time(0 as *i64) };
+    var t: i64 = unsafe { time(0 as *i64) };
     let tm_ptr: *Tm = unsafe { localtime(#addr_of(t)) };
     if unsafe { tm_ptr as usize } == (0 as usize) { return; }
     let tm: Tm = unsafe { *tm_ptr };
     let year: i32 = tm.tm_year +% 1900;
     let mon: i32 = tm.tm_mon +% 1;
 
-    let mut buf: [u8; 32] = [
+    var buf: [u8; 32] = [
         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
         0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,

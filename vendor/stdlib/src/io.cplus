@@ -8,7 +8,7 @@ extern fn printf(fmt: *u8, ...) -> i32;
 
 // Loop until all `n` bytes from `p` are written to `fd` (or write errors).
 fn write_all(fd: i32, p: *u8, n: usize) {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
         let q: *u8 = unsafe { p + written };

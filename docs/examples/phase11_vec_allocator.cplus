@@ -79,13 +79,13 @@ impl VecI32 {
         return unsafe { *p };
     }
 
-    fn set(mut this, i: usize, value: i32) {
+    fn set(ref this, i: usize, value: i32) {
         let p: *i32 = this.elem_ptr(i);
         unsafe { *p = value; }
         return;
     }
 
-    fn grow(mut this) {
+    fn grow(ref this) {
         let new_cap: usize = if this.cap == 0 as usize { 8 as usize } else { this.cap *% 2 as usize };
         let old_bytes: usize = this.cap *% #size_of::[i32]();
         let new_bytes: usize = new_cap *% #size_of::[i32]();
@@ -94,7 +94,7 @@ impl VecI32 {
         return;
     }
 
-    fn push(mut this, value: i32) {
+    fn push(ref this, value: i32) {
         if this.len == this.cap {
             this.grow();
         }
@@ -105,7 +105,7 @@ impl VecI32 {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         let bytes: usize = this.cap *% #size_of::[i32]();
         this.alloc.deallocate(this.ptr, bytes);
         return;
@@ -117,7 +117,7 @@ fn main() -> i32 {
     let initial_cap: usize = 4 as usize;
     let initial_bytes: usize = initial_cap *% #size_of::[i32]();
     let buf: *u8 = alloc.allocate(initial_bytes);
-    let mut v: VecI32 = VecI32 {
+    var v: VecI32 = VecI32 {
         ptr: buf,
         len: 0 as usize,
         cap: initial_cap,
@@ -125,15 +125,15 @@ fn main() -> i32 {
     };
 
     // Push 1..=8 — exceeds initial capacity of 4, exercising realloc-on-grow.
-    let mut i: i32 = 1;
+    var i: i32 = 1;
     while i <= 8 {
         v.push(i);
         i = i +% 1;
     }
 
     // Read back and sum: 1+2+3+4+5+6+7+8 = 36.
-    let mut sum: i32 = 0;
-    let mut j: usize = 0 as usize;
+    var sum: i32 = 0;
+    var j: usize = 0 as usize;
     while j < v.len() {
         sum = sum +% v.get(j);
         j = j +% 1 as usize;

@@ -15,11 +15,11 @@ impl ViewController {
         return ViewController { obj: vc };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -83,7 +83,7 @@ impl NavigationController {
         return NavigationController { obj: nav };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -109,7 +109,7 @@ impl TabBarController {
         return TabBarController { obj: rt::new_object(#str_ptr("UITabBarController\0")) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -131,7 +131,7 @@ impl SplitViewController {
         return SplitViewController { obj: rt::new_object(#str_ptr("UISplitViewController\0")) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -149,7 +149,7 @@ impl PageViewController {
         return PageViewController { obj: rt::new_object(#str_ptr("UIPageViewController\0")) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 }

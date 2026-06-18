@@ -121,7 +121,7 @@ impl Channel[T] {
     }
 
     // Push a value. Never blocks (buffer grows).
-    pub fn send(this, move v: T) {
+    pub fn send(this, take v: T) {
         let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
         let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
         let _e1: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
@@ -129,10 +129,10 @@ impl Channel[T] {
         let tail_ptr: *usize = unsafe { (this.ctrl + off_tail()) as *usize };
         let cap_ptr: *usize = unsafe { (this.ctrl + off_capacity()) as *usize };
         let buf_ptr_slot: **u8 = unsafe { (this.ctrl + off_buffer()) as **u8 };
-        let mut head: usize = unsafe { *head_ptr };
-        let mut tail: usize = unsafe { *tail_ptr };
-        let mut cap: usize = unsafe { *cap_ptr };
-        let mut buf: *u8 = unsafe { *buf_ptr_slot };
+        var head: usize = unsafe { *head_ptr };
+        var tail: usize = unsafe { *tail_ptr };
+        var cap: usize = unsafe { *cap_ptr };
+        var buf: *u8 = unsafe { *buf_ptr_slot };
         let elem_bytes: usize = #size_of::[T]();
         // If tail reached capacity, either shift down or grow.
         if tail == cap {
@@ -218,7 +218,7 @@ impl Channel[T] {
 
     // Destructor: atomic dec; the last reference destroys both pthread
     // primitives and frees both the header and the element buffer.
-    fn drop(mut this) {
+    fn drop(ref this) {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
@@ -236,7 +236,7 @@ impl Channel[T] {
             let head: usize = unsafe { *head_ptr };
             let tail: usize = unsafe { *tail_ptr };
             let typed_buf: *T = unsafe { buf as *T };
-            let mut i: usize = head;
+            var i: usize = head;
             while i < tail {
                 let elem_ptr: *T = unsafe { typed_buf + i };
                 unsafe { #drop_in_place::[T](elem_ptr); }

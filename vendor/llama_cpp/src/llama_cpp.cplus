@@ -97,7 +97,7 @@ pub fn default_context_params() -> raw::llama_context_params {
 }
 
 pub fn load(path: str, opts: LoadOptions) -> result::Result[Session, LlamaError] {
-    let mut mp: raw::llama_model_params = raw::llama_model_default_params();
+    var mp: raw::llama_model_params = raw::llama_model_default_params();
     mp.n_gpu_layers = opts.n_gpu_layers;
 
     let model: *() = raw::llama_model_load_from_file(unsafe { #str_ptr(path) as *i8 }, mp);
@@ -105,7 +105,7 @@ pub fn load(path: str, opts: LoadOptions) -> result::Result[Session, LlamaError]
         return result::Result[Session, LlamaError]::Err(LlamaError::LoadFailed);
     }
 
-    let mut cp: raw::llama_context_params = raw::llama_context_default_params();
+    var cp: raw::llama_context_params = raw::llama_context_default_params();
     cp.n_ctx = opts.n_ctx;
     if opts.n_threads > 0 {
         cp.n_threads = opts.n_threads;
@@ -149,7 +149,7 @@ impl Session {
         return raw::llama_model_size(this.model);
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if !is_null(this.sampler) {
             raw::llama_sampler_free(this.sampler);
             this.sampler = null();
@@ -328,8 +328,8 @@ pub fn generate_greedy_into(
     };
     unsafe { free(raw_tokens); }
 
-    let mut written: usize = 0 as usize;
-    let mut i: i32 = 0;
+    var written: usize = 0 as usize;
+    var i: i32 = 0;
     while i < max_new_tokens {
         guard let result::Result[i32, LlamaError]::Ok(token) = sample_greedy(session) else {
             return result::Result[usize, LlamaError]::Err(LlamaError::SampleFailed);
@@ -398,7 +398,7 @@ impl MtmdContext {
         return mtmd_raw::mtmd_support_audio(this.raw);
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if !is_null(this.raw) {
             mtmd_raw::mtmd_free(this.raw);
             this.raw = null();
@@ -416,7 +416,7 @@ pub fn bitmap_rgb(width: u32, height: u32, rgb: u8[]) -> result::Result[Bitmap, 
 }
 
 impl Bitmap {
-    fn drop(mut this) {
+    fn drop(ref this) {
         if !is_null(this.raw) {
             mtmd_raw::mtmd_bitmap_free(this.raw);
             this.raw = null();

@@ -83,7 +83,7 @@ fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
         #str_ptr("<init>\0"),
         #str_ptr("(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V\0"),
     );
-    let mut ctor_args: [jni::JValue; 2] = [jni::arg_object(buffer), jni::arg_object(app_loader)];
+    var ctor_args: [jni::JValue; 2] = [jni::arg_object(buffer), jni::arg_object(app_loader)];
     let loader: jni::jobject = unsafe {
         (*(*env.env)).NewObjectA(env.env, imdcl, ctor, #addr_of(ctor_args[0]))
     };
@@ -99,7 +99,7 @@ fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
         jni::arg_object(class_name),
     );
 
-    let mut record: ClickMethodRecord = ClickMethodRecord {
+    var record: ClickMethodRecord = ClickMethodRecord {
         name: #str_ptr("nativeOnClick\0"),
         signature: #str_ptr("(JLandroid/view/View;)V\0"),
         fn_ptr: cplus_av_native_on_click,
@@ -126,7 +126,7 @@ fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
 pub fn set_on_click(env: rt::Env, view: jni::jobject, token: i64) {
     let cls: jni::jobject = ensure_listener_class(env, view);
     let ctor: jni::jmethodID = env.get_method_id(cls, #str_ptr("<init>\0"), #str_ptr("(J)V\0"));
-    let mut args: [jni::JValue; 1] = [jni::arg_long(token as i64)];
+    var args: [jni::JValue; 1] = [jni::arg_long(token as i64)];
     let listener: jni::jobject = unsafe {
         (*(*env.env)).NewObjectA(env.env, cls, ctor, #addr_of(args[0]))
     };

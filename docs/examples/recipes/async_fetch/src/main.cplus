@@ -55,7 +55,7 @@ async fn fetch_one_byte(port: u16) -> i32 {
     // gotcha that match-as-expression with divergent arms triggers.
     guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp("127.0.0.1", port)
         else { return 0 -% 1 as i32; };
-    let mut stream: net::TcpStream = s;
+    var stream: net::TcpStream = s;
     let _nb: i32 = stream.make_nonblocking();
     // Send a one-byte request and read a one-byte reply.
     let req: *u8 = unsafe { malloc(1 as usize) };

@@ -53,7 +53,7 @@ impl Iterator[T] {
 
     // Yield at most `n` elements, then stop.
     pub gen fn take(this, n: usize) -> T {
-        let mut k: usize = 0 as usize;
+        var k: usize = 0 as usize;
         while k < n {
             match this.next() {
                 option::Option[T]::Some(v) => { yield v; }

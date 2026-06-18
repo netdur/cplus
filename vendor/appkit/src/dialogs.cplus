@@ -15,7 +15,7 @@ impl Alert {
         return Alert { obj: alert };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

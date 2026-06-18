@@ -1,5 +1,5 @@
 fn main() -> i32 {
-    let mut total: i32 = 0;
+    var total: i32 = 0;
     for i in 1..=100 {
         total = total + i;
     }

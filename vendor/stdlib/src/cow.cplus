@@ -46,7 +46,7 @@ pub fn from_view(s: str) -> CowStr {
 }
 
 // Wrap an owned `Text` as a Cow. The Cow now owns the buffer.
-pub fn from_owned(move s: text::Text) -> CowStr {
+pub fn from_owned(take s: text::Text) -> CowStr {
     return CowStr::Owned(s);
 }
 
@@ -71,7 +71,7 @@ pub fn len(borrow c: CowStr) -> usize {
 // and copy the bytes (`str::to_text()` does the malloc + memcpy).
 // Owned variant → unwrap and return the existing buffer (no extra
 // allocation, no copy).
-pub fn into_owned(move c: CowStr) -> text::Text {
+pub fn into_owned(take c: CowStr) -> text::Text {
     return match c {
         CowStr::View(s) => s.to_text(),
         CowStr::Owned(s) => s,

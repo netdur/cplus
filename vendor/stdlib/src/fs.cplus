@@ -56,8 +56,8 @@ pub fn create(path: str) -> result::Result[File, result::IoError] {
 impl File {
     // Drain remaining bytes into a fresh heap-allocated buffer. Returns
     // the Vec inside Result::Ok on success, or an IoError on failure.
-    pub fn read_to_end(mut this) -> result::Result[vec::Vec[u8], result::IoError] {
-        let mut buf: vec::Vec[u8] = vec::new::[u8]();
+    pub fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] {
+        var buf: vec::Vec[u8] = vec::new::[u8]();
         if this.fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
@@ -81,14 +81,14 @@ impl File {
 
     // Write `data`. Loops on short writes. On success returns bytes written
     // (always == data.len()); errors return Err.
-    pub fn write_all(mut this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+    pub fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
         if this.fd < (0 as i32) {
             return result::io_err::[usize](result::IoError::InvalidInput);
         }
         let n: usize = data.len();
         let slice: u8[] = data.as_slice();
         let p: *u8 = unsafe { #slice_ptr(slice) };
-        let mut written: usize = 0 as usize;
+        var written: usize = 0 as usize;
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = unsafe { p + written };
@@ -102,7 +102,7 @@ impl File {
     }
 
     // Explicit close. Disarms Drop by setting fd to -1.
-    pub fn close(mut this) {
+    pub fn close(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
             this.fd = 0 -% 1 as i32;
@@ -114,7 +114,7 @@ impl File {
     // `read_async` can return EAGAIN-loops instead of blocking the
     // executor thread. Idempotent; safe to call repeatedly. Returns 0
     // on success, -1 on fcntl error.
-    pub fn make_nonblocking(mut this) -> i32 {
+    pub fn make_nonblocking(ref this) -> i32 {
         return net::set_nonblocking(this.fd);
     }
 
@@ -122,7 +122,7 @@ impl File {
     // `net::read_fd_async(this.fd, buf, count)` — reactor handles
     // EAGAIN suspension via kqueue EVFILT_READ. Prerequisite: call
     // `make_nonblocking()` once before first use.
-    pub async fn read_async(mut this, buf: *u8, count: usize) -> isize {
+    pub async fn read_async(ref this, buf: *u8, count: usize) -> isize {
         return await net::read_fd_async(this.fd, buf, count);
     }
 
@@ -133,7 +133,7 @@ impl File {
     // chunk's scan. A final fragment without a trailing newline at EOF
     // is yielded as the last line.
     pub gen fn lines(this) -> text::Text {
-        let mut carry: vec::Vec[u8] = vec::new::[u8]();
+        var carry: vec::Vec[u8] = vec::new::[u8]();
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = unsafe { malloc(chunk_size) };
         loop {
@@ -153,8 +153,8 @@ impl File {
                 return;
             }
             let count: usize = n as usize;
-            let mut start: usize = 0 as usize;
-            let mut i: usize = 0 as usize;
+            var start: usize = 0 as usize;
+            var i: usize = 0 as usize;
             while i < count {
                 let bp: *u8 = unsafe { chunk + i };
                 let b: u8 = unsafe { *bp };
@@ -185,7 +185,7 @@ impl File {
     }
 
     // Destructor: close the fd if not already closed.
-    fn drop(mut this) {
+    fn drop(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
         }

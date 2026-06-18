@@ -66,7 +66,7 @@ fn is_null(p: *u8) -> bool {
 }
 
 impl Model {
-    fn drop(mut this) {
+    fn drop(ref this) {
         if !is_null(this.raw) {
             unsafe { cplus_coreai_release(this.raw); }
             this.raw = null();
@@ -76,7 +76,7 @@ impl Model {
 }
 
 impl Function {
-    fn drop(mut this) {
+    fn drop(ref this) {
         if !is_null(this.raw) {
             unsafe { cplus_coreai_release(this.raw); }
             this.raw = null();
@@ -86,7 +86,7 @@ impl Function {
 }
 
 impl NDArray {
-    fn drop(mut this) {
+    fn drop(ref this) {
         if !is_null(this.raw) {
             unsafe { cplus_coreai_release(this.raw); }
             this.raw = null();

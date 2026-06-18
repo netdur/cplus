@@ -71,7 +71,7 @@ pub struct MutexGuard[T] {
 //   mutex:    ctrl + 8    (64 bytes — pthread_mutex_t)
 //   value:    ctrl + 72   (T)
 
-pub fn new[T](move v: T) -> Mutex[T] {
+pub fn new[T](take v: T) -> Mutex[T] {
     let refct_bytes: usize = 8 as usize;
     let mutex_bytes: usize = 64 as usize;
     let value_size: usize = #size_of::[T]();
@@ -130,7 +130,7 @@ impl Mutex[T] {
     // Destructor: atomic decrement; on the last reference, destroy
     // the pthread mutex and free the heap block. AcqRel ordering
     // mirrors `Arc::drop`.
-    fn drop(mut this) {
+    fn drop(ref this) {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
@@ -173,7 +173,7 @@ impl MutexGuard[T] {
     // inner T is always initialized (`new` moved it in), so the drop-then-store
     // is sound for any T — a no-op `#drop_in_place` for Copy T, and a proper
     // teardown of the old value for a Drop T (no leak, no double-free).
-    pub fn set(mut this, v: T) {
+    pub fn set(ref this, v: T) {
         let value_off: usize = (8 as usize) +% (64 as usize);
         let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
         unsafe { #drop_in_place::[T](value_ptr); }
@@ -190,7 +190,7 @@ impl MutexGuard[T] {
     // implies no other reference exists, so no other thread can be mid-use.
     // The free is inlined here (not delegated) so the raw-pointer
     // accountability check is satisfied — same shape as `Mutex::drop`.
-    fn drop(mut this) {
+    fn drop(ref this) {
         let refct_bytes: usize = 8 as usize;
         let mutex_ptr: *u8 = unsafe { this.ctrl + refct_bytes };
         let _err: i32 = unsafe { pthread_mutex_unlock(mutex_ptr) };

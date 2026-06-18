@@ -12,13 +12,13 @@ struct Buffer { data: [i32; 4] }
 impl Buffer {
     fn new() -> Buffer { return Buffer { data: [0, 0, 0, 0] }; }
     fn first(this) -> i32 { return this.data[0 as usize]; }
-    fn fill(mut this, byte: i32) {
+    fn fill(ref this, byte: i32) {
         this.data[0 as usize] = byte;
         this.data[1 as usize] = byte;
         this.data[2 as usize] = byte;
         this.data[3 as usize] = byte;
     }
-    fn checksum(move this) -> i32 {
+    fn checksum(take this) -> i32 {
         return this.data[0 as usize] + this.data[1 as usize]
              + this.data[2 as usize] + this.data[3 as usize];
     }
@@ -27,7 +27,7 @@ impl Buffer {
 fn read_first(b: Buffer) -> i32 { return b.first(); }
 
 fn main() -> i32 {
-    let mut buf: Buffer = Buffer::new();
+    var buf: Buffer = Buffer::new();
     buf.fill(7);                        // `mut this` — mutates buf in place
     let f: i32 = read_first(buf);       // shared — buf still usable
     let sum: i32 = buf.checksum();      // `move this` — consumes buf

@@ -5,7 +5,7 @@ pub struct Panel {
 }
 
 impl Panel {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

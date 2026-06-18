@@ -13,7 +13,7 @@ impl ImageView {
         return ImageView { obj: rt::alloc_init_with_frame(#str_ptr("UIImageView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -115,7 +115,7 @@ impl BezierPath {
         return BezierPath { obj: rt::retain(path) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

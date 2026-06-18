@@ -1,7 +1,7 @@
 struct Counters { values: [i32; 3] }
 
 fn main() -> i32 {
-    let mut c: Counters = Counters { values: [0, 0, 0] };
+    var c: Counters = Counters { values: [0, 0, 0] };
     c.values[0] = 100;
     c.values[1] = 200;
     c.values[2] = 50;

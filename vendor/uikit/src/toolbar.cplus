@@ -10,7 +10,7 @@ impl Toolbar {
         return Toolbar { obj: rt::alloc_init_with_frame(#str_ptr("UIToolbar\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -36,7 +36,7 @@ impl NavigationBar {
         return NavigationBar { obj: rt::alloc_init_with_frame(#str_ptr("UINavigationBar\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -68,7 +68,7 @@ impl BarButtonItem {
         return BarButtonItem { obj: item };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -86,7 +86,7 @@ impl TabBar {
         return TabBar { obj: rt::alloc_init_with_frame(#str_ptr("UITabBar\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -117,7 +117,7 @@ impl TabBarItem {
         return TabBarItem { obj: item };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 }

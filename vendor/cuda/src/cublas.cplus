@@ -126,7 +126,7 @@ impl Handle {
         return rc;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         handle_destroy(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;

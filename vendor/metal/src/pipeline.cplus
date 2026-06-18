@@ -35,7 +35,7 @@ impl Library {
         return result::Result[Function, runtime::MetalError]::Ok(Function { raw: func_raw });
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -43,7 +43,7 @@ impl Library {
 }
 
 impl Function {
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -71,7 +71,7 @@ impl ComputePipelineState {
         return result::Result[ComputePipelineState, runtime::MetalError]::Ok(ComputePipelineState { raw: pipeline_raw });
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;

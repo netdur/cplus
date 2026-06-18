@@ -104,7 +104,7 @@ impl TextVersions {
 
     // Bump after a committed write. The consumer calls this once the backend has
     // actually applied the edit.
-    pub fn bump(mut this, node: usize) {
+    pub fn bump(ref this, node: usize) {
         let cur: u64 = this.version_of(node);
         this.v.insert(node, cur +% (1 as u64));
         return;
@@ -132,7 +132,7 @@ pub fn authorize_text_write(borrow reg: identity::Registry, borrow versions: Tex
 
 // app(0) -> [ btn(1, Button, tagged), field(2, Input, tagged) ]
 fn fixture() -> identity::Registry {
-    let mut r: identity::Registry = identity::new();
+    var r: identity::Registry = identity::new();
     let root: usize = r.root();
     let _btn: usize = r.add_child(root, option::Option[str]::Some("btn"), identity::Role::Button);
     let _field: usize = r.add_child(root, option::Option[str]::Some("field"), identity::Role::Input);
@@ -153,28 +153,28 @@ fn test_action_not_found_for_bad_handle() {
 
 #[test]
 fn test_action_blocked_when_unexposed() {
-    let mut r: identity::Registry = fixture();
+    var r: identity::Registry = fixture();
     r.set_exposed(1 as usize, false);
     assert outcome_eq(authorize_action(r, 1 as usize), Outcome::NotExposed);
 }
 
 #[test]
 fn test_action_blocked_by_observe_only_ceiling() {
-    let mut r: identity::Registry = fixture();
+    var r: identity::Registry = fixture();
     r.set_observe_only(1 as usize);
     assert outcome_eq(authorize_action(r, 1 as usize), Outcome::NotActionable);
 }
 
 #[test]
 fn test_action_blocked_when_disabled() {
-    let mut r: identity::Registry = fixture();
+    var r: identity::Registry = fixture();
     r.set_enabled(1 as usize, false);
     assert outcome_eq(authorize_action(r, 1 as usize), Outcome::NotActionable);
 }
 
 #[test]
 fn test_read_allows_observe_only_but_not_unexposed() {
-    let mut r: identity::Registry = fixture();
+    var r: identity::Registry = fixture();
     r.set_observe_only(1 as usize);
     // observe-only is still readable / scroll-to-able.
     assert outcome_eq(authorize_read(r, 1 as usize), Outcome::Allowed);
@@ -184,7 +184,7 @@ fn test_read_allows_observe_only_but_not_unexposed() {
 
 #[test]
 fn test_text_version_starts_zero_and_bumps() {
-    let mut tv: TextVersions = new_text_versions();
+    var tv: TextVersions = new_text_versions();
     assert tv.version_of(2 as usize) == (0 as u64);
     tv.bump(2 as usize);
     assert tv.version_of(2 as usize) == (1 as u64);
@@ -195,7 +195,7 @@ fn test_text_version_starts_zero_and_bumps() {
 #[test]
 fn test_text_write_optimistic_concurrency() {
     let r: identity::Registry = fixture();
-    let mut tv: TextVersions = new_text_versions();
+    var tv: TextVersions = new_text_versions();
     // Agent read version 0, edits with base 0 -> allowed.
     assert outcome_eq(authorize_text_write(r, tv, 2 as usize, 0 as u64), Outcome::Allowed);
     // Commit advances the version.
@@ -208,7 +208,7 @@ fn test_text_write_optimistic_concurrency() {
 
 #[test]
 fn test_text_write_gated_by_exposure_before_version() {
-    let mut r: identity::Registry = fixture();
+    var r: identity::Registry = fixture();
     let tv: TextVersions = new_text_versions();
     r.set_exposed(2 as usize, false);
     // Exposure is checked before the version: a hidden node is NotExposed even

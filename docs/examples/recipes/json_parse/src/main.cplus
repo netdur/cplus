@@ -32,7 +32,7 @@ struct Parser {
 }
 
 fn write_all(fd: i32, p: *u8, n: usize) {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let q: *u8 = unsafe { p + written };
         let w: isize = unsafe { write(fd, q, n -% written) };
@@ -54,9 +54,9 @@ fn err_at(p: Parser) {
 }
 
 fn slurp_stdin() -> Parser {
-    let mut cap: usize = 4096 as usize;
-    let mut len: usize = 0 as usize;
-    let mut buf: *u8 = unsafe { malloc(cap) };
+    var cap: usize = 4096 as usize;
+    var len: usize = 0 as usize;
+    var buf: *u8 = unsafe { malloc(cap) };
     loop {
         if len == cap {
             cap = cap *% (2 as usize);
@@ -76,7 +76,7 @@ fn peek(p: Parser) -> u8 {
 }
 
 fn skip_ws(p: Parser) -> Parser {
-    let mut q: Parser = p;
+    var q: Parser = p;
     while q.pos < q.len {
         let c: u8 = unsafe { q.buf[q.pos] };
         if c == (0x20 as u8) || c == (0x09 as u8) || c == (0x0a as u8) || c == (0x0d as u8) {
@@ -94,7 +94,7 @@ fn match_kw(p: Parser, kw: str) -> Parser {
     let kl: usize = #str_len(kw);
     let kp: *u8 = #str_ptr(kw);
     if p.pos +% kl > p.len { return p; }
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < kl {
         let a: u8 = unsafe { p.buf[p.pos +% i] };
         let b: u8 = unsafe { kp[i] };
@@ -119,7 +119,7 @@ fn emit_str_char(c: u8) -> bool {
 fn parse_string(p: Parser, label: str) -> Parser {
     print_str(label);
     print_str(" \"");
-    let mut q: Parser = p;
+    var q: Parser = p;
     loop {
         if q.pos >= q.len {
             print_str("\"\n");
@@ -137,7 +137,7 @@ fn parse_string(p: Parser, label: str) -> Parser {
             return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
         }
         let e: u8 = unsafe { q.buf[q.pos +% (1 as usize)] };
-        let mut out: u8 = e;
+        var out: u8 = e;
         if e == (110 as u8) { out = 10 as u8; }   // n -> LF
         else if e == (116 as u8) { out = 9 as u8; }   // t -> TAB
         else if e == (114 as u8) { out = 13 as u8; }   // r -> CR
@@ -166,7 +166,7 @@ fn parse_string(p: Parser, label: str) -> Parser {
 // digit run (with optional leading '-' and a '.' fraction).
 fn parse_number(p: Parser) -> Parser {
     print_str("num ");
-    let mut q: Parser = p;
+    var q: Parser = p;
     // Optional sign.
     let first: u8 = unsafe { q.buf[q.pos] };
     if first == (45 as u8) {           // '-'
@@ -204,7 +204,7 @@ fn parse_value(p: Parser) -> Parser {
     }
     if c == (123 as u8) {                      // '{'  — object
     print_str("obj\n");
-    let mut q: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
+    var q: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
     q = skip_ws(q);
     if peek(q) == (125 as u8) {            // empty object '}'
     print_str("end-obj\n");
@@ -240,7 +240,7 @@ fn parse_value(p: Parser) -> Parser {
     }
     if c == (91 as u8) {                       // '[' — array
     print_str("arr\n");
-    let mut q: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
+    var q: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
     q = skip_ws(q);
     if peek(q) == (93 as u8) {             // empty array ']'
     print_str("end-arr\n");

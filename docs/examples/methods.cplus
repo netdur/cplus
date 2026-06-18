@@ -3,14 +3,14 @@ struct Point { x: i32, y: i32 }
 impl Point {
     fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
     fn magnitude_squared(this) -> i32 { return this.x * this.x + this.y * this.y; }
-    fn translate(mut this, dx: i32, dy: i32) {
+    fn translate(ref this, dx: i32, dy: i32) {
         this.x = this.x + dx;
         this.y = this.y + dy;
     }
 }
 
 fn main() -> i32 {
-    let mut p: Point = Point::new(3, 4);
+    var p: Point = Point::new(3, 4);
     p.translate(1, 1);
     #println(p.magnitude_squared());
     return 0;

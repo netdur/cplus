@@ -13,7 +13,7 @@ extern fn exit(code: i32);
 // the offset (relative to `ptr`) as `Some(usize)`, or `None` if not
 // found. Used by `--name=value` parsing to find the `=` separator.
 fn find_byte(ptr: *u8, len: usize, b: u8) -> option::Option[usize] {
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < len {
         let p: *u8 = unsafe { ptr + i };
         if unsafe { *p } == b {
@@ -51,23 +51,23 @@ impl Arg {
         return new_arg(name);
     }
 
-    pub fn short(mut this, s: str) -> Arg {
+    pub fn short(ref this, s: str) -> Arg {
         this.short_name = s;
         return this;
     }
-    pub fn long(mut this, l: str) -> Arg {
+    pub fn long(ref this, l: str) -> Arg {
         this.long_name = l;
         return this;
     }
-    pub fn flag(mut this) -> Arg {
+    pub fn flag(ref this) -> Arg {
         this.is_flag = true;
         return this;
     }
-    pub fn required(mut this) -> Arg {
+    pub fn required(ref this) -> Arg {
         this.required = true;
         return this;
     }
-    pub fn help(mut this, h: str) -> Arg {
+    pub fn help(ref this, h: str) -> Arg {
         this.help = h;
         return this;
     }
@@ -94,7 +94,7 @@ pub fn new_app(name: str) -> App {
 fn write_out(fd: i32, s: str) {
     let p: *u8 = #str_ptr(s);
     let n: usize = #str_len(s);
-    let mut written: usize = 0;
+    var written: usize = 0;
     while written < n {
         let q: *u8 = unsafe { p + written };
         let w: isize = unsafe { write(fd, q, n -% written) };
@@ -111,25 +111,25 @@ impl App {
         return new_app(name);
     }
 
-    pub fn version(mut this, v: str) -> App {
+    pub fn version(ref this, v: str) -> App {
         this.version = v;
         return this;
     }
-    pub fn author(mut this, a: str) -> App {
+    pub fn author(ref this, a: str) -> App {
         this.author = a;
         return this;
     }
-    pub fn about(mut this, ab: str) -> App {
+    pub fn about(ref this, ab: str) -> App {
         this.about = ab;
         return this;
     }
-    pub fn arg(mut this, move argument: Arg) -> App {
+    pub fn arg(ref this, take argument: Arg) -> App {
         this.args.push(argument);
         return this;
     }
 
     fn find_arg_by_long(this, name: str) -> option::Option[Arg] {
-        let mut i: usize = 0 as usize;
+        var i: usize = 0 as usize;
         let len: usize = this.args.len();
         while i < len {
             let item: Arg = vec::at_copy::[Arg](this.args, i);
@@ -142,7 +142,7 @@ impl App {
     }
 
     fn find_arg_by_short(this, name: str) -> option::Option[Arg] {
-        let mut i: usize = 0 as usize;
+        var i: usize = 0 as usize;
         let len: usize = this.args.len();
         while i < len {
             let item: Arg = vec::at_copy::[Arg](this.args, i);
@@ -176,7 +176,7 @@ impl App {
         write_out(fd, this.name);
         write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n\nFLAGS & OPTIONS:\n");
 
-        let mut i: usize = 0 as usize;
+        var i: usize = 0 as usize;
         let len: usize = this.args.len();
         while i < len {
             let item: Arg = vec::at_copy::[Arg](this.args, i);
@@ -246,12 +246,12 @@ impl App {
     // pre-v0.0.9 `get_matches()` shortcut that called `_NSGetArgc/Argv`
     // directly was Darwin-only and has been dropped to keep this
     // package portable.
-    pub fn get_matches_from(this, move args: vec::Vec[str]) -> ArgMatches {
-        let mut matches: map::HashMap[str, str] = map::new::[str, str]();
-        let mut positionals: vec::Vec[str] = vec::new::[str]();
+    pub fn get_matches_from(this, take args: vec::Vec[str]) -> ArgMatches {
+        var matches: map::HashMap[str, str] = map::new::[str, str]();
+        var positionals: vec::Vec[str] = vec::new::[str]();
 
         let n: usize = args.len();
-        let mut i: usize = 1 as usize;
+        var i: usize = 1 as usize;
 
         let args_len: usize = this.args.len();
 
@@ -321,8 +321,8 @@ impl App {
                     let body_ptr: *u8 = unsafe { #str_ptr(arg_str) + 1 };
                     let body_len: usize = #str_len(arg_str) -% (1 as usize);
 
-                    let mut all_flags: bool = body_len > (1 as usize);
-                    let mut k: usize = 0 as usize;
+                    var all_flags: bool = body_len > (1 as usize);
+                    var k: usize = 0 as usize;
                     while all_flags && k < body_len {
                         let bptr: *u8 = unsafe { body_ptr + k };
                         let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
@@ -338,7 +338,7 @@ impl App {
 
                     if all_flags {
                         // Combined form `-abc` — insert each flag.
-                        let mut j2: usize = 0 as usize;
+                        var j2: usize = 0 as usize;
                         while j2 < body_len {
                             let bptr: *u8 = unsafe { body_ptr + j2 };
                             let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
@@ -382,7 +382,7 @@ impl App {
             i = i +% (1 as usize);
         }
 
-        let mut j: usize = 0 as usize;
+        var j: usize = 0 as usize;
         while j < args_len {
             let item: Arg = vec::at_copy::[Arg](this.args, j);
             if item.required {
@@ -440,7 +440,7 @@ fn make_argv(items: vec::Vec[str]) -> vec::Vec[str] {
 
 #[test]
 fn test_arg_builder_chains() {
-    let mut a: Arg = Arg::new("v");
+    var a: Arg = Arg::new("v");
     a = a.short("v");
     a = a.long("verbose");
     a = a.flag();
@@ -452,7 +452,7 @@ fn test_arg_builder_chains() {
 
 #[test]
 fn test_app_builder_chains() {
-    let mut app: App = App::new("mytool");
+    var app: App = App::new("mytool");
     app = app.version("1.0");
     app = app.author("me");
     app = app.about("does things");
@@ -464,12 +464,12 @@ fn test_app_builder_chains() {
 
 #[test]
 fn test_long_option_with_separate_value() {
-    let mut a1: Arg = Arg::new("name");
+    var a1: Arg = Arg::new("name");
     a1 = a1.long("name");
-    let mut app: App = App::new("t");
+    var app: App = App::new("t");
     app = app.arg(a1);
 
-    let mut argv: vec::Vec[str] = vec::new::[str]();
+    var argv: vec::Vec[str] = vec::new::[str]();
     argv.push("t");
     argv.push("--name");
     argv.push("alice");
@@ -484,12 +484,12 @@ fn test_long_option_with_separate_value() {
 
 #[test]
 fn test_long_option_with_equals_value() {
-    let mut a1: Arg = Arg::new("name");
+    var a1: Arg = Arg::new("name");
     a1 = a1.long("name");
-    let mut app: App = App::new("t");
+    var app: App = App::new("t");
     app = app.arg(a1);
 
-    let mut argv: vec::Vec[str] = vec::new::[str]();
+    var argv: vec::Vec[str] = vec::new::[str]();
     argv.push("t");
     argv.push("--name=bob");
 
@@ -503,13 +503,13 @@ fn test_long_option_with_equals_value() {
 
 #[test]
 fn test_short_flag() {
-    let mut a: Arg = Arg::new("v");
+    var a: Arg = Arg::new("v");
     a = a.short("v");
     a = a.flag();
-    let mut app: App = App::new("t");
+    var app: App = App::new("t");
     app = app.arg(a);
 
-    let mut argv: vec::Vec[str] = vec::new::[str]();
+    var argv: vec::Vec[str] = vec::new::[str]();
     argv.push("t");
     argv.push("-v");
 
@@ -519,22 +519,22 @@ fn test_short_flag() {
 
 #[test]
 fn test_combined_short_flags() {
-    let mut a1: Arg = Arg::new("a");
+    var a1: Arg = Arg::new("a");
     a1 = a1.short("a");
     a1 = a1.flag();
-    let mut a2: Arg = Arg::new("b");
+    var a2: Arg = Arg::new("b");
     a2 = a2.short("b");
     a2 = a2.flag();
-    let mut a3: Arg = Arg::new("c");
+    var a3: Arg = Arg::new("c");
     a3 = a3.short("c");
     a3 = a3.flag();
 
-    let mut app: App = App::new("t");
+    var app: App = App::new("t");
     app = app.arg(a1);
     app = app.arg(a2);
     app = app.arg(a3);
 
-    let mut argv: vec::Vec[str] = vec::new::[str]();
+    var argv: vec::Vec[str] = vec::new::[str]();
     argv.push("t");
     argv.push("-abc");
 
@@ -546,9 +546,9 @@ fn test_combined_short_flags() {
 
 #[test]
 fn test_positionals_collected() {
-    let mut app: App = App::new("t");
+    var app: App = App::new("t");
 
-    let mut argv: vec::Vec[str] = vec::new::[str]();
+    var argv: vec::Vec[str] = vec::new::[str]();
     argv.push("t");
     argv.push("pos1");
     argv.push("pos2");
@@ -562,8 +562,8 @@ fn test_positionals_collected() {
 
 #[test]
 fn test_value_of_missing_returns_none() {
-    let mut app: App = App::new("t");
-    let mut argv: vec::Vec[str] = vec::new::[str]();
+    var app: App = App::new("t");
+    var argv: vec::Vec[str] = vec::new::[str]();
     argv.push("t");
     let m: ArgMatches = app.get_matches_from(argv);
     match m.value_of("missing") {
@@ -574,7 +574,7 @@ fn test_value_of_missing_returns_none() {
 
 #[test]
 fn test_app_args_collects_via_vec() {
-    let mut app: App = App::new("t");
+    var app: App = App::new("t");
     app = app.arg(Arg::new("x"));
     app = app.arg(Arg::new("y"));
     assert app.args.len() == (2 as usize);

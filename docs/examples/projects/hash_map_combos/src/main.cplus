@@ -13,11 +13,11 @@ import "stdlib/hash_map" as map;
 import "stdlib/result" as result;
 
 fn main() -> i32 {
-    let mut fails: i32 = 0 as i32;
+    var fails: i32 = 0 as i32;
 
     // 1. HashMap[str, i32] — vocab pattern (token text → token id).
     {
-        let mut m: map::HashMap[str, i32] = map::new::[str, i32]();
+        var m: map::HashMap[str, i32] = map::new::[str, i32]();
         m.insert("apple", 1 as i32);
         m.insert("banana", 2 as i32);
         m.insert("cherry", 3 as i32);
@@ -31,7 +31,7 @@ fn main() -> i32 {
 
     // 2. HashMap[str, u64] — BPE merge ranks (merge string → rank).
     {
-        let mut m: map::HashMap[str, u64] = map::new::[str, u64]();
+        var m: map::HashMap[str, u64] = map::new::[str, u64]();
         m.insert("alpha", 100 as u64);
         m.insert("beta", 200 as u64);
         guard let result::Result[u64, result::IoError]::Ok(v) = m.get("alpha")
@@ -41,7 +41,7 @@ fn main() -> i32 {
 
     // 3. HashMap[i32, i32] — integer-keyed lookup.
     {
-        let mut m: map::HashMap[i32, i32] = map::new::[i32, i32]();
+        var m: map::HashMap[i32, i32] = map::new::[i32, i32]();
         m.insert(7 as i32, 700 as i32);
         m.insert(42 as i32, 4200 as i32);
         guard let result::Result[i32, result::IoError]::Ok(v) = m.get(7 as i32)
@@ -51,7 +51,7 @@ fn main() -> i32 {
 
     // 4. HashMap[u64, u32] — tensor-name-hash → row index.
     {
-        let mut m: map::HashMap[u64, u32] = map::new::[u64, u32]();
+        var m: map::HashMap[u64, u32] = map::new::[u64, u32]();
         m.insert(0xDEADBEEF as u64, 11 as u32);
         m.insert(0xCAFEBABE as u64, 22 as u32);
         guard let result::Result[u32, result::IoError]::Ok(v) = m.get(0xDEADBEEF as u64)
@@ -61,7 +61,7 @@ fn main() -> i32 {
 
     // 5. HashMap[i64, bool] — set-like presence check.
     {
-        let mut m: map::HashMap[i64, bool] = map::new::[i64, bool]();
+        var m: map::HashMap[i64, bool] = map::new::[i64, bool]();
         m.insert(1000 as i64, true);
         m.insert(2000 as i64, false);
         guard let result::Result[bool, result::IoError]::Ok(v) = m.get(1000 as i64)
@@ -73,8 +73,8 @@ fn main() -> i32 {
     // initial 16-slot capacity. Verifies linear-probing chains survive
     // resize-rehash.
     {
-        let mut m: map::HashMap[i32, i32] = map::new::[i32, i32]();
-        let mut i: i32 = 0 as i32;
+        var m: map::HashMap[i32, i32] = map::new::[i32, i32]();
+        var i: i32 = 0 as i32;
         while i < (100 as i32) {
             m.insert(i, i *% (3 as i32));
             i = i +% (1 as i32);

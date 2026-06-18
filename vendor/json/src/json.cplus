@@ -122,7 +122,7 @@ fn buf_new() -> Buf {
     return Buf { ptr: unsafe { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
 }
 
-fn buf_push(mut b: Buf, byte: u8) -> Buf {
+fn buf_push(ref b: Buf, byte: u8) -> Buf {
     if b.len == b.cap {
         let nc: usize = if b.cap == (0 as usize) { 16 as usize } else { b.cap *% (2 as usize) };
         let raw: *u8 = unsafe { realloc(b.ptr, nc) };
@@ -154,7 +154,7 @@ fn hex_digit(c: u8) -> i32 {
     return - 1 as i32;
 }
 
-fn buf_push_utf8(mut b: Buf, cp: i32) -> Buf {
+fn buf_push_utf8(ref b: Buf, cp: i32) -> Buf {
     if cp < 0x80 {
         return buf_push(b, cp as u8);
     }
@@ -199,7 +199,7 @@ fn peek(p: Parser) -> i32 {
     return unsafe { *q } as i32;
 }
 
-fn skip_ws(mut p: Parser) -> Parser {
+fn skip_ws(ref p: Parser) -> Parser {
     while p.pos < p.len {
         let q: *u8 = unsafe { p.src + p.pos };
         let c: u8 = unsafe { *q };
@@ -215,7 +215,7 @@ fn skip_ws(mut p: Parser) -> Parser {
 fn match_keyword(p: Parser, kw: str) -> bool {
     let n: usize = #str_len(kw);
     if p.pos +% n > p.len { return false; }
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < n {
         let kq: *u8 = unsafe { #str_ptr(kw) + i };
         let sq: *u8 = unsafe { p.src + (p.pos +% i) };
@@ -227,10 +227,10 @@ fn match_keyword(p: Parser, kw: str) -> bool {
 
 struct StrParse { p: Parser, ok: bool, buf: Buf }
 
-fn parse_string_bytes(mut p: Parser) -> StrParse {
+fn parse_string_bytes(ref p: Parser) -> StrParse {
     // Caller has verified the opening `"`. Consume it.
     p.pos = p.pos +% (1 as usize);
-    let mut b: Buf = buf_new();
+    var b: Buf = buf_new();
     while p.pos < p.len {
         let q: *u8 = unsafe { p.src + p.pos };
         let c: u8 = unsafe { *q };
@@ -272,7 +272,7 @@ fn parse_string_bytes(mut p: Parser) -> StrParse {
                     buf_free(b);
                     return StrParse { p: p, ok: false, buf: buf_new() };
                 }
-                let mut cp: i32 = (h1 << 12)| (h2 << 8)| (h3 << 4)|h4;
+                var cp: i32 = (h1 << 12)| (h2 << 8)| (h3 << 4)|h4;
                 p.pos = p.pos +% (4 as usize);
                 // RFC 8259 §7: a high-surrogate (D800-DBFF) MUST be
                 // followed by `\uYYYY` where Y is a low-surrogate
@@ -339,12 +339,12 @@ fn is_number_byte(c: u8) -> bool {
     return false;
 }
 
-fn parse_number(mut p: Parser) -> ValParse {
+fn parse_number(ref p: Parser) -> ValParse {
     let start: usize = p.pos;
     // Scan the number token, tracking whether it is integer-shaped (no
     // fraction or exponent). The boundary rule (is_number_byte) is
     // unchanged, so acceptance is identical to before.
-    let mut is_int: bool = true;
+    var is_int: bool = true;
     while p.pos < p.len {
         let q: *u8 = unsafe { p.src + p.pos };
         let c: u8 = unsafe { *q };
@@ -365,14 +365,14 @@ fn parse_number(mut p: Parser) -> ValParse {
     // falls through to the strtod path below, so rounding stays correct.
     if is_int {
         let f0: u8 = unsafe { *src_q };
-        let mut i: usize = 0 as usize;
-        let mut neg: bool = false;
+        var i: usize = 0 as usize;
+        var neg: bool = false;
         if f0 == ('-' as u8) { neg = true; i = 1 as usize; }
         let digits: usize = n -% i;
         if digits >= (1 as usize) && digits <= (15 as usize) {
-            let mut acc: i64 = 0 as i64;
-            let mut all_digits: bool = true;
-            let mut j: usize = i;
+            var acc: i64 = 0 as i64;
+            var all_digits: bool = true;
+            var j: usize = i;
             while j < n {
                 let d: u8 = unsafe { *(p.src + (start +% j)) };
                 if d < ('0' as u8) || d > ('9' as u8) { all_digits = false; break; }
@@ -393,7 +393,7 @@ fn parse_number(mut p: Parser) -> ValParse {
     // common case (numbers shorter than 63 bytes), so only pathologically
     // long literals still touch the heap; the strtod end-pointer slot is a
     // stack local addressed via `#addr_of` instead of a second malloc.
-    let mut stackbuf: [u8; 64] = [0u8; 64];
+    var stackbuf: [u8; 64] = [0u8; 64];
     let usestack: bool = n < (63 as usize);
     let buf: *u8 = if usestack {
         unsafe { #addr_of(stackbuf) as *u8 }
@@ -404,7 +404,7 @@ fn parse_number(mut p: Parser) -> ValParse {
     unsafe { memcpy(buf, src_q, n); }
     let nulslot: *u8 = unsafe { buf + n };
     unsafe { *nulslot = 0 as u8; }
-    let mut endp_stack: *u8 = unsafe { 0 as *u8 };
+    var endp_stack: *u8 = unsafe { 0 as *u8 };
     let endp: **u8 = unsafe { #addr_of(endp_stack) };
     let val: f64 = unsafe { strtod(buf, endp) };
     let consumed_end: *u8 = unsafe { *endp };
@@ -414,7 +414,7 @@ fn parse_number(mut p: Parser) -> ValParse {
     return ValParse::Ok(Value::Number(val), p);
 }
 
-fn parse_value(mut p: Parser) -> ValParse {
+fn parse_value(ref p: Parser) -> ValParse {
     p = skip_ws(p);
     let c: i32 = peek(p);
     if c < 0 { return fail(p); }
@@ -443,9 +443,9 @@ fn parse_value(mut p: Parser) -> ValParse {
     return fail(p);
 }
 
-fn parse_array(mut p: Parser) -> ValParse {
+fn parse_array(ref p: Parser) -> ValParse {
     p.pos = p.pos +% (1 as usize);     // consume '['
-    let mut elems: vec::Vec[Value] = vec::new::[Value]();
+    var elems: vec::Vec[Value] = vec::new::[Value]();
     p = skip_ws(p);
     if peek(p) == (']' as i32) {
         p.pos = p.pos +% (1 as usize);
@@ -473,9 +473,9 @@ fn parse_array(mut p: Parser) -> ValParse {
     return fail(p);
 }
 
-fn parse_object(mut p: Parser) -> ValParse {
+fn parse_object(ref p: Parser) -> ValParse {
     p.pos = p.pos +% (1 as usize);     // consume '{'
-    let mut members: vec::Vec[Member] = vec::new::[Member]();
+    var members: vec::Vec[Member] = vec::new::[Member]();
     p = skip_ws(p);
     if peek(p) == ('}' as i32) {
         p.pos = p.pos +% (1 as usize);
@@ -550,8 +550,8 @@ pub fn clone_value(borrow v: Value) -> Value {
         Value::Str(s) => Value::Str(s.clone()),
         Value::Array(arr) => {
             let n: usize = arr.len();
-            let mut out: vec::Vec[Value] = vec::new::[Value]();
-            let mut i: usize = 0 as usize;
+            var out: vec::Vec[Value] = vec::new::[Value]();
+            var i: usize = 0 as usize;
             while i < n {
                 match arr.at(i) {
                     option::Option[*Value]::Some(p) => { out.push(clone_value(unsafe { *p })); }
@@ -563,8 +563,8 @@ pub fn clone_value(borrow v: Value) -> Value {
         }
         Value::Object(arr) => {
             let n: usize = arr.len();
-            let mut out: vec::Vec[Member] = vec::new::[Member]();
-            let mut i: usize = 0 as usize;
+            var out: vec::Vec[Member] = vec::new::[Member]();
+            var i: usize = 0 as usize;
             while i < n {
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
@@ -651,8 +651,8 @@ pub fn object_get(borrow v: Value, key: str) -> Value {
     return match v {
         Value::Object(arr) => {
             let n: usize = arr.len();
-            let mut i: usize = 0 as usize;
-            let mut found: Value = Value::Null;
+            var i: usize = 0 as usize;
+            var found: Value = Value::Null;
             while i < n {
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
@@ -674,10 +674,10 @@ pub fn object_get(borrow v: Value, key: str) -> Value {
 
 // ---------------- Serializer ----------------------------------------------
 
-fn buf_push_str(mut b: Buf, s: str) -> Buf {
+fn buf_push_str(ref b: Buf, s: str) -> Buf {
     let n: usize = #str_len(s);
     let p: *u8 = #str_ptr(s);
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < n {
         let q: *u8 = unsafe { p + i };
         b = buf_push(b, unsafe { *q });
@@ -686,8 +686,8 @@ fn buf_push_str(mut b: Buf, s: str) -> Buf {
     return b;
 }
 
-fn buf_push_bytes(mut b: Buf, p: *u8, n: usize) -> Buf {
-    let mut i: usize = 0 as usize;
+fn buf_push_bytes(ref b: Buf, p: *u8, n: usize) -> Buf {
+    var i: usize = 0 as usize;
     while i < n {
         let q: *u8 = unsafe { p + i };
         b = buf_push(b, unsafe { *q });
@@ -696,11 +696,11 @@ fn buf_push_bytes(mut b: Buf, p: *u8, n: usize) -> Buf {
     return b;
 }
 
-fn encode_string(mut b: Buf, s: str) -> Buf {
+fn encode_string(ref b: Buf, s: str) -> Buf {
     b = buf_push(b, '"' as u8);
     let p: *u8 = #str_ptr(s);
     let n: usize = #str_len(s);
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < n {
         let q: *u8 = unsafe { p + i };
         let c: u8 = unsafe { *q };
@@ -724,7 +724,7 @@ fn encode_string(mut b: Buf, s: str) -> Buf {
     return b;
 }
 
-fn encode_number(mut b: Buf, n: f64) -> Buf {
+fn encode_number(ref b: Buf, n: f64) -> Buf {
     // Shortest round-trip: prefer fixed-point form (`%.*f` with the
     // smallest decimal-place count that round-trips), falling back to
     // `%.*g` for very large / very small magnitudes where fixed-point
@@ -741,11 +741,11 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     // snprintf, preserving prior output exactly.
     let asi: i64 = n as i64;
     if asi != (0 as i64) && (asi as f64) == n && n <= 9.0e15 && n >= (0.0 - 9.0e15) {
-        let mut x: i64 = asi;
+        var x: i64 = asi;
         let neg: bool = x < (0 as i64);
         if neg { x = (0 as i64) -% x; }
-        let mut digs: [u8; 24] = [0u8; 24];
-        let mut len: usize = 0 as usize;
+        var digs: [u8; 24] = [0u8; 24];
+        var len: usize = 0 as usize;
         while x > (0 as i64) {
             let d: i64 = x % (10 as i64);
             digs[len] = ('0' as u8) +% (d as u8);
@@ -753,7 +753,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
             x = x / (10 as i64);
         }
         if neg { b = buf_push(b, '-' as u8); }
-        let mut k: usize = len;
+        var k: usize = len;
         while k > (0 as usize) {
             k = k -% (1 as usize);
             b = buf_push(b, digs[k]);
@@ -763,19 +763,19 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
 
     // Float / large-magnitude fallback. Stack buffers + `#addr_of` for
     // the strtod end-pointer keep the heap untouched here too.
-    let mut out_arr: [u8; 64] = [0u8; 64];
-    let mut fmt_arr: [u8; 8] = [0u8; 8];
+    var out_arr: [u8; 64] = [0u8; 64];
+    var fmt_arr: [u8; 8] = [0u8; 8];
     let buf: *u8 = unsafe { #addr_of(out_arr) as *u8 };
     let fmt_buf: *u8 = unsafe { #addr_of(fmt_arr) as *u8 };
-    let mut endp_stack: *u8 = unsafe { 0 as *u8 };
+    var endp_stack: *u8 = unsafe { 0 as *u8 };
     let endp: **u8 = unsafe { #addr_of(endp_stack) };
 
-    let mut chosen_len: i32 = 0;
+    var chosen_len: i32 = 0;
 
     // Phase 1: try %.0f .. %.17f (fixed point). Picks the smallest
     // decimal-place count that round-trips. Catches integers ("30"),
     // simple decimals ("0.1", "3.14"), etc.
-    let mut p: i32 = 0;
+    var p: i32 = 0;
     while p <= 17 {
         let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%df\0"), p) };
         if fmt_n <= 0 { p = p +% 1; continue; }
@@ -793,7 +793,7 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     // Phase 2: if fixed point didn't work (very large or very small
     // magnitude), fall back to %.*g which can use scientific notation.
     if chosen_len == 0 {
-        let mut q: i32 = 1;
+        var q: i32 = 1;
         while q <= 17 {
             let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%dg\0"), q) };
             if fmt_n <= 0 { q = q +% 1; continue; }
@@ -818,16 +818,16 @@ fn encode_number(mut b: Buf, n: f64) -> Buf {
     return b;
 }
 
-fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
+fn encode_value(ref b: Buf, borrow v: Value) -> Buf {
     let out: Buf = match v {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },
         Value::Number(n) => encode_number(b, n),
         Value::Str(s) => encode_string(b, unsafe { s.as_str() }),
         Value::Array(arr) => {
-            let mut bb: Buf = buf_push(b, '[' as u8);
+            var bb: Buf = buf_push(b, '[' as u8);
             let n: usize = arr.len();
-            let mut i: usize = 0 as usize;
+            var i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
                 match arr.at(i) {
@@ -840,9 +840,9 @@ fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
             bb
         }
         Value::Object(arr) => {
-            let mut bb: Buf = buf_push(b, '{' as u8);
+            var bb: Buf = buf_push(b, '{' as u8);
             let n: usize = arr.len();
-            let mut i: usize = 0 as usize;
+            var i: usize = 0 as usize;
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
                 match arr.at(i) {
@@ -1015,8 +1015,8 @@ fn test_round_trip_object() {
 
 #[test]
 fn test_builder_array_new_push() {
-    let mut arr: Value = array_new();
-    let mut arr_inner: vec::Vec[Value] = match arr {
+    var arr: Value = array_new();
+    var arr_inner: vec::Vec[Value] = match arr {
         Value::Array(a) => a,
         _ => vec::new::[Value](),
     };

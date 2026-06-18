@@ -24,7 +24,7 @@ impl TextField {
         return TextField { obj: label };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -33,7 +33,7 @@ impl TextField {
     // drop (left holding nil), so the object survives a boundary the wrapper
     // can't (e.g. `fn make() -> *u8`); `from_raw` re-adopts it. See the full
     // explanation + the use-after-free trap on `view::View::into_raw`.
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -151,14 +151,14 @@ impl Button {
         return Button { obj: btn };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
     // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
     // see `view::View::into_raw` for the full explanation + the use-after-free
     // trap it prevents.
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -207,7 +207,7 @@ pub struct Slider {
 }
 
 impl Slider {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -248,7 +248,7 @@ pub struct ProgressIndicator {
 }
 
 impl ProgressIndicator {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -285,7 +285,7 @@ pub struct PopUpButton {
 }
 
 impl PopUpButton {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -327,7 +327,7 @@ pub struct Stepper {
 }
 
 impl Stepper {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -365,7 +365,7 @@ pub struct Switch {
 }
 
 impl Switch {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -391,7 +391,7 @@ pub struct SegmentedControl {
 }
 
 impl SegmentedControl {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -430,7 +430,7 @@ pub struct ComboButton {
 }
 
 impl ComboButton {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -461,7 +461,7 @@ pub struct DatePicker {
 }
 
 impl DatePicker {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -495,7 +495,7 @@ pub struct ColorWell {
 }
 
 impl ColorWell {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -525,7 +525,7 @@ pub struct LevelIndicator {
 }
 
 impl LevelIndicator {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -555,7 +555,7 @@ pub struct PathControl {
 }
 
 impl PathControl {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

@@ -88,7 +88,7 @@ fn verb_to_str(v: events::Verb) -> str {
 // double-free its owned `Text`s. `parent` is the index into the node array, or
 // JSON null for the window root.
 fn node_to_json(p: *ui::UiNode) -> json::Value {
-    let mut frame: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var frame: vec::Vec[json::Member] = vec::new::[json::Member]();
     frame.push(member("x", jnum(unsafe { (*p).frame.origin.x })));
     frame.push(member("y", jnum(unsafe { (*p).frame.origin.y })));
     frame.push(member("w", jnum(unsafe { (*p).frame.size.width })));
@@ -99,7 +99,7 @@ fn node_to_json(p: *ui::UiNode) -> json::Value {
         option::Option[usize]::None => json::Value::Null,
     };
 
-    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.push(member("id", jstr(unsafe { (*p).id.as_str() })));
     m.push(member("role", jstr(role_to_str(unsafe { (*p).role }))));
     m.push(member("class", jstr(unsafe { (*p).class_name.as_str() })));
@@ -113,8 +113,8 @@ fn node_to_json(p: *ui::UiNode) -> json::Value {
 
 // The whole describe_ui snapshot as a JSON array of node objects.
 fn describe_to_json(nodes: vec::Vec[ui::UiNode]) -> json::Value {
-    let mut arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let mut i: usize = 0 as usize;
+    var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+    var i: usize = 0 as usize;
     while i < nodes.len() {
         match nodes.at(i) {
             option::Option[*ui::UiNode]::Some(p) => {
@@ -128,7 +128,7 @@ fn describe_to_json(nodes: vec::Vec[ui::UiNode]) -> json::Value {
 }
 
 fn outcome_result(o: surface::Outcome) -> json::Value {
-    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.push(member("outcome", jstr(outcome_to_str(o))));
     return json::Value::Object(m);
 }
@@ -136,7 +136,7 @@ fn outcome_result(o: surface::Outcome) -> json::Value {
 // ---- JSON-RPC envelopes -----------------------------------------------------
 
 fn ok_response(id: f64, result: json::Value) -> json::Value {
-    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.push(member("jsonrpc", jstr("2.0")));
     m.push(member("id", jnum(id)));
     m.push(member("result", result));
@@ -144,10 +144,10 @@ fn ok_response(id: f64, result: json::Value) -> json::Value {
 }
 
 fn err_response(id: f64, code: f64, msg: str) -> json::Value {
-    let mut e: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var e: vec::Vec[json::Member] = vec::new::[json::Member]();
     e.push(member("code", jnum(code)));
     e.push(member("message", jstr(msg)));
-    let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.push(member("jsonrpc", jstr("2.0")));
     m.push(member("id", jnum(id)));
     m.push(member("error", json::Value::Object(e)));
@@ -164,8 +164,8 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
 // gated on the External consent channel first — a rejected gate yields a
 // consent-denied error and never touches the surface.
 pub fn dispatch(
-    mut surf: ui::Surface,
-    mut sub: events::Subscriber,
+    ref surf: ui::Surface,
+    ref sub: events::Subscriber,
     gate: auth::AuthGate,
     method: str,
     params: json::Value,
@@ -199,7 +199,7 @@ pub fn dispatch(
         let ev: option::Option[events::Event] = sub.poll();
         let result: json::Value = match ev {
             option::Option[events::Event]::Some(e) => {
-                let mut m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                var m: vec::Vec[json::Member] = vec::new::[json::Member]();
                 m.push(member("source", jnum(e.source as f64)));
                 m.push(member("verb", jstr(verb_to_str(e.verb))));
                 json::Value::Object(m)
@@ -216,8 +216,8 @@ pub fn dispatch(
 // or missing method yields a JSON-RPC error envelope. This is the unit the
 // transport reads/writes per line.
 pub fn handle_request(
-    mut surf: ui::Surface,
-    mut sub: events::Subscriber,
+    ref surf: ui::Surface,
+    ref sub: events::Subscriber,
     gate: auth::AuthGate,
     line: str,
 ) -> text::Text {
@@ -266,12 +266,12 @@ pub fn current_pid() -> i32 {
 // byte length, or -1 on EOF before any byte was read. A line longer than `cap`
 // is truncated at `cap`.
 fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
-    let mut n: usize = 0 as usize;
+    var n: usize = 0 as usize;
     loop {
         if n >= cap {
             break;
         }
-        let mut byte: u8 = 0 as u8;
+        var byte: u8 = 0 as u8;
         let r: i64 = unsafe { read(fd, #addr_of(byte), 1 as usize) };
         if r <= (0 as i64) {
             if n == (0 as usize) {
@@ -289,7 +289,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
 }
 
 fn write_all(fd: i32, ptr: *u8, len: usize) {
-    let mut off: usize = 0 as usize;
+    var off: usize = 0 as usize;
     while off < len {
         let w: i64 = unsafe { write(fd, ptr + off, len -% off) };
         if w <= (0 as i64) {
@@ -304,12 +304,12 @@ fn write_all(fd: i32, ptr: *u8, len: usize) {
 // (re-arming a fresh gate from `policy` per request), and write the response
 // line, until the peer closes (EOF). The connection fd is the caller's to close.
 pub fn serve_fd(
-    mut surf: ui::Surface,
-    mut sub: events::Subscriber,
+    ref surf: ui::Surface,
+    ref sub: events::Subscriber,
     policy: fn(auth::Request) -> auth::Decision,
     fd: i32,
 ) -> i32 {
-    let mut buf: [u8; 8192] = [0 as u8; 8192];
+    var buf: [u8; 8192] = [0 as u8; 8192];
     loop {
         let len: i64 = read_line(fd, unsafe { #addr_of(buf[0]) }, 8192 as usize);
         if len < (0 as i64) {
@@ -330,8 +330,8 @@ pub fn serve_fd(
 // negative code on a setup error (socket/bind/listen). `path` must be ≤ 100
 // bytes (sun_path limit). Removes the socket file on entry (stale) and exit.
 pub fn serve_uds(
-    mut surf: ui::Surface,
-    mut sub: events::Subscriber,
+    ref surf: ui::Surface,
+    ref sub: events::Subscriber,
     policy: fn(auth::Request) -> auth::Decision,
     path: str,
 ) -> i32 {
@@ -339,10 +339,10 @@ pub fn serve_uds(
     if plen > (100 as usize) {
         return - 4 as i32;
     }
-    let mut addr: [u8; 110] = [0 as u8; 110];
+    var addr: [u8; 110] = [0 as u8; 110];
     addr[1] = 1 as u8; // sun_family = AF_UNIX
     let pbytes: *u8 = #str_ptr(path);
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < plen {
         addr[(2 as usize) +% i] = unsafe { *(pbytes + i) };
         i = i +% (1 as usize);

@@ -265,7 +265,7 @@ fn class_name_text(view: *u8) -> text::Text {
 
 // Length of a NUL-terminated C string (the class name from object_getClassName).
 fn c_strlen(p: *u8) -> usize {
-    let mut n: usize = 0 as usize;
+    var n: usize = 0 as usize;
     loop {
         let b: u8 = unsafe { *(p + n) };
         if b == (0 as u8) {
@@ -370,7 +370,7 @@ pub struct Surface {
 // its subviews in order (DFS pre-order). `views` stays index-aligned with the
 // registry: every `add_child` is paired with exactly one `views.push`. Recursion
 // depth is the view-tree depth (shallow in practice).
-fn walk(mut reg: identity::Registry, mut views: vec::Vec[ViewRef], view: *u8, parent_reg: usize) {
+fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, parent_reg: usize) {
     let role: identity::Role = classify(view);
     let pinned: option::Option[text::Text] = get_agent_id(view);
     let reg_node: usize = match pinned {
@@ -385,7 +385,7 @@ fn walk(mut reg: identity::Registry, mut views: vec::Vec[ViewRef], view: *u8, pa
     views.push(ViewRef { p: view });
 
     let n: usize = subview_count(view);
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < n {
         walk(reg, views, subview_at(view, i), reg_node);
         i = i +% (1 as usize);
@@ -396,8 +396,8 @@ fn walk(mut reg: identity::Registry, mut views: vec::Vec[ViewRef], view: *u8, pa
 // Walk a window's view hierarchy into a `Surface`. The window is the root node
 // (role Window) under the registry's app root; its contentView subtree follows.
 pub fn open(window: *u8) -> Surface {
-    let mut reg: identity::Registry = identity::new();
-    let mut views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    var reg: identity::Registry = identity::new();
+    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
     // NodeId 0 is the synthetic app root — no backing view.
     views.push(ViewRef { p: null() });
 
@@ -442,9 +442,9 @@ impl Surface {
     // from its view, so it reflects state *now* (e.g. after a `set_text`). The
     // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
     pub fn describe(this) -> vec::Vec[UiNode] {
-        let mut out: vec::Vec[UiNode] = vec::new::[UiNode]();
+        var out: vec::Vec[UiNode] = vec::new::[UiNode]();
         let total: usize = this.reg.len();
-        let mut node: usize = 1 as usize;
+        var node: usize = 1 as usize;
         while node < total {
             let view: *u8 = this.view_of(node);
             let role: identity::Role = this.reg.role_of(node);
@@ -480,9 +480,9 @@ impl Surface {
     // `describe` (snapshot index = NodeId - 1). Useful to an agent diagnosing a
     // UI it just built, or to a developer, without a screenshot.
     pub fn layout_diagnostics(this) -> vec::Vec[LayoutDiagnostic] {
-        let mut out: vec::Vec[LayoutDiagnostic] = vec::new::[LayoutDiagnostic]();
+        var out: vec::Vec[LayoutDiagnostic] = vec::new::[LayoutDiagnostic]();
         let total: usize = this.reg.len();
-        let mut node: usize = 1 as usize;
+        var node: usize = 1 as usize;
         while node < total {
             let view: *u8 = this.view_of(node);
             // Both selectors are NSView-only — the tree also carries the
@@ -520,7 +520,7 @@ impl Surface {
     // callback calls this with the verb from `verb_for_notification` (or a
     // direct one, e.g. `Clicked` for a target-action). Events bubble: a
     // subscriber on an ancestor sees descendant events.
-    pub fn emit(this, mut sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+    pub fn emit(this, ref sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
         match this.reg.lookup(source_id) {
             option::Option[usize]::Some(node) => {
                 sub.offer(this.reg, events::event(node, verb));
@@ -560,7 +560,7 @@ impl Surface {
     // WRITE: set a field's text with optimistic concurrency. `base_version` is
     // the version the agent last read (`text_version`); a racing edit yields
     // `VersionConflict`. On `Allowed`, sends `setStringValue:` then bumps.
-    pub fn set_text(mut this, id: str, value: str, base_version: u64) -> surface::Outcome {
+    pub fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome =

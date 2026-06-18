@@ -9,7 +9,7 @@ impl TableView {
         return TableView { obj: rt::alloc_init_with_frame(#str_ptr("UITableView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -64,7 +64,7 @@ impl CollectionView {
         return CollectionView { obj: cv };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -112,7 +112,7 @@ impl CollectionViewFlowLayout {
         return CollectionViewFlowLayout { obj: rt::alloc_init(#str_ptr("UICollectionViewFlowLayout\0")) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -138,7 +138,7 @@ impl CollectionViewCell {
         return CollectionViewCell { obj: rt::alloc_init_with_frame(#str_ptr("UICollectionViewCell\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -156,7 +156,7 @@ impl PickerView {
         return PickerView { obj: rt::alloc_init_with_frame(#str_ptr("UIPickerView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

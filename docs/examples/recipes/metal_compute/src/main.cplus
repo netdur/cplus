@@ -17,8 +17,8 @@
 fn parse_usize(s: str) -> usize {
     let p: *u8 = #str_ptr(s);
     let n: usize = #str_len(s);
-    let mut acc: usize = 0 as usize;
-    let mut i: usize = 0 as usize;
+    var acc: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < n {
         let b: u8 = unsafe { p[i] };
         // Stop on the first non-digit so a trailing newline (the
@@ -151,7 +151,7 @@ pub fn main() -> i32 {
     let host_in: *u8 = unsafe { malloc(bytes) };
     let host_out: *u8 = unsafe { malloc(bytes) };
     let fp: *f32 = unsafe { host_in as *f32 };
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < n {
         unsafe { fp[i] = (i as f32); }
         i = i +% (1 as usize);
@@ -243,8 +243,8 @@ pub fn main() -> i32 {
     unsafe { memcpy(host_out, mtl_contents, bytes); }
     let outp: *f32 = unsafe { host_out as *f32 };
 
-    let mut bad: i32 = 0;
-    let mut j: usize = 0 as usize;
+    var bad: i32 = 0;
+    var j: usize = 0 as usize;
     while j < n {
         let expected: f32 = (j as f32) * 2.0f32;
         let got: f32 = unsafe { outp[j] };

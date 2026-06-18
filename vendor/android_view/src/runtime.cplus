@@ -78,7 +78,7 @@ impl Env {
     pub fn new_object_1(this, class_name: *u8, ctor_sig: *u8, arg0: jni::JValue) -> jni::jobject {
         let cls: jni::jclass = this.find_class(class_name);
         let ctor: jni::jmethodID = this.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
-        let mut args: [jni::JValue; 1] = [arg0];
+        var args: [jni::JValue; 1] = [arg0];
         let obj: jni::jobject = unsafe {
             (*(*this.env)).NewObjectA(this.env, cls, ctor, #addr_of(args[0]))
         };
@@ -93,7 +93,7 @@ impl Env {
 
     pub fn call_void_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
-        let mut args: [jni::JValue; 1] = [arg0];
+        var args: [jni::JValue; 1] = [arg0];
         unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
     }
 
@@ -107,7 +107,7 @@ impl Env {
         arg1: jni::JValue,
     ) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
-        let mut args: [jni::JValue; 2] = [arg0, arg1];
+        var args: [jni::JValue; 2] = [arg0, arg1];
         unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
     }
 
@@ -118,7 +118,7 @@ impl Env {
 
     pub fn call_object_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
-        let mut args: [jni::JValue; 1] = [arg0];
+        var args: [jni::JValue; 1] = [arg0];
         return unsafe {
             (*(*this.env)).CallObjectMethodA(this.env, obj, mid, #addr_of(args[0]) as *u8)
         };

@@ -76,13 +76,13 @@ impl Vec[T, A] {
         return unsafe { *p };
     }
 
-    fn set(mut this, i: usize, value: T) {
+    fn set(ref this, i: usize, value: T) {
         let p: *T = this.elem_ptr(i);
         unsafe { *p = value; }
         return;
     }
 
-    fn grow(mut this) {
+    fn grow(ref this) {
         let new_cap: usize = if this.cap == 0 as usize { 8 as usize } else { this.cap *% 2 as usize };
         let old_bytes: usize = this.cap *% #size_of::[T]();
         let new_bytes: usize = new_cap *% #size_of::[T]();
@@ -91,7 +91,7 @@ impl Vec[T, A] {
         return;
     }
 
-    fn push(mut this, value: T) {
+    fn push(ref this, value: T) {
         if this.len == this.cap {
             this.grow();
         }
@@ -102,7 +102,7 @@ impl Vec[T, A] {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         let bytes: usize = this.cap *% #size_of::[T]();
         this.alloc.deallocate(this.ptr, bytes);
         return;
@@ -111,16 +111,16 @@ impl Vec[T, A] {
 
 fn main() -> i32 {
     let alloc: CMalloc = CMalloc {};
-    let mut v: Vec[i32, CMalloc] = Vec[i32, CMalloc]::with_capacity(alloc, 4 as usize);
+    var v: Vec[i32, CMalloc] = Vec[i32, CMalloc]::with_capacity(alloc, 4 as usize);
 
-    let mut i: i32 = 1;
+    var i: i32 = 1;
     while i <= 8 {
         v.push(i);
         i = i +% 1;
     }
 
-    let mut sum: i32 = 0;
-    let mut j: usize = 0 as usize;
+    var sum: i32 = 0;
+    var j: usize = 0 as usize;
     while j < v.len() {
         sum = sum +% v.get(j);
         j = j +% 1 as usize;

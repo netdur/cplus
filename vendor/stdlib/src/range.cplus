@@ -10,7 +10,7 @@ import "./iterator" as iterator;
 
 // Exclusive-end: `range(0, 3)` yields 0, 1, 2.
 pub gen fn range(start: i32, end: i32) -> i32 {
-    let mut i: i32 = start;
+    var i: i32 = start;
     while i < end {
         yield i;
         i = i +% (1 as i32);
@@ -20,7 +20,7 @@ pub gen fn range(start: i32, end: i32) -> i32 {
 
 // Inclusive-end: `range_inclusive(0, 3)` yields 0, 1, 2, 3.
 pub gen fn range_inclusive(start: i32, end: i32) -> i32 {
-    let mut i: i32 = start;
+    var i: i32 = start;
     while i <= end {
         yield i;
         i = i +% (1 as i32);

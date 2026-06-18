@@ -26,7 +26,7 @@ impl CommandQueue {
         return CommandBuffer { raw: buf_raw };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -61,7 +61,7 @@ impl CommandBuffer {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -114,7 +114,7 @@ impl ComputeCommandEncoder {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;

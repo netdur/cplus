@@ -5,7 +5,7 @@ pub struct ImageView {
 }
 
 impl ImageView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -23,7 +23,7 @@ impl ImageView {
     // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
     // see `view::View::into_raw` for the full explanation + the use-after-free
     // trap it prevents.
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -151,7 +151,7 @@ impl RoundedView {
         return RoundedView { obj: v };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -184,7 +184,7 @@ impl RoundedView {
 
     // GAP 2 (v0.0.19): see `view::View::into_raw` for the ownership-transfer
     // rationale + the use-after-free trap these prevent.
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -208,7 +208,7 @@ impl BezierPath {
         return BezierPath { obj: rt::alloc_init(#str_ptr("NSBezierPath\0")) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

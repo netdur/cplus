@@ -54,7 +54,7 @@ pub fn main() -> i32 {
         return 1;
     };
 
-    let mut out: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+    var out: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
     let out_slice: f32[] =
         unsafe { #slice_from_raw_parts(#addr_of(out[0]), 4 as usize) };
     guard let result::Result[usize, coreai::CoreAIError]::Ok(n) =

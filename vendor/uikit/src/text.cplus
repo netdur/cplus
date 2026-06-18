@@ -11,7 +11,7 @@ impl TextField {
         return TextField { obj: rt::alloc_init_with_frame(#str_ptr("UITextField\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -81,7 +81,7 @@ impl TextView {
         return TextView { obj: rt::alloc_init_with_frame(#str_ptr("UITextView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -131,7 +131,7 @@ impl SearchBar {
         return SearchBar { obj: rt::alloc_init_with_frame(#str_ptr("UISearchBar\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

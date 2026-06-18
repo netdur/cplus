@@ -17,7 +17,7 @@ extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 
 fn write_all(fd: i32, p: *u8, n: usize) {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
         let q: *u8 = unsafe { p + written };
@@ -45,9 +45,9 @@ fn main() -> i32 {
         return 2;
     }
 
-    let mut cap: usize = 4096 as usize;
-    let mut len: usize = 0 as usize;
-    let mut buf: *u8 = unsafe { malloc(cap) };
+    var cap: usize = 4096 as usize;
+    var len: usize = 0 as usize;
+    var buf: *u8 = unsafe { malloc(cap) };
     loop {
         if len == cap {
             cap = cap *% (2 as usize);

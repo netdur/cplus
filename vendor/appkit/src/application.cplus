@@ -68,7 +68,7 @@ impl Application {
 pub fn create_app_delegate(should_terminate_imp: fn(*u8, *u8, *u8) -> i8) -> *u8 {
     let nsobject_cls: *u8 = rt::get_class(#str_ptr("NSObject\0"));
     let existing: *u8 = rt::get_class(#str_ptr("CAppDelegate\0"));
-    let mut delegate_cls: *u8 = existing;
+    var delegate_cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
         delegate_cls = rt::allocate_class_pair(nsobject_cls, #str_ptr("CAppDelegate\0"), 0 as usize);
         let should_terminate_sel: *u8 = rt::sel(#str_ptr("applicationShouldTerminateAfterLastWindowClosed:\0"));

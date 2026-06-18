@@ -80,7 +80,7 @@ impl Device {
         return pipeline::ComputePipelineState::new(this.raw, function);
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;

@@ -293,7 +293,7 @@ fn test_ddot_basic() {
 fn test_saxpy_in_place() {
     // y = 2 * x + y
     let x: [f32; 3] = [1.0f32, 2.0f32, 3.0f32];
-    let mut y: [f32; 3] = [10.0f32, 20.0f32, 30.0f32];
+    var y: [f32; 3] = [10.0f32, 20.0f32, 30.0f32];
     saxpy(3 as i32, 2.0f32, unsafe { #addr_of(x) as *f32 }, 1 as i32, unsafe { #addr_of(y) as *f32 }, 1 as i32);
     assert y[0] == 12.0f32;
     assert y[1] == 24.0f32;
@@ -302,7 +302,7 @@ fn test_saxpy_in_place() {
 
 #[test]
 fn test_sscal_in_place() {
-    let mut x: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
+    var x: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
     sscal(4 as i32, 0.5f32, unsafe { #addr_of(x) as *f32 }, 1 as i32);
     assert x[0] == 0.5f32;
     assert x[1] == 1.0f32;
@@ -332,7 +332,7 @@ fn test_sgemv_matrix_vector() {
     // y = A * x = [1*5 + 2*6, 3*5 + 4*6] = [17, 39]
     let a: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
     let x: [f32; 2] = [5.0f32, 6.0f32];
-    let mut y: [f32; 2] = [0.0f32, 0.0f32];
+    var y: [f32; 2] = [0.0f32, 0.0f32];
     sgemv(
         Order::RowMajor,
         Transpose::NoTrans,
@@ -350,7 +350,7 @@ fn test_sgemm_2x2_identity() {
     // A = [[1, 2], [3, 4]]    I = [[1, 0], [0, 1]]    C = A * I = A
     let a: [f32; 4] = [1.0f32, 2.0f32, 3.0f32, 4.0f32];
     let i: [f32; 4] = [1.0f32, 0.0f32, 0.0f32, 1.0f32];
-    let mut c: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    var c: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     sgemm(
         Order::RowMajor,
         Transpose::NoTrans, Transpose::NoTrans,
@@ -393,7 +393,7 @@ fn test_sgemm_dimensional_3x4_4x2() {
         1.0f32, 0.0f32,
         0.0f32, 1.0f32,
     ];
-    let mut c: [f32; 6] = [0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    var c: [f32; 6] = [0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32];
     sgemm(
         Order::RowMajor,
         Transpose::NoTrans, Transpose::NoTrans,

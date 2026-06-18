@@ -44,7 +44,7 @@ unsafe impl Arc[T: Send + Sync]: Sync {}
 // Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an
 // over-aligned T motivates it).
-pub fn new[T](move v: T) -> Arc[T] {
+pub fn new[T](take v: T) -> Arc[T] {
     let header: usize = 8 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
@@ -82,7 +82,7 @@ impl Arc[T] {
     // ctrl ptr; acquire on the final decrement synchronises with all
     // prior Arc::drop's so the freeing thread sees a consistent view
     // of the value before deallocation.
-    fn drop(mut this) {
+    fn drop(ref this) {
         let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)

@@ -27,7 +27,7 @@ pub struct Box[T] {
 // `move v` is the explicit ownership-transfer marker — required for
 // non-Copy T (string, Vec[U], owned structs) so the caller's binding
 // is properly marked moved. Copy T's behave as if move were absent.
-pub fn new[T](move v: T) -> Box[T] {
+pub fn new[T](take v: T) -> Box[T] {
     let bytes: usize = #size_of::[T]();
     let raw: *u8 = unsafe { malloc(bytes) };
     let p: *T = unsafe { raw as *T };
@@ -55,7 +55,7 @@ impl Box[T] {
     // for any T — for Copy T the `#drop_in_place` is a no-op the optimizer
     // elides; for a Drop T it frees the old value's resources before the new
     // value moves in, so there is no leak and no double-free.
-    pub fn set(mut this, v: T) {
+    pub fn set(ref this, v: T) {
         unsafe { #drop_in_place::[T](this.p); }
         unsafe { *this.p = v; }
         return;
@@ -65,7 +65,7 @@ impl Box[T] {
     // (fires because `move this` transfers ownership *into* the
     // callee) frees the heap slot — no manual free here, or we'd
     // double-free.
-    pub fn unwrap(move this) -> T {
+    pub fn unwrap(take this) -> T {
         // Read the inner value out, then null `this.p` so the
         // function-exit Drop (v0.0.5 Phase 1C invokes inner-T Drop
         // via `__cplus_drop_in_place`) treats the box as "already
@@ -85,7 +85,7 @@ impl Box[T] {
     // Short-circuits on null `this.p` so the `unwrap` consumer path
     // (which nulls `p` after taking ownership of the inner T) doesn't
     // double-free.
-    fn drop(mut this) {
+    fn drop(ref this) {
         let null_p: *T = unsafe { 0 as *T };
         if this.p == null_p { return; }
         // v0.0.5 Phase 1C: invoke inner-T Drop before freeing the box's

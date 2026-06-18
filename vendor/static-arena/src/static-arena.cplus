@@ -38,14 +38,14 @@ impl StaticArena16K {
     pub fn capacity(this) -> usize { return 16384 as usize; }
     pub fn used_bytes(this) -> usize { return this.used; }
     pub fn remaining(this) -> usize { return (16384 as usize) -% this.used; }
-    pub fn reset(mut this) { this.used = 0 as usize; return; }
+    pub fn reset(ref this) { this.used = 0 as usize; return; }
 
-    pub fn alloc_bytes(mut this, n: usize) -> option::Option[*u8] {
+    pub fn alloc_bytes(ref this, n: usize) -> option::Option[*u8] {
         return this.alloc_bytes_aligned(n, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned(mut this, n: usize, align: usize) -> option::Option[*u8] {
-        let mut align: usize = align;
+    pub fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
+        var align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
         let buf_base: usize = unsafe { #addr_of(this) as usize };
         let cursor: usize = buf_base +% this.used;
@@ -59,7 +59,7 @@ impl StaticArena16K {
         return option::Option[*u8]::Some(unsafe { aligned as *u8 });
     }
 
-    pub fn alloc_zeroed_bytes(mut this, n: usize) -> option::Option[*u8] {
+    pub fn alloc_zeroed_bytes(ref this, n: usize) -> option::Option[*u8] {
         let opt: option::Option[*u8] = this.alloc_bytes(n);
         guard let option::Option[*u8]::Some(p) = opt else {
             return option::Option[*u8]::None;
@@ -68,7 +68,7 @@ impl StaticArena16K {
         return option::Option[*u8]::Some(p);
     }
 
-    pub fn alloc_str(mut this, s: str) -> option::Option[str] {
+    pub fn alloc_str(ref this, s: str) -> option::Option[str] {
         let n: usize = #str_len(s);
         let opt: option::Option[*u8] = this.alloc_bytes(n);
         guard let option::Option[*u8]::Some(p) = opt else {
@@ -94,14 +94,14 @@ impl StaticArena64K {
     pub fn capacity(this) -> usize { return 65536 as usize; }
     pub fn used_bytes(this) -> usize { return this.used; }
     pub fn remaining(this) -> usize { return (65536 as usize) -% this.used; }
-    pub fn reset(mut this) { this.used = 0 as usize; return; }
+    pub fn reset(ref this) { this.used = 0 as usize; return; }
 
-    pub fn alloc_bytes(mut this, n: usize) -> option::Option[*u8] {
+    pub fn alloc_bytes(ref this, n: usize) -> option::Option[*u8] {
         return this.alloc_bytes_aligned(n, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned(mut this, n: usize, align: usize) -> option::Option[*u8] {
-        let mut align: usize = align;
+    pub fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
+        var align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
         let buf_base: usize = unsafe { #addr_of(this) as usize };
         let cursor: usize = buf_base +% this.used;
@@ -128,7 +128,7 @@ fn test_16k_new_starts_empty() {
 
 #[test]
 fn test_16k_alloc_bytes_advances_cursor() {
-    let mut a: StaticArena16K = StaticArena16K::new();
+    var a: StaticArena16K = StaticArena16K::new();
     let opt: option::Option[*u8] = a.alloc_bytes(64 as usize);
     guard let option::Option[*u8]::Some(_p) = opt else {
         assert false;
@@ -139,7 +139,7 @@ fn test_16k_alloc_bytes_advances_cursor() {
 
 #[test]
 fn test_16k_alloc_returns_none_on_overflow() {
-    let mut a: StaticArena16K = StaticArena16K::new();
+    var a: StaticArena16K = StaticArena16K::new();
     let opt: option::Option[*u8] = a.alloc_bytes(20000 as usize);
     match opt {
         option::Option[*u8]::Some(_) => { assert false; }
@@ -149,7 +149,7 @@ fn test_16k_alloc_returns_none_on_overflow() {
 
 #[test]
 fn test_16k_reset_recovers_capacity() {
-    let mut a: StaticArena16K = StaticArena16K::new();
+    var a: StaticArena16K = StaticArena16K::new();
     let _p1: option::Option[*u8] = a.alloc_bytes(100 as usize);
     let _p2: option::Option[*u8] = a.alloc_bytes(200 as usize);
     assert a.used_bytes() > (0 as usize);
@@ -159,7 +159,7 @@ fn test_16k_reset_recovers_capacity() {
 
 #[test]
 fn test_16k_alloc_zeroed_writes_zeros() {
-    let mut a: StaticArena16K = StaticArena16K::new();
+    var a: StaticArena16K = StaticArena16K::new();
     let opt: option::Option[*u8] = a.alloc_zeroed_bytes(32 as usize);
     guard let option::Option[*u8]::Some(p) = opt else {
         assert false;
@@ -173,7 +173,7 @@ fn test_16k_alloc_zeroed_writes_zeros() {
 
 #[test]
 fn test_16k_alloc_str_round_trip() {
-    let mut a: StaticArena16K = StaticArena16K::new();
+    var a: StaticArena16K = StaticArena16K::new();
     let opt: option::Option[str] = a.alloc_str("hello");
     guard let option::Option[str]::Some(s) = opt else {
         assert false;

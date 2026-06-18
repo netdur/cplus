@@ -33,7 +33,7 @@ extern fn free(p: *u8);
 // rejects `()` as a generic type-arg today (turbofish path).
 // `Future[i32]` / `spawn_local::[i32]` work cleanly.
 async fn step_loop(counter: *i32, ticks: i32) -> i32 {
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < ticks {
         let cur: i32 = unsafe { *counter };
         unsafe { *counter = cur +% 1; }

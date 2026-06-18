@@ -305,8 +305,8 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
     let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
-    let mut n: i32 = unsafe { *nw_slot };
-    let mut cap: i32 = unsafe { *cw_slot };
+    var n: i32 = unsafe { *nw_slot };
+    var cap: i32 = unsafe { *cw_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_fds: *u8 = unsafe { realloc(*wf_slot, (cap *% 4) as usize) };
@@ -392,7 +392,7 @@ pub fn poll_one_event() -> bool {
     let fds: *i32 = unsafe { *wf_slot as *i32 };
     let hdls: **u8 = unsafe { *wh_slot as **u8 };
     let flts: *i16 = unsafe { *wflt_slot as *i16 };
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < n {
         let cur_fd: i32 = unsafe { *(fds + (i as usize)) };
         let cur_flt: i16 = unsafe { *(flts + (i as usize)) };
@@ -429,7 +429,7 @@ pub fn drain_pending() -> i32 {
     let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
     let hdls: **u8 = unsafe { *ph_slot as **u8 };
     unsafe { *np_slot = 0 as i32; }
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < n {
         let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
         let done: i32 = unsafe { #coro_done(hdl) };
@@ -447,8 +447,8 @@ pub fn enqueue_pending(hdl: *u8) {
     let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
     let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
     let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
-    let mut n: i32 = unsafe { *np_slot };
-    let mut cap: i32 = unsafe { *cp_slot };
+    var n: i32 = unsafe { *np_slot };
+    var cap: i32 = unsafe { *cp_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_p: *u8 = unsafe { realloc(*ph_slot, (cap *% 8) as usize) };
@@ -493,8 +493,8 @@ pub fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
     let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
     let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
-    let mut n: i32 = unsafe { *na_slot };
-    let mut cap: i32 = unsafe { *ca_slot };
+    var n: i32 = unsafe { *na_slot };
+    var cap: i32 = unsafe { *ca_slot };
     if n == cap {
         cap = cap *% (2 as i32);
         let new_ae: *u8 = unsafe { realloc(*ae_slot, (cap *% 8) as usize) };
@@ -536,7 +536,7 @@ pub fn notify_completed(awaitee: *u8) {
     if n == (0 as i32) { return; }
     let aes: **u8 = unsafe { *ae_slot as **u8 };
     let ars: **u8 = unsafe { *ar_slot as **u8 };
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < n {
         let cur_ae: *u8 = unsafe { *(aes + (i as usize)) };
         if cur_ae == awaitee {

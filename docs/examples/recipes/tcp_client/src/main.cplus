@@ -25,7 +25,7 @@ extern fn memset(p: *u8, c: i32, n: usize) -> *u8;
 extern fn free(p: *u8);
 
 fn write_all(fd: i32, p: *u8, n: usize) -> bool {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
         let q: *u8 = unsafe { p + written };

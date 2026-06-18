@@ -118,8 +118,8 @@ pub fn nsarray_obj_at(arr: *u8, idx: usize) -> *u8 {
 
 pub fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
     let n: usize = nsarray_count(arr);
-    let mut out: vec::Vec[i32] = vec::Vec[i32]::with_capacity(n);
-    let mut i: usize = 0 as usize;
+    var out: vec::Vec[i32] = vec::Vec[i32]::with_capacity(n);
+    var i: usize = 0 as usize;
     let int_sel: *u8 = rt::sel(#str_ptr("intValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
@@ -132,8 +132,8 @@ pub fn nsarray_to_vec_i32(arr: *u8) -> vec::Vec[i32] {
 
 pub fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
     let n: usize = nsarray_count(arr);
-    let mut out: vec::Vec[i64] = vec::Vec[i64]::with_capacity(n);
-    let mut i: usize = 0 as usize;
+    var out: vec::Vec[i64] = vec::Vec[i64]::with_capacity(n);
+    var i: usize = 0 as usize;
     // NSInteger == long long on 64-bit Apple; `longLongValue` is the
     // exact width. `integerValue` returns NSInteger which is also
     // 8 bytes on 64-bit but its formal contract is "platform-sized".
@@ -149,8 +149,8 @@ pub fn nsarray_to_vec_i64(arr: *u8) -> vec::Vec[i64] {
 
 pub fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
     let n: usize = nsarray_count(arr);
-    let mut out: vec::Vec[f32] = vec::Vec[f32]::with_capacity(n);
-    let mut i: usize = 0 as usize;
+    var out: vec::Vec[f32] = vec::Vec[f32]::with_capacity(n);
+    var i: usize = 0 as usize;
     let v_sel: *u8 = rt::sel(#str_ptr("floatValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
@@ -166,8 +166,8 @@ pub fn nsarray_to_vec_f32(arr: *u8) -> vec::Vec[f32] {
 
 pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
     let n: usize = nsarray_count(arr);
-    let mut out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n);
-    let mut i: usize = 0 as usize;
+    var out: vec::Vec[f64] = vec::Vec[f64]::with_capacity(n);
+    var i: usize = 0 as usize;
     let v_sel: *u8 = rt::sel(#str_ptr("doubleValue\0"));
     while i < n {
         let num: *u8 = nsarray_obj_at(arr, i);
@@ -196,7 +196,7 @@ pub fn nsarray_to_vec_f64(arr: *u8) -> vec::Vec[f64] {
 pub fn nsdata_to_vec_u8(d: *u8) -> vec::Vec[u8] {
     let len: u64 = unsafe { objc_msg_u64(d, rt::sel(#str_ptr("length\0"))) };
     let ptr: *u8 = rt::msg_id(d, rt::sel(#str_ptr("bytes\0")));
-    let mut out: vec::Vec[u8] = vec::Vec[u8]::with_capacity(len as usize);
+    var out: vec::Vec[u8] = vec::Vec[u8]::with_capacity(len as usize);
     unsafe { out.extend_from_raw(ptr, len as usize); }
     return out;
 }

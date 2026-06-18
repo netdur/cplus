@@ -17,7 +17,7 @@ extern fn close(fd: i32) -> i32;
 extern fn strlen(s: *u8) -> usize;
 
 fn write_all(fd: i32, p: *u8, n: usize) -> bool {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
         let q: *u8 = unsafe { p + written };

@@ -13,7 +13,7 @@ import "arena/arena" as arena;
 extern fn printf(fmt: *u8, ...) -> i32;
 
 fn main() -> i32 {
-    let mut a: arena::Arena = arena::new(4096 as usize);
+    var a: arena::Arena = arena::new(4096 as usize);
 
     let p1: *i32 = a.alloc::[i32](42 as i32);
     let p2: *i32 = a.alloc::[i32](7 as i32);

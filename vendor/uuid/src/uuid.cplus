@@ -43,12 +43,12 @@ impl Uuid {
         // macOS and Linux (replaces the v0.0.9 arc4random_buf path,
         // which was BSD/Darwin-only). `addr_of` writes directly into
         // the stack-allocated `bytes` field; no heap allocation.
-        let mut uuid: Uuid = zero_uuid();
+        var uuid: Uuid = zero_uuid();
         let fd: i32 = unsafe { open(#str_ptr("/dev/urandom\0"), 0 as i32) };
         if fd < 0 {
             return option::Option[Uuid]::None;
         }
-        let mut filled: usize = 0 as usize;
+        var filled: usize = 0 as usize;
         while filled < (16 as usize) {
             let dst: *u8 = unsafe { (#addr_of(uuid) as *u8) + filled };
             let n: isize = unsafe { read(fd, dst, (16 as usize) -% filled) };
@@ -80,8 +80,8 @@ impl Uuid {
             return option::Option[Uuid]::None;
         }
 
-        let mut uuid: Uuid = zero_uuid();
-        let mut idx: usize = 0 as usize;
+        var uuid: Uuid = zero_uuid();
+        var idx: usize = 0 as usize;
         while idx < (16 as usize) {
             let start_offset: usize = hex_offset_for_byte(idx);
             let c1: u8 = unsafe { *(p + start_offset) };
@@ -105,7 +105,7 @@ impl Uuid {
     // result is heap-allocated by `str::to_text()` so the caller owns
     // the storage.
     pub fn to_text(this) -> text::Text {
-        let mut buf: [u8; 37] = [
+        var buf: [u8; 37] = [
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
@@ -252,7 +252,7 @@ fn test_random_uuid_round_trips() {
         assert false;
         return;
     };
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < (16 as usize) {
         assert u.bytes[i] == u2.bytes[i];
         i = i +% (1 as usize);

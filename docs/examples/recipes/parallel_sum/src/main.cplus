@@ -13,8 +13,8 @@ import "stdlib/thread" as thread;
 struct Range { start: i64, end: i64 }
 
 fn sum_range(r: Range) -> i64 {
-    let mut total: i64 = 0 as i64;
-    let mut i: i64 = r.start;
+    var total: i64 = 0 as i64;
+    var i: i64 = r.start;
     while i < r.end {
         total = total +% i;
         i = i +% (1 as i64);

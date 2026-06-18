@@ -115,8 +115,8 @@ pub fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
 
 impl TcpStream {
     // Drain all remaining bytes from the peer (until EOF or error).
-    pub fn read_to_end(mut this) -> result::Result[vec::Vec[u8], result::IoError] {
-        let mut buf: vec::Vec[u8] = vec::new::[u8]();
+    pub fn read_to_end(ref this) -> result::Result[vec::Vec[u8], result::IoError] {
+        var buf: vec::Vec[u8] = vec::new::[u8]();
         if this.fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
@@ -133,7 +133,7 @@ impl TcpStream {
                 return result::io_ok::[vec::Vec[u8]](buf);
             }
             let count: usize = n as usize;
-            let mut k: usize = 0 as usize;
+            var k: usize = 0 as usize;
             while k < count {
                 let byte_p: *u8 = unsafe { chunk + k };
                 buf.push(unsafe { *byte_p });
@@ -144,14 +144,14 @@ impl TcpStream {
     }
 
     // Write `data` to the peer. Loops on short writes.
-    pub fn write_all(mut this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+    pub fn write_all(ref this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
         if this.fd < (0 as i32) {
             return result::io_err::[usize](result::IoError::InvalidInput);
         }
         let n: usize = data.len();
         let slice: u8[] = data.as_slice();
         let p: *u8 = unsafe { #slice_ptr(slice) };
-        let mut written: usize = 0 as usize;
+        var written: usize = 0 as usize;
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = unsafe { p + written };
@@ -173,7 +173,7 @@ impl TcpStream {
         return;
     }
 
-    pub fn close(mut this) {
+    pub fn close(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
             this.fd = 0 -% 1 as i32;
@@ -181,7 +181,7 @@ impl TcpStream {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
         }
@@ -203,29 +203,29 @@ impl TcpStream {
 
     // Mark the stream's fd O_NONBLOCK. Idempotent; safe to call
     // repeatedly. Returns 0 on success, -1 on fcntl error.
-    pub fn make_nonblocking(mut this) -> i32 {
+    pub fn make_nonblocking(ref this) -> i32 {
         return set_nonblocking(this.fd);
     }
 
     // Async read: same semantics as `read_fd_async(this.fd, buf, count)`.
-    pub async fn read_async(mut this, buf: *u8, count: usize) -> isize {
+    pub async fn read_async(ref this, buf: *u8, count: usize) -> isize {
         return await read_fd_async(this.fd, buf, count);
     }
 
     // Async best-effort write (may return < count).
-    pub async fn write_async(mut this, buf: *u8, count: usize) -> isize {
+    pub async fn write_async(ref this, buf: *u8, count: usize) -> isize {
         return await write_fd_async(this.fd, buf, count);
     }
 
     // Async full-buffer write — loops on short writes / EAGAIN.
-    pub async fn write_all_async(mut this, buf: *u8, count: usize) -> isize {
+    pub async fn write_all_async(ref this, buf: *u8, count: usize) -> isize {
         return await write_all_fd_async(this.fd, buf, count);
     }
 }
 
 impl TcpListener {
     // Block until a client connects, return the accepted stream.
-    pub fn accept(mut this) -> result::Result[TcpStream, result::IoError] {
+    pub fn accept(ref this) -> result::Result[TcpStream, result::IoError] {
         if this.fd < (0 as i32) {
             return result::io_err::[TcpStream](result::IoError::InvalidInput);
         }
@@ -240,7 +240,7 @@ impl TcpListener {
         return result::io_ok::[TcpStream](TcpStream { fd: cfd });
     }
 
-    pub fn close(mut this) {
+    pub fn close(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
             this.fd = 0 -% 1 as i32;
@@ -248,7 +248,7 @@ impl TcpListener {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if this.fd >= (0 as i32) {
             unsafe { close(this.fd); }
         }
@@ -257,13 +257,13 @@ impl TcpListener {
 
     // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
     // awaiter-notification fix made real `async fn` shapes safe here.
-    pub fn make_nonblocking(mut this) -> i32 {
+    pub fn make_nonblocking(ref this) -> i32 {
         return set_nonblocking(this.fd);
     }
 
     // Async accept: returns the accepted client fd on success (>= 0),
     // -1 on error.
-    pub async fn accept_async(mut this) -> i32 {
+    pub async fn accept_async(ref this) -> i32 {
         return await accept_fd_async(this.fd);
     }
 }
@@ -360,7 +360,7 @@ pub async fn write_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
 // Write every byte in [buf, buf+count). Loops on short writes, awaiting
 // the reactor on EAGAIN. Returns 0 on full success, -1 on any error.
 pub async fn write_all_fd_async(fd: i32, buf: *u8, count: usize) -> isize {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < count {
         let remaining: usize = count -% written;
         let q: *u8 = unsafe { buf + written };

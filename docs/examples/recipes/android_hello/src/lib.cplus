@@ -17,7 +17,7 @@ pub extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
     let env: av::Env = av::from_native(envp);
     let act: av::Activity = av::Activity::from_borrowed(env, activity_obj);
 
-    let mut root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
+    var root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
     root.set_orientation(av::orientation_vertical());
 
     let title: av::TextView = av::TextView::new(env, act.as_context());
@@ -47,13 +47,13 @@ pub extern fn cplus_on_click(
     view: jni::jobject,
 ) {
     let env: av::Env = av::from_native(envp);
-    let mut n: i32 = 0;
+    var n: i32 = 0;
     unsafe {
         CLICKS = CLICKS + 1;
         n = CLICKS;
     }
     // "clicks: N\0" rendered into a stack buffer (NewStringUTF wants NUL).
-    let mut buf: [u8; 24] = [0 as u8; 24];
+    var buf: [u8; 24] = [0 as u8; 24];
     buf[0] = 99 as u8;   // c
     buf[1] = 108 as u8;  // l
     buf[2] = 105 as u8;  // i
@@ -62,7 +62,7 @@ pub extern fn cplus_on_click(
     buf[5] = 115 as u8;  // s
     buf[6] = 58 as u8;   // :
     buf[7] = 32 as u8;   // space
-    let mut i: i32 = 8;
+    var i: i32 = 8;
     if n >= 100 { buf[i as usize] = (48 + (n / 100) % 10) as u8; i = i + 1; }
     if n >= 10 { buf[i as usize] = (48 + (n / 10) % 10) as u8; i = i + 1; }
     buf[i as usize] = (48 + n % 10) as u8;

@@ -20,7 +20,7 @@ fn clock_monotonic() -> i32 { return 6 as i32; }
 // Current monotonic time in nanoseconds. Monotonic and cheap — safe to call
 // on a real-time hot path (it is a vDSO-style read, not a blocking syscall).
 pub fn now_monotonic_ns() -> u64 {
-    let mut ts: [i64; 2] = [0i64; 2];
+    var ts: [i64; 2] = [0i64; 2];
     let _r: i32 = unsafe { clock_gettime(clock_monotonic(), #addr_of(ts[0])) };
     let sec: u64 = ts[0] as u64;
     let nsec: u64 = ts[1] as u64;

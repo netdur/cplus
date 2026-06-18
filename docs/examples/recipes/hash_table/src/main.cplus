@@ -21,7 +21,7 @@ extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 
 fn write_all(fd: i32, p: *u8, n: usize) {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
         let q: *u8 = unsafe { p + written };
@@ -34,8 +34,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 
 // FNV-1a 64-bit.
 fn fnv1a(bytes: *u8, len: usize) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325 as u64;
-    let mut i: usize = 0 as usize;
+    var h: u64 = 0xcbf29ce484222325 as u64;
+    var i: usize = 0 as usize;
     while i < len {
         let b: u8 = unsafe { bytes[i] };
         h = h ^ (b as u64);
@@ -65,7 +65,7 @@ fn table_new(cap: usize) -> Table {
     let vals_raw: *u8 = unsafe { malloc(vals_bytes) };
     // Zero the entire keys + klens regions byte-by-byte so every slot
     // reads as `(klen=0, key=null)` = empty.
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < keys_bytes { unsafe { keys_raw[i] = 0 as u8; } i = i +% (1 as usize); }
     i = 0 as usize;
     while i < lens_bytes { unsafe { klens_raw[i] = 0 as u8; } i = i +% (1 as usize); }
@@ -79,7 +79,7 @@ fn table_new(cap: usize) -> Table {
 
 fn keys_equal(a: *u8, alen: usize, b: *u8, blen: usize) -> bool {
     if alen != blen { return false; }
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < alen {
         let x: u8 = unsafe { a[i] };
         let y: u8 = unsafe { b[i] };
@@ -92,7 +92,7 @@ fn keys_equal(a: *u8, alen: usize, b: *u8, blen: usize) -> bool {
 fn table_insert(t: Table, key: *u8, klen: usize, val: i32) {
     let h: u64 = fnv1a(key, klen);
     let start: usize = (h as usize) % t.cap;
-    let mut slot: usize = start;
+    var slot: usize = start;
     loop {
         let existing_len: usize = unsafe { t.klens[slot] };
         if existing_len == (0 as usize) {
@@ -118,7 +118,7 @@ fn table_insert(t: Table, key: *u8, klen: usize, val: i32) {
 fn table_get(t: Table, key: *u8, klen: usize) -> i32 {
     let h: u64 = fnv1a(key, klen);
     let start: usize = (h as usize) % t.cap;
-    let mut slot: usize = start;
+    var slot: usize = start;
     loop {
         let existing_len: usize = unsafe { t.klens[slot] };
         if existing_len == (0 as usize) { break; }
@@ -133,7 +133,7 @@ fn table_get(t: Table, key: *u8, klen: usize) -> i32 {
 }
 
 fn table_free(t: Table) {
-    let mut i: usize = 0 as usize;
+    var i: usize = 0 as usize;
     while i < t.cap {
         let l: usize = unsafe { t.klens[i] };
         if l != (0 as usize) {
@@ -164,7 +164,7 @@ fn main() -> i32 {
     put_str(t, "cherry", 3 as i32);
     put_str(t, "apple", 10 as i32);  // overwrite
 
-    let mut fails: i32 = 0 as i32;
+    var fails: i32 = 0 as i32;
     if get_str(t, "apple") != (10 as i32) { fails = fails +% (1 as i32); }
     if get_str(t, "banana") != (2 as i32) { fails = fails +% (1 as i32); }
     if get_str(t, "cherry") != (3 as i32) { fails = fails +% (1 as i32); }

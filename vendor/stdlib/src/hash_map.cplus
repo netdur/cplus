@@ -97,7 +97,7 @@ impl HashMap[K, V] {
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
-    pub fn insert(mut this, k: K, v: V) {
+    pub fn insert(ref this, k: K, v: V) {
         if this.cap == (0 as usize) {
             this.grow_to(16 as usize);
         }
@@ -107,7 +107,7 @@ impl HashMap[K, V] {
         }
         let h: u64 = k.hash();
         let start: usize = (h as usize) % this.cap;
-        let mut slot: usize = start;
+        var slot: usize = start;
         loop {
             let occ: u8 = unsafe { this.occupied[slot] };
             if occ == (0 as u8) {
@@ -134,7 +134,7 @@ impl HashMap[K, V] {
         }
         let h: u64 = k.hash();
         let start: usize = (h as usize) % this.cap;
-        let mut slot: usize = start;
+        var slot: usize = start;
         loop {
             let occ: u8 = unsafe { this.occupied[slot] };
             if occ == (0 as u8) {
@@ -163,7 +163,7 @@ impl HashMap[K, V] {
     // Grow capacity to at least `new_cap`. Re-inserts every live entry
     // (open-addressing positions depend on cap, so a memcpy-resize won't
     // work). Internal helper; not in the public surface.
-    fn grow_to(mut this, new_cap: usize) {
+    fn grow_to(ref this, new_cap: usize) {
         let old_keys: *K = this.keys;
         let old_vals: *V = this.vals;
         let old_occ: *u8 = this.occupied;
@@ -184,7 +184,7 @@ impl HashMap[K, V] {
         this.len = 0 as usize;
 
         // Re-insert every old live entry.
-        let mut j: usize = 0 as usize;
+        var j: usize = 0 as usize;
         while j < old_cap {
             let occ_j: u8 = unsafe { old_occ[j] };
             if occ_j != (0 as u8) {
@@ -192,7 +192,7 @@ impl HashMap[K, V] {
                 let v: V = unsafe { old_vals[j] };
                 let h: u64 = k.hash();
                 let start: usize = (h as usize) % this.cap;
-                let mut slot: usize = start;
+                var slot: usize = start;
                 loop {
                     let cur: u8 = unsafe { this.occupied[slot] };
                     if cur == (0 as u8) {
@@ -216,13 +216,13 @@ impl HashMap[K, V] {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if this.cap == (0 as usize) { return; }
         // v0.0.5 Phase 1C: invoke per-entry Drop for each live (K, V)
         // pair before freeing the parallel storage arrays. Closes the
         // v0.0.4 leak where `HashMap[str, string]` leaked every value
         // and (for non-static) every key.
-        let mut i: usize = 0 as usize;
+        var i: usize = 0 as usize;
         while i < this.cap {
             let occ: u8 = unsafe { this.occupied[i] };
             if occ != (0 as u8) {

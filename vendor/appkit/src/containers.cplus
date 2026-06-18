@@ -5,7 +5,7 @@ pub struct SplitView {
 }
 
 impl SplitView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -35,7 +35,7 @@ pub struct TabView {
 }
 
 impl TabView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -61,7 +61,7 @@ pub struct TabViewItem {
 }
 
 impl TabViewItem {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -92,7 +92,7 @@ pub struct VisualEffectView {
 }
 
 impl VisualEffectView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -118,7 +118,7 @@ pub struct GridView {
 }
 
 impl GridView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -144,7 +144,7 @@ pub struct Browser {
 }
 
 impl Browser {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -170,7 +170,7 @@ pub struct Matrix {
 }
 
 impl Matrix {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -192,7 +192,7 @@ pub struct ClipView {
 }
 
 impl ClipView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -210,7 +210,7 @@ pub struct RulerView {
 }
 
 impl RulerView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -228,7 +228,7 @@ pub struct Popover {
 }
 
 impl Popover {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

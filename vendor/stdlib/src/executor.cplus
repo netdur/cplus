@@ -47,7 +47,7 @@ pub async fn yield_now() {
 //
 // `T` must be Send for forward compatibility, even though v0.0.4's
 // Send is permissive (every type satisfies it).
-pub fn spawn_local[T: Send](move f: future::Future[T]) {
+pub fn spawn_local[T: Send](take f: future::Future[T]) {
     unsafe { #reactor_spawn_local(f); }
     return;
 }

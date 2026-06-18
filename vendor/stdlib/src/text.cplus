@@ -44,7 +44,7 @@ fn max_usize() -> usize {
 
 fn next_capacity(current: usize, required: usize) -> usize {
     assert required > current;
-    let mut out: usize = current;
+    var out: usize = current;
     if out == (0 as usize) {
         out = 1 as usize;
     }
@@ -96,13 +96,13 @@ pub fn with_capacity(n: usize) -> Text {
 
 pub fn from_str(s: str) -> Text {
     let n: usize = #str_len(s);
-    let mut t: Text = with_capacity(n);
+    var t: Text = with_capacity(n);
     t.push_str(s);
     return t;
 }
 
 impl Text {
-    fn grow_to(mut this, new_cap: usize) {
+    fn grow_to(ref this, new_cap: usize) {
         assert new_cap > this.cap;
         let raw: *u8 = unsafe { realloc(this.ptr, new_cap) };
         assert raw.is_not_null();
@@ -123,7 +123,7 @@ impl Text {
         return this.len == (0 as usize);
     }
 
-    pub fn reserve(mut this, additional: usize) {
+    pub fn reserve(ref this, additional: usize) {
         assert additional <= (max_usize() -% this.len);
         let required: usize = this.len +% additional;
         if required <= this.cap {
@@ -133,7 +133,7 @@ impl Text {
         return;
     }
 
-    pub fn push_str(mut this, s: str) {
+    pub fn push_str(ref this, s: str) {
         let n: usize = #str_len(s);
         if n == (0 as usize) {
             return;
@@ -146,12 +146,12 @@ impl Text {
         return;
     }
 
-    pub fn clear(mut this) {
+    pub fn clear(ref this) {
         this.len = 0 as usize;
         return;
     }
 
-    pub fn truncate(mut this, new_len: usize) {
+    pub fn truncate(ref this, new_len: usize) {
         if new_len < this.len {
             this.len = new_len;
         }
@@ -159,7 +159,7 @@ impl Text {
     }
 
     pub fn clone(this) -> Text {
-        let mut t: Text = with_capacity(this.len);
+        var t: Text = with_capacity(this.len);
         if this.len != (0 as usize) {
             unsafe { memcpy(t.ptr, this.ptr, this.len); }
             t.len = this.len;
@@ -202,7 +202,7 @@ impl Text {
         }
         let p: *u8 = #str_ptr(needle);
         let last: usize = this.len -% n; // inclusive last start index
-        let mut i: usize = 0 as usize;
+        var i: usize = 0 as usize;
         while i <= last {
             if region_matches(this.ptr, i, p, n) {
                 return option::Option[usize]::Some(i);
@@ -213,7 +213,7 @@ impl Text {
     }
 
     pub fn contains(this, needle: str) -> bool {
-        let mut found: bool = false;
+        var found: bool = false;
         match this.find(needle) {
             option::Option[usize]::Some(_idx) => { found = true; }
             option::Option[usize]::None => { found = false; }
@@ -232,7 +232,7 @@ impl Text {
             return option::Option[usize]::None;
         }
         let p: *u8 = #str_ptr(needle);
-        let mut i: usize = this.len -% n; // inclusive last start index
+        var i: usize = this.len -% n; // inclusive last start index
         loop {
             if region_matches(this.ptr, i, p, n) {
                 return option::Option[usize]::Some(i);
@@ -255,7 +255,7 @@ impl Text {
     // is in bounds and `start <= end`).
     fn copy_range(this, start: usize, end: usize) -> Text {
         let n: usize = end -% start;
-        let mut t: Text = with_capacity(n);
+        var t: Text = with_capacity(n);
         if n != (0 as usize) {
             let src: *u8 = unsafe { this.ptr + start };
             unsafe { memcpy(t.ptr, src, n); }
@@ -278,7 +278,7 @@ impl Text {
 
     // Owned copy with leading ASCII whitespace removed.
     pub fn trim_start(this) -> Text {
-        let mut start: usize = 0 as usize;
+        var start: usize = 0 as usize;
         while start < this.len {
             if is_ascii_ws(this.byte_at_raw(start)) == false {
                 break;
@@ -290,7 +290,7 @@ impl Text {
 
     // Owned copy with trailing ASCII whitespace removed.
     pub fn trim_end(this) -> Text {
-        let mut end: usize = this.len;
+        var end: usize = this.len;
         while end > (0 as usize) {
             if is_ascii_ws(this.byte_at_raw(end -% (1 as usize))) == false {
                 break;
@@ -302,14 +302,14 @@ impl Text {
 
     // Owned copy with leading and trailing ASCII whitespace removed.
     pub fn trim(this) -> Text {
-        let mut start: usize = 0 as usize;
+        var start: usize = 0 as usize;
         while start < this.len {
             if is_ascii_ws(this.byte_at_raw(start)) == false {
                 break;
             }
             start = start +% (1 as usize);
         }
-        let mut end: usize = this.len;
+        var end: usize = this.len;
         while end > start {
             if is_ascii_ws(this.byte_at_raw(end -% (1 as usize))) == false {
                 break;
@@ -323,15 +323,15 @@ impl Text {
     // as owned `Text` values. An empty `sep` yields the whole string as one
     // piece. `"a,b,c".split(",")` → `["a", "b", "c"]`.
     pub fn split(this, sep: str) -> vec::Vec[Text] {
-        let mut out: vec::Vec[Text] = vec::new::[Text]();
+        var out: vec::Vec[Text] = vec::new::[Text]();
         let n: usize = #str_len(sep);
         if n == (0 as usize) {
             out.push(this.copy_range(0 as usize, this.len));
             return out;
         }
         let p: *u8 = #str_ptr(sep);
-        let mut start: usize = 0 as usize;
-        let mut i: usize = 0 as usize;
+        var start: usize = 0 as usize;
+        var i: usize = 0 as usize;
         while (i +% n) <= this.len {
             if region_matches(this.ptr, i, p, n) {
                 out.push(this.copy_range(start, i));
@@ -351,7 +351,7 @@ impl Text {
     // drop; pass `cs.as_ptr()` to the `extern fn` and keep `cs` alive across the
     // call. Length-based C APIs don't need this — pass `as_str`'s ptr+len.
     pub fn c_str(this) -> option::Option[CString] {
-        let mut i: usize = 0 as usize;
+        var i: usize = 0 as usize;
         while i < this.len {
             if this.byte_at_raw(i) == (0 as u8) {
                 return option::Option[CString]::None;
@@ -368,7 +368,7 @@ impl Text {
         return option::Option[CString]::Some(CString { ptr: buf, len: this.len });
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if this.ptr.is_not_null() {
             unsafe { free(this.ptr); }
         }
@@ -403,7 +403,7 @@ impl CString {
         return this.len;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         if this.ptr.is_not_null() {
             unsafe { free(this.ptr); }
         }

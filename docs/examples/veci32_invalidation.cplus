@@ -19,13 +19,13 @@ struct VecI32 {
 }
 
 impl VecI32 {
-    fn drop(mut this) { return; }
+    fn drop(ref this) { return; }
     fn cursor(this) -> VecI32 { return this; }
-    fn push(mut this, x: i32) { return; }
+    fn push(ref this, x: i32) { return; }
 }
 
 fn main() -> i32 {
-    let mut v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
+    var v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
     let cur: VecI32 = v.cursor();
     // v.push(42);    // E0381 — iterator invalidation rejected
     return 0;

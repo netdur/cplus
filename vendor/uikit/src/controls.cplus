@@ -21,11 +21,11 @@ impl Button {
         return Button { obj: rt::retain(raw) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -96,7 +96,7 @@ impl Slider {
         return Slider { obj: rt::alloc_init_with_frame(#str_ptr("UISlider\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -134,7 +134,7 @@ impl Switch {
         return Switch { obj: rt::alloc_init_with_frame(#str_ptr("UISwitch\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -164,7 +164,7 @@ impl SegmentedControl {
         return SegmentedControl { obj: rt::alloc_init_with_frame(#str_ptr("UISegmentedControl\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -213,7 +213,7 @@ impl ProgressView {
         return ProgressView { obj: rt::alloc_init_with_frame(#str_ptr("UIProgressView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -239,7 +239,7 @@ impl ActivityIndicator {
         return ActivityIndicator { obj: rt::alloc_init_with_frame(#str_ptr("UIActivityIndicatorView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -269,7 +269,7 @@ impl PageControl {
         return PageControl { obj: rt::alloc_init_with_frame(#str_ptr("UIPageControl\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -303,7 +303,7 @@ impl DatePicker {
         return DatePicker { obj: rt::alloc_init_with_frame(#str_ptr("UIDatePicker\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

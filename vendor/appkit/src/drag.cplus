@@ -32,7 +32,7 @@ pub fn create_drag_destination_view(
     perform_imp: fn(*u8, *u8, *u8) -> i8,
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CDragDestView\0"));
-    let mut cls: *u8 = existing;
+    var cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
         let nsview: *u8 = rt::get_class(#str_ptr("NSView\0"));
         cls = rt::allocate_class_pair(nsview, #str_ptr("CDragDestView\0"), 0 as usize);
@@ -94,7 +94,7 @@ pub fn create_drag_source_view(
     dragged_imp: fn(*u8, *u8, *u8),
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CDragSourceView\0"));
-    let mut cls: *u8 = existing;
+    var cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
         let nsview: *u8 = rt::get_class(#str_ptr("NSView\0"));
         cls = rt::allocate_class_pair(nsview, #str_ptr("CDragSourceView\0"), 0 as usize);
@@ -139,7 +139,7 @@ impl DraggingItem {
         return DraggingItem::from_pasteboard_writer(rt::ns_string(text));
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

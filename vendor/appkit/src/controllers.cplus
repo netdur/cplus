@@ -5,7 +5,7 @@ pub struct ViewController {
 }
 
 impl ViewController {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -27,7 +27,7 @@ pub struct WindowController {
 }
 
 impl WindowController {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -53,7 +53,7 @@ pub struct TabViewController {
 }
 
 impl TabViewController {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -71,7 +71,7 @@ pub struct SplitViewController {
 }
 
 impl SplitViewController {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -89,7 +89,7 @@ pub struct ArrayController {
 }
 
 impl ArrayController {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -107,7 +107,7 @@ pub struct ObjectController {
 }
 
 impl ObjectController {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

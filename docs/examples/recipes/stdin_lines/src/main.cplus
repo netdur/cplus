@@ -13,7 +13,7 @@ extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 
 fn write_all(fd: i32, p: *u8, n: usize) {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
         let q: *u8 = unsafe { p + written };
@@ -28,8 +28,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 // 10 digits; size the buffer generously and trim with len.
 fn print_u32(n: u32) {
     let buf: *u8 = unsafe { malloc(16 as usize) };
-    let mut len: usize = 0 as usize;
-    let mut x: u32 = n;
+    var len: usize = 0 as usize;
+    var x: u32 = n;
     if x == (0 as u32) {
         unsafe { buf[0 as usize] = 48 as u8; }
         len = 1 as usize;
@@ -41,8 +41,8 @@ fn print_u32(n: u32) {
             len = len +% (1 as usize);
             x = x / (10 as u32);
         }
-        let mut i: usize = 0 as usize;
-        let mut j: usize = len -% (1 as usize);
+        var i: usize = 0 as usize;
+        var j: usize = len -% (1 as usize);
         while i < j {
             let t: u8 = unsafe { buf[i] };
             unsafe { buf[i] = buf[j]; }
@@ -57,10 +57,10 @@ fn print_u32(n: u32) {
 }
 
 fn main() -> i32 {
-    let mut cap: usize = 4096 as usize;
-    let mut buf: *u8 = unsafe { malloc(cap) };
-    let mut len: usize = 0 as usize;
-    let mut line_no: u32 = 1 as u32;
+    var cap: usize = 4096 as usize;
+    var buf: *u8 = unsafe { malloc(cap) };
+    var len: usize = 0 as usize;
+    var line_no: u32 = 1 as u32;
 
     loop {
         // Grow if the buffer is full and we still haven't seen a newline.
@@ -85,9 +85,9 @@ fn main() -> i32 {
 
         // Drain any complete lines from the buffer.
         loop {
-            let mut nl: usize = len;
-            let mut j: usize = 0 as usize;
-            let mut found: bool = false;
+            var nl: usize = len;
+            var j: usize = 0 as usize;
+            var found: bool = false;
             while j < len {
                 let b: u8 = unsafe { buf[j] };
                 if b == (10 as u8) { nl = j; found = true; break; }
@@ -96,7 +96,7 @@ fn main() -> i32 {
             if !found { break; }
 
             // Emit "<line_no>: <line>\n" (CR stripped).
-            let mut line_end: usize = nl;
+            var line_end: usize = nl;
             if line_end > (0 as usize) {
                 let prev: u8 = unsafe { buf[line_end -% (1 as usize)] };
                 if prev == (13 as u8) {
@@ -112,7 +112,7 @@ fn main() -> i32 {
             // Shift remaining bytes (after '\n') to the front.
             let consumed: usize = nl +% (1 as usize);
             let leftover: usize = len -% consumed;
-            let mut k: usize = 0 as usize;
+            var k: usize = 0 as usize;
             while k < leftover {
                 let src: u8 = unsafe { buf[consumed +% k] };
                 unsafe { buf[k] = src; }

@@ -28,7 +28,7 @@ extern fn free(p: *u8);
 // stable-ordering ordering that's the right default for "I want my
 // increments not to be lost".
 fn bump(counter: *u64) -> i32 {
-    let mut i: i32 = 0 as i32;
+    var i: i32 = 0 as i32;
     while i < (100000 as i32) {
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(counter, 1 as u64, atomic::Ordering::SeqCst)

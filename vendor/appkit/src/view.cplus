@@ -11,7 +11,7 @@ import "./runtime" as rt;
 //   `static mut`, an associated object, or a global.
 pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
     let existing: *u8 = rt::get_class(#str_ptr("CCustomView\0"));
-    let mut cls: *u8 = existing;
+    var cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
         let nsview: *u8 = rt::get_class(#str_ptr("NSView\0"));
         cls = rt::allocate_class_pair(nsview, #str_ptr("CCustomView\0"), 0 as usize);
@@ -33,7 +33,7 @@ pub struct View {
 }
 
 impl View {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -63,7 +63,7 @@ impl View {
     // C+ forbids `move mut this`, so this consumes *logically* via `mut this` +
     // nilling: after `into_raw`, the wrapper is inert (every method is a
     // message-to-nil no-op) — don't keep using it.
-    pub fn into_raw(mut this) -> *u8 {
+    pub fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
         this.obj = unsafe { 0 as *u8 };
         return p;
@@ -102,7 +102,7 @@ pub struct StackView {
 }
 
 impl StackView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -158,7 +158,7 @@ impl ScrollView {
         return ScrollView { obj: view };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -188,7 +188,7 @@ pub struct Box {
 }
 
 impl Box {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -233,7 +233,7 @@ pub struct Scroller {
 }
 
 impl Scroller {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -255,7 +255,7 @@ pub struct BackgroundExtensionView {
 }
 
 impl BackgroundExtensionView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

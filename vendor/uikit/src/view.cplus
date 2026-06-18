@@ -5,7 +5,7 @@ import "./convert" as convert;
 
 pub fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
     let existing: *u8 = rt::get_class(#str_ptr("CUIKitCustomView\0"));
-    let mut cls: *u8 = existing;
+    var cls: *u8 = existing;
     if existing == unsafe { 0 as *u8 } {
         let uiview: *u8 = rt::get_class(#str_ptr("UIView\0"));
         cls = rt::allocate_class_pair(uiview, #str_ptr("CUIKitCustomView\0"), 0 as usize);
@@ -230,7 +230,7 @@ impl StackView {
         return StackView { obj: rt::alloc_init_with_frame(#str_ptr("UIStackView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -272,7 +272,7 @@ impl ScrollView {
         return ScrollView { obj: rt::alloc_init_with_frame(#str_ptr("UIScrollView\0"), frame) };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

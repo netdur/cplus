@@ -1,7 +1,7 @@
 struct Counter { count: i32, max: i32 }
 
 fn main() -> i32 {
-    let mut c: Counter = Counter { count: 0, max: 10 };
+    var c: Counter = Counter { count: 0, max: 10 };
     while c.count < c.max {
         c.count = c.count + 1;
     }

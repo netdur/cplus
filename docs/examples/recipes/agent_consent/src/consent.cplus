@@ -41,7 +41,7 @@ pub enum Mode {
 
 // `rules_dir` + "/" + `agent_id`, as an owned Text the caller can lend.
 fn rule_path(rules_dir: str, agent_id: str) -> text::Text {
-    let mut p: text::Text = text::from_str(rules_dir);
+    var p: text::Text = text::from_str(rules_dir);
     p.push_str("/");
     p.push_str(agent_id);
     return p;
@@ -56,7 +56,7 @@ pub fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
         fs::open_read(unsafe { path.as_str() }) else {
         return option::Option[auth::Decision]::None;
     };
-    let mut fm: fs::File = f;
+    var fm: fs::File = f;
     guard let result::Result[vec::Vec[u8], result::IoError]::Ok(bytes) =
         fm.read_to_end() else {
         return option::Option[auth::Decision]::None;
@@ -84,8 +84,8 @@ pub fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
         fs::create(unsafe { path.as_str() }) else {
         return;
     };
-    let mut fm: fs::File = f;
-    let mut bytes: vec::Vec[u8] = vec::new::[u8]();
+    var fm: fs::File = f;
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
     bytes.extend_from_raw(unsafe { #str_ptr(word) }, #str_len(word));
     match fm.write_all(bytes) {
         result::Result[usize, result::IoError]::Ok(_) => {}

@@ -16,7 +16,7 @@ impl Menu {
         return Menu { obj: menu };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -42,13 +42,13 @@ pub struct MenuItem {
 }
 
 impl MenuItem {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
     pub fn new(title: *u8, action: *u8, key_equiv: *u8) -> MenuItem {
         let ns_title = rt::ns_string(title);
-        let mut act_sel: *u8 = unsafe { 0 as *u8 };
+        var act_sel: *u8 = unsafe { 0 as *u8 };
         if action != unsafe { 0 as *u8 } {
             act_sel = rt::sel(action);
         }

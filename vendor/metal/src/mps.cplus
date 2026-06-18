@@ -98,7 +98,7 @@ impl MatrixDescriptor {
         return MatrixDescriptor { raw: raw };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -133,7 +133,7 @@ impl Matrix {
         return Matrix { raw: initialized };
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -218,7 +218,7 @@ impl MatrixMultiplication {
         return;
     }
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -277,7 +277,7 @@ impl MatrixVectorMultiplication {
     // is a follow-up when a consumer needs the optimized matvec path
     // beyond what matmul-with-1D-shape gives.
 
-    fn drop(mut this) {
+    fn drop(ref this) {
         runtime::release(this.raw);
         this.raw = unsafe { 0 as *u8 };
         return;
@@ -391,7 +391,7 @@ fn test_2x2_matmul_identity_correctness() {
     cmd_buf.wait_until_completed();
 
     // Read back. The result must equal A bit-for-bit.
-    let mut out: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    var out: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let _copied: usize = buf_c.copy_to_slice(
         unsafe { #slice_from_raw_parts(#addr_of(out) as *u8, 16 as usize) },
     );

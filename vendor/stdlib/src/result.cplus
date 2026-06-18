@@ -25,16 +25,16 @@ pub enum IoError {
 // Generic constructors. T and E must be supplied via turbofish at the call
 // site (sema can't infer E from the arg alone when E doesn't appear in the
 // arg position).
-pub fn ok[T, E](move v: T) -> Result[T, E] {
+pub fn ok[T, E](take v: T) -> Result[T, E] {
     return Result[T, E]::Ok(v);
 }
 
-pub fn err[T, E](move e: E) -> Result[T, E] {
+pub fn err[T, E](take e: E) -> Result[T, E] {
     return Result[T, E]::Err(e);
 }
 
 // Convenience constructors for the common `Result[T, IoError]` shape.
-pub fn io_ok[T](move v: T) -> Result[T, IoError] {
+pub fn io_ok[T](take v: T) -> Result[T, IoError] {
     return Result[T, IoError]::Ok(v);
 }
 

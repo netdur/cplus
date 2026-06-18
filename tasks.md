@@ -174,18 +174,32 @@ Tasks 1–6 are independent (any order among themselves).
     rejected yet. parser.rs only (try_parse_receiver, parse_param modifier loop,
     parse_var_stmt + at_var_binding, block-body + builder-entries dispatch).
     7 parser tests + 1 e2e. cplus-core 1557 / cpc e2e 628, green.
-  - [ ] **Stage 2 — migrate the `.cplus` corpus + `.rs` test strings** to the
-    new spellings (`let mut`→`var`, `mut x:`→`ref x:`, `mut this`→`ref this`,
-    `move`→`take`, `static mut`→`static`), rename the 2 `let var` locals, and
-    rewrite the `drop_move` example (`fn take(move h)` → new spelling). Suite
-    green throughout (old spellings still accepted).
-  - [ ] **Stage 3 — hard-switch + semantics.** Reject `mut`/`move`; reserve
-    `take`/`ref`/`var` as binding/param NAMES (allow as members); `static mut`
-    →`static` becomes mutable-by-default (decide: leftover immutable `static`
-    → `const` or stays). Add the `ref`-requires-a-`var`-place `is_var` check
-    (closes the immutable-through-by-ref hole, unifies E0328). Do the bare
-    `x: T` move→borrow flip — AUDIT E0337 escape completeness (plan flags this
-    as a UB-risk surface).
+  - [x] **Stage 2 — migrate the `.cplus` corpus.** `let mut`→`var`,
+    `mut x:`→`ref x:`, `mut this`→`ref this`, `move`→`take` across 120 files
+    (739 line-swaps), via a comment/string-aware migrator (only CODE regions
+    touched — `mut`/`move` are keywords in `.cplus`, so every code hit is the
+    keyword and safe; comments/strings/`mut_field` left alone). DEFERRED to
+    Stage 3 (NOT done here): (a) `static mut`→`static` — needs the SEMANTIC
+    change first (bare `static` is still immutable today, so migrating now
+    silently breaks every written-to static; verified by the 13 e2e failures on
+    the first attempt; the migrator now explicitly PROTECTS `static mut`).
+    (b) the `.rs` test-string migration — doing it compile-error-guided in
+    Stage 3's hard-switch is safer than a blind string rewrite that could
+    corrupt Rust `mut`/`&mut self` or diagnostic-message text. (c) the 2
+    `let var` locals + `drop_move`'s `fn take` are fine as-is (var/take not
+    reserved as names yet). Surfaced + fixed a Stage-1 GAP the migration
+    exposed: `var` wasn't recognized in the C-style for-init (`for (var i …)`)
+    — wired into `parse_let_no_semi` + the C-for dispatch (+1 parser test).
+    cplus-core 1558 / cpc e2e 628, green.
+  - [ ] **Stage 3 — hard-switch + semantics.** Migrate the `.rs` test strings
+    (compile-error-guided). Reject `mut`/`move`; reserve `take`/`ref`/`var` as
+    binding/param NAMES (allow as members) — rename the 2 `let var` locals.
+    `static mut`→`static` AND make bare `static` mutable-by-default (decide:
+    leftover immutable `static` → `const` or stays). Add the
+    `ref`-requires-a-`var`-place `is_var` check (closes the
+    immutable-through-by-ref hole, unifies E0328). Do the bare `x: T`
+    move→borrow flip — AUDIT E0337 escape completeness (plan flags this as a
+    UB-risk surface).
   - [ ] **Stage 4 — `borrow` removal.** Param prefix `borrow x:` folds into the
     bare default. Region-lifetime `borrow A T` / `TypeKind::Borrowed` (9-file
     thread, E0511/E0512, ~19 e2e region tests) — SCOPE TBD with user (in #9 vs a

@@ -14,8 +14,8 @@ fn take_until_zero(seed: i32) -> Drain {
 }
 
 fn sum_with_loop(start: i32) -> i32 {
-    let mut total: i32 = 0;
-    let mut cur: i32 = start;
+    var total: i32 = 0;
+    var cur: i32 = start;
     loop {
         if cur == 0 {
             break;
@@ -27,8 +27,8 @@ fn sum_with_loop(start: i32) -> i32 {
 }
 
 fn skip_evens_under(n: i32) -> i32 {
-    let mut total: i32 = 0;
-    let mut i: i32 = 0;
+    var total: i32 = 0;
+    var i: i32 = 0;
     while i < n {
         i = i + 1;
         if (i - (i / 2) * 2) == 0 {
@@ -41,8 +41,8 @@ fn skip_evens_under(n: i32) -> i32 {
 
 fn drain_with_while_let() -> i32 {
     // Drain decreasing values until take_until_zero returns Empty.
-    let mut total: i32 = 0;
-    let mut next: i32 = 4;
+    var total: i32 = 0;
+    var next: i32 = 4;
     while let Drain::Take(v) = take_until_zero(next) {
         total = total + v;
         next = next - 1;

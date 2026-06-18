@@ -14,7 +14,7 @@ pub struct TextView {
 }
 
 impl TextView {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -70,7 +70,7 @@ pub struct SecureTextField {
 }
 
 impl SecureTextField {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -105,7 +105,7 @@ pub struct SearchField {
 }
 
 impl SearchField {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -148,7 +148,7 @@ pub struct TokenField {
 }
 
 impl TokenField {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -179,7 +179,7 @@ pub struct ComboBox {
 }
 
 impl ComboBox {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 
@@ -218,7 +218,7 @@ pub struct Form {
 }
 
 impl Form {
-    fn drop(mut this) {
+    fn drop(ref this) {
         rt::release(this.obj);
     }
 

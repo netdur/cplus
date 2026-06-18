@@ -2219,7 +2219,9 @@ impl Parser {
             // C-style: for (init; cond; update) body
             let init = if self.at(&TokenKind::Semi) {
                 None
-            } else if matches!(self.peek_kind(), TokenKind::Let) {
+            } else if matches!(self.peek_kind(), TokenKind::Let) || self.at_var_binding() {
+                // v0.0.24 de-Rust (#9): `for (var i: i32 = 0; ...)` as well as
+                // `for (let [mut] i ...; ...)`.
                 Some(Box::new(self.parse_let_no_semi()?))
             } else {
                 let e = self.parse_expr()?;
@@ -2275,10 +2277,18 @@ impl Parser {
         // Same as parse_let_stmt but without consuming a trailing `;` —
         // the for-header's `;` separator is consumed by the caller. The
         // for-header form always requires an initializer (the natural
-        // pattern is `for (let mut i: i32 = 0; ...)`); uninitialized lets
+        // pattern is `for (var i: i32 = 0; ...)`); uninitialized bindings
         // inside a for-header would be useless.
-        let start = self.expect(&TokenKind::Let, "`let`")?.span;
-        let mutable = self.eat(&TokenKind::Mut);
+        //
+        // v0.0.24 de-Rust (#9): accept the `var` mutable-binding spelling as
+        // well as `let [mut]`. The caller confirms it is `let` or a `var`
+        // binding before dispatching here.
+        let (start, mutable) = if self.at_var_binding() {
+            (self.bump().span, true) // consume the contextual `var`
+        } else {
+            let s = self.expect(&TokenKind::Let, "`let`")?.span;
+            (s, self.eat(&TokenKind::Mut))
+        };
         let name = self.expect_ident()?;
         let ty = if self.eat(&TokenKind::Colon) {
             Some(self.parse_type()?)
@@ -4349,6 +4359,29 @@ mod tests {
         };
         assert!(!*mutable, "`let var` is an immutable binding named `var`");
         assert_eq!(name.name, "var");
+    }
+
+    #[test]
+    fn var_in_c_style_for_init_parses() {
+        // The C-style `for (init; cond; update)` header accepts a `var` binding
+        // init, same as `let [mut]`.
+        let p = parse_src(
+            "fn main() -> i32 { for (var i: i32 = 0; i < 3; i = i + 1) { } return 0; }",
+        )
+        .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!();
+        };
+        let StmtKind::For(crate::ast::ForLoop::CStyle { init: Some(init), .. }, _) =
+            &f.body.stmts[0].kind
+        else {
+            panic!("expected a C-style for with a var init");
+        };
+        let StmtKind::Let { mutable, name, .. } = &init.kind else {
+            panic!();
+        };
+        assert!(*mutable);
+        assert_eq!(name.name, "i");
     }
 
     #[test]

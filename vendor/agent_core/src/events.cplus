@@ -113,7 +113,7 @@ impl Subscription {
 
 // Whether `n` is `source` or an ancestor of it (the bubbling test).
 fn is_ancestor_or_self(borrow reg: identity::Registry, n: usize, source: usize) -> bool {
-    let mut cur: option::Option[usize] = option::Option[usize]::Some(source);
+    var cur: option::Option[usize] = option::Option[usize]::Some(source);
     loop {
         match cur {
             option::Option[usize]::Some(c) => {
@@ -197,7 +197,7 @@ impl Subscriber {
     }
 
     fn has_pending_ui_changed(this) -> bool {
-        let mut i: usize = this.head;
+        var i: usize = this.head;
         while i < this.queue.len() {
             let uc: bool = match this.queue.at(i) {
                 option::Option[*Event]::Some(p) => is_ui_changed(unsafe { (*p).verb }),
@@ -211,12 +211,12 @@ impl Subscriber {
         return false;
     }
 
-    fn compact(mut this) {
+    fn compact(ref this) {
         if this.head < this.cap {
             return;
         }
-        let mut nq: vec::Vec[Event] = vec::new::[Event]();
-        let mut i: usize = this.head;
+        var nq: vec::Vec[Event] = vec::new::[Event]();
+        var i: usize = this.head;
         while i < this.queue.len() {
             match this.queue.at(i) {
                 option::Option[*Event]::Some(p) => { nq.push(unsafe { *p }); }
@@ -232,7 +232,7 @@ impl Subscriber {
     // Offer an event. Enqueues iff it matches the filter, applying backpressure:
     // `ui_changed` coalesces to at most one pending; on overflow the oldest event
     // is dropped (dropped-count bumped). Never blocks.
-    pub fn offer(mut this, borrow reg: identity::Registry, ev: Event) {
+    pub fn offer(ref this, borrow reg: identity::Registry, ev: Event) {
         let src: usize = ev.source;
         let vb: Verb = ev.verb;
         if !matches(reg, this.node, this.verb, this.role, src, vb) {
@@ -251,7 +251,7 @@ impl Subscriber {
     }
 
     // Dequeue the oldest pending event, or None.
-    pub fn poll(mut this) -> option::Option[Event] {
+    pub fn poll(ref this) -> option::Option[Event] {
         if this.head >= this.queue.len() {
             return option::Option[Event]::None;
         }
@@ -270,7 +270,7 @@ impl Subscriber {
 
 // A small tree:  app(0) -> window(1) -> [ btn(2, Button), field(3, Input) ]
 fn fixture() -> identity::Registry {
-    let mut r: identity::Registry = identity::new();
+    var r: identity::Registry = identity::new();
     let root: usize = r.root();
     let win: usize = r.add_child(root, option::Option[str]::Some("win"), identity::Role::Window);
     let _btn: usize = r.add_child(win, option::Option[str]::Some("btn"), identity::Role::Button);
@@ -278,8 +278,8 @@ fn fixture() -> identity::Registry {
     return r;
 }
 
-fn poll_count(mut s: Subscriber) -> usize {
-    let mut n: usize = 0 as usize;
+fn poll_count(ref s: Subscriber) -> usize {
+    var n: usize = 0 as usize;
     loop {
         match s.poll() {
             option::Option[Event]::Some(_) => { n = n +% (1 as usize); }
@@ -293,7 +293,7 @@ fn poll_count(mut s: Subscriber) -> usize {
 fn test_bubbling_ancestor_receives_descendant_event() {
     let r: identity::Registry = fixture();
     // Subscribe at the window; a click on the button (a descendant) bubbles up.
-    let mut s: Subscriber = subscriber(everything().on_node(1 as usize), 8 as usize);
+    var s: Subscriber = subscriber(everything().on_node(1 as usize), 8 as usize);
     s.offer(r, event(2 as usize, Verb::Clicked));
     assert s.pending() == (1 as usize);
 }
@@ -302,7 +302,7 @@ fn test_bubbling_ancestor_receives_descendant_event() {
 fn test_node_filter_excludes_other_subtree() {
     let r: identity::Registry = fixture();
     // Subscribe at the button; an event on the field (a sibling) must NOT match.
-    let mut s: Subscriber = subscriber(everything().on_node(2 as usize), 8 as usize);
+    var s: Subscriber = subscriber(everything().on_node(2 as usize), 8 as usize);
     s.offer(r, event(3 as usize, Verb::Changed));
     assert s.pending() == (0 as usize);
 }
@@ -310,7 +310,7 @@ fn test_node_filter_excludes_other_subtree() {
 #[test]
 fn test_root_subscription_matches_anything() {
     let r: identity::Registry = fixture();
-    let mut s: Subscriber = subscriber(everything(), 8 as usize);
+    var s: Subscriber = subscriber(everything(), 8 as usize);
     s.offer(r, event(2 as usize, Verb::Clicked));
     s.offer(r, event(3 as usize, Verb::Changed));
     assert s.pending() == (2 as usize);
@@ -319,7 +319,7 @@ fn test_root_subscription_matches_anything() {
 #[test]
 fn test_verb_filter() {
     let r: identity::Registry = fixture();
-    let mut s: Subscriber = subscriber(everything().on_verb(Verb::Clicked), 8 as usize);
+    var s: Subscriber = subscriber(everything().on_verb(Verb::Clicked), 8 as usize);
     s.offer(r, event(2 as usize, Verb::Clicked));
     s.offer(r, event(2 as usize, Verb::Changed));
     assert s.pending() == (1 as usize);
@@ -334,7 +334,7 @@ fn test_verb_filter() {
 fn test_role_filter_cross_cutting() {
     let r: identity::Registry = fixture();
     // "every button click anywhere" — role+verb, no node.
-    let mut s: Subscriber = subscriber(everything().on_role(identity::Role::Button).on_verb(Verb::Clicked), 8 as usize);
+    var s: Subscriber = subscriber(everything().on_role(identity::Role::Button).on_verb(Verb::Clicked), 8 as usize);
     s.offer(r, event(2 as usize, Verb::Clicked)); // btn -> match
     s.offer(r, event(3 as usize, Verb::Clicked)); // field (Input) -> no match
     assert s.pending() == (1 as usize);
@@ -343,7 +343,7 @@ fn test_role_filter_cross_cutting() {
 #[test]
 fn test_poll_is_fifo_and_drains() {
     let r: identity::Registry = fixture();
-    let mut s: Subscriber = subscriber(everything(), 8 as usize);
+    var s: Subscriber = subscriber(everything(), 8 as usize);
     s.offer(r, event(2 as usize, Verb::Clicked));
     s.offer(r, event(3 as usize, Verb::Changed));
     match s.poll() {
@@ -360,7 +360,7 @@ fn test_poll_is_fifo_and_drains() {
 #[test]
 fn test_ui_changed_coalesces() {
     let r: identity::Registry = fixture();
-    let mut s: Subscriber = subscriber(everything(), 8 as usize);
+    var s: Subscriber = subscriber(everything(), 8 as usize);
     s.offer(r, event(0 as usize, Verb::UiChanged));
     s.offer(r, event(0 as usize, Verb::UiChanged));
     s.offer(r, event(0 as usize, Verb::UiChanged));
@@ -374,7 +374,7 @@ fn test_ui_changed_coalesces() {
 #[test]
 fn test_overflow_drops_oldest_and_counts() {
     let r: identity::Registry = fixture();
-    let mut s: Subscriber = subscriber(everything(), 2 as usize);
+    var s: Subscriber = subscriber(everything(), 2 as usize);
     s.offer(r, event(2 as usize, Verb::Clicked));   // [click]
     s.offer(r, event(3 as usize, Verb::Changed));   // [click, changed]
     s.offer(r, event(2 as usize, Verb::Submitted)); // overflow -> drop click -> [changed, submitted]
@@ -391,8 +391,8 @@ fn test_overflow_drops_oldest_and_counts() {
 #[test]
 fn test_compaction_keeps_backing_bounded_no_double_free() {
     let r: identity::Registry = fixture();
-    let mut s: Subscriber = subscriber(everything(), 2 as usize);
-    let mut i: usize = 0 as usize;
+    var s: Subscriber = subscriber(everything(), 2 as usize);
+    var i: usize = 0 as usize;
     // Many offers + polls force overflow drops and compaction repeatedly.
     while i < (64 as usize) {
         s.offer(r, event(2 as usize, Verb::Clicked));

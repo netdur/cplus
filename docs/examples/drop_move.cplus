@@ -8,10 +8,10 @@ struct Handle { id: i32 }
 
 impl Handle {
     fn new(id: i32) -> Handle { return Handle { id: id }; }
-    fn drop(mut this) { #println(0 -% this.id); }
+    fn drop(ref this) { #println(0 -% this.id); }
 }
 
-fn take(move h: Handle) -> i32 {
+fn take(take h: Handle) -> i32 {
     let id: i32 = h.id;
     return id;
     // h drops at end of take's scope -> prints -7

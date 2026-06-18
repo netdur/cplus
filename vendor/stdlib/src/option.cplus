@@ -17,6 +17,6 @@ pub enum Option[T] {
 // Generic constructor for `Some` — symmetric with `Result::ok`. The
 // `None` variant is constructed directly as `Option[T]::None` with the
 // turbofish (sema can't infer T from a payload-less variant).
-pub fn some[T](move v: T) -> Option[T] {
+pub fn some[T](take v: T) -> Option[T] {
     return Option[T]::Some(v);
 }

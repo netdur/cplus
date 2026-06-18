@@ -90,8 +90,8 @@ fn main() -> i32 {
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), caption.obj);
 
     // ---- Open the agent surface ----
-    let mut surf: ui::Surface = ui::open(win.obj);
-    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+    var surf: ui::Surface = ui::open(win.obj);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     // 1) What the agent sees. `actionable:true` on the tagged nodes, `false` on
     //    the untagged caption and structural views.

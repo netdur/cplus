@@ -27,7 +27,7 @@ extern fn inet_addr(s: *u8) -> u32;
 extern fn gethostbyname(name: *u8) -> *u8;
 
 fn write_all(fd: i32, p: *u8, n: usize) -> bool {
-    let mut written: usize = 0 as usize;
+    var written: usize = 0 as usize;
     while written < n {
         let q: *u8 = unsafe { p + written };
         let w: isize = unsafe { write(fd, q, n -% written) };
@@ -88,7 +88,7 @@ fn main() -> i32 {
 
     // ---- Parse URL: skip "http://" then split host[:port][/path] ----
     if url_len < (7 as usize) { return 2; }  // smaller than "http://"
-    let mut i: usize = 7 as usize;
+    var i: usize = 7 as usize;
     let host_start: usize = i;
     while i < url_len {
         let c: u8 = unsafe { url[i] };
@@ -97,7 +97,7 @@ fn main() -> i32 {
         i = i +% (1 as usize);
     }
     let host_end: usize = i;
-    let mut port: u32 = 80 as u32;
+    var port: u32 = 80 as u32;
     if i < url_len {
         let c: u8 = unsafe { url[i] };
         if c == (58 as u8) {
@@ -163,7 +163,7 @@ fn main() -> i32 {
     // ---- Build + send HTTP request ----
     let req_cap: usize = host_len +% path_len +% (128 as usize);
     let req: *u8 = unsafe { malloc(req_cap) };
-    let mut rlen: usize = 0 as usize;
+    var rlen: usize = 0 as usize;
 
     let s_get: str = "GET ";
     unsafe { memcpy(req + rlen, #str_ptr(s_get), #str_len(s_get)); }
@@ -194,9 +194,9 @@ fn main() -> i32 {
     unsafe { free(host_cstr); }
 
     // ---- Read response, split on \r\n\r\n, dump body ----
-    let mut resp_cap: usize = 8192 as usize;
-    let mut resp_len: usize = 0 as usize;
-    let mut resp: *u8 = unsafe { malloc(resp_cap) };
+    var resp_cap: usize = 8192 as usize;
+    var resp_len: usize = 0 as usize;
+    var resp: *u8 = unsafe { malloc(resp_cap) };
     loop {
         if resp_len == resp_cap {
             resp_cap = resp_cap *% (2 as usize);
@@ -209,8 +209,8 @@ fn main() -> i32 {
     }
     unsafe { close(fd); }
 
-    let mut split: usize = resp_len;
-    let mut k: usize = 0 as usize;
+    var split: usize = resp_len;
+    var k: usize = 0 as usize;
     while (k +% (3 as usize)) < resp_len {
         let b0: u8 = unsafe { resp[k] };
         let b1: u8 = unsafe { resp[k +% (1 as usize)] };
