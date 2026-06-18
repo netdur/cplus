@@ -1050,6 +1050,22 @@ fn main() -> i32 { return 0; }
 '''
 
 [[code]]
+id = "E0363"
+title = "Name already declared in this scope (no same-scope shadowing)"
+category = "Control flow and matching"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:5294"
+test = "cplus-core/src/sema.rs:same_scope_shadow_e0363"
+cause = "Two bindings with the same name are declared in one block. C forbids redeclaring a name in a scope; Rust-style same-scope shadowing is a false friend that silently swaps a binding's type."
+fix = "Pick a new name, or assign to the existing binding. Shadowing in a nested block (or shadowing a parameter) is still allowed — only same-block re-declaration is rejected."
+example = '''
+fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }
+'''
+
+[[code]]
 id = "E0370"
 title = "Move and shared-borrow of the same binding in one call"
 category = "Ownership and borrowing"

@@ -5291,6 +5291,22 @@ impl SemaCx<'_> {
                 } else {
                     BTreeSet::new()
                 };
+                // v0.0.24 de-Rust: same-scope re-declaration is a hard error.
+                // C forbids redeclaring a name in one block; Rust-style
+                // shadowing is a false friend that silently swaps a binding's
+                // type. Only the innermost (current) scope is checked, so
+                // nested-block shadowing and parameter shadowing — which live
+                // in outer scope maps — stay legal.
+                if self.scopes.last().unwrap().contains_key(&name.name) {
+                    self.err(
+                        "E0363",
+                        format!(
+                            "`{}` is already declared in this scope; pick a new name or assign to the existing binding (same-block shadowing is not allowed)",
+                            name.name
+                        ),
+                        s.span,
+                    );
+                }
                 self.scopes.last_mut().unwrap().insert(
                     name.name.clone(),
                     LocalInfo {
@@ -18872,6 +18888,37 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn uninit_let_no_type_e0346() {
         let codes = errors("fn main() -> i32 { let x; x = 5; return x; }");
         assert!(codes.contains(&"E0346"), "expected E0346, got: {codes:?}");
+    }
+
+    // v0.0.24 de-Rust: same-scope shadowing is forbidden (E0363); nested-scope
+    // and parameter shadowing stay legal (ordinary block scoping).
+    #[test]
+    fn same_scope_shadow_e0363() {
+        let codes =
+            errors("fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }");
+        assert!(codes.contains(&"E0363"), "expected E0363, got: {codes:?}");
+    }
+
+    #[test]
+    fn same_scope_shadow_let_then_mut_e0363() {
+        // `let mut` is today's mutable spelling (→ `var` in task #9); a
+        // re-declaration of an existing name is still E0363 regardless.
+        let codes =
+            errors("fn main() -> i32 { let x: i32 = 1; let mut x: i32 = 2; return x; }");
+        assert!(codes.contains(&"E0363"), "expected E0363, got: {codes:?}");
+    }
+
+    #[test]
+    fn nested_scope_shadow_allowed_no_e0363() {
+        let codes =
+            errors("fn main() -> i32 { let x: i32 = 1; { let x: bool = true; } return x; }");
+        assert!(!codes.contains(&"E0363"), "nested shadow must be allowed, got: {codes:?}");
+    }
+
+    #[test]
+    fn param_shadow_by_local_allowed_no_e0363() {
+        let codes = errors("fn f(x: i32) -> i32 { let x: i32 = 2; return x; }");
+        assert!(!codes.contains(&"E0363"), "param shadow must be allowed, got: {codes:?}");
     }
 
     #[test]
