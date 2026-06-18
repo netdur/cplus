@@ -386,7 +386,7 @@ impl Lower {
             }
             ExprKind::Cast { expr, .. } => self.lower_expr(expr),
             ExprKind::Path { .. } => {}
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.lower_expr(&mut f.value);
                 }
@@ -1394,12 +1394,9 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
             subst_expr(value, consts);
         }
         ExprKind::Cast { expr, .. } => subst_expr(expr, consts),
-        ExprKind::StructLit { fields, .. } => {
-            for f in fields {
-                subst_expr(&mut f.value, consts);
-            }
-        }
-        ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
                 subst_expr(&mut f.value, consts);
             }

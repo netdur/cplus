@@ -2261,7 +2261,7 @@ fn contextualize_builder_idents(
                 contextualize_builder_idents(el, context, locals, ctx);
             }
         }
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
                 contextualize_builder_idents(&mut f.value, context, locals, ctx);
             }
@@ -2502,6 +2502,14 @@ fn rewrite_expr(
                     }
                 }
             }
+            for f in fields {
+                rewrite_expr(&mut f.value, ctx, scope)?;
+            }
+        }
+        // v0.0.24 de-Rust: the type-inferred literal has no type name to
+        // qualify (the type is resolved from the expected type at sema time),
+        // so just recurse into the field values.
+        ExprKind::InferredStructLit { fields } => {
             for f in fields {
                 rewrite_expr(&mut f.value, ctx, scope)?;
             }

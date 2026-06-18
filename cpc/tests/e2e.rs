@@ -362,6 +362,109 @@ fn addr_intrinsic_matches_ptr_to_usize_cast() {
     );
 }
 
+// v0.0.24 de-Rust: type-inferred struct literals `{ field: ... }`. The struct
+// type is taken from the expected type at the use site (annotation / return /
+// argument / nested field), so the type name need not be repeated. Verify at
+// runtime that a value built through the inferred form behaves identically to
+// the named form, across binding / return / argument / nested positions.
+#[test]
+fn inferred_struct_literal_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("inf.cplus");
+    std::fs::write(
+        &src,
+        "struct Inner { a: i32 }\n\
+         struct Outer { inner: Inner, k: i32 }\n\
+         fn take_outer(o: Outer) -> i32 { return o.inner.a + o.k; }\n\
+         fn make() -> Outer { return { inner: { a: 3 }, k: 4 }; }\n\
+         fn main() -> i32 {\n\
+            let o: Outer = { inner: { a: 7 }, k: 3 };\n\
+            let s: i32 = take_outer({ inner: { a: 100 }, k: 1 });\n\
+            let m: Outer = make();\n\
+            return o.inner.a + o.k + s + m.inner.a + m.k;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("inf");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "inferred-struct-literal program must compile");
+    let run = Command::new(&bin).status().expect("run inf");
+    // 7+3 (o) + 101 (s) + 3+4 (m) = 118.
+    assert_eq!(run.code(), Some(118), "got {:?}", run.code());
+}
+
+// v0.0.24 de-Rust: an inferred literal against a GENERIC struct annotation
+// (`let b: Box[i32] = { ... }`) must resolve to the same monomorphized struct
+// the type annotation produces — sema records the mangled name, monomorphize
+// rewrites the node to that `StructLit`. Regression guard for the
+// sema-mangling / monomorphize-mangling alignment.
+#[test]
+fn inferred_struct_literal_generic_runs() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("infgen.cplus");
+    std::fs::write(
+        &src,
+        "struct Box[T] { val: T }\n\
+         fn main() -> i32 {\n\
+            let b: Box[i32] = { val: 42 };\n\
+            return b.val;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("infgen");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "generic inferred-literal program must compile");
+    let run = Command::new(&bin).status().expect("run infgen");
+    assert_eq!(run.code(), Some(42), "got {:?}", run.code());
+}
+
+// v0.0.24 de-Rust: moving an owned (Drop) value into an inferred-literal field
+// must disarm the source exactly like the named form — no double-free at
+// scope exit. Move-tracking soundness is inherited because field checking
+// delegates to `check_struct_lit`; this pins that it actually holds at runtime
+// (run under the sanitizers the suite uses elsewhere would catch a double-free;
+// here a clean exit code 5 is the observable).
+#[test]
+fn inferred_struct_literal_move_into_field_no_double_free() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("infmove.cplus");
+    std::fs::write(
+        &src,
+        "struct Owned { p: i32 }\n\
+         impl Owned { fn drop(mut this) { } }\n\
+         struct Holder { o: Owned }\n\
+         fn main() -> i32 {\n\
+            let x: Owned = Owned { p: 5 };\n\
+            let h: Holder = { o: x };\n\
+            return h.o.p;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("infmove");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "move-into-inferred-field program must compile");
+    let run = Command::new(&bin).status().expect("run infmove");
+    assert_eq!(run.code(), Some(5), "got {:?}", run.code());
+}
+
 // v0.0.19: monomorphization fix — a turbofish generic call must mangle its
 // callee from its own (collision-free) AST type-args, not from `call_monos`
 // (keyed by a file-less `ByteSpan`). Two turbofish `vec::new::[T]()` calls at

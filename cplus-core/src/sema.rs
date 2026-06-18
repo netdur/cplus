@@ -574,6 +574,12 @@ pub struct MonoInfo {
     /// `IncludeStr`) determines whether the lowered expression is a raw
     /// pointer or a `str` fat-pointer aggregate.
     pub compile_time_blobs: HashMap<ByteSpan, CompileTimeBlobEntry>,
+    /// v0.0.24 de-Rust: type-inferred struct literals `{ field: ... }`, keyed
+    /// by the node span, mapping to the resolved concrete struct name.
+    /// Monomorphize rewrites each `ExprKind::InferredStructLit` into a plain
+    /// `ExprKind::StructLit` with this name (the same convert-in-mono /
+    /// panic-in-codegen discipline as `GenericStructLit`).
+    pub inferred_struct_lits: HashMap<ByteSpan, String>,
     /// v0.0.8 Phase 4: per-call-site `env!("NAME")` lookup. Resolved at
     /// sema time (read from the compiler's process environment via
     /// `std::env::var`). Value is the env var's value as a UTF-8 string.
@@ -765,6 +771,7 @@ fn check_with_files_inner<'a>(
         enum_method_instantiations: std::collections::BTreeSet::new(),
         generic_impl_methods: HashMap::new(),
         compile_time_blobs_table: HashMap::new(),
+        inferred_struct_lit_table: HashMap::new(),
         env_vars_table: HashMap::new(),
         statics_table: HashMap::new(),
         selectors_table: std::collections::BTreeSet::new(),
@@ -943,6 +950,7 @@ fn check_with_files_inner<'a>(
         method_instantiations,
         type_aliases,
         compile_time_blobs: std::mem::take(&mut cx.compile_time_blobs_table),
+        inferred_struct_lits: std::mem::take(&mut cx.inferred_struct_lit_table),
         env_vars: std::mem::take(&mut cx.env_vars_table),
         statics: cx
             .statics_table
@@ -1190,6 +1198,12 @@ struct SemaCx<'a> {
     /// materialize. See [`CompileTimeBlobEntry`] /
     /// [`MonoInfo::compile_time_blobs`].
     compile_time_blobs_table: HashMap<ByteSpan, CompileTimeBlobEntry>,
+    /// v0.0.24 de-Rust: type-inferred struct literals `{ field: ... }`, keyed
+    /// by the node span, mapping to the resolved concrete struct NAME. Sema
+    /// populates this when it resolves the literal against its expected type;
+    /// monomorphize reads the snapshot from [`MonoInfo::inferred_struct_lits`]
+    /// to rewrite each node into a plain `StructLit` with that name.
+    inferred_struct_lit_table: HashMap<ByteSpan, String>,
     /// v0.0.8 Phase 4: resolved `env!("NAME")` lookups, keyed by the
     /// macro call's source span. Sema populates; codegen reads from
     /// `MonoInfo::env_vars` (built by `mem::take` at hand-off).
@@ -5782,6 +5796,9 @@ impl SemaCx<'_> {
             ExprKind::Cast { expr, ty } => self.check_cast(expr, ty, e.span),
             ExprKind::Path { segments } => self.check_path(segments, e.span),
             ExprKind::StructLit { name, fields } => self.check_struct_lit(name, fields, e.span),
+            ExprKind::InferredStructLit { fields } => {
+                self.check_inferred_struct_lit(fields, expected, e.span)
+            }
             ExprKind::GenericStructLit {
                 name,
                 type_args,
@@ -7855,6 +7872,48 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             span: name.span,
         };
         self.check_struct_lit(&mangled_ident, fields, span)
+    }
+
+    /// v0.0.24 de-Rust: a type-inferred struct literal `{ field: ... }`. The
+    /// struct type comes from `expected` (the annotation / return / arg /
+    /// receiver position). When `expected` resolves to a concrete struct, the
+    /// resolved struct NAME is recorded in `inferred_struct_lit_table` (keyed by
+    /// the node span) so monomorphize can rewrite this node to a plain
+    /// `StructLit`, and field checking delegates to `check_struct_lit` so the
+    /// field/privacy/move diagnostics are byte-identical to the named form.
+    /// When the type cannot be inferred, emit E0364 and fall back to checking
+    /// the field values with no expectation.
+    fn check_inferred_struct_lit(
+        &mut self,
+        fields: &[StructLitField],
+        expected: Option<Ty>,
+        span: ByteSpan,
+    ) -> Ty {
+        let struct_id = match expected {
+            Some(Ty::Struct(id)) => id,
+            _ => {
+                self.err(
+                    "E0364",
+                    "cannot infer the struct type of `{ ... }` here; the expected type is not a known struct — name the type (`A { ... }`) or add a type annotation"
+                        .to_string(),
+                    span,
+                );
+                for f in fields {
+                    let _ = self.check_expr(&f.value, None);
+                }
+                return Ty::Error;
+            }
+        };
+        let struct_name = self.structs[struct_id.0 as usize].name.clone();
+        // Record the resolved name keyed by span; monomorphize rewrites the
+        // node to `StructLit { name: struct_name, .. }`.
+        self.inferred_struct_lit_table
+            .insert(span, struct_name.clone());
+        let name_ident = Ident {
+            name: struct_name,
+            span,
+        };
+        self.check_struct_lit(&name_ident, fields, span)
     }
 
     fn check_struct_lit(&mut self, name: &Ident, fields: &[StructLitField], span: ByteSpan) -> Ty {
@@ -12269,6 +12328,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     fn flag_escaping_local_views(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::StructLit { .. }
+            | ExprKind::InferredStructLit { .. }
             | ExprKind::GenericStructLit { .. }
             | ExprKind::ArrayLit { .. }
             | ExprKind::TupleLit { .. }
@@ -12279,7 +12339,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     fn flag_view_leaves(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.flag_view_leaves(&f.value);
                 }
@@ -14446,7 +14506,7 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
             walk_variant_patterns_in_expr(index, f);
         }
         ExprKind::Cast { expr, .. } => walk_variant_patterns_in_expr(expr, f),
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
             for sf in fields {
                 walk_variant_patterns_in_expr(&sf.value, f);
             }
@@ -15745,12 +15805,9 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
             collect_effects_expr(receiver, out);
             collect_effects_expr(index, out);
         }
-        ExprKind::StructLit { fields, .. } => {
-            for f in fields {
-                collect_effects_expr(&f.value, out);
-            }
-        }
-        ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
                 collect_effects_expr(&f.value, out);
             }
@@ -18075,6 +18132,65 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn field_access_on_non_struct_e0323() {
         let codes = errors("fn main() -> i32 { let x: i32 = 5; let _v: i32 = x.foo; return 0; }");
         assert!(codes.contains(&"E0323"));
+    }
+
+    // v0.0.24 de-Rust: type-inferred struct literals `{ field: ... }`.
+    #[test]
+    fn inferred_struct_lit_from_annotation_ok() {
+        let codes = errors(
+            "struct A { x: i32, y: i32 }\n\
+             fn main() -> i32 { let a: A = { x: 1, y: 2 }; return a.x + a.y; }",
+        );
+        assert!(codes.is_empty(), "expected clean, got: {codes:?}");
+    }
+
+    #[test]
+    fn inferred_struct_lit_from_return_type_ok() {
+        let codes = errors(
+            "struct A { x: i32 }\n\
+             fn make() -> A { return { x: 7 }; }\n\
+             fn main() -> i32 { return make().x; }",
+        );
+        assert!(codes.is_empty(), "expected clean, got: {codes:?}");
+    }
+
+    #[test]
+    fn inferred_struct_lit_uninferable_e0364() {
+        // No annotation and no other expected type → the struct type cannot
+        // be inferred.
+        let codes = errors(
+            "struct A { x: i32 }\n\
+             fn main() -> i32 { let a = { x: 1 }; return 0; }",
+        );
+        assert!(codes.contains(&"E0364"), "got: {codes:?}");
+    }
+
+    #[test]
+    fn inferred_struct_lit_against_non_struct_e0364() {
+        // The expected type is a scalar, not a struct → cannot construct.
+        let codes = errors("fn main() -> i32 { let a: i32 = { x: 1 }; return 0; }");
+        assert!(codes.contains(&"E0364"), "got: {codes:?}");
+    }
+
+    #[test]
+    fn inferred_struct_lit_reuses_field_diagnostics() {
+        // Field checking delegates to check_struct_lit, so the field
+        // diagnostics (here E0322: unknown field) are byte-identical to the
+        // named form.
+        let codes = errors(
+            "struct A { x: i32 }\n\
+             fn main() -> i32 { let a: A = { x: 1, y: 2 }; return 0; }",
+        );
+        assert!(codes.contains(&"E0322"), "got: {codes:?}");
+    }
+
+    #[test]
+    fn inferred_struct_lit_missing_field_e0321() {
+        let codes = errors(
+            "struct A { x: i32, y: i32 }\n\
+             fn main() -> i32 { let a: A = { x: 1 }; return 0; }",
+        );
+        assert!(codes.contains(&"E0321"), "got: {codes:?}");
     }
 
     #[test]

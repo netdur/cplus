@@ -1066,6 +1066,23 @@ fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }
 '''
 
 [[code]]
+id = "E0364"
+title = "Cannot infer struct type of `{ ... }`"
+category = "Names, types, and items"
+severity = "error"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:check_inferred_struct_lit"
+test = "cplus-core/src/sema.rs:inferred_struct_lit_uninferable_e0364"
+cause = "A type-inferred struct literal `{ field: ... }` appears where the expected type is absent or is not a known struct, so the compiler has no struct to construct."
+fix = "Name the struct (`A { field: ... }`), or give the binding a struct type annotation so the literal's type can be inferred."
+example = '''
+struct A { x: i32 }
+fn main() -> i32 { let a = { x: 1 }; return 0; }
+'''
+
+[[code]]
 id = "E0370"
 title = "Move and shared-borrow of the same binding in one call"
 category = "Ownership and borrowing"

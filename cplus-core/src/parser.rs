@@ -2953,6 +2953,34 @@ impl Parser {
         })
     }
 
+    /// v0.0.24 de-Rust: parse the body of a type-inferred struct literal
+    /// `{ field: value, ... }` (the leading `{` is the current token). Field
+    /// syntax is identical to the named form; only the type name is absent.
+    fn parse_inferred_struct_lit_body(&mut self, start_span: Span) -> Result<Expr, ParseError> {
+        self.bump(); // consume `{`
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) {
+            let fname = self.expect_ident()?;
+            self.expect(&TokenKind::Colon, "`:`")?;
+            let value = self.parse_expr()?;
+            let span = fname.span.merge(value.span);
+            fields.push(StructLitField {
+                name: fname,
+                value,
+                span,
+            });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+        let span = start_span.merge(end);
+        Ok(Expr {
+            kind: ExprKind::InferredStructLit { fields },
+            span,
+        })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         let tok = self.peek().clone();
         match &tok.kind {
@@ -3436,6 +3464,19 @@ impl Parser {
                 })
             }
             TokenKind::LBrace => {
+                // v0.0.24 de-Rust: type-inferred struct literal `{ field: ... }`.
+                // A block can never begin with `Ident :` (C+ has no labels or
+                // statement-level type ascription), so `{` + `Ident` + `:` is
+                // syntactically unambiguous. Gated on `!no_struct_lit` like the
+                // named `Type { .. }` form, so an if/while/for/match body `{`
+                // still parses as a block. The struct type is inferred from the
+                // expected type at sema time.
+                if !self.no_struct_lit
+                    && matches!(self.peek_kind_n(1), TokenKind::Ident(_))
+                    && matches!(self.peek_kind_n(2), TokenKind::Colon)
+                {
+                    return self.parse_inferred_struct_lit_body(tok.span);
+                }
                 let block = self.parse_block()?;
                 let span = block.span;
                 Ok(Expr {
@@ -4715,6 +4756,70 @@ mod tests {
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].name, "g");
         assert_eq!(segments[1].name, "flag");
+    }
+
+    #[test]
+    fn inferred_struct_literal_parses() {
+        // v0.0.24 de-Rust: `{ field: ... }` with no leading type name parses
+        // as an InferredStructLit (the type is inferred at sema time).
+        let p =
+            parse_src(r#"fn main() -> i32 { let p: P = { x: 1, y: 2 }; return 0; }"#).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!();
+        };
+        let StmtKind::Let {
+            init: Some(init), ..
+        } = &f.body.stmts[0].kind
+        else {
+            panic!();
+        };
+        let ExprKind::InferredStructLit { fields } = &init.kind else {
+            panic!("expected InferredStructLit, got {:?}", init.kind);
+        };
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name.name, "x");
+        assert_eq!(fields[1].name.name, "y");
+    }
+
+    #[test]
+    fn inferred_struct_literal_in_return_parses() {
+        // `return { field: ... };` is the other motivating position.
+        let p = parse_src(r#"fn make() -> P { return { x: 1 }; }"#).unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!();
+        };
+        let StmtKind::Return(Some(e)) = &f.body.stmts[0].kind else {
+            panic!();
+        };
+        assert!(
+            matches!(&e.kind, ExprKind::InferredStructLit { fields } if fields.len() == 1),
+            "expected InferredStructLit, got {:?}",
+            e.kind
+        );
+    }
+
+    #[test]
+    fn bare_block_is_not_an_inferred_struct_literal() {
+        // A block whose first statement is not `Ident :` must still parse as a
+        // Block, not an inferred struct literal. `{ let t ...; t + 1 }` starts
+        // with a `let` keyword, so the disambiguation falls to Block.
+        let p =
+            parse_src(r#"fn main() -> i32 { let v: i32 = { let t: i32 = 5; t + 1 }; return v; }"#)
+                .unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!();
+        };
+        let StmtKind::Let {
+            init: Some(init), ..
+        } = &f.body.stmts[0].kind
+        else {
+            panic!();
+        };
+        assert!(
+            matches!(&init.kind, ExprKind::Block(_)),
+            "expected Block, got {:?}",
+            init.kind
+        );
     }
 
     #[test]

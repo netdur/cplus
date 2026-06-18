@@ -1614,6 +1614,14 @@ impl<'a> Resolver<'a> {
                     self.walk_expr(&f.value);
                 }
             }
+            // v0.0.24 de-Rust: the type-inferred literal carries no type name
+            // (it is resolved from the expected type at sema time), so there is
+            // no type_ref to record here — just walk the field values.
+            ExprKind::InferredStructLit { fields } => {
+                for f in fields {
+                    self.walk_expr(&f.value);
+                }
+            }
             ExprKind::GenericStructLit {
                 name,
                 type_args,
@@ -1976,7 +1984,7 @@ impl ScopedFlows {
                     self.walk_expr(a, arg_ctx);
                 }
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.walk_expr(&f.value, FlowKind::Construct);
                 }

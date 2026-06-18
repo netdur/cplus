@@ -1128,7 +1128,7 @@ fn check_expr_returns_e3(
                 && check_expr_returns_e3(value, param_names, roots, found)
         }
         ExprKind::Cast { expr, .. } => check_expr_returns_e3(expr, param_names, roots, found),
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => fields
             .iter()
             .all(|f| check_expr_returns_e3(&f.value, param_names, roots, found)),
         ExprKind::Field { receiver, .. } => {
@@ -1313,7 +1313,7 @@ fn check_expr_returns(e: &Expr, root: &str, found: &mut bool) -> bool {
             check_expr_returns(target, root, found) && check_expr_returns(value, root, found)
         }
         ExprKind::Cast { expr, .. } => check_expr_returns(expr, root, found),
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => fields
             .iter()
             .all(|f| check_expr_returns(&f.value, root, found)),
         ExprKind::Field { receiver, .. } => check_expr_returns(receiver, root, found),
@@ -1545,7 +1545,7 @@ fn scan_overlapping_places(
             scan_overlapping_places(receiver, primary, found);
             scan_overlapping_places(index, primary, found);
         }
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
                 scan_overlapping_places(&f.value, primary, found);
             }
@@ -2509,7 +2509,7 @@ impl Analyzer<'_> {
                 self.apply_expr(value, state);
             }
             ExprKind::Cast { expr, .. } => self.apply_expr(expr, state),
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.apply_expr(&f.value, state);
                 }
@@ -3293,7 +3293,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
             expr_reads_ident(target, name) || expr_reads_ident(value, name)
         }
         ExprKind::Cast { expr, .. } => expr_reads_ident(expr, name),
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
             fields.iter().any(|f| expr_reads_ident(&f.value, name))
         }
         ExprKind::Field { receiver, .. } => expr_reads_ident(receiver, name),

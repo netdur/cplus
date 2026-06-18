@@ -3171,7 +3171,7 @@ fn scan_moves_in_expr(
             scan_moves_in_expr(receiver, sigs, types, set);
             scan_moves_in_expr(index, sigs, types, set);
         }
-        ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
             // G-023 fix: a field initialized from a bare-Ident source
             // (`Wrap { m: m }`) consumes that binding into the struct
             // slot. Pre-register so the runtime drop_flag gets allocated
@@ -4241,7 +4241,7 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                     walk_expr(&a.body, table, next_id, out);
                 }
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     walk_expr(&f.value, table, next_id, out);
                 }
@@ -4416,7 +4416,7 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                     visit_expr(&a.body, sigs, taken);
                 }
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     visit_expr(&f.value, sigs, taken);
                 }
@@ -9521,6 +9521,12 @@ impl<'a> FnState<'a> {
             // with the mangled name. If we get here, that pass missed.
             ExprKind::GenericStructLit { .. } => {
                 panic!("codegen reached GenericStructLit — monomorphize did not rewrite this site")
+            }
+            // v0.0.24 de-Rust: InferredStructLit must not reach codegen —
+            // monomorphize rewrites every instance to a regular StructLit
+            // using the name sema recorded. If we get here, that pass missed.
+            ExprKind::InferredStructLit { .. } => {
+                panic!("codegen reached InferredStructLit — monomorphize did not rewrite this site")
             }
             // v0.0.5 Phase 3 Slice 3B: tuple literal `(a, b, ...)`.
             // Element types come from each gen_expr; combine them to

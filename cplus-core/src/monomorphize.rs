@@ -1014,12 +1014,9 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
             visit_ident_calls(index, f);
         }
         ExprKind::Cast { expr, .. } => visit_ident_calls(expr, f),
-        ExprKind::StructLit { fields, .. } => {
-            for sf in fields {
-                visit_ident_calls(&sf.value, f);
-            }
-        }
-        ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             for sf in fields {
                 visit_ident_calls(&sf.value, f);
             }
@@ -2324,6 +2321,43 @@ fn rewrite_expr(
                 })
                 .collect(),
         },
+        // v0.0.24 de-Rust: rewrite the type-inferred literal `{ ... }` to a
+        // plain StructLit using the concrete struct name sema recorded for
+        // this span. Same convert-in-mono / panic-in-codegen discipline as
+        // GenericStructLit below — codegen never sees an InferredStructLit.
+        ExprKind::InferredStructLit { fields } => {
+            let rewritten_fields: Vec<StructLitField> = fields
+                .iter()
+                .map(|f| StructLitField {
+                    name: f.name.clone(),
+                    value: rewrite_expr(
+                        &f.value,
+                        subst,
+                        generic_names,
+                        inst_lookup,
+                        mono,
+                        type_name_of,
+                        struct_lookup,
+                    ),
+                    span: f.span,
+                })
+                .collect();
+            match mono.inferred_struct_lits.get(&expr.span) {
+                Some(struct_name) => ExprKind::StructLit {
+                    name: Ident {
+                        name: struct_name.clone(),
+                        span: expr.span,
+                    },
+                    fields: rewritten_fields,
+                },
+                // Sema records every type-checked inferred literal, so a miss
+                // here is a compiler bug; keep the node so codegen's panic-arm
+                // surfaces it loudly rather than silently miscompiling.
+                None => ExprKind::InferredStructLit {
+                    fields: rewritten_fields,
+                },
+            }
+        }
         // Slice 7GEN.5c: rewrite `Pair[i32, bool] { ... }` to a plain
         // StructLit with the mangled name. Same approach as the type-side
         // Generic → Path rewrite: substitute fn-generic params first,
@@ -2933,6 +2967,11 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
         ExprKind::Field { receiver, .. } => rewrite_alias_expr(receiver, aliases),
         ExprKind::StructLit { name, fields } => {
             rewrite_alias_ident(name, aliases);
+            for f in fields {
+                rewrite_alias_expr(&mut f.value, aliases);
+            }
+        }
+        ExprKind::InferredStructLit { fields } => {
             for f in fields {
                 rewrite_alias_expr(&mut f.value, aliases);
             }

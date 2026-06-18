@@ -759,6 +759,18 @@ pub enum ExprKind {
         name: Ident,
         fields: Vec<StructLitField>,
     },
+    /// v0.0.24 de-Rust: type-inferred struct literal — `{ x: 1, y: 2 }` with
+    /// no leading type name. The struct type is taken from the expected type
+    /// at the use site (`let a: A = { x: 1 };`, `return { x: 1 };`,
+    /// argument/field positions). Sema resolves the expected type to a
+    /// concrete struct, validates the fields exactly like `check_struct_lit`,
+    /// and records the resolved struct NAME in `MonoInfo::inferred_struct_lits`
+    /// keyed by this node's span. Monomorphize then rewrites the node to a
+    /// plain `StructLit` with that name (the same convert-in-mono / panic-in-
+    /// codegen discipline as `GenericStructLit`), so codegen never sees it.
+    InferredStructLit {
+        fields: Vec<StructLitField>,
+    },
     /// Slice 7GEN.5c: generic struct literal —
     /// `Pair[i32, bool] { first: 7, second: true }`. `name` is the
     /// generic template name; `type_args` is the list of concrete
