@@ -51,12 +51,12 @@ fn loop_body_locals_drop_each_iteration() {
         &src,
         "static mut FREES: i32 = 0;\n\
          struct B { opaque data: *u8 }\n\
-         impl B { fn drop(mut this) { unsafe { FREES = FREES + 1; } return; } }\n\
+         impl B { fn drop(ref this) { unsafe { FREES = FREES + 1; } return; } }\n\
          fn work() {\n\
-             let mut i: i32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < 3 { let b: B = B { data: unsafe { 0 as *u8 } }; i = i + 1; }\n\
              for j in 0..2 { let c: B = B { data: unsafe { 0 as *u8 } }; }\n\
-             let mut k: i32 = 0;\n\
+             var k: i32 = 0;\n\
              loop { let d: B = B { data: unsafe { 0 as *u8 } }; if k == 1 { break; } k = k + 1; }\n\
              return;\n\
          }\n\
@@ -130,14 +130,14 @@ fn match_consumes_owned_scrutinee_exactly_once() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum E { A(R), B }\n\
          enum P { Pair(R, R), None }\n\
          fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
          fn mkp() -> P { return P::Pair(R { data: unsafe { 0 as *u8 } }, R { data: unsafe { 0 as *u8 } }); }\n\
-         fn consume(move r: R) -> i32 { return 0; }\n\
+         fn consume(take r: R) -> i32 { return 0; }\n\
          struct H { e: E }\n\
-         impl H { fn drop(mut this) { return; } }\n\
+         impl H { fn drop(ref this) { return; } }\n\
          fn p_bind() { let e: E = mke(); let _n: i32 = match e { x => 7 }; return; }\n\
          fn p_wild() { let e: E = mke(); let _n: i32 = match e { _ => 7 }; return; }\n\
          fn p_temp_var() { let _n: i32 = match mke() { E::A(r) => 7, E::B => 0 }; return; }\n\
@@ -197,7 +197,7 @@ fn match_model_allowed_reads_runtime_safe() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum Opt { Some(usize), None }\n\
          struct NodeView { id: R, parent: Opt }\n\
          struct PodS { a: usize }\n\
@@ -298,15 +298,15 @@ fn cplus_intrinsic_sigil_forms_run() {
         &src,
         "static mut DROPPED: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
          fn main() -> i32 {\n\
-             let mut x: i32 = 41;\n\
+             var x: i32 = 41;\n\
              let p: *i32 = unsafe { #addr_of(x) };\n\
              unsafe { #atomic_store_i32_seqcst(p, 7); }\n\
              let v: i32 = unsafe { #atomic_load_i32_seqcst(p) };\n\
              let old: i32 = unsafe { #atomic_fetch_add_i32_seqcst(p, 35) };\n\
              unsafe { #atomic_fence_seqcst(); }\n\
-             let mut r: R = R { data: unsafe { 0 as *u8 } };\n\
+             var r: R = R { data: unsafe { 0 as *u8 } };\n\
              let rp: *R = unsafe { #addr_of(r) };\n\
              unsafe { #drop_in_place::[R](rp); }\n\
              return v + old + unsafe { DROPPED };\n\
@@ -336,7 +336,7 @@ fn addr_intrinsic_matches_ptr_to_usize_cast() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n\
-            let mut x: i32 = 41;\n\
+            var x: i32 = 41;\n\
             let p: *i32 = unsafe { #addr_of(x) };\n\
             let via_intrinsic: usize = unsafe { #addr(p) };\n\
             let via_cast: usize = unsafe { p as usize };\n\
@@ -444,7 +444,7 @@ fn inferred_struct_literal_move_into_field_no_double_free() {
     std::fs::write(
         &src,
         "struct Owned { p: i32 }\n\
-         impl Owned { fn drop(mut this) { } }\n\
+         impl Owned { fn drop(ref this) { } }\n\
          struct Holder { o: Owned }\n\
          fn main() -> i32 {\n\
             let x: Owned = Owned { p: 5 };\n\
@@ -531,7 +531,7 @@ fn monomorphize_turbofish_same_offset_no_collision() {
     let mod_a = "import \"stdlib/vec\" as vec;\n\
                  struct Aaa { x: i32 }\n\
                  pub fn fa() -> usize {\n\
-                 \x20   let mut v: vec::Vec[Aaa] = vec::new::[Aaa]();\n\
+                 \x20   var v: vec::Vec[Aaa] = vec::new::[Aaa]();\n\
                  \x20   v.push(Aaa { x: 1 });\n\
                  \x20   return v.len();\n\
                  }\n";
@@ -992,7 +992,7 @@ fn cpu_relax_runtime_g031() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n\
-             let mut i: i32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < 4 { #cpu_relax(); i = i +% 1; }\n\
              return 0;\n\
          }",
@@ -1079,12 +1079,12 @@ fn inline_asm_tier2_operands_run_aarch64() {
     std::fs::write(
         &src,
         "fn add(a: i64, b: i64) -> i64 {\n\
-             let mut s: i64 = 0;\n\
+             var s: i64 = 0;\n\
              unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
              return s;\n\
          }\n\
          fn inc(x: i64) -> i64 {\n\
-             let mut v: i64 = x;\n\
+             var v: i64 = x;\n\
              unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
              return v;\n\
          }\n\
@@ -1392,7 +1392,7 @@ fn zero_intrinsic_and_write_zeroed_runtime_g028() {
          struct Chunk { offset: usize, size: usize, opaque next: *u8, pad: i64 }\n\
          fn main() -> i32 {\n\
              // #zero::[T]() — stack value, all bytes zeroed.\n\
-             let mut c: Chunk = #zero::[Chunk]();\n\
+             var c: Chunk = #zero::[Chunk]();\n\
              if c.offset != (0 as usize) { return 1; }\n\
              if c.size   != (0 as usize) { return 2; }\n\
              c.size = 64 as usize;\n\
@@ -1817,7 +1817,7 @@ fn use_after_move_rejected_at_compile_time() {
     std::fs::write(
         &src,
         "struct B { x: i32 }\n\
-         impl B { fn drop(mut this) {} fn consume(move this) -> i32 { return this.x; } }\n\
+         impl B { fn drop(ref this) {} fn consume(take this) -> i32 { return this.x; } }\n\
          fn main() -> i32 {\n\
            let b: B = B { x: 7 };\n\
            let s: i32 = b.consume();\n\
@@ -1888,7 +1888,7 @@ fn generic_body_use_after_move_rejected_e0335() {
     // E0335 (would otherwise double-free at run time).
     assert_compile_fails_with(
         "struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { return; } }\n\
+         impl R { fn drop(ref this) { return; } }\n\
          struct P {}\n\
          interface Sink { fn sink(this, r: R); }\n\
          impl P: Sink { fn sink(this, r: R) { return; } }\n\
@@ -1909,7 +1909,7 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
     // E0337 (would otherwise double-free — both the callee and the owner drop).
     assert_compile_fails_with(
         "struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { return; } }\n\
+         impl R { fn drop(ref this) { return; } }\n\
          struct P {}\n\
          interface Sink { fn sink(this, r: R); }\n\
          impl P: Sink { fn sink(this, r: R) { return; } }\n\
@@ -1976,10 +1976,10 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
     // double-free. Exercises the `move self` receiver path of the bound-method
     // checker, not just its args.
     assert_compile_fails_with(
-        "interface Take { fn take(move this) -> i32; }\n\
+        "interface Take { fn take(take this) -> i32; }\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { return; } }\n\
-         impl R: Take { fn take(move this) -> i32 { return 0; } }\n\
+         impl R { fn drop(ref this) { return; } }\n\
+         impl R: Take { fn take(take this) -> i32 { return 0; } }\n\
          fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
          fn main() -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
@@ -2162,7 +2162,7 @@ fn fn_pointer_call_moves_arg_no_double_free() {
             format!(
                 "static mut DROPS: i32 = 0;\n\
                  struct R {{ tag: i32 }}\n\
-                 impl R {{ fn drop(mut this) {{ unsafe {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
+                 impl R {{ fn drop(ref this) {{ unsafe {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
                  fn sink(r: R) -> i32 {{ return 1; }}\n\
                  struct Handler {{ cb: fn(R) -> i32 }}\n\
                  fn run() -> i32 {{ {run_body} }}\n\
@@ -2252,8 +2252,8 @@ fn move_param_use_after_call_rejected() {
     std::fs::write(
         &src,
         "struct B { x: i32 }\n\
-         impl B { fn drop(mut this) {} }\n\
-         fn take(move b: B) -> i32 { return b.x; }\n\
+         impl B { fn drop(ref this) {} }\n\
+         fn take(take b: B) -> i32 { return b.x; }\n\
          fn main() -> i32 {\n\
            let b: B = B { x: 3 };\n\
            let a: i32 = take(b);\n\
@@ -2401,14 +2401,14 @@ fn longest_move_either_input_while_borrowed_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
     if a.x > b.x {
         return a;
     }
     return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let a: B = B { x: 1 };
     let b: B = B { x: 2 };
@@ -2454,9 +2454,9 @@ fn move_while_return_borrow_live_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn passthrough(b: B) -> B { return b; }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let x: B = B { x: 1 };
     let r: B = passthrough(x);
@@ -2497,8 +2497,8 @@ fn move_and_borrow_in_same_call_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn drain(n: i32, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn drain(n: i32, take b: B) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
@@ -2610,7 +2610,7 @@ fn defer_drop_interleave_runs() {
 // ---- runtime trap behavior for overflow + divide-by-zero ----
 
 const OVERFLOW_PROGRAM: &str =
-    "fn main() -> i32 { let mut x: i32 = 2147483647; x = x + 1; #println(x); return 0; }";
+    "fn main() -> i32 { var x: i32 = 2147483647; x = x + 1; #println(x); return 0; }";
 
 const DIV_ZERO_PROGRAM: &str =
     "fn main() -> i32 { let x: i32 = 10; let y: i32 = 0; return x / y; }";
@@ -3555,13 +3555,13 @@ fn mut_param_noncopy_struct_mutation_propagates() {
         &src,
         "\
 struct Tag { v: i32 }
-impl Tag { fn drop(mut this) { return; } }
-fn bump(mut t: Tag) {
+impl Tag { fn drop(ref this) { return; } }
+fn bump(ref t: Tag) {
     t.v = t.v + 1;
     return;
 }
 fn main() -> i32 {
-    let mut x: Tag = Tag { v: 10 };
+    var x: Tag = Tag { v: 10 };
     bump(x);
     #println(x.v);
     return 0;
@@ -3603,7 +3603,7 @@ fn mut_param_copy_struct_does_not_propagate() {
         &src,
         "\
 struct P { v: i32 }
-fn bump(mut p: P) {
+fn bump(ref p: P) {
     p.v = p.v + 1;
     return;
 }
@@ -3651,17 +3651,17 @@ fn mut_param_noncopy_struct_no_double_drop_at_runtime() {
         "\
 struct Tracker { id: i32 }
 impl Tracker {
-    fn drop(mut this) {
+    fn drop(ref this) {
         #println(0 -% this.id);
         return;
     }
 }
-fn bump(mut t: Tracker) {
+fn bump(ref t: Tracker) {
     t.id = t.id + 1;
     return;
 }
 fn main() -> i32 {
-    let mut x: Tracker = Tracker { id: 6 };
+    var x: Tracker = Tracker { id: 6 };
     bump(x);
     #println(x.id);
     return 0;
@@ -4125,8 +4125,8 @@ fn e0380_two_mut_borrows_of_same_binding_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn modify_both(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
     modify_both(y, y);
@@ -4159,8 +4159,8 @@ fn e0381_mut_and_shared_borrow_in_same_call_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn write_thing(mut a: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_thing(ref a: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
@@ -4194,8 +4194,8 @@ fn e0382_mut_and_move_in_same_call_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn write_and_take(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_and_take(ref a: B, take b: B) { return; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
     write_and_take(y, y);
@@ -4234,8 +4234,8 @@ fn mut_borrows_of_different_bindings_accepted() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn modify_both(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
     let z: B = B { x: 2 };
@@ -4269,7 +4269,7 @@ fn mut_borrows_of_copy_type_accepted() {
     std::fs::write(
         &src,
         "\
-fn modify_both(mut a: i32, mut b: i32) { return; }
+fn modify_both(ref a: i32, ref b: i32) { return; }
 fn main() -> i32 {
     let y: i32 = 1;
     modify_both(y, y);
@@ -4307,12 +4307,12 @@ fn phase6_exit_iterator_invalidation_rejected() {
         "\
 struct VecI32 { data: [i32; 8], len: usize }
 impl VecI32 {
-    fn drop(mut this) { return; }
+    fn drop(ref this) { return; }
     fn cursor(this) -> VecI32 { return this; }
-    fn push(mut this, x: i32) { return; }
+    fn push(ref this, x: i32) { return; }
 }
 fn main() -> i32 {
-    let mut v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
+    var v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
     let cur: VecI32 = v.cursor();
     v.push(42);
     return 0;
@@ -4352,11 +4352,11 @@ fn phase6_exit_sequential_pushes_accepted() {
         "\
 struct VecI32 { data: [i32; 8], len: usize }
 impl VecI32 {
-    fn drop(mut this) { return; }
-    fn push(mut this, x: i32) { return; }
+    fn drop(ref this) { return; }
+    fn push(ref this, x: i32) { return; }
 }
 fn main() -> i32 {
-    let mut v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
+    var v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
     v.push(1);
     v.push(2);
     v.push(3);
@@ -4393,7 +4393,7 @@ fn never_moved_drop_binding_elides_flag() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn main() -> i32 {
     let x: B = B { x: 7 };
     return x.x;
@@ -4433,8 +4433,8 @@ fn moved_drop_binding_keeps_runtime_flag() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn consume(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn consume(take b: B) { return; }
 fn main() -> i32 {
     let x: B = B { x: 7 };
     consume(x);
@@ -4506,10 +4506,10 @@ fn mut_param_tagged_noalias_in_ir() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn bump(mut b: B) -> i32 { b.x = b.x + 1; return b.x; }
+impl B { fn drop(ref this) { return; } }
+fn bump(ref b: B) -> i32 { b.x = b.x + 1; return b.x; }
 fn main() -> i32 {
-    let mut v: B = B { x: 1 };
+    var v: B = B { x: 1 };
     return bump(v);
 }
 ",
@@ -4528,7 +4528,7 @@ fn main() -> i32 {
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
         ir.contains("i32 @bump(ptr noalias "),
-        "expected `mut b: B` to lower to `ptr noalias`; got: {ir}"
+        "expected `ref b: B` to lower to `ptr noalias`; got: {ir}"
     );
 }
 
@@ -4541,7 +4541,7 @@ fn shared_param_tagged_readonly_in_ir() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 7 };
@@ -4593,7 +4593,7 @@ extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut this) { unsafe { free(this.ptr); } return; }
+    fn drop(ref this) { unsafe { free(this.ptr); } return; }
 }
 fn forward(x: Owned) -> Owned { return x; }
 fn main() -> i32 {
@@ -4641,11 +4641,11 @@ extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut this) { unsafe { free(this.ptr); } return; }
+    fn drop(ref this) { unsafe { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 impl Pair {
-    fn drop(mut this) { unsafe { free(this.a.ptr); } unsafe { free(this.b.ptr); } return; }
+    fn drop(ref this) { unsafe { free(this.a.ptr); } unsafe { free(this.b.ptr); } return; }
 }
 fn main() -> i32 {
     let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
@@ -4685,7 +4685,7 @@ extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut this) { unsafe { free(this.ptr); } return; }
+    fn drop(ref this) { unsafe { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 fn main() -> i32 {
@@ -4781,13 +4781,13 @@ extern fn free(p: *u8);
 struct Res { p: *u8 }
 impl Res {
     fn make() -> Res { return Res { p: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut this) { unsafe { free(this.p); } return; }
+    fn drop(ref this) { unsafe { free(this.p); } return; }
 }
 struct Holder { r: Res }
-fn consume(move h: Holder) -> i32 { return 0; }
+fn consume(take h: Holder) -> i32 { return 0; }
 fn main() -> i32 {
-    let mut i: i32 = 0;
-    let mut acc: i32 = 0;
+    var i: i32 = 0;
+    var acc: i32 = 0;
     while i < 100 {
         let h: Holder = Holder { r: Res::make() };
         acc = acc +% consume(h);
@@ -4880,7 +4880,7 @@ const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
      extern fn free(p: *u8);\n\
      struct Buf { ptr: *u8 }\n\
      impl Buf {\n\
-         fn drop(mut this) { unsafe { free(this.ptr); } return; }\n\
+         fn drop(ref this) { unsafe { free(this.ptr); } return; }\n\
          fn as_str(this) -> str { return unsafe { #str_from_raw_parts(this.ptr, 4 as usize) }; }\n\
          fn len(this) -> usize { return 4 as usize; }\n\
      }\n\
@@ -4924,7 +4924,7 @@ fn return_borrow_branch_alias_of_local_owned_rejected_e0513() {
     let (ok, stderr) = try_compile_snippet(&format!(
         "{BUF_PRELUDE}fn bad(flag: bool) -> str {{\n\
              let s: Buf = mk_buf();\n\
-             let mut view: str;\n\
+             var view: str;\n\
              if flag {{ view = s.as_str(); }} else {{ view = \"static\"; }}\n\
              return view;\n\
          }}\n\
@@ -5153,7 +5153,7 @@ fn main() -> i32 {
         v_make(3.0f32, 4.0f32)
     } else {
         let r_perp: V = dir;
-        let mut k: f32 = 1.0f32 - r_perp.x;
+        var k: f32 = 1.0f32 - r_perp.x;
         if k < 0.0f32 { k = 0.0f32; }
         r_perp
     };
@@ -5190,7 +5190,7 @@ fn copy_struct_param_stays_by_value_no_attr() {
         &src,
         "\
 struct Point { x: i32, y: i32 }
-fn shift(mut p: Point) -> i32 { p.x = p.x + 1; return p.x; }
+fn shift(ref p: Point) -> i32 { p.x = p.x + 1; return p.x; }
 fn main() -> i32 {
     let v: Point = Point { x: 1, y: 2 };
     return shift(v);
@@ -5222,7 +5222,7 @@ fn borrow_region_annotation_compiles_and_links() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > 0 { return a; }
     return b;
@@ -5262,12 +5262,12 @@ fn borrow_region_annotation_establishes_multi_source_borrow() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > 0 { return a; }
     return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let a: B = B { x: 1 };
     let b: B = B { x: 2 };
@@ -5305,8 +5305,8 @@ fn borrow_region_with_mut_marker_is_exclusive() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut buf: borrow A B) -> borrow A B { return buf; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref buf: borrow A B) -> borrow A B { return buf; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
@@ -5343,7 +5343,7 @@ fn move_with_borrow_annotation_rejected_at_parse() {
         &src,
         "\
 struct B { x: i32 }
-fn take(move x: borrow A B) { return; }
+fn take(take x: borrow A B) { return; }
 fn main() -> i32 { return 0; }
 ",
     )
@@ -5378,7 +5378,7 @@ fn explicit_annotation_fixes_e0384() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > 0 { return a; }
     return B { x: 0 };
@@ -5430,7 +5430,7 @@ fn array_and_tuple_of_owned_values_drop_once() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
          fn arr() { let p: R = mkR(); let q: R = mkR(); let _a: [R; 2] = [p, q]; return; }\n\
          fn tup() { let p: R = mkR(); let q: R = mkR(); let _t: (R, R) = (p, q); return; }\n\
@@ -5474,7 +5474,7 @@ fn shared_region_borrow_return_drops_once() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct B { x: i32 }\n\
-         impl B { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl B { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          fn cursor(b: borrow A B) -> borrow A B { return b; }\n\
          fn run() {\n\
              let v: B = B { x: 7 };\n\
@@ -5513,8 +5513,8 @@ fn e3_mut_longest_pattern_compiles_cleanly() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn longest_mut(mut a: B, mut b: B) -> B {
+impl B { fn drop(ref this) { return; } }
+fn longest_mut(ref a: B, ref b: B) -> B {
     if a.x > b.x { return a; }
     return b;
 }
@@ -5553,12 +5553,12 @@ fn e3_mut_move_of_either_source_while_borrowed_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn longest_mut(mut a: B, mut b: B) -> B {
+impl B { fn drop(ref this) { return; } }
+fn longest_mut(ref a: B, ref b: B) -> B {
     if a.x > b.x { return a; }
     return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let a: B = B { x: 1 };
     let b: B = B { x: 2 };
@@ -5595,7 +5595,7 @@ fn e0384_mixed_rooting_requires_annotation() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: B, b: B) -> B {
     if a.x > 0 { return a; }
     return B { x: 0 };
@@ -5632,7 +5632,7 @@ fn e0384_does_not_fire_on_fresh_value_returns() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn fresh(a: B, b: B) -> B { return B { x: 0 }; }
 fn main() -> i32 { return 0; }
 ",
@@ -5663,10 +5663,10 @@ fn disjoint_subfield_borrows_accepted_in_one_call() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn modify_both(mut a: Inner, mut b: Inner) { return; }
+impl Pair { fn drop(ref this) { return; } }
+fn modify_both(ref a: Inner, ref b: Inner) { return; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     modify_both(p.left, p.right);
@@ -5698,10 +5698,10 @@ fn e0374_parent_and_subfield_in_one_call_rejected() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn write_pair(mut a: Pair, b: Inner) { return; }
+impl Pair { fn drop(ref this) { return; } }
+fn write_pair(ref a: Pair, b: Inner) { return; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     write_pair(p, p.left);
@@ -5742,10 +5742,10 @@ fn e0374_cross_statement_subfield_borrow_blocks_parent_read() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn cursor(mut i: Inner) -> Inner { return i; }
+impl Pair { fn drop(ref this) { return; } }
+fn cursor(ref i: Inner) -> Inner { return i; }
 fn peek_pair(borrow p: Pair) -> i32 { return 0; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
@@ -5782,10 +5782,10 @@ fn disjoint_subfield_cross_statement_accepted() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn cursor(mut i: Inner) -> Inner { return i; }
+impl Pair { fn drop(ref this) { return; } }
+fn cursor(ref i: Inner) -> Inner { return i; }
 fn peek(borrow i: Inner) -> i32 { return i.v; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
@@ -5824,8 +5824,8 @@ fn e0383_read_of_exclusively_borrowed_place_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
@@ -5862,9 +5862,9 @@ fn e0383_does_not_fire_when_borrower_consumed_first() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
-fn drain(move c: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn drain(take c: B) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
@@ -5902,9 +5902,9 @@ fn e0372_message_refined_when_borrow_is_exclusive() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
-fn drain(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -5941,12 +5941,12 @@ fn e2_mut_method_call_establishes_exclusive_borrow() {
         "\
 struct B { x: i32 }
 impl B {
-    fn drop(mut this) { return; }
-    fn cursor(mut this) -> B { return this; }
+    fn drop(ref this) { return; }
+    fn cursor(ref this) -> B { return this; }
 }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
-    let mut v: B = B { x: 1 };
+    var v: B = B { x: 1 };
     let cur: B = v.cursor();
     let n: i32 = peek(v);
     return 0;
@@ -5965,7 +5965,7 @@ fn main() -> i32 {
     // value → E0337, rejected before the read-while-borrowed (E0383) conflict.
     assert!(
         !out.status.success(),
-        "returning `mut this` by value must be rejected"
+        "returning `ref this` by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
@@ -5981,8 +5981,8 @@ fn reading_the_exclusive_borrower_itself_accepted() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
@@ -6502,10 +6502,10 @@ fn phase7_generic_typed_impl_mut_self_runs() {
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
              fn get(this) -> T { return this.value; }\n\
-             fn set(mut this, v: T) { this.value = v; }\n\
+             fn set(ref this, v: T) { this.value = v; }\n\
          }\n\
          fn main() -> i32 {\n\
-             let mut b: Box[i32] = Box[i32] { value: 0 };\n\
+             var b: Box[i32] = Box[i32] { value: 0 };\n\
              b.set(42);\n\
              return b.get();\n\
          }\n",
@@ -8770,7 +8770,7 @@ fn phase11_asan_catches_heap_overflow() {
         "extern fn malloc(n: usize) -> *u8;\n\
          fn main() -> i32 {\n\
              let p: *u8 = unsafe { malloc(8 as usize) };\n\
-             let mut i: usize = 0 as usize;\n\
+             var i: usize = 0 as usize;\n\
              while i < 100 as usize {\n\
                  unsafe { *(p + i) = 42 as u8; }\n\
                  i = i +% 1 as usize;\n\
@@ -8819,12 +8819,12 @@ fn phase11_borrow_diagnostic_includes_secondary_label() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > b.x { return a; }
     return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let a: B = B { x: 1 };
     let b: B = B { x: 2 };
@@ -8859,12 +8859,12 @@ fn phase11_borrow_diagnostic_json_carries_labels_field() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > b.x { return a; }
     return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn main() -> i32 {
     let a: B = B { x: 1 };
     let b: B = B { x: 2 };
@@ -9133,8 +9133,8 @@ extern fn malloc(n: usize) -> *u8;
 fn sum_i32(xs: i32[]) -> i32 {
     let n: usize = #slice_len(xs);
     let p: *i32 = #slice_ptr(xs);
-    let mut acc: i32 = 0;
-    let mut i: usize = 0 as usize;
+    var acc: i32 = 0;
+    var i: usize = 0 as usize;
     while i < n {
         acc = acc +% unsafe { *(p + i) };
         i = i +% 1 as usize;
@@ -10314,13 +10314,13 @@ fn compound_assigns_run() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n\
-             let mut x: i32 = 10 as i32;\n\
+             var x: i32 = 10 as i32;\n\
              x += 5 as i32;            // 15\n\
              x -= 2 as i32;            // 13\n\
              x *= 2 as i32;            // 26\n\
              x /= 3 as i32;            // 8\n\
              x %= 5 as i32;            // 3\n\
-             let mut b: u32 = 0xff as u32;\n\
+             var b: u32 = 0xff as u32;\n\
              b &= 0x0f as u32;         // 0x0f\n\
              b |= 0xa0 as u32;         // 0xaf\n\
              b ^= 0x20 as u32;         // 0x8f\n\
@@ -10373,12 +10373,12 @@ fn stdlib_hash_map_str_int() {
         "import \"stdlib/hash_map\" as map;\n\
          import \"stdlib/result\" as result;\n\
          fn main() -> i32 {\n\
-             let mut m: map::HashMap[str, i32] = map::new_str_int_map();\n\
+             var m: map::HashMap[str, i32] = map::new_str_int_map();\n\
              m.insert(\"apple\",  1 as i32);\n\
              m.insert(\"banana\", 2 as i32);\n\
              m.insert(\"cherry\", 3 as i32);\n\
              m.insert(\"apple\",  10 as i32);\n\
-             let mut fails: i32 = 0 as i32;\n\
+             var fails: i32 = 0 as i32;\n\
              guard let result::Result[i32, result::IoError]::Ok(v1) = m.get(\"apple\")\n\
                  else { return 50; };\n\
              if v1 != (10 as i32) { fails = fails +% (1 as i32); }\n\
@@ -10433,7 +10433,7 @@ fn stdlib_hash_map_generic_k_v() {
          import \"stdlib/result\" as result;\n\
          fn main() -> i32 {\n\
              // K = i32, V = i32 with overwrite + miss.\n\
-             let mut m1: hm::HashMap[i32, i32] = hm::new::[i32, i32]();\n\
+             var m1: hm::HashMap[i32, i32] = hm::new::[i32, i32]();\n\
              m1.insert(1 as i32, 10 as i32);\n\
              m1.insert(2 as i32, 20 as i32);\n\
              m1.insert(1 as i32, 100 as i32);  // overwrite\n\
@@ -10446,7 +10446,7 @@ fn stdlib_hash_map_generic_k_v() {
                  result::Result[i32, result::IoError]::Err(_) => { }\n\
              }\n\
              // K = str, V = i32.\n\
-             let mut m2: hm::HashMap[str, i32] = hm::new::[str, i32]();\n\
+             var m2: hm::HashMap[str, i32] = hm::new::[str, i32]();\n\
              m2.insert(\"apple\", 1 as i32);\n\
              m2.insert(\"banana\", 2 as i32);\n\
              m2.insert(\"cherry\", 3 as i32);\n\
@@ -10457,15 +10457,15 @@ fn stdlib_hash_map_generic_k_v() {
              if !m2.contains_key(\"apple\") { return 8 as i32; }\n\
              if m2.contains_key(\"grape\") { return 9 as i32; }\n\
              // Stress: 100 entries exercises grow_to (16 → 32 → 64 → 128).\n\
-             let mut m3: hm::HashMap[i32, i32] = hm::new::[i32, i32]();\n\
-             let mut i: i32 = 0;\n\
+             var m3: hm::HashMap[i32, i32] = hm::new::[i32, i32]();\n\
+             var i: i32 = 0;\n\
              while i < (100 as i32) {\n\
                  m3.insert(i, i *% (10 as i32));\n\
                  i = i +% (1 as i32);\n\
              }\n\
              if m3.len() != (100 as usize) { return 10 as i32; }\n\
-             let mut sum: i32 = 0;\n\
-             let mut j: i32 = 0;\n\
+             var sum: i32 = 0;\n\
+             var j: i32 = 0;\n\
              while j < (100 as i32) {\n\
                  guard let result::Result[i32, result::IoError]::Ok(v) = m3.get(j)\n\
                      else { return 11 as i32; };\n\
@@ -10525,13 +10525,13 @@ fn stdlib_hash_map_noncopy_value_rejected_e0502() {
         "import \"stdlib/hash_map\" as hm;\n\
          struct Owner { p: *u8 }\n\
          impl Owner {\n\
-             fn drop(mut this) { unsafe { free(this.p); } return; }\n\
+             fn drop(ref this) { unsafe { free(this.p); } return; }\n\
              fn hash(this) -> u64 { return 7 as u64; }\n\
              fn eq(this, other: This) -> bool { return true; }\n\
          }\n\
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
-             let mut m: hm::HashMap[i32, Owner] = hm::new::[i32, Owner]();\n\
+             var m: hm::HashMap[i32, Owner] = hm::new::[i32, Owner]();\n\
              return 0 as i32;\n\
          }\n",
     )
@@ -10614,10 +10614,10 @@ fn stdlib_net_tcp_round_trip() {
              fn run_server() -> i32 {{\n\
                  guard let result::Result[net::TcpListener, result::IoError]::Ok(lis) = net::listen_tcp({port} as u16)\n\
                      else {{ return 1; }};\n\
-                 let mut listener: net::TcpListener = lis;\n\
+                 var listener: net::TcpListener = lis;\n\
                  guard let result::Result[net::TcpStream, result::IoError]::Ok(client) = listener.accept()\n\
                      else {{ return 2; }};\n\
-                 let mut stream: net::TcpStream = client;\n\
+                 var stream: net::TcpStream = client;\n\
                  guard let result::Result[vec::Vec[u8], result::IoError]::Ok(data) = stream.read_to_end()\n\
                      else {{ return 3; }};\n\
                  guard let result::Result[usize, result::IoError]::Ok(w) = stream.write_all(data)\n\
@@ -10629,8 +10629,8 @@ fn stdlib_net_tcp_round_trip() {
                  unsafe {{ sleep(1 as u32); }}\n\
                  guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp(\"127.0.0.1\", {port} as u16)\n\
                      else {{ return 0 as usize; }};\n\
-                 let mut stream: net::TcpStream = s;\n\
-                 let mut payload: vec::Vec[u8] = vec::new::[u8]();\n\
+                 var stream: net::TcpStream = s;\n\
+                 var payload: vec::Vec[u8] = vec::new::[u8]();\n\
                  payload.push(72 as u8); payload.push(73 as u8);\n\
                  guard let result::Result[usize, result::IoError]::Ok(w) = stream.write_all(payload)\n\
                      else {{ return 0 as usize; }};\n\
@@ -10707,7 +10707,7 @@ fn cross_module_vec_in_result_no_double_free() {
         "import \"./vec\" as vec;\n\
          import \"./result\" as result;\n\
          pub fn make_three_bytes() -> result::Result[vec::Vec[u8], result::IoError] {\n\
-             let mut v: vec::Vec[u8] = vec::new::[u8]();\n\
+             var v: vec::Vec[u8] = vec::new::[u8]();\n\
              v.push(7 as u8);\n\
              v.push(8 as u8);\n\
              v.push(9 as u8);\n\
@@ -10800,13 +10800,13 @@ fn stdlib_fs_round_trip() {
              import \"stdlib/vec\" as vec;\n\
              import \"stdlib/result\" as result;\n\
              fn write_data(path: str) -> bool {{\n\
-                 let mut data: vec::Vec[u8] = vec::new::[u8]();\n\
+                 var data: vec::Vec[u8] = vec::new::[u8]();\n\
                  data.push(72 as u8);\n\
                  data.push(73 as u8);\n\
                  data.push(33 as u8);\n\
                  guard let result::Result[fs::File, result::IoError]::Ok(w) = fs::create(path)\n\
                      else {{ return false; }};\n\
-                 let mut writer: fs::File = w;\n\
+                 var writer: fs::File = w;\n\
                  guard let result::Result[usize, result::IoError]::Ok(wrote) = writer.write_all(data)\n\
                      else {{ return false; }};\n\
                  if wrote == (0 as usize) {{ return false; }}\n\
@@ -10816,7 +10816,7 @@ fn stdlib_fs_round_trip() {
              fn read_len(path: str) -> usize {{\n\
                  guard let result::Result[fs::File, result::IoError]::Ok(r) = fs::open_read(path)\n\
                      else {{ return 0 as usize; }};\n\
-                 let mut reader: fs::File = r;\n\
+                 var reader: fs::File = r;\n\
                  guard let result::Result[vec::Vec[u8], result::IoError]::Ok(got) = reader.read_to_end()\n\
                      else {{ return 0 as usize; }};\n\
                  return got.len();\n\
@@ -10926,7 +10926,7 @@ fn stdlib_cross_module_generic_method_propagation() {
          pub fn make_maker() -> Maker { return Maker { _x: 0 as i32 }; }\n\
          impl Maker {\n\
              pub fn make_buf(this) -> vec::Vec[u8] {\n\
-                 let mut buf: vec::Vec[u8] = vec::new::[u8]();\n\
+                 var buf: vec::Vec[u8] = vec::new::[u8]();\n\
                  buf.push(7 as u8);\n\
                  return buf;\n\
              }\n\
@@ -10938,7 +10938,7 @@ fn stdlib_cross_module_generic_method_propagation() {
         "import \"stdlib/vec\" as vec;\n\
          import \"stdlib/other\" as other;\n\
          fn main() -> i32 {\n\
-             let mut v: vec::Vec[u8] = vec::new::[u8]();\n\
+             var v: vec::Vec[u8] = vec::new::[u8]();\n\
              v.push(1 as u8);\n\
              v.push(2 as u8);\n\
              return v.len() as i32;\n\
@@ -11005,7 +11005,7 @@ fn musttail_sret_cross_module_vec_return_round_trip() {
         dir.join("src/main.cplus"),
         "import \"./maker\" as maker;\n\
          fn main() -> i32 {\n\
-             let mut buf = maker::make_empty_buf();\n\
+             var buf = maker::make_empty_buf();\n\
              buf.push(7 as u8);\n\
              buf.push(8 as u8);\n\
              buf.push(9 as u8);\n\
@@ -11075,7 +11075,7 @@ fn generic_fn_returning_generic_struct_transitive_instantiation() {
          }\n\
          \n\
          fn main() -> i32 {\n\
-             let mut b = make_buf::[i32]();\n\
+             var b = make_buf::[i32]();\n\
              b.push(7);\n\
              b.push(8);\n\
              b.push(9);\n\
@@ -11132,7 +11132,7 @@ fn assoc_free_fn_dispatch_via_type_brackets() {
          import \"stdlib/io\" as io;\n\
          \n\
          fn main() -> i32 {\n\
-             let mut b = vec::Vec[i32]::with_capacity(16);\n\
+             var b = vec::Vec[i32]::with_capacity(16);\n\
              b.push(7);\n\
              b.push(8);\n\
              io::println(\"ok\");\n\
@@ -11565,7 +11565,7 @@ fn stdlib_box_round_trip_copy_and_non_copy() {
         "import \"stdlib/box\" as box;\n\
          import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
-             let mut b = box::new::[i32](7);\n\
+             var b = box::new::[i32](7);\n\
              if b.get() != 7 { return 1; }\n\
              b.set(100);\n\
              if b.get() != 100 { return 2; }\n\
@@ -11618,7 +11618,7 @@ fn stdlib_arc_cross_thread_share() {
         dir.join("src/main.cplus"),
         "import \"stdlib/arc\" as arc;\n\
          import \"stdlib/thread\" as thread;\n\
-         fn worker(move handle: arc::Arc[i32]) -> i32 {\n\
+         fn worker(take handle: arc::Arc[i32]) -> i32 {\n\
              return handle.get();\n\
          }\n\
          fn main() -> i32 {\n\
@@ -11734,8 +11734,8 @@ fn stdlib_mutex_cross_thread_increment() {
         dir.join("src/main.cplus"),
         "import \"stdlib/mutex\" as mutex;\n\
          import \"stdlib/thread\" as thread;\n\
-         fn worker(move m: mutex::Mutex[i32]) -> i32 {\n\
-             let mut g = m.lock();\n\
+         fn worker(take m: mutex::Mutex[i32]) -> i32 {\n\
+             var g = m.lock();\n\
              let cur: i32 = g.get();\n\
              g.set(cur + 1);\n\
              return 0;\n\
@@ -11817,7 +11817,7 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
          extern fn free(p: *u8);\n\
          static mut FREES: i32 = 0;\n\
          struct Res { p: *u8 }\n\
-         impl Res { fn drop(mut this) { unsafe { FREES = FREES +% 1; free(this.p); } return; } }\n\
+         impl Res { fn drop(ref this) { unsafe { FREES = FREES +% 1; free(this.p); } return; } }\n\
          fn make_locked() -> mutex::MutexGuard[Res] {\n\
              let m: mutex::Mutex[Res] = mutex::new::[Res](Res { p: unsafe { malloc(8 as usize) } });\n\
              return m.lock();\n\
@@ -11887,10 +11887,10 @@ fn stdlib_box_set_drops_old_value() {
          static mut A: i32 = 0;\n\
          static mut F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
-             { let mut b: box::Box[R] = box::new::[R](mk()); b.set(mk()); }\n\
+             { var b: box::Box[R] = box::new::[R](mk()); b.set(mk()); }\n\
              return unsafe { A -% F };\n\
          }\n",
     )
@@ -11940,7 +11940,7 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { free(this.p); } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { free(this.p); } return; } }\n\
          fn mk() -> R { return R { p: unsafe { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              let b: box::Box[R] = box::new::[R](mk());\n\
@@ -11998,7 +11998,7 @@ fn stdlib_text_reassign_str_literal_coerces() {
         dir.join("src/main.cplus"),
         "import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
-             let mut s: text::Text = \"a\";\n\
+             var s: text::Text = \"a\";\n\
              s = \"bb\";\n\
              s = \"ccc\";\n\
              s = 9.to_text();\n\
@@ -12065,10 +12065,10 @@ fn stdlib_vec_assoc_new_with_struct_element() {
          static mut A: i32 = 0;\n\
          static mut F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
-             { let mut v: vec::Vec[R] = vec::Vec[R]::new(); v.push(mk()); v.push(mk()); v.push(mk()); }\n\
+             { var v: vec::Vec[R] = vec::Vec[R]::new(); v.push(mk()); v.push(mk()); v.push(mk()); }\n\
              return unsafe { A -% F };\n\
          }\n",
     )
@@ -12125,16 +12125,16 @@ fn stdlib_for_in_break_does_not_crash() {
         dir.join("src/main.cplus"),
         "import \"stdlib/iterator\" as iterator;\n\
          import \"stdlib/vec\" as vec;\n\
-         gen fn upto(n: i32) -> i32 { let mut i: i32 = 0; while i < n { yield i; i = i +% 1; } return; }\n\
+         gen fn upto(n: i32) -> i32 { var i: i32 = 0; while i < n { yield i; i = i +% 1; } return; }\n\
          fn main() -> i32 {\n\
              // break out of a user gen-fn loop after summing 0+1+2 = 3\n\
-             let mut a: i32 = 0;\n\
+             var a: i32 = 0;\n\
              for x in upto(100) { if x == 3 { break; } a = a +% x; }\n\
              if a != 3 { return 1; }\n\
              // break out of a Vec::iter loop\n\
-             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
              v.push(10); v.push(20); v.push(30);\n\
-             let mut b: i32 = 0;\n\
+             var b: i32 = 0;\n\
              for y in v.iter() { if y == 20 { break; } b = b +% y; }\n\
              if b != 10 { return 2; }\n\
              return 0;\n\
@@ -12203,7 +12203,7 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
          static mut A: i32 = 0;\n\
          static mut F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
+         impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
          gen fn one() -> i32 { let r: R = mk(); yield 1; yield 2; return; }\n\
          gen fn staggered() -> i32 { let r1: R = mk(); yield 1; let r2: R = mk(); yield 2; return; }\n\
@@ -12214,7 +12214,7 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
              { for x in staggered() { if x == 1 { break; } } }\n\
              if unsafe { A -% F } != 0 { return 2; }\n\
              unsafe { A = 0; F = 0; }\n\
-             { let mut s: i32 = 0; for x in one() { s = s +% x; } }\n\
+             { var s: i32 = 0; for x in one() { s = s +% x; } }\n\
              if unsafe { A -% F } != 0 { return 3; }\n\
              return 0;\n\
          }\n",
@@ -12319,17 +12319,17 @@ fn stdlib_channel_mpmc_stress() {
         dir.join("src/main.cplus"),
         "import \"stdlib/channel\" as channel;\n\
          import \"stdlib/thread\" as thread;\n\
-         fn producer(move ch: channel::Channel[i32]) -> i32 {\n\
-             let mut i: i32 = 0;\n\
+         fn producer(take ch: channel::Channel[i32]) -> i32 {\n\
+             var i: i32 = 0;\n\
              while i < 100 {\n\
                  ch.send(i);\n\
                  i = i +% 1;\n\
              }\n\
              return 0;\n\
          }\n\
-         fn consumer(move ch: channel::Channel[i32]) -> i32 {\n\
-             let mut count: i32 = 0;\n\
-             let mut done: bool = false;\n\
+         fn consumer(take ch: channel::Channel[i32]) -> i32 {\n\
+             var count: i32 = 0;\n\
+             var done: bool = false;\n\
              while !done {\n\
                  match ch.recv() {\n\
                      channel::RecvResult[i32]::Value(_v) => { count = count +% 1; },\n\
@@ -12574,7 +12574,7 @@ fn phase4_gen_fn_for_in_round_trips() {
         "import \"stdlib/iterator\" as iter;\n\
          import \"stdlib/option\" as option;\n\
          gen fn count_up(n: i32) -> i32 {\n\
-             let mut i: i32 = 1;\n\
+             var i: i32 = 1;\n\
              while i <= n {\n\
                  yield i;\n\
                  i = i +% (1 as i32);\n\
@@ -12583,15 +12583,15 @@ fn phase4_gen_fn_for_in_round_trips() {
          }\n\
          fn main() -> i32 {\n\
              // Path 1: `for x in iter` desugar.\n\
-             let mut sum: i32 = 0;\n\
+             var sum: i32 = 0;\n\
              for x in count_up(5 as i32) {\n\
                  sum = sum +% x;\n\
              }\n\
              if sum != (15 as i32) { return 1 as i32; }\n\
              // Path 2: explicit `it.next()` pull-style consumption.\n\
-             let mut it: iter::Iterator[i32] = count_up(3 as i32);\n\
-             let mut pulled: i32 = 0;\n\
-             let mut loops: i32 = 0;\n\
+             var it: iter::Iterator[i32] = count_up(3 as i32);\n\
+             var pulled: i32 = 0;\n\
+             var loops: i32 = 0;\n\
              while loops < (10 as i32) {\n\
                  match it.next() {\n\
                      option::Option[i32]::Some(v) => { pulled = pulled +% v; }\n\
@@ -12661,7 +12661,7 @@ fn stdlib_executor_yield_now_round_trips() {
         "import \"stdlib/executor\" as executor;\n\
          import \"stdlib/future\" as future;\n\
          async fn count_with_yields() -> i32 {\n\
-             let mut i: i32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < 5 {\n\
                  executor::yield_now();\n\
                  i = i +% 1;\n\
@@ -12865,8 +12865,8 @@ fn stdlib_fs_file_lines_round_trip() {
          fn main() -> i32 {{\n\
              guard let result::Result[fs::File, result::IoError]::Ok(f) = fs::open_read(\"{test_file_str}\")\n\
                  else {{ return 1 as i32; }};\n\
-             let mut count: i32 = 0;\n\
-             let mut total_len: i32 = 0;\n\
+             var count: i32 = 0;\n\
+             var total_len: i32 = 0;\n\
              for line in f.lines() {{\n\
                  count = count +% (1 as i32);\n\
                  total_len = total_len +% (line.len() as i32);\n\
@@ -12981,10 +12981,10 @@ fn stdlib_fs_file_read_async_compiles() {
          import \"stdlib/future\" as future;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
-         async fn read_first(move f: fs::File) -> i32 {{\n\
+         async fn read_first(take f: fs::File) -> i32 {{\n\
              // Re-bind locally so the body has a `mut` handle without\n\
              // tripping the E0900 (mut-pointer-pass + await) guard.\n\
-             let mut f: fs::File = f;\n\
+             var f: fs::File = f;\n\
              let _nb: i32 = f.make_nonblocking();\n\
              let buf: *u8 = unsafe {{ malloc(1 as usize) }};\n\
              let n: isize = await f.read_async(buf, 1 as usize);\n\
@@ -13161,14 +13161,14 @@ fn phase4f_concurrent_n_sleeps_stress() {
              let bytes: usize = (n as usize) *% (8 as usize);\n\
              let buf: *u8 = unsafe { malloc(bytes) };\n\
              let hdls: **u8 = unsafe { buf as **u8 };\n\
-             let mut i: i32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < n {\n\
                  let f: future::Future[i32] = unit_sleep();\n\
                  let slot: **u8 = unsafe { hdls + (i as usize) };\n\
                  unsafe { *slot = f.handle; }\n\
                  i = i +% (1 as i32);\n\
              }\n\
-             let mut j: i32 = 0;\n\
+             var j: i32 = 0;\n\
              while j < n {\n\
                  let slot: **u8 = unsafe { hdls + (j as usize) };\n\
                  let h: *u8 = unsafe { *slot };\n\
@@ -13289,7 +13289,7 @@ fn async_method_on_user_struct_round_trip() {
          extern fn free(p: *u8);\n\
          struct PipeReader { fd: i32 }\n\
          impl PipeReader {\n\
-             pub async fn read_byte(mut this) -> i32 {\n\
+             pub async fn read_byte(ref this) -> i32 {\n\
                  let buf: *u8 = unsafe { malloc(1 as usize) };\n\
                  let n: isize = await net::read_fd_async(this.fd, buf, 1 as usize);\n\
                  let v: u8 = unsafe { *buf };\n\
@@ -13307,7 +13307,7 @@ fn async_method_on_user_struct_round_trip() {
              let wfd: i32 = unsafe { *wfd_p };\n\
              let nb: i32 = net::set_nonblocking(rfd);\n\
              if nb != (0 as i32) { return 90 as i32; }\n\
-             let mut reader: PipeReader = PipeReader { fd: rfd };\n\
+             var reader: PipeReader = PipeReader { fd: rfd };\n\
              let f: future::Future[i32] = reader.read_byte();\n\
              let payload: *u8 = unsafe { malloc(1 as usize) };\n\
              unsafe { *payload = 42 as u8; }\n\
@@ -14857,7 +14857,7 @@ fn refract(dir: V, n: V, cond: bool) -> V {
         v_make(3.0f32, 4.0f32)
     } else {
         let r_perp: V = V { x: dir.x + n.x, y: dir.y + n.y, z: 0.0f32 };
-        let mut k: f32 = 1.0f32 - r_perp.x;
+        var k: f32 = 1.0f32 - r_perp.x;
         if k < 0.0f32 { k = 0.0f32; }
         V { x: r_perp.x + r_perp.x, y: r_perp.y + k, z: 0.0f32 }
     };
@@ -14979,7 +14979,7 @@ fn phase1c_container_inner_drop_runs_without_crash() {
          import \"stdlib/text\" as text;\n\
          fn box_scope() { let _b: box::Box[text::Text] = box::new::[text::Text](text::from_str(\"hello\")); return; }\n\
          fn vec_scope() {\n\
-             let mut v: vec::Vec[text::Text] = vec::new::[text::Text]();\n\
+             var v: vec::Vec[text::Text] = vec::new::[text::Text]();\n\
              v.push(text::from_str(\"one\"));\n\
              v.push(text::from_str(\"two\"));\n\
              v.push(text::from_str(\"three\"));\n\
@@ -14996,7 +14996,7 @@ fn phase1c_container_inner_drop_runs_without_crash() {
              return;\n\
          }\n\
          fn hm_scope() {\n\
-             let mut m: hm::HashMap[str, i32] = hm::new::[str, i32]();\n\
+             var m: hm::HashMap[str, i32] = hm::new::[str, i32]();\n\
              m.insert(\"apple\", 1 as i32);\n\
              m.insert(\"banana\", 2 as i32);\n\
              m.insert(\"cherry\", 3 as i32);\n\
@@ -15153,7 +15153,7 @@ fn phase2b_gen_method_on_struct() {
          pub struct Counter { n: i32 }\n\
          impl Counter {\n\
              pub gen fn iter(this) -> i32 {\n\
-                 let mut i: i32 = 0;\n\
+                 var i: i32 = 0;\n\
                  while i < this.n {\n\
                      yield i;\n\
                      i = i +% (1 as i32);\n\
@@ -15163,7 +15163,7 @@ fn phase2b_gen_method_on_struct() {
          }\n\
          fn main() -> i32 {\n\
              let c: Counter = Counter { n: 5 as i32 };\n\
-             let mut sum: i32 = 0;\n\
+             var sum: i32 = 0;\n\
              for x in c.iter() {\n\
                  sum = sum +% x;\n\
              }\n\
@@ -15299,14 +15299,14 @@ fn stdlib_vec_push_and_get() {
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
          fn main() -> i32 {\n\
-             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
-             let mut i: i32 = 1;\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
+             var i: i32 = 1;\n\
              while i <= 8 {\n\
                  v.push(i);\n\
                  i = i +% 1;\n\
              }\n\
-             let mut total: i32 = 0;\n\
-             let mut j: usize = 0 as usize;\n\
+             var total: i32 = 0;\n\
+             var j: usize = 0 as usize;\n\
              while j < v.len() {\n\
                  total = total +% vec::at_copy::[i32](v, j);\n\
                  j = j +% (1 as usize);\n\
@@ -15355,11 +15355,11 @@ fn stdlib_vec_iter_for_in() {
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
          fn main() -> i32 {\n\
-             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
              v.push(10 as i32);\n\
              v.push(20 as i32);\n\
              v.push(30 as i32);\n\
-             let mut sum: i32 = 0;\n\
+             var sum: i32 = 0;\n\
              for x in v.iter() {\n\
                  sum = sum +% x;\n\
              }\n\
@@ -15472,7 +15472,7 @@ fn stdlib_vec_collect_drains_iterator() {
         "import \"stdlib/vec\" as vec;\n\
          fn is_pos(x: i32) -> bool { return x > (0 as i32); }\n\
          fn main() -> i32 {\n\
-             let mut src: vec::Vec[i32] = vec::new::[i32]();\n\
+             var src: vec::Vec[i32] = vec::new::[i32]();\n\
              src.push(0 -% (1 as i32));\n\
              src.push(2 as i32);\n\
              src.push(0 -% (3 as i32));\n\
@@ -15480,8 +15480,8 @@ fn stdlib_vec_collect_drains_iterator() {
              src.push(5 as i32);\n\
              let positives: vec::Vec[i32] = vec::collect::[i32](src.iter().filter(is_pos));\n\
              if positives.len() != (3 as usize) { return 1 as i32; }\n\
-             let mut sum: i32 = 0;\n\
-             let mut i: usize = 0 as usize;\n\
+             var sum: i32 = 0;\n\
+             var i: usize = 0 as usize;\n\
              while i < positives.len() {\n\
                  sum = sum +% vec::at_copy::[i32](positives, i);\n\
                  i = i +% (1 as usize);\n\
@@ -15545,7 +15545,7 @@ fn stdlib_iterator_adapters_filter_take_map() {
          fn is_even(x: i32) -> bool { return (x % (2 as i32)) == (0 as i32); }\n\
          fn double(x: i32) -> i32 { return x *% (2 as i32); }\n\
          fn main() -> i32 {\n\
-             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
              v.push(1 as i32);\n\
              v.push(2 as i32);\n\
              v.push(3 as i32);\n\
@@ -15553,19 +15553,19 @@ fn stdlib_iterator_adapters_filter_take_map() {
              v.push(5 as i32);\n\
              v.push(6 as i32);\n\
              // filter: keep even — sum 2+4+6 = 12\n\
-             let mut sum: i32 = 0;\n\
+             var sum: i32 = 0;\n\
              for x in v.iter().filter(is_even) {\n\
                  sum = sum +% x;\n\
              }\n\
              if sum != (12 as i32) { return 1 as i32; }\n\
              // take(3): count exactly three elements\n\
-             let mut count: i32 = 0;\n\
+             var count: i32 = 0;\n\
              for _x in v.iter().take(3 as usize) {\n\
                  count = count +% (1 as i32);\n\
              }\n\
              if count != (3 as i32) { return 2 as i32; }\n\
              // map: double every element — sum 2+4+6+8+10+12 = 42\n\
-             let mut sum2: i32 = 0;\n\
+             var sum2: i32 = 0;\n\
              for x in iterator::map::[i32, i32](v.iter(), double) {\n\
                  sum2 = sum2 +% x;\n\
              }\n\
@@ -15629,7 +15629,7 @@ fn stdlib_vec_extend_from_slice_round_trip() {
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
              // Build a source Vec with [10, 20, 30, 40, 50] then expose a slice.\n\
-             let mut src_vec: vec::Vec[i32] = vec::new::[i32]();\n\
+             var src_vec: vec::Vec[i32] = vec::new::[i32]();\n\
              src_vec.push(10 as i32);\n\
              src_vec.push(20 as i32);\n\
              src_vec.push(30 as i32);\n\
@@ -15637,13 +15637,13 @@ fn stdlib_vec_extend_from_slice_round_trip() {
              src_vec.push(50 as i32);\n\
              let slice: i32[] = src_vec.as_slice();\n\
              // Extend a fresh Vec; assert total + count.\n\
-             let mut dst: vec::Vec[i32] = vec::new::[i32]();\n\
+             var dst: vec::Vec[i32] = vec::new::[i32]();\n\
              dst.push(1 as i32);\n\
              vec::extend_from_slice::[i32](dst, slice);\n\
              dst.push(2 as i32);\n\
              // dst = [1, 10, 20, 30, 40, 50, 2]; len = 7, sum = 153.\n\
-             let mut sum: i32 = 0;\n\
-             let mut i: usize = 0 as usize;\n\
+             var sum: i32 = 0;\n\
+             var i: usize = 0 as usize;\n\
              while i < dst.len() {\n\
                  sum = sum +% vec::at_copy::[i32](dst, i);\n\
                  i = i +% (1 as usize);\n\
@@ -15927,15 +15927,15 @@ fn stdlib_thread_spawn_with_round_trip() {
          import \"stdlib/text\" as text;\n\
          struct Range { start: i64, end: i64 }\n\
          fn sum_range(r: Range) -> i64 {\n\
-             let mut total: i64 = 0 as i64;\n\
-             let mut i: i64 = r.start;\n\
+             var total: i64 = 0 as i64;\n\
+             var i: i64 = r.start;\n\
              while i < r.end {\n\
                  total = total +% i;\n\
                  i = i +% (1 as i64);\n\
              }\n\
              return total;\n\
          }\n\
-         fn measure(move s: text::Text) -> i64 { return s.len() as i64; }\n\
+         fn measure(take s: text::Text) -> i64 { return s.len() as i64; }\n\
          fn main() -> i32 {\n\
              let left:  Range = Range { start: 1 as i64,   end: 501 as i64  };\n\
              let right: Range = Range { start: 501 as i64, end: 1001 as i64 };\n\
@@ -16008,7 +16008,7 @@ fn stdlib_thread_spawn_with_string_input_asan_clean() {
         dir.join("src/main.cplus"),
         "import \"stdlib/thread\" as thread;\n\
          import \"stdlib/text\" as text;\n\
-         fn measure(move s: text::Text) -> i64 { return s.len() as i64; }\n\
+         fn measure(take s: text::Text) -> i64 { return s.len() as i64; }\n\
          fn main() -> i32 {\n\
              let s: text::Text = text::from_str(\"hello, threaded world\");\n\
              let h: thread::JoinHandle[i64] = thread::spawn_with::[text::Text, i64](s, measure);\n\
@@ -16089,11 +16089,11 @@ fn stdlib_thread_spawn_with_post_move_use_rejected() {
         dir.join("src/main.cplus"),
         "import \"stdlib/thread\" as thread;\n\
          import \"stdlib/text\" as text;\n\
-         fn measure(move s: text::Text) -> i64 { return s.len() as i64; }\n\
+         fn measure(take s: text::Text) -> i64 { return s.len() as i64; }\n\
          fn main() -> i32 {\n\
              let s: text::Text = text::from_str(\"hi\");\n\
              let h: thread::JoinHandle[i64] = thread::spawn_with::[text::Text, i64](s, measure);\n\
-             // Post-move use: borrow checker rejects.\n\
+             // Post-take use: borrow checker rejects.\n\
              let n: i64 = s.len() as i64;\n\
              let _r: i64 = h.join();\n\
              return n as i32;\n\
@@ -16160,7 +16160,7 @@ fn stdlib_thread_drop_detaches_unjoined_handle() {
                  // h falls out of scope here: Drop runs pthread_detach + free.\n\
              }\n\
              // Spin briefly so the worker can finish before main exits.\n\
-             let mut i: i64 = 0 as i64;\n\
+             var i: i64 = 0 as i64;\n\
              while i < (5000000 as i64) { i = i +% (1 as i64); }\n\
              return 0;\n\
          }\n",
@@ -16678,7 +16678,7 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
          impl Counter {\n\
            pub fn make() -> Counter { return Counter { v: 0 }; }\n\
            pub fn value(this) -> i32 { return this.v; }\n\
-           fn priv_bump(mut this) -> Counter { return Counter { v: this.v +% (1 as i32) }; }\n\
+           fn priv_bump(ref this) -> Counter { return Counter { v: this.v +% (1 as i32) }; }\n\
          }\n",
     )
     .unwrap();
@@ -18009,7 +18009,7 @@ fn racy_counter_provokes_tsan_warning() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn bump_racy(counter: *u64) -> i32 {\n\
-             let mut i: i32 = 0 as i32;\n\
+             var i: i32 = 0 as i32;\n\
              while i < (100000 as i32) {\n\
                  unsafe { *counter = *counter +% (1 as u64); }\n\
                  i = i +% (1 as i32);\n\
@@ -18510,7 +18510,7 @@ fn main() -> i32 {
     if s3.len() != (0 as usize) { return 4; }
 
     // Vec[u8] -> NSData -> Vec[u8] copy round-trip.
-    let mut bytes: vec::Vec[u8] = vec::Vec[u8]::with_capacity(4 as usize);
+    var bytes: vec::Vec[u8] = vec::Vec[u8]::with_capacity(4 as usize);
     bytes.push(10 as u8);
     bytes.push(20 as u8);
     bytes.push(30 as u8);
@@ -18633,7 +18633,7 @@ fn make_view() -> *u8 {
         origin: rt::Point { x: 0.0, y: 0.0 },
         size: rt::Size { width: 10.0, height: 10.0 },
     };
-    let mut v: view::View = view::View::new(r);   // +1 owned by v
+    var v: view::View = view::View::new(r);   // +1 owned by v
     return v.into_raw();                          // +1 transferred; v's drop releases nil
 }
 
@@ -18797,14 +18797,14 @@ fn main() -> i32 {
 
     let nodes: vec::Vec[ui::UiNode] = ui::describe(win.obj);
 
-    let mut n_window: i32 = 0;
-    let mut n_button: i32 = 0;
-    let mut n_text: i32 = 0;
-    let mut n_input: i32 = 0;
-    let mut n_group: i32 = 0;
-    let mut found_click: bool = false;
-    let mut found_pinned_id: bool = false;
-    let mut i: usize = 0 as usize;
+    var n_window: i32 = 0;
+    var n_button: i32 = 0;
+    var n_text: i32 = 0;
+    var n_input: i32 = 0;
+    var n_group: i32 = 0;
+    var found_click: bool = false;
+    var found_pinned_id: bool = false;
+    var i: usize = 0 as usize;
     while i < nodes.len() {
         match nodes.at(i) {
             option::Option[*ui::UiNode]::Some(p) => {
@@ -18907,7 +18907,7 @@ fn main() -> i32 {
 
     let surf: ui::Surface = ui::open(win.obj);
     let diags: vec::Vec[ui::LayoutDiagnostic] = surf.layout_diagnostics();
-    let mut n_auto: i32 = 0;
+    var n_auto: i32 = 0;
     for d in diags.iter() {
         if d.uses_autolayout { n_auto = n_auto +% (1 as i32); }
     }
@@ -19085,8 +19085,8 @@ fn main() -> i32 {
     ui::set_agent_id(inp.obj, "name-field");
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
 
-    let mut surf: ui::Surface = ui::open(win.obj);
-    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+    var surf: ui::Surface = ui::open(win.obj);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     let d: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}");
     if !unsafe { d.as_str() }.to_text().contains("save-btn") { return 1; }
@@ -19155,10 +19155,10 @@ fn main() -> i32 {
     let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
     ui::set_agent_id(btn.obj, "save-btn");
     rt::msg_void_id(win.content_view(), rt::sel(#str_ptr("addSubview:\0")), btn.obj);
-    let mut surf: ui::Surface = ui::open(win.obj);
-    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+    var surf: ui::Surface = ui::open(win.obj);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
-    let mut sv: [i32; 2] = [0 as i32, 0 as i32];
+    var sv: [i32; 2] = [0 as i32, 0 as i32];
     if unsafe { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(sv[0])) } != (0 as i32) { return 10; }
     let client: i32 = sv[0];
     let server: i32 = sv[1];
@@ -19169,7 +19169,7 @@ fn main() -> i32 {
 
     mcp::serve_fd(surf, sub, allow_all, server);
 
-    let mut rbuf: [u8; 4096] = [0 as u8; 4096];
+    var rbuf: [u8; 4096] = [0 as u8; 4096];
     let n: i64 = unsafe { read(client, #addr_of(rbuf[0]), 4096 as usize) };
     if n <= (0 as i64) { return 11; }
     let resp: str = unsafe { #str_from_raw_parts(#addr_of(rbuf[0]), n as usize) };
@@ -19235,7 +19235,7 @@ fn main() -> i32 {
     lbl.set_string_value(#str_ptr("static\0"));
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.obj);
 
-    let mut s: ui::Surface = ui::open(win.obj);
+    var s: ui::Surface = ui::open(win.obj);
 
     if !surface::outcome_eq(s.click("save-btn"), surface::Outcome::Allowed) { return 1; }
     if unsafe { CLICKED } != (1 as i32) { return 2; }
@@ -19246,10 +19246,10 @@ fn main() -> i32 {
     if !surface::outcome_eq(s.set_text("name-field", "race", 0 as u64), surface::Outcome::VersionConflict) { return 7; }
 
     let nodes: vec::Vec[ui::UiNode] = s.describe();
-    let mut wrote_ok: bool = false;
-    let mut btn_actionable: bool = false;
-    let mut have_unexposed: bool = false;
-    let mut i: usize = 0 as usize;
+    var wrote_ok: bool = false;
+    var btn_actionable: bool = false;
+    var have_unexposed: bool = false;
+    var i: usize = 0 as usize;
     while i < nodes.len() {
         match nodes.at(i) {
             option::Option[*ui::UiNode]::Some(p) => {
@@ -19311,7 +19311,7 @@ fn main() -> i32 {
     let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,10.0,200.0,24.0));
     ui::set_agent_id(inp.obj, "field");
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
-    let mut s: ui::Surface = ui::open(win.obj);
+    var s: ui::Surface = ui::open(win.obj);
 
     // scroll_to is exposed (tagged) -> Allowed; routes through the main-thread
     // scroll path (direct send while on main).
@@ -19361,7 +19361,7 @@ fn main() -> i32 {
     rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
 
     let s: ui::Surface = ui::open(win.obj);
-    let mut sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     // Emit a translated event on the tagged node -> delivered.
     if !s.emit(sub, "save-btn", events::Verb::Clicked) { return 1; }
@@ -19417,7 +19417,7 @@ fn main() -> i32 {
     rt::release(obj);                                             // 0 -> dealloc
 
     // Owned wrapper: each Alert drops (releases) at end of iteration.
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     loop {
         if i >= (500 as i32) { break; }
         let a: dialogs::Alert = dialogs::Alert::new();
@@ -20072,7 +20072,7 @@ import "appkit/controls" as controls;
 fn main() -> i32 {
     let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 80.0, height: 20.0 } };
 
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < 200 {
         let s = controls::Slider::new(f);
         s.set_double_value(1.0);
@@ -20112,7 +20112,7 @@ import "appkit/view" as view;
 fn main() -> i32 {
     let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 50.0, height: 50.0 } };
 
-    let mut i: i32 = 0;
+    var i: i32 = 0;
     while i < 200 {
         let v = view::View::new(f);
         let sv = view::StackView::new(f);
@@ -20453,7 +20453,7 @@ fn main() -> i32 {
     if unsafe { back.as_str() } != "hello world" { return 1; }
 
     // Vec[u8] -> NSData -> Vec[u8], bytes preserved.
-    let mut v: vec::Vec[u8] = vec::Vec[u8]::new();
+    var v: vec::Vec[u8] = vec::Vec[u8]::new();
     v.push(10 as u8);
     v.push(20 as u8);
     v.push(30 as u8);
@@ -21217,17 +21217,17 @@ fn vec_element_drop_runs_per_element_by_count() {
         "import \"stdlib/vec\" as vec;\n\
          static mut DROPS: i32 = 0;\n\
          struct Cell { tag: i32 }\n\
-         impl Cell { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Cell { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          struct Wrap { items: vec::Vec[Cell], name: i32 }\n\
          fn direct() {\n\
-             let mut v: vec::Vec[Cell] = vec::new::[Cell]();\n\
+             var v: vec::Vec[Cell] = vec::new::[Cell]();\n\
              v.push(Cell { tag: 1 });\n\
              v.push(Cell { tag: 2 });\n\
              v.push(Cell { tag: 3 });\n\
              return;\n\
          }\n\
          fn nested() {\n\
-             let mut v: vec::Vec[Cell] = vec::new::[Cell]();\n\
+             var v: vec::Vec[Cell] = vec::new::[Cell]();\n\
              v.push(Cell { tag: 1 });\n\
              v.push(Cell { tag: 2 });\n\
              let w: Wrap = Wrap { items: v, name: 9 };\n\
@@ -21267,7 +21267,7 @@ fn consumed_enum_payload_drops_once_per_arm() {
         "\
 static mut DROPS: i32 = 0;
 struct Res { tag: i32 }
-impl Res { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }
+impl Res { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }
 enum Box1 { Some(Res), None }
 enum Wrap { W(Res), X }
 fn consume(r: Res) -> i32 { return r.tag; }
@@ -21347,17 +21347,17 @@ fn enum_move_into_method_arg_no_double_free() {
          static mut DROPS: i32 = 0;\n\
          static mut SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
-         impl Leaf { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Leaf { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
          enum Parse { Ok(Node, i32), Fail(i32) }\n\
          fn make_inner() -> Parse {\n\
-             let mut kids: vec::Vec[Node] = vec::new::[Node]();\n\
+             var kids: vec::Vec[Node] = vec::new::[Node]();\n\
              kids.push(Node::One(Leaf { tag: 1 }));\n\
              kids.push(Node::One(Leaf { tag: 2 }));\n\
              return Parse::Ok(Node::Many(kids), 0);\n\
          }\n\
          fn build() -> Node {\n\
-             let mut elems: vec::Vec[Node] = vec::new::[Node]();\n\
+             var elems: vec::Vec[Node] = vec::new::[Node]();\n\
              let r: Parse = make_inner();\n\
              match r {\n\
                  Parse::Ok(v, rp) => { let _p: i32 = rp; elems.push(v); }\n\
@@ -21369,8 +21369,8 @@ fn enum_move_into_method_arg_no_double_free() {
              return match n {\n\
                  Node::One(l) => l.tag,\n\
                  Node::Many(kids) => {\n\
-                     let mut total: i32 = 0;\n\
-                     let mut i: usize = 0 as usize;\n\
+                     var total: i32 = 0;\n\
+                     var i: usize = 0 as usize;\n\
                      while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count(unsafe { *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
                      total\n\
                  }\n\
@@ -21382,7 +21382,7 @@ fn enum_move_into_method_arg_no_double_free() {
              return;\n\
          }\n\
          fn main() -> i32 {\n\
-             let mut iter: i32 = 0;\n\
+             var iter: i32 = 0;\n\
              while iter < 8 { run_once(); iter = iter +% 1; }\n\
              if unsafe { SUM } != 24 { return 100; }\n\
              return unsafe { DROPS };\n\
@@ -21432,11 +21432,11 @@ fn enum_conditional_branch_tail_move_no_double_free() {
          static mut DROPS: i32 = 0;\n\
          static mut SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
-         impl Leaf { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Leaf { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
          enum Parse { Ok(Node), Fail }\n\
          fn make() -> Parse {\n\
-             let mut kids: vec::Vec[Node] = vec::new::[Node]();\n\
+             var kids: vec::Vec[Node] = vec::new::[Node]();\n\
              kids.push(Node::One(Leaf { tag: 1 }));\n\
              kids.push(Node::One(Leaf { tag: 2 }));\n\
              return Parse::Ok(Node::Many(kids));\n\
@@ -21452,8 +21452,8 @@ fn enum_conditional_branch_tail_move_no_double_free() {
              return match n {\n\
                  Node::One(l) => l.tag,\n\
                  Node::Many(kids) => {\n\
-                     let mut total: i32 = 0;\n\
-                     let mut i: usize = 0 as usize;\n\
+                     var total: i32 = 0;\n\
+                     var i: usize = 0 as usize;\n\
                      while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count(unsafe { *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
                      total\n\
                  }\n\
@@ -21465,7 +21465,7 @@ fn enum_conditional_branch_tail_move_no_double_free() {
              return;\n\
          }\n\
          fn main() -> i32 {\n\
-             let mut iter: i32 = 0;\n\
+             var iter: i32 = 0;\n\
              while iter < 8 { run_once(); iter = iter +% 1; }\n\
              if unsafe { SUM } != 24 { return 100; }\n\
              return unsafe { DROPS };\n\
@@ -22191,7 +22191,7 @@ fn addr_of_round_trips_through_libc_time() {
          extern fn time(t: *i64) -> i64;\n\
          \n\
          fn main() -> i32 {\n\
-             let mut t: i64 = 0;\n\
+             var t: i64 = 0;\n\
              let returned: i64 = unsafe { time(#addr_of(t)) };\n\
              if t == returned { return 0; }\n\
              return 1;\n\
@@ -22227,7 +22227,7 @@ fn addr_of_emits_no_alloca_or_load_extras() {
         &src,
         "extern fn time(t: *i64) -> i64;\n\
          fn main() -> i32 {\n\
-             let mut t: i64 = 0;\n\
+             var t: i64 = 0;\n\
              let _r: i64 = unsafe { time(#addr_of(t)) };\n\
              return 0;\n\
          }\n",
@@ -22298,7 +22298,7 @@ fn g023_struct_literal_field_init_does_not_double_drop() {
          pub struct Wrap { pub m: map::HashMap[str, str] }\n\
          \n\
          fn make() -> Wrap {\n\
-             let mut m: map::HashMap[str, str] = map::new::[str, str]();\n\
+             var m: map::HashMap[str, str] = map::new::[str, str]();\n\
              m.insert(\"name\", \"alice\");\n\
              return Wrap { m: m };\n\
          }\n\
@@ -22366,7 +22366,7 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          \n\
          extern fn malloc(n: usize) -> *u8;\n\
          \n\
-         fn place[T](move val: T) -> *T {\n\
+         fn place[T](take val: T) -> *T {\n\
              let raw: *u8 = unsafe { malloc(#size_of::[T]()) };\n\
              let p: *T = unsafe { raw as *T };\n\
              unsafe { *p = val; }\n\
@@ -22374,7 +22374,7 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          }\n\
          \n\
          fn make_vec() -> vec::Vec[i32] {\n\
-             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
              v.push(100 as i32);\n\
              v.push(200 as i32);\n\
              return v;\n\
@@ -22487,10 +22487,10 @@ fn no_alloc_rejects_allocating_method_through_receiver() {
         "extern fn malloc(n: usize) -> *u8;\n\
          struct Bag { ptr: *u8 }\n\
          impl Bag {\n\
-             fn grow(mut this) { unsafe { this.ptr = malloc(64 as usize); } return; }\n\
+             fn grow(ref this) { unsafe { this.ptr = malloc(64 as usize); } return; }\n\
          }\n\
          #[no_alloc]\n\
-         fn hot(mut b: Bag) { b.grow(); return; }\n\
+         fn hot(ref b: Bag) { b.grow(); return; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -22514,10 +22514,10 @@ fn no_alloc_allows_marked_method_through_receiver() {
         "struct Ctr { v: i32 }\n\
          impl Ctr {\n\
              #[no_alloc]\n\
-             fn bump(mut this) { this.v = this.v +% 1; return; }\n\
+             fn bump(ref this) { this.v = this.v +% 1; return; }\n\
          }\n\
          #[no_alloc]\n\
-         fn hot(mut c: Ctr) { c.bump(); return; }\n\
+         fn hot(ref c: Ctr) { c.bump(); return; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -22772,7 +22772,7 @@ fn g034_static_mut_indexed_write() {
         &src,
         "pub static mut TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
          fn fill() {\n\
-             let mut i: usize = 0 as usize;\n\
+             var i: usize = 0 as usize;\n\
              while i < (16 as usize) {\n\
                  unsafe { TABLE[i] = (i as i32) *% (2 as i32); };\n\
                  i = i +% (1 as usize);\n\
@@ -22852,7 +22852,7 @@ fn g045_f16_scalar_end_to_end() {
              // f16 as struct field + array storage\n\
              let b: Block = Block { d: 1.5f32 as f16, n: 0 };\n\
              if (b.d as f32) < 1.49f32 { return 8; }\n\
-             let mut arr: [f16; 2] = [0.0f32 as f16, 0.0f32 as f16];\n\
+             var arr: [f16; 2] = [0.0f32 as f16, 0.0f32 as f16];\n\
              arr[1] = 3.0f32 as f16;\n\
              if (arr[1] as f32) < 2.99f32 { return 9; }\n\
              // f16 arithmetic (LLVM legalizes) + size_of\n\
@@ -23321,9 +23321,9 @@ fn struct_literal_static_compiles_and_runs() {
          ];\n\
          fn main() -> i32 {\n\
              // SUN.color(100) + SUN.radius(2) = 102\n\
-             let mut acc: i32 = SUN.color +% (SUN.radius as i32);\n\
+             var acc: i32 = SUN.color +% (SUN.radius as i32);\n\
              // sum of radii (1+3+4)=8, sum of colors (1+2+3)=6, z of [2]=5\n\
-             let mut i: i32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < 3 {\n\
                  acc = acc +% (SCENE[i as usize].radius as i32);\n\
                  acc = acc +% SCENE[i as usize].color;\n\
@@ -23388,15 +23388,15 @@ fn const_array_length_compiles_and_runs() {
          const ROWS: u32 = 3;\n\
          struct Grid { cells: [i32; CAP] }\n\
          fn sum(buf: [i32; CAP]) -> i32 {\n\
-             let mut s: i32 = 0;\n\
-             let mut i: i32 = 0;\n\
+             var s: i32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < (CAP as i32) { s = s +% buf[i as usize]; i = i +% 1; }\n\
              return s;\n\
          }\n\
          fn main() -> i32 {\n\
              let a: [i32; CAP] = [2; CAP];\n\
              let g: Grid = Grid { cells: [1; CAP] };\n\
-             let mut total: i32 = sum(a);\n\
+             var total: i32 = sum(a);\n\
              total = total +% g.cells[0];\n\
              let m: [u8; ROWS] = [0u8; ROWS];\n\
              total = total +% (m[2] as i32);\n\
@@ -23646,9 +23646,9 @@ fn stdlib_text_core_api_builds_and_runs() {
         "import \"stdlib/text\" as text;\n\
          import \"stdlib/option\" as option;\n\
          fn main() -> i32 {\n\
-             let mut t: text::Text = text::from_str(\"hello\");\n\
+             var t: text::Text = text::from_str(\"hello\");\n\
              t.push_str(\", world\");\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if t.len() == (12 as usize) { score = score +% 1; }\n\
              if t.starts_with(\"hello\") { score = score +% 1; }\n\
              if t.ends_with(\"world\") { score = score +% 1; }\n\
@@ -23718,7 +23718,7 @@ fn stdlib_text_literal_in_let_constructs_owned_text() {
         "import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
              let s: text::Text = \"hello, world\";\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if s.len() == (12 as usize) { score = score +% 1; }\n\
              if s.starts_with(\"hello\") { score = score +% 1; }\n\
              if s.contains(\"o, w\") { score = score +% 1; }\n\
@@ -23757,7 +23757,7 @@ fn stdlib_text_literal_as_arg_constructs_owned_text() {
          }\n\
          fn take(t: text::Text) -> usize { return t.len(); }\n\
          fn main() -> i32 {\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if take(\"hello\") == (5 as usize) { score = score +% 1; }\n\
              let s: Setter = Setter { tag: 1 };\n\
              if s.set(\"hi there\") == (8 as usize) { score = score +% 1; }\n\
@@ -23791,7 +23791,7 @@ fn stdlib_text_multiline_literal_is_verbatim() {
         "import \"stdlib/text\" as text;\n\
          fn main() -> i32 {\n\
              let banner: text::Text = \"\"\"\nusage: build <file>\n  --out <dir>\n\"\"\";\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if banner.starts_with(\"\\nusage:\") { score = score +% 1; }\n\
              if banner.contains(\"--out <dir>\") { score = score +% 1; }\n\
              if banner.ends_with(\"\\n\") { score = score +% 1; }\n\
@@ -23825,7 +23825,7 @@ fn stdlib_text_literal_in_return_constructs_owned_text() {
          fn main() -> i32 {\n\
              let a: text::Text = label();\n\
              let b: text::Text = banner();\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if a.starts_with(\"OK\") { score = score +% 1; }\n\
              if a.len() == (2 as usize) { score = score +% 1; }\n\
              if b.contains(\"hi\") { score = score +% 1; }\n\
@@ -23858,7 +23858,7 @@ fn stdlib_text_literal_in_struct_field_constructs_owned_text() {
          struct Widget { label: text::Text, id: i32 }\n\
          fn main() -> i32 {\n\
              let w: Widget = Widget { label: \"Submit\", id: 7 };\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if w.label.len() == (6 as usize) { score = score +% 1; }\n\
              if w.label.starts_with(\"Sub\") { score = score +% 1; }\n\
              if w.id == 7 { score = score +% 1; }\n\
@@ -23893,7 +23893,7 @@ fn stdlib_text_interpolation_produces_owned_text() {
              let n: i32 = 42;\n\
              let a: text::Text = \"world\";\n\
              let s: text::Text = \"count=${n} hi ${a}\";\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if s.len() == (17 as usize) { score = score +% 1; }\n\
              if s.starts_with(\"count=42\") { score = score +% 1; }\n\
              if s.contains(\"hi world\") { score = score +% 1; }\n\
@@ -23927,7 +23927,7 @@ fn stdlib_text_slice_rfind_trim_split() {
          import \"stdlib/vec\" as vec;\n\
          fn main() -> i32 {\n\
              let s: text::Text = \"  hello,world,foo  \";\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              let t: text::Text = s.trim();\n\
              if t.len() == (15 as usize) { score = score +% 1; }\n\
              match t.rfind(\",\") {\n\
@@ -23969,7 +23969,7 @@ fn stdlib_text_c_str_round_trips_through_libc() {
          import \"stdlib/option\" as option;\n\
          extern fn strlen(s: *u8) -> usize;\n\
          fn main() -> i32 {\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              let t: text::Text = \"hello\";\n\
              match t.c_str() {\n\
                  option::Option[text::CString]::Some(cs) => {\n\
@@ -24012,7 +24012,7 @@ fn stdlib_text_to_string_produces_owned_text() {
              let n: i32 = 42;\n\
              let s: text::Text = n.to_text();\n\
              let b: text::Text = true.to_text();\n\
-             let mut score: i32 = 0;\n\
+             var score: i32 = 0;\n\
              if s.len() == (2 as usize) { score = score +% 1; }\n\
              if s.starts_with(\"42\") { score = score +% 1; }\n\
              if b.starts_with(\"true\") { score = score +% 1; }\n\
@@ -25132,7 +25132,7 @@ fn target_esp32_text_and_vec_compile_to_xtensa_object() {
          fn main() -> i32 {\n\
              let t: text::Text = \"esp32 heap\".to_text();\n\
              let n: usize = t.len();\n\
-             let mut v: vec::Vec[i32] = vec::new::[i32]();\n\
+             var v: vec::Vec[i32] = vec::new::[i32]();\n\
              v.push(40);\n\
              v.push(2);\n\
              let a: i32 = vec::at_copy::[i32](v, 0 as usize);\n\
@@ -25331,7 +25331,7 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
 ) -> jni::jobject {
     let env: av::Env = av::from_native(envp);
     let act: av::Activity = av::Activity::from_borrowed(env, activity_obj);
-    let mut root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
+    var root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
     root.set_orientation(av::orientation_vertical());
     let title: av::TextView = av::TextView::new(env, act.as_context());
     title.set_text(#str_ptr("Hello from C+\0"));
@@ -25612,8 +25612,8 @@ fn espidf_firmware_project_passes_check() {
          pub extern fn cplus_app_main() {\n\
              let _r0: i32 = gpio::reset(2);\n\
              let _r1: i32 = gpio::set_direction(2, gpio::mode_output());\n\
-             let mut on: u32 = 0;\n\
-             let mut i: i32 = 0;\n\
+             var on: u32 = 0;\n\
+             var i: i32 = 0;\n\
              while i < 3 {\n\
                  on = (1 as u32) - on;\n\
                  let _r2: i32 = gpio::set_level(2, on);\n\
@@ -25919,7 +25919,7 @@ const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
      }\n\
      \n\
      impl Item {\n\
-     \x20   pub fn boost(mut this, by: i32) {\n\
+     \x20   pub fn boost(ref this, by: i32) {\n\
      \x20       this.weight = this.weight + by;\n\
      \x20       return;\n\
      \x20   }\n\
@@ -25934,12 +25934,12 @@ const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
      \x20       return Builder { sum: 0 };\n\
      \x20   }\n\
      \n\
-     \x20   pub fn add(mut this, item: Item) {\n\
+     \x20   pub fn add(ref this, item: Item) {\n\
      \x20       this.sum = this.sum + item.value * item.weight;\n\
      \x20       return;\n\
      \x20   }\n\
      \n\
-     \x20   pub fn finish(move this) -> Item {\n\
+     \x20   pub fn finish(take this) -> Item {\n\
      \x20       return Item { value: this.sum, weight: 1 };\n\
      \x20   }\n\
      }\n\

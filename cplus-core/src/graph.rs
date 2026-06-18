@@ -1807,8 +1807,8 @@ fn method_signature(m: &Method) -> String {
         parts.push(
             match r {
                 Receiver::Read => "this",
-                Receiver::Mut => "mut this",
-                Receiver::Move => "move this",
+                Receiver::Mut => "ref this",
+                Receiver::Move => "take this",
             }
             .to_string(),
         );
@@ -2260,14 +2260,14 @@ mod tests {
         let src = "struct Counter { v: i32 }\n\
                    impl Counter {\n\
                      fn read(this) -> i32 { return this.v; }\n\
-                     fn inc(mut this) { this.v = this.v +% 1; }\n\
+                     fn inc(ref this) { this.v = this.v +% 1; }\n\
                    }";
         let g = CodeGraph::build(&project(src));
         let read = node(&g, "src::Counter::read");
         assert_eq!(read.kind, NodeKind::Method);
         assert_eq!(read.signature.as_deref(), Some("fn read(this) -> i32"));
         let inc = node(&g, "src::Counter::inc");
-        assert_eq!(inc.signature.as_deref(), Some("fn inc(mut this)"));
+        assert_eq!(inc.signature.as_deref(), Some("fn inc(ref this)"));
         assert!(g
             .edges
             .iter()
@@ -2373,8 +2373,8 @@ mod tests {
     fn self_method_call_resolves_to_impl_target() {
         let src = "struct Counter { v: i32 }\n\
                    impl Counter {\n\
-                     fn inc(mut this) { this.bump(); }\n\
-                     fn bump(mut this) { this.v = this.v +% 1; }\n\
+                     fn inc(ref this) { this.bump(); }\n\
+                     fn bump(ref this) { this.v = this.v +% 1; }\n\
                    }";
         let g = CodeGraph::build(&project(src));
         assert!(has_call(&g, "src::Counter::inc", "src::Counter::bump"));
@@ -2764,7 +2764,7 @@ mod tests {
     fn value_refs_for_range_loop_var_is_a_definition() {
         // A `for x in ...` loop variable is a definition scoped to the loop.
         let src = "fn sum(n: i32) -> i32 {\n\
-                       let mut total: i32 = 0;\n\
+                       var total: i32 = 0;\n\
                        for v in 0..n {\n\
                            total = total +% v;\n\
                        }\n\

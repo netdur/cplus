@@ -897,7 +897,7 @@ impl Parser {
                     kind: ParseErrorKind::Unexpected {
                         found: "`self`".into(),
                         expected:
-                            "`this` — C+ receivers are `this` / `mut this` / `move this`, not `self`",
+                            "`this` — C+ receivers are `this` / `ref this` / `take this`, not `self`",
                     },
                     span: tok.span,
                 })
@@ -4072,7 +4072,7 @@ mod tests {
         // Note: parse-only; sema may reject this since chained assignment
         // typically requires a value-producing inner assign. Phase 1 is loose.
         let p =
-            parse_src("fn main() -> i32 { let mut a: i32 = 0; let mut b: i32 = 0; a = b = 1; 0 }")
+            parse_src("fn main() -> i32 { var a: i32 = 0; var b: i32 = 0; a = b = 1; 0 }")
                 .unwrap();
         // The third stmt is `a = (b = 1)`.
         let ItemKind::Function(f) = &p.items[0].kind else {
@@ -4246,14 +4246,14 @@ mod tests {
 
     #[test]
     fn mut_param_sets_mutable_flag() {
-        let params = first_function_params("fn f(mut x: i32) -> i32 { return x; }");
+        let params = first_function_params("fn f(ref x: i32) -> i32 { return x; }");
         assert!(params[0].mutable);
         assert!(!params[0].move_);
     }
 
     #[test]
     fn move_param_sets_move_flag() {
-        let params = first_function_params("fn f(move x: i32) -> i32 { return x; }");
+        let params = first_function_params("fn f(take x: i32) -> i32 { return x; }");
         assert!(!params[0].mutable);
         assert!(params[0].move_);
     }
@@ -4261,14 +4261,14 @@ mod tests {
     #[test]
     fn move_mut_param_sets_both_flags() {
         // Combo is permitted at parse time; sema rejects with E0334.
-        let params = first_function_params("fn f(move mut x: i32) -> i32 { return x; }");
+        let params = first_function_params("fn f(move ref x: i32) -> i32 { return x; }");
         assert!(params[0].mutable);
         assert!(params[0].move_);
     }
 
     #[test]
     fn mut_move_param_sets_both_flags() {
-        let params = first_function_params("fn f(mut move x: i32) -> i32 { return x; }");
+        let params = first_function_params("fn f(mut take x: i32) -> i32 { return x; }");
         assert!(params[0].mutable);
         assert!(params[0].move_);
     }
@@ -4276,7 +4276,7 @@ mod tests {
     #[test]
     fn move_self_receiver_parses() {
         let m = first_method(
-            "struct P { x: i32 } impl P { fn consume(move this) -> i32 { return this.x; } }",
+            "struct P { x: i32 } impl P { fn consume(take this) -> i32 { return this.x; } }",
         );
         assert_eq!(m.receiver, Some(Receiver::Move));
     }
@@ -4290,14 +4290,14 @@ mod tests {
 
     #[test]
     fn mut_self_receiver_parses() {
-        let m = first_method("struct P { x: i32 } impl P { fn write(mut this) { this.x = 0; } }");
+        let m = first_method("struct P { x: i32 } impl P { fn write(ref this) { this.x = 0; } }");
         assert_eq!(m.receiver, Some(Receiver::Mut));
     }
 
     #[test]
     fn mut_move_self_is_parse_error() {
         let err =
-            parse_src("struct P { x: i32 } impl P { fn bad(mut move this) -> i32 { return 0; } }")
+            parse_src("struct P { x: i32 } impl P { fn bad(mut take this) -> i32 { return 0; } }")
                 .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
@@ -4396,7 +4396,7 @@ mod tests {
     #[test]
     fn move_mut_self_is_parse_error() {
         let err =
-            parse_src("struct P { x: i32 } impl P { fn bad(move mut this) -> i32 { return 0; } }")
+            parse_src("struct P { x: i32 } impl P { fn bad(move ref this) -> i32 { return 0; } }")
                 .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
@@ -4509,7 +4509,7 @@ mod tests {
 
     #[test]
     fn borrow_region_parses_with_mut_marker() {
-        let p = parse_src("fn modify(mut x: borrow A B) -> borrow A B { return x; }").unwrap();
+        let p = parse_src("fn modify(ref x: borrow A B) -> borrow A B { return x; }").unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!()
         };
@@ -4522,7 +4522,7 @@ mod tests {
         // `move x: borrow A T` is a parse error per §4.2: ownership
         // transfer doesn't borrow, so the region annotation is
         // meaningless on a `move`-parameter.
-        let err = parse_src("fn take(move x: borrow A B) { return; }").unwrap_err();
+        let err = parse_src("fn take(take x: borrow A B) { return; }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
@@ -4893,7 +4893,7 @@ mod tests {
 
     #[test]
     fn interface_method_with_mut_self_receiver() {
-        let p = parse_src("interface Counter { fn inc(mut this) -> i32; }").unwrap();
+        let p = parse_src("interface Counter { fn inc(ref this) -> i32; }").unwrap();
         let ItemKind::Interface(i) = &p.items[0].kind else {
             panic!()
         };

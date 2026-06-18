@@ -2349,7 +2349,7 @@ impl SemaCx<'_> {
                     if !recv_ok || !no_extra_params || !no_return {
                         self.err(
                             "E0338",
-                            format!("destructor `{}::drop` must have signature `fn drop(mut this)` — no extra parameters, no return type", b.target.name),
+                            format!("destructor `{}::drop` must have signature `fn drop(ref this)` — no extra parameters, no return type", b.target.name),
                             m.name.span,
                         );
                     } else {
@@ -3304,7 +3304,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0901",
                         format!(
-                            "`#[no_alloc]` method: `move this` receiver of type `{}` runs an allocating destructor at scope exit (its `drop` frees heap or is not marked `#[no_alloc]`)",
+                            "`#[no_alloc]` method: `take this` receiver of type `{}` runs an allocating destructor at scope exit (its `drop` frees heap or is not marked `#[no_alloc]`)",
                             ty_display(&self_ty),
                         ),
                         m.name.span,
@@ -4619,7 +4619,7 @@ impl SemaCx<'_> {
                     format!(
                         "raw-pointer field `{fname}` is unaccounted: {detail}. \
                          Mark it `opaque {fname}: ...` if another owner frees it, \
-                         or release it in `fn drop(mut this)` — e.g. \
+                         or release it in `fn drop(ref this)` — e.g. \
                          `unsafe {{ free(this.{fname}); }}`"
                     ),
                     f.span,
@@ -4970,7 +4970,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0900",
                         format!(
-                            "parameter `{}: {}` is `mut`-bound (pointer-passed) in an `async fn`; that storage may not outlive an `await`. Drop the `mut` and bind locally (`let mut x = x;`) or move ownership in with `move`.",
+                            "parameter `{}: {}` is `mut`-bound (pointer-passed) in an `async fn`; that storage may not outlive an `await`. Drop the `mut` and bind locally (`var x = x;`) or move ownership in with `move`.",
                             param.name.name, ty_display(pty),
                         ),
                         param.span,
@@ -12937,7 +12937,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     self.err(
                         "E0305",
                         format!(
-                            "cannot assign to immutable binding `{name}`; declare it as `let mut`"
+                            "cannot assign to immutable binding `{name}`; declare it as `var`"
                         ),
                         target.span,
                     );
@@ -16185,7 +16185,7 @@ mod tests {
         // reusing it afterward is a use-after-move (would double-free at run).
         assert_has_code(
             "struct R { opaque data: *u8 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              struct P {}\n\
              interface Sink { fn sink(this, r: R); }\n\
              impl P: Sink { fn sink(this, r: R) { return; } }\n\
@@ -16301,10 +16301,10 @@ mod tests {
         // value the caller still drops (double-free). Must be E0337 — the
         // receiver path, not just args, runs the move classifier.
         assert_has_code(
-            "interface Take { fn take(move this) -> i32; }\n\
+            "interface Take { fn take(take this) -> i32; }\n\
              struct R { opaque data: *u8 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
-             impl R: Take { fn take(move this) -> i32 { return 0; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
+             impl R: Take { fn take(take this) -> i32 { return 0; } }\n\
              fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
@@ -16317,7 +16317,7 @@ mod tests {
         // arg would create a second owner (the caller still drops it): E0337.
         assert_has_code(
             "struct R { opaque data: *u8 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              struct P {}\n\
              interface Sink { fn sink(this, r: R); }\n\
              impl P: Sink { fn sink(this, r: R) { return; } }\n\
@@ -16343,7 +16343,7 @@ mod tests {
         const PRELUDE: &str = "\
 static mut DROPS: i32 = 0;\n\
 struct R { opaque data: *u8 }\n\
-impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; }; return; } fn sink(move this) -> i32 { return 0; } }\n\
+impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; }; return; } fn sink(take this) -> i32 { return 0; } }\n\
 struct H { e: R }\n\
 struct W { r: R }\n\
 enum E { A(R) }\n\
@@ -16362,8 +16362,8 @@ fn main() -> i32 { return 0; }\n";
             ("tuple_elem", "let _t: (R, i32) = ({V}, 0);", false),
             ("array_elem", "let _a: [R; 1] = [{V}];", false),
             ("move_self_recv", "let _m: i32 = ({V}).sink();", false),
-            ("assign", "let mut _s: R = mkr(); _s = {V};", false),
-            ("field_assign", "let mut _hh: H = H { e: mkr() }; _hh.e = {V};", false),
+            ("assign", "var _s: R = mkr(); _s = {V};", false),
+            ("field_assign", "var _hh: H = H { e: mkr() }; _hh.e = {V};", false),
             // indirect calls through a fn-pointer (by-value param = move)
             ("fnptr_ident_call", "let _fp: fn(R) -> i32 = take; let _c: i32 = _fp({V});", false),
             ("fnptr_field_call", "let _h: Hdlr = Hdlr { cb: take }; let _c: i32 = _h.cb({V});", false),
@@ -16407,7 +16407,7 @@ fn main() -> i32 { return 0; }\n";
         // an owned slot is E0337; `T: Copy` is a harmless bit-copy → clean.
         const PRELUDE: &str = "\
 struct R { opaque data: *u8 }\n\
-impl R { fn drop(mut this) { return; } }\n\
+impl R { fn drop(ref this) { return; } }\n\
 struct GW[U] { v: U }\n\
 struct GM { v: i32 }\n\
 impl GM { fn take2[U](this, x: U) -> i32 { return 0; } }\n\
@@ -16463,7 +16463,7 @@ fn main() -> i32 { return 0; }\n";
         // then read it again.
         const PRELUDE: &str = "\
 struct R { opaque data: *u8 }\n\
-impl R { fn drop(mut this) { return; } }\n\
+impl R { fn drop(ref this) { return; } }\n\
 struct W { r: R }\n\
 enum E { A(R) }\n\
 struct Hdlr { cb: fn(R) -> i32 }\n\
@@ -16568,11 +16568,11 @@ fn main() -> i32 { return 0; }\n";
         // by-value param (plain or `move`) is fine.
         const DECLS: &str = "\
 struct R { tag: i32 }\n\
-impl R { fn drop(mut this) { return; } }\n\
+impl R { fn drop(ref this) { return; } }\n\
 fn peek(borrow r: R) -> i32 { return r.tag; }\n\
-fn pm(mut r: R) -> i32 { return 0; }\n\
+fn pm(ref r: R) -> i32 { return 0; }\n\
 fn sink(r: R) -> i32 { return 0; }\n\
-fn mv(move r: R) -> i32 { return 0; }\n";
+fn mv(take r: R) -> i32 { return 0; }\n";
         let prog = |take: &str| {
             format!("{DECLS}fn u() {{ let _f: fn(R) -> i32 = {take}; return; }}\nfn main() -> i32 {{ return 0; }}")
         };
@@ -16681,7 +16681,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn borrow_plus_move_e0334() {
         assert_only_code(
-            "fn bad(borrow move x: i32) -> i32 { return x; }\n\
+            "fn bad(borrow take x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return bad(0); }",
             "E0334",
         );
@@ -16690,7 +16690,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn borrow_plus_mut_e0334() {
         assert_only_code(
-            "fn bad(borrow mut x: i32) -> i32 { return x; }\n\
+            "fn bad(borrow ref x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return bad(0); }",
             "E0334",
         );
@@ -16940,7 +16940,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn cpu_relax_clean_g031() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 let mut i: i32 = 0;\n\
+                 var i: i32 = 0;\n\
                  while i < 3 { #cpu_relax(); i = i +% 1; }\n\
                  return 0;\n\
              }",
@@ -17194,7 +17194,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // no place to mutate and still mismatches (E0302).
         let codes = errors(
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
-             fn take(mut t: Text) -> i32 { return 0; }\n\
+             fn take(ref t: Text) -> i32 { return 0; }\n\
              fn main() -> i32 { return take(\"x\"); }",
         );
         assert!(codes.contains(&"E0302"));
@@ -17455,11 +17455,11 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct Pair[T] { a: T, b: T }\n\
              impl Pair[T] {\n\
-                 fn put(mut this, v: T) { this.a = v; return; }\n\
+                 fn put(ref this, v: T) { this.a = v; return; }\n\
              }\n\
              struct Holder { p: Pair[i32] }\n\
              fn touch() -> i32 {\n\
-                 let mut x: Pair[i32] = Pair[i32] { a: 0 as i32, b: 0 as i32 };\n\
+                 var x: Pair[i32] = Pair[i32] { a: 0 as i32, b: 0 as i32 };\n\
                  x.put(7 as i32);\n\
                  return x.a;\n\
              }\n\
@@ -17698,15 +17698,15 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn compound_assign_supported_clean() {
         // v0.0.3 Slice 3A: `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`
         // all type-check cleanly on appropriate types.
-        assert_clean("fn main() -> i32 { let mut x = 1; x += 2; x -= 1; x *= 3; return x; }");
-        assert_clean("fn main() -> i32 { let mut b: u32 = 0xff as u32; b &= 0x0f as u32; b |= 0x10 as u32; b ^= 0x01 as u32; b <<= 1 as u32; b >>= 2 as u32; return b as i32; }");
+        assert_clean("fn main() -> i32 { var x = 1; x += 2; x -= 1; x *= 3; return x; }");
+        assert_clean("fn main() -> i32 { var b: u32 = 0xff as u32; b &= 0x0f as u32; b |= 0x10 as u32; b ^= 0x01 as u32; b <<= 1 as u32; b >>= 2 as u32; return b as i32; }");
     }
 
     #[test]
     fn compound_bitwise_assign_on_float_e0302() {
         // Bitwise compound assigns require integer types.
         assert_only_code(
-            "fn main() -> i32 { let mut x: f32 = 1.0 as f32; x &= 2.0 as f32; return 0; }",
+            "fn main() -> i32 { var x: f32 = 1.0 as f32; x &= 2.0 as f32; return 0; }",
             "E0302",
         );
     }
@@ -17732,7 +17732,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn while_loop_clean() {
-        assert_clean("fn main() -> i32 { let mut i = 0; while i < 10 { i = i + 1; } return i; }");
+        assert_clean("fn main() -> i32 { var i = 0; while i < 10 { i = i + 1; } return i; }");
     }
 
     #[test]
@@ -17861,7 +17861,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn e0333_unit_tail_suggests_semicolon_g022() {
         let msg = first_e0333_message(
-            "fn f() { unsafe { let mut x: i32 = 1; x = x +% 1; } }\n\
+            "fn f() { unsafe { var x: i32 = 1; x = x +% 1; } }\n\
              fn main() -> i32 { f(); return 0; }",
         );
         assert!(
@@ -18076,7 +18076,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn struct_field_write_clean() {
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
-             fn main() -> i32 { let mut p: Point = Point { x: 1, y: 2 }; p.x = 10; return 0; }",
+             fn main() -> i32 { var p: Point = Point { x: 1, y: 2 }; p.x = 10; return 0; }",
         );
     }
 
@@ -18238,7 +18238,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
              struct Line  { from: Point, to: Point }\n\
-             fn main() -> i32 { let mut l: Line = Line { from: Point { x: 0, y: 0 }, to: Point { x: 0, y: 0 } }; l.to.x = 5; return 0; }"
+             fn main() -> i32 { var l: Line = Line { from: Point { x: 0, y: 0 }, to: Point { x: 0, y: 0 } }; l.to.x = 5; return 0; }"
         );
     }
 
@@ -18277,8 +18277,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn ref_mut_self_method_clean() {
         assert_clean(
             "struct P { x: i32 }\n\
-             impl P { fn set(mut this, v: i32) { this.x = v; } }\n\
-             fn main() -> i32 { let mut p: P = P { x: 0 }; p.set(5); return p.x; }",
+             impl P { fn set(ref this, v: i32) { this.x = v; } }\n\
+             fn main() -> i32 { var p: P = P { x: 0 }; p.set(5); return p.x; }",
         );
     }
 
@@ -18356,7 +18356,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn calling_mut_method_on_immutable_e0328() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn bump(mut this) { this.x = this.x + 1; } }\n\
+             impl P { fn bump(ref this) { this.x = this.x + 1; } }\n\
              fn main() -> i32 { let p: P = P { x: 0 }; p.bump(); return 0; }",
         );
         assert!(codes.contains(&"E0328"));
@@ -18408,7 +18408,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn array_indexed_assign_clean() {
         assert_clean(
-            "fn main() -> i32 { let mut xs: [i32; 3] = [0, 0, 0]; xs[1 as usize] = 5; return xs[1 as usize]; }"
+            "fn main() -> i32 { var xs: [i32; 3] = [0, 0, 0]; xs[1 as usize] = 5; return xs[1 as usize]; }"
         );
     }
 
@@ -18470,7 +18470,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // resource → a double-free when the elements drop. Reject it.
         let codes = errors(
             "struct Owner { id: i32 }\n\
-             impl Owner { fn drop(mut this) { return; } }\n\
+             impl Owner { fn drop(ref this) { return; } }\n\
              fn mk() -> Owner { return Owner { id: 1 }; }\n\
              fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }",
         );
@@ -18498,7 +18498,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn mut_and_move_on_param_e0334() {
         let codes = errors(
-            "fn f(mut move x: i32) -> i32 { return x; }\n\
+            "fn f(mut take x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return f(1); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
@@ -18507,7 +18507,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn move_and_mut_on_param_e0334() {
         let codes = errors(
-            "fn f(move mut x: i32) -> i32 { return x; }\n\
+            "fn f(move ref x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return f(1); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
@@ -18518,7 +18518,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `mut x: T` should allow writing `x = ...` inside the body without
         // E0305 (assignment to immutable binding).
         assert_clean(
-            "fn inc(mut x: i32) -> i32 { x = x + 1; return x; }\n\
+            "fn inc(ref x: i32) -> i32 { x = x + 1; return x; }\n\
              fn main() -> i32 { return inc(1); }",
         );
     }
@@ -18537,7 +18537,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `move x: T` is accepted; full move tracking is deferred to a later
         // slice of Phase 3, so this should currently behave like a plain param.
         assert_clean(
-            "fn consume(move x: i32) -> i32 { return x; }\n\
+            "fn consume(take x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return consume(7); }",
         );
     }
@@ -18546,7 +18546,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn move_self_method_parses_clean() {
         assert_clean(
             "struct P { x: i32 }\n\
-             impl P { fn take(move this) -> i32 { return this.x; } }\n\
+             impl P { fn take(take this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 4 }; return p.take(); }",
         );
     }
@@ -18555,7 +18555,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn mut_and_move_on_method_param_e0334() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn f(this, mut move y: i32) -> i32 { return this.x + y; } }\n\
+             impl P { fn f(this, mut take y: i32) -> i32 { return this.x + y; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; return p.f(2); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
@@ -18577,7 +18577,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // Reading `p.x` after the call fires E0335.
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} }\n\
+             impl P { fn drop(ref this) {} }\n\
              fn echo(p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 1 };\n\
@@ -18594,7 +18594,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // the binding after the call.
         assert_clean(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} }\n\
+             impl P { fn drop(ref this) {} }\n\
              fn peek(borrow p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 1 };\n\
@@ -18623,8 +18623,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn move_param_consumes_non_copy_binding_e0335() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} }\n\
-             fn take(move p: P) -> i32 { return p.x; }\n\
+             impl P { fn drop(ref this) {} }\n\
+             fn take(take p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); return p.x; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -18634,8 +18634,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn move_param_double_call_e0335() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} }\n\
-             fn take(move p: P) -> i32 { return p.x; }\n\
+             impl P { fn drop(ref this) {} }\n\
+             fn take(take p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); let r: i32 = take(p); return 0; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -18655,7 +18655,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // instantiation was misclassified Copy → no move tracking → undetected.
         let codes = errors(
             "struct Held[T] { v: T }\n\
-             impl Held[T] { fn drop(mut this) { return; } }\n\
+             impl Held[T] { fn drop(ref this) { return; } }\n\
              enum W { A(Held[i32]), B }\n\
              fn sink(w: W) -> i32 { return 0; }\n\
              fn main() -> i32 { let w: W = W::B; let a: i32 = sink(w); let b: i32 = sink(w); return a +% b; }",
@@ -18669,7 +18669,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // self-contained generic Drop struct.
         let codes = errors(
             "struct Held[T] { v: T }\n\
-             impl Held[T] { fn drop(mut this) { return; } }\n\
+             impl Held[T] { fn drop(ref this) { return; } }\n\
              enum Node { Leaf(i32), Branch(Held[Node]) }\n\
              fn sink(n: Node) -> i32 { return 0; }\n\
              fn main() -> i32 { let n: Node = Node::Leaf(1); let a: i32 = sink(n); let b: i32 = sink(n); return a +% b; }",
@@ -18686,7 +18686,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // the stdlib read loops.)
         assert_clean(
             "struct Held[T] { v: T }\n\
-             impl Held[T] { fn drop(mut this) { return; } }\n\
+             impl Held[T] { fn drop(ref this) { return; } }\n\
              fn consume(h: Held[i32]) -> i32 { return 0; }\n\
              fn pick(flag: bool) -> i32 {\n\
                  let h: Held[i32] = Held[i32] { v: 1 };\n\
@@ -18704,7 +18704,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // this clean.
         assert_clean(
             "struct Held[T] { v: T }\n\
-             impl Held[T] { fn drop(mut this) { return; } }\n\
+             impl Held[T] { fn drop(ref this) { return; } }\n\
              enum Opt { Some(i32), None }\n\
              fn consume(h: Held[i32]) -> i32 { return 0; }\n\
              fn f(o: Opt) -> i32 {\n\
@@ -18720,7 +18720,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn move_self_consumes_receiver_e0335() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} fn into_x(move this) -> i32 { return this.x; } }\n\
+             impl P { fn drop(ref this) {} fn into_x(take this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = p.into_x(); return p.x; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -18730,7 +18730,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn move_self_double_call_e0335() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} fn into_x(move this) -> i32 { return this.x; } }\n\
+             impl P { fn drop(ref this) {} fn into_x(take this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = p.into_x(); let r: i32 = p.into_x(); return 0; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -18741,7 +18741,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `move x: i32` is redundant — `i32` is Copy, so the source remains
         // usable. (A future E0336 lint will suggest removing the keyword.)
         assert_clean(
-            "fn take(move x: i32) -> i32 { return x; }\n\
+            "fn take(take x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { let x: i32 = 5; let r: i32 = take(x); return x; }",
         );
     }
@@ -18765,9 +18765,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // parameter must be rejected.
         let codes = errors(
             "struct Inner { x: i32 }\n\
-             impl Inner { fn drop(mut this) {} }\n\
+             impl Inner { fn drop(ref this) {} }\n\
              struct Outer { i: Inner }\n\
-             fn take(move i: Inner) -> i32 { return i.x; }\n\
+             fn take(take i: Inner) -> i32 { return i.x; }\n\
              fn main() -> i32 { let o: Outer = Outer { i: Inner { x: 1 } }; return take(o.i); }",
         );
         // v0.0.23: moving the Drop field `o.i` through a call is now the precise
@@ -18786,7 +18786,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // also nothing should error.
         assert_clean(
             "struct P { x: i32 }\n\
-             fn take(move p: P) -> i32 { return p.x; }\n\
+             fn take(take p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 { let p: P = P { x: 42 }; return take(p); }",
         );
     }
@@ -18797,8 +18797,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // (A re-`let` would shadow it, but the same `p` cannot be revived.)
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn drop(mut this) {} }\n\
-             fn take(move p: P) -> i32 { return p.x; }\n\
+             impl P { fn drop(ref this) {} }\n\
+             fn take(take p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; let r: i32 = take(p); let q: i32 = p.x; return q; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -18844,7 +18844,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // test for `i32` — now extended to aggregates under auto-derive.
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
-             fn take(move p: Point) -> i32 { return p.x; }\n\
+             fn take(take p: Point) -> i32 { return p.x; }\n\
              fn main() -> i32 { let p: Point = Point { x: 1, y: 2 }; let a: i32 = take(p); return a + p.y; }",
         );
     }
@@ -18854,7 +18854,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `move self` on a Copy receiver: ditto.
         assert_clean(
             "struct Point { x: i32, y: i32 }\n\
-             impl Point { fn into_x(move this) -> i32 { return this.x; } }\n\
+             impl Point { fn into_x(take this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: Point = Point { x: 1, y: 2 }; let a: i32 = p.into_x(); return a + p.y; }",
         );
     }
@@ -18870,9 +18870,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // a non-Copy aggregate.
         let codes = errors(
             "struct B { x: i32 }\n\
-             impl B { fn drop(mut this) {} }\n\
+             impl B { fn drop(ref this) {} }\n\
              struct C { b: B }\n\
-             fn take(move b: B) -> i32 { return b.x; }\n\
+             fn take(take b: B) -> i32 { return b.x; }\n\
              fn main() -> i32 { let c: C = C { b: B { x: 1 } }; return take(c.b); }",
         );
         // v0.0.23: call args now use the drop-aware partial-move classifier
@@ -18899,7 +18899,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn drop_extra_param_e0338() {
         let codes = errors(
             "struct B { x: i32 }\n\
-             impl B { fn drop(mut this, k: i32) {} }\n\
+             impl B { fn drop(ref this, k: i32) {} }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0338"), "expected E0338, got: {codes:?}");
@@ -18909,7 +18909,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn drop_with_return_e0338() {
         let codes = errors(
             "struct B { x: i32 }\n\
-             impl B { fn drop(mut this) -> i32 { return 0; } }\n\
+             impl B { fn drop(ref this) -> i32 { return 0; } }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0338"), "expected E0338, got: {codes:?}");
@@ -18921,7 +18921,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // empty destructor. Must compile cleanly.
         assert_clean(
             "struct B { x: i32 }\n\
-             impl B { fn drop(mut this) {} }\n\
+             impl B { fn drop(ref this) {} }\n\
              fn main() -> i32 { let b: B = B { x: 1 }; return b.x; }",
         );
     }
@@ -19024,7 +19024,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // E0344; it is now allowed — codegen synthesizes enum-variant drop.
         assert_clean(
             "struct R { x: i32 }\n\
-             impl R { fn drop(mut this) {} }\n\
+             impl R { fn drop(ref this) {} }\n\
              enum E { Hold(R), Empty }\n\
              fn main() -> i32 { return 0; }",
         );
@@ -19082,7 +19082,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `let mut` is today's mutable spelling (→ `var` in task #9); a
         // re-declaration of an existing name is still E0363 regardless.
         let codes =
-            errors("fn main() -> i32 { let x: i32 = 1; let mut x: i32 = 2; return x; }");
+            errors("fn main() -> i32 { let x: i32 = 1; var x: i32 = 2; return x; }");
         assert!(codes.contains(&"E0363"), "expected E0363, got: {codes:?}");
     }
 
@@ -19426,9 +19426,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
                  fn main() -> i32 {{ return 0; }}"
             ))
         };
-        assert!(mism("this", "move this").contains(&"E0505"), "this vs move this");
-        assert!(mism("move this", "this").contains(&"E0505"), "move this vs this");
-        assert!(mism("this", "mut this").contains(&"E0505"), "this vs mut this");
+        assert!(mism("this", "take this").contains(&"E0505"), "this vs take this");
+        assert!(mism("take this", "this").contains(&"E0505"), "take this vs this");
+        assert!(mism("this", "ref this").contains(&"E0505"), "this vs ref this");
     }
 
     #[test]
@@ -20176,7 +20176,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct W[T] { v: T } \
              impl W[T: Copy] { fn dup(this) -> T { return this.v; } } \
              struct NC { x: i32 } \
-             impl NC { fn drop(mut this) { return; } } \
+             impl NC { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
                  let w: W[NC] = W[NC] { v: NC { x: 1 } }; \
                  let _d: NC = w.dup(); \
@@ -20197,7 +20197,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct Box[T] { value: T } \
              impl Box[T] { fn dup_arg[U: Copy](this, x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
              struct R { tag: i32 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
                  let b: Box[i32] = Box[i32] { value: 0 }; \
                  let r: R = R { tag: 5 }; \
@@ -20234,7 +20234,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "enum Box[T] { V(T) } \
              impl Box[T] { fn dup[U: Copy](this, x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
              struct R { tag: i32 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
                  let b: Box[i32] = Box[i32]::V(0); \
                  let r: R = R { tag: 5 }; \
@@ -20249,7 +20249,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "enum Box[T] { V(T) } \
              impl Box[T] { fn mk[U: Copy](x: U) -> i32 { let a: U = x; let b: U = x; return 1; } } \
              struct R { tag: i32 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { let r: R = R { tag: 5 }; return Box[i32]::mk::[R](r); }",
         );
         assert!(
@@ -20279,7 +20279,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `let`-init coercion. Before the fix this was E0302 (str vs struct).
         assert_clean(
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
-             fn main() -> i32 { let mut s: Text = \"a\"; s = \"b\"; return 0; }",
+             fn main() -> i32 { var s: Text = \"a\"; s = \"b\"; return 0; }",
         );
     }
 
@@ -20300,7 +20300,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `.to_text()` — assigning one to a Text binding is a type error.
         let codes = errors(
             "#[lang(\"string\")] struct Text { opaque ptr: *u8, len: usize, cap: usize }\n\
-             fn main() -> i32 { let mut s: Text = \"a\"; let v: str = \"b\"; s = v; return 0; }",
+             fn main() -> i32 { var s: Text = \"a\"; let v: str = \"b\"; s = v; return 0; }",
         );
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
@@ -20312,12 +20312,12 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // unbounded methods. Only `dup` requires Copy; `store` does not.
         assert_clean(
             "struct W[T] { v: T } \
-             impl W[T] { fn store(mut this, x: T) { this.v = x; return; } } \
+             impl W[T] { fn store(ref this, x: T) { this.v = x; return; } } \
              impl W[T: Copy] { fn dup(this) -> T { return this.v; } } \
              struct NC { x: i32 } \
-             impl NC { fn drop(mut this) { return; } } \
+             impl NC { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
-                 let mut w: W[NC] = W[NC] { v: NC { x: 1 } }; \
+                 var w: W[NC] = W[NC] { v: NC { x: 1 } }; \
                  w.store(NC { x: 2 }); \
                  return 0; \
              }",
@@ -20359,7 +20359,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // moved payload and the field's owner both dropped it).
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
@@ -20378,7 +20378,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // is sound (the field's owner drops it) and stays accepted.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
              fn rd(borrow r: R) -> i32 { return 0; } \
@@ -20397,7 +20397,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // fine and must not be over-rejected.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
                  let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
@@ -20416,7 +20416,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn block_wrapped_field_move_rejected_e0509() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
@@ -20435,7 +20435,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // move is caught at scrutinee evaluation (E0509), not the arm.
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
@@ -20451,7 +20451,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn if_wrapped_field_move_rejected_e0509() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
@@ -20471,7 +20471,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn enum_construction_consumes_noncopy_arg_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
                  let y: R = R { data: unsafe { 0 as *u8 } }; \
@@ -20487,7 +20487,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn struct_construction_consumes_noncopy_arg_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              struct W { r: R } \
              fn main() -> i32 { \
                  let y: R = R { data: unsafe { 0 as *u8 } }; \
@@ -20507,7 +20507,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // because root #2 marks `y` moved). Previously double-freed (DROPS=2).
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
@@ -20525,7 +20525,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // moved into exactly one aggregate, never used again, is sound.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct W { r: R } \
              fn main() -> i32 { \
@@ -20548,7 +20548,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // out of a place the deref doesn't own → double-free. Rejected (E0337).
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
                  let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
@@ -20565,7 +20565,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // The same partial move at a let-init value site (not a match).
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
                  let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
@@ -20584,7 +20584,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // is the `owns_value=false` branch of `classify_scrutinee`.
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn take(borrow e: E) -> i32 { \
                  let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
@@ -20601,7 +20601,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // the payload binding is itself a borrow. Must not be over-rejected.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn rd(borrow r: R) -> i32 { return 0; } \
              fn take(borrow e: E) -> i32 { \
@@ -20619,7 +20619,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // a harmless bit-copy, never a partial move. Must compile.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum Opt { Some(usize), None } \
              struct NodeView { id: R, parent: Opt } \
              fn main() -> i32 { \
@@ -20660,7 +20660,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // The reporter's repro: `let y = { x }; let z = x;`.
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
                  let _y: R = { x }; \
@@ -20675,7 +20675,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn let_if_wrapped_move_then_reuse_rejected_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
                  let _y: R = if unsafe { 0 as i32 } == 0 { x } else { R { data: unsafe { 0 as *u8 } } }; \
@@ -20690,7 +20690,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn enum_construct_wrapped_move_then_reuse_rejected_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
@@ -20706,7 +20706,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn struct_construct_wrapped_move_then_reuse_rejected_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              struct W { r: R } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
@@ -20722,7 +20722,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn call_arg_wrapped_move_then_reuse_rejected_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn sink(r: R) -> i32 { return 0; } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
@@ -20738,9 +20738,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn assign_wrapped_move_then_reuse_rejected_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
-                 let mut t: R = R { data: unsafe { 0 as *u8 } }; \
+                 var t: R = R { data: unsafe { 0 as *u8 } }; \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
                  t = { x }; \
                  let _z: R = x; \
@@ -20755,7 +20755,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // The wrapped move itself (no reuse) is sound — `x` moves into `y`.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
                  let _y: R = { x }; \
@@ -20771,9 +20771,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // old immediate-Ident-only `consume_arg_place` wrongly E0337'd it).
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
-             fn sink(move r: R) -> i32 { return 0; } \
+             fn sink(take r: R) -> i32 { return 0; } \
              fn main() -> i32 { let _n: i32 = sink(mkR()); return 0; }",
         );
     }
@@ -20788,7 +20788,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn return_borrow_marker_param_rejected_e0337() {
         let codes = errors(
             "struct B { x: i32 } \
-             impl B { fn drop(mut this) { return; } } \
+             impl B { fn drop(ref this) { return; } } \
              fn steal(borrow r: B) -> B { let out: B = r; return out; } \
              fn main() -> i32 { return 0; }",
         );
@@ -20799,8 +20799,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn return_mut_marker_param_rejected_e0337() {
         let codes = errors(
             "struct B { x: i32 } \
-             impl B { fn drop(mut this) { return; } } \
-             fn cursor(mut b: B) -> B { return b; } \
+             impl B { fn drop(ref this) { return; } } \
+             fn cursor(ref b: B) -> B { return b; } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
@@ -20812,8 +20812,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // result) — rejected under feature freeze.
         let codes = errors(
             "struct B { x: i32 } \
-             impl B { fn drop(mut this) { return; } } \
-             fn cursor(mut b: borrow A B) -> borrow A B { return b; } \
+             impl B { fn drop(ref this) { return; } } \
+             fn cursor(ref b: borrow A B) -> borrow A B { return b; } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
@@ -20826,7 +20826,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // drops exactly once). Must NOT be rejected — it's the surviving cursor.
         assert_clean(
             "struct B { x: i32 } \
-             impl B { fn drop(mut this) { return; } } \
+             impl B { fn drop(ref this) { return; } } \
              fn cursor(b: borrow A B) -> borrow A B { return b; } \
              fn main() -> i32 { return 0; }",
         );
@@ -20841,7 +20841,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn array_literal_borrow_element_rejected_e0337() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn f(borrow r: R) -> i32 { let _a: [R; 1] = [r]; return 0; } \
              fn main() -> i32 { return 0; }",
         );
@@ -20852,7 +20852,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn array_literal_reused_binding_rejected_e0335() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
              fn main() -> i32 { let x: R = mkR(); let _a: [R; 2] = [x, x]; return 0; }",
         );
@@ -20863,9 +20863,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn array_literal_drop_field_element_rejected_e0509() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              struct H { r: R } \
-             impl H { fn drop(mut this) { return; } } \
+             impl H { fn drop(ref this) { return; } } \
              fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
              fn main() -> i32 { let h: H = H { r: mkR() }; let _a: [R; 1] = [h.r]; return 0; }",
         );
@@ -20876,7 +20876,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn tuple_literal_borrow_element_rejected_e0337() {
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn f(borrow r: R) -> i32 { let _t: (R, i32) = (r, 0); return 0; } \
              fn main() -> i32 { return 0; }",
         );
@@ -20888,7 +20888,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // Distinct owned values into an array is a legitimate move of each.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } } \
+             impl R { fn drop(ref this) { return; } } \
              fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
              fn main() -> i32 { \
                  let p: R = mkR(); let q: R = mkR(); \
@@ -20905,7 +20905,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // owned value (the caller still drops it) → E0337, same as `return r`.
         let codes = errors(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } fn take(move this) -> R { return this; } } \
+             impl R { fn drop(ref this) { return; } fn take(take this) -> R { return this; } } \
              fn steal(borrow r: R) -> R { return r.take(); } \
              fn main() -> i32 { return 0; }",
         );
@@ -20917,7 +20917,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // The same `move self` call on an OWNED local is a legitimate move.
         assert_clean(
             "struct R { opaque data: *u8 } \
-             impl R { fn drop(mut this) { return; } fn take(move this) -> R { return this; } } \
+             impl R { fn drop(ref this) { return; } fn take(take this) -> R { return this; } } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
                  let _y: R = x.take(); \
@@ -20932,7 +20932,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // reusable. Must not be over-rejected by the returned-borrow check.
         assert_clean(
             "struct B { x: i32 } \
-             impl B { fn drop(mut this) { return; } } \
+             impl B { fn drop(ref this) { return; } } \
              fn rd(borrow b: B) -> i32 { return b.x; } \
              fn main() -> i32 { \
                  let v: B = B { x: 1 }; \
@@ -21004,7 +21004,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn migrated_atomic_intrinsic_outside_unsafe_e0801_v0019() {
         let codes = errors(
             "fn f() -> i32 { \
-                 let mut x: i32 = 0; \
+                 var x: i32 = 0; \
                  let p: *i32 = unsafe { #addr_of(x) }; \
                  return #atomic_load_i32_seqcst(p); \
              }",
@@ -21017,7 +21017,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn migrated_atomic_intrinsic_in_unsafe_clean_v0019() {
         assert_clean(
             "fn f() -> i32 { \
-                 let mut x: i32 = 0; \
+                 var x: i32 = 0; \
                  let p: *i32 = unsafe { #addr_of(x) }; \
                  return unsafe { #atomic_load_i32_seqcst(p) }; \
              }",
@@ -21038,7 +21038,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn legacy_cplus_call_spelling_rejected_v0019() {
         let codes = errors(
             "fn f() -> i32 { \
-                 let mut x: i32 = 0; \
+                 var x: i32 = 0; \
                  let p: *i32 = unsafe { #addr_of(x) }; \
                  return unsafe { __cplus_atomic_load_i32_seqcst(p) }; \
              }",
@@ -21093,7 +21093,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // A struct with a `drop` method is non-Copy and fails T: Copy.
         let codes = errors(
             "struct Resource { x: i32 } \
-             impl Resource { fn drop(mut this) {} } \
+             impl Resource { fn drop(ref this) {} } \
              fn pick[T: Copy](a: T, b: T) -> T { return a; } \
              fn main() -> i32 { \
                  let r: Resource = Resource { x: 0 }; \
@@ -21151,9 +21151,9 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // Method takes T as a param.
         assert_clean(
             "struct Box[T] { value: T } \
-             impl Box[T] { fn replace(mut this, new_value: T) { this.value = new_value; } } \
+             impl Box[T] { fn replace(ref this, new_value: T) { this.value = new_value; } } \
              fn main() -> i32 { \
-                 let mut b: Box[i32] = Box[i32] { value: 0 }; \
+                 var b: Box[i32] = Box[i32] { value: 0 }; \
                  b.replace(42); \
                  return b.value; \
              }",
@@ -21711,7 +21711,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "#[repr(C)]\n\
              struct R { fd: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              pub extern fn use_it(r: R) -> i32 { return r.fd; }",
         );
         assert!(codes.contains(&"E0410"), "expected E0410, got: {codes:?}");
@@ -21763,12 +21763,12 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     // blessed `string` in tests that just need "some owned heap-ish type" now
     // that the `string` spelling is gone and `Text` is import-required (so it
     // can't appear in a single unvendored snippet).
-    const DROP_STRUCT: &str = "struct Owned { x: i32 } impl Owned { fn drop(mut this) { return; } } ";
+    const DROP_STRUCT: &str = "struct Owned { x: i32 } impl Owned { fn drop(ref this) { return; } } ";
 
     // R4: a user-defined struct whose `drop` *frees* heap — the freeing-drop
     // signal `#[no_alloc]` (E0901) keys on. Replaces a `string` field, which
     // used to be the convenient freeing-drop type before the spelling's removal.
-    const FREEING_DROP: &str = "extern fn free(p: *u8); struct Handle { opaque p: *u8 } impl Handle { fn drop(mut this) { unsafe { free(this.p); }; } } ";
+    const FREEING_DROP: &str = "extern fn free(p: *u8); struct Handle { opaque p: *u8 } impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } } ";
 
     #[test]
     fn async_fn_body_returns_inner_type() {
@@ -21877,7 +21877,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `mut buf: Owned` is pointer-passed in Phase-6 ABI; storage
         // doesn't necessarily live in the coroutine frame.
         let codes = errors(&format!(
-            "{FUTURE_PRELUDE}{DROP_STRUCT}async fn proc(mut buf: Owned) -> i32 {{ return 0 as i32; }}"
+            "{FUTURE_PRELUDE}{DROP_STRUCT}async fn proc(ref buf: Owned) -> i32 {{ return 0 as i32; }}"
         ));
         assert!(
             codes.contains(&"E0900"),
@@ -22569,7 +22569,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn loop_unroll_in_range_clean() {
         assert_clean(
             "fn main() -> i32 { \
-                let mut i: i32 = 0; \
+                var i: i32 = 0; \
                 #[unroll(4)] while i < 10 { i = i + 1; } \
                 return 0; \
             }",
@@ -22580,7 +22580,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn loop_vectorize_width_clean() {
         assert_clean(
             "fn main() -> i32 { \
-                let mut s: i32 = 0; \
+                var s: i32 = 0; \
                 #[vectorize_width(8)] for i in 0..16 { s = s + i; } \
                 return 0; \
             }",
@@ -22592,7 +22592,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // N == 0 is out of range — must fire E0510.
         let codes = errors(
             "fn main() -> i32 { \
-                let mut i: i32 = 0; \
+                var i: i32 = 0; \
                 #[unroll(0)] while i < 10 { i = i + 1; } \
                 return 0; \
             }",
@@ -22605,7 +22605,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // N == 257 is out of range.
         let codes = errors(
             "fn main() -> i32 { \
-                let mut i: i32 = 0; \
+                var i: i32 = 0; \
                 #[unroll(257)] while i < 10 { i = i + 1; } \
                 return 0; \
             }",
@@ -22749,7 +22749,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "fn main() -> i32 { \
                 let v: f32x4 = f32x4::splat(1.0f32); \
-                let mut i: u32 = 0 as u32; \
+                var i: u32 = 0 as u32; \
                 let x: f32 = v.lane(i); \
                 if x != 0.0f32 { return 1; } \
                 return 0; \
@@ -23029,7 +23029,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "fn main() -> i32 { \
                 let v: i32x4 = i32x4::splat(1); \
-                let mut n: u32 = 2 as u32; \
+                var n: u32 = 2 as u32; \
                 let r: i32x4 = v.shl(n); \
                 if r.lane(0 as u32) != 0 { return 1; } \
                 return 0; \
@@ -23594,7 +23594,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
-             impl Handle { fn drop(mut this) { unsafe { free(this.p); }; } }\n\
+             impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } }\n\
              #[no_alloc] fn f(raw: *u8) -> i32 {\n\
                  let h: Handle = Handle { p: raw };\n\
                  return 0;\n\
@@ -23610,7 +23610,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // scope exit is allowed.
         assert_clean(
             "struct Tracker { opaque p: *u8 }\n\
-             impl Tracker { #[no_alloc] fn drop(mut this) { return; } }\n\
+             impl Tracker { #[no_alloc] fn drop(ref this) { return; } }\n\
              #[no_alloc] fn f(raw: *u8) -> i32 {\n\
                  let t: Tracker = Tracker { p: raw };\n\
                  return 0;\n\
@@ -23671,8 +23671,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
-             impl Handle { fn drop(mut this) { unsafe { free(this.p); }; } }\n\
-             #[no_alloc] fn f(move h: Handle) -> i32 { return 0; }\n\
+             impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } }\n\
+             #[no_alloc] fn f(take h: Handle) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
@@ -23707,7 +23707,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // callee drop.
         assert_clean(&format!(
             "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
-             #[no_alloc] fn f(mut w: Wrap) -> i32 {{ return w.tag; }}\n\
+             #[no_alloc] fn f(ref w: Wrap) -> i32 {{ return w.tag; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
     }
@@ -23718,8 +23718,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // non-allocating, so running it at scope exit is allowed.
         assert_clean(
             "struct Tracker { opaque p: *u8 }\n\
-             impl Tracker { #[no_alloc] fn drop(mut this) { return; } }\n\
-             #[no_alloc] fn f(move t: Tracker) -> i32 { return 0; }\n\
+             impl Tracker { #[no_alloc] fn drop(ref this) { return; } }\n\
+             #[no_alloc] fn f(take t: Tracker) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -23732,8 +23732,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
              impl Handle {\n\
-                 fn drop(mut this) { unsafe { free(this.p); }; }\n\
-                 #[no_alloc] fn consume(move this) -> i32 { return 0; }\n\
+                 fn drop(ref this) { unsafe { free(this.p); }; }\n\
+                 #[no_alloc] fn consume(take this) -> i32 { return 0; }\n\
              }\n\
              fn main() -> i32 { return 0; }",
         );
@@ -23748,7 +23748,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
-             impl Handle { fn drop(mut this) { unsafe { free(this.p); }; } }\n\
+             impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } }\n\
              #[no_alloc] fn f(raw: *u8) -> i32 { Handle { p: raw }; return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
@@ -24155,7 +24155,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
 
     // v0.0.16 move tracking: `let y = x;` on a non-Copy whole binding *moves* it.
     const MOVE_HDR: &str = "struct B { opaque data: *u8 }\n\
-         impl B { fn drop(mut this) { return; } }\n\
+         impl B { fn drop(ref this) { return; } }\n\
          fn nb() -> B { return B { data: unsafe { 0 as *u8 } }; }\n";
 
     #[test]
@@ -24174,7 +24174,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // use-after-move on iteration 2 (and a double-free now that loop bodies
         // drop their locals). Must be rejected.
         let src = format!(
-            "{MOVE_HDR}fn t() -> i32 {{ let mut b: B = nb(); let mut i: i32 = 0; while i < 2 {{ let x: B = b; i = i + 1; }} return 0; }}\n\
+            "{MOVE_HDR}fn t() -> i32 {{ var b: B = nb(); var i: i32 = 0; while i < 2 {{ let x: B = b; i = i + 1; }} return 0; }}\n\
              fn main() -> i32 {{ return 0; }}"
         );
         let codes = errors(&src);
@@ -24186,7 +24186,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // Re-assigning the binding before the move each iteration is valid — the
         // move-in-loop check must NOT false-positive here.
         assert_clean(&format!(
-            "{MOVE_HDR}fn t() -> i32 {{ let mut b: B = nb(); let mut i: i32 = 0; while i < 2 {{ b = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
+            "{MOVE_HDR}fn t() -> i32 {{ var b: B = nb(); var i: i32 = 0; while i < 2 {{ b = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
     }
@@ -24196,7 +24196,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // A binding declared *inside* the loop is fresh each iteration — moving
         // it is fine.
         assert_clean(&format!(
-            "{MOVE_HDR}fn t() -> i32 {{ let mut i: i32 = 0; while i < 2 {{ let b: B = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
+            "{MOVE_HDR}fn t() -> i32 {{ var i: i32 = 0; while i < 2 {{ let b: B = nb(); let x: B = b; i = i + 1; }} return 0; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
     }
@@ -24204,7 +24204,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     #[test]
     fn reassign_after_move_clears_moved() {
         assert_clean(&format!(
-            "{MOVE_HDR}fn t() -> i32 {{ let mut b: B = nb(); let x: B = b; b = nb(); let y: B = b; return 0; }}\n\
+            "{MOVE_HDR}fn t() -> i32 {{ var b: B = nb(); let x: B = b; b = nb(); let y: B = b; return 0; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
     }
@@ -24345,7 +24345,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn asm_tier2_in_out_clean() {
         assert_clean(
             "fn add(a: i64, b: i64) -> i64 {\n\
-                 let mut s: i64 = 0;\n\
+                 var s: i64 = 0;\n\
                  unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
                  return s;\n\
              }\n\
@@ -24357,7 +24357,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn asm_tier2_inout_clean() {
         assert_clean(
             "fn inc(x: i64) -> i64 {\n\
-                 let mut v: i64 = x;\n\
+                 var v: i64 = x;\n\
                  unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
                  return v;\n\
              }\n\
@@ -24370,7 +24370,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // Explicit-register operand needs no `{name}` placeholder.
         assert_clean(
             "fn getpid() -> i64 {\n\
-                 let mut p: i64 = 0;\n\
+                 var p: i64 = 0;\n\
                  unsafe { #asm(\"mov x16, #20\", p = out(\"x0\") p, clobber(\"x16\")); }\n\
                  return p;\n\
              }\n\
@@ -24382,7 +24382,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn asm_tier2_outside_unsafe_e0801() {
         let codes = errors(
             "fn f(a: i64) -> i64 {\n\
-                 let mut s: i64 = 0;\n\
+                 var s: i64 = 0;\n\
                  #asm(\"mov {s}, {a}\", s = out(reg) s, a = in(reg) a);\n\
                  return s;\n\
              }\n\
@@ -24426,7 +24426,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn asm_tier2_out_must_be_variable_e0895() {
         let codes = errors(
             "struct P { x: i64 }\n\
-             fn f(mut p: P, a: i64) {\n\
+             fn f(ref p: P, a: i64) {\n\
                  unsafe { #asm(\"mov {o}, {a}\", o = out(reg) p.x, a = in(reg) a); }\n\
                  return;\n\
              }\n\

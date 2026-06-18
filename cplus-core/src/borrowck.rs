@@ -3497,7 +3497,7 @@ fn f() {
     fn copy_oracle_marks_drop_struct_non_copy() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }";
+impl B { fn drop(ref this) { return; } }";
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
         let oracle = CopyOracle::build(&prog);
@@ -3546,7 +3546,7 @@ impl B { fn drop(mut this) { return; } }";
     fn copy_oracle_propagates_non_copy_through_struct_field() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 struct Outer { b: B, n: i32 }";
         let toks = tokenize(src).expect("lex");
         let prog = parse(toks).expect("parse");
@@ -3586,7 +3586,7 @@ struct Outer { b: B, n: i32 }";
         // (Sema may eventually lint this as E0336 but for now silently
         // accepts; borrowck must not over-track.)
         let src = "\
-fn sink(move x: i32) { return; }
+fn sink(take x: i32) { return; }
 fn caller() {
   let y: i32 = 7;
   sink(y);
@@ -3601,8 +3601,8 @@ fn caller() {
         // B is non-Copy because it has a `drop`. The move actually consumes.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn sink(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   sink(y);
@@ -3624,8 +3624,8 @@ fn caller() {
     fn e0370_fires_on_move_and_read_of_same_non_copy_binding() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn drain(move b: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
@@ -3642,7 +3642,7 @@ fn caller() {
     #[test]
     fn e0370_does_not_fire_on_copy_binding() {
         let src = "\
-fn drain(move x: i32, n: i32) { return; }
+fn drain(take x: i32, n: i32) { return; }
 fn peek(x: i32) -> i32 { return x; }
 fn caller() {
   let y: i32 = 1;
@@ -3666,8 +3666,8 @@ fn caller() {
     fn bare_noncopy_struct_arg_while_borrowed_is_move_e0372() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn take(b: B) -> i32 { return 0; }
 fn caller() {
   let v: B = B { x: 1 };
@@ -3686,9 +3686,9 @@ fn caller() {
     fn bare_noncopy_enum_arg_while_borrowed_is_move_e0372() {
         let src = "\
 struct Leaf { tag: i32 }
-impl Leaf { fn drop(mut this) { return; } }
+impl Leaf { fn drop(ref this) { return; } }
 enum E { A(Leaf), B }
-fn cursor(mut e: E) -> E { return e; }
+fn cursor(ref e: E) -> E { return e; }
 fn take(e: E) -> i32 { return 0; }
 fn caller() {
   let v: E = E::B;
@@ -3707,8 +3707,8 @@ fn caller() {
     fn e0370_does_not_fire_when_other_arg_does_not_read_binding() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn drain(move b: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   let z: i32 = 42;
@@ -3733,8 +3733,8 @@ fn caller() {
         // is about confirming borrowck doesn't double-fire / fire-where-it-can't-prove.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn drain(move b: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y = B { x: 1 };
@@ -3769,8 +3769,8 @@ fn main() -> i32 { return add(2, 3); }";
         // merge-rule behavior.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn sink(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
 fn caller(c: bool) {
   let y: B = B { x: 1 };
   if c {
@@ -3796,8 +3796,8 @@ fn caller(c: bool) {
         // Moved — not MaybePartial.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn sink(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
 fn caller(c: bool) {
   let y: B = B { x: 1 };
   if c {
@@ -3824,8 +3824,8 @@ fn caller(c: bool) {
         // the join inherits the pre-if state where `y` is Owned.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn sink(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
 fn caller(c: bool) -> i32 {
   let y: B = B { x: 1 };
   if c {
@@ -3880,8 +3880,8 @@ fn caller(c: bool) {
         // (pre-state Owned merged with body-end Moved).
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn sink(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn sink(take b: B) { return; }
 fn caller(c: bool) {
   let y: B = B { x: 1 };
   while c {
@@ -3908,7 +3908,7 @@ fn caller(c: bool) {
         // Owned. State after the if is Owned, not MaybePartial. No
         // E0371.
         let src = "\
-fn sink(move x: i32) { return; }
+fn sink(take x: i32) { return; }
 fn caller(c: bool) {
   let y: i32 = 1;
   if c { sink(y); }
@@ -3958,7 +3958,7 @@ fn caller(c: Color) -> i32 {
         // `return b;`. Rule E1 matches.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn passthrough(b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -3973,9 +3973,9 @@ fn passthrough(b: B) -> B { return b; }";
         // parameter still qualifies under E1.
         let src = "\
 struct Inner { x: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Outer { inner: Inner }
-impl Outer { fn drop(mut this) { return; } }
+impl Outer { fn drop(ref this) { return; } }
 fn pull(o: Outer) -> Inner { return o.inner; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -3990,7 +3990,7 @@ fn pull(o: Outer) -> Inner { return o.inner; }";
         // — the return is owned, not a borrow.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn make(b: B) -> B { return B { x: 0 }; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source(&prog, "make"), None);
@@ -4010,8 +4010,8 @@ fn make(b: B) -> B { return B { x: 0 }; }";
         // transferred owned value, not a borrow.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn consume(move b: B) -> B { return b; }";
+impl B { fn drop(ref this) { return; } }
+fn consume(take b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source(&prog, "consume"), None);
     }
@@ -4023,8 +4023,8 @@ fn consume(move b: B) -> B { return b; }";
         // Compare to Rule E1 (shared form) which requires no marker.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn through(mut b: B) -> B { return b; }";
+impl B { fn drop(ref this) { return; } }
+fn through(ref b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(
             return_borrow_source_with_flavor(&prog, "through"),
@@ -4040,7 +4040,7 @@ fn through(mut b: B) -> B { return b; }";
         // set. (E1 would have required exactly one param.)
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn pick(a: B, b: B) -> B { return a; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -4054,7 +4054,7 @@ fn pick(a: B, b: B) -> B { return a; }";
         // Void return — no value flows.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn noop(b: B) { return; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source(&prog, "noop"), None);
@@ -4067,7 +4067,7 @@ fn noop(b: B) { return; }";
         // return to be rooted at the param.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn maybe(b: B, c: bool) -> B {
   if c {
     return b;
@@ -4088,7 +4088,7 @@ fn maybe(b: B, c: bool) -> B {
         // Use a match on a same-file enum.)
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn weird(b: B) -> B {
   // A nested block expression that diverges-on-one-arm via match-of-a-field
   match b.x {
@@ -4113,7 +4113,7 @@ fn weird(b: B) -> B {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
+  fn drop(ref this) { return; }
   fn pass(this) -> B { return this; }
 }";
         let prog = parse_prog(src);
@@ -4129,10 +4129,10 @@ impl B {
         // the receiver.
         let src = "\
 struct Inner { x: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Outer { inner: Inner }
 impl Outer {
-  fn drop(mut this) { return; }
+  fn drop(ref this) { return; }
   fn payload(this) -> Inner { return this.inner; }
 }";
         let prog = parse_prog(src);
@@ -4150,8 +4150,8 @@ impl Outer {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
-  fn pass(mut this) -> B { return this; }
+  fn drop(ref this) { return; }
+  fn pass(ref this) -> B { return this; }
 }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -4167,8 +4167,8 @@ impl B {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
-  fn pass(move this) -> B { return this; }
+  fn drop(ref this) { return; }
+  fn pass(take this) -> B { return this; }
 }";
         let prog = parse_prog(src);
         assert_eq!(method_return_borrow_source(&prog, "B", "pass"), None);
@@ -4196,7 +4196,7 @@ impl P {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
+  fn drop(ref this) { return; }
   fn pass(this) -> B { return this; }
 }
 fn passthrough(b: B) -> B { return b; }
@@ -4214,7 +4214,7 @@ fn main() -> i32 { return 0; }";
         // first or the second. Rule E3 records MultiParam([0, 1]).
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x {
     return a;
@@ -4234,7 +4234,7 @@ fn longest(a: B, b: B) -> B {
         // `a` and `b`. State after the let: both BorrowedShared(1).
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
@@ -4267,12 +4267,12 @@ fn caller() {
         // the same path through `check_move_against_borrow`.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -4292,12 +4292,12 @@ fn caller() {
         // The mirror case — moving `b` instead of `a`. Same diagnostic.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -4319,7 +4319,7 @@ fn caller() {
         // disqualifies.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn maybe(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return B { x: 0 };
@@ -4333,7 +4333,7 @@ fn maybe(a: B, b: B) -> B {
         // Rule E3 requires every param non-Copy. A Copy param disqualifies.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn weird(a: B, n: i32) -> B { return a; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source(&prog, "weird"), None);
@@ -4344,8 +4344,8 @@ fn weird(a: B, n: i32) -> B { return a; }";
         // Rule E3 requires shared-borrow form on every param.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn weird(move a: B, b: B) -> B { return a; }";
+impl B { fn drop(ref this) { return; } }
+fn weird(take a: B, b: B) -> B { return a; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source(&prog, "weird"), None);
     }
@@ -4357,12 +4357,12 @@ fn weird(move a: B, b: B) -> B { return a; }";
         // of `a` is permitted.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -4387,7 +4387,7 @@ fn caller() {
         // After the let-stmt, `x` is `BorrowedShared(1)`.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn passthrough(b: B) -> B { return b; }
 fn caller() {
   let x: B = B { x: 1 };
@@ -4412,7 +4412,7 @@ fn caller() {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
+  fn drop(ref this) { return; }
   fn pass(this) -> B { return this; }
 }
 fn caller() {
@@ -4438,9 +4438,9 @@ fn caller() {
         // is borrowed and fires E0372.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn passthrough(b: B) -> B { return b; }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let x: B = B { x: 1 };
   let r: B = passthrough(x);
@@ -4461,9 +4461,9 @@ fn caller() {
         // its borrow is released, so the move is fine.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn passthrough(b: B) -> B { return b; }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let x: B = B { x: 1 };
   {
@@ -4485,7 +4485,7 @@ fn caller() {
         // is registered. Moving `x` is fine.
         let src = "\
 fn passthrough(b: i32) -> i32 { return b; }
-fn drain(move b: i32) { return; }
+fn drain(take b: i32) { return; }
 fn caller() {
   let x: i32 = 1;
   let r: i32 = passthrough(x);
@@ -4505,9 +4505,9 @@ fn caller() {
         // releases its borrow on x; subsequent `drain_b(move x)` is OK.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn passthrough(b: B) -> B { return b; }
-fn drain_b(move b: B) { return; }
+fn drain_b(take b: B) { return; }
 fn caller() {
   let x: B = B { x: 1 };
   let r: B = passthrough(x);
@@ -4533,8 +4533,8 @@ fn caller() {
     fn diagnostic_carries_machine_applicable_suggestion() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn drain(move b: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
@@ -4560,8 +4560,8 @@ fn caller() {
     fn e0380_fires_on_two_mut_borrows_of_same_non_copy_binding() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn modify_both(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   modify_both(y, y);
@@ -4584,7 +4584,7 @@ fn caller() {
     fn e0380_does_not_fire_on_two_mut_copy_args() {
         // `mut x: i32` is local-mutability for Copy types, not a borrow.
         let src = "\
-fn modify_both(mut a: i32, mut b: i32) { return; }
+fn modify_both(ref a: i32, ref b: i32) { return; }
 fn caller() {
   let y: i32 = 1;
   modify_both(y, y);
@@ -4601,8 +4601,8 @@ fn caller() {
     fn e0380_does_not_fire_on_different_bindings() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn modify_both(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify_both(ref a: B, ref b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   let z: B = B { x: 2 };
@@ -4620,8 +4620,8 @@ fn caller() {
     fn e0381_fires_on_mut_arg_with_sibling_read() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn write_thing(mut a: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_thing(ref a: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
@@ -4638,7 +4638,7 @@ fn caller() {
     #[test]
     fn e0381_does_not_fire_on_copy_binding() {
         let src = "\
-fn write_thing(mut a: i32, n: i32) { return; }
+fn write_thing(ref a: i32, n: i32) { return; }
 fn peek(x: i32) -> i32 { return x; }
 fn caller() {
   let y: i32 = 1;
@@ -4656,8 +4656,8 @@ fn caller() {
     fn e0382_fires_on_mut_arg_with_sibling_move() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn write_and_take(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_and_take(ref a: B, take b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   write_and_take(y, y);
@@ -4674,8 +4674,8 @@ fn caller() {
     fn e0382_does_not_fire_when_other_arg_does_not_name_binding() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn modify(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn modify(ref a: B, take b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   let z: B = B { x: 2 };
@@ -4696,8 +4696,8 @@ fn caller() {
         // sibling is a more specific (and structurally different) case.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn write_and_take(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn write_and_take(ref a: B, take b: B) { return; }
 fn caller() {
   let y: B = B { x: 1 };
   write_and_take(y, y);
@@ -4722,16 +4722,16 @@ fn caller() {
                 "E0380",
                 "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn f(mut a: B, mut b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn f(ref a: B, ref b: B) { return; }
 fn c() { let y: B = B { x: 1 }; f(y, y); return; }",
             ),
             (
                 "E0381",
                 "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn f(mut a: B, n: i32) { return; }
+impl B { fn drop(ref this) { return; } }
+fn f(ref a: B, n: i32) { return; }
 fn p(b: B) -> i32 { return b.x; }
 fn c() { let y: B = B { x: 1 }; f(y, p(y)); return; }",
             ),
@@ -4739,8 +4739,8 @@ fn c() { let y: B = B { x: 1 }; f(y, p(y)); return; }",
                 "E0382",
                 "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn f(mut a: B, move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn f(ref a: B, take b: B) { return; }
 fn c() { let y: B = B { x: 1 }; f(y, y); return; }",
             ),
         ] {
@@ -4809,8 +4809,8 @@ fn c() { let y: B = B { x: 1 }; f(y, y); return; }",
     fn e1_mut_call_records_exclusive_borrow_in_state() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -4829,8 +4829,8 @@ fn caller() {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
-  fn cursor(mut this) -> B { return this; }
+  fn drop(ref this) { return; }
+  fn cursor(ref this) -> B { return this; }
 }
 fn caller() {
   let v: B = B { x: 1 };
@@ -4848,8 +4848,8 @@ fn caller() {
     fn e0383_fires_on_read_of_exclusively_borrowed_place() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
@@ -4870,8 +4870,8 @@ fn caller() {
         // (end of the `if` body); reading `v` after the `if` is fine.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
@@ -4896,8 +4896,8 @@ fn caller() {
         // fine: it owns the borrow that points at `v`.)
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
@@ -4919,9 +4919,9 @@ fn caller() {
         // is the wrong story here.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
-fn drain(move b: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn drain(take b: B) { return; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -4956,7 +4956,7 @@ fn caller() {
         // `mut x: i32` is local-mutability for Copy, not a borrow. The
         // E1-mut detector must require non-Copy.
         let src = "\
-fn handle(mut x: i32) -> i32 { return x; }
+fn handle(ref x: i32) -> i32 { return x; }
 fn caller() {
   let v: i32 = 1;
   let r: i32 = handle(v);
@@ -4974,8 +4974,8 @@ fn caller() {
     fn e1_mut_classification_with_flavor() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn through(mut b: B) -> B { return b; }";
+impl B { fn drop(ref this) { return; } }
+fn through(ref b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(
             return_borrow_source_with_flavor(&prog, "through"),
@@ -4987,7 +4987,7 @@ fn through(mut b: B) -> B { return b; }";
     fn e1_shared_classification_with_flavor() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn through(b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -5002,8 +5002,8 @@ fn through(b: B) -> B { return b; }";
         // No elision rule applies.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn drain(move b: B) -> B { return b; }";
+impl B { fn drop(ref this) { return; } }
+fn drain(take b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source_with_flavor(&prog, "drain"), None);
     }
@@ -5077,10 +5077,10 @@ fn drain(move b: B) -> B { return b; }";
         // claim disjoint sub-places and admit.
         let src = "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn modify_both(mut a: Inner, mut b: Inner) { return; }
+impl Pair { fn drop(ref this) { return; } }
+fn modify_both(ref a: Inner, ref b: Inner) { return; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   modify_both(p.left, p.right);
@@ -5105,10 +5105,10 @@ fn caller() {
         // contains sub-place). Fires E0374 not E0381.
         let src = "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn write_pair(mut a: Pair, b: Inner) { return; }
+impl Pair { fn drop(ref this) { return; } }
+fn write_pair(ref a: Pair, b: Inner) { return; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   write_pair(p, p.left);
@@ -5128,10 +5128,10 @@ fn caller() {
         // `p` past that point fires E0374.
         let src = "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn cursor(mut i: Inner) -> Inner { return i; }
+impl Pair { fn drop(ref this) { return; } }
+fn cursor(ref i: Inner) -> Inner { return i; }
 fn peek_pair(borrow p: Pair) -> i32 { return 0; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
@@ -5152,10 +5152,10 @@ fn caller() {
         // doesn't block reading `p.right`.
         let src = "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut this) { return; } }
+impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut this) { return; } }
-fn cursor(mut i: Inner) -> Inner { return i; }
+impl Pair { fn drop(ref this) { return; } }
+fn cursor(ref i: Inner) -> Inner { return i; }
 fn peek(i: Inner) -> i32 { return i.v; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
@@ -5201,8 +5201,8 @@ fn caller() {
     fn e3_mut_fires_on_multi_mut_param_with_param_rooted_returns() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn longest_mut(mut a: B, mut b: B) -> B {
+impl B { fn drop(ref this) { return; } }
+fn longest_mut(ref a: B, ref b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }";
@@ -5223,8 +5223,8 @@ fn longest_mut(mut a: B, mut b: B) -> B {
         // bias). E0384 fires separately when any return IS rooted.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn merge_mut(mut a: B, mut b: B) -> B {
+impl B { fn drop(ref this) { return; } }
+fn merge_mut(ref a: B, ref b: B) -> B {
   if a.x > 0 { return a; }
   return B { x: 0 };
 }";
@@ -5239,8 +5239,8 @@ fn merge_mut(mut a: B, mut b: B) -> B {
         // qualify for either E3 or E3-mut.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn mixed(a: B, mut b: B) -> B { return b; }";
+impl B { fn drop(ref this) { return; } }
+fn mixed(a: B, ref b: B) -> B { return b; }";
         let prog = parse_prog(src);
         assert_eq!(return_borrow_source_with_flavor(&prog, "mixed"), None);
     }
@@ -5253,7 +5253,7 @@ fn mixed(a: B, mut b: B) -> B { return b; }";
         // E0384 fires with annotation guidance.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: B, b: B) -> B {
   if a.x > 0 { return a; }
   return B { x: 0 };
@@ -5272,7 +5272,7 @@ fn merge(a: B, b: B) -> B {
         // would help; the return doesn't borrow at all).
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn always_fresh(a: B, b: B) -> B { return B { x: 0 }; }";
         let codes = check_src(src);
         assert!(
@@ -5287,7 +5287,7 @@ fn always_fresh(a: B, b: B) -> B { return B { x: 0 }; }";
         // — every return is rooted. E3 matches; no annotation needed.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn longest(a: B, b: B) -> B {
   if a.x > b.x { return a; }
   return b;
@@ -5303,7 +5303,7 @@ fn longest(a: B, b: B) -> B {
     fn e0384_carries_annotation_suggestion() {
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: B, b: B) -> B {
   if a.x > 0 { return a; }
   return B { x: 0 };
@@ -5333,7 +5333,7 @@ fn merge(a: B, b: B) -> B {
         let src = "\
 struct B { x: i32 }
 impl B {
-  fn drop(mut this) { return; }
+  fn drop(ref this) { return; }
   fn merge(a: B, b: B) -> B {
     if a.x > 0 { return a; }
     return B { x: 0 };
@@ -5354,7 +5354,7 @@ impl B {
         // single matching region → Shared Param(0).
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn through(xs: borrow A B) -> borrow A B { return xs; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -5368,7 +5368,7 @@ fn through(xs: borrow A B) -> borrow A B { return xs; }";
         // Two params sharing region A → MultiParam([0, 1]) Shared.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
   if a.x > 0 { return a; }
   return b;
@@ -5389,8 +5389,8 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
         // result flavor to Exclusive.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut buf: borrow A B) -> borrow A B { return buf; }";
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref buf: borrow A B) -> borrow A B { return buf; }";
         let prog = parse_prog(src);
         assert_eq!(
             return_borrow_source_with_flavor(&prog, "cursor"),
@@ -5404,9 +5404,9 @@ fn cursor(mut buf: borrow A B) -> borrow A B { return buf; }";
         // — return matches A but only `xs` is in region A. Param(0) Shared.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 struct Ctx { v: i32 }
-impl Ctx { fn drop(mut this) { return; } }
+impl Ctx { fn drop(ref this) { return; } }
 fn split(xs: borrow A B, ctx: borrow R Ctx) -> borrow A B { return xs; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -5423,7 +5423,7 @@ fn split(xs: borrow A B, ctx: borrow R Ctx) -> borrow A B { return xs; }";
         // believe it. (E0385 mismatch-checking is future polish.)
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
   if a.x > 0 { return a; }
   return B { x: 0 };
@@ -5442,12 +5442,12 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
         // parameter. Moving either source fires E0372.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
   if a.x > 0 { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -5469,7 +5469,7 @@ fn caller() {
         // explicit form wins, classifying as MultiParam.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
+impl B { fn drop(ref this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B { return a; }";
         let prog = parse_prog(src);
         assert_eq!(
@@ -5488,12 +5488,12 @@ fn merge(a: borrow A B, b: borrow A B) -> borrow A B { return a; }";
         // any parameter while the result is alive fires E0372.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn longest_mut(mut a: B, mut b: B) -> B {
+impl B { fn drop(ref this) { return; } }
+fn longest_mut(ref a: B, ref b: B) -> B {
   if a.x > b.x { return a; }
   return b;
 }
-fn drain(move b: B) { return; }
+fn drain(take b: B) { return; }
 fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
@@ -5513,9 +5513,9 @@ fn caller() {
         // Moving the exclusive borrower releases the borrow on its source.
         let src = "\
 struct B { x: i32 }
-impl B { fn drop(mut this) { return; } }
-fn cursor(mut b: B) -> B { return b; }
-fn drain(move c: B) { return; }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn drain(take c: B) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };

@@ -15751,7 +15751,7 @@ mod tests {
     const OWNED24: &str = "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct S24 { a: *u8, b: i64, c: i64 }\n\
-         impl S24 { fn drop(mut this) { unsafe { free(this.a); } return; } }\n\
+         impl S24 { fn drop(ref this) { unsafe { free(this.a); } return; } }\n\
          fn mk24() -> S24 { return S24 { a: unsafe { malloc(8 as usize) }, b: 0 as i64, c: 0 as i64 }; }\n";
 
     fn gen_src_with(src: &str, mode: BuildMode) -> String {
@@ -15978,7 +15978,7 @@ mod tests {
     fn unroll_attribute_emits_llvm_loop_metadata() {
         let ir = gen_src(
             "fn main() -> i32 { \
-                let mut i: i32 = 0; \
+                var i: i32 = 0; \
                 #[unroll(4)] while i < 10 { i = i + 1; } \
                 return 0; \
             }",
@@ -16000,7 +16000,7 @@ mod tests {
     fn vectorize_width_attribute_on_for_loop() {
         let ir = gen_src(
             "fn main() -> i32 { \
-                let mut sum: i32 = 0; \
+                var sum: i32 = 0; \
                 #[vectorize_width(8)] for i in 0..16 { sum = sum + i; } \
                 return 0; \
             }",
@@ -16017,7 +16017,7 @@ mod tests {
         // back-edge shape (no trailing `, !llvm.loop !N`).
         let ir = gen_src(
             "fn main() -> i32 { \
-                let mut i: i32 = 0; \
+                var i: i32 = 0; \
                 while i < 10 { i = i + 1; } \
                 return 0; \
             }",
@@ -16405,7 +16405,7 @@ mod tests {
     #[test]
     fn while_loop_has_header_and_exit() {
         let ir = gen_src(
-            "fn main() -> i32 { let mut i: i32 = 0; while i < 5 { i = i + 1; } return i; }",
+            "fn main() -> i32 { var i: i32 = 0; while i < 5 { i = i + 1; } return i; }",
         );
         assert!(ir.contains("br label %bb"));
         assert!(ir.contains("icmp slt"));
@@ -16414,7 +16414,7 @@ mod tests {
     #[test]
     fn for_range_inclusive_uses_sle() {
         let ir = gen_src(
-            "fn main() -> i32 { let mut s: i32 = 0; for i in 0..=3 { s = s + i; } return s; }",
+            "fn main() -> i32 { var s: i32 = 0; for i in 0..=3 { s = s + i; } return s; }",
         );
         assert!(ir.contains("icmp sle i32"));
     }
@@ -16422,7 +16422,7 @@ mod tests {
     #[test]
     fn for_range_exclusive_uses_slt() {
         let ir = gen_src(
-            "fn main() -> i32 { let mut s: i32 = 0; for i in 0..3 { s = s + i; } return s; }",
+            "fn main() -> i32 { var s: i32 = 0; for i in 0..3 { s = s + i; } return s; }",
         );
         assert!(ir.contains("icmp slt i32"));
     }
@@ -16526,9 +16526,9 @@ mod tests {
         // produces.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         // Definition still has the attrs (pre-existing behavior).
         assert!(
@@ -16551,7 +16551,7 @@ mod tests {
         // gets `readonly` (not `noalias`) at both def and call site.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
              fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 1 }; return peek(x); }",
         );
@@ -16623,8 +16623,8 @@ mod tests {
         // ownership transfers aren't a getter shape).
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(mut this) -> i32 { return this.x; } }\n\
-             fn main() -> i32 { let mut p: P = P { x: 7 }; return p.get(); }",
+             impl P { fn get(ref this) -> i32 { return this.x; } }\n\
+             fn main() -> i32 { var p: P = P { x: 7 }; return p.get(); }",
         );
         assert!(
             ir.contains("call fastcc i32 @P.get("),
@@ -16844,9 +16844,9 @@ mod tests {
         // field at scope exit (here: a moved-in owning param).
         let ir = gen_src(
             "struct Inner { opaque p: *u8 }\n\
-             impl Inner { fn drop(mut this) { return; } }\n\
+             impl Inner { fn drop(ref this) { return; } }\n\
              struct Outer { inner: Inner }\n\
-             fn consume(move o: Outer) -> i32 { return 0; }\n\
+             fn consume(take o: Outer) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -16861,9 +16861,9 @@ mod tests {
         // tag and tears down the active variant's payload.
         let ir = gen_src(
             "struct Inner { opaque p: *u8 }\n\
-             impl Inner { fn drop(mut this) { return; } }\n\
+             impl Inner { fn drop(ref this) { return; } }\n\
              enum E { Has(Inner), None }\n\
-             fn consume(move e: E) -> i32 { return 0; }\n\
+             fn consume(take e: E) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
         // The drop path (not a match) emits a tag switch + the payload drop.
@@ -16882,7 +16882,7 @@ mod tests {
         // never reached — the elements leaked.
         let ir = gen_src(
             "struct Cell { id: i32 }\n\
-             impl Cell { fn drop(mut this) { return; } }\n\
+             impl Cell { fn drop(ref this) { return; } }\n\
              fn mk(i: i32) -> Cell { return Cell { id: i }; }\n\
              fn scope_array() { let _cells: [Cell; 2] = [mk(1), mk(2)]; return; }\n\
              fn main() -> i32 { scope_array(); return 0; }",
@@ -16903,8 +16903,8 @@ mod tests {
         // pre-drop at the `=`, and the scope-exit drop of the final value.
         let ir = gen_src(
             "struct Owner { id: i32 }\n\
-             impl Owner { fn drop(mut this) { return; } }\n\
-             fn reassign() { let mut x: Owner = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
+             impl Owner { fn drop(ref this) { return; } }\n\
+             fn reassign() { var x: Owner = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
              fn main() -> i32 { reassign(); return 0; }",
         );
         let drops = ir.matches("call preserve_nonecc void @Owner.drop").count();
@@ -16922,8 +16922,8 @@ mod tests {
         // garbage). `gen_assign` re-arms the flag to `true` after each store.
         let ir = gen_src(
             "struct Owner { id: i32 }\n\
-             impl Owner { fn drop(mut this) { return; } }\n\
-             fn f() { let mut x: Owner; x = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
+             impl Owner { fn drop(ref this) { return; } }\n\
+             fn f() { var x: Owner; x = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
              fn main() -> i32 { f(); return 0; }",
         );
         assert!(
@@ -16940,10 +16940,10 @@ mod tests {
         // stored straight over the old value.
         let ir = gen_src(
             "struct R { id: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              struct Holder { r: R }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
-             fn f() { let mut h: Holder = Holder { r: mk() }; h.r = mk(); return; }\n\
+             fn f() { var h: Holder = Holder { r: mk() }; h.r = mk(); return; }\n\
              fn main() -> i32 { f(); return 0; }",
         );
         // In f(): the pre-drop at `h.r = mk()` plus the scope-exit drop of the
@@ -16964,9 +16964,9 @@ mod tests {
         // which is excluded by `place_is_safe_owned`.
         let ir = gen_src(
             "struct R { id: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
-             fn f() { let mut a: [R; 2] = [mk(), mk()]; a[0 as usize] = mk(); return; }\n\
+             fn f() { var a: [R; 2] = [mk(), mk()]; a[0 as usize] = mk(); return; }\n\
              fn main() -> i32 { f(); return 0; }",
         );
         // pre-drop at `a[0] = mk()` (1) + scope-exit drop of [R; 2] (2) = 3.
@@ -16986,7 +16986,7 @@ mod tests {
         let ir = gen_src(
             "extern fn malloc(n: usize) -> *u8;\n\
              struct R { id: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
              fn f() {\n\
                  let pr: *R = unsafe { malloc(#size_of::[R]()) as *R };\n\
@@ -17022,7 +17022,7 @@ mod tests {
         // `{name}` placeholders rewritten to `$0/$1/$2`, result stored back.
         let ir = gen_src(
             "fn add(a: i64, b: i64) -> i64 {\n\
-                 let mut s: i64 = 0;\n\
+                 var s: i64 = 0;\n\
                  unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
                  return s;\n\
              }\n\
@@ -17044,7 +17044,7 @@ mod tests {
         // `inout(reg) v` -> one output `=r` plus a tied input `0`.
         let ir = gen_src(
             "fn inc(x: i64) -> i64 {\n\
-                 let mut v: i64 = x;\n\
+                 var v: i64 = x;\n\
                  unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
                  return v;\n\
              }\n\
@@ -17529,7 +17529,7 @@ mod tests {
     fn struct_field_write_uses_gep_store() {
         let ir = gen_src(
             "struct Counter { count: i32 }\n\
-             fn main() -> i32 { let mut c: Counter = Counter { count: 0 }; c.count = 5; return 0; }"
+             fn main() -> i32 { var c: Counter = Counter { count: 0 }; c.count = 5; return 0; }"
         );
         assert!(ir.contains("getelementptr inbounds %Counter"));
         assert!(ir.contains("store i32 5, ptr"));
@@ -17618,12 +17618,12 @@ mod tests {
         // `b.get()` call must observe the mutation.
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn set(mut this, v: i32) { this.x = v; } }\n\
-             fn main() -> i32 { let mut p: P = P { x: 0 }; p.set(5); return 0; }",
+             impl P { fn set(ref this, v: i32) { this.x = v; } }\n\
+             fn main() -> i32 { var p: P = P { x: 0 }; p.set(5); return 0; }",
         );
         assert!(
             ir.contains("void @P.set(ptr "),
-            "mut this on Copy must stay pointer-passed: {ir}"
+            "ref this on Copy must stay pointer-passed: {ir}"
         );
         // Body should store through the ptr (GEP then store).
         assert!(ir.contains("getelementptr inbounds %P"));
@@ -17654,7 +17654,7 @@ mod tests {
         // doesn't fire — this test still exercises the call-site path.
         let ir = gen_src(
             "struct Q { x: i32 }\n\
-             impl Q { fn drop(mut this) { return; } fn get(this) -> i32 { return this.x +% 0; } }\n\
+             impl Q { fn drop(ref this) { return; } fn get(this) -> i32 { return this.x +% 0; } }\n\
              fn main() -> i32 { let q: Q = Q { x: 7 }; let r: i32 = q.get(); return r; }",
         );
         assert!(
@@ -17710,7 +17710,7 @@ mod tests {
     #[test]
     fn array_indexed_assign_uses_gep_store() {
         let ir = gen_src(
-            "fn main() -> i32 { let mut xs: [i32; 3] = [0, 0, 0]; xs[1 as usize] = 7; return 0; }",
+            "fn main() -> i32 { var xs: [i32; 3] = [0, 0, 0]; xs[1 as usize] = 7; return 0; }",
         );
         assert!(ir.contains("getelementptr inbounds [3 x i32]"));
         assert!(ir.contains("store i32 7, ptr"));
@@ -17829,13 +17829,13 @@ mod tests {
         // uniqueness, so LLVM gets the strong promise.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         assert!(
             ir.contains("void @bump(ptr noalias "),
-            "expected `mut t: Tag` to lower to `ptr noalias` param, got: {ir}"
+            "expected `ref t: Tag` to lower to `ptr noalias` param, got: {ir}"
         );
         // Call site still passes a pointer, not a struct value.
         // v0.0.8 fix C: non-pub `bump` → fastcc at the call.
@@ -17854,7 +17854,7 @@ mod tests {
         // (Bare `x: T` now *moves* — see `bare_noncopy_param_moves_value_passed`.)
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
              fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
@@ -17880,7 +17880,7 @@ mod tests {
         // and the new owner's drop both fired on the same heap.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
              fn forward(x: Tag) -> Tag { return x; }\n\
              fn main() -> i32 { let b: Tag = Tag { v: 7 }; let c: Tag = forward(b); return c.v; }",
         );
@@ -17909,13 +17909,13 @@ mod tests {
         // caller's drop-flag is flipped at the call site).
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn take(move t: Tag) -> i32 { return t.v; }\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn take(take t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 9 }; return take(x); }",
         );
         assert!(
             ir.contains("i32 @take(%Tag "),
-            "expected `move t: Tag` to stay struct-by-value, got: {ir}"
+            "expected `take t: Tag` to stay struct-by-value, got: {ir}"
         );
     }
 
@@ -17927,12 +17927,12 @@ mod tests {
         // coerced C-ABI form (`i64`), matching clang, not a raw aggregate.
         let ir = gen_src(
             "struct P { v: i32 }\n\
-             fn bump(mut p: P) -> i32 { p.v = p.v + 1; return p.v; }\n\
+             fn bump(ref p: P) -> i32 { p.v = p.v + 1; return p.v; }\n\
              fn main() -> i32 { let q: P = P { v: 5 }; return bump(q); }",
         );
         assert!(
             ir.contains("i32 @bump(i64"),
-            "expected `mut p: P` on Copy struct to be passed by value via the C ABI (coerced i64), got: {ir}"
+            "expected `ref p: P` on Copy struct to be passed by value via the C ABI (coerced i64), got: {ir}"
         );
     }
 
@@ -17944,9 +17944,9 @@ mod tests {
         // indicate a stray re-allocation).
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 0 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 0 }; bump(x); return x.v; }",
         );
         // Find the @bump body and confirm it has no `alloca %Tag` inside.
         let body_start = ir.find("void @bump(").expect("@bump must be emitted");
@@ -17955,7 +17955,7 @@ mod tests {
         let bump_body = &body_tail[..body_end];
         assert!(
             !bump_body.contains("alloca %Tag"),
-            "ptr-passed `mut t: Tag` must not re-alloca in callee, got: {bump_body}"
+            "ptr-passed `ref t: Tag` must not re-alloca in callee, got: {bump_body}"
         );
     }
 
@@ -17965,9 +17965,9 @@ mod tests {
         // register a scope-exit drop — only the caller owns the value.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 0 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 0 }; bump(x); return x.v; }",
         );
         let body_start = ir.find("void @bump(").expect("@bump must be emitted");
         let body_tail = &ir[body_start..];
@@ -18017,11 +18017,11 @@ mod tests {
         // value-passed; only the second param keeps the ptr shape.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
              struct Tool {}\n\
-             impl Tool { fn poke(this, mut t: Tag) { t.v = t.v + 1; return; } }\n\
+             impl Tool { fn poke(this, ref t: Tag) { t.v = t.v + 1; return; } }\n\
              fn main() -> i32 {\n\
-                 let mut x: Tag = Tag { v: 1 };\n\
+                 var x: Tag = Tag { v: 1 };\n\
                  let tool: Tool = Tool {};\n\
                  tool.poke(x);\n\
                  return x.v;\n\
@@ -18034,7 +18034,7 @@ mod tests {
         );
         assert!(
             ir.contains(", ptr noalias "),
-            "expected `mut t: Tag` to lower to `ptr noalias`, got: {ir}"
+            "expected `ref t: Tag` to lower to `ptr noalias`, got: {ir}"
         );
         // Call site: by-value receiver, ptr for the mut param.
         // v0.0.8 fix C: non-pub Tool.poke → fastcc at the call.
@@ -18154,9 +18154,9 @@ mod tests {
         // Tag = { i32 v } → size 4, align 4.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         assert!(
             ir.contains("void @bump(ptr noalias nonnull noundef dereferenceable(4) align 4 %0)"),
@@ -18171,7 +18171,7 @@ mod tests {
         // so noalias would be unsound.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
              fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
@@ -18187,13 +18187,13 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut this) { return; }\n\
+               fn drop(ref this) { return; }\n\
                fn read(this) -> i32 { return this.v; }\n\
-               fn bump(mut this) { this.v = this.v + 1; return; }\n\
-               fn into(move this) -> i32 { return this.v; }\n\
+               fn bump(ref this) { this.v = this.v + 1; return; }\n\
+               fn into(take this) -> i32 { return this.v; }\n\
              }\n\
              fn main() -> i32 {\n\
-               let mut a: T = T { v: 1 }; a.bump();\n\
+               var a: T = T { v: 1 }; a.bump();\n\
                let b: T = T { v: 2 }; let _r: i32 = b.read();\n\
                let c: T = T { v: 3 }; let _n: i32 = c.into();\n\
                return 0;\n\
@@ -18222,7 +18222,7 @@ mod tests {
         // (i8 at 0, padding to 4, i32 at 4..8.)
         let ir = gen_src(
             "struct Big { tag: i8, n: i32 }\n\
-             impl Big { fn drop(mut this) { return; } }\n\
+             impl Big { fn drop(ref this) { return; } }\n\
              fn use_it(borrow b: Big) -> i32 { return b.n; }\n\
              fn main() -> i32 { let x: Big = Big { tag: 1, n: 42 }; return use_it(x); }",
         );
@@ -18473,8 +18473,8 @@ mod tests {
         // The function gets one domain MD node and two scope nodes.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn swap(mut a: Tag, mut b: Tag) {\n\
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn swap(ref a: Tag, ref b: Tag) {\n\
                let ta: i32 = a.v;\n\
                let tb: i32 = b.v;\n\
                a.v = tb;\n\
@@ -18482,8 +18482,8 @@ mod tests {
                return;\n\
              }\n\
              fn main() -> i32 {\n\
-               let mut x: Tag = Tag { v: 1 };\n\
-               let mut y: Tag = Tag { v: 2 };\n\
+               var x: Tag = Tag { v: 1 };\n\
+               var y: Tag = Tag { v: 2 };\n\
                swap(x, y);\n\
                return x.v;\n\
              }",
@@ -18510,8 +18510,8 @@ mod tests {
         // GEP source to the load.
         let ir = gen_src(
             "struct P { v: i32 }\n\
-             impl P { fn drop(mut this) { return; } }\n\
-             fn pair(mut a: P, mut b: P) -> i32 { return a.v + b.v; }\n\
+             impl P { fn drop(ref this) { return; } }\n\
+             fn pair(ref a: P, ref b: P) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
                let p: P = P { v: 1 };\n\
                let q: P = P { v: 2 };\n\
@@ -18536,9 +18536,9 @@ mod tests {
         // small.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         // The function body must not carry alias.scope on its loads.
         let body_start = ir.find("void @bump(").expect("@bump emitted");
@@ -18557,7 +18557,7 @@ mod tests {
         // alias-scope sources.
         let ir = gen_src(
             "struct P { v: i32 }\n\
-             impl P { fn drop(mut this) { return; } }\n\
+             impl P { fn drop(ref this) { return; } }\n\
              fn both_shared(a: P, b: P) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
                let p: P = P { v: 1 };\n\
@@ -18581,16 +18581,16 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut this) { return; }\n\
-               fn merge(mut this, mut other: T) {\n\
+               fn drop(ref this) { return; }\n\
+               fn merge(ref this, ref other: T) {\n\
                  this.v = this.v + other.v;\n\
                  other.v = 0;\n\
                  return;\n\
                }\n\
              }\n\
              fn main() -> i32 {\n\
-               let mut a: T = T { v: 10 };\n\
-               let mut b: T = T { v: 20 };\n\
+               var a: T = T { v: 10 };\n\
+               var b: T = T { v: 20 };\n\
                a.merge(b);\n\
                return a.v;\n\
              }",
@@ -18628,15 +18628,15 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut this) { return; }\n\
-               fn read_and_bump(this, mut other: T) -> i32 {\n\
+               fn drop(ref this) { return; }\n\
+               fn read_and_bump(this, ref other: T) -> i32 {\n\
                  other.v = this.v;\n\
                  return this.v;\n\
                }\n\
              }\n\
              fn main() -> i32 {\n\
                let a: T = T { v: 5 };\n\
-               let mut b: T = T { v: 0 };\n\
+               var b: T = T { v: 0 };\n\
                return a.read_and_bump(b);\n\
              }",
         );
@@ -18672,8 +18672,8 @@ mod tests {
         let ir = gen_src(
             "struct Inner { x: i32 }\n\
              struct Outer { inner: Inner, tag: i32 }\n\
-             impl Outer { fn drop(mut this) { return; } }\n\
-             fn touch_both(mut a: Outer, mut b: Outer) -> i32 {\n\
+             impl Outer { fn drop(ref this) { return; } }\n\
+             fn touch_both(ref a: Outer, ref b: Outer) -> i32 {\n\
                return a.inner.x + b.tag;\n\
              }\n\
              fn main() -> i32 {\n\
@@ -18700,7 +18700,7 @@ mod tests {
     fn drop_method_emits_cold_and_preserve_none_cc() {
         let ir = gen_src(
             "struct R { v: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }",
         );
         // `define [internal ]preserve_nonecc void @R.drop(...) cold {`
@@ -18726,7 +18726,7 @@ mod tests {
         // callee's. The Always-disposition path emits the call.
         let ir = gen_src(
             "struct R { v: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }",
         );
         assert!(
@@ -18742,10 +18742,10 @@ mod tests {
         let ir = gen_src(
             "struct R { v: i32 }\n\
              impl R {\n\
-               fn drop(mut this) { return; }\n\
-               fn bump(mut this) -> i32 { this.v = this.v + 1; return this.v; }\n\
+               fn drop(ref this) { return; }\n\
+               fn bump(ref this) -> i32 { this.v = this.v + 1; return this.v; }\n\
              }\n\
-             fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }",
+             fn main() -> i32 { var r: R = R { v: 0 }; return r.bump(); }",
         );
         // R.bump must NOT have preserve_nonecc or `) cold {`.
         let bump_line = ir
@@ -18775,10 +18775,10 @@ mod tests {
         let ir = gen_src(
             "struct R { v: i32 }\n\
              impl R {\n\
-               fn drop(mut this) { return; }\n\
-               fn bump(mut this) -> i32 { this.v = this.v + 1; return this.v; }\n\
+               fn drop(ref this) { return; }\n\
+               fn bump(ref this) -> i32 { this.v = this.v + 1; return this.v; }\n\
              }\n\
-             fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }",
+             fn main() -> i32 { var r: R = R { v: 0 }; return r.bump(); }",
         );
         // R.bump is fastcc; R.drop is preserve_nonecc — the two never
         // share a cc, but both call sites carry SOME cc tag now.
@@ -18962,7 +18962,7 @@ mod tests {
         // emission between), so the predicate must bail.
         let ir = gen_src(
             "struct R { v: i32 }\n\
-             impl R { fn drop(mut this) { return; } }\n\
+             impl R { fn drop(ref this) { return; } }\n\
              fn id(n: i32) -> i32 { return n; }\n\
              fn caller(n: i32) -> i32 {\n\
                let r: R = R { v: 1 };\n\
@@ -20270,9 +20270,9 @@ mod tests {
         // the attr set widened (the noalias prefix is still left-anchored).
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
+             impl Tag { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: Tag) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
         assert!(ir.contains("void @bump(ptr noalias "));
     }
@@ -20290,16 +20290,16 @@ mod tests {
     fn two_mut_params_get_distinct_alias_scopes() {
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut this) { return; } }\n\
-             fn swap_bump(mut a: T, mut b: T) {\n\
+             impl T { fn drop(ref this) { return; } }\n\
+             fn swap_bump(ref a: T, ref b: T) {\n\
                let tmp: i32 = a.v;\n\
                a.v = b.v;\n\
                b.v = tmp;\n\
                return;\n\
              }\n\
              fn main() -> i32 {\n\
-               let mut x: T = T { v: 1 };\n\
-               let mut y: T = T { v: 2 };\n\
+               var x: T = T { v: 1 };\n\
+               var y: T = T { v: 2 };\n\
                swap_bump(x, y);\n\
                return x.v + y.v;\n\
              }",
@@ -20334,9 +20334,9 @@ mod tests {
         // a payoff. Confirm the optimization is gated on count >= 2.
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut this) { return; } }\n\
-             fn bump(mut t: T) { t.v = t.v + 1; return; }\n\
-             fn main() -> i32 { let mut x: T = T { v: 1 }; bump(x); return x.v; }",
+             impl T { fn drop(ref this) { return; } }\n\
+             fn bump(ref t: T) { t.v = t.v + 1; return; }\n\
+             fn main() -> i32 { var x: T = T { v: 1 }; bump(x); return x.v; }",
         );
         assert!(
             !ir.contains("!alias.scope"),
@@ -20352,10 +20352,10 @@ mod tests {
         // no noalias params in main).
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut this) { return; } }\n\
+             impl T { fn drop(ref this) { return; } }\n\
              fn main() -> i32 {\n\
-               let mut x: T = T { v: 1 };\n\
-               let mut y: T = T { v: 2 };\n\
+               var x: T = T { v: 1 };\n\
+               var y: T = T { v: 2 };\n\
                x.v = 3;\n\
                y.v = 4;\n\
                return x.v + y.v;\n\
@@ -20376,7 +20376,7 @@ mod tests {
         // we scope this test to the sum function's IR.)
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut this) { return; } }\n\
+             impl T { fn drop(ref this) { return; } }\n\
              fn sum(a: T, b: T) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
                let x: T = T { v: 1 };\n\
@@ -20405,16 +20405,16 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut this) { return; }\n\
-               fn merge(mut this, mut other: T) {\n\
+               fn drop(ref this) { return; }\n\
+               fn merge(ref this, ref other: T) {\n\
                  this.v = this.v + other.v;\n\
                  other.v = 0;\n\
                  return;\n\
                }\n\
              }\n\
              fn main() -> i32 {\n\
-               let mut a: T = T { v: 1 };\n\
-               let mut b: T = T { v: 2 };\n\
+               var a: T = T { v: 1 };\n\
+               var b: T = T { v: 2 };\n\
                a.merge(b);\n\
                return a.v;\n\
              }",
@@ -20443,14 +20443,14 @@ mod tests {
         let ir = gen_src(
             "struct Inner { n: i32 }\n\
              struct Outer { inner: Inner, tag: i32 }\n\
-             impl Outer { fn drop(mut this) { return; } }\n\
-             fn touch(mut a: Outer, mut b: Outer) -> i32 {\n\
+             impl Outer { fn drop(ref this) { return; } }\n\
+             fn touch(ref a: Outer, ref b: Outer) -> i32 {\n\
                a.inner.n = b.tag;\n\
                return a.inner.n + b.tag;\n\
              }\n\
              fn main() -> i32 {\n\
-               let mut x: Outer = Outer { inner: Inner { n: 0 }, tag: 7 };\n\
-               let mut y: Outer = Outer { inner: Inner { n: 0 }, tag: 9 };\n\
+               var x: Outer = Outer { inner: Inner { n: 0 }, tag: 7 };\n\
+               var y: Outer = Outer { inner: Inner { n: 0 }, tag: 9 };\n\
                return touch(x, y);\n\
              }",
         );
