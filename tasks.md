@@ -252,9 +252,32 @@ Tasks 1–6 are independent (any order among themselves).
     `constant`→`global` assertions + the parser `is_mut` assertion, deleted the
     obsolete E0X34 e2e test, fixed the const-static-globals e2e + a lower test.
     cplus-core 1563 / cpc e2e 629, green.
-  - [ ] **Stage 3e — bare `x: T` move→borrow flip.** AUDIT E0337 escape
-    completeness first (plan flags this as the UB-risk surface), then flip the
-    default so bare = read-only borrow for every type.
+  - [→] **Stage 3e — bare `x: T` move→borrow flip** (DEFERRED — verified core
+    recipe ready; the migration is a dedicated stdlib-wide pass). **VERIFIED
+    core change (tried + reverted to keep the tree green, like #7):** the flip
+    is 3 small edits — (1) codegen `effective_move` → `p.move_ && matches!(ty,
+    Struct|Enum|String) && !is_copy_ty` (bare no longer moves; only `take`
+    does); (2) sema `consume_value_arg` → only `move_` consumes (bare doesn't
+    mark_moved); (3) the 3 sema `owns_value:` param sites → `param.move_ ||
+    self.is_copy(&psig.ty)` (bare non-Copy is a non-owning borrow — must hoist
+    the `is_copy` call before the `&mut self` scope insert; the 3 sites sit right
+    after the `restrict`/E0411 block). Bare non-Copy ALREADY passes by-pointer
+    (`param_passes_by_ptr` unchanged), so this only flips ownership/drop, reusing
+    the sound `borrow` path; escapes are caught by the existing E0337 the
+    `owns_value=false` flag triggers. NO `param_passes_by_ptr` change needed.
+    **MIGRATION SCALE (why deferred):** the flip is GLOBAL and ALL-OR-NOTHING —
+    a partial migration leaves vendor uncompilable. It surfaced 33 cplus-core
+    lib failures alone, of two kinds: (a) generic passthroughs `fn f[T](x: T)
+    -> T { return x; }` (identity/worker/Vec/Box/Option/Result/HashMap — return
+    or store a bare param) now hit E0337 → must become `take x: T`; (b) the
+    move/E0335 consume tests flip to borrow semantics (bare reuse is now legal)
+    → update assertions. Plus the entire vendor stdlib + e2e corpus (200+
+    `take`/`.clone()` edits, compile-guided). This is the "migration across
+    stdlib/tests" the plan calls out — a focused multi-hundred-edit pass, not a
+    tail-of-session rush. AUDIT to do during it: after the flip, adversarially
+    confirm E0337 catches EVERY escape (return / field-store / global-store /
+    re-pass-to-`take`) — a miss is a silent double-free (the v0.0.14 json /
+    v0.0.17 string class). cplus-core stays 1563 / cpc e2e 629 at 3d.
   - [ ] **Stage 4 — `borrow` removal.** Param prefix `borrow x:` folds into the
     bare default. Region-lifetime `borrow A T` / `TypeKind::Borrowed` (9-file
     thread, E0511/E0512, ~19 e2e region tests) — SCOPE TBD with user (in #9 vs a
