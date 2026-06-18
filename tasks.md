@@ -266,18 +266,26 @@ Tasks 1–6 are independent (any order among themselves).
     the sound `borrow` path; escapes are caught by the existing E0337 the
     `owns_value=false` flag triggers. NO `param_passes_by_ptr` change needed.
     **MIGRATION SCALE (why deferred):** the flip is GLOBAL and ALL-OR-NOTHING —
-    a partial migration leaves vendor uncompilable. It surfaced 33 cplus-core
-    lib failures alone, of two kinds: (a) generic passthroughs `fn f[T](x: T)
-    -> T { return x; }` (identity/worker/Vec/Box/Option/Result/HashMap — return
-    or store a bare param) now hit E0337 → must become `take x: T`; (b) the
-    move/E0335 consume tests flip to borrow semantics (bare reuse is now legal)
-    → update assertions. Plus the entire vendor stdlib + e2e corpus (200+
-    `take`/`.clone()` edits, compile-guided). This is the "migration across
-    stdlib/tests" the plan calls out — a focused multi-hundred-edit pass, not a
-    tail-of-session rush. AUDIT to do during it: after the flip, adversarially
-    confirm E0337 catches EVERY escape (return / field-store / global-store /
-    re-pass-to-`take`) — a miss is a silent double-free (the v0.0.14 json /
-    v0.0.17 string class). cplus-core stays 1563 / cpc e2e 629 at 3d.
+    a partial migration leaves vendor uncompilable.
+    **MEASURED SCOPE (two grind attempts, both reverted to keep green):** ~57
+    sites total — **33 cplus-core lib + 32 cpc e2e failures** — NOT the 200+
+    first feared. Crucial finding: container stores via a raw-pointer write
+    (`Vec::push`'s `*slot = value`, etc.) do NOT trip the tracked-move check, so
+    VENDOR PRODUCTION CODE is largely unaffected; the surface is almost entirely
+    TEST SNIPPETS + a few real passthroughs. Two kinds: (a) generic/concrete
+    passthroughs `fn f[T](x: T) -> T { return x; }` (return/forward a bare param)
+    → `take`; (b) consume / E0335 / double-free / E0502-not-Send tests whose
+    expectations shift under the flip. **CARE REQUIRED — blanket regex
+    BACKFIRES:** a global "identity → `take`" sed bumped failures 25→29 by adding
+    `take` to helpers in NEGATIVE tests (E0502/consume), where the now-consumed
+    arg introduces spurious E0335 that breaks `assert_only_code`. So this is a
+    careful PER-TEST pass, not a blanket one. VERIFIED core flip recipe (above)
+    is correct and re-applies cleanly. AUDIT during it: adversarially confirm
+    E0337 catches EVERY escape (return / field-store / global-store /
+    re-pass-to-`take`) — a miss is a silent double-free (v0.0.14 json /
+    v0.0.17 string class). e2e borrow-region tests (`borrow A T`) also fail —
+    likely Stage-4 collateral, confirm during the pass. cplus-core 1563 / cpc
+    e2e 629 at 3d.
   - [ ] **Stage 4 — `borrow` removal.** Param prefix `borrow x:` folds into the
     bare default. Region-lifetime `borrow A T` / `TypeKind::Borrowed` (9-file
     thread, E0511/E0512, ~19 e2e region tests) — SCOPE TBD with user (in #9 vs a
