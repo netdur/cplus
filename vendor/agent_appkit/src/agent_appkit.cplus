@@ -80,7 +80,7 @@ fn perform_on_main(target: *u8, action: *u8, arg: *u8) {
 // through a no-extra-arg helper method registered on NSView once:
 // `cplusScrollSelfVisible:` reads its own bounds and calls `scrollRectToVisible:`.
 // Registered lazily and idempotently (class_addMethod no-ops if it exists).
-static mut SCROLL_METHOD_REGISTERED: bool = false;
+static SCROLL_METHOD_REGISTERED: bool = false;
 
 fn cplus_scroll_self_visible(view: *u8, _cmd: *u8, _sender: *u8) {
     let b: rt::Rect = rt::msg_rect(view, rt::sel(#str_ptr("bounds\0")));
@@ -127,7 +127,7 @@ fn scroll_visible_on_main(view: *u8) {
 
 // A unique, stable address used as the associated-object key for the pinned
 // agent-id. The byte's value is irrelevant — only its address matters.
-static mut AGENT_ID_KEY: u8 = 0;
+static AGENT_ID_KEY: u8 = 0;
 
 fn agent_id_key() -> *u8 {
     return unsafe { #addr_of(AGENT_ID_KEY) };

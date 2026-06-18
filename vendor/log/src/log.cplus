@@ -52,8 +52,8 @@ pub enum Level {
     Error,
 }
 
-static mut MAX_LEVEL: i32 = 2; // Info level by default
-static mut USE_COLORS: bool = true;
+static MAX_LEVEL: i32 = 2; // Info level by default
+static USE_COLORS: bool = true;
 
 pub fn set_max_level(l: Level) {
     let val: i32 = match l {

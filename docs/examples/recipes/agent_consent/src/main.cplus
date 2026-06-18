@@ -29,7 +29,7 @@ fn print_line(s: str) {
 
 // How many times a dialog was shown. An app's real prompt would block on an
 // NSAlert; here we count so the test can prove a remembered rule short-circuits.
-static mut PROMPTS: i32 = 0;
+static PROMPTS: i32 = 0;
 
 // A preset "dialog" that the user answers Allow.
 fn prompt_allow(agent_id: str) -> auth::Decision {

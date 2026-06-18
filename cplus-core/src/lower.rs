@@ -1840,7 +1840,7 @@ mod tests {
     #[test]
     fn multi_file_static_init_error_points_at_origin_file_gap3() {
         let entry_src = "fn main() -> i32 { return 0; }\n";
-        let lib_src = "// lib header\nstatic mut BAD: i32 = 1 + 2;\n";
+        let lib_src = "// lib header\nstatic BAD: i32 = 1 + 2;\n";
         let (mut prog, files, entry_path) = merge_two_files(
             "main",
             "/proj/main.cplus",
@@ -1897,7 +1897,7 @@ mod tests {
     #[test]
     fn single_file_static_init_error_unchanged_gap3() {
         // The single-file `lower` entry still renders against the one file.
-        let (_, diags) = run("static mut BAD: i32 = 1 + 2;\nfn main() -> i32 { return 0; }");
+        let (_, diags) = run("static BAD: i32 = 1 + 2;\nfn main() -> i32 { return 0; }");
         let d = diags
             .iter()
             .find(|d| d.code.0 == "E0X30")

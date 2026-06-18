@@ -12748,28 +12748,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     fn check_assign(&mut self, op: AssignOp, target: &Expr, value: &Expr, span: ByteSpan) -> Ty {
         // v0.0.9 Phase 4: assignment to a module-scope `static`.
         // Routed before the local-binding path because static names
-        // don't appear in `self.scopes`. Immutable `static` writes
-        // fail with the same diagnostic shape as an immutable local
-        // (E0305); `static mut` writes require `unsafe { ... }` (E0X34).
+        // don't appear in `self.scopes`.
+        // v0.0.24 de-Rust (#9 stage 3d): every `static` is mutable and access is
+        // bare — there is no immutable `static` (E0305) and no `unsafe` gate on
+        // the write (E0X34 dropped; the marker is the `static` declaration
+        // itself). Cross-`static` data races are the developer's responsibility
+        // (mem.md). The deref/cast `unsafe` surface is untouched (it stays for
+        // #7).
         if let ExprKind::Ident(name) = &target.kind {
             if self.lookup_local(name).is_none() {
                 if let Some(info) = self.statics_table.get(name).cloned() {
-                    if !info.is_mut {
-                        self.err(
-                            "E0305",
-                            format!("cannot assign to immutable `static {name}`; declare it as `static mut` to permit writes"),
-                            target.span,
-                        );
-                        let _ = self.check_expr(value, Some(info.ty));
-                        return Ty::Error;
-                    }
-                    if self.unsafe_depth == 0 {
-                        self.err(
-                            "E0X34",
-                            format!("write to `static mut {name}` requires an enclosing `unsafe {{ ... }}` block"),
-                            span,
-                        );
-                    }
                     let _ = self.check_expr(value, Some(info.ty));
                     return Ty::Unit;
                 }
@@ -12945,20 +12933,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // `static mut` is a writable place root. `TABLE[i] = v` and
                     // `STATIC.field = v` reach here through the Index / Field
                     // arms' recursion on their receiver; the scalar `STATIC = v`
-                    // case is handled earlier in `check_assign`. The `unsafe`
-                    // requirement is enforced when the receiver is read (the
-                    // Index/Field arm calls `check_expr`, which routes a
-                    // `static mut` read through E0X33). An immutable `static`
-                    // is E0305; anything else is genuinely undefined (E0300).
-                    if let Some(s) = self.statics_table.get(name).cloned() {
-                        if !s.is_mut {
-                            self.err(
-                                "E0305",
-                                format!("cannot assign to immutable `static {name}`; declare it as `static mut` to permit writes"),
-                                target.span,
-                            );
-                            return false;
-                        }
+                    // case is handled earlier in `check_assign`.
+                    // v0.0.24 de-Rust (#9 stage 3d): every `static` is a mutable,
+                    // writable place — no immutable `static` (E0305 gone), bare
+                    // access (no `unsafe` gate). Anything else is undefined (E0300).
+                    if self.statics_table.contains_key(name) {
                         return true;
                     }
                     self.err("E0300", format!("undefined name `{name}`"), target.span);
@@ -14053,19 +14032,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return ty;
         }
-        // v0.0.9 Phase 4: module-scope `static` lookup. Immutable
-        // `static` is readable from any context. `static mut` reads
-        // require an enclosing `unsafe { ... }` block — the borrow
-        // checker can't prove absence of data races on module-scope
-        // mutable state.
+        // v0.0.9 Phase 4: module-scope `static` lookup.
+        // v0.0.24 de-Rust (#9 stage 3d): `static` access is bare — a `static`
+        // read needs no `unsafe` gate (E0X33 dropped). The `static` declaration
+        // is itself the marker for global, foreign-facing state; cross-`static`
+        // data races are the developer's responsibility (mem.md).
         if let Some(info) = self.statics_table.get(name).cloned() {
-            if info.is_mut && self.unsafe_depth == 0 {
-                self.err(
-                    "E0X33",
-                    format!("read of `static mut {name}` requires an enclosing `unsafe {{ ... }}` block"),
-                    span,
-                );
-            }
             return info.ty;
         }
         // Slice 11.FN_PTR: when expected is `Ty::FnPtr { .. }` and `name` is
@@ -16372,7 +16344,7 @@ mod tests {
     #[test]
     fn ownership_consume_site_matrix_concrete() {
         const PRELUDE: &str = "\
-static mut DROPS: i32 = 0;\n\
+static DROPS: i32 = 0;\n\
 struct R { opaque data: *u8 }\n\
 impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; }; return; } fn sink(take this) -> i32 { return 0; } }\n\
 struct H { e: R }\n\
@@ -16999,7 +16971,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn zero_in_static_mut_init_clean_g033() {
         assert_clean(
-            "pub static mut TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+            "pub static TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -23345,7 +23317,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     // it even though the plain `= 1` form worked (a surprising asymmetry).
     #[test]
     fn static_narrowing_literal_cast_accepted_v0019() {
-        let codes = lowered_errors("static mut X: i8 = 1 as i8;");
+        let codes = lowered_errors("static X: i8 = 1 as i8;");
         assert!(
             !codes.iter().any(|c| c == "E0X30"),
             "expected no E0X30, got {:?}",
@@ -23355,7 +23327,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn static_negative_narrowing_literal_cast_accepted_v0019() {
-        let codes = lowered_errors("static mut X: i16 = -3 as i16;");
+        let codes = lowered_errors("static X: i16 = -3 as i16;");
         assert!(
             !codes.iter().any(|c| c == "E0X30"),
             "expected no E0X30, got {:?}",
@@ -23377,7 +23349,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn static_int_to_float_literal_cast_accepted_v0019() {
-        let codes = lowered_errors("static mut F: f32 = 2 as f32;");
+        let codes = lowered_errors("static F: f32 = 2 as f32;");
         assert!(
             !codes.iter().any(|c| c == "E0X30"),
             "expected no E0X30, got {:?}",
@@ -23389,7 +23361,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     // of an arithmetic expression or identifier is still E0X30.
     #[test]
     fn static_cast_of_arithmetic_still_rejected_e0x30_v0019() {
-        let codes = lowered_errors("static mut X: i8 = (1 + 2) as i8;");
+        let codes = lowered_errors("static X: i8 = (1 + 2) as i8;");
         assert!(
             codes.iter().any(|c| c == "E0X30"),
             "expected E0X30, got {:?}",
@@ -23406,49 +23378,36 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         assert!(diags.is_empty(), "got {:#?}", diags);
     }
 
+    // v0.0.24 de-Rust (#9 stage 3d): `static` is mutable and access is bare —
+    // no `static mut`, no `unsafe` gate on read (E0X33) or write (E0X34), no
+    // immutable `static` (E0305). The deref/cast `unsafe` surface is untouched.
     #[test]
-    fn static_mut_read_outside_unsafe_e0x33() {
+    fn static_read_is_bare() {
         let codes = lowered_errors(
-            "static mut COUNTER: i32 = 0; \
+            "static COUNTER: i32 = 0; \
              fn main() -> i32 { return COUNTER; }",
         );
-        assert!(codes.iter().any(|c| c == "E0X33"), "got {:?}", codes);
+        assert!(codes.is_empty(), "static read should be bare, got {:?}", codes);
     }
 
     #[test]
-    fn static_mut_read_inside_unsafe_clean() {
-        let diags = check_src_lowered(
-            "static mut COUNTER: i32 = 0; \
-             fn main() -> i32 { let n: i32 = unsafe { COUNTER }; return n; }",
-        );
-        assert!(diags.is_empty(), "got {:#?}", diags);
-    }
-
-    #[test]
-    fn static_mut_write_outside_unsafe_e0x34() {
+    fn static_write_is_bare() {
         let codes = lowered_errors(
-            "static mut COUNTER: i32 = 0; \
-             fn main() -> i32 { COUNTER = 5; return 0; }",
+            "static COUNTER: i32 = 0; \
+             fn main() -> i32 { COUNTER = 5; return COUNTER; }",
         );
-        assert!(codes.iter().any(|c| c == "E0X34"), "got {:?}", codes);
+        assert!(codes.is_empty(), "static write should be bare, got {:?}", codes);
     }
 
     #[test]
-    fn static_mut_write_inside_unsafe_clean() {
-        let diags = check_src_lowered(
-            "static mut COUNTER: i32 = 0; \
-             fn main() -> i32 { unsafe { COUNTER = 5; } return 0; }",
-        );
-        assert!(diags.is_empty(), "got {:#?}", diags);
-    }
-
-    #[test]
-    fn write_to_immutable_static_e0305() {
+    fn static_is_always_mutable() {
+        // A plain `static` is writable — there is no immutable `static`
+        // (use `const` for an immutable, non-addressable value).
         let codes = lowered_errors(
             "static FROZEN: i32 = 0; \
-             fn main() -> i32 { FROZEN = 5; return 0; }",
+             fn main() -> i32 { FROZEN = 5; return FROZEN; }",
         );
-        assert!(codes.iter().any(|c| c == "E0305"), "got {:?}", codes);
+        assert!(codes.is_empty(), "static is mutable, got {:?}", codes);
     }
 
     #[test]

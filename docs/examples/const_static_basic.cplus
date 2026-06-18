@@ -13,7 +13,7 @@ const ADD_CONST: i32 = 100;
 
 static IMMUTABLE_OFFSET: i32 = 50;
 
-static mut COUNTER: i32 = 5;
+static COUNTER: i32 = 5;
 
 fn bump_counter(by: i32) {
     unsafe {

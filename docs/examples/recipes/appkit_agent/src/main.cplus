@@ -32,7 +32,7 @@ extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
 
 // How many times the Save button actually fired. An authorized `click` actuates
 // the real widget, so this proves the action reached AppKit (not just the tree).
-static mut SAVES: i32 = 0;
+static SAVES: i32 = 0;
 
 fn on_save(sender: *u8) {
     unsafe { SAVES = SAVES +% (1 as i32); }

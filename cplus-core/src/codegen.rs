@@ -20905,7 +20905,7 @@ mod tests {
         // The global is a constant struct in declared field order, with the
         // f32 field rendered as the f32 hex bit pattern and bool as i1.
         assert!(
-            ir.contains("@S = constant %P { i32 7, float 0x3FF8000000000000, i1 true }"),
+            ir.contains("@S = global %P { i32 7, float 0x3FF8000000000000, i1 true }"),
             "expected constant struct aggregate; IR:\n{ir}"
         );
     }
@@ -20919,7 +20919,7 @@ mod tests {
              fn main() -> i32 { return S.a; }",
         );
         assert!(
-            ir.contains("@S = constant %P { i32 1, i32 2 }"),
+            ir.contains("@S = global %P { i32 1, i32 2 }"),
             "expected declared-order fields; IR:\n{ir}"
         );
     }
@@ -20933,7 +20933,7 @@ mod tests {
              fn main() -> i32 { return O.n; }",
         );
         assert!(
-            ir.contains("@O = constant %Outer { %Inner { i32 5 }, i32 6 }"),
+            ir.contains("@O = global %Outer { %Inner { i32 5 }, i32 6 }"),
             "expected nested constant struct; IR:\n{ir}"
         );
     }
@@ -20946,7 +20946,7 @@ mod tests {
              fn main() -> i32 { return 0; }",
         );
         assert!(
-            ir.contains("@G = constant %W { half 0xH3C00, half 0xH3E00 }"),
+            ir.contains("@G = global %W { half 0xH3C00, half 0xH3E00 }"),
             "expected half constants; IR:\n{ir}"
         );
     }
@@ -20956,7 +20956,7 @@ mod tests {
     #[test]
     fn static_narrowing_int_cast_emits_scalar_global() {
         let ir = gen_src_mono(
-            "static mut X: i8 = 1 as i8;\n\
+            "static X: i8 = 1 as i8;\n\
              fn main() -> i32 { return 0; }",
         );
         // The cast value renders identically to the plain `= 1` form.
@@ -20969,7 +20969,7 @@ mod tests {
     #[test]
     fn static_negative_narrowing_int_cast_emits_scalar_global() {
         let ir = gen_src_mono(
-            "static mut X: i16 = -3 as i16;\n\
+            "static X: i16 = -3 as i16;\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -20981,7 +20981,7 @@ mod tests {
     #[test]
     fn static_int_to_float_cast_emits_float_constant() {
         let ir = gen_src_mono(
-            "static mut F: f32 = 2 as f32;\n\
+            "static F: f32 = 2 as f32;\n\
              fn main() -> i32 { return 0; }",
         );
         // 2.0f32 bit pattern (rendered as the double-width hex form LLVM

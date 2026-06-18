@@ -21,7 +21,7 @@ import "appkit/graphics" as graphics;
 import "appkit/drag" as drag;
 import "appkit/menu" as menu;
 
-static mut RESULT_LABEL: *u8 = #zero::[*u8]();
+static RESULT_LABEL: *u8 = #zero::[*u8]();
 
 fn should_terminate(self_obj: *u8, _cmd: *u8, app: *u8) -> i8 { return 1 as i8; }
 fn on_quit(sender: *u8) { let app = application::Application::shared(); app.terminate(sender); }

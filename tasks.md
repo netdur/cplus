@@ -235,10 +235,23 @@ Tasks 1–6 are independent (any order among themselves).
     counterpart, extending the non-Copy by-pointer path to Copy, updating that
     ABI test, AND verifying the new `T*` lowering against clang (strict-C-ABI
     rule). Then extend the 3c is_var check to Copy `ref` too.
-  - [ ] **Stage 3d — `static mut`→`static` + bare `static` mutable-by-default.**
-    Decide: leftover immutable `static` → `const` or stays. Update the
-    `static mut` diagnostics (sema ~12729/12738/12926) and the `static mut`
-    declaration syntax. Migrate the 13 `static mut` code sites + comment prose.
+  - [x] **Stage 3d — `static` is the mutable, addressable global; `static mut`
+    gone.** Per mem.md: every `static` is mutable, access is BARE, and an
+    immutable addressable global is "a `static` you never write" → DECISION:
+    leftover immutable `static` STAYS `static` (not converted to `const`; `const`
+    is the inlined, non-addressable immutable value). Parser rejects `static mut`
+    with a hint (is_mut always true). Sema dropped all three static gates:
+    E0305 (immutable-static write), E0X33 (static read needs `unsafe`), E0X34
+    (static write needs `unsafe`) — the `static` declaration is itself the
+    marker; cross-`static` data races are the developer's responsibility. (This
+    is the static-side of `unsafe`, which #7 retires wholesale; the deref/cast
+    `unsafe` surface is untouched.) Codegen: all statics emit as `global`
+    (.data) — the `constant`/.rodata path was the old immutable static. Migrated
+    `static mut`→`static` across .cplus (9 files) + .rs test strings; repurposed
+    the 3 gate sema tests to positive bare-access tests, updated 4 codegen
+    `constant`→`global` assertions + the parser `is_mut` assertion, deleted the
+    obsolete E0X34 e2e test, fixed the const-static-globals e2e + a lower test.
+    cplus-core 1563 / cpc e2e 629, green.
   - [ ] **Stage 3e — bare `x: T` move→borrow flip.** AUDIT E0337 escape
     completeness first (plan flags this as the UB-risk surface), then flip the
     default so bare = read-only borrow for every type.

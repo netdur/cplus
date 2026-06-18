@@ -6,8 +6,8 @@ import "android_view/listener" as listener;
 import "jni/jni" as jni;
 
 // The status TextView's own global ref (jobject as usize) + click count.
-static mut STATUS_REF: usize = 0;
-static mut CLICKS: i32 = 0;
+static STATUS_REF: usize = 0;
+static CLICKS: i32 = 0;
 
 pub extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
     envp: *jni::JNIEnv,

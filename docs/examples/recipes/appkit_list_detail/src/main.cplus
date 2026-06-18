@@ -27,8 +27,8 @@ import "appkit/menu" as menu;
 extern fn puts(s: *u8) -> i32;
 extern fn fflush(stream: *u8) -> i32;
 
-static mut THE_TABLE: *u8 = #zero::[*u8]();
-static mut DETAIL_LABEL: *u8 = #zero::[*u8]();
+static THE_TABLE: *u8 = #zero::[*u8]();
+static DETAIL_LABEL: *u8 = #zero::[*u8]();
 
 fn item_text(row: i64) -> *u8 {
     if row == (0 as i64) { return #str_ptr("Apple\0"); }

@@ -1008,7 +1008,22 @@ impl Parser {
             return Err(self.err_at_peek("item — `static` items don't take attributes in v0.0.9"));
         }
         let start = self.expect(&TokenKind::Static, "`static`")?.span;
-        let is_mut = self.eat(&TokenKind::Mut);
+        // v0.0.24 de-Rust (#9 stage 3d): `static` IS the mutable, addressable
+        // global — there is no `static mut`. Reject a Rust-habit `mut` with a
+        // hint. Every `static` is mutable; an immutable compile-time value is
+        // `const` (and a read-only addressable global is a `static` you never
+        // write).
+        if self.at(&TokenKind::Mut) {
+            let tok = self.peek().clone();
+            return Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    found: "`mut`".into(),
+                    expected: "a static name — `static` is already mutable; drop `mut` (there is no `static`)",
+                },
+                span: tok.span,
+            });
+        }
+        let is_mut = true;
         let name = self.expect_ident()?;
         self.expect(&TokenKind::Colon, "`:` (static requires explicit type annotation)")?;
         let ty = self.parse_type()?;
@@ -5805,7 +5820,7 @@ mod tests {
             panic!("expected ItemKind::Static, got {:?}", p.items[0].kind);
         };
         assert_eq!(s.name.name, "RNG_STATE");
-        assert!(!s.is_mut);
+        assert!(s.is_mut, "every `static` is mutable in v0.0.24");
         assert!(!s.is_pub);
         let TypeKind::Path(name) = &s.ty.kind else {
             panic!("expected Path type");
@@ -5815,7 +5830,7 @@ mod tests {
 
     #[test]
     fn static_mut_decl_parses() {
-        let p = parse_src("static mut COUNTER: i32 = 0;").unwrap();
+        let p = parse_src("static COUNTER: i32 = 0;").unwrap();
         let ItemKind::Static(s) = &p.items[0].kind else {
             panic!("expected ItemKind::Static");
         };
@@ -5826,7 +5841,7 @@ mod tests {
 
     #[test]
     fn pub_static_mut_decl_parses() {
-        let p = parse_src("pub static mut GLOBAL_TICK: u64 = 0;").unwrap();
+        let p = parse_src("pub static GLOBAL_TICK: u64 = 0;").unwrap();
         let ItemKind::Static(s) = &p.items[0].kind else {
             panic!("expected ItemKind::Static");
         };

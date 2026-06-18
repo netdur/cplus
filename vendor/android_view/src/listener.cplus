@@ -46,7 +46,7 @@ struct ClickMethodRecord {
 
 // The adapter class, once loaded + bound: a jclass global ref (as usize —
 // statics hold integers; the JVM owns the class object).
-static mut LISTENER_CLASS: usize = 0;
+static LISTENER_CLASS: usize = 0;
 
 // Load adapter.dex and bind nativeOnClick. Idempotent; runs on first
 // `set_on_click`. The dex bytes live in the binary (static lifetime), so

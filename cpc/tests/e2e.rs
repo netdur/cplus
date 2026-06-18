@@ -49,7 +49,7 @@ fn loop_body_locals_drop_each_iteration() {
     let src = dir.join("loopdrop.cplus");
     std::fs::write(
         &src,
-        "static mut FREES: i32 = 0;\n\
+        "static FREES: i32 = 0;\n\
          struct B { opaque data: *u8 }\n\
          impl B { fn drop(ref this) { unsafe { FREES = FREES + 1; } return; } }\n\
          fn work() {\n\
@@ -92,8 +92,8 @@ fn static_narrowing_literal_cast_runs() {
     let src = dir.join("statcast.cplus");
     std::fs::write(
         &src,
-        "static mut X: i8 = 5 as i8;\n\
-         static mut Y: i16 = -3 as i16;\n\
+        "static X: i8 = 5 as i8;\n\
+         static Y: i16 = -3 as i16;\n\
          fn main() -> i32 { let d: i32 = unsafe { (X as i32) - (Y as i32) }; return d; }\n",
     )
     .unwrap();
@@ -128,7 +128,7 @@ fn match_consumes_owned_scrutinee_exactly_once() {
     let src = dir.join("m.cplus");
     std::fs::write(
         &src,
-        "static mut DROPS: i32 = 0;\n\
+        "static DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum E { A(R), B }\n\
@@ -195,7 +195,7 @@ fn match_model_allowed_reads_runtime_safe() {
     let src = dir.join("m.cplus");
     std::fs::write(
         &src,
-        "static mut DROPS: i32 = 0;\n\
+        "static DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum Opt { Some(usize), None }\n\
@@ -296,7 +296,7 @@ fn cplus_intrinsic_sigil_forms_run() {
     let src = dir.join("sig.cplus");
     std::fs::write(
         &src,
-        "static mut DROPPED: i32 = 0;\n\
+        "static DROPPED: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
          fn main() -> i32 {\n\
@@ -925,8 +925,8 @@ fn zero_initialized_static_aggregate_cross_lang_g033() {
     std::fs::write(
         &cplus_src,
         "#[repr(C)] struct S { a: i32, b: i64, opaque c: *u8 }\n\
-         pub static mut MUT_I32_TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
-         pub static mut MUT_STRUCT:    S         = #zero::[S]();\n\
+         pub static MUT_I32_TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+         pub static MUT_STRUCT:    S         = #zero::[S]();\n\
          extern fn c_set_table(idx: i32, val: i32);\n\
          extern fn c_set_struct(a: i32, b: i64);\n\
          fn main() -> i32 {\n\
@@ -1245,7 +1245,7 @@ fn multi_file_static_init_error_points_at_imported_file_gap3() {
     // The bad static lives in lib.cplus; main.cplus is the entry and is clean.
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub static mut BAD: i32 = 1 + 2;\npub fn ok() -> i32 { return 0; }\n",
+        "pub static BAD: i32 = 1 + 2;\npub fn ok() -> i32 { return 0; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -2215,7 +2215,7 @@ fn fn_pointer_call_moves_arg_no_double_free() {
         std::fs::write(
             &src,
             format!(
-                "static mut DROPS: i32 = 0;\n\
+                "static DROPS: i32 = 0;\n\
                  struct R {{ tag: i32 }}\n\
                  impl R {{ fn drop(ref this) {{ unsafe {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
                  fn sink(r: R) -> i32 {{ return 1; }}\n\
@@ -5483,7 +5483,7 @@ fn array_and_tuple_of_owned_values_drop_once() {
     let src = dir.join("m.cplus");
     std::fs::write(
         &src,
-        "static mut DROPS: i32 = 0;\n\
+        "static DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
@@ -5527,7 +5527,7 @@ fn shared_region_borrow_return_drops_once() {
     let src = dir.join("m.cplus");
     std::fs::write(
         &src,
-        "static mut DROPS: i32 = 0;\n\
+        "static DROPS: i32 = 0;\n\
          struct B { x: i32 }\n\
          impl B { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          fn cursor(b: borrow A B) -> borrow A B { return b; }\n\
@@ -11870,7 +11870,7 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
         "import \"stdlib/mutex\" as mutex;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
-         static mut FREES: i32 = 0;\n\
+         static FREES: i32 = 0;\n\
          struct Res { p: *u8 }\n\
          impl Res { fn drop(ref this) { unsafe { FREES = FREES +% 1; free(this.p); } return; } }\n\
          fn make_locked() -> mutex::MutexGuard[Res] {\n\
@@ -11939,8 +11939,8 @@ fn stdlib_box_set_drops_old_value() {
         "import \"stdlib/box\" as box;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
-         static mut A: i32 = 0;\n\
-         static mut F: i32 = 0;\n\
+         static A: i32 = 0;\n\
+         static F: i32 = 0;\n\
          struct R { p: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
@@ -12117,8 +12117,8 @@ fn stdlib_vec_assoc_new_with_struct_element() {
         "import \"stdlib/vec\" as vec;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
-         static mut A: i32 = 0;\n\
-         static mut F: i32 = 0;\n\
+         static A: i32 = 0;\n\
+         static F: i32 = 0;\n\
          struct R { p: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
@@ -12255,8 +12255,8 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
         "import \"stdlib/iterator\" as iterator;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
-         static mut A: i32 = 0;\n\
-         static mut F: i32 = 0;\n\
+         static A: i32 = 0;\n\
+         static F: i32 = 0;\n\
          struct R { p: *u8 }\n\
          impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
@@ -19263,7 +19263,7 @@ import "agent_core/surface" as surface;
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 
-static mut CLICKED: i32 = 0;
+static CLICKED: i32 = 0;
 fn on_click(sender: *u8) { unsafe { CLICKED = CLICKED +% 1; } return; }
 
 fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
@@ -19611,7 +19611,7 @@ fn appkit_notification_subscribe_and_unsubscribe() {
 import "appkit/application" as application;
 import "appkit/notifications" as notify;
 
-static mut COUNT: i32 = 0;
+static COUNT: i32 = 0;
 
 fn on_note(note: *u8) {
     unsafe { COUNT = COUNT +% (1 as i32); };
@@ -19702,8 +19702,8 @@ import "appkit/window" as window;
 import "appkit/data" as data;
 import "appkit/runtime" as rt;
 
-static mut WILL_CLOSE: i32 = 0;
-static mut SEL_CHANGED: i32 = 0;
+static WILL_CLOSE: i32 = 0;
+static SEL_CHANGED: i32 = 0;
 
 fn should_close(self_obj: *u8, _cmd: *u8, sender: *u8) -> i8 { return 1 as i8; }
 fn will_close(self_obj: *u8, _cmd: *u8, note: *u8) { unsafe { WILL_CLOSE = 1 as i32; }; return; }
@@ -19783,8 +19783,8 @@ import "appkit/application" as application;
 import "appkit/view" as view;
 import "appkit/runtime" as rt;
 
-static mut DREW: i32 = 0;
-static mut DRAW_W: f64 = 0.0;
+static DREW: i32 = 0;
+static DRAW_W: f64 = 0.0;
 
 fn my_draw(self_obj: *u8, _cmd: *u8, dirty: rt::Rect) {
     unsafe { DREW = 1 as i32; };
@@ -19864,7 +19864,7 @@ import "appkit/application" as application;
 import "appkit/drag" as drag;
 import "appkit/runtime" as rt;
 
-static mut DROPPED: i32 = 0;
+static DROPPED: i32 = 0;
 
 fn on_entered(self_obj: *u8, _cmd: *u8, info: *u8) -> i64 { return drag::drag_op_copy(); }
 fn on_perform(self_obj: *u8, _cmd: *u8, info: *u8) -> i8 { unsafe { DROPPED = 1 as i32; }; return 1 as i8; }
@@ -21270,7 +21270,7 @@ fn vec_element_drop_runs_per_element_by_count() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
-         static mut DROPS: i32 = 0;\n\
+         static DROPS: i32 = 0;\n\
          struct Cell { tag: i32 }\n\
          impl Cell { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          struct Wrap { items: vec::Vec[Cell], name: i32 }\n\
@@ -21320,7 +21320,7 @@ fn consumed_enum_payload_drops_once_per_arm() {
     std::fs::write(
         &src,
         "\
-static mut DROPS: i32 = 0;
+static DROPS: i32 = 0;
 struct Res { tag: i32 }
 impl Res { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }
 enum Box1 { Some(Res), None }
@@ -21399,8 +21399,8 @@ fn enum_move_into_method_arg_no_double_free() {
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
          import \"stdlib/option\" as option;\n\
-         static mut DROPS: i32 = 0;\n\
-         static mut SUM: i32 = 0;\n\
+         static DROPS: i32 = 0;\n\
+         static SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
          impl Leaf { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
@@ -21484,8 +21484,8 @@ fn enum_conditional_branch_tail_move_no_double_free() {
         dir.join("src/main.cplus"),
         "import \"stdlib/vec\" as vec;\n\
          import \"stdlib/option\" as option;\n\
-         static mut DROPS: i32 = 0;\n\
-         static mut SUM: i32 = 0;\n\
+         static DROPS: i32 = 0;\n\
+         static SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
          impl Leaf { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
@@ -22029,8 +22029,8 @@ fn const_static_basic_runs() {
 #[test]
 fn const_static_emits_expected_globals() {
     // Inspect the emitted IR to pin the load/store routing decision —
-    // immutable statics use `constant`, mutable use `global`, const
-    // items emit no global at all (substituted in `lower`).
+    // v0.0.24 #9 stage 3d: every `static` is mutable, so all emit as `global`
+    // (.data); const items emit no global at all (substituted in `lower`).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let src = format!(
         "{}/../docs/examples/const_static_basic.cplus",
@@ -22044,8 +22044,8 @@ fn const_static_emits_expected_globals() {
     assert!(out.status.success(), "exited {:?}", out.status);
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
-        ir.contains("@IMMUTABLE_OFFSET = constant i32 50"),
-        "expected immutable-static global; ir was:\n{ir}"
+        ir.contains("@IMMUTABLE_OFFSET = global i32 50"),
+        "expected static emitted as global; ir was:\n{ir}"
     );
     assert!(
         ir.contains("@COUNTER = global i32 5"),
@@ -22058,38 +22058,10 @@ fn const_static_emits_expected_globals() {
     );
 }
 
-#[test]
-fn const_static_mut_write_outside_unsafe_rejected() {
-    // Negative case: writing to `static mut` without an enclosing
-    // `unsafe { ... }` block must fail with E0X34. Pin the diagnostic
-    // shape so a future refactor of the unsafe gate doesn't silently
-    // relax it.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("bad.cplus");
-    std::fs::write(
-        &src,
-        "static mut COUNTER: i32 = 0;\n\
-         fn main() -> i32 { COUNTER = 5; return 0; }\n",
-    )
-    .unwrap();
-    let bin = dir.join("bad");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "expected cpc to reject the program, got success"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0X34"),
-        "expected E0X34 in stderr, got:\n{stderr}"
-    );
-}
+// v0.0.24 #9 stage 3d: the old `const_static_mut_write_outside_unsafe_rejected`
+// test is removed — there is no `static mut` and no `unsafe` gate on a static
+// write (E0X34 retired; access is bare). The positive rule "a static write is
+// bare" is covered by the sema test `static_write_is_bare`.
 
 // ---- v0.0.9 follow-up: `static FOO: str = "..."`. Lowers to a
 // paired data global (the bytes) + a fat-pointer global (the
@@ -22825,7 +22797,7 @@ fn g034_static_mut_indexed_write() {
     let bin = dir.join("g034");
     std::fs::write(
         &src,
-        "pub static mut TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
+        "pub static TABLE: [i32; 16] = #zero::[[i32; 16]]();\n\
          fn fill() {\n\
              var i: usize = 0 as usize;\n\
              while i < (16 as usize) {\n\
