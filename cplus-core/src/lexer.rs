@@ -824,12 +824,11 @@ impl<'a> Lexer<'a> {
             "use" => TokenKind::Use,
             "mod" => TokenKind::Mod,
             "import" => TokenKind::Import,
-            "self" => TokenKind::SelfLower,
-            "Self" => TokenKind::SelfUpper,
-            // v0.0.24 de-Rust (stage B): `this`/`This` are the canonical receiver /
-            // enclosing-type spellings (C++ `this`). `self`/`Self` stay accepted
-            // transitionally — same token, zero downstream change — until the .rs test
-            // corpus is migrated and they become a hard error (a later dedicated pass).
+            // v0.0.24 de-Rust: `this`/`This` are the receiver / enclosing-type
+            // spellings (C++ `this`). The Rust `self`/`Self` spellings are no
+            // longer accepted — they lex as plain identifiers and are rejected
+            // downstream (the receiver parser and `This`-type path emit a
+            // "use `this`/`This`" hint).
             "this" => TokenKind::SelfLower,
             "This" => TokenKind::SelfUpper,
             "defer" => TokenKind::Defer,

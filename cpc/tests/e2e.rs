@@ -51,7 +51,7 @@ fn loop_body_locals_drop_each_iteration() {
         &src,
         "static mut FREES: i32 = 0;\n\
          struct B { opaque data: *u8 }\n\
-         impl B { fn drop(mut self) { unsafe { FREES = FREES + 1; } return; } }\n\
+         impl B { fn drop(mut this) { unsafe { FREES = FREES + 1; } return; } }\n\
          fn work() {\n\
              let mut i: i32 = 0;\n\
              while i < 3 { let b: B = B { data: unsafe { 0 as *u8 } }; i = i + 1; }\n\
@@ -130,14 +130,14 @@ fn match_consumes_owned_scrutinee_exactly_once() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum E { A(R), B }\n\
          enum P { Pair(R, R), None }\n\
          fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
          fn mkp() -> P { return P::Pair(R { data: unsafe { 0 as *u8 } }, R { data: unsafe { 0 as *u8 } }); }\n\
          fn consume(move r: R) -> i32 { return 0; }\n\
          struct H { e: E }\n\
-         impl H { fn drop(mut self) { return; } }\n\
+         impl H { fn drop(mut this) { return; } }\n\
          fn p_bind() { let e: E = mke(); let _n: i32 = match e { x => 7 }; return; }\n\
          fn p_wild() { let e: E = mke(); let _n: i32 = match e { _ => 7 }; return; }\n\
          fn p_temp_var() { let _n: i32 = match mke() { E::A(r) => 7, E::B => 0 }; return; }\n\
@@ -197,7 +197,7 @@ fn match_model_allowed_reads_runtime_safe() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          enum Opt { Some(usize), None }\n\
          struct NodeView { id: R, parent: Opt }\n\
          struct PodS { a: usize }\n\
@@ -260,11 +260,11 @@ fn interface_bound_generic_backend_runs() {
     let src = dir.join("backend.cplus");
     std::fs::write(
         &src,
-        "interface Backend { fn flush(self) -> i32; }\n\
+        "interface Backend { fn flush(this) -> i32; }\n\
          struct Mac { fd: i32 }\n\
-         impl Mac: Backend { fn flush(self) -> i32 { return self.fd; } }\n\
+         impl Mac: Backend { fn flush(this) -> i32 { return this.fd; } }\n\
          struct App[B: Backend] { backend: B }\n\
-         impl App[B: Backend] { fn run(self) -> i32 { return self.backend.flush(); } }\n\
+         impl App[B: Backend] { fn run(this) -> i32 { return this.backend.flush(); } }\n\
          fn render[B: Backend](b: B) -> i32 { return b.flush(); }\n\
          fn main() -> i32 {\n\
              let viaturbo: i32 = render::[Mac](Mac { fd: 10 });\n\
@@ -298,7 +298,7 @@ fn cplus_intrinsic_sigil_forms_run() {
         &src,
         "static mut DROPPED: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
          fn main() -> i32 {\n\
              let mut x: i32 = 41;\n\
              let p: *i32 = unsafe { #addr_of(x) };\n\
@@ -1672,7 +1672,7 @@ fn use_after_move_rejected_at_compile_time() {
     std::fs::write(
         &src,
         "struct B { x: i32 }\n\
-         impl B { fn drop(mut self) {} fn consume(move self) -> i32 { return self.x; } }\n\
+         impl B { fn drop(mut this) {} fn consume(move this) -> i32 { return this.x; } }\n\
          fn main() -> i32 {\n\
            let b: B = B { x: 7 };\n\
            let s: i32 = b.consume();\n\
@@ -1743,10 +1743,10 @@ fn generic_body_use_after_move_rejected_e0335() {
     // E0335 (would otherwise double-free at run time).
     assert_compile_fails_with(
         "struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { return; } }\n\
+         impl R { fn drop(mut this) { return; } }\n\
          struct P {}\n\
-         interface Sink { fn sink(self, r: R); }\n\
-         impl P: Sink { fn sink(self, r: R) { return; } }\n\
+         interface Sink { fn sink(this, r: R); }\n\
+         impl P: Sink { fn sink(this, r: R) { return; } }\n\
          fn use_twice[T: Sink](t: T) -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
            t.sink(r);\n\
@@ -1764,10 +1764,10 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
     // E0337 (would otherwise double-free — both the callee and the owner drop).
     assert_compile_fails_with(
         "struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { return; } }\n\
+         impl R { fn drop(mut this) { return; } }\n\
          struct P {}\n\
-         interface Sink { fn sink(self, r: R); }\n\
-         impl P: Sink { fn sink(self, r: R) { return; } }\n\
+         interface Sink { fn sink(this, r: R); }\n\
+         impl P: Sink { fn sink(this, r: R) { return; } }\n\
          fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
          fn main() -> i32 {\n\
            let p: P = P {};\n\
@@ -1815,8 +1815,8 @@ fn generic_bound_method_arity_mismatch_rejected_e0308() {
     // the generic path can't silently accept it (it used to).
     assert_compile_fails_with(
         "struct P { x: i32 }\n\
-         interface Add { fn add(self, rhs: i32) -> i32; }\n\
-         impl P: Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+         interface Add { fn add(this, rhs: i32) -> i32; }\n\
+         impl P: Add { fn add(this, rhs: i32) -> i32 { return this.x + rhs; } }\n\
          fn call_add[T: Add](t: T) -> i32 { return t.add(2, 3); }\n\
          fn main() -> i32 { let p: P = P { x: 4 }; return call_add::[P](p); }\n",
         "E0308",
@@ -1831,10 +1831,10 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
     // double-free. Exercises the `move self` receiver path of the bound-method
     // checker, not just its args.
     assert_compile_fails_with(
-        "interface Take { fn take(move self) -> i32; }\n\
+        "interface Take { fn take(move this) -> i32; }\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { return; } }\n\
-         impl R: Take { fn take(move self) -> i32 { return 0; } }\n\
+         impl R { fn drop(mut this) { return; } }\n\
+         impl R: Take { fn take(move this) -> i32 { return 0; } }\n\
          fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
          fn main() -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
@@ -2017,7 +2017,7 @@ fn fn_pointer_call_moves_arg_no_double_free() {
             format!(
                 "static mut DROPS: i32 = 0;\n\
                  struct R {{ tag: i32 }}\n\
-                 impl R {{ fn drop(mut self) {{ unsafe {{ DROPS = DROPS + self.tag; }}; return; }} }}\n\
+                 impl R {{ fn drop(mut this) {{ unsafe {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
                  fn sink(r: R) -> i32 {{ return 1; }}\n\
                  struct Handler {{ cb: fn(R) -> i32 }}\n\
                  fn run() -> i32 {{ {run_body} }}\n\
@@ -2107,7 +2107,7 @@ fn move_param_use_after_call_rejected() {
     std::fs::write(
         &src,
         "struct B { x: i32 }\n\
-         impl B { fn drop(mut self) {} }\n\
+         impl B { fn drop(mut this) {} }\n\
          fn take(move b: B) -> i32 { return b.x; }\n\
          fn main() -> i32 {\n\
            let b: B = B { x: 3 };\n\
@@ -2256,7 +2256,7 @@ fn longest_move_either_input_while_borrowed_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn longest(a: B, b: B) -> B {
     if a.x > b.x {
         return a;
@@ -2309,7 +2309,7 @@ fn move_while_return_borrow_live_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn passthrough(b: B) -> B { return b; }
 fn drain(move b: B) { return; }
 fn main() -> i32 {
@@ -2352,7 +2352,7 @@ fn move_and_borrow_in_same_call_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn drain(n: i32, move b: B) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
@@ -3410,7 +3410,7 @@ fn mut_param_noncopy_struct_mutation_propagates() {
         &src,
         "\
 struct Tag { v: i32 }
-impl Tag { fn drop(mut self) { return; } }
+impl Tag { fn drop(mut this) { return; } }
 fn bump(mut t: Tag) {
     t.v = t.v + 1;
     return;
@@ -3506,8 +3506,8 @@ fn mut_param_noncopy_struct_no_double_drop_at_runtime() {
         "\
 struct Tracker { id: i32 }
 impl Tracker {
-    fn drop(mut self) {
-        #println(0 -% self.id);
+    fn drop(mut this) {
+        #println(0 -% this.id);
         return;
     }
 }
@@ -3980,7 +3980,7 @@ fn e0380_two_mut_borrows_of_same_binding_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn modify_both(mut a: B, mut b: B) { return; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
@@ -4014,7 +4014,7 @@ fn e0381_mut_and_shared_borrow_in_same_call_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn write_thing(mut a: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
@@ -4049,7 +4049,7 @@ fn e0382_mut_and_move_in_same_call_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn write_and_take(mut a: B, move b: B) { return; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
@@ -4089,7 +4089,7 @@ fn mut_borrows_of_different_bindings_accepted() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn modify_both(mut a: B, mut b: B) { return; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
@@ -4162,9 +4162,9 @@ fn phase6_exit_iterator_invalidation_rejected() {
         "\
 struct VecI32 { data: [i32; 8], len: usize }
 impl VecI32 {
-    fn drop(mut self) { return; }
-    fn cursor(self) -> VecI32 { return self; }
-    fn push(mut self, x: i32) { return; }
+    fn drop(mut this) { return; }
+    fn cursor(this) -> VecI32 { return this; }
+    fn push(mut this, x: i32) { return; }
 }
 fn main() -> i32 {
     let mut v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
@@ -4207,8 +4207,8 @@ fn phase6_exit_sequential_pushes_accepted() {
         "\
 struct VecI32 { data: [i32; 8], len: usize }
 impl VecI32 {
-    fn drop(mut self) { return; }
-    fn push(mut self, x: i32) { return; }
+    fn drop(mut this) { return; }
+    fn push(mut this, x: i32) { return; }
 }
 fn main() -> i32 {
     let mut v: VecI32 = VecI32 { data: [0, 0, 0, 0, 0, 0, 0, 0], len: 0 };
@@ -4248,7 +4248,7 @@ fn never_moved_drop_binding_elides_flag() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn main() -> i32 {
     let x: B = B { x: 7 };
     return x.x;
@@ -4288,7 +4288,7 @@ fn moved_drop_binding_keeps_runtime_flag() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn consume(move b: B) { return; }
 fn main() -> i32 {
     let x: B = B { x: 7 };
@@ -4361,7 +4361,7 @@ fn mut_param_tagged_noalias_in_ir() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn bump(mut b: B) -> i32 { b.x = b.x + 1; return b.x; }
 fn main() -> i32 {
     let mut v: B = B { x: 1 };
@@ -4396,7 +4396,7 @@ fn shared_param_tagged_readonly_in_ir() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 7 };
@@ -4448,7 +4448,7 @@ extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+    fn drop(mut this) { unsafe { free(this.ptr); } return; }
 }
 fn forward(x: Owned) -> Owned { return x; }
 fn main() -> i32 {
@@ -4496,11 +4496,11 @@ extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+    fn drop(mut this) { unsafe { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 impl Pair {
-    fn drop(mut self) { unsafe { free(self.a.ptr); } unsafe { free(self.b.ptr); } return; }
+    fn drop(mut this) { unsafe { free(this.a.ptr); } unsafe { free(this.b.ptr); } return; }
 }
 fn main() -> i32 {
     let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
@@ -4540,7 +4540,7 @@ extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut self) { unsafe { free(self.ptr); } return; }
+    fn drop(mut this) { unsafe { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 fn main() -> i32 {
@@ -4636,7 +4636,7 @@ extern fn free(p: *u8);
 struct Res { p: *u8 }
 impl Res {
     fn make() -> Res { return Res { p: unsafe { malloc(16 as usize) } }; }
-    fn drop(mut self) { unsafe { free(self.p); } return; }
+    fn drop(mut this) { unsafe { free(this.p); } return; }
 }
 struct Holder { r: Res }
 fn consume(move h: Holder) -> i32 { return 0; }
@@ -4735,9 +4735,9 @@ const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
      extern fn free(p: *u8);\n\
      struct Buf { ptr: *u8 }\n\
      impl Buf {\n\
-         fn drop(mut self) { unsafe { free(self.ptr); } return; }\n\
-         fn as_str(self) -> str { return unsafe { #str_from_raw_parts(self.ptr, 4 as usize) }; }\n\
-         fn len(self) -> usize { return 4 as usize; }\n\
+         fn drop(mut this) { unsafe { free(this.ptr); } return; }\n\
+         fn as_str(this) -> str { return unsafe { #str_from_raw_parts(this.ptr, 4 as usize) }; }\n\
+         fn len(this) -> usize { return 4 as usize; }\n\
      }\n\
      fn mk_buf() -> Buf { return Buf { ptr: unsafe { malloc(4 as usize) } }; }\n";
 
@@ -5077,7 +5077,7 @@ fn borrow_region_annotation_compiles_and_links() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > 0 { return a; }
     return b;
@@ -5117,7 +5117,7 @@ fn borrow_region_annotation_establishes_multi_source_borrow() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > 0 { return a; }
     return b;
@@ -5160,7 +5160,7 @@ fn borrow_region_with_mut_marker_is_exclusive() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn cursor(mut buf: borrow A B) -> borrow A B { return buf; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
@@ -5233,7 +5233,7 @@ fn explicit_annotation_fixes_e0384() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > 0 { return a; }
     return B { x: 0 };
@@ -5285,7 +5285,7 @@ fn array_and_tuple_of_owned_values_drop_once() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
          fn arr() { let p: R = mkR(); let q: R = mkR(); let _a: [R; 2] = [p, q]; return; }\n\
          fn tup() { let p: R = mkR(); let q: R = mkR(); let _t: (R, R) = (p, q); return; }\n\
@@ -5329,7 +5329,7 @@ fn shared_region_borrow_return_drops_once() {
         &src,
         "static mut DROPS: i32 = 0;\n\
          struct B { x: i32 }\n\
-         impl B { fn drop(mut self) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl B { fn drop(mut this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
          fn cursor(b: borrow A B) -> borrow A B { return b; }\n\
          fn run() {\n\
              let v: B = B { x: 7 };\n\
@@ -5368,7 +5368,7 @@ fn e3_mut_longest_pattern_compiles_cleanly() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn longest_mut(mut a: B, mut b: B) -> B {
     if a.x > b.x { return a; }
     return b;
@@ -5408,7 +5408,7 @@ fn e3_mut_move_of_either_source_while_borrowed_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn longest_mut(mut a: B, mut b: B) -> B {
     if a.x > b.x { return a; }
     return b;
@@ -5450,7 +5450,7 @@ fn e0384_mixed_rooting_requires_annotation() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn merge(a: B, b: B) -> B {
     if a.x > 0 { return a; }
     return B { x: 0 };
@@ -5487,7 +5487,7 @@ fn e0384_does_not_fire_on_fresh_value_returns() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn fresh(a: B, b: B) -> B { return B { x: 0 }; }
 fn main() -> i32 { return 0; }
 ",
@@ -5518,9 +5518,9 @@ fn disjoint_subfield_borrows_accepted_in_one_call() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut self) { return; } }
+impl Inner { fn drop(mut this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut self) { return; } }
+impl Pair { fn drop(mut this) { return; } }
 fn modify_both(mut a: Inner, mut b: Inner) { return; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
@@ -5553,9 +5553,9 @@ fn e0374_parent_and_subfield_in_one_call_rejected() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut self) { return; } }
+impl Inner { fn drop(mut this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut self) { return; } }
+impl Pair { fn drop(mut this) { return; } }
 fn write_pair(mut a: Pair, b: Inner) { return; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
@@ -5597,9 +5597,9 @@ fn e0374_cross_statement_subfield_borrow_blocks_parent_read() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut self) { return; } }
+impl Inner { fn drop(mut this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut self) { return; } }
+impl Pair { fn drop(mut this) { return; } }
 fn cursor(mut i: Inner) -> Inner { return i; }
 fn peek_pair(borrow p: Pair) -> i32 { return 0; }
 fn main() -> i32 {
@@ -5637,9 +5637,9 @@ fn disjoint_subfield_cross_statement_accepted() {
         &src,
         "\
 struct Inner { v: i32 }
-impl Inner { fn drop(mut self) { return; } }
+impl Inner { fn drop(mut this) { return; } }
 struct Pair { left: Inner, right: Inner }
-impl Pair { fn drop(mut self) { return; } }
+impl Pair { fn drop(mut this) { return; } }
 fn cursor(mut i: Inner) -> Inner { return i; }
 fn peek(borrow i: Inner) -> i32 { return i.v; }
 fn main() -> i32 {
@@ -5679,7 +5679,7 @@ fn e0383_read_of_exclusively_borrowed_place_rejected() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn cursor(mut b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
@@ -5717,7 +5717,7 @@ fn e0383_does_not_fire_when_borrower_consumed_first() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn cursor(mut b: B) -> B { return b; }
 fn drain(move c: B) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
@@ -5757,7 +5757,7 @@ fn e0372_message_refined_when_borrow_is_exclusive() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn cursor(mut b: B) -> B { return b; }
 fn drain(move b: B) { return; }
 fn main() -> i32 {
@@ -5796,8 +5796,8 @@ fn e2_mut_method_call_establishes_exclusive_borrow() {
         "\
 struct B { x: i32 }
 impl B {
-    fn drop(mut self) { return; }
-    fn cursor(mut self) -> B { return self; }
+    fn drop(mut this) { return; }
+    fn cursor(mut this) -> B { return this; }
 }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
@@ -5820,7 +5820,7 @@ fn main() -> i32 {
     // value → E0337, rejected before the read-while-borrowed (E0383) conflict.
     assert!(
         !out.status.success(),
-        "returning `mut self` by value must be rejected"
+        "returning `mut this` by value must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
@@ -5836,7 +5836,7 @@ fn reading_the_exclusive_borrower_itself_accepted() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn cursor(mut b: B) -> B { return b; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
@@ -6050,11 +6050,11 @@ fn phase7_generic_decls_and_impl_interface_clean() {
         &src,
         // Slice 7GEN.6: `Ord` is now blessed; the interface body in
         // this test uses a different name to avoid the collision.
-        "interface Compare { fn compare(self, other: i32) -> i32; }\n\
+        "interface Compare { fn compare(this, other: i32) -> i32; }\n\
          struct Pair[A, B] { first: A, second: B }\n\
          enum Maybe[T] { Some(T), None }\n\
          struct Point { x: i32, y: i32 }\n\
-         impl Point: Compare { fn compare(self, other: i32) -> i32 { return 0; } }\n\
+         impl Point: Compare { fn compare(this, other: i32) -> i32 { return 0; } }\n\
          fn identity[T](x: T) -> T { return x; }\n\
          fn main() -> i32 { return 7; }\n",
     )
@@ -6082,9 +6082,9 @@ fn phase7_impl_interface_missing_method_rejected_e0503() {
     let src = dir.join("p7_miss.cplus");
     std::fs::write(
         &src,
-        "interface Two { fn a(self) -> i32; fn b(self) -> i32; }\n\
+        "interface Two { fn a(this) -> i32; fn b(this) -> i32; }\n\
          struct P { x: i32 }\n\
-         impl P: Two { fn a(self) -> i32 { return 0; } }\n\
+         impl P: Two { fn a(this) -> i32 { return 0; } }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -6356,8 +6356,8 @@ fn phase7_generic_typed_impl_mut_self_runs() {
         &src,
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
-             fn get(self) -> T { return self.value; }\n\
-             fn set(mut self, v: T) { self.value = v; }\n\
+             fn get(this) -> T { return this.value; }\n\
+             fn set(mut this, v: T) { this.value = v; }\n\
          }\n\
          fn main() -> i32 {\n\
              let mut b: Box[i32] = Box[i32] { value: 0 };\n\
@@ -6375,7 +6375,7 @@ fn phase7_generic_typed_impl_mut_self_runs() {
         .expect("invoke cpc");
     assert!(
         out.status.success(),
-        "mut-self generic-typed impl should build: stderr={}",
+        "mut-this generic-typed impl should build: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let run = Command::new(&bin).status().expect("run binary");
@@ -6899,7 +6899,7 @@ fn phase7_generic_typed_impl_runs() {
         &src,
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
-             fn get(self) -> T { return self.value; }\n\
+             fn get(this) -> T { return this.value; }\n\
          }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32] { value: 42 };\n\
@@ -6934,7 +6934,7 @@ fn phase7_generic_method_with_turbofish_runs() {
         &src,
         "struct P { x: i32 }\n\
          impl P {\n\
-             fn cast[T](self, value: T) -> T { return value; }\n\
+             fn cast[T](this, value: T) -> T { return value; }\n\
          }\n\
          fn main() -> i32 {\n\
              let p: P = P { x: 0 };\n\
@@ -6974,7 +6974,7 @@ fn phase7_generic_method_on_generic_struct_runs() {
         &src,
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
-             fn id[U](self, x: U) -> U { return x; }\n\
+             fn id[U](this, x: U) -> U { return x; }\n\
          }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32] { value: 0 };\n\
@@ -7010,11 +7010,11 @@ fn phase7_method_generic_interface_bound_satisfied_runs() {
     let src = dir.join("mgbound.cplus");
     std::fs::write(
         &src,
-        "interface Show { fn show(self) -> i32; }\n\
+        "interface Show { fn show(this) -> i32; }\n\
          struct Box[T] { value: T }\n\
-         impl Box[T] { fn run[U: Show](self, x: U) -> i32 { return x.show(); } }\n\
+         impl Box[T] { fn run[U: Show](this, x: U) -> i32 { return x.show(); } }\n\
          struct W { n: i32 }\n\
-         impl W: Show { fn show(self) -> i32 { return self.n; } }\n\
+         impl W: Show { fn show(this) -> i32 { return this.n; } }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32] { value: 0 };\n\
              let w: W = W { n: 7 };\n\
@@ -7048,7 +7048,7 @@ fn phase7_generic_method_on_generic_struct_uses_both_type_params() {
         &src,
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
-             fn get[U](self, x: U) -> T { return self.value; }\n\
+             fn get[U](this, x: U) -> T { return this.value; }\n\
          }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32] { value: 42 };\n\
@@ -7089,7 +7089,7 @@ fn phase7_generic_method_on_generic_enum_runs() {
         &src,
         "enum Maybe[T] { Some(T), None }\n\
          impl Maybe[T] {\n\
-             fn id[U](self, x: U) -> U { return x; }\n\
+             fn id[U](this, x: U) -> U { return x; }\n\
          }\n\
          fn main() -> i32 {\n\
              let m: Maybe[i32] = Maybe[i32]::Some(0);\n\
@@ -7126,7 +7126,7 @@ fn phase7_generic_method_on_generic_enum_two_instantiations() {
         &src,
         "enum Maybe[T] { Some(T), None }\n\
          impl Maybe[T] {\n\
-             fn id[U](self, x: U) -> U { return x; }\n\
+             fn id[U](this, x: U) -> U { return x; }\n\
          }\n\
          fn main() -> i32 {\n\
              let m: Maybe[i32] = Maybe[i32]::Some(0);\n\
@@ -7443,7 +7443,7 @@ fn phase7_self_outside_impl_rejected_e0508() {
     let src = dir.join("p7_self.cplus");
     std::fs::write(
         &src,
-        "fn loose(x: Self) -> i32 { return 0; }\n\
+        "fn loose(x: This) -> i32 { return 0; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -7454,7 +7454,7 @@ fn phase7_self_outside_impl_rejected_e0508() {
         .expect("invoke cpc");
     assert!(
         !out.status.success(),
-        "Self outside impl/interface should reject"
+        "This outside impl/interface should reject"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -8153,7 +8153,7 @@ fn phase7_generic_type_assoc_fn_multi_args_runs() {
         "struct Pair[A, B] { first: A, second: B }\n\
          impl Pair[A, B] {\n\
              fn make(a: A, b: B) -> Pair[A, B] { return Pair[A, B] { first: a, second: b }; }\n\
-             fn sum_first_and_b(self) -> i32 { return self.first; }\n\
+             fn sum_first_and_b(this) -> i32 { return this.first; }\n\
          }\n\
          fn main() -> i32 {\n\
              let p: Pair[i32, bool] = Pair[i32, bool]::make(42, true);\n\
@@ -8674,7 +8674,7 @@ fn phase11_borrow_diagnostic_includes_secondary_label() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn longest(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > b.x { return a; }
     return b;
@@ -8714,7 +8714,7 @@ fn phase11_borrow_diagnostic_json_carries_labels_field() {
         &src,
         "\
 struct B { x: i32 }
-impl B { fn drop(mut self) { return; } }
+impl B { fn drop(mut this) { return; } }
 fn longest(a: borrow A B, b: borrow A B) -> borrow A B {
     if a.x > b.x { return a; }
     return b;
@@ -10380,9 +10380,9 @@ fn stdlib_hash_map_noncopy_value_rejected_e0502() {
         "import \"stdlib/hash_map\" as hm;\n\
          struct Owner { p: *u8 }\n\
          impl Owner {\n\
-             fn drop(mut self) { unsafe { free(self.p); } return; }\n\
-             fn hash(self) -> u64 { return 7 as u64; }\n\
-             fn eq(self, other: Self) -> bool { return true; }\n\
+             fn drop(mut this) { unsafe { free(this.p); } return; }\n\
+             fn hash(this) -> u64 { return 7 as u64; }\n\
+             fn eq(this, other: This) -> bool { return true; }\n\
          }\n\
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
@@ -10780,7 +10780,7 @@ fn stdlib_cross_module_generic_method_propagation() {
          pub struct Maker { _x: i32 }\n\
          pub fn make_maker() -> Maker { return Maker { _x: 0 as i32 }; }\n\
          impl Maker {\n\
-             pub fn make_buf(self) -> vec::Vec[u8] {\n\
+             pub fn make_buf(this) -> vec::Vec[u8] {\n\
                  let mut buf: vec::Vec[u8] = vec::new::[u8]();\n\
                  buf.push(7 as u8);\n\
                  return buf;\n\
@@ -11672,7 +11672,7 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
          extern fn free(p: *u8);\n\
          static mut FREES: i32 = 0;\n\
          struct Res { p: *u8 }\n\
-         impl Res { fn drop(mut self) { unsafe { FREES = FREES +% 1; free(self.p); } return; } }\n\
+         impl Res { fn drop(mut this) { unsafe { FREES = FREES +% 1; free(this.p); } return; } }\n\
          fn make_locked() -> mutex::MutexGuard[Res] {\n\
              let m: mutex::Mutex[Res] = mutex::new::[Res](Res { p: unsafe { malloc(8 as usize) } });\n\
              return m.lock();\n\
@@ -11742,7 +11742,7 @@ fn stdlib_box_set_drops_old_value() {
          static mut A: i32 = 0;\n\
          static mut F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { F = F +% 1; free(self.p); } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              { let mut b: box::Box[R] = box::new::[R](mk()); b.set(mk()); }\n\
@@ -11795,7 +11795,7 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { free(self.p); } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { free(this.p); } return; } }\n\
          fn mk() -> R { return R { p: unsafe { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              let b: box::Box[R] = box::new::[R](mk());\n\
@@ -11920,7 +11920,7 @@ fn stdlib_vec_assoc_new_with_struct_element() {
          static mut A: i32 = 0;\n\
          static mut F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { F = F +% 1; free(self.p); } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              { let mut v: vec::Vec[R] = vec::Vec[R]::new(); v.push(mk()); v.push(mk()); v.push(mk()); }\n\
@@ -12058,7 +12058,7 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
          static mut A: i32 = 0;\n\
          static mut F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(mut self) { unsafe { F = F +% 1; free(self.p); } return; } }\n\
+         impl R { fn drop(mut this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
          fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
          gen fn one() -> i32 { let r: R = mk(); yield 1; yield 2; return; }\n\
          gen fn staggered() -> i32 { let r1: R = mk(); yield 1; let r2: R = mk(); yield 2; return; }\n\
@@ -13144,9 +13144,9 @@ fn async_method_on_user_struct_round_trip() {
          extern fn free(p: *u8);\n\
          struct PipeReader { fd: i32 }\n\
          impl PipeReader {\n\
-             pub async fn read_byte(mut self) -> i32 {\n\
+             pub async fn read_byte(mut this) -> i32 {\n\
                  let buf: *u8 = unsafe { malloc(1 as usize) };\n\
-                 let n: isize = await net::read_fd_async(self.fd, buf, 1 as usize);\n\
+                 let n: isize = await net::read_fd_async(this.fd, buf, 1 as usize);\n\
                  let v: u8 = unsafe { *buf };\n\
                  unsafe { free(buf); }\n\
                  if n != (1 as isize) { return -1 as i32; }\n\
@@ -13501,9 +13501,9 @@ fn generic_max_with_ord_bound_calls_cmp_in_body() {
         "\
 struct Point { x: i32, y: i32 }
 impl Point: Ord {
-    fn cmp(self, other: Point) -> i32 {
-        if self.x < other.x { return 0 -% 1; }
-        if self.x > other.x { return 1; }
+    fn cmp(this, other: Point) -> i32 {
+        if this.x < other.x { return 0 -% 1; }
+        if this.x > other.x { return 1; }
         return 0;
     }
 }
@@ -13549,9 +13549,9 @@ fn interface_self_in_fn_ptr_through_generic_dispatch() {
         &src,
         "\
 struct P { x: i32 }
-interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; }
+interface Apply { fn apply(this, f: fn(This) -> i32) -> i32; }
 impl P: Apply {
-    fn apply(self, f: fn(P) -> i32) -> i32 { return f(self); }
+    fn apply(this, f: fn(P) -> i32) -> i32 { return f(this); }
 }
 fn read(p: P) -> i32 { return p.x; }
 fn call[T: Apply](t: T, f: fn(T) -> i32) -> i32 { return t.apply(f); }
@@ -13589,9 +13589,9 @@ fn interface_self_in_generic_instantiation_return() {
         "\
 struct Holder[A] { v: A }
 struct P { x: i32 }
-interface Wrap { fn wrap(self) -> Holder[Self]; }
+interface Wrap { fn wrap(this) -> Holder[This]; }
 impl P: Wrap {
-    fn wrap(self) -> Holder[P] { return Holder[P] { v: self }; }
+    fn wrap(this) -> Holder[P] { return Holder[P] { v: this }; }
 }
 fn run[T: Wrap](t: T) -> Holder[T] { return t.wrap(); }
 fn main() -> i32 {
@@ -15007,9 +15007,9 @@ fn phase2b_gen_method_on_struct() {
         "import \"stdlib/iterator\" as iterator;\n\
          pub struct Counter { n: i32 }\n\
          impl Counter {\n\
-             pub gen fn iter(self) -> i32 {\n\
+             pub gen fn iter(this) -> i32 {\n\
                  let mut i: i32 = 0;\n\
-                 while i < self.n {\n\
+                 while i < this.n {\n\
                      yield i;\n\
                      i = i +% (1 as i32);\n\
                  }\n\
@@ -15068,14 +15068,14 @@ fn phase2c_enum_impl_methods_dispatch() {
 extern fn printf(fmt: *u8, ...) -> i32;
 pub enum Tag { Yes, No }
 impl Tag {
-    pub fn flip(self) -> Tag {
-        return match self {
+    pub fn flip(this) -> Tag {
+        return match this {
             Tag::Yes => Tag::No,
             Tag::No => Tag::Yes,
         };
     }
-    pub fn is_yes(self) -> bool {
-        return match self {
+    pub fn is_yes(this) -> bool {
+        return match this {
             Tag::Yes => true,
             Tag::No => false,
         };
@@ -15083,8 +15083,8 @@ impl Tag {
 }
 pub enum Shape { Circle(i32), Square(i32) }
 impl Shape {
-    pub fn area(self) -> i32 {
-        return match self {
+    pub fn area(this) -> i32 {
+        return match this {
             Shape::Circle(r) => r *% r *% (3 as i32),
             Shape::Square(s) => s *% s,
         };
@@ -15259,8 +15259,8 @@ fn phase2c_generic_enum_impl_synthesis() {
         dir.join("src/main.cplus"),
         "enum Maybe[T] { Some(T), None }\n\
          impl Maybe[T] {\n\
-             pub fn is_some(self) -> bool {\n\
-                 return match self {\n\
+             pub fn is_some(this) -> bool {\n\
+                 return match this {\n\
                      Maybe[T]::Some(_) => true,\n\
                      Maybe[T]::None => false,\n\
                  };\n\
@@ -16532,8 +16532,8 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
         "pub struct Counter { v: i32 }\n\
          impl Counter {\n\
            pub fn make() -> Counter { return Counter { v: 0 }; }\n\
-           pub fn value(self) -> i32 { return self.v; }\n\
-           fn priv_bump(mut self) -> Counter { return Counter { v: self.v +% (1 as i32) }; }\n\
+           pub fn value(this) -> i32 { return this.v; }\n\
+           fn priv_bump(mut this) -> Counter { return Counter { v: this.v +% (1 as i32) }; }\n\
          }\n",
     )
     .unwrap();
@@ -20962,8 +20962,8 @@ fn if_arm_method_call_struct_value_not_discarded() {
 struct P { x: i32, y: i32 }
 
 impl P {
-    fn shift(self) -> P { return P { x: self.x +% 1, y: self.y +% 1 }; }
-    fn keep(self) -> P { return P { x: self.x, y: self.y }; }
+    fn shift(this) -> P { return P { x: this.x +% 1, y: this.y +% 1 }; }
+    fn keep(this) -> P { return P { x: this.x, y: this.y }; }
 }
 
 fn choose(p: P, flag: bool) -> P {
@@ -21072,7 +21072,7 @@ fn vec_element_drop_runs_per_element_by_count() {
         "import \"stdlib/vec\" as vec;\n\
          static mut DROPS: i32 = 0;\n\
          struct Cell { tag: i32 }\n\
-         impl Cell { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Cell { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          struct Wrap { items: vec::Vec[Cell], name: i32 }\n\
          fn direct() {\n\
              let mut v: vec::Vec[Cell] = vec::new::[Cell]();\n\
@@ -21122,7 +21122,7 @@ fn consumed_enum_payload_drops_once_per_arm() {
         "\
 static mut DROPS: i32 = 0;
 struct Res { tag: i32 }
-impl Res { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }
+impl Res { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }
 enum Box1 { Some(Res), None }
 enum Wrap { W(Res), X }
 fn consume(r: Res) -> i32 { return r.tag; }
@@ -21202,7 +21202,7 @@ fn enum_move_into_method_arg_no_double_free() {
          static mut DROPS: i32 = 0;\n\
          static mut SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
-         impl Leaf { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Leaf { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
          enum Parse { Ok(Node, i32), Fail(i32) }\n\
          fn make_inner() -> Parse {\n\
@@ -21287,7 +21287,7 @@ fn enum_conditional_branch_tail_move_no_double_free() {
          static mut DROPS: i32 = 0;\n\
          static mut SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
-         impl Leaf { fn drop(mut self) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Leaf { fn drop(mut this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
          enum Parse { Ok(Node), Fail }\n\
          fn make() -> Parse {\n\
@@ -22342,7 +22342,7 @@ fn no_alloc_rejects_allocating_method_through_receiver() {
         "extern fn malloc(n: usize) -> *u8;\n\
          struct Bag { ptr: *u8 }\n\
          impl Bag {\n\
-             fn grow(mut self) { unsafe { self.ptr = malloc(64 as usize); } return; }\n\
+             fn grow(mut this) { unsafe { this.ptr = malloc(64 as usize); } return; }\n\
          }\n\
          #[no_alloc]\n\
          fn hot(mut b: Bag) { b.grow(); return; }\n\
@@ -22369,7 +22369,7 @@ fn no_alloc_allows_marked_method_through_receiver() {
         "struct Ctr { v: i32 }\n\
          impl Ctr {\n\
              #[no_alloc]\n\
-             fn bump(mut self) { self.v = self.v +% 1; return; }\n\
+             fn bump(mut this) { this.v = this.v +% 1; return; }\n\
          }\n\
          #[no_alloc]\n\
          fn hot(mut c: Ctr) { c.bump(); return; }\n\
@@ -22417,7 +22417,7 @@ fn no_block_rejects_blocking_method_through_receiver() {
         "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
          struct Lock { h: *u8 }\n\
          impl Lock {\n\
-             fn take(self) { unsafe { let _r: i32 = pthread_mutex_lock(self.h); } return; }\n\
+             fn take(this) { unsafe { let _r: i32 = pthread_mutex_lock(this.h); } return; }\n\
          }\n\
          #[no_block]\n\
          fn hot(l: Lock) { l.take(); return; }\n\
@@ -22758,7 +22758,7 @@ fn graph_project() -> std::path::PathBuf {
         dir.join("src/main.cplus"),
         "struct Point { pub x: i32, pub y: i32 }\n\
          impl Point {\n\
-             fn sum(self) -> i32 { return self.x +% self.y; }\n\
+             fn sum(this) -> i32 { return this.x +% this.y; }\n\
          }\n\
          fn main() -> i32 {\n\
              let p: Point = Point { x: 1, y: 2 };\n\
@@ -23410,7 +23410,7 @@ fn unsafe_fn_compiles_and_runs_when_called_in_unsafe_block() {
     std::fs::write(
         &src,
         "struct Counter { n: i32 }\n\
-         impl Counter { unsafe fn raw_get(self) -> i32 { return self.n; } }\n\
+         impl Counter { unsafe fn raw_get(this) -> i32 { return this.n; } }\n\
          unsafe fn danger() -> i32 { return 42; }\n\
          fn main() -> i32 {\n\
              let c: Counter = Counter { n: 7 };\n\
@@ -23607,7 +23607,7 @@ fn stdlib_text_literal_as_arg_constructs_owned_text() {
         "import \"stdlib/text\" as text;\n\
          struct Setter { tag: i32 }\n\
          impl Setter {\n\
-             fn set(self, t: text::Text) -> usize { return t.len(); }\n\
+             fn set(this, t: text::Text) -> usize { return t.len(); }\n\
              fn make(t: text::Text) -> usize { return t.len(); }\n\
          }\n\
          fn take(t: text::Text) -> usize { return t.len(); }\n\
@@ -25774,8 +25774,8 @@ const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
      }\n\
      \n\
      impl Item {\n\
-     \x20   pub fn boost(mut self, by: i32) {\n\
-     \x20       self.weight = self.weight + by;\n\
+     \x20   pub fn boost(mut this, by: i32) {\n\
+     \x20       this.weight = this.weight + by;\n\
      \x20       return;\n\
      \x20   }\n\
      }\n\
@@ -25789,13 +25789,13 @@ const DSL_GROUP_PACKAGE: &str = "pub struct Item {\n\
      \x20       return Builder { sum: 0 };\n\
      \x20   }\n\
      \n\
-     \x20   pub fn add(mut self, item: Item) {\n\
-     \x20       self.sum = self.sum + item.value * item.weight;\n\
+     \x20   pub fn add(mut this, item: Item) {\n\
+     \x20       this.sum = this.sum + item.value * item.weight;\n\
      \x20       return;\n\
      \x20   }\n\
      \n\
-     \x20   pub fn finish(move self) -> Item {\n\
-     \x20       return Item { value: self.sum, weight: 1 };\n\
+     \x20   pub fn finish(move this) -> Item {\n\
+     \x20       return Item { value: this.sum, weight: 1 };\n\
      \x20   }\n\
      }\n\
      \n\

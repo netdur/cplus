@@ -17,8 +17,8 @@
 //
 // Variants that were CLEAN even before the fix, pinning the trigger:
 //   - pass the temporary inline:           k.set(text::from_str("hello"));
-//   - declare the param `move`:            fn set(mut self, move v: text::Text)
-//   - a read-only param (not stored):      fn set(mut self, v: text::Text) { ...read v... }
+//   - declare the param `move`:            fn set(mut this, move v: text::Text)
+//   - a read-only param (not stored):      fn set(mut this, v: text::Text) { ...read v... }
 //   - a user-Drop struct instead of a builtin owning type.
 
 import "stdlib/vec" as vec;
@@ -29,9 +29,9 @@ extern fn write(fd: i32, buf: *u8, n: usize) -> isize;
 struct Sink { items: vec::Vec[text::Text] }
 
 impl Sink {
-    // Stores the param: `self.items.push(v)` moves v into the Vec, so the Vec now
+    // Stores the param: `this.items.push(v)` moves v into the Vec, so the Vec now
     // owns v's buffer and frees it on Sink's drop.
-    fn set(mut self, v: text::Text) { self.items.push(v); return; }
+    fn set(mut this, v: text::Text) { this.items.push(v); return; }
 }
 
 fn main() -> i32 {

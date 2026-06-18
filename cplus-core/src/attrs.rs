@@ -955,7 +955,7 @@ mod tests {
         // layer — both errors will eventually point at the same span).
         let diags = check_src(
             "struct X { v: i32 }\n\
-             impl X { #[test] fn t(self) { return; } }",
+             impl X { #[test] fn t(this) { return; } }",
         );
         assert_eq!(codes(&diags), vec!["E0356"]);
     }
@@ -1028,7 +1028,7 @@ mod tests {
     fn no_alloc_on_method_clean() {
         let diags = check_src(
             "struct X { v: i32 }\n\
-             impl X { #[no_alloc] fn t(self) -> i32 { return self.v; } }",
+             impl X { #[no_alloc] fn t(this) -> i32 { return this.v; } }",
         );
         assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
     }
@@ -1059,7 +1059,7 @@ mod tests {
     fn no_block_on_method_clean() {
         let diags = check_src(
             "struct X { v: i32 }\n\
-             impl X { #[no_block] fn t(self) -> i32 { return self.v; } }",
+             impl X { #[no_block] fn t(this) -> i32 { return this.v; } }",
         );
         assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
     }
@@ -1112,7 +1112,7 @@ mod tests {
     fn max_stack_on_method_clean() {
         let diags = check_src(
             "struct X { v: i32 }\n\
-             impl X { #[max_stack(256)] fn t(self) -> i32 { return self.v; } }",
+             impl X { #[max_stack(256)] fn t(this) -> i32 { return this.v; } }",
         );
         assert!(diags.is_empty(), "expected clean, got: {:?}", codes(&diags));
     }
@@ -1252,7 +1252,7 @@ mod tests {
     #[test]
     fn inline_on_method_clean() {
         let diags = check_src(
-            "struct P { x: i32 } impl P { #[inline(always)] fn get(self) -> i32 { return self.x; } }",
+            "struct P { x: i32 } impl P { #[inline(always)] fn get(this) -> i32 { return this.x; } }",
         );
         assert!(diags.is_empty(), "got: {:?}", codes(&diags));
     }

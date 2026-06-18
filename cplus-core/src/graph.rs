@@ -1798,9 +1798,9 @@ fn method_signature(m: &Method) -> String {
     if let Some(r) = m.receiver {
         parts.push(
             match r {
-                Receiver::Read => "self",
-                Receiver::Mut => "mut self",
-                Receiver::Move => "move self",
+                Receiver::Read => "this",
+                Receiver::Mut => "mut this",
+                Receiver::Move => "move this",
             }
             .to_string(),
         );
@@ -2251,15 +2251,15 @@ mod tests {
     fn impl_methods_attach_to_their_type() {
         let src = "struct Counter { v: i32 }\n\
                    impl Counter {\n\
-                     fn read(self) -> i32 { return self.v; }\n\
-                     fn inc(mut self) { self.v = self.v +% 1; }\n\
+                     fn read(this) -> i32 { return this.v; }\n\
+                     fn inc(mut this) { this.v = this.v +% 1; }\n\
                    }";
         let g = CodeGraph::build(&project(src));
         let read = node(&g, "src::Counter::read");
         assert_eq!(read.kind, NodeKind::Method);
-        assert_eq!(read.signature.as_deref(), Some("fn read(self) -> i32"));
+        assert_eq!(read.signature.as_deref(), Some("fn read(this) -> i32"));
         let inc = node(&g, "src::Counter::inc");
-        assert_eq!(inc.signature.as_deref(), Some("fn inc(mut self)"));
+        assert_eq!(inc.signature.as_deref(), Some("fn inc(mut this)"));
         assert!(g
             .edges
             .iter()
@@ -2365,8 +2365,8 @@ mod tests {
     fn self_method_call_resolves_to_impl_target() {
         let src = "struct Counter { v: i32 }\n\
                    impl Counter {\n\
-                     fn inc(mut self) { self.bump(); }\n\
-                     fn bump(mut self) { self.v = self.v +% 1; }\n\
+                     fn inc(mut this) { this.bump(); }\n\
+                     fn bump(mut this) { this.v = this.v +% 1; }\n\
                    }";
         let g = CodeGraph::build(&project(src));
         assert!(has_call(&g, "src::Counter::inc", "src::Counter::bump"));
@@ -2375,7 +2375,7 @@ mod tests {
     #[test]
     fn typed_local_method_call_resolves() {
         let src = "struct Point { x: i32 }\n\
-                   impl Point { fn mag(self) -> i32 { return self.x; } }\n\
+                   impl Point { fn mag(this) -> i32 { return this.x; } }\n\
                    fn run() -> i32 { let p: Point = Point { x: 3 }; return p.mag(); }";
         let g = CodeGraph::build(&project(src));
         assert!(has_call(&g, "src::run", "src::Point::mag"));
@@ -2397,7 +2397,7 @@ mod tests {
         let src = "struct W { x: i32 }\n\
                    impl W {\n\
                      fn make() -> W { return W { x: 0 }; }\n\
-                     fn go(self) -> i32 { return self.x; }\n\
+                     fn go(this) -> i32 { return this.x; }\n\
                    }\n\
                    fn run() -> i32 { return W::make().go(); }";
         let g = CodeGraph::build(&project(src));
@@ -2555,7 +2555,7 @@ mod tests {
     #[test]
     fn type_at_resolves_params_locals_and_self() {
         let src = "struct Point { x: i32 }\n\
-                   impl Point { fn mag(self) -> i32 { return self.x; } }\n\
+                   impl Point { fn mag(this) -> i32 { return this.x; } }\n\
                    fn run(p: Point) -> i32 { let q: Point = p; return q.x; }";
         let g = CodeGraph::build(&project(src));
 

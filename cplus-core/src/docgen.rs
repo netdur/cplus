@@ -391,7 +391,7 @@ impl Point {
     pub fn new(x: i32) -> Point { return Point { x: x }; }
 
     /// Read the x coordinate.
-    pub fn x(self) -> i32 { return self.x; }
+    pub fn x(this) -> i32 { return this.x; }
 }
 ";
         let items = extract(src);
@@ -403,11 +403,11 @@ impl Point {
     #[test]
     fn impl_interface_for_target_uses_implementing_type_name() {
         let src = "\
-pub interface Display { fn show(self) -> i32 }
+pub interface Display { fn show(this) -> i32 }
 
 impl Counter: Display {
     /// Show the counter's value.
-    pub fn show(self) -> i32 { return self.value; }
+    pub fn show(this) -> i32 { return this.value; }
 }
 ";
         let items = extract(src);

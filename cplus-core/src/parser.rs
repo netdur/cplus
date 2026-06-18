@@ -863,6 +863,25 @@ impl Parser {
                     Ok(None)
                 }
             }
+            // v0.0.24 de-Rust: a Rust-style bare receiver `self` (followed by
+            // `)` or `,` — not a typed `self: T` param) is rejected with a hint.
+            TokenKind::Ident(s)
+                if s == "self"
+                    && matches!(
+                        self.peek_kind_n(1),
+                        TokenKind::RParen | TokenKind::Comma
+                    ) =>
+            {
+                let tok = self.peek().clone();
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`self`".into(),
+                        expected:
+                            "`this` — C+ receivers are `this` / `mut this` / `move this`, not `self`",
+                    },
+                    span: tok.span,
+                })
+            }
             _ => Ok(None),
         }
     }
@@ -4032,19 +4051,19 @@ mod tests {
 
     #[test]
     fn unsafe_method_sets_is_unsafe() {
-        let m = first_method("struct S { n: i32 } impl S { unsafe fn g(self) -> i32 { return self.n; } }");
+        let m = first_method("struct S { n: i32 } impl S { unsafe fn g(this) -> i32 { return this.n; } }");
         assert!(m.is_unsafe);
     }
 
     #[test]
     fn plain_method_is_not_unsafe() {
-        let m = first_method("struct S { n: i32 } impl S { fn g(self) -> i32 { return self.n; } }");
+        let m = first_method("struct S { n: i32 } impl S { fn g(this) -> i32 { return this.n; } }");
         assert!(!m.is_unsafe);
     }
 
     #[test]
     fn pub_unsafe_method_sets_both_flags() {
-        let m = first_method("struct S { n: i32 } impl S { pub unsafe fn g(self) -> i32 { return self.n; } }");
+        let m = first_method("struct S { n: i32 } impl S { pub unsafe fn g(this) -> i32 { return this.n; } }");
         assert!(m.is_unsafe);
         assert!(m.is_pub);
     }
@@ -4100,7 +4119,7 @@ mod tests {
     #[test]
     fn move_self_receiver_parses() {
         let m = first_method(
-            "struct P { x: i32 } impl P { fn consume(move self) -> i32 { return self.x; } }",
+            "struct P { x: i32 } impl P { fn consume(move this) -> i32 { return this.x; } }",
         );
         assert_eq!(m.receiver, Some(Receiver::Move));
     }
@@ -4108,20 +4127,20 @@ mod tests {
     #[test]
     fn self_receiver_parses() {
         let m =
-            first_method("struct P { x: i32 } impl P { fn read(self) -> i32 { return self.x; } }");
+            first_method("struct P { x: i32 } impl P { fn read(this) -> i32 { return this.x; } }");
         assert_eq!(m.receiver, Some(Receiver::Read));
     }
 
     #[test]
     fn mut_self_receiver_parses() {
-        let m = first_method("struct P { x: i32 } impl P { fn write(mut self) { self.x = 0; } }");
+        let m = first_method("struct P { x: i32 } impl P { fn write(mut this) { this.x = 0; } }");
         assert_eq!(m.receiver, Some(Receiver::Mut));
     }
 
     #[test]
     fn mut_move_self_is_parse_error() {
         let err =
-            parse_src("struct P { x: i32 } impl P { fn bad(mut move self) -> i32 { return 0; } }")
+            parse_src("struct P { x: i32 } impl P { fn bad(mut move this) -> i32 { return 0; } }")
                 .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
@@ -4129,7 +4148,7 @@ mod tests {
     #[test]
     fn move_mut_self_is_parse_error() {
         let err =
-            parse_src("struct P { x: i32 } impl P { fn bad(move mut self) -> i32 { return 0; } }")
+            parse_src("struct P { x: i32 } impl P { fn bad(move mut this) -> i32 { return 0; } }")
                 .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
@@ -4209,7 +4228,7 @@ mod tests {
 
     #[test]
     fn pub_method_flag() {
-        let p = parse_src("struct S { x: i32 } impl S { pub fn f(self) -> i32 { return 0; } fn g(self) -> i32 { return 0; } }").unwrap();
+        let p = parse_src("struct S { x: i32 } impl S { pub fn f(this) -> i32 { return 0; } fn g(this) -> i32 { return 0; } }").unwrap();
         let ItemKind::Impl(b) = &p.items[1].kind else {
             panic!();
         };
@@ -4505,7 +4524,7 @@ mod tests {
 
     #[test]
     fn interface_decl_parses_with_single_method() {
-        let p = parse_src("interface Ord { fn compare(self, other: i32) -> i32; }").unwrap();
+        let p = parse_src("interface Ord { fn compare(this, other: i32) -> i32; }").unwrap();
         let ItemKind::Interface(i) = &p.items[0].kind else {
             panic!()
         };
@@ -4520,8 +4539,8 @@ mod tests {
     fn interface_decl_multiple_methods() {
         let p = parse_src(
             "interface Eq {\n\
-                 fn eq(self, other: i32) -> bool;\n\
-                 fn ne(self, other: i32) -> bool;\n\
+                 fn eq(this, other: i32) -> bool;\n\
+                 fn ne(this, other: i32) -> bool;\n\
              }",
         )
         .unwrap();
@@ -4534,7 +4553,7 @@ mod tests {
 
     #[test]
     fn interface_method_with_no_return_type() {
-        let p = parse_src("interface Logger { fn log(self, msg: i32); }").unwrap();
+        let p = parse_src("interface Logger { fn log(this, msg: i32); }").unwrap();
         let ItemKind::Interface(i) = &p.items[0].kind else {
             panic!()
         };
@@ -4545,13 +4564,13 @@ mod tests {
     fn interface_method_requires_semicolon_not_body() {
         // Interface methods declare signatures, not implementations —
         // they must end with `;`, not `{ ... }`.
-        let err = parse_src("interface X { fn f(self) -> i32 { return 0; } }").unwrap_err();
+        let err = parse_src("interface X { fn f(this) -> i32 { return 0; } }").unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
     }
 
     #[test]
     fn interface_pub_combo() {
-        let p = parse_src("pub interface Ord { fn compare(self, other: i32) -> i32; }").unwrap();
+        let p = parse_src("pub interface Ord { fn compare(this, other: i32) -> i32; }").unwrap();
         let ItemKind::Interface(i) = &p.items[0].kind else {
             panic!()
         };
@@ -4563,7 +4582,7 @@ mod tests {
         let p = parse_src(
             "struct Point { x: i32, y: i32 }\n\
              impl Point: Ord {\n\
-                 fn compare(self, other: Point) -> i32 { return 0; }\n\
+                 fn compare(this, other: Point) -> i32 { return 0; }\n\
              }",
         )
         .unwrap();
@@ -4582,7 +4601,7 @@ mod tests {
         // with a diagnostic pointing at the C+ `:` spelling.
         let e = parse_src(
             "struct Point { x: i32 }\n\
-             impl Point for Ord { fn compare(self, other: Point) -> i32 { return 0; } }",
+             impl Point for Ord { fn compare(this, other: Point) -> i32 { return 0; } }",
         )
         .unwrap_err();
         match e.kind {
@@ -4595,12 +4614,26 @@ mod tests {
     }
 
     #[test]
+    fn rust_self_receiver_rejected_with_this_hint() {
+        // v0.0.24 de-Rust: a bare `self` receiver points at `this`.
+        let e = parse_src("struct P { x: i32 } impl P { fn f(self) -> i32 { return 0; } }")
+            .unwrap_err();
+        match e.kind {
+            ParseErrorKind::Unexpected { found, expected } => {
+                assert!(found.contains("self"), "found: {found}");
+                assert!(expected.contains("`this`"), "expected hint, got: {expected}");
+            }
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn plain_impl_target_still_works() {
         // Inherent impl without `for Interface` continues to work — no
         // interface_name set.
         let p = parse_src(
             "struct Point { x: i32 }\n\
-             impl Point { fn x(self) -> i32 { return self.x; } }",
+             impl Point { fn x(this) -> i32 { return this.x; } }",
         )
         .unwrap();
         let ItemKind::Impl(b) = &p.items[1].kind else {
@@ -4612,7 +4645,7 @@ mod tests {
 
     #[test]
     fn interface_method_with_mut_self_receiver() {
-        let p = parse_src("interface Counter { fn inc(mut self) -> i32; }").unwrap();
+        let p = parse_src("interface Counter { fn inc(mut this) -> i32; }").unwrap();
         let ItemKind::Interface(i) = &p.items[0].kind else {
             panic!()
         };
@@ -4775,7 +4808,7 @@ mod tests {
     fn attribute_on_method_parses() {
         let p = parse_src(
             "struct X { v: i32 }\n\
-             impl X { #[test] fn m(self) { return; } }",
+             impl X { #[test] fn m(this) { return; } }",
         )
         .unwrap();
         let ItemKind::Impl(b) = &p.items[1].kind else {
@@ -5147,7 +5180,7 @@ mod tests {
     fn impl_block_with_target_generic_params_parses() {
         // Slice 7GEN.5e: `impl Vec[T] { ... }` parses, with `T`
         // recorded on `target_generic_params`.
-        let p = parse_src("impl Vec[T] { fn len(self) -> usize { return 0; } }").unwrap();
+        let p = parse_src("impl Vec[T] { fn len(this) -> usize { return 0; } }").unwrap();
         let ItemKind::Impl(b) = &p.items[0].kind else {
             panic!()
         };
@@ -5159,7 +5192,7 @@ mod tests {
 
     #[test]
     fn impl_block_with_two_target_generic_params_parses() {
-        let p = parse_src("impl Pair[A, B] { fn first(self) -> A { return self.a; } }").unwrap();
+        let p = parse_src("impl Pair[A, B] { fn first(this) -> A { return this.a; } }").unwrap();
         let ItemKind::Impl(b) = &p.items[0].kind else {
             panic!()
         };
@@ -5170,7 +5203,7 @@ mod tests {
 
     #[test]
     fn impl_block_target_generic_param_with_bound_parses() {
-        let p = parse_src("impl Sorted[T: Ord] { fn len(self) -> usize { return 0; } }").unwrap();
+        let p = parse_src("impl Sorted[T: Ord] { fn len(this) -> usize { return 0; } }").unwrap();
         let ItemKind::Impl(b) = &p.items[0].kind else {
             panic!()
         };

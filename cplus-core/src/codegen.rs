@@ -15745,7 +15745,7 @@ mod tests {
     const OWNED24: &str = "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct S24 { a: *u8, b: i64, c: i64 }\n\
-         impl S24 { fn drop(mut self) { unsafe { free(self.a); } return; } }\n\
+         impl S24 { fn drop(mut this) { unsafe { free(this.a); } return; } }\n\
          fn mk24() -> S24 { return S24 { a: unsafe { malloc(8 as usize) }, b: 0 as i64, c: 0 as i64 }; }\n";
 
     fn gen_src_with(src: &str, mode: BuildMode) -> String {
@@ -16520,7 +16520,7 @@ mod tests {
         // produces.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
@@ -16545,7 +16545,7 @@ mod tests {
         // gets `readonly` (not `noalias`) at both def and call site.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 1 }; return peek(x); }",
         );
@@ -16576,7 +16576,7 @@ mod tests {
         // unreferenced internals at -O3).
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(self) -> i32 { return self.x; } }\n\
+             impl P { fn get(this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }",
         );
         // No `call ...@P.get` in main's body — the getter was inlined.
@@ -16601,7 +16601,7 @@ mod tests {
         // pattern and the call site keeps the `call` instruction.
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(self, _unused: i32) -> i32 { return self.x; } }\n\
+             impl P { fn get(this, _unused: i32) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 7 }; return p.get(0); }",
         );
         assert!(
@@ -16617,7 +16617,7 @@ mod tests {
         // ownership transfers aren't a getter shape).
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(mut self) -> i32 { return self.x; } }\n\
+             impl P { fn get(mut this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let mut p: P = P { x: 7 }; return p.get(); }",
         );
         assert!(
@@ -16838,7 +16838,7 @@ mod tests {
         // field at scope exit (here: a moved-in owning param).
         let ir = gen_src(
             "struct Inner { opaque p: *u8 }\n\
-             impl Inner { fn drop(mut self) { return; } }\n\
+             impl Inner { fn drop(mut this) { return; } }\n\
              struct Outer { inner: Inner }\n\
              fn consume(move o: Outer) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
@@ -16855,7 +16855,7 @@ mod tests {
         // tag and tears down the active variant's payload.
         let ir = gen_src(
             "struct Inner { opaque p: *u8 }\n\
-             impl Inner { fn drop(mut self) { return; } }\n\
+             impl Inner { fn drop(mut this) { return; } }\n\
              enum E { Has(Inner), None }\n\
              fn consume(move e: E) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
@@ -16876,7 +16876,7 @@ mod tests {
         // never reached — the elements leaked.
         let ir = gen_src(
             "struct Cell { id: i32 }\n\
-             impl Cell { fn drop(mut self) { return; } }\n\
+             impl Cell { fn drop(mut this) { return; } }\n\
              fn mk(i: i32) -> Cell { return Cell { id: i }; }\n\
              fn scope_array() { let _cells: [Cell; 2] = [mk(1), mk(2)]; return; }\n\
              fn main() -> i32 { scope_array(); return 0; }",
@@ -16897,7 +16897,7 @@ mod tests {
         // pre-drop at the `=`, and the scope-exit drop of the final value.
         let ir = gen_src(
             "struct Owner { id: i32 }\n\
-             impl Owner { fn drop(mut self) { return; } }\n\
+             impl Owner { fn drop(mut this) { return; } }\n\
              fn reassign() { let mut x: Owner = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
              fn main() -> i32 { reassign(); return 0; }",
         );
@@ -16916,7 +16916,7 @@ mod tests {
         // garbage). `gen_assign` re-arms the flag to `true` after each store.
         let ir = gen_src(
             "struct Owner { id: i32 }\n\
-             impl Owner { fn drop(mut self) { return; } }\n\
+             impl Owner { fn drop(mut this) { return; } }\n\
              fn f() { let mut x: Owner; x = Owner { id: 1 }; x = Owner { id: 2 }; return; }\n\
              fn main() -> i32 { f(); return 0; }",
         );
@@ -16934,7 +16934,7 @@ mod tests {
         // stored straight over the old value.
         let ir = gen_src(
             "struct R { id: i32 }\n\
-             impl R { fn drop(mut self) { return; } }\n\
+             impl R { fn drop(mut this) { return; } }\n\
              struct Holder { r: R }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
              fn f() { let mut h: Holder = Holder { r: mk() }; h.r = mk(); return; }\n\
@@ -16958,7 +16958,7 @@ mod tests {
         // which is excluded by `place_is_safe_owned`.
         let ir = gen_src(
             "struct R { id: i32 }\n\
-             impl R { fn drop(mut self) { return; } }\n\
+             impl R { fn drop(mut this) { return; } }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
              fn f() { let mut a: [R; 2] = [mk(), mk()]; a[0 as usize] = mk(); return; }\n\
              fn main() -> i32 { f(); return 0; }",
@@ -16980,7 +16980,7 @@ mod tests {
         let ir = gen_src(
             "extern fn malloc(n: usize) -> *u8;\n\
              struct R { id: i32 }\n\
-             impl R { fn drop(mut self) { return; } }\n\
+             impl R { fn drop(mut this) { return; } }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
              fn f() {\n\
                  let pr: *R = unsafe { malloc(#size_of::[R]()) as *R };\n\
@@ -17593,7 +17593,7 @@ mod tests {
         // Copy.
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(self) -> i32 { return self.x; } }\n\
+             impl P { fn get(this) -> i32 { return this.x; } }\n\
              fn main() -> i32 { let p: P = P { x: 7 }; return p.get(); }",
         );
         assert!(
@@ -17612,12 +17612,12 @@ mod tests {
         // `b.get()` call must observe the mutation.
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn set(mut self, v: i32) { self.x = v; } }\n\
+             impl P { fn set(mut this, v: i32) { this.x = v; } }\n\
              fn main() -> i32 { let mut p: P = P { x: 0 }; p.set(5); return 0; }",
         );
         assert!(
             ir.contains("void @P.set(ptr "),
-            "mut self on Copy must stay pointer-passed: {ir}"
+            "mut this on Copy must stay pointer-passed: {ir}"
         );
         // Body should store through the ptr (GEP then store).
         assert!(ir.contains("getelementptr inbounds %P"));
@@ -17631,7 +17631,7 @@ mod tests {
         // `trivial_getter_is_inlined_at_call_site` for the inline path.)
         let ir = gen_src(
             "struct P { x: i32 }\n\
-             impl P { fn get(self) -> i32 { return self.x +% 0; } }\n\
+             impl P { fn get(this) -> i32 { return this.x +% 0; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; return p.get(); }",
         );
         // Call site loads the Copy receiver and passes by value.
@@ -17648,7 +17648,7 @@ mod tests {
         // doesn't fire — this test still exercises the call-site path.
         let ir = gen_src(
             "struct Q { x: i32 }\n\
-             impl Q { fn drop(mut self) { return; } fn get(self) -> i32 { return self.x +% 0; } }\n\
+             impl Q { fn drop(mut this) { return; } fn get(this) -> i32 { return this.x +% 0; } }\n\
              fn main() -> i32 { let q: Q = Q { x: 7 }; let r: i32 = q.get(); return r; }",
         );
         assert!(
@@ -17823,7 +17823,7 @@ mod tests {
         // uniqueness, so LLVM gets the strong promise.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
@@ -17848,7 +17848,7 @@ mod tests {
         // (Bare `x: T` now *moves* — see `bare_noncopy_param_moves_value_passed`.)
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
@@ -17874,7 +17874,7 @@ mod tests {
         // and the new owner's drop both fired on the same heap.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn forward(x: Tag) -> Tag { return x; }\n\
              fn main() -> i32 { let b: Tag = Tag { v: 7 }; let c: Tag = forward(b); return c.v; }",
         );
@@ -17903,7 +17903,7 @@ mod tests {
         // caller's drop-flag is flipped at the call site).
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn take(move t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 9 }; return take(x); }",
         );
@@ -17938,7 +17938,7 @@ mod tests {
         // indicate a stray re-allocation).
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 0 }; bump(x); return x.v; }",
         );
@@ -17959,7 +17959,7 @@ mod tests {
         // register a scope-exit drop — only the caller owns the value.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 0 }; bump(x); return x.v; }",
         );
@@ -18011,9 +18011,9 @@ mod tests {
         // value-passed; only the second param keeps the ptr shape.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              struct Tool {}\n\
-             impl Tool { fn poke(self, mut t: Tag) { t.v = t.v + 1; return; } }\n\
+             impl Tool { fn poke(this, mut t: Tag) { t.v = t.v + 1; return; } }\n\
              fn main() -> i32 {\n\
                  let mut x: Tag = Tag { v: 1 };\n\
                  let tool: Tool = Tool {};\n\
@@ -18148,7 +18148,7 @@ mod tests {
         // Tag = { i32 v } → size 4, align 4.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
@@ -18165,7 +18165,7 @@ mod tests {
         // so noalias would be unsound.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
@@ -18181,10 +18181,10 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut self) { return; }\n\
-               fn read(self) -> i32 { return self.v; }\n\
-               fn bump(mut self) { self.v = self.v + 1; return; }\n\
-               fn into(move self) -> i32 { return self.v; }\n\
+               fn drop(mut this) { return; }\n\
+               fn read(this) -> i32 { return this.v; }\n\
+               fn bump(mut this) { this.v = this.v + 1; return; }\n\
+               fn into(move this) -> i32 { return this.v; }\n\
              }\n\
              fn main() -> i32 {\n\
                let mut a: T = T { v: 1 }; a.bump();\n\
@@ -18216,7 +18216,7 @@ mod tests {
         // (i8 at 0, padding to 4, i32 at 4..8.)
         let ir = gen_src(
             "struct Big { tag: i8, n: i32 }\n\
-             impl Big { fn drop(mut self) { return; } }\n\
+             impl Big { fn drop(mut this) { return; } }\n\
              fn use_it(borrow b: Big) -> i32 { return b.n; }\n\
              fn main() -> i32 { let x: Big = Big { tag: 1, n: 42 }; return use_it(x); }",
         );
@@ -18467,7 +18467,7 @@ mod tests {
         // The function gets one domain MD node and two scope nodes.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn swap(mut a: Tag, mut b: Tag) {\n\
                let ta: i32 = a.v;\n\
                let tb: i32 = b.v;\n\
@@ -18504,7 +18504,7 @@ mod tests {
         // GEP source to the load.
         let ir = gen_src(
             "struct P { v: i32 }\n\
-             impl P { fn drop(mut self) { return; } }\n\
+             impl P { fn drop(mut this) { return; } }\n\
              fn pair(mut a: P, mut b: P) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
                let p: P = P { v: 1 };\n\
@@ -18530,7 +18530,7 @@ mod tests {
         // small.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
@@ -18551,7 +18551,7 @@ mod tests {
         // alias-scope sources.
         let ir = gen_src(
             "struct P { v: i32 }\n\
-             impl P { fn drop(mut self) { return; } }\n\
+             impl P { fn drop(mut this) { return; } }\n\
              fn both_shared(a: P, b: P) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
                let p: P = P { v: 1 };\n\
@@ -18575,9 +18575,9 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut self) { return; }\n\
-               fn merge(mut self, mut other: T) {\n\
-                 self.v = self.v + other.v;\n\
+               fn drop(mut this) { return; }\n\
+               fn merge(mut this, mut other: T) {\n\
+                 this.v = this.v + other.v;\n\
                  other.v = 0;\n\
                  return;\n\
                }\n\
@@ -18622,10 +18622,10 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut self) { return; }\n\
-               fn read_and_bump(self, mut other: T) -> i32 {\n\
-                 other.v = self.v;\n\
-                 return self.v;\n\
+               fn drop(mut this) { return; }\n\
+               fn read_and_bump(this, mut other: T) -> i32 {\n\
+                 other.v = this.v;\n\
+                 return this.v;\n\
                }\n\
              }\n\
              fn main() -> i32 {\n\
@@ -18666,7 +18666,7 @@ mod tests {
         let ir = gen_src(
             "struct Inner { x: i32 }\n\
              struct Outer { inner: Inner, tag: i32 }\n\
-             impl Outer { fn drop(mut self) { return; } }\n\
+             impl Outer { fn drop(mut this) { return; } }\n\
              fn touch_both(mut a: Outer, mut b: Outer) -> i32 {\n\
                return a.inner.x + b.tag;\n\
              }\n\
@@ -18694,7 +18694,7 @@ mod tests {
     fn drop_method_emits_cold_and_preserve_none_cc() {
         let ir = gen_src(
             "struct R { v: i32 }\n\
-             impl R { fn drop(mut self) { return; } }\n\
+             impl R { fn drop(mut this) { return; } }\n\
              fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }",
         );
         // `define [internal ]preserve_nonecc void @R.drop(...) cold {`
@@ -18720,7 +18720,7 @@ mod tests {
         // callee's. The Always-disposition path emits the call.
         let ir = gen_src(
             "struct R { v: i32 }\n\
-             impl R { fn drop(mut self) { return; } }\n\
+             impl R { fn drop(mut this) { return; } }\n\
              fn main() -> i32 { let r: R = R { v: 7 }; return r.v; }",
         );
         assert!(
@@ -18736,8 +18736,8 @@ mod tests {
         let ir = gen_src(
             "struct R { v: i32 }\n\
              impl R {\n\
-               fn drop(mut self) { return; }\n\
-               fn bump(mut self) -> i32 { self.v = self.v + 1; return self.v; }\n\
+               fn drop(mut this) { return; }\n\
+               fn bump(mut this) -> i32 { this.v = this.v + 1; return this.v; }\n\
              }\n\
              fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }",
         );
@@ -18769,8 +18769,8 @@ mod tests {
         let ir = gen_src(
             "struct R { v: i32 }\n\
              impl R {\n\
-               fn drop(mut self) { return; }\n\
-               fn bump(mut self) -> i32 { self.v = self.v + 1; return self.v; }\n\
+               fn drop(mut this) { return; }\n\
+               fn bump(mut this) -> i32 { this.v = this.v + 1; return this.v; }\n\
              }\n\
              fn main() -> i32 { let mut r: R = R { v: 0 }; return r.bump(); }",
         );
@@ -18935,7 +18935,7 @@ mod tests {
             "struct T { v: i32 }\n\
              fn helper() -> i32 { return 1; }\n\
              impl T {\n\
-               fn get(self) -> i32 { return helper(); }\n\
+               fn get(this) -> i32 { return helper(); }\n\
              }\n\
              fn main() -> i32 { let t: T = T { v: 0 }; return t.get(); }",
         );
@@ -18956,7 +18956,7 @@ mod tests {
         // emission between), so the predicate must bail.
         let ir = gen_src(
             "struct R { v: i32 }\n\
-             impl R { fn drop(mut self) { return; } }\n\
+             impl R { fn drop(mut this) { return; } }\n\
              fn id(n: i32) -> i32 { return n; }\n\
              fn caller(n: i32) -> i32 {\n\
                let r: R = R { v: 1 };\n\
@@ -20264,7 +20264,7 @@ mod tests {
         // the attr set widened (the noalias prefix is still left-anchored).
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
-             impl Tag { fn drop(mut self) { return; } }\n\
+             impl Tag { fn drop(mut this) { return; } }\n\
              fn bump(mut t: Tag) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: Tag = Tag { v: 1 }; bump(x); return x.v; }",
         );
@@ -20284,7 +20284,7 @@ mod tests {
     fn two_mut_params_get_distinct_alias_scopes() {
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut self) { return; } }\n\
+             impl T { fn drop(mut this) { return; } }\n\
              fn swap_bump(mut a: T, mut b: T) {\n\
                let tmp: i32 = a.v;\n\
                a.v = b.v;\n\
@@ -20328,7 +20328,7 @@ mod tests {
         // a payoff. Confirm the optimization is gated on count >= 2.
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut self) { return; } }\n\
+             impl T { fn drop(mut this) { return; } }\n\
              fn bump(mut t: T) { t.v = t.v + 1; return; }\n\
              fn main() -> i32 { let mut x: T = T { v: 1 }; bump(x); return x.v; }",
         );
@@ -20346,7 +20346,7 @@ mod tests {
         // no noalias params in main).
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut self) { return; } }\n\
+             impl T { fn drop(mut this) { return; } }\n\
              fn main() -> i32 {\n\
                let mut x: T = T { v: 1 };\n\
                let mut y: T = T { v: 2 };\n\
@@ -20370,7 +20370,7 @@ mod tests {
         // we scope this test to the sum function's IR.)
         let ir = gen_src(
             "struct T { v: i32 }\n\
-             impl T { fn drop(mut self) { return; } }\n\
+             impl T { fn drop(mut this) { return; } }\n\
              fn sum(a: T, b: T) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
                let x: T = T { v: 1 };\n\
@@ -20399,9 +20399,9 @@ mod tests {
         let ir = gen_src(
             "struct T { v: i32 }\n\
              impl T {\n\
-               fn drop(mut self) { return; }\n\
-               fn merge(mut self, mut other: T) {\n\
-                 self.v = self.v + other.v;\n\
+               fn drop(mut this) { return; }\n\
+               fn merge(mut this, mut other: T) {\n\
+                 this.v = this.v + other.v;\n\
                  other.v = 0;\n\
                  return;\n\
                }\n\
@@ -20437,7 +20437,7 @@ mod tests {
         let ir = gen_src(
             "struct Inner { n: i32 }\n\
              struct Outer { inner: Inner, tag: i32 }\n\
-             impl Outer { fn drop(mut self) { return; } }\n\
+             impl Outer { fn drop(mut this) { return; } }\n\
              fn touch(mut a: Outer, mut b: Outer) -> i32 {\n\
                a.inner.n = b.tag;\n\
                return a.inner.n + b.tag;\n\
@@ -21008,7 +21008,7 @@ mod tests {
     fn inline_attr_on_method_emits_llvm_attr() {
         let ir = gen_src(
             "struct P { v: i32 }\n\
-             impl P { #[inline(always)] fn get(self) -> i32 { return self.v; } }\n\
+             impl P { #[inline(always)] fn get(this) -> i32 { return this.v; } }\n\
              fn main() -> i32 { let p: P = P { v: 5 }; return p.get(); }",
         );
         assert!(ir.contains("@P.get(%P %0) alwaysinline {"), "IR:\n{ir}");
