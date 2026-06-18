@@ -18,12 +18,12 @@ impl AlertController {
         return AlertController { obj: rt::retain(alert) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn add_action(self, action: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addAction:\0")), action);
+    pub fn add_action(this, action: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("addAction:\0")), action);
     }
 }
 

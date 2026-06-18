@@ -11,19 +11,19 @@ impl Pasteboard {
         return Pasteboard { obj: rt::msg_id(cls, rt::sel(#str_ptr("generalPasteboard\0"))) };
     }
 
-    pub fn set_string(self, text: str) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setString:\0")), convert::cplus_str_to_nsstring(text));
+    pub fn set_string(this, text: str) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setString:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_string_ns(self, text_ns: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setString:\0")), text_ns);
+    pub fn set_string_ns(this, text_ns: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setString:\0")), text_ns);
     }
 
-    pub fn string_ns(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(#str_ptr("string\0")));
+    pub fn string_ns(this) -> *u8 {
+        return rt::msg_id(this.obj, rt::sel(#str_ptr("string\0")));
     }
 
-    pub fn has_strings(self) -> i8 {
-        return rt::msg_i8(self.obj, rt::sel(#str_ptr("hasStrings\0")));
+    pub fn has_strings(this) -> i8 {
+        return rt::msg_i8(this.obj, rt::sel(#str_ptr("hasStrings\0")));
     }
 }

@@ -26,76 +26,76 @@ impl Vec4 {
 
     // Lane accessors ------------------------------------------------
 
-    pub fn x(self) -> f32 { return self.v.lane(0 as u32); }
-    pub fn y(self) -> f32 { return self.v.lane(1 as u32); }
-    pub fn z(self) -> f32 { return self.v.lane(2 as u32); }
-    pub fn w(self) -> f32 { return self.v.lane(3 as u32); }
+    pub fn x(this) -> f32 { return this.v.lane(0 as u32); }
+    pub fn y(this) -> f32 { return this.v.lane(1 as u32); }
+    pub fn z(this) -> f32 { return this.v.lane(2 as u32); }
+    pub fn w(this) -> f32 { return this.v.lane(3 as u32); }
 
     // Arithmetic ----------------------------------------------------
 
-    pub fn add(self, o: Vec4) -> Vec4 {
-        return Vec4 { v: self.v.add(o.v) };
+    pub fn add(this, o: Vec4) -> Vec4 {
+        return Vec4 { v: this.v.add(o.v) };
     }
 
-    pub fn sub(self, o: Vec4) -> Vec4 {
-        return Vec4 { v: self.v.sub(o.v) };
+    pub fn sub(this, o: Vec4) -> Vec4 {
+        return Vec4 { v: this.v.sub(o.v) };
     }
 
-    pub fn mul(self, o: Vec4) -> Vec4 {
-        return Vec4 { v: self.v.mul(o.v) };
+    pub fn mul(this, o: Vec4) -> Vec4 {
+        return Vec4 { v: this.v.mul(o.v) };
     }
 
-    pub fn scale(self, s: f32) -> Vec4 {
-        return Vec4 { v: self.v.mul(f32x4::splat(s)) };
+    pub fn scale(this, s: f32) -> Vec4 {
+        return Vec4 { v: this.v.mul(f32x4::splat(s)) };
     }
 
-    pub fn neg(self) -> Vec4 {
-        return Vec4 { v: self.v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
+    pub fn neg(this) -> Vec4 {
+        return Vec4 { v: this.v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
     }
 
     // Geometric ops -------------------------------------------------
 
-    pub fn dot(self, o: Vec4) -> f32 {
-        return self.v.mul(o.v).sum();
+    pub fn dot(this, o: Vec4) -> f32 {
+        return this.v.mul(o.v).sum();
     }
 
-    pub fn len2(self) -> f32 {
-        return self.dot(self);
+    pub fn len2(this) -> f32 {
+        return this.dot(this);
     }
 
-    pub fn length(self) -> f32 {
-        return f_sqrt(self.dot(self));
+    pub fn length(this) -> f32 {
+        return f_sqrt(this.dot(this));
     }
 
-    pub fn normalize(self) -> Vec4 {
-        let inv: f32 = 1.0f32 / self.length();
-        return self.scale(inv);
+    pub fn normalize(this) -> Vec4 {
+        let inv: f32 = 1.0f32 / this.length();
+        return this.scale(inv);
     }
 
     // Lane-wise helpers ---------------------------------------------
 
-    pub fn min(self, o: Vec4) -> Vec4 {
-        return Vec4 { v: self.v.min(o.v) };
+    pub fn min(this, o: Vec4) -> Vec4 {
+        return Vec4 { v: this.v.min(o.v) };
     }
 
-    pub fn max(self, o: Vec4) -> Vec4 {
-        return Vec4 { v: self.v.max(o.v) };
+    pub fn max(this, o: Vec4) -> Vec4 {
+        return Vec4 { v: this.v.max(o.v) };
     }
 
-    pub fn clamp(self, lo: Vec4, hi: Vec4) -> Vec4 {
-        return self.max(lo).min(hi);
+    pub fn clamp(this, lo: Vec4, hi: Vec4) -> Vec4 {
+        return this.max(lo).min(hi);
     }
 
-    pub fn lerp(self, o: Vec4, t: f32) -> Vec4 {
-        let diff: f32x4 = o.v.sub(self.v);
+    pub fn lerp(this, o: Vec4, t: f32) -> Vec4 {
+        let diff: f32x4 = o.v.sub(this.v);
         let tv: f32x4 = f32x4::splat(t);
-        return Vec4 { v: diff.fma(tv, self.v) };
+        return Vec4 { v: diff.fma(tv, this.v) };
     }
 
     // Inner accessor for `mat4x4` cross-module use ------------------
 
-    pub fn raw(self) -> f32x4 {
-        return self.v;
+    pub fn raw(this) -> f32x4 {
+        return this.v;
     }
 
     pub fn from_raw(v: f32x4) -> Vec4 {

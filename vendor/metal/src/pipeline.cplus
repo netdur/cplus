@@ -16,13 +16,13 @@ pub struct ComputePipelineState {
 }
 
 impl Library {
-    pub fn new_function(self, name: str) -> result::Result[Function, runtime::MetalError] {
-        if self.raw == unsafe { 0 as *u8 } {
+    pub fn new_function(this, name: str) -> result::Result[Function, runtime::MetalError] {
+        if this.raw == unsafe { 0 as *u8 } {
             return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
         let ns_name: *u8 = runtime::ns_string(name);
         let selector: *u8 = runtime::sel(#str_ptr("newFunctionWithName:\0"));
-        let func_raw: *u8 = runtime::msg_id_id(self.raw, selector, ns_name);
+        let func_raw: *u8 = runtime::msg_id_id(this.raw, selector, ns_name);
         // `stringWithBytes:length:encoding:` returns an autoreleased
         // NSString. Without an autorelease pool active (the typical case
         // outside an AppKit run loop), it would leak. Release explicitly:
@@ -35,17 +35,17 @@ impl Library {
         return result::Result[Function, runtime::MetalError]::Ok(Function { raw: func_raw });
     }
 
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }
 
 impl Function {
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }
@@ -71,9 +71,9 @@ impl ComputePipelineState {
         return result::Result[ComputePipelineState, runtime::MetalError]::Ok(ComputePipelineState { raw: pipeline_raw });
     }
 
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }

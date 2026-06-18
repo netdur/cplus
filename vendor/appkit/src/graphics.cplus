@@ -5,8 +5,8 @@ pub struct ImageView {
 }
 
 impl ImageView {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new(frame: rt::Rect) -> ImageView {
@@ -16,16 +16,16 @@ impl ImageView {
         return ImageView { obj: iv };
     }
 
-    pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
+    pub fn set_image(this, image: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
     // GAP 2 (v0.0.19): ownership transfer for the builder-returns-a-widget case;
     // see `view::View::into_raw` for the full explanation + the use-after-free
     // trap it prevents.
-    pub fn into_raw(mut self) -> *u8 {
-        let p: *u8 = self.obj;
-        self.obj = unsafe { 0 as *u8 };
+    pub fn into_raw(mut this) -> *u8 {
+        let p: *u8 = this.obj;
+        this.obj = unsafe { 0 as *u8 };
         return p;
     }
 
@@ -33,21 +33,21 @@ impl ImageView {
         return ImageView { obj: obj };
     }
 
-    pub fn set_scaling(self, scaling: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
+    pub fn set_scaling(this, scaling: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setImageScaling:\0")), scaling);
     }
 
     // GAP 4 (v0.0.19): tint a template/SF-Symbol image — `setContentTintColor:`
     // (macOS 10.14+). Takes an `NSColor*` (e.g. `Color::label_color()`).
-    pub fn set_content_tint_color(self, color: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setContentTintColor:\0")), color);
+    pub fn set_content_tint_color(this, color: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setContentTintColor:\0")), color);
     }
 
     // GAP 4 (v0.0.19): apply an `NSImageSymbolConfiguration` (build one with
     // `Image::symbol_config`) to the displayed SF Symbol — `setSymbolConfiguration:`
     // (macOS 11+).
-    pub fn set_symbol_configuration(self, config: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), config);
+    pub fn set_symbol_configuration(this, config: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setSymbolConfiguration:\0")), config);
     }
 }
 
@@ -151,42 +151,42 @@ impl RoundedView {
         return RoundedView { obj: v };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     // The backing CALayer (valid once `wantsLayer` is set, which `new` does).
-    fn layer(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(#str_ptr("layer\0")));
+    fn layer(this) -> *u8 {
+        return rt::msg_id(this.obj, rt::sel(#str_ptr("layer\0")));
     }
 
-    pub fn set_corner_radius(self, radius: f64) {
-        rt::msg_void_f64(self.layer(), rt::sel(#str_ptr("setCornerRadius:\0")), radius);
+    pub fn set_corner_radius(this, radius: f64) {
+        rt::msg_void_f64(this.layer(), rt::sel(#str_ptr("setCornerRadius:\0")), radius);
     }
 
-    pub fn set_border_width(self, width: f64) {
-        rt::msg_void_f64(self.layer(), rt::sel(#str_ptr("setBorderWidth:\0")), width);
-    }
-
-    // Takes an `NSColor*`; bridged to CGColorRef for the layer.
-    pub fn set_border_color(self, ns_color: *u8) {
-        rt::msg_void_id(self.layer(), rt::sel(#str_ptr("setBorderColor:\0")), Color::cg_color(ns_color));
+    pub fn set_border_width(this, width: f64) {
+        rt::msg_void_f64(this.layer(), rt::sel(#str_ptr("setBorderWidth:\0")), width);
     }
 
     // Takes an `NSColor*`; bridged to CGColorRef for the layer.
-    pub fn set_background_color(self, ns_color: *u8) {
-        rt::msg_void_id(self.layer(), rt::sel(#str_ptr("setBackgroundColor:\0")), Color::cg_color(ns_color));
+    pub fn set_border_color(this, ns_color: *u8) {
+        rt::msg_void_id(this.layer(), rt::sel(#str_ptr("setBorderColor:\0")), Color::cg_color(ns_color));
     }
 
-    pub fn add_subview(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addSubview:\0")), view);
+    // Takes an `NSColor*`; bridged to CGColorRef for the layer.
+    pub fn set_background_color(this, ns_color: *u8) {
+        rt::msg_void_id(this.layer(), rt::sel(#str_ptr("setBackgroundColor:\0")), Color::cg_color(ns_color));
+    }
+
+    pub fn add_subview(this, view: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("addSubview:\0")), view);
     }
 
     // GAP 2 (v0.0.19): see `view::View::into_raw` for the ownership-transfer
     // rationale + the use-after-free trap these prevent.
-    pub fn into_raw(mut self) -> *u8 {
-        let p: *u8 = self.obj;
-        self.obj = unsafe { 0 as *u8 };
+    pub fn into_raw(mut this) -> *u8 {
+        let p: *u8 = this.obj;
+        this.obj = unsafe { 0 as *u8 };
         return p;
     }
 
@@ -208,50 +208,50 @@ impl BezierPath {
         return BezierPath { obj: rt::alloc_init(#str_ptr("NSBezierPath\0")) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn move_to(self, x: f64, y: f64) {
+    pub fn move_to(this, x: f64, y: f64) {
         let p = rt::Point { x: x, y: y };
-        rt::msg_void_point(self.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
+        rt::msg_void_point(this.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
     }
 
-    pub fn line_to(self, x: f64, y: f64) {
+    pub fn line_to(this, x: f64, y: f64) {
         let p = rt::Point { x: x, y: y };
-        rt::msg_void_point(self.obj, rt::sel(#str_ptr("lineToPoint:\0")), p);
+        rt::msg_void_point(this.obj, rt::sel(#str_ptr("lineToPoint:\0")), p);
     }
 
-    pub fn close(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("closePath\0")));
+    pub fn close(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("closePath\0")));
     }
 
-    pub fn append_rect(self, rect: rt::Rect) {
-        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
+    pub fn append_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this.obj, rt::sel(#str_ptr("appendBezierPathWithRect:\0")), rect);
     }
 
-    pub fn append_oval_in_rect(self, rect: rt::Rect) {
-        rt::msg_void_rect(self.obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
+    pub fn append_oval_in_rect(this, rect: rt::Rect) {
+        rt::msg_void_rect(this.obj, rt::sel(#str_ptr("appendBezierPathWithOvalInRect:\0")), rect);
     }
 
-    pub fn set_line_width(self, width: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
+    pub fn set_line_width(this, width: f64) {
+        rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
     }
 
     // Number of path elements (move/line/curve/close). A data property — no
     // drawing context required.
-    pub fn element_count(self) -> i64 {
-        return rt::msg_i64(self.obj, rt::sel(#str_ptr("elementCount\0")));
+    pub fn element_count(this) -> i64 {
+        return rt::msg_i64(this.obj, rt::sel(#str_ptr("elementCount\0")));
     }
 
     // Stroke / fill the path into the current graphics context (call from a
     // view's draw method).
-    pub fn stroke(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("stroke\0")));
+    pub fn stroke(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("stroke\0")));
     }
 
-    pub fn fill(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("fill\0")));
+    pub fn fill(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("fill\0")));
     }
 }
 

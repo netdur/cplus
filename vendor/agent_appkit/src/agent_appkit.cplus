@@ -431,8 +431,8 @@ pub fn describe(window: *u8) -> vec::Vec[UiNode] {
 }
 
 impl Surface {
-    fn view_of(self, node: usize) -> *u8 {
-        return match self.views.at(node) {
+    fn view_of(this, node: usize) -> *u8 {
+        return match this.views.at(node) {
             option::Option[*ViewRef]::Some(r) => unsafe { (*r).p },
             option::Option[*ViewRef]::None => null(),
         };
@@ -441,14 +441,14 @@ impl Surface {
     // Live describe_ui snapshot. Reads each node's current frame / hidden / text
     // from its view, so it reflects state *now* (e.g. after a `set_text`). The
     // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
-    pub fn describe(self) -> vec::Vec[UiNode] {
+    pub fn describe(this) -> vec::Vec[UiNode] {
         let mut out: vec::Vec[UiNode] = vec::new::[UiNode]();
-        let total: usize = self.reg.len();
+        let total: usize = this.reg.len();
         let mut node: usize = 1 as usize;
         while node < total {
-            let view: *u8 = self.view_of(node);
-            let role: identity::Role = self.reg.role_of(node);
-            let parent: option::Option[usize] = match self.reg.parent_of(node) {
+            let view: *u8 = this.view_of(node);
+            let role: identity::Role = this.reg.role_of(node);
+            let parent: option::Option[usize] = match this.reg.parent_of(node) {
                 option::Option[usize]::Some(p) => {
                     if p == (0 as usize) {
                         option::Option[usize]::None
@@ -459,13 +459,13 @@ impl Surface {
                 option::Option[usize]::None => option::Option[usize]::None,
             };
             out.push(UiNode {
-                id: self.reg.resolved_id(node).to_text(),
+                id: this.reg.resolved_id(node).to_text(),
                 role: role,
                 class_name: class_name_text(view),
                 frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
                 is_hidden: live_hidden(view),
                 text: node_text(view, role),
-                actionable: self.reg.is_exposed(node) && self.reg.is_agent_actionable(node),
+                actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
                 parent: parent,
             });
             node = node +% (1 as usize);
@@ -479,12 +479,12 @@ impl Surface {
     // authorization gate beyond being in the tree. Same node ordering as
     // `describe` (snapshot index = NodeId - 1). Useful to an agent diagnosing a
     // UI it just built, or to a developer, without a screenshot.
-    pub fn layout_diagnostics(self) -> vec::Vec[LayoutDiagnostic] {
+    pub fn layout_diagnostics(this) -> vec::Vec[LayoutDiagnostic] {
         let mut out: vec::Vec[LayoutDiagnostic] = vec::new::[LayoutDiagnostic]();
-        let total: usize = self.reg.len();
+        let total: usize = this.reg.len();
         let mut node: usize = 1 as usize;
         while node < total {
-            let view: *u8 = self.view_of(node);
+            let view: *u8 = this.view_of(node);
             // Both selectors are NSView-only — the tree also carries the
             // NSWindow root node, which doesn't respond to them — so guard each
             // with `respondsToSelector:` and report false for non-view nodes.
@@ -503,7 +503,7 @@ impl Surface {
                 false
             };
             out.push(LayoutDiagnostic {
-                id: self.reg.resolved_id(node).to_text(),
+                id: this.reg.resolved_id(node).to_text(),
                 class_name: class_name_text(view),
                 uses_autolayout: !translates,
                 has_ambiguous_layout: ambiguous,
@@ -520,10 +520,10 @@ impl Surface {
     // callback calls this with the verb from `verb_for_notification` (or a
     // direct one, e.g. `Clicked` for a target-action). Events bubble: a
     // subscriber on an ancestor sees descendant events.
-    pub fn emit(self, mut sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
-        match self.reg.lookup(source_id) {
+    pub fn emit(this, mut sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+        match this.reg.lookup(source_id) {
             option::Option[usize]::Some(node) => {
-                sub.offer(self.reg, events::event(node, verb));
+                sub.offer(this.reg, events::event(node, verb));
                 return true;
             }
             option::Option[usize]::None => {}
@@ -533,23 +533,23 @@ impl Surface {
 
     // The current text version of a node (for optimistic-concurrency edits).
     // 0 if the id is unknown or never edited.
-    pub fn text_version(self, id: str) -> u64 {
-        return match self.reg.lookup(id) {
-            option::Option[usize]::Some(n) => self.versions.version_of(n),
+    pub fn text_version(this, id: str) -> u64 {
+        return match this.reg.lookup(id) {
+            option::Option[usize]::Some(n) => this.versions.version_of(n),
             option::Option[usize]::None => 0 as u64,
         };
     }
 
     // WRITE: click a control. Authorized via the core (exposed + actionable);
     // on `Allowed`, sends `performClick:` to the backing view.
-    pub fn click(self, id: str) -> surface::Outcome {
-        match self.reg.lookup(id) {
+    pub fn click(this, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
-                let oc: surface::Outcome = surface::authorize_action(self.reg, node);
+                let oc: surface::Outcome = surface::authorize_action(this.reg, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                perform_on_main(self.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
+                perform_on_main(this.view_of(node), rt::sel(#str_ptr("performClick:\0")), null());
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -560,17 +560,17 @@ impl Surface {
     // WRITE: set a field's text with optimistic concurrency. `base_version` is
     // the version the agent last read (`text_version`); a racing edit yields
     // `VersionConflict`. On `Allowed`, sends `setStringValue:` then bumps.
-    pub fn set_text(mut self, id: str, value: str, base_version: u64) -> surface::Outcome {
-        match self.reg.lookup(id) {
+    pub fn set_text(mut this, id: str, value: str, base_version: u64) -> surface::Outcome {
+        match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome =
-                    surface::authorize_text_write(self.reg, self.versions, node, base_version);
+                    surface::authorize_text_write(this.reg, this.versions, node, base_version);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
                 let ns: *u8 = convert::cplus_str_to_nsstring(value);
-                perform_on_main(self.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
-                self.versions.bump(node);
+                perform_on_main(this.view_of(node), rt::sel(#str_ptr("setStringValue:\0")), ns);
+                this.versions.bump(node);
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -580,14 +580,14 @@ impl Surface {
 
     // READ/NAV: scroll a node's bounds into view. Authorized via `authorize_read`
     // (exposure required; the affordance ceiling does not apply to navigation).
-    pub fn scroll_to(self, id: str) -> surface::Outcome {
-        match self.reg.lookup(id) {
+    pub fn scroll_to(this, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
-                let oc: surface::Outcome = surface::authorize_read(self.reg, node);
+                let oc: surface::Outcome = surface::authorize_read(this.reg, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                scroll_visible_on_main(self.view_of(node));
+                scroll_visible_on_main(this.view_of(node));
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}

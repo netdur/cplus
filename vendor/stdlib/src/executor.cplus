@@ -31,7 +31,7 @@ pub fn block_on[T](f: future::Future[T]) -> T {
 }
 
 // v0.0.4 Phase 3 Slice 3A.2: yield control back to the executor.
-// Only meaningful inside an `async fn` body — pushes self onto the
+// Only meaningful inside an `async fn` body — pushes this onto the
 // reactor's pending queue and suspends. On the next block_on
 // iteration, the drain step resumes us; cooperative-multitasking
 // primitive for "give other tasks a turn."

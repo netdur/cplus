@@ -16,20 +16,20 @@ impl Menu {
         return Menu { obj: menu };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn add_item(self, item: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("addItem:\0")), item);
+    pub fn add_item(this, item: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("addItem:\0")), item);
     }
 
-    pub fn remove_all_items(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("removeAllItems\0")));
+    pub fn remove_all_items(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("removeAllItems\0")));
     }
 
-    pub fn set_autoenables_items(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setAutoenablesItems:\0")), flag);
+    pub fn set_autoenables_items(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setAutoenablesItems:\0")), flag);
     }
 }
 
@@ -42,8 +42,8 @@ pub struct MenuItem {
 }
 
 impl MenuItem {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new(title: *u8, action: *u8, key_equiv: *u8) -> MenuItem {
@@ -64,23 +64,23 @@ impl MenuItem {
         return rt::msg_id(cls, rt::sel(#str_ptr("separatorItem\0")));
     }
 
-    pub fn set_submenu(self, submenu: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setSubmenu:\0")), submenu);
+    pub fn set_submenu(this, submenu: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setSubmenu:\0")), submenu);
     }
 
-    pub fn set_enabled(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
+    pub fn set_enabled(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
     }
 
-    pub fn set_target(self, target: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTarget:\0")), target);
+    pub fn set_target(this, target: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    pub fn set_action(self, action: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setAction:\0")), action);
+    pub fn set_action(this, action: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setAction:\0")), action);
     }
 
-    pub fn set_key_equivalent_modifier_mask(self, mask: u64) {
-        rt::msg_void_u64(self.obj, rt::sel(#str_ptr("setKeyEquivalentModifierMask:\0")), mask);
+    pub fn set_key_equivalent_modifier_mask(this, mask: u64) {
+        rt::msg_void_u64(this.obj, rt::sel(#str_ptr("setKeyEquivalentModifierMask:\0")), mask);
     }
 }

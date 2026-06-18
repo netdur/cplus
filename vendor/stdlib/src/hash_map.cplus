@@ -26,8 +26,8 @@
 //   - `K.hash() -> u64` and `K.eq(other) -> bool` are required. The
 //     compiler ships blessed implementations for every integer
 //     primitive plus `str` — those just work. User types provide their
-//     own via `impl MyType: Hash { fn hash(self) -> u64 { ... } }`
-//     and `impl MyType: Eq { fn eq(self, other: Self) -> bool { ... } }`.
+//     own via `impl MyType: Hash { fn hash(this) -> u64 { ... } }`
+//     and `impl MyType: Eq { fn eq(this, other: This) -> bool { ... } }`.
 //
 //     The generic body in this module calls `k.hash()` and `k.eq(stored)`
 //     directly; monomorphization picks the right lowering per
@@ -44,11 +44,11 @@
 // **API.**
 //
 //   hash_map::new::[K, V]() -> HashMap[K, V]
-//   HashMap[K, V]::len(self) -> usize
-//   HashMap[K, V]::capacity(self) -> usize
-//   HashMap[K, V]::insert(mut self, k: K, v: V)
-//   HashMap[K, V]::get(self, k: K) -> result::Result[V, result::IoError]
-//   HashMap[K, V]::contains_key(self, k: K) -> bool
+//   HashMap[K, V]::len(this) -> usize
+//   HashMap[K, V]::capacity(this) -> usize
+//   HashMap[K, V]::insert(mut this, k: K, v: V)
+//   HashMap[K, V]::get(this, k: K) -> result::Result[V, result::IoError]
+//   HashMap[K, V]::contains_key(this, k: K) -> bool
 //
 // `StrIntMap` from v0.0.3 is retained as a thin alias: `pub fn
 // new_str_int_map() -> HashMap[str, i32]` constructs the same shape.
@@ -87,65 +87,65 @@ pub fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
 }
 
 impl HashMap[K, V] {
-    pub fn len(self) -> usize {
-        return self.len;
+    pub fn len(this) -> usize {
+        return this.len;
     }
 
-    pub fn capacity(self) -> usize {
-        return self.cap;
+    pub fn capacity(this) -> usize {
+        return this.cap;
     }
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
-    pub fn insert(mut self, k: K, v: V) {
-        if self.cap == (0 as usize) {
-            self.grow_to(16 as usize);
+    pub fn insert(mut this, k: K, v: V) {
+        if this.cap == (0 as usize) {
+            this.grow_to(16 as usize);
         }
         // Grow at 0.75 load factor.
-        if (self.len *% (4 as usize)) >= (self.cap *% (3 as usize)) {
-            self.grow_to(self.cap *% (2 as usize));
+        if (this.len *% (4 as usize)) >= (this.cap *% (3 as usize)) {
+            this.grow_to(this.cap *% (2 as usize));
         }
         let h: u64 = k.hash();
-        let start: usize = (h as usize) % self.cap;
+        let start: usize = (h as usize) % this.cap;
         let mut slot: usize = start;
         loop {
-            let occ: u8 = unsafe { self.occupied[slot] };
+            let occ: u8 = unsafe { this.occupied[slot] };
             if occ == (0 as u8) {
-                unsafe { self.keys[slot] = k; }
-                unsafe { self.vals[slot] = v; }
-                unsafe { self.occupied[slot] = 1 as u8; }
-                self.len = self.len +% (1 as usize);
+                unsafe { this.keys[slot] = k; }
+                unsafe { this.vals[slot] = v; }
+                unsafe { this.occupied[slot] = 1 as u8; }
+                this.len = this.len +% (1 as usize);
                 return;
             }
-            let existing: K = unsafe { self.keys[slot] };
+            let existing: K = unsafe { this.keys[slot] };
             if existing.eq(k) {
-                unsafe { self.vals[slot] = v; }
+                unsafe { this.vals[slot] = v; }
                 return;
             }
-            slot = (slot +% (1 as usize)) % self.cap;
+            slot = (slot +% (1 as usize)) % this.cap;
             if slot == start { return; } // table full; cannot happen post-grow
         }
     }
 
     // Look up `k`. Returns Ok(v) on hit, Err(NotFound) on miss.
-    pub fn get(self, k: K) -> result::Result[V, result::IoError] {
-        if self.cap == (0 as usize) {
+    pub fn get(this, k: K) -> result::Result[V, result::IoError] {
+        if this.cap == (0 as usize) {
             return result::io_err::[V](result::IoError::NotFound);
         }
         let h: u64 = k.hash();
-        let start: usize = (h as usize) % self.cap;
+        let start: usize = (h as usize) % this.cap;
         let mut slot: usize = start;
         loop {
-            let occ: u8 = unsafe { self.occupied[slot] };
+            let occ: u8 = unsafe { this.occupied[slot] };
             if occ == (0 as u8) {
                 return result::io_err::[V](result::IoError::NotFound);
             }
-            let existing: K = unsafe { self.keys[slot] };
+            let existing: K = unsafe { this.keys[slot] };
             if existing.eq(k) {
-                let v: V = unsafe { self.vals[slot] };
+                let v: V = unsafe { this.vals[slot] };
                 return result::io_ok::[V](v);
             }
-            slot = (slot +% (1 as usize)) % self.cap;
+            slot = (slot +% (1 as usize)) % this.cap;
             if slot == start {
                 return result::io_err::[V](result::IoError::NotFound);
             }
@@ -153,8 +153,8 @@ impl HashMap[K, V] {
         return result::io_err::[V](result::IoError::NotFound);  // unreachable
     }
 
-    pub fn contains_key(self, k: K) -> bool {
-        return match self.get(k) {
+    pub fn contains_key(this, k: K) -> bool {
+        return match this.get(k) {
             result::Result[V, result::IoError]::Ok(_) => true,
             result::Result[V, result::IoError]::Err(_) => false,
         };
@@ -163,11 +163,11 @@ impl HashMap[K, V] {
     // Grow capacity to at least `new_cap`. Re-inserts every live entry
     // (open-addressing positions depend on cap, so a memcpy-resize won't
     // work). Internal helper; not in the public surface.
-    fn grow_to(mut self, new_cap: usize) {
-        let old_keys: *K = self.keys;
-        let old_vals: *V = self.vals;
-        let old_occ: *u8 = self.occupied;
-        let old_cap: usize = self.cap;
+    fn grow_to(mut this, new_cap: usize) {
+        let old_keys: *K = this.keys;
+        let old_vals: *V = this.vals;
+        let old_occ: *u8 = this.occupied;
+        let old_cap: usize = this.cap;
 
         let keys_bytes: usize = new_cap *% #size_of::[K]();
         let vals_bytes: usize = new_cap *% #size_of::[V]();
@@ -177,11 +177,11 @@ impl HashMap[K, V] {
         let no_raw: *u8 = unsafe { malloc(occ_bytes) };
         // Zero the occupied buffer so empty-slot detection is correct.
         unsafe { memset(no_raw, 0 as i32, occ_bytes); }
-        self.keys = unsafe { nk_raw as *K };
-        self.vals = unsafe { nv_raw as *V };
-        self.occupied = unsafe { no_raw as *u8 };
-        self.cap = new_cap;
-        self.len = 0 as usize;
+        this.keys = unsafe { nk_raw as *K };
+        this.vals = unsafe { nv_raw as *V };
+        this.occupied = unsafe { no_raw as *u8 };
+        this.cap = new_cap;
+        this.len = 0 as usize;
 
         // Re-insert every old live entry.
         let mut j: usize = 0 as usize;
@@ -191,18 +191,18 @@ impl HashMap[K, V] {
                 let k: K = unsafe { old_keys[j] };
                 let v: V = unsafe { old_vals[j] };
                 let h: u64 = k.hash();
-                let start: usize = (h as usize) % self.cap;
+                let start: usize = (h as usize) % this.cap;
                 let mut slot: usize = start;
                 loop {
-                    let cur: u8 = unsafe { self.occupied[slot] };
+                    let cur: u8 = unsafe { this.occupied[slot] };
                     if cur == (0 as u8) {
-                        unsafe { self.keys[slot] = k; }
-                        unsafe { self.vals[slot] = v; }
-                        unsafe { self.occupied[slot] = 1 as u8; }
-                        self.len = self.len +% (1 as usize);
+                        unsafe { this.keys[slot] = k; }
+                        unsafe { this.vals[slot] = v; }
+                        unsafe { this.occupied[slot] = 1 as u8; }
+                        this.len = this.len +% (1 as usize);
                         break;
                     }
-                    slot = (slot +% (1 as usize)) % self.cap;
+                    slot = (slot +% (1 as usize)) % this.cap;
                     if slot == start { break; }
                 }
             }
@@ -216,26 +216,26 @@ impl HashMap[K, V] {
         return;
     }
 
-    fn drop(mut self) {
-        if self.cap == (0 as usize) { return; }
+    fn drop(mut this) {
+        if this.cap == (0 as usize) { return; }
         // v0.0.5 Phase 1C: invoke per-entry Drop for each live (K, V)
         // pair before freeing the parallel storage arrays. Closes the
         // v0.0.4 leak where `HashMap[str, string]` leaked every value
         // and (for non-static) every key.
         let mut i: usize = 0 as usize;
-        while i < self.cap {
-            let occ: u8 = unsafe { self.occupied[i] };
+        while i < this.cap {
+            let occ: u8 = unsafe { this.occupied[i] };
             if occ != (0 as u8) {
-                let k_ptr: *K = unsafe { self.keys + i };
-                let v_ptr: *V = unsafe { self.vals + i };
+                let k_ptr: *K = unsafe { this.keys + i };
+                let v_ptr: *V = unsafe { this.vals + i };
                 unsafe { #drop_in_place::[K](k_ptr); }
                 unsafe { #drop_in_place::[V](v_ptr); }
             }
             i = i +% (1 as usize);
         }
-        unsafe { free(self.keys as *u8); }
-        unsafe { free(self.vals as *u8); }
-        unsafe { free(self.occupied); }
+        unsafe { free(this.keys as *u8); }
+        unsafe { free(this.vals as *u8); }
+        unsafe { free(this.occupied); }
         return;
     }
 }

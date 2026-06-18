@@ -82,121 +82,121 @@ pub fn with_capacity[T](n: usize) -> Vec[T] {
 }
 
 impl Vec[T] {
-    fn grow_to(mut self, new_cap: usize) {
-        assert new_cap > self.cap;
+    fn grow_to(mut this, new_cap: usize) {
+        assert new_cap > this.cap;
         let bytes: usize = checked_bytes::[T](new_cap);
-        let raw: *u8 = unsafe { realloc(self.ptr as *u8, bytes) };
+        let raw: *u8 = unsafe { realloc(this.ptr as *u8, bytes) };
         assert raw.is_not_null();
-        self.ptr = unsafe { raw as *T };
-        self.cap = new_cap;
+        this.ptr = unsafe { raw as *T };
+        this.cap = new_cap;
         return;
     }
 
-    pub fn len(self) -> usize {
-        return self.len;
+    pub fn len(this) -> usize {
+        return this.len;
     }
 
-    pub fn capacity(self) -> usize {
-        return self.cap;
+    pub fn capacity(this) -> usize {
+        return this.cap;
     }
 
-    pub fn is_empty(self) -> bool {
-        return self.len == (0 as usize);
+    pub fn is_empty(this) -> bool {
+        return this.len == (0 as usize);
     }
 
-    pub fn reserve(mut self, additional: usize) {
-        let required: usize = required_len(self.len, additional);
-        if required <= self.cap {
+    pub fn reserve(mut this, additional: usize) {
+        let required: usize = required_len(this.len, additional);
+        if required <= this.cap {
             return;
         }
-        self.grow_to(next_capacity(self.cap, required));
+        this.grow_to(next_capacity(this.cap, required));
         return;
     }
 
-    pub fn push(mut self, value: T) {
-        let required: usize = required_len(self.len, 1 as usize);
-        if required > self.cap {
-            self.grow_to(next_capacity(self.cap, required));
+    pub fn push(mut this, value: T) {
+        let required: usize = required_len(this.len, 1 as usize);
+        if required > this.cap {
+            this.grow_to(next_capacity(this.cap, required));
         }
-        let slot: *T = unsafe { self.ptr + self.len };
+        let slot: *T = unsafe { this.ptr + this.len };
         unsafe { *slot = value; }
-        self.len = required;
+        this.len = required;
         return;
     }
 
-    pub fn pop(mut self) -> option::Option[T] {
-        if self.len == (0 as usize) {
+    pub fn pop(mut this) -> option::Option[T] {
+        if this.len == (0 as usize) {
             return option::Option[T]::None;
         }
-        let new_len: usize = self.len -% (1 as usize);
-        let slot: *T = unsafe { self.ptr + new_len };
+        let new_len: usize = this.len -% (1 as usize);
+        let slot: *T = unsafe { this.ptr + new_len };
         let value: T = unsafe { *slot };
-        self.len = new_len;
+        this.len = new_len;
         return option::Option[T]::Some(value);
     }
 
-    pub fn swap_remove(mut self, i: usize) -> option::Option[T] {
-        if i >= self.len {
+    pub fn swap_remove(mut this, i: usize) -> option::Option[T] {
+        if i >= this.len {
             return option::Option[T]::None;
         }
-        let last: usize = self.len -% (1 as usize);
-        let slot: *T = unsafe { self.ptr + i };
+        let last: usize = this.len -% (1 as usize);
+        let slot: *T = unsafe { this.ptr + i };
         let value: T = unsafe { *slot };
         if i != last {
-            let last_slot: *T = unsafe { self.ptr + last };
+            let last_slot: *T = unsafe { this.ptr + last };
             unsafe { *slot = *last_slot; }
         }
-        self.len = last;
+        this.len = last;
         return option::Option[T]::Some(value);
     }
 
-    pub fn clear(mut self) {
+    pub fn clear(mut this) {
         let mut i: usize = 0 as usize;
-        while i < self.len {
-            let elem: *T = unsafe { self.ptr + i };
+        while i < this.len {
+            let elem: *T = unsafe { this.ptr + i };
             unsafe { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        self.len = 0 as usize;
+        this.len = 0 as usize;
         return;
     }
 
-    pub fn truncate(mut self, new_len: usize) {
-        if new_len >= self.len {
+    pub fn truncate(mut this, new_len: usize) {
+        if new_len >= this.len {
             return;
         }
         let mut i: usize = new_len;
-        while i < self.len {
-            let elem: *T = unsafe { self.ptr + i };
+        while i < this.len {
+            let elem: *T = unsafe { this.ptr + i };
             unsafe { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        self.len = new_len;
+        this.len = new_len;
         return;
     }
 
-    pub fn shrink_to_fit(mut self) {
-        if self.len == self.cap {
+    pub fn shrink_to_fit(mut this) {
+        if this.len == this.cap {
             return;
         }
-        if self.len == (0 as usize) {
-            if self.ptr.is_not_null() {
-                unsafe { free(self.ptr as *u8); }
+        if this.len == (0 as usize) {
+            if this.ptr.is_not_null() {
+                unsafe { free(this.ptr as *u8); }
             }
-            self.ptr = unsafe { 0 as *T };
-            self.cap = 0 as usize;
+            this.ptr = unsafe { 0 as *T };
+            this.cap = 0 as usize;
             return;
         }
-        let bytes: usize = checked_bytes::[T](self.len);
-        let raw: *u8 = unsafe { realloc(self.ptr as *u8, bytes) };
+        let bytes: usize = checked_bytes::[T](this.len);
+        let raw: *u8 = unsafe { realloc(this.ptr as *u8, bytes) };
         assert raw.is_not_null();
-        self.ptr = unsafe { raw as *T };
-        self.cap = self.len;
+        this.ptr = unsafe { raw as *T };
+        this.cap = this.len;
         return;
     }
 
-    pub fn as_slice(self) -> T[] {
-        return unsafe { #slice_from_raw_parts(self.ptr, self.len) };
+    pub fn as_slice(this) -> T[] {
+        return unsafe { #slice_from_raw_parts(this.ptr, this.len) };
     }
 
     // Pointer to element `i`, bounds-checked (None past the end).
@@ -212,20 +212,20 @@ impl Vec[T] {
     //         option::Option[*T]::Some(p) => { let n = unsafe { (*p).field }; ... }
     //         option::Option[*T]::None    => { ... }
     //     }
-    pub fn at(self, i: usize) -> option::Option[*T] {
-        if i >= self.len {
+    pub fn at(this, i: usize) -> option::Option[*T] {
+        if i >= this.len {
             return option::Option[*T]::None;
         }
-        return option::Option[*T]::Some(unsafe { self.ptr + i });
+        return option::Option[*T]::Some(unsafe { this.ptr + i });
     }
 
     // Replace element `i` with `value`, dropping the element previously there.
     // Asserts the index is in bounds. Works for any `T`: the old element's Drop
     // runs (freeing e.g. a `string`'s buffer) before the new value is moved in,
     // so there is no leak and no double free.
-    pub fn set(mut self, i: usize, value: T) {
-        assert i < self.len;
-        let slot: *T = unsafe { self.ptr + i };
+    pub fn set(mut this, i: usize, value: T) {
+        assert i < this.len;
+        let slot: *T = unsafe { this.ptr + i };
         unsafe { #drop_in_place::[T](slot); }
         unsafe { *slot = value; }
         return;
@@ -237,10 +237,10 @@ impl Vec[T] {
     // read those by index through `at` instead. This is a gen *method* (receiver
     // by value), not a `[T: Copy]` free fn, because the coroutine must own the
     // receiver across yields; a borrowed param does not survive suspension.
-    pub gen fn iter(self) -> T {
+    pub gen fn iter(this) -> T {
         let mut i: usize = 0 as usize;
-        while i < self.len {
-            match self.at(i) {
+        while i < this.len {
+            match this.at(i) {
                 option::Option[*T]::Some(p) => { yield unsafe { *p }; }
                 option::Option[*T]::None => { return; }
             }
@@ -253,30 +253,30 @@ impl Vec[T] {
     // responsible for `T` being bit-copyable, or for the source relinquishing
     // ownership; this runs no element clone or drop. Mirrors the old vec.cplus
     // method so byte-stream consumers (fs, appkit/convert) port unchanged.
-    pub fn extend_from_raw(mut self, src: *T, count: usize) {
+    pub fn extend_from_raw(mut this, src: *T, count: usize) {
         if count == (0 as usize) {
             return;
         }
-        let required: usize = required_len(self.len, count);
-        if required > self.cap {
-            self.grow_to(next_capacity(self.cap, required));
+        let required: usize = required_len(this.len, count);
+        if required > this.cap {
+            this.grow_to(next_capacity(this.cap, required));
         }
-        let dest: *T = unsafe { self.ptr + self.len };
+        let dest: *T = unsafe { this.ptr + this.len };
         let bytes: usize = checked_bytes::[T](count);
         unsafe { memcpy(dest as *u8, src as *u8, bytes); }
-        self.len = required;
+        this.len = required;
         return;
     }
 
-    fn drop(mut self) {
+    fn drop(mut this) {
         let mut i: usize = 0 as usize;
-        while i < self.len {
-            let elem: *T = unsafe { self.ptr + i };
+        while i < this.len {
+            let elem: *T = unsafe { this.ptr + i };
             unsafe { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
-        if self.ptr.is_not_null() {
-            unsafe { free(self.ptr as *u8); }
+        if this.ptr.is_not_null() {
+            unsafe { free(this.ptr as *u8); }
         }
         return;
     }

@@ -17,8 +17,8 @@ struct Pair[A, B] {
 }
 
 impl Pair[A, B] {
-    fn first(self) -> A { return self.first; }
-    fn second(self) -> B { return self.second; }
+    fn first(this) -> A { return this.first; }
+    fn second(this) -> B { return this.second; }
 }
 
 enum Maybe[T] {
@@ -33,9 +33,9 @@ struct Point {
 
 // User impl of the blessed Ord interface.
 impl Point: Ord {
-    fn cmp(self, other: Point) -> i32 {
-        if self.x < other.x { return 0 -% 1; }
-        if self.x > other.x { return 1; }
+    fn cmp(this, other: Point) -> i32 {
+        if this.x < other.x { return 0 -% 1; }
+        if this.x > other.x { return 1; }
         return 0;
     }
 }
@@ -52,7 +52,7 @@ struct Box {
 }
 
 impl Box {
-    fn cast[T](self, value: T) -> T {
+    fn cast[T](this, value: T) -> T {
         return value;
     }
 }

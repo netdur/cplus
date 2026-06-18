@@ -139,14 +139,14 @@ impl DraggingItem {
         return DraggingItem::from_pasteboard_writer(rt::ns_string(text));
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     // `frame` is the on-screen rect the drag image animates from (in the source
     // view's coordinates); `image` is the `NSImage*` drawn during the drag.
-    pub fn set_dragging_frame_contents(self, frame: rt::Rect, image: *u8) {
-        rt::msg_void_rect_id(self.obj, rt::sel(#str_ptr("setDraggingFrame:contents:\0")), frame, image);
+    pub fn set_dragging_frame_contents(this, frame: rt::Rect, image: *u8) {
+        rt::msg_void_rect_id(this.obj, rt::sel(#str_ptr("setDraggingFrame:contents:\0")), frame, image);
     }
 }
 

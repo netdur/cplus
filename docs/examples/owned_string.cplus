@@ -35,25 +35,25 @@ impl OwnedString {
         };
     }
 
-    fn push_str(mut self, s: str) {
+    fn push_str(mut this, s: str) {
         // str_ptr / str_len are safe — they only read the fat-pointer
         // fields, no UB possible. The memcpy and pointer arithmetic
         // are unsafe and must be wrapped.
         let src: *u8 = #str_ptr(s);
         let n: usize = #str_len(s);
         unsafe {
-            let dest: *u8 = self.ptr + self.len;
+            let dest: *u8 = this.ptr + this.len;
             memcpy(dest, src, n);
         }
-        self.len = self.len +% n;
+        this.len = this.len +% n;
     }
 
-    fn as_str(self) -> str {
-        return unsafe { #str_from_raw_parts(self.ptr, self.len) };
+    fn as_str(this) -> str {
+        return unsafe { #str_from_raw_parts(this.ptr, this.len) };
     }
 
-    fn drop(mut self) {
-        unsafe { free(self.ptr) };
+    fn drop(mut this) {
+        unsafe { free(this.ptr) };
     }
 }
 

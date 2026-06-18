@@ -17,7 +17,7 @@
 // **Why Mutex is internally refcounted in v0.0.4.** Rust's idiomatic
 // shape is `Arc<Mutex<T>>`, with `&Mutex<T>` as the shared handle.
 // C+ has no `&T` references, so a literal `Arc[Mutex[T]]` would break:
-// `Arc::get(self)` returns a bitwise copy of `Mutex`, and `Mutex`'s
+// `Arc::get(this)` returns a bitwise copy of `Mutex`, and `Mutex`'s
 // own Drop (which destroys the pthread mutex + frees the heap block)
 // would fire on every copy. To avoid that hazard while keeping the
 // API ergonomic, `Mutex[T]` collapses Arc into itself: the heap block
@@ -92,16 +92,16 @@ impl Mutex[T] {
     // ordering rationale as `Arc::clone` — relaxed is sufficient
     // because the new Mutex carries a ctrl already visible to this
     // thread.
-    pub fn clone(self) -> Mutex[T] {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn clone(this) -> Mutex[T] {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
-        return Mutex[T] { ctrl: self.ctrl };
+        return Mutex[T] { ctrl: this.ctrl };
     }
 
     // Acquire the lock, return a `MutexGuard` whose Drop releases it.
-    // Borrows the mutex via `self` (read-only-receiver — the lock op
+    // Borrows the mutex via `this` (read-only-receiver — the lock op
     // doesn't change the Mutex's own state, only the underlying
     // mutex's state).
     //
@@ -110,42 +110,42 @@ impl Mutex[T] {
     // (the guard-escape use-after-free is thus impossible). Bump the refcount
     // before handing the ctrl pointer over — Relaxed mirrors `clone` (the
     // block is already visible to this thread).
-    pub fn lock(self) -> MutexGuard[T] {
+    pub fn lock(this) -> MutexGuard[T] {
         let refct_bytes: usize = 8 as usize;
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
-        let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
+        let mutex_ptr: *u8 = unsafe { this.ctrl + refct_bytes };
         let _err: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
-        return MutexGuard[T] { ctrl: self.ctrl };
+        return MutexGuard[T] { ctrl: this.ctrl };
     }
 
     // Strong-count snapshot (racy except in single-threaded contexts).
-    pub fn strong_count(self) -> u64 {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn strong_count(this) -> u64 {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }
 
     // Destructor: atomic decrement; on the last reference, destroy
     // the pthread mutex and free the heap block. AcqRel ordering
     // mirrors `Arc::drop`.
-    fn drop(mut self) {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    fn drop(mut this) {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
             let refct_bytes: usize = 8 as usize;
-            let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
+            let mutex_ptr: *u8 = unsafe { this.ctrl + refct_bytes };
             let _err: i32 = unsafe { pthread_mutex_destroy(mutex_ptr) };
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last
             // reference before freeing the heap block. Value lives
             // at refcount(8B) + pthread_mutex_t(64B) = offset 72.
             let value_off: usize = (8 as usize) +% (64 as usize);
-            let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+            let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
             unsafe { #drop_in_place::[T](value_ptr); }
-            unsafe { free(self.ctrl); }
+            unsafe { free(this.ctrl); }
         }
         return;
     }
@@ -160,9 +160,9 @@ impl Mutex[T] {
 impl MutexGuard[T: Copy] {
     // Read inner T (bitwise copy). The lock guarantees no other
     // thread is reading or writing concurrently.
-    pub fn get(self) -> T {
+    pub fn get(this) -> T {
         let value_off: usize = (8 as usize) +% (64 as usize);
-        let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+        let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
         return unsafe { *value_ptr };
     }
 }
@@ -173,9 +173,9 @@ impl MutexGuard[T] {
     // inner T is always initialized (`new` moved it in), so the drop-then-store
     // is sound for any T — a no-op `#drop_in_place` for Copy T, and a proper
     // teardown of the old value for a Drop T (no leak, no double-free).
-    pub fn set(mut self, v: T) {
+    pub fn set(mut this, v: T) {
         let value_off: usize = (8 as usize) +% (64 as usize);
-        let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+        let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
         unsafe { #drop_in_place::[T](value_ptr); }
         unsafe { *value_ptr = v; }
         return;
@@ -190,20 +190,20 @@ impl MutexGuard[T] {
     // implies no other reference exists, so no other thread can be mid-use.
     // The free is inlined here (not delegated) so the raw-pointer
     // accountability check is satisfied — same shape as `Mutex::drop`.
-    fn drop(mut self) {
+    fn drop(mut this) {
         let refct_bytes: usize = 8 as usize;
-        let mutex_ptr: *u8 = unsafe { self.ctrl + refct_bytes };
+        let mutex_ptr: *u8 = unsafe { this.ctrl + refct_bytes };
         let _err: i32 = unsafe { pthread_mutex_unlock(mutex_ptr) };
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
             let _derr: i32 = unsafe { pthread_mutex_destroy(mutex_ptr) };
             let value_off: usize = (8 as usize) +% (64 as usize);
-            let value_ptr: *T = unsafe { (self.ctrl + value_off) as *T };
+            let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
             unsafe { #drop_in_place::[T](value_ptr); }
-            unsafe { free(self.ctrl); }
+            unsafe { free(this.ctrl); }
         }
         return;
     }

@@ -51,25 +51,25 @@ impl Arg {
         return new_arg(name);
     }
 
-    pub fn short(mut self, s: str) -> Arg {
-        self.short_name = s;
-        return self;
+    pub fn short(mut this, s: str) -> Arg {
+        this.short_name = s;
+        return this;
     }
-    pub fn long(mut self, l: str) -> Arg {
-        self.long_name = l;
-        return self;
+    pub fn long(mut this, l: str) -> Arg {
+        this.long_name = l;
+        return this;
     }
-    pub fn flag(mut self) -> Arg {
-        self.is_flag = true;
-        return self;
+    pub fn flag(mut this) -> Arg {
+        this.is_flag = true;
+        return this;
     }
-    pub fn required(mut self) -> Arg {
-        self.required = true;
-        return self;
+    pub fn required(mut this) -> Arg {
+        this.required = true;
+        return this;
     }
-    pub fn help(mut self, h: str) -> Arg {
-        self.help = h;
-        return self;
+    pub fn help(mut this, h: str) -> Arg {
+        this.help = h;
+        return this;
     }
 }
 
@@ -111,28 +111,28 @@ impl App {
         return new_app(name);
     }
 
-    pub fn version(mut self, v: str) -> App {
-        self.version = v;
-        return self;
+    pub fn version(mut this, v: str) -> App {
+        this.version = v;
+        return this;
     }
-    pub fn author(mut self, a: str) -> App {
-        self.author = a;
-        return self;
+    pub fn author(mut this, a: str) -> App {
+        this.author = a;
+        return this;
     }
-    pub fn about(mut self, ab: str) -> App {
-        self.about = ab;
-        return self;
+    pub fn about(mut this, ab: str) -> App {
+        this.about = ab;
+        return this;
     }
-    pub fn arg(mut self, move argument: Arg) -> App {
-        self.args.push(argument);
-        return self;
+    pub fn arg(mut this, move argument: Arg) -> App {
+        this.args.push(argument);
+        return this;
     }
 
-    fn find_arg_by_long(self, name: str) -> option::Option[Arg] {
+    fn find_arg_by_long(this, name: str) -> option::Option[Arg] {
         let mut i: usize = 0 as usize;
-        let len: usize = self.args.len();
+        let len: usize = this.args.len();
         while i < len {
-            let item: Arg = vec::at_copy::[Arg](self.args, i);
+            let item: Arg = vec::at_copy::[Arg](this.args, i);
             if item.long_name == name {
                 return option::some::[Arg](item);
             }
@@ -141,11 +141,11 @@ impl App {
         return option::Option[Arg]::None;
     }
 
-    fn find_arg_by_short(self, name: str) -> option::Option[Arg] {
+    fn find_arg_by_short(this, name: str) -> option::Option[Arg] {
         let mut i: usize = 0 as usize;
-        let len: usize = self.args.len();
+        let len: usize = this.args.len();
         while i < len {
-            let item: Arg = vec::at_copy::[Arg](self.args, i);
+            let item: Arg = vec::at_copy::[Arg](this.args, i);
             if item.short_name == name {
                 return option::some::[Arg](item);
             }
@@ -154,32 +154,32 @@ impl App {
         return option::Option[Arg]::None;
     }
 
-    pub fn print_help_and_exit(self) {
+    pub fn print_help_and_exit(this) {
         let fd: i32 = 1; // stdout
-        write_out(fd, self.name);
+        write_out(fd, this.name);
         write_out(fd, "\n");
-        if #str_len(self.version) > 0 {
+        if #str_len(this.version) > 0 {
             write_out(fd, "Version: ");
-            write_out(fd, self.version);
+            write_out(fd, this.version);
             write_out(fd, "\n");
         }
-        if #str_len(self.author) > 0 {
+        if #str_len(this.author) > 0 {
             write_out(fd, "Author: ");
-            write_out(fd, self.author);
+            write_out(fd, this.author);
             write_out(fd, "\n");
         }
-        if #str_len(self.about) > 0 {
-            write_out(fd, self.about);
+        if #str_len(this.about) > 0 {
+            write_out(fd, this.about);
             write_out(fd, "\n");
         }
         write_out(fd, "\nUSAGE:\n    ");
-        write_out(fd, self.name);
+        write_out(fd, this.name);
         write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n\nFLAGS & OPTIONS:\n");
 
         let mut i: usize = 0 as usize;
-        let len: usize = self.args.len();
+        let len: usize = this.args.len();
         while i < len {
-            let item: Arg = vec::at_copy::[Arg](self.args, i);
+            let item: Arg = vec::at_copy::[Arg](this.args, i);
             write_out(fd, "    ");
             if #str_len(item.short_name) > 0 {
                 write_out(fd, "-");
@@ -210,19 +210,19 @@ impl App {
         return;
     }
 
-    fn print_unknown_arg_and_exit(self, arg: str) {
+    fn print_unknown_arg_and_exit(this, arg: str) {
         let fd: i32 = 2; // stderr
         write_out(fd, "error: Found argument '");
         write_out(fd, arg);
         write_out(fd, "' which wasn't expected, or isn't valid in this context\n\n");
         write_out(fd, "USAGE:\n    ");
-        write_out(fd, self.name);
+        write_out(fd, this.name);
         write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n");
         unsafe { exit(1 as i32); }
         return;
     }
 
-    fn print_missing_value_and_exit(self, name: str) {
+    fn print_missing_value_and_exit(this, name: str) {
         let fd: i32 = 2; // stderr
         write_out(fd, "error: The argument '--");
         write_out(fd, name);
@@ -231,7 +231,7 @@ impl App {
         return;
     }
 
-    fn print_missing_required_and_exit(self, name: str) {
+    fn print_missing_required_and_exit(this, name: str) {
         let fd: i32 = 2; // stderr
         write_out(fd, "error: The following required arguments were not provided:\n    ");
         write_out(fd, name);
@@ -246,21 +246,21 @@ impl App {
     // pre-v0.0.9 `get_matches()` shortcut that called `_NSGetArgc/Argv`
     // directly was Darwin-only and has been dropped to keep this
     // package portable.
-    pub fn get_matches_from(self, move args: vec::Vec[str]) -> ArgMatches {
+    pub fn get_matches_from(this, move args: vec::Vec[str]) -> ArgMatches {
         let mut matches: map::HashMap[str, str] = map::new::[str, str]();
         let mut positionals: vec::Vec[str] = vec::new::[str]();
 
         let n: usize = args.len();
         let mut i: usize = 1 as usize;
 
-        let args_len: usize = self.args.len();
+        let args_len: usize = this.args.len();
 
         while i < n {
             let arg_str: str = vec::at_copy::[str](args, i);
 
             if #str_len(arg_str) > (1 as usize) && unsafe { *#str_ptr(arg_str) } == ('-' as u8) {
                 if arg_str == "--help" || arg_str == "-h" {
-                    self.print_help_and_exit();
+                    this.print_help_and_exit();
                 }
 
                 if #str_len(arg_str) > (2 as usize) && unsafe { *(#str_ptr(arg_str) + 1) } == ('-' as u8) {
@@ -282,9 +282,9 @@ impl App {
                         option::Option[usize]::None => option::Option[str]::None,
                     };
 
-                    let opt_arg: option::Option[Arg] = self.find_arg_by_long(opt_name);
+                    let opt_arg: option::Option[Arg] = this.find_arg_by_long(opt_name);
                     guard let option::Option[Arg]::Some(found) = opt_arg else {
-                        self.print_unknown_arg_and_exit(arg_str);
+                        this.print_unknown_arg_and_exit(arg_str);
                         return ArgMatches {
                             matches: map::new::[str, str](),
                             positionals: vec::new::[str](),
@@ -306,7 +306,7 @@ impl App {
                                     let val: str = vec::at_copy::[str](args, i);
                                     matches.insert(found.name, val);
                                 } else {
-                                    self.print_missing_value_and_exit(found.name);
+                                    this.print_missing_value_and_exit(found.name);
                                 }
                             }
                         };
@@ -326,7 +326,7 @@ impl App {
                     while all_flags && k < body_len {
                         let bptr: *u8 = unsafe { body_ptr + k };
                         let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
-                        let oa: option::Option[Arg] = self.find_arg_by_short(one);
+                        let oa: option::Option[Arg] = this.find_arg_by_short(one);
                         match oa {
                             option::Option[Arg]::Some(a) => {
                                 if !a.is_flag { all_flags = false; }
@@ -342,7 +342,7 @@ impl App {
                         while j2 < body_len {
                             let bptr: *u8 = unsafe { body_ptr + j2 };
                             let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
-                            guard let option::Option[Arg]::Some(a) = self.find_arg_by_short(one) else {
+                            guard let option::Option[Arg]::Some(a) = this.find_arg_by_short(one) else {
                                 // can't happen — checked in loop above
                                 return ArgMatches {
                                     matches: map::new::[str, str](),
@@ -354,9 +354,9 @@ impl App {
                         }
                     } else {
                         let opt_name: str = unsafe { #str_from_raw_parts(body_ptr, body_len) };
-                        let opt_arg: option::Option[Arg] = self.find_arg_by_short(opt_name);
+                        let opt_arg: option::Option[Arg] = this.find_arg_by_short(opt_name);
                         guard let option::Option[Arg]::Some(found) = opt_arg else {
-                            self.print_unknown_arg_and_exit(arg_str);
+                            this.print_unknown_arg_and_exit(arg_str);
                             return ArgMatches {
                                 matches: map::new::[str, str](),
                                 positionals: vec::new::[str](),
@@ -371,7 +371,7 @@ impl App {
                                 let val: str = vec::at_copy::[str](args, i);
                                 matches.insert(found.name, val);
                             } else {
-                                self.print_missing_value_and_exit(found.name);
+                                this.print_missing_value_and_exit(found.name);
                             }
                         }
                     }
@@ -384,10 +384,10 @@ impl App {
 
         let mut j: usize = 0 as usize;
         while j < args_len {
-            let item: Arg = vec::at_copy::[Arg](self.args, j);
+            let item: Arg = vec::at_copy::[Arg](this.args, j);
             if item.required {
                 if !matches.contains_key(item.name) {
-                    self.print_missing_required_and_exit(item.name);
+                    this.print_missing_required_and_exit(item.name);
                 }
             }
             j = j +% (1 as usize);
@@ -406,24 +406,24 @@ pub struct ArgMatches {
 }
 
 impl ArgMatches {
-    pub fn is_present(self, name: str) -> bool {
-        return self.matches.contains_key(name);
+    pub fn is_present(this, name: str) -> bool {
+        return this.matches.contains_key(name);
     }
 
-    pub fn value_of(self, name: str) -> option::Option[str] {
-        let res = self.matches.get(name);
+    pub fn value_of(this, name: str) -> option::Option[str] {
+        let res = this.matches.get(name);
         guard let result::Result[str, result::IoError]::Ok(val) = res else {
             return option::Option[str]::None;
         };
         return option::some::[str](val);
     }
 
-    pub fn positional_count(self) -> usize {
-        return self.positionals.len();
+    pub fn positional_count(this) -> usize {
+        return this.positionals.len();
     }
 
-    pub fn positional_at(self, i: usize) -> str {
-        return vec::at_copy::[str](self.positionals, i);
+    pub fn positional_at(this, i: usize) -> str {
+        return vec::at_copy::[str](this.positionals, i);
     }
 }
 

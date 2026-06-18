@@ -15,7 +15,7 @@
 //
 // **v0.0.4 limitation.** No `Arc::make_mut` (clone-on-write to take a
 // `&mut T`-equivalent) — C+ has no references, so the API would be
-// `Arc::unwrap_mut(mut self) -> T` that requires refcount == 1. Land
+// `Arc::unwrap_mut(mut this) -> T` that requires refcount == 1. Land
 // when an actual workload asks for it.
 //
 // **Drop of inner T.** Inherits the v0.0.4 stdlib limitation: when T
@@ -62,18 +62,18 @@ impl Arc[T] {
     // Arc carries the same ctrl pointer that's already visible to this
     // thread; no happens-before relationship is established by the
     // increment itself.
-    pub fn clone(self) -> Arc[T] {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn clone(this) -> Arc[T] {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
-        return Arc[T] { ctrl: self.ctrl };
+        return Arc[T] { ctrl: this.ctrl };
     }
 
     // Current strong-reference count (snapshot — racy under load,
     // useful for tests + debugging only).
-    pub fn strong_count(self) -> u64 {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn strong_count(this) -> u64 {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }
 
@@ -82,17 +82,17 @@ impl Arc[T] {
     // ctrl ptr; acquire on the final decrement synchronises with all
     // prior Arc::drop's so the freeing thread sees a consistent view
     // of the value before deallocation.
-    fn drop(mut self) {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    fn drop(mut this) {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last
             // reference before freeing the control block.
-            let value_ptr: *T = unsafe { (self.ctrl + (8 as usize)) as *T };
+            let value_ptr: *T = unsafe { (this.ctrl + (8 as usize)) as *T };
             unsafe { #drop_in_place::[T](value_ptr); }
-            unsafe { free(self.ctrl); }
+            unsafe { free(this.ctrl); }
         }
         return;
     }
@@ -105,9 +105,9 @@ impl Arc[T] {
 // `Arc[NonCopy]` still works through `clone` / `strong_count` / Drop.
 impl Arc[T: Copy] {
     // Read inner T (bitwise copy).
-    pub fn get(self) -> T {
+    pub fn get(this) -> T {
         let header: usize = 8 as usize;
-        let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
+        let value_ptr: *T = unsafe { (this.ctrl + header) as *T };
         return unsafe { *value_ptr };
     }
 }

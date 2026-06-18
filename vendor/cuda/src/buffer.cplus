@@ -20,7 +20,7 @@ pub struct DeviceBuffer {
 }
 
 // Void wrapper around `cudaFree` so `drop` releases the field as a bare
-// statement passing `self.dptr` directly — the form the raw-pointer
+// statement passing `this.dptr` directly — the form the raw-pointer
 // accountability check recognizes as a provable release. `cudaFree(NULL)`
 // is a documented no-op, so this is safe on a moved-from buffer.
 fn device_free(p: *u8) {
@@ -44,23 +44,23 @@ pub fn alloc(size: usize) -> result::Result[DeviceBuffer, runtime::CudaError] {
 }
 
 impl DeviceBuffer {
-    // Copy up to `min(bytes, self.size)` bytes from host `src` into this
+    // Copy up to `min(bytes, this.size)` bytes from host `src` into this
     // device buffer. Returns the raw cudaError_t (0 = success).
-    pub fn copy_from_host(self, src: *u8, bytes: usize) -> i32 {
-        let n: usize = if bytes < self.size { bytes } else { self.size };
-        return unsafe { cudaMemcpy(self.dptr, src, n, runtime::memcpy_host_to_device()) };
+    pub fn copy_from_host(this, src: *u8, bytes: usize) -> i32 {
+        let n: usize = if bytes < this.size { bytes } else { this.size };
+        return unsafe { cudaMemcpy(this.dptr, src, n, runtime::memcpy_host_to_device()) };
     }
 
-    // Copy up to `min(bytes, self.size)` bytes from this device buffer into
+    // Copy up to `min(bytes, this.size)` bytes from this device buffer into
     // host `dst`. Returns the raw cudaError_t (0 = success).
-    pub fn copy_to_host(self, dst: *u8, bytes: usize) -> i32 {
-        let n: usize = if bytes < self.size { bytes } else { self.size };
-        return unsafe { cudaMemcpy(dst, self.dptr, n, runtime::memcpy_device_to_host()) };
+    pub fn copy_to_host(this, dst: *u8, bytes: usize) -> i32 {
+        let n: usize = if bytes < this.size { bytes } else { this.size };
+        return unsafe { cudaMemcpy(dst, this.dptr, n, runtime::memcpy_device_to_host()) };
     }
 
-    fn drop(mut self) {
-        device_free(self.dptr);
-        self.dptr = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        device_free(this.dptr);
+        this.dptr = unsafe { 0 as *u8 };
         return;
     }
 }

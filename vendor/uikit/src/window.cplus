@@ -20,15 +20,15 @@ impl Window {
         return Window { obj: win };
     }
 
-    pub fn set_root_view_controller(self, vc: controllers::ViewController) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setRootViewController:\0")), vc.obj);
+    pub fn set_root_view_controller(this, vc: controllers::ViewController) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setRootViewController:\0")), vc.obj);
     }
 
-    pub fn set_background_color(self, color: view::Color) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
+    pub fn set_background_color(this, color: view::Color) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
     }
 
-    pub fn make_key_and_visible(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("makeKeyAndVisible\0")));
+    pub fn make_key_and_visible(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("makeKeyAndVisible\0")));
     }
 }

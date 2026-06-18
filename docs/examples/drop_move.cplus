@@ -8,7 +8,7 @@ struct Handle { id: i32 }
 
 impl Handle {
     fn new(id: i32) -> Handle { return Handle { id: id }; }
-    fn drop(mut self) { #println(0 -% self.id); }
+    fn drop(mut this) { #println(0 -% this.id); }
 }
 
 fn take(move h: Handle) -> i32 {

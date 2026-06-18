@@ -25568,7 +25568,7 @@ import "uikit/window" as window;
 import "uikit/controllers" as controllers;
 import "uikit/view" as view;
 
-fn did_finish(this: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
+fn did_finish(recv: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
     let bounds: rt::Rect = screen::Screen::main().bounds();
     let win: window::Window = window::Window::new(bounds);
     let vc: controllers::ViewController = controllers::ViewController::new();

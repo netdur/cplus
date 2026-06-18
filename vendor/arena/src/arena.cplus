@@ -22,7 +22,7 @@
 //     before deref. The `*_opt` family (`alloc_bytes_opt`,
 //     `alloc_bytes_aligned_opt`) returns `Option[*u8]` for callers
 //     that prefer explicit failure-handling.
-//   - `reset(mut self)` frees every chunk and leaves the arena empty
+//   - `reset(mut this)` frees every chunk and leaves the arena empty
 //     and reusable. `total_allocated()` returns the sum of all chunk
 //     capacities (the upper bound on bytes that could fit, NOT the
 //     current high-water mark).
@@ -67,24 +67,24 @@ impl Arena {
         return new(chunk_size);
     }
 
-    pub fn alloc_bytes(mut self, bytes: usize) -> *u8 {
-        return self.alloc_bytes_aligned(bytes, 8 as usize);
+    pub fn alloc_bytes(mut this, bytes: usize) -> *u8 {
+        return this.alloc_bytes_aligned(bytes, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned(mut self, bytes: usize, align: usize) -> *u8 {
+    pub fn alloc_bytes_aligned(mut this, bytes: usize, align: usize) -> *u8 {
         // Normalize `align == 0` to 1-byte alignment — the `% align`
         // math below would trap on SIGFPE otherwise.
         let mut align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
         let header_size: usize = #size_of::[Chunk]();
 
-        if unsafe { self.head as usize } != (0 as usize) {
-            let chunk: *Chunk = unsafe { self.head as *Chunk };
+        if unsafe { this.head as usize } != (0 as usize) {
+            let chunk: *Chunk = unsafe { this.head as *Chunk };
             let cap: usize = unsafe { (*chunk).cap };
             let used: usize = unsafe { (*chunk).used };
 
             // Pointer-as-usize math: real addresses don't wrap.
-            let p_start: usize = unsafe { (self.head as usize) +% header_size };
+            let p_start: usize = unsafe { (this.head as usize) +% header_size };
             let avail: usize = p_start +% used;
 
             let remainder: usize = avail % align;
@@ -109,7 +109,7 @@ impl Arena {
         }
         let max_needed: usize = bytes + padding;
 
-        let mut next_chunk_payload: usize = self.chunk_size -% header_size;
+        let mut next_chunk_payload: usize = this.chunk_size -% header_size;
         if next_chunk_payload < max_needed {
             next_chunk_payload = max_needed;
         }
@@ -124,9 +124,9 @@ impl Arena {
         unsafe {
             (*new_chunk).cap = next_chunk_payload;
             (*new_chunk).used = 0;
-            (*new_chunk).next = self.head;
+            (*new_chunk).next = this.head;
         }
-        self.head = raw;
+        this.head = raw;
 
         let p_start: usize = unsafe { (raw as usize) +% header_size };
         let remainder: usize = p_start % align;
@@ -138,10 +138,10 @@ impl Arena {
         return unsafe { aligned_avail as *u8 };
     }
 
-    pub fn alloc[T](mut self, move val: T) -> *T {
+    pub fn alloc[T](mut this, move val: T) -> *T {
         let bytes: usize = #size_of::[T]();
         let align: usize = #align_of::[T]();
-        let ptr: *u8 = self.alloc_bytes_aligned(bytes, align);
+        let ptr: *u8 = this.alloc_bytes_aligned(bytes, align);
         if unsafe { ptr as usize } == (0 as usize) {
             return unsafe { 0 as *T };
         }
@@ -154,12 +154,12 @@ impl Arena {
 
     // OOM-explicit variants. Mirror the null-returning forms but
     // wrap in `Option` so the caller can `guard let Some(p) = ...`.
-    pub fn alloc_bytes_opt(mut self, bytes: usize) -> option::Option[*u8] {
-        return self.alloc_bytes_aligned_opt(bytes, 8 as usize);
+    pub fn alloc_bytes_opt(mut this, bytes: usize) -> option::Option[*u8] {
+        return this.alloc_bytes_aligned_opt(bytes, 8 as usize);
     }
 
-    pub fn alloc_bytes_aligned_opt(mut self, bytes: usize, align: usize) -> option::Option[*u8] {
-        let p: *u8 = self.alloc_bytes_aligned(bytes, align);
+    pub fn alloc_bytes_aligned_opt(mut this, bytes: usize, align: usize) -> option::Option[*u8] {
+        let p: *u8 = this.alloc_bytes_aligned(bytes, align);
         if unsafe { p as usize } == (0 as usize) {
             return option::Option[*u8]::None;
         }
@@ -168,8 +168,8 @@ impl Arena {
 
     // Allocate `n` bytes initialized to zero. Useful for arenas holding
     // POD structs the caller wants memset'd. Returns null on OOM.
-    pub fn alloc_zeroed_bytes(mut self, bytes: usize) -> *u8 {
-        let p: *u8 = self.alloc_bytes(bytes);
+    pub fn alloc_zeroed_bytes(mut this, bytes: usize) -> *u8 {
+        let p: *u8 = this.alloc_bytes(bytes);
         if unsafe { p as usize } != (0 as usize) {
             unsafe { memset(p, 0 as i32, bytes); }
         }
@@ -179,12 +179,12 @@ impl Arena {
     // Copy a `str`'s bytes into the arena and return a `str` view of
     // the copied bytes. Returns `None` on OOM. The returned view
     // shares the arena's lifetime (same as every other arena alloc).
-    pub fn alloc_str(mut self, s: str) -> option::Option[str] {
+    pub fn alloc_str(mut this, s: str) -> option::Option[str] {
         let n: usize = #str_len(s);
         if n == (0 as usize) {
             return option::Option[str]::Some("");
         }
-        let p: *u8 = self.alloc_bytes_aligned(n, 1 as usize);
+        let p: *u8 = this.alloc_bytes_aligned(n, 1 as usize);
         if unsafe { p as usize } == (0 as usize) {
             return option::Option[str]::None;
         }
@@ -195,9 +195,9 @@ impl Arena {
     // Sum of every chunk's capacity. Useful for "how much memory am I
     // holding" diagnostics. NOT the high-water mark — it's the upper
     // bound on what could still fit if perfectly packed.
-    pub fn total_allocated(self) -> usize {
+    pub fn total_allocated(this) -> usize {
         let mut total: usize = 0 as usize;
-        let mut curr: *u8 = self.head;
+        let mut curr: *u8 = this.head;
         while unsafe { curr as usize } != (0 as usize) {
             let chunk: *Chunk = unsafe { curr as *Chunk };
             total = total + unsafe { (*chunk).cap };
@@ -210,20 +210,20 @@ impl Arena {
     // reusable — future `alloc_bytes` calls will allocate a fresh
     // chunk. Equivalent to dropping and re-creating with the same
     // chunk_size, but without changing the binding.
-    pub fn reset(mut self) {
-        let mut curr: *u8 = self.head;
+    pub fn reset(mut this) {
+        let mut curr: *u8 = this.head;
         while unsafe { curr as usize } != (0 as usize) {
             let chunk: *Chunk = unsafe { curr as *Chunk };
             let next: *u8 = unsafe { (*chunk).next };
             unsafe { free(curr); }
             curr = next;
         }
-        self.head = unsafe { 0 as *u8 };
+        this.head = unsafe { 0 as *u8 };
         return;
     }
 
-    fn drop(mut self) {
-        self.reset();
+    fn drop(mut this) {
+        this.reset();
         return;
     }
 }

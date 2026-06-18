@@ -4,7 +4,7 @@
 // take turns advancing one step at a time, interleaved via `yield_now`.
 // Without the reactor, each task would run to completion in turn (no
 // interleaving); with the reactor's drain step in `block_on`, each
-// `yield_now` push-pops self off the pending queue, letting other
+// `yield_now` push-pops this off the pending queue, letting other
 // queued tasks make progress between iterations.
 //
 // **No I/O.** This recipe exercises the substrate without needing a

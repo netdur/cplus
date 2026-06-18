@@ -66,30 +66,30 @@ fn is_null(p: *u8) -> bool {
 }
 
 impl Model {
-    fn drop(mut self) {
-        if !is_null(self.raw) {
-            unsafe { cplus_coreai_release(self.raw); }
-            self.raw = null();
+    fn drop(mut this) {
+        if !is_null(this.raw) {
+            unsafe { cplus_coreai_release(this.raw); }
+            this.raw = null();
         }
         return;
     }
 }
 
 impl Function {
-    fn drop(mut self) {
-        if !is_null(self.raw) {
-            unsafe { cplus_coreai_release(self.raw); }
-            self.raw = null();
+    fn drop(mut this) {
+        if !is_null(this.raw) {
+            unsafe { cplus_coreai_release(this.raw); }
+            this.raw = null();
         }
         return;
     }
 }
 
 impl NDArray {
-    fn drop(mut self) {
-        if !is_null(self.raw) {
-            unsafe { cplus_coreai_release(self.raw); }
-            self.raw = null();
+    fn drop(mut this) {
+        if !is_null(this.raw) {
+            unsafe { cplus_coreai_release(this.raw); }
+            this.raw = null();
         }
         return;
     }

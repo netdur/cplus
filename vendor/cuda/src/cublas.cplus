@@ -50,7 +50,7 @@ pub struct Handle {
 }
 
 // Void wrapper around `cublasDestroy_v2` so `drop` releases the field as a
-// bare statement passing `self.raw` directly (the form the raw-pointer
+// bare statement passing `this.raw` directly (the form the raw-pointer
 // accountability check recognizes as a provable release).
 fn handle_destroy(h: *u8) {
     let _rc: i32 = unsafe { cublasDestroy_v2(h) };
@@ -75,7 +75,7 @@ impl Handle {
     // Column-major; `a`/`b`/`c` are device pointers (`DeviceBuffer.dptr`).
     // Returns the raw cublasStatus_t (0 = success).
     pub fn sgemm(
-        self,
+        this,
         transa: Op, transb: Op,
         m: i32, n: i32, k: i32,
         alpha: f32, a: *u8, lda: i32, b: *u8, ldb: i32,
@@ -87,7 +87,7 @@ impl Handle {
         unsafe { *(bbuf as *f32) = beta; }
         let rc: i32 = unsafe {
             cublasSgemm_v2(
-                self.raw, op_raw(transa), op_raw(transb),
+                this.raw, op_raw(transa), op_raw(transb),
                 m, n, k,
                 abuf, a, lda, b, ldb,
                 bbuf, c, ldc,
@@ -103,7 +103,7 @@ impl Handle {
     // behind vector search (`scores = database @ query`). Returns the raw
     // cublasStatus_t (0 = success).
     pub fn sgemv(
-        self,
+        this,
         trans: Op,
         m: i32, n: i32,
         alpha: f32, a: *u8, lda: i32, x: *u8, incx: i32,
@@ -115,7 +115,7 @@ impl Handle {
         unsafe { *(bbuf as *f32) = beta; }
         let rc: i32 = unsafe {
             cublasSgemv_v2(
-                self.raw, op_raw(trans),
+                this.raw, op_raw(trans),
                 m, n,
                 abuf, a, lda, x, incx,
                 bbuf, y, incy,
@@ -126,9 +126,9 @@ impl Handle {
         return rc;
     }
 
-    fn drop(mut self) {
-        handle_destroy(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        handle_destroy(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }

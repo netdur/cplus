@@ -12,8 +12,8 @@ impl AutoreleasePool {
         return AutoreleasePool { obj: pool };
     }
 
-    pub fn drain(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("drain\0")));
+    pub fn drain(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("drain\0")));
     }
 }
 
@@ -28,40 +28,40 @@ impl Application {
         return Application { obj: app };
     }
 
-    pub fn set_activation_policy(self, policy: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setActivationPolicy:\0")), policy);
+    pub fn set_activation_policy(this, policy: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setActivationPolicy:\0")), policy);
     }
 
-    pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    pub fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn activate(self, ignoring_other_apps: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), ignoring_other_apps);
+    pub fn activate(this, ignoring_other_apps: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("activateIgnoringOtherApps:\0")), ignoring_other_apps);
     }
 
-    pub fn run(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("run\0")));
+    pub fn run(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("run\0")));
     }
 
-    pub fn stop(self, sender: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("stop:\0")), sender);
+    pub fn stop(this, sender: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("stop:\0")), sender);
     }
 
-    pub fn terminate(self, sender: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("terminate:\0")), sender);
+    pub fn terminate(this, sender: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("terminate:\0")), sender);
     }
 
-    pub fn hide(self, sender: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("hide:\0")), sender);
+    pub fn hide(this, sender: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("hide:\0")), sender);
     }
 
-    pub fn unhide(self, sender: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("unhide:\0")), sender);
+    pub fn unhide(this, sender: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("unhide:\0")), sender);
     }
 
-    pub fn set_main_menu(self, menu: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setMainMenu:\0")), menu);
+    pub fn set_main_menu(this, menu: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMainMenu:\0")), menu);
     }
 }
 

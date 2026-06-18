@@ -4,7 +4,7 @@
 // connect, set non-blocking, write a request, read a response — all
 // through method-form `await stream.write_async(...)` /
 // `await stream.read_async(...)`. No raw fds in user code; the
-// `mut self` receiver keeps the stream live across `await` points
+// `mut this` receiver keeps the stream live across `await` points
 // without `move`-on-value-pass consumption.
 //
 // Pairs with a server running on 127.0.0.1:PORT that echoes one byte.

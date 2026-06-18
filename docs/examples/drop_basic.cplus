@@ -9,8 +9,8 @@ impl Tracker {
         #println(id);
         return Tracker { id: id };
     }
-    fn drop(mut self) {
-        #println(0 -% self.id);
+    fn drop(mut this) {
+        #println(0 -% this.id);
     }
 }
 

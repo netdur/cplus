@@ -27,7 +27,7 @@ pub struct Iterator[T] {
 
 // v0.0.5 Phase 3 Slice 3C: iterator adapters. Each adapter is a
 // `gen fn` that pulls from its source iterator and re-yields. The
-// `match self.next() { Option[T]::Some(v) => ..., Option[T]::None => return }`
+// `match this.next() { Option[T]::Some(v) => ..., Option[T]::None => return }`
 // shape is enabled by sema's `propagate_pattern_instantiations` pass
 // (walks variant patterns inside generic-impl-method bodies and
 // generic free fn bodies, substitutes through the outer subst, and
@@ -40,9 +40,9 @@ pub struct Iterator[T] {
 
 impl Iterator[T] {
     // Keep only elements where `pred` returns true.
-    pub gen fn filter(self, pred: fn(T) -> bool) -> T {
+    pub gen fn filter(this, pred: fn(T) -> bool) -> T {
         loop {
-            match self.next() {
+            match this.next() {
                 option::Option[T]::Some(v) => {
                     if pred(v) { yield v; }
                 }
@@ -52,10 +52,10 @@ impl Iterator[T] {
     }
 
     // Yield at most `n` elements, then stop.
-    pub gen fn take(self, n: usize) -> T {
+    pub gen fn take(this, n: usize) -> T {
         let mut k: usize = 0 as usize;
         while k < n {
-            match self.next() {
+            match this.next() {
                 option::Option[T]::Some(v) => { yield v; }
                 option::Option[T]::None => { return; }
             }

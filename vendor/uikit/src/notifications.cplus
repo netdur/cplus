@@ -34,9 +34,9 @@ pub struct Observer {
 }
 
 impl Observer {
-    fn drop(mut self) {
-        rt::msg_void_id(default_center(), rt::sel(#str_ptr("removeObserver:\0")), self.obj);
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::msg_void_id(default_center(), rt::sel(#str_ptr("removeObserver:\0")), this.obj);
+        rt::release(this.obj);
     }
 }
 
@@ -49,30 +49,30 @@ impl NotificationCenter {
         return NotificationCenter { obj: default_center() };
     }
 
-    pub fn post(self, name: *u8) {
+    pub fn post(this, name: *u8) {
         rt::msg_void_id_id(
-            self.obj,
+            this.obj,
             rt::sel(#str_ptr("postNotificationName:object:\0")),
             rt::ns_string(name),
             unsafe { 0 as *u8 },
         );
     }
 
-    pub fn post_ns(self, name_ns: *u8) {
+    pub fn post_ns(this, name_ns: *u8) {
         rt::msg_void_id_id(
-            self.obj,
+            this.obj,
             rt::sel(#str_ptr("postNotificationName:object:\0")),
             name_ns,
             unsafe { 0 as *u8 },
         );
     }
 
-    pub fn add_observer(self, name: *u8, cb: fn(*u8)) -> Observer {
+    pub fn add_observer(this, name: *u8, cb: fn(*u8)) -> Observer {
         let cls: *u8 = observer_class();
         let obs: *u8 = rt::alloc_init(#str_ptr("CUIKitNotifyObserver\0"));
         rt::set_associated_callback(obs, #str_ptr("notify_cb_key\0"), cb, 0 as usize);
         rt::msg_void_id_id_id_id(
-            self.obj,
+            this.obj,
             rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
             obs,
             rt::sel(#str_ptr("handleNotification:\0")),

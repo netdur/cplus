@@ -115,15 +115,15 @@ pub fn listen_tcp(port: u16) -> result::Result[TcpListener, result::IoError] {
 
 impl TcpStream {
     // Drain all remaining bytes from the peer (until EOF or error).
-    pub fn read_to_end(mut self) -> result::Result[vec::Vec[u8], result::IoError] {
+    pub fn read_to_end(mut this) -> result::Result[vec::Vec[u8], result::IoError] {
         let mut buf: vec::Vec[u8] = vec::new::[u8]();
-        if self.fd < (0 as i32) {
+        if this.fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
         let chunk_size: usize = 4096 as usize;
         let chunk: *u8 = unsafe { malloc(chunk_size) };
         loop {
-            let n: isize = unsafe { read(self.fd, chunk, chunk_size) };
+            let n: isize = unsafe { read(this.fd, chunk, chunk_size) };
             if n < (0 as isize) {
                 unsafe { free(chunk); }
                 return result::io_err::[vec::Vec[u8]](result::IoError::ConnectionReset);
@@ -144,8 +144,8 @@ impl TcpStream {
     }
 
     // Write `data` to the peer. Loops on short writes.
-    pub fn write_all(mut self, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
-        if self.fd < (0 as i32) {
+    pub fn write_all(mut this, data: vec::Vec[u8]) -> result::Result[usize, result::IoError] {
+        if this.fd < (0 as i32) {
             return result::io_err::[usize](result::IoError::InvalidInput);
         }
         let n: usize = data.len();
@@ -155,7 +155,7 @@ impl TcpStream {
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = unsafe { p + written };
-            let w: isize = unsafe { write(self.fd, q, remaining) };
+            let w: isize = unsafe { write(this.fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -166,29 +166,29 @@ impl TcpStream {
 
     // Half-close the write side so the peer sees EOF. Pairs with a remote
     // `read_to_end` that would otherwise block forever waiting for more.
-    pub fn shutdown_write(self) {
-        if self.fd >= (0 as i32) {
-            unsafe { shutdown(self.fd, 1 as i32); }
+    pub fn shutdown_write(this) {
+        if this.fd >= (0 as i32) {
+            unsafe { shutdown(this.fd, 1 as i32); }
         }
         return;
     }
 
-    pub fn close(mut self) {
-        if self.fd >= (0 as i32) {
-            unsafe { close(self.fd); }
-            self.fd = 0 -% 1 as i32;
+    pub fn close(mut this) {
+        if this.fd >= (0 as i32) {
+            unsafe { close(this.fd); }
+            this.fd = 0 -% 1 as i32;
         }
         return;
     }
 
-    fn drop(mut self) {
-        if self.fd >= (0 as i32) {
-            unsafe { close(self.fd); }
+    fn drop(mut this) {
+        if this.fd >= (0 as i32) {
+            unsafe { close(this.fd); }
         }
         return;
     }
 
-    // v0.0.5 Phase 4 Slice 4B: async I/O method form. `mut self` is
+    // v0.0.5 Phase 4 Slice 4B: async I/O method form. `mut this` is
     // pointer-passed (not consumed), so callers can chain — a
     // `stream.read_async(...)` then `stream.write_async(...)` keeps
     // the same handle live and Drop still runs on scope exit.
@@ -199,72 +199,72 @@ impl TcpStream {
     // multi-level await chains drive correctly.
     //
     // Prerequisite: the stream's fd must be non-blocking. Easiest path
-    // is to call `self.make_nonblocking()` once after construction.
+    // is to call `this.make_nonblocking()` once after construction.
 
     // Mark the stream's fd O_NONBLOCK. Idempotent; safe to call
     // repeatedly. Returns 0 on success, -1 on fcntl error.
-    pub fn make_nonblocking(mut self) -> i32 {
-        return set_nonblocking(self.fd);
+    pub fn make_nonblocking(mut this) -> i32 {
+        return set_nonblocking(this.fd);
     }
 
-    // Async read: same semantics as `read_fd_async(self.fd, buf, count)`.
-    pub async fn read_async(mut self, buf: *u8, count: usize) -> isize {
-        return await read_fd_async(self.fd, buf, count);
+    // Async read: same semantics as `read_fd_async(this.fd, buf, count)`.
+    pub async fn read_async(mut this, buf: *u8, count: usize) -> isize {
+        return await read_fd_async(this.fd, buf, count);
     }
 
     // Async best-effort write (may return < count).
-    pub async fn write_async(mut self, buf: *u8, count: usize) -> isize {
-        return await write_fd_async(self.fd, buf, count);
+    pub async fn write_async(mut this, buf: *u8, count: usize) -> isize {
+        return await write_fd_async(this.fd, buf, count);
     }
 
     // Async full-buffer write — loops on short writes / EAGAIN.
-    pub async fn write_all_async(mut self, buf: *u8, count: usize) -> isize {
-        return await write_all_fd_async(self.fd, buf, count);
+    pub async fn write_all_async(mut this, buf: *u8, count: usize) -> isize {
+        return await write_all_fd_async(this.fd, buf, count);
     }
 }
 
 impl TcpListener {
     // Block until a client connects, return the accepted stream.
-    pub fn accept(mut self) -> result::Result[TcpStream, result::IoError] {
-        if self.fd < (0 as i32) {
+    pub fn accept(mut this) -> result::Result[TcpStream, result::IoError] {
+        if this.fd < (0 as i32) {
             return result::io_err::[TcpStream](result::IoError::InvalidInput);
         }
         // We don't expose the peer's address (would need another allocation
         // + caller-side parsing). Pass NULL pointers so accept skips it.
         let null_ptr: *u8 = unsafe { 0 as *u8 };
         let null_len: *u32 = unsafe { 0 as *u32 };
-        let cfd: i32 = unsafe { accept(self.fd, null_ptr, null_len) };
+        let cfd: i32 = unsafe { accept(this.fd, null_ptr, null_len) };
         if cfd < (0 as i32) {
             return result::io_err::[TcpStream](result::IoError::Other);
         }
         return result::io_ok::[TcpStream](TcpStream { fd: cfd });
     }
 
-    pub fn close(mut self) {
-        if self.fd >= (0 as i32) {
-            unsafe { close(self.fd); }
-            self.fd = 0 -% 1 as i32;
+    pub fn close(mut this) {
+        if this.fd >= (0 as i32) {
+            unsafe { close(this.fd); }
+            this.fd = 0 -% 1 as i32;
         }
         return;
     }
 
-    fn drop(mut self) {
-        if self.fd >= (0 as i32) {
-            unsafe { close(self.fd); }
+    fn drop(mut this) {
+        if this.fd >= (0 as i32) {
+            unsafe { close(this.fd); }
         }
         return;
     }
 
     // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
     // awaiter-notification fix made real `async fn` shapes safe here.
-    pub fn make_nonblocking(mut self) -> i32 {
-        return set_nonblocking(self.fd);
+    pub fn make_nonblocking(mut this) -> i32 {
+        return set_nonblocking(this.fd);
     }
 
     // Async accept: returns the accepted client fd on success (>= 0),
     // -1 on error.
-    pub async fn accept_async(mut self) -> i32 {
-        return await accept_fd_async(self.fd);
+    pub async fn accept_async(mut this) -> i32 {
+        return await accept_fd_async(this.fd);
     }
 }
 
@@ -282,9 +282,9 @@ impl TcpListener {
 //
 // The wrappers are free fns taking a raw `fd: i32` rather than methods on
 // TcpStream / TcpListener: those types are non-Copy (have Drop), and v0.0.4
-// async-method `self` passing would consume the stream on first call. Free
+// async-method `this` passing would consume the stream on first call. Free
 // fns sidestep that — pass `stream.fd` and keep your handle. A friendlier
-// method API can re-export these once impl-on-non-Copy-self async lands.
+// method API can re-export these once impl-on-non-Copy-this async lands.
 //
 // EAGAIN / O_NONBLOCK / errno differ across macOS and Linux — netsys
 // supplies the right values for the target.

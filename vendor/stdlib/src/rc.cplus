@@ -35,11 +35,11 @@ pub fn new[T](move v: T) -> Rc[T] {
 
 impl Rc[T] {
     // Non-atomic increment; returns a new Rc sharing the storage.
-    pub fn clone(self) -> Rc[T] {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn clone(this) -> Rc[T] {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let cur: u64 = unsafe { *refct };
         unsafe { *refct = cur +% (1 as u64); }
-        return Rc[T] { ctrl: self.ctrl };
+        return Rc[T] { ctrl: this.ctrl };
     }
 
 }
@@ -51,9 +51,9 @@ impl Rc[T] {
 // `Rc[NonCopy]` still works through `clone` / `strong_count` / Drop.
 impl Rc[T: Copy] {
     // Read inner T (bitwise copy).
-    pub fn get(self) -> T {
+    pub fn get(this) -> T {
         let header: usize = 8 as usize;
-        let value_ptr: *T = unsafe { (self.ctrl + header) as *T };
+        let value_ptr: *T = unsafe { (this.ctrl + header) as *T };
         return unsafe { *value_ptr };
     }
 }
@@ -61,23 +61,23 @@ impl Rc[T: Copy] {
 impl Rc[T] {
 
     // Current strong-reference count (single-threaded, exact).
-    pub fn strong_count(self) -> u64 {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn strong_count(this) -> u64 {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { *refct };
     }
 
     // Destructor: non-atomic decrement; free the block on the last ref.
-    fn drop(mut self) {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    fn drop(mut this) {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let cur: u64 = unsafe { *refct };
         let new_count: u64 = cur -% (1 as u64);
         unsafe { *refct = new_count; }
         if new_count == (0 as u64) {
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last reference
             // before freeing the control block.
-            let value_ptr: *T = unsafe { (self.ctrl + (8 as usize)) as *T };
+            let value_ptr: *T = unsafe { (this.ctrl + (8 as usize)) as *T };
             unsafe { #drop_in_place::[T](value_ptr); }
-            unsafe { free(self.ctrl); }
+            unsafe { free(this.ctrl); }
         }
         return;
     }

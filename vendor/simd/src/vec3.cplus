@@ -34,44 +34,44 @@ impl Vec3 {
 
     // Lane accessors ------------------------------------------------
 
-    pub fn x(self) -> f32 { return self.v.lane(0 as u32); }
-    pub fn y(self) -> f32 { return self.v.lane(1 as u32); }
-    pub fn z(self) -> f32 { return self.v.lane(2 as u32); }
+    pub fn x(this) -> f32 { return this.v.lane(0 as u32); }
+    pub fn y(this) -> f32 { return this.v.lane(1 as u32); }
+    pub fn z(this) -> f32 { return this.v.lane(2 as u32); }
 
     // Arithmetic (lane 3 stays 0 because both operands have 0 there) -
 
-    pub fn add(self, o: Vec3) -> Vec3 {
-        return Vec3 { v: self.v.add(o.v) };
+    pub fn add(this, o: Vec3) -> Vec3 {
+        return Vec3 { v: this.v.add(o.v) };
     }
 
-    pub fn sub(self, o: Vec3) -> Vec3 {
-        return Vec3 { v: self.v.sub(o.v) };
+    pub fn sub(this, o: Vec3) -> Vec3 {
+        return Vec3 { v: this.v.sub(o.v) };
     }
 
-    pub fn mul(self, o: Vec3) -> Vec3 {
+    pub fn mul(this, o: Vec3) -> Vec3 {
         // Hadamard (per-lane) product. Lane 3 = 0 * 0 = 0. ✓
-        return Vec3 { v: self.v.mul(o.v) };
+        return Vec3 { v: this.v.mul(o.v) };
     }
 
-    pub fn scale(self, s: f32) -> Vec3 {
+    pub fn scale(this, s: f32) -> Vec3 {
         // Multiply every lane by scalar. Lane 3 = 0 * s = 0. ✓
-        return Vec3 { v: self.v.mul(f32x4::splat(s)) };
+        return Vec3 { v: this.v.mul(f32x4::splat(s)) };
     }
 
-    pub fn neg(self) -> Vec3 {
-        return Vec3 { v: self.v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
+    pub fn neg(this) -> Vec3 {
+        return Vec3 { v: this.v.mul(f32x4::splat(0.0f32 - 1.0f32)) };
     }
 
     // Geometric ops -------------------------------------------------
 
-    pub fn dot(self, o: Vec3) -> f32 {
+    pub fn dot(this, o: Vec3) -> f32 {
         // Lane-3 contribution is `0 * 0 = 0`, so summing all 4 lanes
         // is the 3D dot product. One `fmul <4 x float>` plus one
         // `llvm.vector.reduce.fadd.v4f32`.
-        return self.v.mul(o.v).sum();
+        return this.v.mul(o.v).sum();
     }
 
-    pub fn cross(self, o: Vec3) -> Vec3 {
+    pub fn cross(this, o: Vec3) -> Vec3 {
         // Classic 3D cross product via shuffles:
         //   c.x = a.y*b.z - a.z*b.y
         //   c.y = a.z*b.x - a.x*b.z
@@ -80,76 +80,76 @@ impl Vec3 {
         // a_zxy0 = (a.z, a.x, a.y, 0); b_yzx0 = (b.y, b.z, b.x, 0)
         // result = a_yzx0 * b_zxy0 - a_zxy0 * b_yzx0
         // Lane 3 of result = 0*0 - 0*0 = 0. Invariant preserved.
-        let a_yzx0: f32x4 = self.v.swizzle([1 as u32, 2 as u32, 0 as u32, 3 as u32]);
+        let a_yzx0: f32x4 = this.v.swizzle([1 as u32, 2 as u32, 0 as u32, 3 as u32]);
         let b_zxy0: f32x4 = o.v.swizzle([2 as u32, 0 as u32, 1 as u32, 3 as u32]);
-        let a_zxy0: f32x4 = self.v.swizzle([2 as u32, 0 as u32, 1 as u32, 3 as u32]);
+        let a_zxy0: f32x4 = this.v.swizzle([2 as u32, 0 as u32, 1 as u32, 3 as u32]);
         let b_yzx0: f32x4 = o.v.swizzle([1 as u32, 2 as u32, 0 as u32, 3 as u32]);
         return Vec3 { v: a_yzx0.mul(b_zxy0).sub(a_zxy0.mul(b_yzx0)) };
     }
 
-    pub fn len2(self) -> f32 {
+    pub fn len2(this) -> f32 {
         // Squared length — avoids the sqrt when callers only need to
         // compare magnitudes.
-        return self.dot(self);
+        return this.dot(this);
     }
 
-    pub fn length(self) -> f32 {
+    pub fn length(this) -> f32 {
         // Scalar sqrt of the dot product. Vector sqrt over the whole
         // SIMD register isn't useful here — we want just one scalar.
-        return f_sqrt(self.dot(self));
+        return f_sqrt(this.dot(this));
     }
 
-    pub fn normalize(self) -> Vec3 {
+    pub fn normalize(this) -> Vec3 {
         // v / |v|. Caller must avoid zero-length vectors (no NaN
         // guard here — the contract is "non-zero input").
-        let inv: f32 = 1.0f32 / self.length();
-        return self.scale(inv);
+        let inv: f32 = 1.0f32 / this.length();
+        return this.scale(inv);
     }
 
-    pub fn reflect(self, n: Vec3) -> Vec3 {
+    pub fn reflect(this, n: Vec3) -> Vec3 {
         // r = v - 2 * dot(v, n) * n  — incident-to-reflected vector
         // about the surface normal `n`. `n` should be normalized.
-        let t: f32 = 2.0f32 * self.dot(n);
-        return self.sub(n.scale(t));
+        let t: f32 = 2.0f32 * this.dot(n);
+        return this.sub(n.scale(t));
     }
 
-    pub fn refract(self, n: Vec3, eta: f32) -> Vec3 {
+    pub fn refract(this, n: Vec3, eta: f32) -> Vec3 {
         // Snell's law refraction. `eta` is the ratio of indices
-        // (incident / transmitted). `n` should be normalized; `self`
+        // (incident / transmitted). `n` should be normalized; `this`
         // should be normalized. Returns the refracted direction, or
         // zero if total internal reflection (caller should check).
-        let cos_i: f32 = 0.0f32 - self.dot(n);
+        let cos_i: f32 = 0.0f32 - this.dot(n);
         let k: f32 = 1.0f32 - eta * eta * (1.0f32 - cos_i * cos_i);
         if k < 0.0f32 {
             return Vec3::zero();
         }
         let scale_self: f32 = eta;
         let scale_n: f32 = eta * cos_i - f_sqrt(k);
-        return self.scale(scale_self).add(n.scale(scale_n));
+        return this.scale(scale_self).add(n.scale(scale_n));
     }
 
     // Lane-wise helpers ---------------------------------------------
 
-    pub fn min(self, o: Vec3) -> Vec3 {
+    pub fn min(this, o: Vec3) -> Vec3 {
         // Lane-3: min(0, 0) = 0. Invariant safe.
-        return Vec3 { v: self.v.min(o.v) };
+        return Vec3 { v: this.v.min(o.v) };
     }
 
-    pub fn max(self, o: Vec3) -> Vec3 {
-        return Vec3 { v: self.v.max(o.v) };
+    pub fn max(this, o: Vec3) -> Vec3 {
+        return Vec3 { v: this.v.max(o.v) };
     }
 
-    pub fn clamp(self, lo: Vec3, hi: Vec3) -> Vec3 {
-        return self.max(lo).min(hi);
+    pub fn clamp(this, lo: Vec3, hi: Vec3) -> Vec3 {
+        return this.max(lo).min(hi);
     }
 
-    pub fn lerp(self, o: Vec3, t: f32) -> Vec3 {
-        // self + t * (o - self) — straight-line interpolation. Uses
-        // f32x4 FMA for the inner `t * (o - self) + self` step:
-        //   fma((o - self), splat(t), self)
-        let diff: f32x4 = o.v.sub(self.v);
+    pub fn lerp(this, o: Vec3, t: f32) -> Vec3 {
+        // this + t * (o - this) — straight-line interpolation. Uses
+        // f32x4 FMA for the inner `t * (o - this) + this` step:
+        //   fma((o - this), splat(t), this)
+        let diff: f32x4 = o.v.sub(this.v);
         let tv: f32x4 = f32x4::splat(t);
-        return Vec3 { v: diff.fma(tv, self.v) };
+        return Vec3 { v: diff.fma(tv, this.v) };
     }
 }
 

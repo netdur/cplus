@@ -559,13 +559,13 @@ pub fn array_add_string(arr: *u8, s: *u8) {
 //     `generalPasteboard`, or a child view whose parent retains it) is left
 //     `opaque` and has no drop — releasing it would over-release.
 //
-// Adding `fn drop` makes a wrapper non-Copy; `self`/`mut self` method
+// Adding `fn drop` makes a wrapper non-Copy; `this`/`mut this` method
 // receivers are borrows (they do not consume), so builder chaining is
 // unaffected. The owner must keep the wrapper alive as long as the UI needs
 // the object (store it in a long-lived value); a top-level object that nothing
 // else retains must not be dropped while still on screen.
 //
-// `retain` returns its argument so call sites can write `self.obj =
+// `retain` returns its argument so call sites can write `this.obj =
 // rt::retain(x)` in one line.
 
 pub fn retain(obj: *u8) -> *u8 {

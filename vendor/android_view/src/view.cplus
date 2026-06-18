@@ -35,11 +35,11 @@ pub struct View {
 }
 
 impl View {
-    fn drop(mut self) {
+    fn drop(mut this) {
         // `into_raw` nulls `obj` after transferring the global ref out;
         // JNI's DeleteGlobalRef contract does not admit NULL.
-        if self.obj != unsafe { 0 as jni::jobject } {
-            self.env.delete_global_ref(self.obj);
+        if this.obj != unsafe { 0 as jni::jobject } {
+            this.env.delete_global_ref(this.obj);
         }
         return;
     }
@@ -52,19 +52,19 @@ impl View {
         return View { env: env, obj: env.retain_local_as_global(obj) };
     }
 
-    pub fn as_obj(self) -> jni::jobject {
-        return self.obj;
+    pub fn as_obj(this) -> jni::jobject {
+        return this.obj;
     }
 
-    pub fn into_raw(mut self) -> jni::jobject {
-        let p: jni::jobject = self.obj;
-        self.obj = unsafe { 0 as jni::jobject };
+    pub fn into_raw(mut this) -> jni::jobject {
+        let p: jni::jobject = this.obj;
+        this.obj = unsafe { 0 as jni::jobject };
         return p;
     }
 
-    pub fn set_visibility(self, visibility: i32) {
-        self.env.call_void_1(
-            self.obj,
+    pub fn set_visibility(this, visibility: i32) {
+        this.env.call_void_1(
+            this.obj,
             #str_ptr("android/view/View\0"),
             #str_ptr("setVisibility\0"),
             #str_ptr("(I)V\0"),
@@ -72,9 +72,9 @@ impl View {
         );
     }
 
-    pub fn set_enabled(self, flag: i8) {
-        self.env.call_void_1(
-            self.obj,
+    pub fn set_enabled(this, flag: i8) {
+        this.env.call_void_1(
+            this.obj,
             #str_ptr("android/view/View\0"),
             #str_ptr("setEnabled\0"),
             #str_ptr("(Z)V\0"),
@@ -82,8 +82,8 @@ impl View {
         );
     }
 
-    pub fn set_on_click(self, adapter_class: *u8, token: i64) {
-        set_on_click_raw(self.env, self.obj, adapter_class, token);
+    pub fn set_on_click(this, adapter_class: *u8, token: i64) {
+        set_on_click_raw(this.env, this.obj, adapter_class, token);
         return;
     }
 }
@@ -94,11 +94,11 @@ pub struct LinearLayout {
 }
 
 impl LinearLayout {
-    fn drop(mut self) {
+    fn drop(mut this) {
         // `into_raw` nulls `obj` after transferring the global ref out;
         // JNI's DeleteGlobalRef contract does not admit NULL.
-        if self.obj != unsafe { 0 as jni::jobject } {
-            self.env.delete_global_ref(self.obj);
+        if this.obj != unsafe { 0 as jni::jobject } {
+            this.env.delete_global_ref(this.obj);
         }
         return;
     }
@@ -112,19 +112,19 @@ impl LinearLayout {
         return LinearLayout { env: env, obj: env.retain_local_as_global(local) };
     }
 
-    pub fn as_view_obj(self) -> jni::jobject {
-        return self.obj;
+    pub fn as_view_obj(this) -> jni::jobject {
+        return this.obj;
     }
 
-    pub fn into_raw(mut self) -> jni::jobject {
-        let p: jni::jobject = self.obj;
-        self.obj = unsafe { 0 as jni::jobject };
+    pub fn into_raw(mut this) -> jni::jobject {
+        let p: jni::jobject = this.obj;
+        this.obj = unsafe { 0 as jni::jobject };
         return p;
     }
 
-    pub fn set_orientation(self, orientation: i32) {
-        self.env.call_void_1(
-            self.obj,
+    pub fn set_orientation(this, orientation: i32) {
+        this.env.call_void_1(
+            this.obj,
             #str_ptr("android/widget/LinearLayout\0"),
             #str_ptr("setOrientation\0"),
             #str_ptr("(I)V\0"),
@@ -132,9 +132,9 @@ impl LinearLayout {
         );
     }
 
-    pub fn add_view(self, child: jni::jobject) {
-        self.env.call_void_1(
-            self.obj,
+    pub fn add_view(this, child: jni::jobject) {
+        this.env.call_void_1(
+            this.obj,
             #str_ptr("android/view/ViewGroup\0"),
             #str_ptr("addView\0"),
             #str_ptr("(Landroid/view/View;)V\0"),

@@ -9,11 +9,11 @@
 // stdlib's free-fn-constructor convention until module-qualified
 // generic associated-fn calls are routinely resolved). Methods on
 // `Box[T]`: `get`, `set`, `unwrap`, and Drop. No `as_ref` — C+ has no
-// `&T` reference type; pass `mut self` / `self` receivers instead.
+// `&T` reference type; pass `mut this` / `this` receivers instead.
 //
 // **v0.0.4 limitation** (inherited from `Vec[T]`): when `T` itself is
 // Drop, the inner value's destructor is **not** invoked automatically
-// at Box's Drop. Free-fn `unwrap(move self)` is the safe way to recover
+// at Box's Drop. Free-fn `unwrap(move this)` is the safe way to recover
 // the inner T before scope-exit Drop runs.
 
 extern fn malloc(n: usize) -> *u8;
@@ -43,8 +43,8 @@ pub fn new[T](move v: T) -> Box[T] {
 // / `unwrap` / Drop below.)
 impl Box[T: Copy] {
     // Read the boxed value (does not consume the box; the pointer stays valid).
-    pub fn get(self) -> T {
-        return unsafe { *self.p };
+    pub fn get(this) -> T {
+        return unsafe { *this.p };
     }
 }
 
@@ -55,18 +55,18 @@ impl Box[T] {
     // for any T — for Copy T the `#drop_in_place` is a no-op the optimizer
     // elides; for a Drop T it frees the old value's resources before the new
     // value moves in, so there is no leak and no double-free.
-    pub fn set(mut self, v: T) {
-        unsafe { #drop_in_place::[T](self.p); }
-        unsafe { *self.p = v; }
+    pub fn set(mut this, v: T) {
+        unsafe { #drop_in_place::[T](this.p); }
+        unsafe { *this.p = v; }
         return;
     }
 
     // Consume the box, return the inner T. The function-exit drop
-    // (fires because `move self` transfers ownership *into* the
+    // (fires because `move this` transfers ownership *into* the
     // callee) frees the heap slot — no manual free here, or we'd
     // double-free.
-    pub fn unwrap(move self) -> T {
-        // Read the inner value out, then null `self.p` so the
+    pub fn unwrap(move this) -> T {
+        // Read the inner value out, then null `this.p` so the
         // function-exit Drop (v0.0.5 Phase 1C invokes inner-T Drop
         // via `__cplus_drop_in_place`) treats the box as "already
         // emptied" and skips both inner Drop and the outer free.
@@ -74,27 +74,27 @@ impl Box[T] {
         // cleanup. Without this nulling, the v0.0.5 inner-T Drop
         // would double-free the inner value while it's also live in
         // the caller's binding.
-        let v: T = unsafe { *self.p };
-        let free_p: *u8 = unsafe { self.p as *u8 };
-        unsafe { self.p = 0 as *T; }
+        let v: T = unsafe { *this.p };
+        let free_p: *u8 = unsafe { this.p as *u8 };
+        unsafe { this.p = 0 as *T; }
         unsafe { free(free_p); }
         return v;
     }
 
     // Destructor: invoke inner-T Drop, then free the heap slot.
-    // Short-circuits on null `self.p` so the `unwrap` consumer path
+    // Short-circuits on null `this.p` so the `unwrap` consumer path
     // (which nulls `p` after taking ownership of the inner T) doesn't
     // double-free.
-    fn drop(mut self) {
+    fn drop(mut this) {
         let null_p: *T = unsafe { 0 as *T };
-        if self.p == null_p { return; }
+        if this.p == null_p { return; }
         // v0.0.5 Phase 1C: invoke inner-T Drop before freeing the box's
         // heap slot. For Copy T this is a no-op the optimizer elides;
         // for `T = string` / `T = Vec[U]` / user struct with Drop, this
         // tears down the contained value's resources first so the
         // following `free` only releases the box's outer slot.
-        unsafe { #drop_in_place::[T](self.p); }
-        unsafe { free(self.p as *u8); }
+        unsafe { #drop_in_place::[T](this.p); }
+        unsafe { free(this.p as *u8); }
         return;
     }
 }

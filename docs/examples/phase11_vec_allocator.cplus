@@ -27,24 +27,24 @@ extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
 
 interface Allocator {
-    fn allocate(self, bytes: usize) -> *u8;
-    fn reallocate(self, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8;
-    fn deallocate(self, p: *u8, bytes: usize);
+    fn allocate(this, bytes: usize) -> *u8;
+    fn reallocate(this, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8;
+    fn deallocate(this, p: *u8, bytes: usize);
 }
 
 // `CMalloc` is a zero-byte struct whose methods wrap libc. No state, so
 // it's Copy and threads through every method call by value. A stateful
-// allocator (e.g. an Arena with `bump_ptr: *u8`) would use `mut self`.
+// allocator (e.g. an Arena with `bump_ptr: *u8`) would use `mut this`.
 struct CMalloc {}
 
 impl CMalloc: Allocator {
-    fn allocate(self, bytes: usize) -> *u8 {
+    fn allocate(this, bytes: usize) -> *u8 {
         return unsafe { malloc(bytes) };
     }
-    fn reallocate(self, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8 {
+    fn reallocate(this, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8 {
         return unsafe { realloc(p, new_bytes) };
     }
-    fn deallocate(self, p: *u8, bytes: usize) {
+    fn deallocate(this, p: *u8, bytes: usize) {
         unsafe { free(p); }
         return;
     }
@@ -61,53 +61,53 @@ struct VecI32 {
 }
 
 impl VecI32 {
-    fn len(self) -> usize {
-        return self.len;
+    fn len(this) -> usize {
+        return this.len;
     }
 
-    fn capacity(self) -> usize {
-        return self.cap;
+    fn capacity(this) -> usize {
+        return this.cap;
     }
 
-    fn elem_ptr(self, i: usize) -> *i32 {
-        let base: *i32 = unsafe { self.ptr as *i32 };
+    fn elem_ptr(this, i: usize) -> *i32 {
+        let base: *i32 = unsafe { this.ptr as *i32 };
         return unsafe { base + i };
     }
 
-    fn get(self, i: usize) -> i32 {
-        let p: *i32 = self.elem_ptr(i);
+    fn get(this, i: usize) -> i32 {
+        let p: *i32 = this.elem_ptr(i);
         return unsafe { *p };
     }
 
-    fn set(mut self, i: usize, value: i32) {
-        let p: *i32 = self.elem_ptr(i);
+    fn set(mut this, i: usize, value: i32) {
+        let p: *i32 = this.elem_ptr(i);
         unsafe { *p = value; }
         return;
     }
 
-    fn grow(mut self) {
-        let new_cap: usize = if self.cap == 0 as usize { 8 as usize } else { self.cap *% 2 as usize };
-        let old_bytes: usize = self.cap *% #size_of::[i32]();
+    fn grow(mut this) {
+        let new_cap: usize = if this.cap == 0 as usize { 8 as usize } else { this.cap *% 2 as usize };
+        let old_bytes: usize = this.cap *% #size_of::[i32]();
         let new_bytes: usize = new_cap *% #size_of::[i32]();
-        self.ptr = self.alloc.reallocate(self.ptr, old_bytes, new_bytes);
-        self.cap = new_cap;
+        this.ptr = this.alloc.reallocate(this.ptr, old_bytes, new_bytes);
+        this.cap = new_cap;
         return;
     }
 
-    fn push(mut self, value: i32) {
-        if self.len == self.cap {
-            self.grow();
+    fn push(mut this, value: i32) {
+        if this.len == this.cap {
+            this.grow();
         }
-        let i: usize = self.len;
-        let p: *i32 = self.elem_ptr(i);
+        let i: usize = this.len;
+        let p: *i32 = this.elem_ptr(i);
         unsafe { *p = value; }
-        self.len = self.len +% 1 as usize;
+        this.len = this.len +% 1 as usize;
         return;
     }
 
-    fn drop(mut self) {
-        let bytes: usize = self.cap *% #size_of::[i32]();
-        self.alloc.deallocate(self.ptr, bytes);
+    fn drop(mut this) {
+        let bytes: usize = this.cap *% #size_of::[i32]();
+        this.alloc.deallocate(this.ptr, bytes);
         return;
     }
 }

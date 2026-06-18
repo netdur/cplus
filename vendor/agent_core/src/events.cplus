@@ -100,14 +100,14 @@ pub fn everything() -> Subscription {
 
 impl Subscription {
     // Restrict to a subtree: events from this node or any descendant.
-    pub fn on_node(self, n: usize) -> Subscription {
-        return Subscription { node: option::Option[usize]::Some(n), verb: self.verb, role: self.role };
+    pub fn on_node(this, n: usize) -> Subscription {
+        return Subscription { node: option::Option[usize]::Some(n), verb: this.verb, role: this.role };
     }
-    pub fn on_verb(self, v: Verb) -> Subscription {
-        return Subscription { node: self.node, verb: option::Option[Verb]::Some(v), role: self.role };
+    pub fn on_verb(this, v: Verb) -> Subscription {
+        return Subscription { node: this.node, verb: option::Option[Verb]::Some(v), role: this.role };
     }
-    pub fn on_role(self, r: identity::Role) -> Subscription {
-        return Subscription { node: self.node, verb: self.verb, role: option::Option[identity::Role]::Some(r) };
+    pub fn on_role(this, r: identity::Role) -> Subscription {
+        return Subscription { node: this.node, verb: this.verb, role: option::Option[identity::Role]::Some(r) };
     }
 }
 
@@ -135,7 +135,7 @@ fn is_ancestor_or_self(borrow reg: identity::Registry, n: usize, source: usize) 
 // event's fields (both Copy) rather than the Event itself, so the caller can
 // keep ownership of the Event for enqueueing.
 // Takes the filter's three fields individually (not the `Subscription` struct):
-// reading a struct-typed field by value out of `self` is a partial move the
+// reading a struct-typed field by value out of `this` is a partial move the
 // move-checker rejects, but Option/enum fields copy fine, so the subscriber
 // stores them flat and passes them here.
 pub fn matches(borrow reg: identity::Registry, node_f: option::Option[usize], verb_f: option::Option[Verb], role_f: option::Option[identity::Role], source: usize, verb: Verb) -> bool {
@@ -187,19 +187,19 @@ pub fn subscriber(filter: Subscription, cap: usize) -> Subscriber {
 
 impl Subscriber {
     // Events waiting to be polled.
-    pub fn pending(self) -> usize {
-        return self.queue.len() -% self.head;
+    pub fn pending(this) -> usize {
+        return this.queue.len() -% this.head;
     }
 
     // Events dropped to date due to overflow.
-    pub fn dropped_count(self) -> usize {
-        return self.dropped;
+    pub fn dropped_count(this) -> usize {
+        return this.dropped;
     }
 
-    fn has_pending_ui_changed(self) -> bool {
-        let mut i: usize = self.head;
-        while i < self.queue.len() {
-            let uc: bool = match self.queue.at(i) {
+    fn has_pending_ui_changed(this) -> bool {
+        let mut i: usize = this.head;
+        while i < this.queue.len() {
+            let uc: bool = match this.queue.at(i) {
                 option::Option[*Event]::Some(p) => is_ui_changed(unsafe { (*p).verb }),
                 option::Option[*Event]::None => false,
             };
@@ -211,55 +211,55 @@ impl Subscriber {
         return false;
     }
 
-    fn compact(mut self) {
-        if self.head < self.cap {
+    fn compact(mut this) {
+        if this.head < this.cap {
             return;
         }
         let mut nq: vec::Vec[Event] = vec::new::[Event]();
-        let mut i: usize = self.head;
-        while i < self.queue.len() {
-            match self.queue.at(i) {
+        let mut i: usize = this.head;
+        while i < this.queue.len() {
+            match this.queue.at(i) {
                 option::Option[*Event]::Some(p) => { nq.push(unsafe { *p }); }
                 option::Option[*Event]::None => {}
             }
             i = i +% (1 as usize);
         }
-        self.queue = nq;
-        self.head = 0 as usize;
+        this.queue = nq;
+        this.head = 0 as usize;
         return;
     }
 
     // Offer an event. Enqueues iff it matches the filter, applying backpressure:
     // `ui_changed` coalesces to at most one pending; on overflow the oldest event
     // is dropped (dropped-count bumped). Never blocks.
-    pub fn offer(mut self, borrow reg: identity::Registry, ev: Event) {
+    pub fn offer(mut this, borrow reg: identity::Registry, ev: Event) {
         let src: usize = ev.source;
         let vb: Verb = ev.verb;
-        if !matches(reg, self.node, self.verb, self.role, src, vb) {
+        if !matches(reg, this.node, this.verb, this.role, src, vb) {
             return;
         }
-        if is_ui_changed(vb) && self.has_pending_ui_changed() {
+        if is_ui_changed(vb) && this.has_pending_ui_changed() {
             return;
         }
-        if self.pending() >= self.cap {
-            self.head = self.head +% (1 as usize);
-            self.dropped = self.dropped +% (1 as usize);
+        if this.pending() >= this.cap {
+            this.head = this.head +% (1 as usize);
+            this.dropped = this.dropped +% (1 as usize);
         }
-        self.queue.push(ev);
-        self.compact();
+        this.queue.push(ev);
+        this.compact();
         return;
     }
 
     // Dequeue the oldest pending event, or None.
-    pub fn poll(mut self) -> option::Option[Event] {
-        if self.head >= self.queue.len() {
+    pub fn poll(mut this) -> option::Option[Event] {
+        if this.head >= this.queue.len() {
             return option::Option[Event]::None;
         }
-        let out: option::Option[Event] = match self.queue.at(self.head) {
+        let out: option::Option[Event] = match this.queue.at(this.head) {
             option::Option[*Event]::Some(p) => option::Option[Event]::Some(unsafe { *p }),
             option::Option[*Event]::None => option::Option[Event]::None,
         };
-        self.head = self.head +% (1 as usize);
+        this.head = this.head +% (1 as usize);
         return out;
     }
 }

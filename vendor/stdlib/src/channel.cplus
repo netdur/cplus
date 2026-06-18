@@ -112,23 +112,23 @@ pub fn new[T]() -> Channel[T] {
 
 impl Channel[T] {
     // Atomic refcount inc; share the heap block.
-    pub fn clone(self) -> Channel[T] {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn clone(this) -> Channel[T] {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let _prev: u64 = unsafe {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
-        return Channel[T] { ctrl: self.ctrl };
+        return Channel[T] { ctrl: this.ctrl };
     }
 
     // Push a value. Never blocks (buffer grows).
-    pub fn send(self, move v: T) {
-        let mutex_ptr: *u8 = unsafe { self.ctrl + off_mutex() };
-        let cond_ptr: *u8 = unsafe { self.ctrl + off_cond() };
+    pub fn send(this, move v: T) {
+        let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
+        let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
         let _e1: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
-        let head_ptr: *usize = unsafe { (self.ctrl + off_head()) as *usize };
-        let tail_ptr: *usize = unsafe { (self.ctrl + off_tail()) as *usize };
-        let cap_ptr: *usize = unsafe { (self.ctrl + off_capacity()) as *usize };
-        let buf_ptr_slot: **u8 = unsafe { (self.ctrl + off_buffer()) as **u8 };
+        let head_ptr: *usize = unsafe { (this.ctrl + off_head()) as *usize };
+        let tail_ptr: *usize = unsafe { (this.ctrl + off_tail()) as *usize };
+        let cap_ptr: *usize = unsafe { (this.ctrl + off_capacity()) as *usize };
+        let buf_ptr_slot: **u8 = unsafe { (this.ctrl + off_buffer()) as **u8 };
         let mut head: usize = unsafe { *head_ptr };
         let mut tail: usize = unsafe { *tail_ptr };
         let mut cap: usize = unsafe { *cap_ptr };
@@ -167,13 +167,13 @@ impl Channel[T] {
 
     // Blocking receive. Returns Value(v) on a pop, Closed when the
     // channel is closed AND the buffer is empty.
-    pub fn recv(self) -> RecvResult[T] {
-        let mutex_ptr: *u8 = unsafe { self.ctrl + off_mutex() };
-        let cond_ptr: *u8 = unsafe { self.ctrl + off_cond() };
-        let head_ptr: *usize = unsafe { (self.ctrl + off_head()) as *usize };
-        let tail_ptr: *usize = unsafe { (self.ctrl + off_tail()) as *usize };
-        let buf_ptr_slot: **u8 = unsafe { (self.ctrl + off_buffer()) as **u8 };
-        let closed_ptr: *u64 = unsafe { (self.ctrl + off_closed()) as *u64 };
+    pub fn recv(this) -> RecvResult[T] {
+        let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
+        let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
+        let head_ptr: *usize = unsafe { (this.ctrl + off_head()) as *usize };
+        let tail_ptr: *usize = unsafe { (this.ctrl + off_tail()) as *usize };
+        let buf_ptr_slot: **u8 = unsafe { (this.ctrl + off_buffer()) as **u8 };
+        let closed_ptr: *u64 = unsafe { (this.ctrl + off_closed()) as *u64 };
         let _e1: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
         loop {
             let head: usize = unsafe { *head_ptr };
@@ -199,10 +199,10 @@ impl Channel[T] {
     // Mark the channel closed; wake every blocked receiver. Senders
     // can still call `send` after close — that's the caller's bug
     // (no enforcement in v0.0.4).
-    pub fn close(self) {
-        let mutex_ptr: *u8 = unsafe { self.ctrl + off_mutex() };
-        let cond_ptr: *u8 = unsafe { self.ctrl + off_cond() };
-        let closed_ptr: *u64 = unsafe { (self.ctrl + off_closed()) as *u64 };
+    pub fn close(this) {
+        let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
+        let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
+        let closed_ptr: *u64 = unsafe { (this.ctrl + off_closed()) as *u64 };
         let _e1: i32 = unsafe { pthread_mutex_lock(mutex_ptr) };
         unsafe { *closed_ptr = 1 as u64; }
         let _e2: i32 = unsafe { pthread_cond_broadcast(cond_ptr) };
@@ -211,28 +211,28 @@ impl Channel[T] {
     }
 
     // Snapshot of refcount. Racy except in single-threaded use.
-    pub fn strong_count(self) -> u64 {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    pub fn strong_count(this) -> u64 {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }
 
     // Destructor: atomic dec; the last reference destroys both pthread
     // primitives and frees both the header and the element buffer.
-    fn drop(mut self) {
-        let refct: *u64 = unsafe { self.ctrl as *u64 };
+    fn drop(mut this) {
+        let refct: *u64 = unsafe { this.ctrl as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            let mutex_ptr: *u8 = unsafe { self.ctrl + off_mutex() };
-            let cond_ptr: *u8 = unsafe { self.ctrl + off_cond() };
-            let buf_ptr_slot: **u8 = unsafe { (self.ctrl + off_buffer()) as **u8 };
+            let mutex_ptr: *u8 = unsafe { this.ctrl + off_mutex() };
+            let cond_ptr: *u8 = unsafe { this.ctrl + off_cond() };
+            let buf_ptr_slot: **u8 = unsafe { (this.ctrl + off_buffer()) as **u8 };
             let buf: *u8 = unsafe { *buf_ptr_slot };
             // v0.0.5 Phase 1C: drop every buffered element (live range
             // [head, tail) in the shift-on-grow buffer) before freeing
             // the element storage.
-            let head_ptr: *usize = unsafe { (self.ctrl + off_head()) as *usize };
-            let tail_ptr: *usize = unsafe { (self.ctrl + off_tail()) as *usize };
+            let head_ptr: *usize = unsafe { (this.ctrl + off_head()) as *usize };
+            let tail_ptr: *usize = unsafe { (this.ctrl + off_tail()) as *usize };
             let head: usize = unsafe { *head_ptr };
             let tail: usize = unsafe { *tail_ptr };
             let typed_buf: *T = unsafe { buf as *T };
@@ -245,7 +245,7 @@ impl Channel[T] {
             let _e1: i32 = unsafe { pthread_cond_destroy(cond_ptr) };
             let _e2: i32 = unsafe { pthread_mutex_destroy(mutex_ptr) };
             unsafe { free(buf); }
-            unsafe { free(self.ctrl); }
+            unsafe { free(this.ctrl); }
         }
         return;
     }

@@ -10,20 +10,20 @@ impl Toolbar {
         return Toolbar { obj: rt::alloc_init_with_frame(#str_ptr("UIToolbar\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_items(self, items: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setItems:\0")), items);
+    pub fn set_items(this, items: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setItems:\0")), items);
     }
 
-    pub fn set_bar_style(self, style: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
+    pub fn set_bar_style(this, style: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 
@@ -36,16 +36,16 @@ impl NavigationBar {
         return NavigationBar { obj: rt::alloc_init_with_frame(#str_ptr("UINavigationBar\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_items(self, items: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setItems:\0")), items);
+    pub fn set_items(this, items: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setItems:\0")), items);
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 
@@ -68,12 +68,12 @@ impl BarButtonItem {
         return BarButtonItem { obj: item };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_enabled(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
+    pub fn set_enabled(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEnabled:\0")), flag);
     }
 }
 
@@ -86,16 +86,16 @@ impl TabBar {
         return TabBar { obj: rt::alloc_init_with_frame(#str_ptr("UITabBar\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_items(self, items: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setItems:\0")), items);
+    pub fn set_items(this, items: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setItems:\0")), items);
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 
@@ -117,7 +117,7 @@ impl TabBarItem {
         return TabBarItem { obj: item };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 }

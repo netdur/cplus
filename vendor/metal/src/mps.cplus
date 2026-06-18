@@ -98,9 +98,9 @@ impl MatrixDescriptor {
         return MatrixDescriptor { raw: raw };
     }
 
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }
@@ -133,9 +133,9 @@ impl Matrix {
         return Matrix { raw: initialized };
     }
 
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }
@@ -199,7 +199,7 @@ impl MatrixMultiplication {
     // keeps using them (commit / wait_until_completed on cmd_buf,
     // read-back on `out`).
     pub fn encode_to(
-        self,
+        this,
         borrow cmd_buf: queue::CommandBuffer,
         borrow lhs: Matrix,
         borrow rhs: Matrix,
@@ -207,7 +207,7 @@ impl MatrixMultiplication {
     ) {
         unsafe {
             #msg_send(
-                self.raw,
+                this.raw,
                 "encodeToCommandBuffer:leftMatrix:rightMatrix:resultMatrix:",
                 cmd_buf.raw,
                 lhs.raw,
@@ -218,9 +218,9 @@ impl MatrixMultiplication {
         return;
     }
 
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }
@@ -277,9 +277,9 @@ impl MatrixVectorMultiplication {
     // is a follow-up when a consumer needs the optimized matvec path
     // beyond what matmul-with-1D-shape gives.
 
-    fn drop(mut self) {
-        runtime::release(self.raw);
-        self.raw = unsafe { 0 as *u8 };
+    fn drop(mut this) {
+        runtime::release(this.raw);
+        this.raw = unsafe { 0 as *u8 };
         return;
     }
 }

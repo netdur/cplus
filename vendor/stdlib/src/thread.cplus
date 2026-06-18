@@ -2,7 +2,7 @@
 //
 // v0.0.3 Phase 5 Slice 5B. The cornerstone API for safe split-work-join-
 // results: `thread::spawn[O](f) -> JoinHandle[O]` runs `f` on a fresh
-// pthread; `JoinHandle[O]::join(move self) -> O` waits for it and
+// pthread; `JoinHandle[O]::join(move this) -> O` waits for it and
 // transfers ownership of the result back to the parent. No shared
 // memory, no `unsafe` at the user surface, no raw pointers.
 //
@@ -79,11 +79,11 @@ pub fn spawn_with[I: Send, O: Send](move input: I, f: fn(I) -> O) -> JoinHandle[
 
 impl JoinHandle[O] {
     // Block until the worker thread finishes and return its produced
-    // value. Consumes `self` — a handle can only be joined once,
+    // value. Consumes `this` — a handle can only be joined once,
     // enforced by the move-semantics receiver. The borrow checker
     // catches double-join at compile time.
-    pub fn join(move self) -> O {
-        return unsafe { #thread_join::[O](self) };
+    pub fn join(move this) -> O {
+        return unsafe { #thread_join::[O](this) };
     }
 
     // Drop an un-joined handle: detach the worker from the OS (so its
@@ -98,14 +98,14 @@ impl JoinHandle[O] {
     // pthread_join because freeing the ctx underneath a still-running
     // worker would race the worker's result-store. With the refcount
     // both sides safely cooperate on lifetime.
-    fn drop(mut self) {
-        unsafe { pthread_detach(self.tid); }
-        let refct: *u64 = unsafe { self.ctx as *u64 };
+    fn drop(mut this) {
+        unsafe { pthread_detach(this.tid); }
+        let refct: *u64 = unsafe { this.ctx as *u64 };
         let prev: u64 = unsafe {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            unsafe { free(self.ctx); }
+            unsafe { free(this.ctx); }
         }
         return;
     }

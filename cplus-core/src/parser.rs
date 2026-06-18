@@ -826,7 +826,7 @@ impl Parser {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             found: tok_name(&tok.kind).into(),
-                            expected: "`self` (`mut` and `move` are mutually exclusive)",
+                            expected: "`this` (`mut` and `move` are mutually exclusive)",
                         },
                         span: tok.span,
                     });
@@ -849,7 +849,7 @@ impl Parser {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             found: tok_name(&tok.kind).into(),
-                            expected: "`self` (`move` and `mut` are mutually exclusive)",
+                            expected: "`this` (`move` and `mut` are mutually exclusive)",
                         },
                         span: tok.span,
                     });

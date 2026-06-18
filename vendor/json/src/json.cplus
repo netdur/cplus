@@ -60,43 +60,43 @@ impl Value {
     pub fn str_(s: str) -> Value { return Value::Str(s.to_text()); }
 
     // Predicates.
-    pub fn is_null(self) -> bool {
-        let yes: bool = match self {
+    pub fn is_null(this) -> bool {
+        let yes: bool = match this {
             Value::Null => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_bool(self) -> bool {
-        let yes: bool = match self {
+    pub fn is_bool(this) -> bool {
+        let yes: bool = match this {
             Value::Bool(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_number(self) -> bool {
-        let yes: bool = match self {
+    pub fn is_number(this) -> bool {
+        let yes: bool = match this {
             Value::Number(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_string(self) -> bool {
-        let yes: bool = match self {
+    pub fn is_string(this) -> bool {
+        let yes: bool = match this {
             Value::Str(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_array(self) -> bool {
-        let yes: bool = match self {
+    pub fn is_array(this) -> bool {
+        let yes: bool = match this {
             Value::Array(_) => true,
             _ => false,
         };
         return yes;
     }
-    pub fn is_object(self) -> bool {
-        let yes: bool = match self {
+    pub fn is_object(this) -> bool {
+        let yes: bool = match this {
             Value::Object(_) => true,
             _ => false,
         };
@@ -863,9 +863,9 @@ fn encode_value(mut b: Buf, borrow v: Value) -> Buf {
 }
 
 impl Value {
-    pub fn to_text(self) -> text::Text {
+    pub fn to_text(this) -> text::Text {
         let b: Buf = buf_new();
-        let final_buf: Buf = encode_value(b, self);
+        let final_buf: Buf = encode_value(b, this);
         return buf_to_string(final_buf);
     }
 }

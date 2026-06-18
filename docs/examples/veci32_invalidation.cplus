@@ -5,8 +5,8 @@
 // primitives). The shape is enough to exercise the Phase-6 borrow
 // checker's exclusive-borrow rule on method calls:
 //
-//   - `cursor(self)` returns a shared borrow of `self` (Rule E2).
-//   - `push(mut self, x)` requires exclusive access to `self`.
+//   - `cursor(this)` returns a shared borrow of `this` (Rule E2).
+//   - `push(mut this, x)` requires exclusive access to `this`.
 //
 // Calling `push` while a cursor is alive is the canonical
 // iterator-invalidation pattern — Phase 6 rejects it as **E0381**
@@ -19,9 +19,9 @@ struct VecI32 {
 }
 
 impl VecI32 {
-    fn drop(mut self) { return; }
-    fn cursor(self) -> VecI32 { return self; }
-    fn push(mut self, x: i32) { return; }
+    fn drop(mut this) { return; }
+    fn cursor(this) -> VecI32 { return this; }
+    fn push(mut this, x: i32) { return; }
 }
 
 fn main() -> i32 {

@@ -14,13 +14,13 @@ impl Activity {
         return Activity { env: env, obj: activity };
     }
 
-    pub fn as_context(self) -> rt::Context {
-        return self.obj;
+    pub fn as_context(this) -> rt::Context {
+        return this.obj;
     }
 
-    pub fn set_content_view(self, view: jni::jobject) {
-        self.env.call_void_1(
-            self.obj,
+    pub fn set_content_view(this, view: jni::jobject) {
+        this.env.call_void_1(
+            this.obj,
             #str_ptr("android/app/Activity\0"),
             #str_ptr("setContentView\0"),
             #str_ptr("(Landroid/view/View;)V\0"),

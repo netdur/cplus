@@ -135,34 +135,34 @@ pub fn load(path: str, opts: LoadOptions) -> result::Result[Session, LlamaError]
 }
 
 impl Session {
-    pub fn n_ctx(self) -> u32 {
-        if is_null(self.ctx) {
+    pub fn n_ctx(this) -> u32 {
+        if is_null(this.ctx) {
             return 0 as u32;
         }
-        return raw::llama_n_ctx(self.ctx);
+        return raw::llama_n_ctx(this.ctx);
     }
 
-    pub fn model_size(self) -> u64 {
-        if is_null(self.model) {
+    pub fn model_size(this) -> u64 {
+        if is_null(this.model) {
             return 0 as u64;
         }
-        return raw::llama_model_size(self.model);
+        return raw::llama_model_size(this.model);
     }
 
-    fn drop(mut self) {
-        if !is_null(self.sampler) {
-            raw::llama_sampler_free(self.sampler);
-            self.sampler = null();
+    fn drop(mut this) {
+        if !is_null(this.sampler) {
+            raw::llama_sampler_free(this.sampler);
+            this.sampler = null();
         }
-        if !is_null(self.ctx) {
-            raw::llama_free(self.ctx);
-            self.ctx = null();
+        if !is_null(this.ctx) {
+            raw::llama_free(this.ctx);
+            this.ctx = null();
         }
-        if !is_null(self.model) {
-            raw::llama_model_free(self.model);
-            self.model = null();
+        if !is_null(this.model) {
+            raw::llama_model_free(this.model);
+            this.model = null();
         }
-        self.vocab = null();
+        this.vocab = null();
         return;
     }
 }
@@ -384,24 +384,24 @@ pub fn mtmd_init(
 }
 
 impl MtmdContext {
-    pub fn supports_vision(self) -> bool {
-        if is_null(self.raw) {
+    pub fn supports_vision(this) -> bool {
+        if is_null(this.raw) {
             return false;
         }
-        return mtmd_raw::mtmd_support_vision(self.raw);
+        return mtmd_raw::mtmd_support_vision(this.raw);
     }
 
-    pub fn supports_audio(self) -> bool {
-        if is_null(self.raw) {
+    pub fn supports_audio(this) -> bool {
+        if is_null(this.raw) {
             return false;
         }
-        return mtmd_raw::mtmd_support_audio(self.raw);
+        return mtmd_raw::mtmd_support_audio(this.raw);
     }
 
-    fn drop(mut self) {
-        if !is_null(self.raw) {
-            mtmd_raw::mtmd_free(self.raw);
-            self.raw = null();
+    fn drop(mut this) {
+        if !is_null(this.raw) {
+            mtmd_raw::mtmd_free(this.raw);
+            this.raw = null();
         }
         return;
     }
@@ -416,10 +416,10 @@ pub fn bitmap_rgb(width: u32, height: u32, rgb: u8[]) -> result::Result[Bitmap, 
 }
 
 impl Bitmap {
-    fn drop(mut self) {
-        if !is_null(self.raw) {
-            mtmd_raw::mtmd_bitmap_free(self.raw);
-            self.raw = null();
+    fn drop(mut this) {
+        if !is_null(this.raw) {
+            mtmd_raw::mtmd_bitmap_free(this.raw);
+            this.raw = null();
         }
         return;
     }

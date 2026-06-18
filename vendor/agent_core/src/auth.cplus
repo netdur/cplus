@@ -64,8 +64,8 @@ pub fn serve(policy: fn(Request) -> Decision) -> AuthGate {
 
 impl AuthGate {
     // The single grant check. Pure: no I/O, no prompt, never blocks.
-    pub fn check(self, req: Request) -> Decision {
-        return (self.policy)(req);
+    pub fn check(this, req: Request) -> Decision {
+        return (this.policy)(req);
     }
 }
 

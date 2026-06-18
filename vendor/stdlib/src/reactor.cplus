@@ -31,8 +31,8 @@
 //     reactor's task queue; block_on's loop resumes each queued task
 //     to its next suspend point.
 //
-//   - `yield_now()` is `spawn_local(self)` essentially — re-enqueue
-//     self and suspend, giving the scheduler a chance to run other
+//   - `yield_now()` is `spawn_local(this)` essentially — re-enqueue
+//     this and suspend, giving the scheduler a chance to run other
 //     queued tasks.
 //
 // **Layout of the reactor state heap block:**
@@ -212,8 +212,8 @@ pub extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
 }
 
 // v0.0.5 Slice 4F: awaiter-of-completed-coroutine notification.
-// Codegen emits `register_awaiter_v1(awaitee, self)` at await sites
-// before suspending; `notify_completed_v1(self)` runs in every async
+// Codegen emits `register_awaiter_v1(awaitee, this)` at await sites
+// before suspending; `notify_completed_v1(this)` runs in every async
 // fn's final_suspend epilogue. See the architecture comment at the
 // top of this file for the full flow.
 pub extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {

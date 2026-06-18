@@ -13,28 +13,28 @@ impl ImageView {
         return ImageView { obj: rt::alloc_init_with_frame(#str_ptr("UIImageView\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
+    pub fn set_image(this, image: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
-    pub fn set_highlighted_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setHighlightedImage:\0")), image);
+    pub fn set_highlighted_image(this, image: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setHighlightedImage:\0")), image);
     }
 
-    pub fn set_content_mode(self, mode: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setContentMode:\0")), mode);
+    pub fn set_content_mode(this, mode: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setContentMode:\0")), mode);
     }
 
-    pub fn set_tint_color(self, color: view::Color) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTintColor:\0")), color.obj);
+    pub fn set_tint_color(this, color: view::Color) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTintColor:\0")), color.obj);
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 
@@ -115,33 +115,33 @@ impl BezierPath {
         return BezierPath { obj: rt::retain(path) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn move_to(self, x: f64, y: f64) {
+    pub fn move_to(this, x: f64, y: f64) {
         let p: rt::Point = rt::Point { x: x, y: y };
-        rt::msg_void_point(self.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
+        rt::msg_void_point(this.obj, rt::sel(#str_ptr("moveToPoint:\0")), p);
     }
 
-    pub fn line_to(self, x: f64, y: f64) {
+    pub fn line_to(this, x: f64, y: f64) {
         let p: rt::Point = rt::Point { x: x, y: y };
-        rt::msg_void_point(self.obj, rt::sel(#str_ptr("addLineToPoint:\0")), p);
+        rt::msg_void_point(this.obj, rt::sel(#str_ptr("addLineToPoint:\0")), p);
     }
 
-    pub fn close(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("closePath\0")));
+    pub fn close(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("closePath\0")));
     }
 
-    pub fn set_line_width(self, width: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
+    pub fn set_line_width(this, width: f64) {
+        rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setLineWidth:\0")), width);
     }
 
-    pub fn stroke(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("stroke\0")));
+    pub fn stroke(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("stroke\0")));
     }
 
-    pub fn fill(self) {
-        rt::msg_void(self.obj, rt::sel(#str_ptr("fill\0")));
+    pub fn fill(this) {
+        rt::msg_void(this.obj, rt::sel(#str_ptr("fill\0")));
     }
 }

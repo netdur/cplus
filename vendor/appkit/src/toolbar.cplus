@@ -5,35 +5,35 @@ pub struct Toolbar {
 }
 
 impl Toolbar {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new(identifier: *u8) -> Toolbar {
         return Toolbar { obj: rt::alloc_init_with_identifier(#str_ptr("NSToolbar\0"), identifier) };
     }
 
-    pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    pub fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 
-    pub fn set_display_mode(self, mode: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setDisplayMode:\0")), mode);
+    pub fn set_display_mode(this, mode: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setDisplayMode:\0")), mode);
     }
 
-    pub fn set_allows_user_customization(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setAllowsUserCustomization:\0")), flag);
+    pub fn set_allows_user_customization(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setAllowsUserCustomization:\0")), flag);
     }
 
     // GAP 4 (v0.0.19): center a single toolbar item by identifier. Uses the
     // modern `centeredItemIdentifiers` (NSSet, macOS 13+) — wraps the one
     // identifier in an `NSSet` — rather than the deprecated singular
     // `centeredItemIdentifier`.
-    pub fn set_centered_item(self, identifier: *u8) {
+    pub fn set_centered_item(this, identifier: *u8) {
         let ns_id: *u8 = rt::ns_string(identifier);
         let set_cls: *u8 = rt::get_class(#str_ptr("NSSet\0"));
         let set: *u8 = rt::msg_id_id(set_cls, rt::sel(#str_ptr("setWithObject:\0")), ns_id);
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setCenteredItemIdentifiers:\0")), set);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setCenteredItemIdentifiers:\0")), set);
     }
 }
 
@@ -76,8 +76,8 @@ pub struct ToolbarItem {
 }
 
 impl ToolbarItem {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new(identifier: *u8) -> ToolbarItem {
@@ -87,44 +87,44 @@ impl ToolbarItem {
         return ToolbarItem { obj: item };
     }
 
-    pub fn set_label(self, label: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setLabel:\0")), rt::ns_string(label));
+    pub fn set_label(this, label: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setLabel:\0")), rt::ns_string(label));
     }
 
-    pub fn set_palette_label(self, label: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setPaletteLabel:\0")), rt::ns_string(label));
+    pub fn set_palette_label(this, label: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPaletteLabel:\0")), rt::ns_string(label));
     }
 
-    pub fn set_tool_tip(self, tip: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setToolTip:\0")), rt::ns_string(tip));
+    pub fn set_tool_tip(this, tip: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setToolTip:\0")), rt::ns_string(tip));
     }
 
-    pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
+    pub fn set_image(this, image: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
-    pub fn set_view(self, view: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setView:\0")), view);
+    pub fn set_view(this, view: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setView:\0")), view);
     }
 
-    pub fn set_target(self, target: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTarget:\0")), target);
+    pub fn set_target(this, target: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTarget:\0")), target);
     }
 
-    pub fn set_action(self, action: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setAction:\0")), action);
+    pub fn set_action(this, action: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setAction:\0")), action);
     }
 
     // GAP 4 (v0.0.19): pin a view-backed item's size. NOTE: `minSize`/`maxSize`
     // are deprecated (macOS 10–12) — Apple recommends letting the system measure
     // a `view`-backed item via Auto Layout constraints instead. They still
     // function; provided for parity, but prefer constraints on the item's view.
-    pub fn set_min_size(self, size: rt::Size) {
-        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMinSize:\0")), size);
+    pub fn set_min_size(this, size: rt::Size) {
+        rt::msg_void_size(this.obj, rt::sel(#str_ptr("setMinSize:\0")), size);
     }
 
-    pub fn set_max_size(self, size: rt::Size) {
-        rt::msg_void_size(self.obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
+    pub fn set_max_size(this, size: rt::Size) {
+        rt::msg_void_size(this.obj, rt::sel(#str_ptr("setMaxSize:\0")), size);
     }
 }
 
@@ -133,8 +133,8 @@ pub struct ToolbarItemGroup {
 }
 
 impl ToolbarItemGroup {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new(identifier: *u8) -> ToolbarItemGroup {
@@ -144,8 +144,8 @@ impl ToolbarItemGroup {
         return ToolbarItemGroup { obj: item };
     }
 
-    pub fn set_subitems(self, items: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setSubitems:\0")), items);
+    pub fn set_subitems(this, items: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setSubitems:\0")), items);
     }
 }
 
@@ -158,8 +158,8 @@ impl StatusBar {
         return StatusBar { obj: rt::msg_id(rt::get_class(#str_ptr("NSStatusBar\0")), rt::sel(#str_ptr("systemStatusBar\0"))) };
     }
 
-    pub fn status_item_with_length(self, length: f64) -> *u8 {
-        return rt::msg_id_f64(self.obj, rt::sel(#str_ptr("statusItemWithLength:\0")), length);
+    pub fn status_item_with_length(this, length: f64) -> *u8 {
+        return rt::msg_id_f64(this.obj, rt::sel(#str_ptr("statusItemWithLength:\0")), length);
     }
 }
 
@@ -172,16 +172,16 @@ impl StatusItem {
         return StatusItem { obj: obj };
     }
 
-    pub fn button(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(#str_ptr("button\0")));
+    pub fn button(this) -> *u8 {
+        return rt::msg_id(this.obj, rt::sel(#str_ptr("button\0")));
     }
 
-    pub fn set_menu(self, menu: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setMenu:\0")), menu);
+    pub fn set_menu(this, menu: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMenu:\0")), menu);
     }
 
-    pub fn set_length(self, length: f64) {
-        rt::msg_void_f64(self.obj, rt::sel(#str_ptr("setLength:\0")), length);
+    pub fn set_length(this, length: f64) {
+        rt::msg_void_f64(this.obj, rt::sel(#str_ptr("setLength:\0")), length);
     }
 }
 
@@ -194,16 +194,16 @@ impl StatusBarButton {
         return StatusBarButton { obj: obj };
     }
 
-    pub fn set_title(self, title: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
+    pub fn set_title(this, title: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTitle:\0")), rt::ns_string(title));
     }
 
-    pub fn set_image(self, image: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setImage:\0")), image);
+    pub fn set_image(this, image: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setImage:\0")), image);
     }
 
-    pub fn set_on_click(self, cb: fn(*u8)) {
-        rt::attach_callback(self.obj, cb);
+    pub fn set_on_click(this, cb: fn(*u8)) {
+        rt::attach_callback(this.obj, cb);
     }
 }
 
@@ -212,16 +212,16 @@ pub struct TouchBar {
 }
 
 impl TouchBar {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new() -> TouchBar {
         return TouchBar { obj: rt::alloc_init(#str_ptr("NSTouchBar\0")) };
     }
 
-    pub fn set_delegate(self, delegate: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
+    pub fn set_delegate(this, delegate: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setDelegate:\0")), delegate);
     }
 }
 
@@ -230,8 +230,8 @@ pub struct TouchBarItem {
 }
 
 impl TouchBarItem {
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
     pub fn new(identifier: *u8) -> TouchBarItem {

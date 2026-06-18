@@ -11,64 +11,64 @@ impl TextField {
         return TextField { obj: rt::alloc_init_with_frame(#str_ptr("UITextField\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_text(self, text: str) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
+    pub fn set_text(this, text: str) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_text_ns(self, text_ns: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setText:\0")), text_ns);
+    pub fn set_text_ns(this, text_ns: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), text_ns);
     }
 
-    pub fn text(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(#str_ptr("text\0")));
+    pub fn text(this) -> *u8 {
+        return rt::msg_id(this.obj, rt::sel(#str_ptr("text\0")));
     }
 
-    pub fn set_placeholder(self, text: str) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
+    pub fn set_placeholder(this, text: str) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_placeholder_ns(self, text_ns: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setPlaceholder:\0")), text_ns);
+    pub fn set_placeholder_ns(this, text_ns: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholder:\0")), text_ns);
     }
 
-    pub fn set_text_color(self, color: view::Color) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
+    pub fn set_text_color(this, color: view::Color) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
     }
 
-    pub fn set_font(self, font: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setFont:\0")), font);
+    pub fn set_font(this, font: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_text_alignment(self, alignment: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
+    pub fn set_text_alignment(this, alignment: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
     }
 
-    pub fn set_border_style(self, style: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBorderStyle:\0")), style);
+    pub fn set_border_style(this, style: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBorderStyle:\0")), style);
     }
 
-    pub fn set_secure_text_entry(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setSecureTextEntry:\0")), flag);
+    pub fn set_secure_text_entry(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setSecureTextEntry:\0")), flag);
     }
 
-    pub fn set_keyboard_type(self, keyboard_type: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setKeyboardType:\0")), keyboard_type);
+    pub fn set_keyboard_type(this, keyboard_type: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setKeyboardType:\0")), keyboard_type);
     }
 
-    pub fn set_return_key_type(self, return_key_type: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setReturnKeyType:\0")), return_key_type);
+    pub fn set_return_key_type(this, return_key_type: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setReturnKeyType:\0")), return_key_type);
     }
 
-    pub fn set_on_editing_changed(self, cb: fn(*u8)) {
-        rt::attach_control_callback(self.obj, cb, rt::control_event_value_changed());
+    pub fn set_on_editing_changed(this, cb: fn(*u8)) {
+        rt::attach_control_callback(this.obj, cb, rt::control_event_value_changed());
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 
@@ -81,44 +81,44 @@ impl TextView {
         return TextView { obj: rt::alloc_init_with_frame(#str_ptr("UITextView\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_text(self, text: str) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
+    pub fn set_text(this, text: str) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_text_ns(self, text_ns: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setText:\0")), text_ns);
+    pub fn set_text_ns(this, text_ns: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), text_ns);
     }
 
-    pub fn text(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(#str_ptr("text\0")));
+    pub fn text(this) -> *u8 {
+        return rt::msg_id(this.obj, rt::sel(#str_ptr("text\0")));
     }
 
-    pub fn set_text_color(self, color: view::Color) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
+    pub fn set_text_color(this, color: view::Color) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
     }
 
-    pub fn set_font(self, font: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setFont:\0")), font);
+    pub fn set_font(this, font: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setFont:\0")), font);
     }
 
-    pub fn set_editable(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setEditable:\0")), flag);
+    pub fn set_editable(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setEditable:\0")), flag);
     }
 
-    pub fn set_selectable(self, flag: i8) {
-        rt::msg_void_i8(self.obj, rt::sel(#str_ptr("setSelectable:\0")), flag);
+    pub fn set_selectable(this, flag: i8) {
+        rt::msg_void_i8(this.obj, rt::sel(#str_ptr("setSelectable:\0")), flag);
     }
 
-    pub fn set_text_alignment(self, alignment: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
+    pub fn set_text_alignment(this, alignment: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setTextAlignment:\0")), alignment);
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 
@@ -131,28 +131,28 @@ impl SearchBar {
         return SearchBar { obj: rt::alloc_init_with_frame(#str_ptr("UISearchBar\0"), frame) };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_text(self, text: str) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
+    pub fn set_text(this, text: str) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setText:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn text(self) -> *u8 {
-        return rt::msg_id(self.obj, rt::sel(#str_ptr("text\0")));
+    pub fn text(this) -> *u8 {
+        return rt::msg_id(this.obj, rt::sel(#str_ptr("text\0")));
     }
 
-    pub fn set_placeholder(self, text: str) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
+    pub fn set_placeholder(this, text: str) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setPlaceholder:\0")), convert::cplus_str_to_nsstring(text));
     }
 
-    pub fn set_bar_style(self, style: i64) {
-        rt::msg_void_i64(self.obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
+    pub fn set_bar_style(this, style: i64) {
+        rt::msg_void_i64(this.obj, rt::sel(#str_ptr("setBarStyle:\0")), style);
     }
 
-    pub fn as_view_obj(self) -> *u8 {
-        return self.obj;
+    pub fn as_view_obj(this) -> *u8 {
+        return this.obj;
     }
 }
 

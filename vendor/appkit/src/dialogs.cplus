@@ -15,39 +15,39 @@ impl Alert {
         return Alert { obj: alert };
     }
 
-    fn drop(mut self) {
-        rt::release(self.obj);
+    fn drop(mut this) {
+        rt::release(this.obj);
     }
 
-    pub fn set_message_text(self, text: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setMessageText:\0")), rt::ns_string(text));
+    pub fn set_message_text(this, text: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMessageText:\0")), rt::ns_string(text));
     }
 
     // v0.0.7 Slice 5.1: pre-built-NSString variant. See window.cplus
     // for the rationale — `_ns` setters skip the `rt::ns_string` wrap
     // so callers with a dynamic `NSString*` (e.g. from
     // `bridge::cplus_string_to_nsstring`) can pass it through typed.
-    pub fn set_message_text_ns(self, text_ns: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setMessageText:\0")), text_ns);
+    pub fn set_message_text_ns(this, text_ns: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setMessageText:\0")), text_ns);
     }
 
-    pub fn set_informative_text(self, text: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setInformativeText:\0")), rt::ns_string(text));
+    pub fn set_informative_text(this, text: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setInformativeText:\0")), rt::ns_string(text));
     }
 
-    pub fn set_informative_text_ns(self, text_ns: *u8) {
-        rt::msg_void_id(self.obj, rt::sel(#str_ptr("setInformativeText:\0")), text_ns);
+    pub fn set_informative_text_ns(this, text_ns: *u8) {
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setInformativeText:\0")), text_ns);
     }
 
-    pub fn add_button(self, title: *u8) -> *u8 {
-        return rt::msg_id_id(self.obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), rt::ns_string(title));
+    pub fn add_button(this, title: *u8) -> *u8 {
+        return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), rt::ns_string(title));
     }
 
-    pub fn add_button_ns(self, title_ns: *u8) -> *u8 {
-        return rt::msg_id_id(self.obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), title_ns);
+    pub fn add_button_ns(this, title_ns: *u8) -> *u8 {
+        return rt::msg_id_id(this.obj, rt::sel(#str_ptr("addButtonWithTitle:\0")), title_ns);
     }
 
-    pub fn run_modal(self) -> i64 {
-        return rt::msg_i64(self.obj, rt::sel(#str_ptr("runModal\0")));
+    pub fn run_modal(this) -> i64 {
+        return rt::msg_i64(this.obj, rt::sel(#str_ptr("runModal\0")));
     }
 }

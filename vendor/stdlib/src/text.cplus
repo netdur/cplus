@@ -102,67 +102,67 @@ pub fn from_str(s: str) -> Text {
 }
 
 impl Text {
-    fn grow_to(mut self, new_cap: usize) {
-        assert new_cap > self.cap;
-        let raw: *u8 = unsafe { realloc(self.ptr, new_cap) };
+    fn grow_to(mut this, new_cap: usize) {
+        assert new_cap > this.cap;
+        let raw: *u8 = unsafe { realloc(this.ptr, new_cap) };
         assert raw.is_not_null();
-        self.ptr = raw;
-        self.cap = new_cap;
+        this.ptr = raw;
+        this.cap = new_cap;
         return;
     }
 
-    pub fn len(self) -> usize {
-        return self.len;
+    pub fn len(this) -> usize {
+        return this.len;
     }
 
-    pub fn capacity(self) -> usize {
-        return self.cap;
+    pub fn capacity(this) -> usize {
+        return this.cap;
     }
 
-    pub fn is_empty(self) -> bool {
-        return self.len == (0 as usize);
+    pub fn is_empty(this) -> bool {
+        return this.len == (0 as usize);
     }
 
-    pub fn reserve(mut self, additional: usize) {
-        assert additional <= (max_usize() -% self.len);
-        let required: usize = self.len +% additional;
-        if required <= self.cap {
+    pub fn reserve(mut this, additional: usize) {
+        assert additional <= (max_usize() -% this.len);
+        let required: usize = this.len +% additional;
+        if required <= this.cap {
             return;
         }
-        self.grow_to(next_capacity(self.cap, required));
+        this.grow_to(next_capacity(this.cap, required));
         return;
     }
 
-    pub fn push_str(mut self, s: str) {
+    pub fn push_str(mut this, s: str) {
         let n: usize = #str_len(s);
         if n == (0 as usize) {
             return;
         }
-        self.reserve(n);
+        this.reserve(n);
         let src: *u8 = #str_ptr(s);
-        let dest: *u8 = unsafe { self.ptr + self.len };
+        let dest: *u8 = unsafe { this.ptr + this.len };
         unsafe { memcpy(dest, src, n); }
-        self.len = self.len +% n;
+        this.len = this.len +% n;
         return;
     }
 
-    pub fn clear(mut self) {
-        self.len = 0 as usize;
+    pub fn clear(mut this) {
+        this.len = 0 as usize;
         return;
     }
 
-    pub fn truncate(mut self, new_len: usize) {
-        if new_len < self.len {
-            self.len = new_len;
+    pub fn truncate(mut this, new_len: usize) {
+        if new_len < this.len {
+            this.len = new_len;
         }
         return;
     }
 
-    pub fn clone(self) -> Text {
-        let mut t: Text = with_capacity(self.len);
-        if self.len != (0 as usize) {
-            unsafe { memcpy(t.ptr, self.ptr, self.len); }
-            t.len = self.len;
+    pub fn clone(this) -> Text {
+        let mut t: Text = with_capacity(this.len);
+        if this.len != (0 as usize) {
+            unsafe { memcpy(t.ptr, this.ptr, this.len); }
+            t.len = this.len;
         }
         return t;
     }
@@ -170,41 +170,41 @@ impl Text {
     // Borrow escape hatch — `unsafe fn` (TEXT.1). The returned view's lifetime
     // is not tracked: the caller promises this Text outlives the view and is
     // not mutated while the view is held.
-    pub unsafe fn as_str(self) -> str {
-        return unsafe { #str_from_raw_parts(self.ptr, self.len) };
+    pub unsafe fn as_str(this) -> str {
+        return unsafe { #str_from_raw_parts(this.ptr, this.len) };
     }
 
-    pub fn starts_with(self, prefix: str) -> bool {
+    pub fn starts_with(this, prefix: str) -> bool {
         let n: usize = #str_len(prefix);
-        if n > self.len {
+        if n > this.len {
             return false;
         }
-        return region_matches(self.ptr, 0 as usize, #str_ptr(prefix), n);
+        return region_matches(this.ptr, 0 as usize, #str_ptr(prefix), n);
     }
 
-    pub fn ends_with(self, suffix: str) -> bool {
+    pub fn ends_with(this, suffix: str) -> bool {
         let n: usize = #str_len(suffix);
-        if n > self.len {
+        if n > this.len {
             return false;
         }
-        return region_matches(self.ptr, self.len -% n, #str_ptr(suffix), n);
+        return region_matches(this.ptr, this.len -% n, #str_ptr(suffix), n);
     }
 
     // Byte offset of the first occurrence of `needle`, or None. An empty
     // needle matches at 0.
-    pub fn find(self, needle: str) -> option::Option[usize] {
+    pub fn find(this, needle: str) -> option::Option[usize] {
         let n: usize = #str_len(needle);
         if n == (0 as usize) {
             return option::Option[usize]::Some(0 as usize);
         }
-        if n > self.len {
+        if n > this.len {
             return option::Option[usize]::None;
         }
         let p: *u8 = #str_ptr(needle);
-        let last: usize = self.len -% n; // inclusive last start index
+        let last: usize = this.len -% n; // inclusive last start index
         let mut i: usize = 0 as usize;
         while i <= last {
-            if region_matches(self.ptr, i, p, n) {
+            if region_matches(this.ptr, i, p, n) {
                 return option::Option[usize]::Some(i);
             }
             i = i +% (1 as usize);
@@ -212,9 +212,9 @@ impl Text {
         return option::Option[usize]::None;
     }
 
-    pub fn contains(self, needle: str) -> bool {
+    pub fn contains(this, needle: str) -> bool {
         let mut found: bool = false;
-        match self.find(needle) {
+        match this.find(needle) {
             option::Option[usize]::Some(_idx) => { found = true; }
             option::Option[usize]::None => { found = false; }
         }
@@ -223,18 +223,18 @@ impl Text {
 
     // Byte offset of the *last* occurrence of `needle`, or None. An empty needle
     // matches at `len`.
-    pub fn rfind(self, needle: str) -> option::Option[usize] {
+    pub fn rfind(this, needle: str) -> option::Option[usize] {
         let n: usize = #str_len(needle);
         if n == (0 as usize) {
-            return option::Option[usize]::Some(self.len);
+            return option::Option[usize]::Some(this.len);
         }
-        if n > self.len {
+        if n > this.len {
             return option::Option[usize]::None;
         }
         let p: *u8 = #str_ptr(needle);
-        let mut i: usize = self.len -% n; // inclusive last start index
+        let mut i: usize = this.len -% n; // inclusive last start index
         loop {
-            if region_matches(self.ptr, i, p, n) {
+            if region_matches(this.ptr, i, p, n) {
                 return option::Option[usize]::Some(i);
             }
             if i == (0 as usize) {
@@ -246,18 +246,18 @@ impl Text {
     }
 
     // Read the byte at `i` (caller guarantees `i < len`).
-    fn byte_at_raw(self, i: usize) -> u8 {
-        let p: *u8 = unsafe { self.ptr + i };
+    fn byte_at_raw(this, i: usize) -> u8 {
+        let p: *u8 = unsafe { this.ptr + i };
         return unsafe { *p };
     }
 
     // Owned copy of the byte range `[start, end)` (caller guarantees the range
     // is in bounds and `start <= end`).
-    fn copy_range(self, start: usize, end: usize) -> Text {
+    fn copy_range(this, start: usize, end: usize) -> Text {
         let n: usize = end -% start;
         let mut t: Text = with_capacity(n);
         if n != (0 as usize) {
-            let src: *u8 = unsafe { self.ptr + start };
+            let src: *u8 = unsafe { this.ptr + start };
             unsafe { memcpy(t.ptr, src, n); }
             t.len = n;
         }
@@ -266,82 +266,82 @@ impl Text {
 
     // Owned copy of the byte range `[start, end)`, or None if out of bounds /
     // inverted. (Copies — the result owns its bytes.)
-    pub fn slice(self, start: usize, end: usize) -> option::Option[Text] {
+    pub fn slice(this, start: usize, end: usize) -> option::Option[Text] {
         if start > end {
             return option::Option[Text]::None;
         }
-        if end > self.len {
+        if end > this.len {
             return option::Option[Text]::None;
         }
-        return option::Option[Text]::Some(self.copy_range(start, end));
+        return option::Option[Text]::Some(this.copy_range(start, end));
     }
 
     // Owned copy with leading ASCII whitespace removed.
-    pub fn trim_start(self) -> Text {
+    pub fn trim_start(this) -> Text {
         let mut start: usize = 0 as usize;
-        while start < self.len {
-            if is_ascii_ws(self.byte_at_raw(start)) == false {
+        while start < this.len {
+            if is_ascii_ws(this.byte_at_raw(start)) == false {
                 break;
             }
             start = start +% (1 as usize);
         }
-        return self.copy_range(start, self.len);
+        return this.copy_range(start, this.len);
     }
 
     // Owned copy with trailing ASCII whitespace removed.
-    pub fn trim_end(self) -> Text {
-        let mut end: usize = self.len;
+    pub fn trim_end(this) -> Text {
+        let mut end: usize = this.len;
         while end > (0 as usize) {
-            if is_ascii_ws(self.byte_at_raw(end -% (1 as usize))) == false {
+            if is_ascii_ws(this.byte_at_raw(end -% (1 as usize))) == false {
                 break;
             }
             end = end -% (1 as usize);
         }
-        return self.copy_range(0 as usize, end);
+        return this.copy_range(0 as usize, end);
     }
 
     // Owned copy with leading and trailing ASCII whitespace removed.
-    pub fn trim(self) -> Text {
+    pub fn trim(this) -> Text {
         let mut start: usize = 0 as usize;
-        while start < self.len {
-            if is_ascii_ws(self.byte_at_raw(start)) == false {
+        while start < this.len {
+            if is_ascii_ws(this.byte_at_raw(start)) == false {
                 break;
             }
             start = start +% (1 as usize);
         }
-        let mut end: usize = self.len;
+        let mut end: usize = this.len;
         while end > start {
-            if is_ascii_ws(self.byte_at_raw(end -% (1 as usize))) == false {
+            if is_ascii_ws(this.byte_at_raw(end -% (1 as usize))) == false {
                 break;
             }
             end = end -% (1 as usize);
         }
-        return self.copy_range(start, end);
+        return this.copy_range(start, end);
     }
 
     // Split on every (non-overlapping) occurrence of `sep`, returning the pieces
     // as owned `Text` values. An empty `sep` yields the whole string as one
     // piece. `"a,b,c".split(",")` → `["a", "b", "c"]`.
-    pub fn split(self, sep: str) -> vec::Vec[Text] {
+    pub fn split(this, sep: str) -> vec::Vec[Text] {
         let mut out: vec::Vec[Text] = vec::new::[Text]();
         let n: usize = #str_len(sep);
         if n == (0 as usize) {
-            out.push(self.copy_range(0 as usize, self.len));
+            out.push(this.copy_range(0 as usize, this.len));
             return out;
         }
         let p: *u8 = #str_ptr(sep);
         let mut start: usize = 0 as usize;
         let mut i: usize = 0 as usize;
-        while (i +% n) <= self.len {
-            if region_matches(self.ptr, i, p, n) {
-                out.push(self.copy_range(start, i));
+        while (i +% n) <= this.len {
+            if region_matches(this.ptr, i, p, n) {
+                out.push(this.copy_range(start, i));
                 i = i +% n;
                 start = i;
             } else {
                 i = i +% (1 as usize);
             }
         }
-        out.push(self.copy_range(start, self.len));
+        out.push(this.copy_range(start, this.len));
         return out;
     }
 
@@ -350,27 +350,27 @@ impl Text {
     // represent one). The returned `CString` owns its buffer and frees it on
     // drop; pass `cs.as_ptr()` to the `extern fn` and keep `cs` alive across the
     // call. Length-based C APIs don't need this — pass `as_str`'s ptr+len.
-    pub fn c_str(self) -> option::Option[CString] {
+    pub fn c_str(this) -> option::Option[CString] {
         let mut i: usize = 0 as usize;
-        while i < self.len {
-            if self.byte_at_raw(i) == (0 as u8) {
+        while i < this.len {
+            if this.byte_at_raw(i) == (0 as u8) {
                 return option::Option[CString]::None;
             }
             i = i +% (1 as usize);
         }
-        let buf: *u8 = unsafe { malloc(self.len +% (1 as usize)) };
+        let buf: *u8 = unsafe { malloc(this.len +% (1 as usize)) };
         assert buf.is_not_null();
-        if self.len != (0 as usize) {
-            unsafe { memcpy(buf, self.ptr, self.len); }
+        if this.len != (0 as usize) {
+            unsafe { memcpy(buf, this.ptr, this.len); }
         }
-        let term: *u8 = unsafe { buf + self.len };
+        let term: *u8 = unsafe { buf + this.len };
         unsafe { *term = 0 as u8; }
-        return option::Option[CString]::Some(CString { ptr: buf, len: self.len });
+        return option::Option[CString]::Some(CString { ptr: buf, len: this.len });
     }
 
-    fn drop(mut self) {
-        if self.ptr.is_not_null() {
-            unsafe { free(self.ptr); }
+    fn drop(mut this) {
+        if this.ptr.is_not_null() {
+            unsafe { free(this.ptr); }
         }
         return;
     }
@@ -394,18 +394,18 @@ pub struct CString {
 
 impl CString {
     // The raw `*u8` the C ABI wants. Valid only while this `CString` is alive.
-    pub fn as_ptr(self) -> *u8 {
-        return self.ptr;
+    pub fn as_ptr(this) -> *u8 {
+        return this.ptr;
     }
 
     // Length in bytes, NOT counting the trailing NUL.
-    pub fn len(self) -> usize {
-        return self.len;
+    pub fn len(this) -> usize {
+        return this.len;
     }
 
-    fn drop(mut self) {
-        if self.ptr.is_not_null() {
-            unsafe { free(self.ptr); }
+    fn drop(mut this) {
+        if this.ptr.is_not_null() {
+            unsafe { free(this.ptr); }
         }
         return;
     }

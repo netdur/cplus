@@ -55,27 +55,27 @@ impl FixedPoolU64 {
         return p;
     }
 
-    pub fn capacity(self) -> usize { return 1024 as usize; }
+    pub fn capacity(this) -> usize { return 1024 as usize; }
 
     #[no_alloc] #[no_block]
-    pub fn in_use_count(self) -> usize { return self.in_use; }
+    pub fn in_use_count(this) -> usize { return this.in_use; }
 
     #[no_alloc] #[no_block]
-    pub fn available(self) -> usize { return (1024 as usize) -% self.in_use; }
+    pub fn available(this) -> usize { return (1024 as usize) -% this.in_use; }
 
     #[no_alloc] #[no_block]
-    pub fn is_full(self) -> bool { return self.free_head == pool_none(); }
+    pub fn is_full(this) -> bool { return this.free_head == pool_none(); }
 
     // Claim a free slot. Returns its index, or `None` (without blocking)
     // when the pool is exhausted.
     #[no_alloc] #[no_block]
-    pub fn acquire(mut self) -> option::Option[u32] {
-        if self.free_head == pool_none() {
+    pub fn acquire(mut this) -> option::Option[u32] {
+        if this.free_head == pool_none() {
             return option::Option[u32]::None;
         }
-        let idx: u32 = self.free_head;
-        self.free_head = self.links[idx as usize];
-        self.in_use = self.in_use +% (1 as usize);
+        let idx: u32 = this.free_head;
+        this.free_head = this.links[idx as usize];
+        this.in_use = this.in_use +% (1 as usize);
         return option::Option[u32]::Some(idx);
     }
 
@@ -83,18 +83,18 @@ impl FixedPoolU64 {
     // release; releasing a slot that is not in use corrupts the free list,
     // so callers are responsible for release-once discipline.
     #[no_alloc] #[no_block]
-    pub fn release(mut self, idx: u32) {
-        self.links[idx as usize] = self.free_head;
-        self.free_head = idx;
-        self.in_use = self.in_use -% (1 as usize);
+    pub fn release(mut this, idx: u32) {
+        this.links[idx as usize] = this.free_head;
+        this.free_head = idx;
+        this.in_use = this.in_use -% (1 as usize);
         return;
     }
 
     #[no_alloc] #[no_block]
-    pub fn get(self, idx: u32) -> u64 { return self.slots[idx as usize]; }
+    pub fn get(this, idx: u32) -> u64 { return this.slots[idx as usize]; }
 
     #[no_alloc] #[no_block]
-    pub fn set(mut self, idx: u32, v: u64) { self.slots[idx as usize] = v; return; }
+    pub fn set(mut this, idx: u32, v: u64) { this.slots[idx as usize] = v; return; }
 }
 
 // ---------------- Unit tests ----------------

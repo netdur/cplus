@@ -23,7 +23,7 @@ pub struct Future[T] {
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop
-// checks each `poll(self)` return value: `Ready(t)` extracts the
+// checks each `poll(this)` return value: `Ready(t)` extracts the
 // final value; `Pending` means resume later (after the reactor has
 // signalled the wait was satisfied).
 pub enum Poll[T] {

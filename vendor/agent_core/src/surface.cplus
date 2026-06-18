@@ -95,8 +95,8 @@ pub fn new_text_versions() -> TextVersions {
 
 impl TextVersions {
     // A node's current text version (0 until its first edit).
-    pub fn version_of(self, node: usize) -> u64 {
-        return match self.v.get(node) {
+    pub fn version_of(this, node: usize) -> u64 {
+        return match this.v.get(node) {
             result::Result[u64, result::IoError]::Ok(x) => x,
             result::Result[u64, result::IoError]::Err(_) => 0 as u64,
         };
@@ -104,9 +104,9 @@ impl TextVersions {
 
     // Bump after a committed write. The consumer calls this once the backend has
     // actually applied the edit.
-    pub fn bump(mut self, node: usize) {
-        let cur: u64 = self.version_of(node);
-        self.v.insert(node, cur +% (1 as u64));
+    pub fn bump(mut this, node: usize) {
+        let cur: u64 = this.version_of(node);
+        this.v.insert(node, cur +% (1 as u64));
         return;
     }
 }
