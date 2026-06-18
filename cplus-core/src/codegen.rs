@@ -4119,6 +4119,19 @@ fn write_preamble(out: &mut String) {
             ));
         }
     }
+    // v0.0.24 de-Rust soundness: saturating float→int conversions. A raw
+    // `fptosi`/`fptoui` is UB when the float is out of the int's range or NaN;
+    // the `.sat` form clamps to min/max and maps NaN→0. Declared for every
+    // supported (int width × float width); LLVM drops unused ones.
+    for sat in ["fptosi", "fptoui"] {
+        for ibits in [8, 16, 32, 64, 128] {
+            for (fbits, fty) in [(16, "half"), (32, "float"), (64, "double")] {
+                out.push_str(&format!(
+                    "declare i{ibits} @llvm.{sat}.sat.i{ibits}.f{fbits}({fty})\n"
+                ));
+            }
+        }
+    }
     out.push_str("\n");
 }
 
@@ -10913,7 +10926,15 @@ impl<'a> FnState<'a> {
                     (BinOp::Shr, false) => "lshr",
                     _ => unreachable!(),
                 };
-                self.emit(&format!("{v} = {iop} {lhs_t} {l}, {coerced_r}"));
+                // v0.0.24 de-Rust soundness: mask the shift count to
+                // [0, bitwidth). A `shl`/`ashr`/`lshr` with a count >= the LHS
+                // bit width is LLVM poison (UB); masking makes it defined
+                // (matching x86 hardware) at zero cost — LLVM folds the mask
+                // when the count is constant.
+                let mask = ty_bit_width(&lt) - 1;
+                let masked_r = self.next_tmp();
+                self.emit(&format!("{masked_r} = and {lhs_t} {coerced_r}, {mask}"));
+                self.emit(&format!("{v} = {iop} {lhs_t} {l}, {masked_r}"));
                 (v, lt)
             }
         }
@@ -10991,10 +11012,28 @@ impl<'a> FnState<'a> {
         let llvm_t = self.lty(&ty);
         let zero_check = self.next_tmp();
         self.emit(&format!("{zero_check} = icmp eq {llvm_t} {r}, 0"));
+        // v0.0.24 de-Rust soundness: signed `INT_MIN / -1` (and `INT_MIN % -1`)
+        // overflow is UB in LLVM `sdiv`/`srem` — trap on it as well. Unsigned
+        // division has no overflow case, so only the zero check applies there.
+        let trap_check = if ty.is_signed_int() {
+            let bits = ty_bit_width(&ty);
+            let int_min = format!("-{}", 1u128 << (bits - 1));
+            let l_is_min = self.next_tmp();
+            self.emit(&format!("{l_is_min} = icmp eq {llvm_t} {l}, {int_min}"));
+            let r_is_neg1 = self.next_tmp();
+            self.emit(&format!("{r_is_neg1} = icmp eq {llvm_t} {r}, -1"));
+            let overflow = self.next_tmp();
+            self.emit(&format!("{overflow} = and i1 {l_is_min}, {r_is_neg1}"));
+            let combined = self.next_tmp();
+            self.emit(&format!("{combined} = or i1 {zero_check}, {overflow}"));
+            combined
+        } else {
+            zero_check
+        };
         let trap_lbl = self.next_block_label();
         let ok_lbl = self.next_block_label();
         self.emit_terminator(&format!(
-            "br i1 {zero_check}, label %{trap_lbl}, label %{ok_lbl}"
+            "br i1 {trap_check}, label %{trap_lbl}, label %{ok_lbl}"
         ));
         self.open_block(&trap_lbl);
         self.emit("call void @llvm.trap()");
@@ -11542,9 +11581,20 @@ impl<'a> FnState<'a> {
             // int → float
             (a, b) if a.is_signed_int() && b.is_float() => "sitofp",
             (a, b) if a.is_unsigned_int() && b.is_float() => "uitofp",
-            // float → int
-            (a, b) if a.is_float() && b.is_signed_int() => "fptosi",
-            (a, b) if a.is_float() && b.is_unsigned_int() => "fptoui",
+            // float → int. v0.0.24 de-Rust soundness: a raw `fptosi`/`fptoui`
+            // is UB (poison) when the source float is out of the target int's
+            // range or is NaN. The saturating intrinsic clamps to the int's
+            // min/max and maps NaN→0 — matching Rust ≥1.45 `as`. Emit the call
+            // and return early (the generic `inst` path can't express a call).
+            (a, b) if a.is_float() && b.is_int() => {
+                let sat = if b.is_signed_int() { "fptosi" } else { "fptoui" };
+                let ibits = ty_bit_width(b);
+                let fbits = ty_bit_width(a);
+                self.emit(&format!(
+                    "{r} = call {to_t} @llvm.{sat}.sat.i{ibits}.f{fbits}({from_t} {v})"
+                ));
+                return (r, to);
+            }
             // float → float (different widths)
             (a, b) if a.is_float() && b.is_float() => {
                 if ty_bit_width(b) > ty_bit_width(a) {
@@ -17303,13 +17353,39 @@ mod tests {
     }
 
     #[test]
-    fn cast_float_to_int_uses_fptosi_or_fptoui() {
+    fn cast_float_to_int_saturates_v0024() {
+        // v0.0.24 de-Rust soundness: float→int uses the saturating intrinsic
+        // (defined on overflow/NaN), NOT a raw `fptosi`/`fptoui` (which is UB).
         let ir1 =
             gen_src("fn main() -> i32 { let a: f64 = 1.5; let _b: i32 = a as i32; return 0; }");
-        assert!(ir1.contains(" = fptosi "));
+        assert!(ir1.contains("@llvm.fptosi.sat.i32.f64"), "expected saturating fptosi, got: {ir1}");
+        assert!(!ir1.contains(" = fptosi "), "must not emit a raw fptosi");
         let ir2 =
             gen_src("fn main() -> i32 { let a: f64 = 1.5; let _b: u32 = a as u32; return 0; }");
-        assert!(ir2.contains(" = fptoui "));
+        assert!(ir2.contains("@llvm.fptoui.sat.i32.f64"), "expected saturating fptoui, got: {ir2}");
+        assert!(!ir2.contains(" = fptoui "), "must not emit a raw fptoui");
+    }
+
+    #[test]
+    fn shift_count_is_masked_v0024() {
+        // v0.0.24 de-Rust soundness: the shift count is masked to [0, bitwidth)
+        // so a count >= bitwidth is defined (not LLVM poison/UB).
+        let ir = gen_src("fn f(x: i32, n: i32) -> i32 { return x << n; }");
+        assert!(ir.contains("and i32"), "shift count must be masked, got: {ir}");
+        assert!(ir.contains(" = shl i32 "), "expected shl, got: {ir}");
+    }
+
+    #[test]
+    fn signed_div_traps_on_int_min_overflow_v0024() {
+        // v0.0.24 de-Rust soundness: signed `INT_MIN / -1` traps (UB in LLVM
+        // sdiv). The guard compares against INT_MIN and -1 and ORs with the
+        // zero check.
+        let ir = gen_src("fn f(a: i32, b: i32) -> i32 { return a / b; }");
+        assert!(ir.contains("-2147483648"), "expected i32 INT_MIN check, got: {ir}");
+        assert!(ir.contains("or i1"), "expected zero||overflow trap condition, got: {ir}");
+        // Unsigned division has no overflow case — only the zero check.
+        let iru = gen_src("fn f(a: u32, b: u32) -> i32 { let _q: u32 = a / b; return 0; }");
+        assert!(!iru.contains("-2147483648"), "unsigned div must not add the INT_MIN check");
     }
 
     #[test]
