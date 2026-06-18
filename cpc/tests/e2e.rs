@@ -672,6 +672,33 @@ fn diagnostics_short_format() {
     );
 }
 
+// v0.0.24 de-Rust #9 (stage 3): the retired keywords `let mut` / `mut x:` /
+// `move x:` are rejected by the real cpc binary with a hint pointing at the
+// new spelling (`var` / `ref` / `take`). Also: `var` is reserved as a binding
+// name. Confirms the hard switch end-to-end, not just at the parser unit level.
+#[test]
+fn retired_keywords_rejected_with_hints() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let cases: &[(&str, &str, &str)] = &[
+        ("lm.cplus", "fn main() -> i32 { let mut x: i32 = 0; return x; }", "var"),
+        ("mp.cplus", "fn f(mut x: i32) -> i32 { return x; }\nfn main() -> i32 { return f(1); }", "ref"),
+        ("mv.cplus", "fn f(move x: i32) -> i32 { return x; }\nfn main() -> i32 { return f(1); }", "take"),
+        ("vn.cplus", "fn main() -> i32 { let var: i32 = 0; return 0; }", "reserved"),
+    ];
+    for (name, src, hint) in cases {
+        let p = dir.join(name);
+        std::fs::write(&p, src).unwrap();
+        let out = Command::new(cpc).arg("check").arg(&p).output().expect("invoke cpc");
+        assert!(!out.status.success(), "{name}: expected rejection, compiled clean");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(hint),
+            "{name}: expected hint `{hint}` in diagnostic, got: {stderr}"
+        );
+    }
+}
+
 // ---- Phase 1 end-to-end: each sample program compiles, runs, prints expected output ----
 
 fn compile_and_run(sample: &str) -> std::process::Output {

@@ -6881,7 +6881,7 @@ impl SemaCx<'_> {
                                 self.err(
                                     "E0305",
                                     format!(
-                                        "`#asm` writes operand `{}` but `{}` is not declared `mut`",
+                                        "`#asm` writes operand `{}` but `{}` is not a `var` binding",
                                         op.name, name
                                     ),
                                     op.span,
@@ -18496,18 +18496,20 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     // ----- Phase 3 slice 3A: ownership markers on params -----
 
     #[test]
-    fn mut_and_move_on_param_e0334() {
+    fn ref_and_take_on_param_e0334() {
+        // v0.0.24 #9: the contradictory `ref take` combo (mutate + consume) is
+        // permitted at parse time, rejected by sema with E0334.
         let codes = errors(
-            "fn f(mut take x: i32) -> i32 { return x; }\n\
+            "fn f(ref take x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return f(1); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
     }
 
     #[test]
-    fn move_and_mut_on_param_e0334() {
+    fn take_and_ref_on_param_e0334() {
         let codes = errors(
-            "fn f(move ref x: i32) -> i32 { return x; }\n\
+            "fn f(take ref x: i32) -> i32 { return x; }\n\
              fn main() -> i32 { return f(1); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
@@ -18552,10 +18554,10 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn mut_and_move_on_method_param_e0334() {
+    fn ref_and_take_on_method_param_e0334() {
         let codes = errors(
             "struct P { x: i32 }\n\
-             impl P { fn f(this, mut take y: i32) -> i32 { return this.x + y; } }\n\
+             impl P { fn f(this, ref take y: i32) -> i32 { return this.x + y; } }\n\
              fn main() -> i32 { let p: P = P { x: 1 }; return p.f(2); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");

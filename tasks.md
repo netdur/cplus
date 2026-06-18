@@ -191,15 +191,35 @@ Tasks 1–6 are independent (any order among themselves).
     exposed: `var` wasn't recognized in the C-style for-init (`for (var i …)`)
     — wired into `parse_let_no_semi` + the C-for dispatch (+1 parser test).
     cplus-core 1558 / cpc e2e 628, green.
-  - [ ] **Stage 3 — hard-switch + semantics.** Migrate the `.rs` test strings
-    (compile-error-guided). Reject `mut`/`move`; reserve `take`/`ref`/`var` as
-    binding/param NAMES (allow as members) — rename the 2 `let var` locals.
-    `static mut`→`static` AND make bare `static` mutable-by-default (decide:
-    leftover immutable `static` → `const` or stays). Add the
-    `ref`-requires-a-`var`-place `is_var` check (closes the
-    immutable-through-by-ref hole, unifies E0328). Do the bare `x: T`
-    move→borrow flip — AUDIT E0337 escape completeness (plan flags this as a
-    UB-risk surface).
+  - [x] **Stage 3a — migrate `.rs` test-string C+ source** to `var`/`ref`/`take`
+    (457 strings, 6 files). A hardened Rust-lexing migrator rewrites ONLY
+    string-literal contents — Rust code (`let mut parser`, `&mut self`,
+    `fn f(mut x:)`), comments, char/byte literals (`b'"'`, `'\u{..}'`), and
+    lifetimes (`'a`) untouched (`cargo build` passing proves no Rust corruption).
+    `static mut` protected (escape-adjacency bug found+fixed: a `\n` before
+    `static` defeated the `\b`). lexer.rs excluded (its `keywords_and_idents`
+    legitimately tokenizes `let mut`; `mut`/`move` stay reserved tokens). E0305
+    diagnostic updated to suggest `var`. cplus-core 1558 / cpc e2e 628.
+  - [x] **Stage 3b — keyword hard-switch.** Parser rejects `mut`/`move`/`let mut`
+    with targeted hints (kept as reserved tokens, #1-style). Reserve
+    `var`/`ref`/`take` as binding/param NAMES via `reject_reserved_binding_name`
+    (still legal as member names — `fn take`, `iter.take`, `Iterator::take` all
+    work; verified). Renamed the 2 `let var` locals (uuid→`variant`,
+    async_fetch→`env_p`). Repurposed the obsolete combo tests to `ref take`/
+    `take ref` (still parse-permitted, still E0334 in sema) and flipped the
+    `let var` test to assert rejection; added 5 parser rejection tests + 1 e2e.
+    `#asm` operand message updated `mut`→`var`. cplus-core 1562 / cpc e2e 629.
+  - [ ] **Stage 3c — `ref`-requires-a-`var`-place `is_var` check** (closes the
+    immutable-through-by-ref hole; one check at the call site from the
+    signature's `ref`, modular through fn-ptrs/interfaces/generics; unifies
+    E0328).
+  - [ ] **Stage 3d — `static mut`→`static` + bare `static` mutable-by-default.**
+    Decide: leftover immutable `static` → `const` or stays. Update the
+    `static mut` diagnostics (sema ~12729/12738/12926) and the `static mut`
+    declaration syntax. Migrate the 13 `static mut` code sites + comment prose.
+  - [ ] **Stage 3e — bare `x: T` move→borrow flip.** AUDIT E0337 escape
+    completeness first (plan flags this as the UB-risk surface), then flip the
+    default so bare = read-only borrow for every type.
   - [ ] **Stage 4 — `borrow` removal.** Param prefix `borrow x:` folds into the
     bare default. Region-lifetime `borrow A T` / `TypeKind::Borrowed` (9-file
     thread, E0511/E0512, ~19 e2e region tests) — SCOPE TBD with user (in #9 vs a

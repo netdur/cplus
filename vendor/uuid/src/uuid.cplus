@@ -148,8 +148,8 @@ fn test_new_v4_sets_version_and_variant() {
     };
     let v: u8 = (u.bytes[6] & 240u8) >> 4u32;
     assert v == (4 as u8);
-    let var: u8 = (u.bytes[8] & 192u8) >> 6u32;
-    assert var == (2 as u8);   // 10 binary = 2 decimal
+    let variant: u8 = (u.bytes[8] & 192u8) >> 6u32;
+    assert variant == (2 as u8);   // 10 binary = 2 decimal
 }
 
 #[test]

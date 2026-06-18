@@ -817,51 +817,28 @@ impl Parser {
                 self.bump();
                 Ok(Some(Receiver::Read))
             }
+            // v0.0.24 de-Rust (#9 stage 3): `mut`/`move` are retired. They stay
+            // reserved tokens so a Rust-habit author gets a targeted hint
+            // pointing at the new spelling instead of a confusing parse error.
             TokenKind::Mut => {
-                let save = self.pos;
-                self.bump(); // consume `mut`
-                if matches!(self.peek_kind(), TokenKind::Move) {
-                    // `mut move self` — invalid combination on a receiver.
-                    let tok = self.peek().clone();
-                    return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            found: tok_name(&tok.kind).into(),
-                            expected: "`this` (`mut` and `move` are mutually exclusive)",
-                        },
-                        span: tok.span,
-                    });
-                }
-                if matches!(self.peek_kind(), TokenKind::SelfLower) {
-                    self.bump();
-                    Ok(Some(Receiver::Mut))
-                } else {
-                    // `mut` followed by something else — not a receiver.
-                    self.pos = save;
-                    Ok(None)
-                }
+                let tok = self.peek().clone();
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`mut`".into(),
+                        expected: "`ref` — `mut` is retired; a mutating receiver is `ref this`",
+                    },
+                    span: tok.span,
+                })
             }
             TokenKind::Move => {
-                let save = self.pos;
-                self.bump(); // consume `move`
-                if matches!(self.peek_kind(), TokenKind::Mut) {
-                    // `move mut self` — invalid combination on a receiver.
-                    let tok = self.peek().clone();
-                    return Err(ParseError {
-                        kind: ParseErrorKind::Unexpected {
-                            found: tok_name(&tok.kind).into(),
-                            expected: "`this` (`move` and `mut` are mutually exclusive)",
-                        },
-                        span: tok.span,
-                    });
-                }
-                if matches!(self.peek_kind(), TokenKind::SelfLower) {
-                    self.bump();
-                    Ok(Some(Receiver::Move))
-                } else {
-                    // `move` followed by something else — not a receiver.
-                    self.pos = save;
-                    Ok(None)
-                }
+                let tok = self.peek().clone();
+                Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`move`".into(),
+                        expected: "`take` — `move` is retired; a consuming receiver is `take this`",
+                    },
+                    span: tok.span,
+                })
             }
             // v0.0.24 de-Rust (#9 stage 1): `ref this` / `take this` are the new
             // spellings of `mut this` / `move this`. `ref`/`take` are contextual
@@ -1450,13 +1427,27 @@ impl Parser {
         let start = self.peek().span;
         loop {
             match self.peek_kind() {
-                TokenKind::Mut if !mutable => {
-                    self.bump();
-                    mutable = true;
+                // v0.0.24 de-Rust (#9 stage 3): `mut`/`move` are retired —
+                // reject with a hint at the new spelling (kept reserved tokens).
+                TokenKind::Mut => {
+                    let tok = self.peek().clone();
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: "`mut`".into(),
+                            expected: "`ref` — `mut` is retired; a by-reference param is `ref x: T`",
+                        },
+                        span: tok.span,
+                    });
                 }
-                TokenKind::Move if !move_ => {
-                    self.bump();
-                    move_ = true;
+                TokenKind::Move => {
+                    let tok = self.peek().clone();
+                    return Err(ParseError {
+                        kind: ParseErrorKind::Unexpected {
+                            found: "`move`".into(),
+                            expected: "`take` — `move` is retired; transfer ownership with `take x: T`",
+                        },
+                        span: tok.span,
+                    });
                 }
                 // v0.0.24 de-Rust (#9 stage 1): `ref x: T` / `take x: T` are the
                 // new spellings of `mut x: T` / `move x: T`. `ref`/`take` are
@@ -1498,6 +1489,7 @@ impl Parser {
             }
         }
         let name = self.expect_ident()?;
+        self.reject_reserved_binding_name(&name)?;
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type()?;
         // Slice 6BC.5: `move x: borrow A T` is a parse error.
@@ -1937,7 +1929,19 @@ impl Parser {
 
     fn parse_let_stmt(&mut self) -> Result<Stmt, ParseError> {
         let start = self.expect(&TokenKind::Let, "`let`")?.span;
-        let mutable = self.eat(&TokenKind::Mut);
+        // v0.0.24 de-Rust (#9 stage 3): `let mut` is retired — a mutable local
+        // is `var`. Reject with a hint (`mut` stays a reserved token).
+        if self.at(&TokenKind::Mut) {
+            let tok = self.peek().clone();
+            return Err(ParseError {
+                kind: ParseErrorKind::Unexpected {
+                    found: "`mut`".into(),
+                    expected: "a binding name — `let mut` is retired; use `var` for a mutable local",
+                },
+                span: tok.span,
+            });
+        }
+        let mutable = false;
         // `let _ = expr;` — a discard binding: evaluate `expr` (for its effect /
         // to consume a must-use result) and drop it at scope exit. Synthesize a
         // unique, `_`-prefixed name (so sibling `let _`s don't collide and it
@@ -1952,6 +1956,7 @@ impl Parser {
         } else {
             self.expect_ident()?
         };
+        self.reject_reserved_binding_name(&name)?;
         let ty = if self.eat(&TokenKind::Colon) {
             Some(self.parse_type()?)
         } else {
@@ -1996,6 +2001,7 @@ impl Parser {
         } else {
             self.expect_ident()?
         };
+        self.reject_reserved_binding_name(&name)?;
         let ty = if self.eat(&TokenKind::Colon) {
             Some(self.parse_type()?)
         } else {
@@ -2015,6 +2021,26 @@ impl Parser {
                 init,
             },
             span: start.merge(end),
+        })
+    }
+
+    /// v0.0.24 de-Rust (#9 stage 3): `var`/`ref`/`take` are reserved as the
+    /// NAME of a binding or parameter (they stay usable as member/method names
+    /// after `.`/`::`/`fn`). Returns a targeted parse error if `name` is one of
+    /// them; otherwise `Ok(())`.
+    fn reject_reserved_binding_name(&self, name: &Ident) -> Result<(), ParseError> {
+        let expected: &'static str = match name.name.as_str() {
+            "var" => "a non-reserved name (`var` is the mutable-binding keyword)",
+            "ref" => "a non-reserved name (`ref` is the by-reference parameter keyword)",
+            "take" => "a non-reserved name (`take` is the ownership-transfer keyword)",
+            _ => return Ok(()),
+        };
+        Err(ParseError {
+            kind: ParseErrorKind::Unexpected {
+                found: format!("`{}`", name.name),
+                expected,
+            },
+            span: name.span,
         })
     }
 
@@ -2287,9 +2313,21 @@ impl Parser {
             (self.bump().span, true) // consume the contextual `var`
         } else {
             let s = self.expect(&TokenKind::Let, "`let`")?.span;
-            (s, self.eat(&TokenKind::Mut))
+            // v0.0.24 de-Rust (#9 stage 3): `let mut` is retired; use `var`.
+            if self.at(&TokenKind::Mut) {
+                let tok = self.peek().clone();
+                return Err(ParseError {
+                    kind: ParseErrorKind::Unexpected {
+                        found: "`mut`".into(),
+                        expected: "a binding name — `let mut` is retired; use `var` for a mutable local",
+                    },
+                    span: tok.span,
+                });
+            }
+            (s, false)
         };
         let name = self.expect_ident()?;
+        self.reject_reserved_binding_name(&name)?;
         let ty = if self.eat(&TokenKind::Colon) {
             Some(self.parse_type()?)
         } else {
@@ -4259,16 +4297,17 @@ mod tests {
     }
 
     #[test]
-    fn move_mut_param_sets_both_flags() {
-        // Combo is permitted at parse time; sema rejects with E0334.
-        let params = first_function_params("fn f(move ref x: i32) -> i32 { return x; }");
+    fn take_ref_param_sets_both_flags() {
+        // The contradictory `take ref` combo is permitted at parse time (both
+        // flags set); sema rejects it with E0334. (`mut`/`move` are retired.)
+        let params = first_function_params("fn f(take ref x: i32) -> i32 { return x; }");
         assert!(params[0].mutable);
         assert!(params[0].move_);
     }
 
     #[test]
-    fn mut_move_param_sets_both_flags() {
-        let params = first_function_params("fn f(mut take x: i32) -> i32 { return x; }");
+    fn ref_take_param_sets_both_flags() {
+        let params = first_function_params("fn f(ref take x: i32) -> i32 { return x; }");
         assert!(params[0].mutable);
         assert!(params[0].move_);
     }
@@ -4346,19 +4385,35 @@ mod tests {
     }
 
     #[test]
-    fn var_still_usable_as_binding_name_after_let() {
-        // `var` is contextual — after `let` it is just the binding's name, not
-        // the mutable-binding keyword. (Reservation as a name lands in the
-        // hard-switch stage.)
-        let p = parse_src("fn main() -> i32 { let var: i32 = 7; return var; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!();
-        };
-        let StmtKind::Let { mutable, name, .. } = &f.body.stmts[0].kind else {
-            panic!();
-        };
-        assert!(!*mutable, "`let var` is an immutable binding named `var`");
-        assert_eq!(name.name, "var");
+    fn var_reserved_as_binding_name() {
+        // v0.0.24 #9 stage 3: `var` is now a reserved binding keyword — it
+        // cannot be used as the NAME of a binding (`let var` is rejected).
+        let err = parse_src("fn main() -> i32 { let var: i32 = 7; return 0; }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn take_reserved_as_param_name() {
+        // `take` cannot name a parameter (it is the ownership keyword), but it
+        // stays usable as a method name (see take_still_usable_as_method_name).
+        let err = parse_src("fn f(take: i32) -> i32 { return take; }").unwrap_err();
+        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    #[test]
+    fn mut_param_rejected_with_hint() {
+        // `mut` is retired; the parser rejects it (pointing at `ref`).
+        assert!(parse_src("fn f(mut x: i32) -> i32 { return x; }").is_err());
+    }
+
+    #[test]
+    fn move_param_rejected_with_hint() {
+        assert!(parse_src("fn f(move x: i32) -> i32 { return x; }").is_err());
+    }
+
+    #[test]
+    fn let_mut_rejected_with_hint() {
+        assert!(parse_src("fn main() -> i32 { let mut x: i32 = 0; return x; }").is_err());
     }
 
     #[test]
