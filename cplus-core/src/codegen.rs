@@ -18513,8 +18513,8 @@ mod tests {
              impl P { fn drop(ref this) { return; } }\n\
              fn pair(ref a: P, ref b: P) -> i32 { return a.v + b.v; }\n\
              fn main() -> i32 {\n\
-               let p: P = P { v: 1 };\n\
-               let q: P = P { v: 2 };\n\
+               var p: P = P { v: 1 };\n\
+               var q: P = P { v: 2 };\n\
                return pair(p, q);\n\
              }",
         );
@@ -18677,8 +18677,8 @@ mod tests {
                return a.inner.x + b.tag;\n\
              }\n\
              fn main() -> i32 {\n\
-               let p: Outer = Outer { inner: Inner { x: 7 }, tag: 1 };\n\
-               let q: Outer = Outer { inner: Inner { x: 3 }, tag: 2 };\n\
+               var p: Outer = Outer { inner: Inner { x: 7 }, tag: 1 };\n\
+               var q: Outer = Outer { inner: Inner { x: 3 }, tag: 2 };\n\
                return touch_both(p, q);\n\
              }",
         );

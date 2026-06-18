@@ -11906,6 +11906,37 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return;
         }
         let _ = self.check_expr(arg, Some(expected.ty.clone()));
+        // v0.0.24 de-Rust (#9 stage 3c): a `ref` parameter writes back to the
+        // caller's value, so the argument must be a `var` (writable) place —
+        // passing a `let`/`const`/temporary would silently mutate an immutable
+        // binding (the live hole: E0305 catches direct/field writes but not the
+        // write across the parameter boundary). Single `is_var` check from the
+        // signature's `ref`, no callee-body inspection, so it stays modular
+        // through fn-pointers / interfaces / generics. The receiver analogue
+        // (`ref this`) is the E0328 check at the method-call site; this is the
+        // same rule for value parameters.
+        //
+        // Scoped to non-Copy `ref` for now: those are the params actually
+        // lowered by-pointer today, so the write-back is real and the rule has
+        // teeth. A Copy `ref` is still passed by value (the C-ABI form), so
+        // demanding a `var` there would be a false promise — making Copy `ref`
+        // write back (lower to `T*`, per the model) is a C-ABI change to verify
+        // against clang and lands as its own step. (`borrow`/bare params have
+        // `mutable == false`; `take` consumes rather than writes back.)
+        if expected.mutable
+            && !expected.move_
+            && !expected.borrow_
+            && !self.is_copy(&expected.ty)
+            && !self.is_writable_place_quiet(arg)
+        {
+            self.err(
+                "E0328",
+                "a `ref` parameter writes back to the caller, so the argument must be a \
+                 mutable (`var`) place"
+                    .to_string(),
+                arg.span,
+            );
+        }
         self.consume_value_arg(arg, expected);
     }
 
@@ -18561,6 +18592,43 @@ fn mv(take r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { let p: P = P { x: 1 }; return p.f(2); }",
         );
         assert!(codes.contains(&"E0334"), "expected E0334, got: {codes:?}");
+    }
+
+    // v0.0.24 de-Rust (#9 stage 3c): a `ref` (by-reference write-back) parameter
+    // requires a `var` caller place — the closed "immutable mutated across the
+    // parameter boundary" hole.
+    #[test]
+    fn ref_param_immutable_arg_e0328() {
+        let codes = errors(
+            "struct Box { v: i32 }\n\
+             impl Box { fn drop(ref this) { return; } }\n\
+             fn bump(ref b: Box) { b.v = b.v +% 1; }\n\
+             fn main() -> i32 { let b: Box = Box { v: 5 }; bump(b); return b.v; }",
+        );
+        assert!(codes.contains(&"E0328"), "expected E0328, got: {codes:?}");
+    }
+
+    #[test]
+    fn ref_param_var_arg_clean() {
+        let codes = errors(
+            "struct Box { v: i32 }\n\
+             impl Box { fn drop(ref this) { return; } }\n\
+             fn bump(ref b: Box) { b.v = b.v +% 1; }\n\
+             fn main() -> i32 { var b: Box = Box { v: 5 }; bump(b); return b.v; }",
+        );
+        assert!(codes.is_empty(), "expected clean, got: {codes:?}");
+    }
+
+    #[test]
+    fn ref_param_rvalue_arg_e0328() {
+        // A temporary (rvalue) has no place to write back to — also rejected.
+        let codes = errors(
+            "struct Box { v: i32 }\n\
+             impl Box { fn drop(ref this) { return; } fn make() -> Box { return Box { v: 1 }; } }\n\
+             fn bump(ref b: Box) { b.v = b.v +% 1; }\n\
+             fn main() -> i32 { bump(Box::make()); return 0; }",
+        );
+        assert!(codes.contains(&"E0328"), "expected E0328, got: {codes:?}");
     }
 
     // ----- Phase 3 slice 3A: move tracking + E0335 -----

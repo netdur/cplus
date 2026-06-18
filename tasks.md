@@ -209,10 +209,32 @@ Tasks 1–6 are independent (any order among themselves).
     `take ref` (still parse-permitted, still E0334 in sema) and flipped the
     `let var` test to assert rejection; added 5 parser rejection tests + 1 e2e.
     `#asm` operand message updated `mut`→`var`. cplus-core 1562 / cpc e2e 629.
-  - [ ] **Stage 3c — `ref`-requires-a-`var`-place `is_var` check** (closes the
-    immutable-through-by-ref hole; one check at the call site from the
-    signature's `ref`, modular through fn-ptrs/interfaces/generics; unifies
-    E0328).
+  - [x] **Stage 3c — `ref`-requires-a-`var`-place `is_var` check.** Wired the
+    pre-existing `is_writable_place_quiet` into `check_arg_with_move` (the
+    single arg/param-modifier site, covers direct + fn-ptr + generic calls):
+    a `ref` argument must be a `var` place, reusing E0328 (the receiver
+    analogue `ref this` was already E0328-checked). No callee-body inspection.
+    Closes the live hole (immutable `let` mutated across the param boundary).
+    SCOPED to non-Copy `ref` for now — those are lowered by-pointer today, so
+    the write-back is real; a Copy `ref` is still passed by value, so demanding
+    `var` there would be a false promise (see 3c-copy). Excludes `borrow_`
+    (read-only) and `take` (consume). Fixed the call-site fallout: 6 e2e
+    borrow-exclusivity/partial-place/env tests passed `let` to `ref` params →
+    `var` (incl. `stdlib_env_var_into`, a real latent bug — `var_into` fills its
+    `out`). +3 sema tests, +1 runtime e2e (write-back reaches the caller). The
+    DECISION that unblocked this: per mem.md, `ref` ALWAYS requires `var` (single
+    is_var check, all types); there is NO read-only `ref` — read-only-by-ref is
+    bare. So the 3c/3e "intertwining" I worried about was a misread; the noalias
+    tests that used read-only `ref` just need `var` callers (interim; they move
+    to bare at 3e). cplus-core 1565 / cpc e2e 630.
+  - [ ] **Stage 3c-copy — Copy `ref` → `T*` write-back.** mem.md: `ref x: T`
+    "lowers to a C out-parameter (`T*`)" for ANY type, incl. Copy (`bump(ref x:
+    i32)` writes back). Today Copy `ref` is by-value (the C-ABI coerced form;
+    pinned by `mut_param_copy_struct_passed_by_value_c_abi`). Unifying requires
+    dropping the `!is_copy` guard in `is_mut_pointer_passed` (sema) + the codegen
+    counterpart, extending the non-Copy by-pointer path to Copy, updating that
+    ABI test, AND verifying the new `T*` lowering against clang (strict-C-ABI
+    rule). Then extend the 3c is_var check to Copy `ref` too.
   - [ ] **Stage 3d — `static mut`→`static` + bare `static` mutable-by-default.**
     Decide: leftover immutable `static` → `const` or stays. Update the
     `static mut` diagnostics (sema ~12729/12738/12926) and the `static mut`

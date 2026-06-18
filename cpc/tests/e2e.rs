@@ -507,6 +507,34 @@ fn var_ref_take_spellings_run() {
     assert_eq!(run.code(), Some(42), "got {:?}", run.code());
 }
 
+// v0.0.24 de-Rust #9 (stage 3c): a `ref` (by-reference) parameter writes back
+// to the caller's value at runtime, and the caller's binding must be `var`.
+// Confirms the by-pointer lowering end-to-end (the write reaches the caller).
+#[test]
+fn ref_param_writes_back_to_var_caller() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("rb.cplus");
+    std::fs::write(
+        &src,
+        "struct Cell { n: i32 }\n\
+         impl Cell { fn drop(ref this) { return; } }\n\
+         fn add_one(ref c: Cell) { c.n = c.n +% 1; }\n\
+         fn main() -> i32 {\n\
+            var c: Cell = Cell { n: 41 };\n\
+            add_one(c);\n\
+            return c.n;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("rb");
+    let status = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    assert!(status.success(), "ref-param write-back program must compile");
+    let run = Command::new(&bin).status().expect("run rb");
+    // add_one mutated c through the `ref` param: 41 -> 42.
+    assert_eq!(run.code(), Some(42), "got {:?}", run.code());
+}
+
 // v0.0.19: monomorphization fix — a turbofish generic call must mangle its
 // callee from its own (collision-free) AST type-args, not from `call_monos`
 // (keyed by a file-less `ByteSpan`). Two turbofish `vec::new::[T]()` calls at
@@ -4155,7 +4183,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn modify_both(ref a: B, ref b: B) { return; }
 fn main() -> i32 {
-    let y: B = B { x: 1 };
+    var y: B = B { x: 1 };
     modify_both(y, y);
     return 0;
 }
@@ -4190,7 +4218,7 @@ impl B { fn drop(ref this) { return; } }
 fn write_thing(ref a: B, n: i32) { return; }
 fn peek(borrow b: B) -> i32 { return b.x; }
 fn main() -> i32 {
-    let y: B = B { x: 1 };
+    var y: B = B { x: 1 };
     write_thing(y, peek(y));
     return 0;
 }
@@ -4224,7 +4252,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn write_and_take(ref a: B, take b: B) { return; }
 fn main() -> i32 {
-    let y: B = B { x: 1 };
+    var y: B = B { x: 1 };
     write_and_take(y, y);
     return 0;
 }
@@ -4264,8 +4292,8 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn modify_both(ref a: B, ref b: B) { return; }
 fn main() -> i32 {
-    let y: B = B { x: 1 };
-    let z: B = B { x: 2 };
+    var y: B = B { x: 1 };
+    var z: B = B { x: 2 };
     modify_both(y, z);
     return 0;
 }
@@ -5695,7 +5723,7 @@ struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(ref this) { return; } }
 fn modify_both(ref a: Inner, ref b: Inner) { return; }
 fn main() -> i32 {
-    let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
+    var p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     modify_both(p.left, p.right);
     return 0;
 }
@@ -10184,7 +10212,7 @@ fn stdlib_env_var_into() {
         "import \"stdlib/env\" as env;\n\
          import \"stdlib/vec\" as vec;\n\
          fn main() -> i32 {\n\
-             let buf: vec::Vec[u8] = vec::new::[u8]();\n\
+             var buf: vec::Vec[u8] = vec::new::[u8]();\n\
              if !env::var_into(\"PATH\", buf) { return 1; }\n\
              if !env::has_var(\"PATH\") { return 2; }\n\
              if env::argc() < (1 as usize) { return 3; }\n\
