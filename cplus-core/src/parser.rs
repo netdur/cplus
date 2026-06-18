@@ -337,6 +337,24 @@ impl Parser {
                     self.parse_impl_block(true)
                 }
             },
+            // v0.0.24 de-Rust: dead Rust keywords are kept reserved ONLY to
+            // emit a targeted "did you mean" diagnostic — C+ has none of them.
+            // Keeping them reserved (rather than freeing the identifier)
+            // guarantees a precise hint here instead of a confusing downstream
+            // error (e.g. a freed `try { ... }` would mis-parse as a struct
+            // literal). See refac.txt / plans/plan.md.
+            TokenKind::Trait => Err(self.err_at_peek(
+                "an item; C+ has no `trait` — declare a method contract with `interface` (`interface Name { ... }`)",
+            )),
+            TokenKind::Use => Err(self.err_at_peek(
+                "an item; C+ has no `use` — import a package with `import \"path\" as alias;` at the top of the file",
+            )),
+            TokenKind::Mod => Err(self.err_at_peek(
+                "an item; C+ has no `mod` and no module tree — packages are string-path imports (`import \"path\" as alias;`)",
+            )),
+            TokenKind::Union => Err(self.err_at_peek(
+                "an item; C+ has no `union` — use `enum` for a tagged (safe) union, or `struct` for a plain aggregate",
+            )),
             // `import` after the file's leading import block is a hard
             // error — call it out by name so the diagnostic explains the
             // restriction.
@@ -3414,6 +3432,12 @@ impl Parser {
                     span,
                 })
             }
+            // v0.0.24 de-Rust: `try` is reserved only to hint here — C+ has no
+            // try/`?` construct. (Kept reserved so it never mis-parses as e.g.
+            // a `try { ... }` struct literal.)
+            TokenKind::Try => Err(self.err_at_peek(
+                "an expression; `try` is not a C+ keyword — there is no try/`?` error-propagation construct",
+            )),
             _ => Err(self.err_at_peek("expression")),
         }
     }
@@ -3697,6 +3721,12 @@ fn tok_name(k: &TokenKind) -> &'static str {
         TokenKind::True => "`true`",
         TokenKind::False => "`false`",
         TokenKind::As => "`as`",
+        // v0.0.24 de-Rust: dead keywords kept reserved only for a targeted hint.
+        TokenKind::Trait => "`trait`",
+        TokenKind::Use => "`use`",
+        TokenKind::Mod => "`mod`",
+        TokenKind::Union => "`union`",
+        TokenKind::Try => "`try`",
         TokenKind::LParen => "`(`",
         TokenKind::RParen => "`)`",
         TokenKind::LBrace => "`{`",
@@ -3727,6 +3757,58 @@ mod tests {
     fn empty_program() {
         let p = parse_src("").unwrap();
         assert!(p.items.is_empty());
+    }
+
+    // v0.0.24 de-Rust: the dead Rust keywords `trait`/`use`/`mod`/`union`/`try`
+    // are reserved only to emit a targeted "did you mean" diagnostic instead of
+    // a generic "expected item/expression". Verify each points at the right
+    // C+ construct and reports the offending keyword.
+    fn unexpected(e: &ParseError) -> (&str, &str) {
+        match &e.kind {
+            ParseErrorKind::Unexpected { expected, found } => (expected, found.as_str()),
+            other => panic!("expected ParseErrorKind::Unexpected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dead_keyword_trait_hints_interface() {
+        let e = parse_src("trait Greeter { }").unwrap_err();
+        let (expected, found) = unexpected(&e);
+        assert!(expected.contains("interface"), "got: {expected}");
+        assert!(found.contains("trait"), "found: {found}");
+    }
+
+    #[test]
+    fn dead_keyword_use_hints_import() {
+        let e = parse_src("use foo::bar;").unwrap_err();
+        let (expected, found) = unexpected(&e);
+        assert!(expected.contains("import"), "got: {expected}");
+        assert!(found.contains("use"), "found: {found}");
+    }
+
+    #[test]
+    fn dead_keyword_mod_hints_import() {
+        let e = parse_src("mod foo { }").unwrap_err();
+        let (expected, found) = unexpected(&e);
+        assert!(expected.contains("import"), "got: {expected}");
+        assert!(found.contains("mod"), "found: {found}");
+    }
+
+    #[test]
+    fn dead_keyword_union_hints_enum_or_struct() {
+        let e = parse_src("union U { a: i32 }").unwrap_err();
+        let (expected, found) = unexpected(&e);
+        assert!(expected.contains("enum") && expected.contains("struct"), "got: {expected}");
+        assert!(found.contains("union"), "found: {found}");
+    }
+
+    #[test]
+    fn dead_keyword_try_hints_no_construct() {
+        // `try` is an expression-position keyword, so exercise it inside a body.
+        let e = parse_src("fn f() -> i32 { try { } }").unwrap_err();
+        let (expected, found) = unexpected(&e);
+        assert!(expected.contains("not a C+ keyword"), "got: {expected}");
+        assert!(found.contains("try"), "found: {found}");
     }
 
     #[test]
