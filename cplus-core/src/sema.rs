@@ -6013,6 +6013,10 @@ impl SemaCx<'_> {
             // `#align_of::[T]()`). Routed through the unified `#name` dispatch
             // so every compiler-known builtin shares one sigil.
             "addr_of" => self.check_intrinsic_addr_of(type_args, args, ret_ty, span),
+            // v0.0.24 de-Rust: `#addr(p)` — raw pointer → integer (`usize`), the
+            // loud replacement for the bare `p as usize` cast. Inverse of
+            // `#addr_of` (place → pointer).
+            "addr" => self.check_intrinsic_addr(type_args, args, ret_ty, span),
             "include_bytes" => self.check_intrinsic_include_bytes(type_args, args, ret_ty, span),
             "include_str" => self.check_intrinsic_include_str(type_args, args, ret_ty, span),
             "env" => self.check_intrinsic_env(type_args, args, ret_ty, span),
@@ -6437,6 +6441,64 @@ impl SemaCx<'_> {
             return Ty::Error;
         }
         Ty::RawPtr(Box::new(ty))
+    }
+
+    /// v0.0.24 de-Rust: `#addr(p)` — raw pointer → integer (`usize`). The loud
+    /// replacement for `p as usize`: the pointer op is visible in the
+    /// expression (`#addr`), not hidden in the destination type. Inverse of
+    /// `#addr_of`. Unsafe-gated today like `p as usize`; un-gates with the rest
+    /// when `unsafe` is dropped (task #7).
+    fn check_intrinsic_addr(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err(
+                "E0501",
+                format!("`#addr` takes no type arguments, got {}", type_args.len()),
+                span,
+            );
+        }
+        if ret_ty.is_some() {
+            self.err(
+                "E0903",
+                "`#addr` does not accept a `-> T` return-type ascription".to_string(),
+                span,
+            );
+        }
+        if args.len() != 1 {
+            self.err(
+                "E0308",
+                format!("`#addr` takes exactly 1 argument, got {}", args.len()),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Usize;
+        }
+        if self.unsafe_depth == 0 {
+            self.err(
+                "E0801",
+                "`#addr` is unsafe; wrap in `unsafe { ... }`".to_string(),
+                span,
+            );
+        }
+        let ty = self.check_expr(&args[0], None);
+        if !matches!(ty, Ty::RawPtr(_) | Ty::Error) {
+            self.err(
+                "E0302",
+                format!(
+                    "`#addr` argument must be a raw pointer `*T`, found `{}`",
+                    ty_display(&ty)
+                ),
+                args[0].span,
+            );
+        }
+        Ty::Usize
     }
 
     // ---- v0.0.11 Phase 4: `#include_bytes("path")` ----
@@ -18919,6 +18981,27 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn param_shadow_by_local_allowed_no_e0363() {
         let codes = errors("fn f(x: i32) -> i32 { let x: i32 = 2; return x; }");
         assert!(!codes.contains(&"E0363"), "param shadow must be allowed, got: {codes:?}");
+    }
+
+    // v0.0.24 de-Rust: `#addr(p)` — raw pointer → usize (loud `p as usize`).
+    #[test]
+    fn addr_intrinsic_on_pointer_is_usize() {
+        let codes = errors("fn f(p: *i32) -> usize { return unsafe { #addr(p) }; }");
+        assert!(!codes.contains(&"E0905"), "#addr must be a known intrinsic, got: {codes:?}");
+        assert!(!codes.contains(&"E0302"), "*i32 is a valid #addr arg, got: {codes:?}");
+        assert!(!codes.contains(&"E0801"), "inside unsafe there is no E0801, got: {codes:?}");
+    }
+
+    #[test]
+    fn addr_intrinsic_on_non_pointer_e0302() {
+        let codes = errors("fn f(x: i32) -> usize { return unsafe { #addr(x) }; }");
+        assert!(codes.contains(&"E0302"), "expected E0302 for non-pointer #addr, got: {codes:?}");
+    }
+
+    #[test]
+    fn addr_intrinsic_outside_unsafe_e0801() {
+        let codes = errors("fn f(p: *i32) -> usize { return #addr(p); }");
+        assert!(codes.contains(&"E0801"), "expected E0801 outside unsafe, got: {codes:?}");
     }
 
     #[test]

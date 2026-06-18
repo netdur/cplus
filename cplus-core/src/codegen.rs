@@ -9844,6 +9844,8 @@ impl<'a> FnState<'a> {
             "compile_shader" => Some(self.gen_intrinsic_compile_shader(span)),
             // v0.0.11 Phase 4: intrinsic-spelling migration.
             "addr_of" => Some(self.gen_intrinsic_addr_of(args)),
+            // v0.0.24 de-Rust: `#addr(p)` — raw pointer → usize (`ptrtoint`).
+            "addr" => Some(self.gen_intrinsic_addr(args)),
             "include_bytes" => Some(self.gen_intrinsic_include_bytes(span)),
             "include_str" => Some(self.gen_intrinsic_include_str(span)),
             "env" => Some(self.gen_intrinsic_env(span)),
@@ -10024,6 +10026,16 @@ impl<'a> FnState<'a> {
     fn gen_intrinsic_addr_of(&mut self, args: &[Expr]) -> (String, Ty) {
         let (slot, ty) = self.gen_place(&args[0]);
         (slot, Ty::RawPtr(Box::new(ty)))
+    }
+
+    /// v0.0.24 de-Rust: `#addr(p)` — raw pointer → `usize` (`ptrtoint`). The
+    /// loud spelling of `p as usize`; the inverse of `#addr_of`.
+    fn gen_intrinsic_addr(&mut self, args: &[Expr]) -> (String, Ty) {
+        let (v, _) = self.gen_expr(&args[0]).expect("#addr argument");
+        let r = self.next_tmp();
+        let us = self.lty(&Ty::Usize);
+        self.emit(&format!("{r} = ptrtoint ptr {v} to {us}"));
+        (r, Ty::Usize)
     }
 
     /// v0.0.11 Phase 4: `#include_bytes("path")` — address of a private
@@ -17373,6 +17385,13 @@ mod tests {
         let ir = gen_src("fn f(x: i32, n: i32) -> i32 { return x << n; }");
         assert!(ir.contains("and i32"), "shift count must be masked, got: {ir}");
         assert!(ir.contains(" = shl i32 "), "expected shl, got: {ir}");
+    }
+
+    #[test]
+    fn addr_intrinsic_emits_ptrtoint_v0024() {
+        // v0.0.24 de-Rust: `#addr(p)` lowers to `ptrtoint` (the loud `p as usize`).
+        let ir = gen_src("fn f(p: *i32) -> usize { return unsafe { #addr(p) }; }");
+        assert!(ir.contains("ptrtoint ptr"), "expected ptrtoint, got: {ir}");
     }
 
     #[test]

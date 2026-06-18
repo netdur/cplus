@@ -326,6 +326,42 @@ fn cplus_intrinsic_sigil_forms_run() {
     assert_eq!(run.code(), Some(15), "got {:?}", run.code());
 }
 
+// v0.0.24 de-Rust: `#addr(p)` is the loud spelling of `p as usize`. Verify at
+// runtime (compile + link + run) that the two produce the identical address.
+#[test]
+fn addr_intrinsic_matches_ptr_to_usize_cast() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("addr.cplus");
+    std::fs::write(
+        &src,
+        "fn main() -> i32 {\n\
+            let mut x: i32 = 41;\n\
+            let p: *i32 = unsafe { #addr_of(x) };\n\
+            let via_intrinsic: usize = unsafe { #addr(p) };\n\
+            let via_cast: usize = unsafe { p as usize };\n\
+            if via_intrinsic == via_cast { return 0; }\n\
+            return 1;\n\
+        }\n",
+    )
+    .unwrap();
+    let bin = dir.join("addr");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "#addr program must compile");
+    let run = Command::new(&bin).status().expect("run addr");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "#addr(p) must equal `p as usize`; got {:?}",
+        run.code()
+    );
+}
+
 // v0.0.19: monomorphization fix — a turbofish generic call must mangle its
 // callee from its own (collision-free) AST type-args, not from `call_monos`
 // (keyed by a file-less `ByteSpan`). Two turbofish `vec::new::[T]()` calls at
