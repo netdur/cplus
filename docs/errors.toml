@@ -1562,7 +1562,7 @@ fix = "Implement every method the interface declares."
 example = '''
 interface Two { fn first(self) -> i32; fn second(self) -> i32; }
 struct P { x: i32 }
-impl P for Two { fn first(self) -> i32 { return 0; } }
+impl P: Two { fn first(self) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1581,7 +1581,7 @@ fix = "Move the extra method to an inherent `impl Type { ... }` block."
 example = '''
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl P for One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
+impl P: One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1600,7 +1600,7 @@ fix = "Make the impl method's signature match the interface declaration exactly.
 example = '''
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl P for One { fn a(self) -> bool { return true; } }
+impl P: One { fn a(self) -> bool { return true; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1619,8 +1619,8 @@ fix = "Remove the duplicate impl block."
 example = '''
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl P for One { fn a(self) -> i32 { return 0; } }
-impl P for One { fn a(self) -> i32 { return 1; } }
+impl P: One { fn a(self) -> i32 { return 0; } }
+impl P: One { fn a(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 '''
 
@@ -1637,7 +1637,7 @@ cause = "An `impl Type for Interface` block lives in a file that declares neithe
 fix = "Declare the impl in the same file as either the interface or the type."
 example = '''
 // in a third file that imports both Iface and Ty:
-impl Ty for Iface { fn a(self) -> i32 { return 0; } }
+impl Ty: Iface { fn a(self) -> i32 { return 0; } }
 '''
 
 [[code]]
@@ -2005,7 +2005,7 @@ cause = "A `Send` or `Sync` marker is implemented with a bare `impl` (no `unsafe
 fix = "Write `unsafe impl T for Send {}` — the marker is a promise you make."
 example = '''
 struct Handle { opaque p: *u8 }
-impl Handle for Send {}
+impl Handle: Send {}
 fn main() -> i32 { return 0; }
 // -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Handle for Send {}`
 '''
@@ -2025,7 +2025,7 @@ fix = "Remove `unsafe`; it applies only to those two markers."
 example = '''
 interface Greet { fn hi(self) -> i32; }
 struct S { x: i32 }
-unsafe impl S for Greet { fn hi(self) -> i32 { return self.x; } }
+unsafe impl S: Greet { fn hi(self) -> i32 { return self.x; } }
 fn main() -> i32 { return 0; }
 // -> [E0861] `unsafe impl` applies only to the `Send` / `Sync` markers
 '''
@@ -2670,7 +2670,7 @@ cause = "A raw-pointer field in a `Drop` type is freed inside `drop` only under 
 fix = "Confirm it frees on every owning path (expected for refcounted types)."
 example = '''
 struct Cell { p: *u8 }
-impl Cell for Drop {
+impl Cell: Drop {
     fn drop(self) {
         if some_condition() { free(self.p); }  // freed only conditionally
     }

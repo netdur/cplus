@@ -262,7 +262,7 @@ fn interface_bound_generic_backend_runs() {
         &src,
         "interface Backend { fn flush(self) -> i32; }\n\
          struct Mac { fd: i32 }\n\
-         impl Mac for Backend { fn flush(self) -> i32 { return self.fd; } }\n\
+         impl Mac: Backend { fn flush(self) -> i32 { return self.fd; } }\n\
          struct App[B: Backend] { backend: B }\n\
          impl App[B: Backend] { fn run(self) -> i32 { return self.backend.flush(); } }\n\
          fn render[B: Backend](b: B) -> i32 { return b.flush(); }\n\
@@ -1730,7 +1730,7 @@ fn generic_body_receiver_less_interface_call_rejected_e0327() {
     assert_compile_fails_with(
         "struct P { x: i32 }\n\
          interface Maker { fn make() -> i32; }\n\
-         impl P for Maker { fn make() -> i32 { return 7; } }\n\
+         impl P: Maker { fn make() -> i32 { return 7; } }\n\
          fn call_make[T: Maker](t: T) -> i32 { return t.make(); }\n\
          fn main() -> i32 { let p: P = P { x: 1 }; return call_make::[P](p); }\n",
         "E0327",
@@ -1746,7 +1746,7 @@ fn generic_body_use_after_move_rejected_e0335() {
          impl R { fn drop(mut self) { return; } }\n\
          struct P {}\n\
          interface Sink { fn sink(self, r: R); }\n\
-         impl P for Sink { fn sink(self, r: R) { return; } }\n\
+         impl P: Sink { fn sink(self, r: R) { return; } }\n\
          fn use_twice[T: Sink](t: T) -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
            t.sink(r);\n\
@@ -1767,7 +1767,7 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
          impl R { fn drop(mut self) { return; } }\n\
          struct P {}\n\
          interface Sink { fn sink(self, r: R); }\n\
-         impl P for Sink { fn sink(self, r: R) { return; } }\n\
+         impl P: Sink { fn sink(self, r: R) { return; } }\n\
          fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
          fn main() -> i32 {\n\
            let p: P = P {};\n\
@@ -1791,7 +1791,7 @@ fn generic_path_assoc_fn_through_bound_compiles_and_runs() {
         &src,
         "struct P { x: i32 }\n\
          interface Maker { fn make() -> i32; }\n\
-         impl P for Maker { fn make() -> i32 { return 7; } }\n\
+         impl P: Maker { fn make() -> i32 { return 7; } }\n\
          fn call_make[T: Maker]() -> i32 { return T::make(); }\n\
          fn main() -> i32 { return call_make::[P](); }\n",
     )
@@ -1816,7 +1816,7 @@ fn generic_bound_method_arity_mismatch_rejected_e0308() {
     assert_compile_fails_with(
         "struct P { x: i32 }\n\
          interface Add { fn add(self, rhs: i32) -> i32; }\n\
-         impl P for Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+         impl P: Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
          fn call_add[T: Add](t: T) -> i32 { return t.add(2, 3); }\n\
          fn main() -> i32 { let p: P = P { x: 4 }; return call_add::[P](p); }\n",
         "E0308",
@@ -1834,7 +1834,7 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
         "interface Take { fn take(move self) -> i32; }\n\
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(mut self) { return; } }\n\
-         impl R for Take { fn take(move self) -> i32 { return 0; } }\n\
+         impl R: Take { fn take(move self) -> i32 { return 0; } }\n\
          fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
          fn main() -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
@@ -6040,7 +6040,7 @@ fn doctest_does_not_interfere_with_cpc_build() {
 #[test]
 fn phase7_generic_decls_and_impl_interface_clean() {
     // Parses + sema-checks a file exercising generic fns, generic types,
-    // an interface decl, and an `impl Type for Interface` block with a
+    // an interface decl, and an `impl Type: Interface` block with a
     // matching method signature. Pre-monomorphization (7GEN.5) the
     // generic items are codegen-skipped; the concrete `main` runs.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -6054,7 +6054,7 @@ fn phase7_generic_decls_and_impl_interface_clean() {
          struct Pair[A, B] { first: A, second: B }\n\
          enum Maybe[T] { Some(T), None }\n\
          struct Point { x: i32, y: i32 }\n\
-         impl Point for Compare { fn compare(self, other: i32) -> i32 { return 0; } }\n\
+         impl Point: Compare { fn compare(self, other: i32) -> i32 { return 0; } }\n\
          fn identity[T](x: T) -> T { return x; }\n\
          fn main() -> i32 { return 7; }\n",
     )
@@ -6084,7 +6084,7 @@ fn phase7_impl_interface_missing_method_rejected_e0503() {
         &src,
         "interface Two { fn a(self) -> i32; fn b(self) -> i32; }\n\
          struct P { x: i32 }\n\
-         impl P for Two { fn a(self) -> i32 { return 0; } }\n\
+         impl P: Two { fn a(self) -> i32 { return 0; } }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
@@ -7014,7 +7014,7 @@ fn phase7_method_generic_interface_bound_satisfied_runs() {
          struct Box[T] { value: T }\n\
          impl Box[T] { fn run[U: Show](self, x: U) -> i32 { return x.show(); } }\n\
          struct W { n: i32 }\n\
-         impl W for Show { fn show(self) -> i32 { return self.n; } }\n\
+         impl W: Show { fn show(self) -> i32 { return self.n; } }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32] { value: 0 };\n\
              let w: W = W { n: 7 };\n\
@@ -13491,7 +13491,7 @@ fn stdlib_qualified_generic_enum_construct_and_match() {
 /// bound's interface signature, so the call type-checks at sema time
 /// instead of failing as "no method `cmp` on type `type-param`".
 /// Monomorphization then substitutes T → concrete type and the call
-/// dispatches to that type's `impl T for Ord` method.
+/// dispatches to that type's `impl T: Ord` method.
 fn generic_max_with_ord_bound_calls_cmp_in_body() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
@@ -13500,7 +13500,7 @@ fn generic_max_with_ord_bound_calls_cmp_in_body() {
         &src,
         "\
 struct Point { x: i32, y: i32 }
-impl Point for Ord {
+impl Point: Ord {
     fn cmp(self, other: Point) -> i32 {
         if self.x < other.x { return 0 -% 1; }
         if self.x > other.x { return 1; }
@@ -13550,7 +13550,7 @@ fn interface_self_in_fn_ptr_through_generic_dispatch() {
         "\
 struct P { x: i32 }
 interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; }
-impl P for Apply {
+impl P: Apply {
     fn apply(self, f: fn(P) -> i32) -> i32 { return f(self); }
 }
 fn read(p: P) -> i32 { return p.x; }
@@ -13590,7 +13590,7 @@ fn interface_self_in_generic_instantiation_return() {
 struct Holder[A] { v: A }
 struct P { x: i32 }
 interface Wrap { fn wrap(self) -> Holder[Self]; }
-impl P for Wrap {
+impl P: Wrap {
     fn wrap(self) -> Holder[P] { return Holder[P] { v: self }; }
 }
 fn run[T: Wrap](t: T) -> Holder[T] { return t.wrap(); }
@@ -21347,7 +21347,7 @@ fn unsafe_impl_send_compiles_and_runs_end_to_end() {
         &src,
         "\
 struct Handle { opaque p: *u8 }
-unsafe impl Handle for Send {}
+unsafe impl Handle: Send {}
 fn ship[T: Send](v: T) -> T { return v; }
 fn main() -> i32 {
     let h: Handle = Handle { p: unsafe { 7 as *u8 } };

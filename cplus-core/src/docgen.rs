@@ -270,11 +270,11 @@ fn update_impl_tracker(line: &str, current: &mut Option<String>) {
             .collect::<String>()
             .trim()
             .to_string();
-        // `impl TYPE for INTERFACE` → use TYPE (the part before " for ") as the
-        // implementing type. The order is type-first (`impl Counter for Display`
-        // means "Counter implements Display"), so the type, not the interface,
-        // qualifies the method name. Strip any generic params off the type
-        // (`impl Vec[T] for Iterator` → `Vec`).
+        // Type-first: `impl TYPE: INTERFACE` → use TYPE (the implementing type)
+        // to qualify the method name. v0.0.24 de-Rust: the connector is `:`, and
+        // the `take_while` above stops at it, so `name` is already just the type
+        // for `:`-form code (the `" for "` split below is vestigial back-compat,
+        // a no-op now). Strip any generic params (`impl Vec[T]: Iterator` → `Vec`).
         let type_part = match name.find(" for ") {
             Some(idx) => name[..idx].trim(),
             None => name.trim(),
@@ -405,7 +405,7 @@ impl Point {
         let src = "\
 pub interface Display { fn show(self) -> i32 }
 
-impl Counter for Display {
+impl Counter: Display {
     /// Show the counter's value.
     pub fn show(self) -> i32 { return self.value; }
 }

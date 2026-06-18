@@ -23,7 +23,7 @@ interface Allocator {
 
 struct CMalloc {}
 
-impl CMalloc for Allocator {
+impl CMalloc: Allocator {
     fn allocate(self, bytes: usize) -> *u8 {
         return unsafe { malloc(bytes) };
     }

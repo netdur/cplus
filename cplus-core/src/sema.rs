@@ -129,7 +129,7 @@ pub enum Ty {
     },
     /// Slice 7GEN.4: a generic type parameter, identified by name. Appears
     /// inside the body of a generic fn / method / struct / enum or inside an
-    /// `interface` / `impl Interface for ...` block (where `Self` is
+    /// `interface` / `impl Interface: ...` block (where `Self` is
     /// represented as `Param("Self")`). Two `Ty::Param` values are equal
     /// iff their names match — the surrounding signature gives them meaning.
     /// Substitution at instantiation time (slice 7GEN.5) replaces each
@@ -425,7 +425,7 @@ pub struct InterfaceDef {
     pub name: String,
     pub methods: HashMap<String, MethodSig>,
     /// File the interface was declared in. Used by the orphan rule
-    /// (E0507): an `impl Type for Interface` block must live in the same
+    /// (E0507): an `impl Type: Interface` block must live in the same
     /// file as either the interface or the implementing type. `None` in
     /// single-file mode.
     pub origin_file: Option<String>,
@@ -1093,15 +1093,15 @@ struct SemaCx<'a> {
     /// type happens at impl-validation time.
     interfaces: HashMap<String, InterfaceDef>,
     /// Slice 7GEN.4: set of `(interface_name, target_type_name)` pairs
-    /// that have a registered `impl Type for Interface` block. Used by
+    /// that have a registered `impl Type: Interface` block. Used by
     /// E0506 (duplicate impl) and by future bound-checking call sites
     /// (E0502 — type does not satisfy interface bound, slice 7GEN.5).
     interface_impls: std::collections::HashSet<(String, String)>,
-    /// v0.0.14: registered `unsafe impl Send/Sync for T {}` overrides, keyed
+    /// v0.0.14: registered `unsafe impl Send/Sync: T {}` overrides, keyed
     /// by `(marker, type_name)` where `type_name` is the source-written name
     /// (the template leaf for a generic target, e.g. `"Arc"`). The value is
     /// the per-type-param bound list from a conditional impl
-    /// (`unsafe impl Arc[T: Send + Sync] for Send` → `[["Send","Sync"]]`);
+    /// (`unsafe impl Arc[T: Send + Sync]: Send` → `[["Send","Sync"]]`);
     /// an empty Vec means an unconditional override (`unsafe impl Send for
     /// Handle {}`). Consulted by `is_send`/`is_sync` to re-enable a type the
     /// structural raw-pointer rule would otherwise reject.
@@ -1697,7 +1697,7 @@ impl SemaCx<'_> {
     /// to the acquiring thread). All other types remain `Send`. Detected by
     /// the generic template name behind the instantiated struct.
     ///
-    /// Deferred (needs an `unsafe impl T for Send {}` opt-in that doesn't
+    /// Deferred (needs an `unsafe impl T: Send {}` opt-in that doesn't
     /// exist yet): the broad "structs with raw-pointer fields are `!Send`"
     /// rule. Enabling it without an escape hatch would reject most FFI code
     /// (ObjC bindings, channels, mutexes). Structural propagation through a
@@ -1805,7 +1805,7 @@ impl SemaCx<'_> {
         }
     }
 
-    /// For a conditional override (`unsafe impl Arc[T: Send + Sync] for Send`),
+    /// For a conditional override (`unsafe impl Arc[T: Send + Sync]: Send`),
     /// check the instantiation's type args against the declared per-param
     /// bounds. Empty bounds = an unconditional override (`unsafe impl Send for
     /// Handle {}`). A conditional impl on a type with no recoverable args is
@@ -1988,7 +1988,7 @@ impl SemaCx<'_> {
         // interfaces. v0.0.4 baseline is permissive — every type
         // satisfies both. Future slices tighten: Rc[T] / MutexGuard[T]
         // explicitly !Send, raw-pointer-bearing structs !Send unless
-        // user opts in via `unsafe impl T for Send`. The bound API
+        // user opts in via `unsafe impl T: Send`. The bound API
         // is locked in now so generic signatures (`thread::spawn[O: Send]`)
         // compose forward-compatibly with future tightening.
         if bound == "Send" {
@@ -2687,7 +2687,7 @@ impl SemaCx<'_> {
     /// Slice 7GEN.6: register the compiler-blessed interfaces
     /// (`Copy`, `Eq`, `Ord`, `Hash`, `Clone`) into the interfaces
     /// table. Users implement most of them manually; `Copy` is a
-    /// marker that's structurally inferred (manual `impl X for Copy`
+    /// marker that's structurally inferred (manual `impl X: Copy`
     /// is rejected with E0510).
     ///
     /// Method signatures use `Ty::Param("Self")` for the implementing
@@ -2736,7 +2736,7 @@ impl SemaCx<'_> {
             // Phase 8 slice 8.STR.6 (renamed v0.0.19): `ToText` — produces an
             // owned `Text`. Blessed impls cover every primitive + str; user
             // types add their own via the usual
-            // `impl Foo for ToText { fn to_text(self) -> Text }` surface.
+            // `impl Foo: ToText { fn to_text(self) -> Text }` surface.
             // (Was `ToString`/`to_string` until v0.0.19; renamed to track the
             // surviving owned-string type after `string` → `Text`.)
             ("ToText", "to_text", Ty::String, false),
@@ -2855,14 +2855,14 @@ impl SemaCx<'_> {
         self.current_file = None;
     }
 
-    /// Slice 7GEN.4: validate every `impl Type for Interface { ... }` block.
+    /// Slice 7GEN.4: validate every `impl Type: Interface { ... }` block.
     ///
     /// Reports:
     /// - **E0503** — interface impl missing a required method.
     /// - **E0504** — interface impl has a method not declared by the interface.
     /// - **E0505** — interface method signature mismatch (with `Self`
     ///   substituted to the implementing type).
-    /// - **E0506** — duplicate `impl Type for Interface` for the same pair.
+    /// - **E0506** — duplicate `impl Type: Interface` for the same pair.
     /// - **E0507** — orphan rule: impl must live in the same file as
     ///   either the interface or the implementing type.
     ///
@@ -2890,7 +2890,7 @@ impl SemaCx<'_> {
                 continue;
             };
             // Slice 7GEN.6: `Copy` is structurally inferred — manual
-            // `impl X for Copy` is rejected with E0510. The structural
+            // `impl X: Copy` is rejected with E0510. The structural
             // Copy flag (`is_copy` on StructDef/EnumDef) is what
             // satisfies the `T: Copy` bound at use sites.
             if iface_name.name == "Copy" {
@@ -2905,16 +2905,16 @@ impl SemaCx<'_> {
             // v0.0.14: `Send` / `Sync` are unsafe marker overrides. They take
             // no methods (the body must be empty `{}`) and assert thread
             // safety the compiler can't prove, so the impl must carry
-            // `unsafe`. A bare `impl T for Send {}` is E0860. The override is
+            // `unsafe`. A bare `impl T: Send {}` is E0860. The override is
             // recorded for `is_send`/`is_sync`; a conditional impl
-            // (`unsafe impl Arc[T: Send + Sync] for Send`) records its
+            // (`unsafe impl Arc[T: Send + Sync]: Send`) records its
             // per-param bounds so the marker only holds when they're met.
             if iface_name.name == "Send" || iface_name.name == "Sync" {
                 if !b.is_unsafe {
                     diags.push(Diag {
                         code: "E0860",
                         msg: format!(
-                            "`{}` is an unsafe assertion — write `unsafe impl {} for {} {{}}` to vouch for thread safety the compiler can't verify",
+                            "`{}` is an unsafe assertion — write `unsafe impl {}: {} {{}}` to vouch for thread safety the compiler can't verify",
                             iface_name.name, iface_name.name, b.target.name
                         ),
                         span: iface_name.span,
@@ -2926,7 +2926,7 @@ impl SemaCx<'_> {
                     diags.push(Diag {
                         code: "E0860",
                         msg: format!(
-                            "`unsafe impl {} for {}` must have an empty body — `Send`/`Sync` are marker interfaces with no methods",
+                            "`unsafe impl {}: {}` must have an empty body — `Send`/`Sync` are marker interfaces with no methods",
                             iface_name.name, b.target.name
                         ),
                         span: iface_name.span,
@@ -2978,7 +2978,7 @@ impl SemaCx<'_> {
                 diags.push(Diag {
                     code: "E0325",
                     msg: format!(
-                        "`impl {} for {}` — `{}` is not a known struct",
+                        "`impl {}: {}` — `{}` is not a known struct",
                         iface_name.name, b.target.name, b.target.name
                     ),
                     span: b.target.span,
@@ -2998,7 +2998,7 @@ impl SemaCx<'_> {
                 diags.push(Diag {
                     code: "E0507",
                     msg: format!(
-                        "orphan `impl {} for {}` — must be declared in the same file as either the interface or the type",
+                        "orphan `impl {}: {}` — must be declared in the same file as either the interface or the type",
                         iface_name.name, b.target.name
                     ),
                     span: iface_name.span,
@@ -3012,7 +3012,7 @@ impl SemaCx<'_> {
                 diags.push(Diag {
                     code: "E0506",
                     msg: format!(
-                        "duplicate `impl {} for {}` — a type may have at most one impl of any given interface",
+                        "duplicate `impl {}: {}` — a type may have at most one impl of any given interface",
                         b.target.name, iface_name.name
                     ),
                     span: iface_name.span,
@@ -3036,7 +3036,7 @@ impl SemaCx<'_> {
                     diags.push(Diag {
                         code: "E0503",
                         msg: format!(
-                            "`impl {} for {}` is missing method `{}` required by interface",
+                            "`impl {}: {}` is missing method `{}` required by interface",
                             b.target.name, iface_name.name, mname
                         ),
                         span,
@@ -3055,7 +3055,7 @@ impl SemaCx<'_> {
                     diags.push(Diag {
                         code: "E0505",
                         msg: format!(
-                            "method `{}` in `impl {} for {}` does not match the interface signature",
+                            "method `{}` in `impl {}: {}` does not match the interface signature",
                             mname, b.target.name, iface_name.name
                         ),
                         span,
@@ -3072,7 +3072,7 @@ impl SemaCx<'_> {
                     diags.push(Diag {
                         code: "E0504",
                         msg: format!(
-                            "method `{}` in `impl {} for {}` is not declared by the interface; move it to an inherent `impl {} {{ ... }}` block",
+                            "method `{}` in `impl {}: {}` is not declared by the interface; move it to an inherent `impl {} {{ ... }}` block",
                             m.name.name, iface_name.name, b.target.name, b.target.name
                         ),
                         span: m.name.span,
@@ -9595,7 +9595,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Phase 8 slice 8.STR.6 (renamed v0.0.19): blessed `to_text()` on every
         // primitive + `str`. Returns an owned `Text`. User-defined structs hit
         // the normal method-lookup below; if they provide
-        // `impl Foo for ToText { fn to_text(self) -> Text }`, that path handles
+        // `impl Foo: ToText { fn to_text(self) -> Text }`, that path handles
         // them.
         if name.name == "to_text"
             && args.is_empty()
@@ -10061,7 +10061,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// Phase 8 slice 8.STR.B: type-check an interpolated string literal.
     /// Walk each part; each `Expr` part must have a type that satisfies
     /// `ToText` (blessed primitives + `str`, or a user-declared
-    /// `impl Foo for ToText`). Result type is `Ty::String`.
+    /// `impl Foo: ToText`). Result type is `Ty::String`.
     fn check_interp_str(&mut self, parts: &[crate::ast::InterpStrPart], span: ByteSpan) -> Ty {
         use crate::ast::InterpStrPart;
         for part in parts {
@@ -10123,7 +10123,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// `Text` is intentionally NOT here — its `.clone()` duplicates an owned
     /// string, so `t.to_text()` would be a redundant alias. User-declared
     /// structs aren't here either — they go through normal method-lookup with
-    /// an `impl Foo for ToText` provided by the user.
+    /// an `impl Foo: ToText` provided by the user.
     fn is_blessed_to_text_receiver(ty: &Ty) -> bool {
         matches!(
             ty,
@@ -16115,7 +16115,7 @@ mod tests {
         assert_has_code(
             "struct P { x: i32 }\n\
              interface Maker { fn make() -> i32; }\n\
-             impl P for Maker { fn make() -> i32 { return 7; } }\n\
+             impl P: Maker { fn make() -> i32 { return 7; } }\n\
              fn call_make[T: Maker](t: T) -> i32 { return t.make(); }\n\
              fn main() -> i32 { return 0; }",
             "E0327",
@@ -16131,7 +16131,7 @@ mod tests {
              impl R { fn drop(mut self) { return; } }\n\
              struct P {}\n\
              interface Sink { fn sink(self, r: R); }\n\
-             impl P for Sink { fn sink(self, r: R) { return; } }\n\
+             impl P: Sink { fn sink(self, r: R) { return; } }\n\
              fn use_twice[T: Sink](t: T) -> i32 {\n\
                  let r: R = R { data: unsafe { 0 as *u8 } };\n\
                  t.sink(r);\n\
@@ -16169,7 +16169,7 @@ mod tests {
         assert_clean(
             "struct P { x: i32 }\n\
              interface Maker { fn make() -> i32; }\n\
-             impl P for Maker { fn make() -> i32 { return 7; } }\n\
+             impl P: Maker { fn make() -> i32 { return 7; } }\n\
              fn call_make[T: Maker]() -> i32 { return T::make(); }\n\
              fn main() -> i32 { return call_make::[P](); }",
         );
@@ -16182,7 +16182,7 @@ mod tests {
         assert_has_code(
             "struct P { x: i32 }\n\
              interface I { fn val(self) -> i32; }\n\
-             impl P for I { fn val(self) -> i32 { return self.x; } }\n\
+             impl P: I { fn val(self) -> i32 { return self.x; } }\n\
              fn f[T: I]() -> i32 { return T::val(); }\n\
              fn main() -> i32 { return 0; }",
             "E0327",
@@ -16219,7 +16219,7 @@ mod tests {
         assert_has_code(
             "struct P { x: i32 }\n\
              interface Add { fn add(self, rhs: i32) -> i32; }\n\
-             impl P for Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+             impl P: Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
              fn call_add[T: Add](t: T) -> i32 { return t.add(2, 3); }\n\
              fn main() -> i32 { return 0; }",
             "E0308",
@@ -16231,7 +16231,7 @@ mod tests {
         assert_clean(
             "struct P { x: i32 }\n\
              interface Add { fn add(self, rhs: i32) -> i32; }\n\
-             impl P for Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
+             impl P: Add { fn add(self, rhs: i32) -> i32 { return self.x + rhs; } }\n\
              fn call_add[T: Add](t: T) -> i32 { return t.add(2); }\n\
              fn main() -> i32 { let p: P = P { x: 4 }; return call_add::[P](p); }",
         );
@@ -16247,7 +16247,7 @@ mod tests {
             "interface Take { fn take(move self) -> i32; }\n\
              struct R { opaque data: *u8 }\n\
              impl R { fn drop(mut self) { return; } }\n\
-             impl R for Take { fn take(move self) -> i32 { return 0; } }\n\
+             impl R: Take { fn take(move self) -> i32 { return 0; } }\n\
              fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
@@ -16263,7 +16263,7 @@ mod tests {
              impl R { fn drop(mut self) { return; } }\n\
              struct P {}\n\
              interface Sink { fn sink(self, r: R); }\n\
-             impl P for Sink { fn sink(self, r: R) { return; } }\n\
+             impl P: Sink { fn sink(self, r: R) { return; } }\n\
              fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
@@ -16452,7 +16452,7 @@ fn main() -> i32 { return 0; }\n";
         const PRELUDE: &str = "\
 interface I { fn inst(self, a: i32) -> i32; fn assoc(a: i32) -> i32; }\n\
 struct P { x: i32 }\n\
-impl P for I { fn inst(self, a: i32) -> i32 { return self.x + a; } fn assoc(a: i32) -> i32 { return a; } }\n\
+impl P: I { fn inst(self, a: i32) -> i32 { return self.x + a; } fn assoc(a: i32) -> i32 { return a; } }\n\
 fn main() -> i32 { return 0; }\n";
 
         // (name, call template — `{V}` value receiver, `{T}` type — needs a
@@ -19223,7 +19223,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "interface Compare { fn compare(self, other: i32) -> i32; } \
              struct Point { x: i32, y: i32 } \
-             impl Point for Compare { fn compare(self, other: i32) -> i32 { return 0; } } \
+             impl Point: Compare { fn compare(self, other: i32) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19233,7 +19233,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "interface Two { fn first(self) -> i32; fn second(self) -> i32; } \
              struct P { x: i32 } \
-             impl P for Two { fn first(self) -> i32 { return 0; } } \
+             impl P: Two { fn first(self) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0503"), "expected E0503, got: {codes:?}");
@@ -19244,7 +19244,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "interface One { fn a(self) -> i32; } \
              struct P { x: i32 } \
-             impl P for One { fn a(self) -> i32 { return 0; } \
+             impl P: One { fn a(self) -> i32 { return 0; } \
                               fn extra(self) -> i32 { return 1; } } \
              fn main() -> i32 { return 0; }",
         );
@@ -19257,7 +19257,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "interface One { fn a(self) -> i32; } \
              struct P { x: i32 } \
-             impl P for One { fn a(self) -> bool { return true; } } \
+             impl P: One { fn a(self) -> bool { return true; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0505"), "expected E0505, got: {codes:?}");
@@ -19275,7 +19275,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct R { tag: i32 } \
              struct P {} \
              interface UseR { fn use_r(self, borrow r: R) -> i32; } \
-             impl P for UseR { fn use_r(self, r: R) -> i32 { return r.tag; } } \
+             impl P: UseR { fn use_r(self, r: R) -> i32 { return r.tag; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -19287,7 +19287,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct R { tag: i32 } \
              struct P {} \
              interface UseR { fn use_r(self, r: R) -> i32; } \
-             impl P for UseR { fn use_r(self, borrow r: R) -> i32 { return r.tag; } } \
+             impl P: UseR { fn use_r(self, borrow r: R) -> i32 { return r.tag; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -19306,7 +19306,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             errors(&format!(
                 "struct P {{ x: i32 }} \
                  interface I {{ fn m({iface_recv}) -> i32; }} \
-                 impl P for I {{ fn m({impl_recv}) -> i32 {{ return 0; }} }} \
+                 impl P: I {{ fn m({impl_recv}) -> i32 {{ return 0; }} }} \
                  fn main() -> i32 {{ return 0; }}"
             ))
         };
@@ -19322,7 +19322,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct R { tag: i32 } \
              struct P {} \
              interface UseR { fn use_r(self, borrow r: R) -> i32; } \
-             impl P for UseR { fn use_r(self, borrow r: R) -> i32 { return r.tag; } } \
+             impl P: UseR { fn use_r(self, borrow r: R) -> i32 { return r.tag; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19332,8 +19332,8 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "interface One { fn a(self) -> i32; } \
              struct P { x: i32 } \
-             impl P for One { fn a(self) -> i32 { return 0; } } \
-             impl P for One { fn a(self) -> i32 { return 1; } } \
+             impl P: One { fn a(self) -> i32 { return 0; } } \
+             impl P: One { fn a(self) -> i32 { return 1; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0506"), "expected E0506, got: {codes:?}");
@@ -19345,7 +19345,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "interface Dup { fn dup(self) -> Self; } \
              struct Point { x: i32, y: i32 } \
-             impl Point for Dup { fn dup(self) -> Point { return Point { x: self.x, y: self.y }; } } \
+             impl Point: Dup { fn dup(self) -> Point { return Point { x: self.x, y: self.y }; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19356,7 +19356,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "interface Dup { fn dup(self) -> Self; } \
              struct Point { x: i32, y: i32 } \
-             impl Point for Dup { fn dup(self) -> i32 { return 0; } } \
+             impl Point: Dup { fn dup(self) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0505"), "expected E0505, got: {codes:?}");
@@ -19373,7 +19373,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct P { x: i32 } \
              interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; } \
-             impl P for Apply { fn apply(self, f: fn(P) -> i32) -> i32 { return f(self); } } \
+             impl P: Apply { fn apply(self, f: fn(P) -> i32) -> i32 { return f(self); } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19385,13 +19385,13 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct P { x: i32 } \
              interface IPtr { fn m(self, p: *Self) -> i32; } \
-             impl P for IPtr { fn m(self, p: *P) -> i32 { return unsafe { (*p).x }; } } \
+             impl P: IPtr { fn m(self, p: *P) -> i32 { return unsafe { (*p).x }; } } \
              fn main() -> i32 { return 0; }",
         );
         assert_clean(
             "struct P { x: i32 } \
              interface ISlice { fn m(self, s: Self[]) -> i32; } \
-             impl P for ISlice { fn m(self, s: P[]) -> i32 { return 0; } } \
+             impl P: ISlice { fn m(self, s: P[]) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19406,14 +19406,14 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct Pair[A] { a: A } \
              struct P { x: i32 } \
              interface I { fn m(self, p: Pair[Self]) -> i32; } \
-             impl P for I { fn m(self, p: Pair[P]) -> i32 { return p.a.x; } } \
+             impl P: I { fn m(self, p: Pair[P]) -> i32 { return p.a.x; } } \
              fn main() -> i32 { return 0; }",
         );
         assert_clean(
             "struct Holder[A] { v: A } \
              struct P { x: i32 } \
              interface Wrap { fn wrap(self) -> Holder[Self]; } \
-             impl P for Wrap { fn wrap(self) -> Holder[P] { return Holder[P] { v: self }; } } \
+             impl P: Wrap { fn wrap(self) -> Holder[P] { return Holder[P] { v: self }; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -19428,7 +19428,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
             "struct P { x: i32 } \
              struct Q { y: i32 } \
              interface Apply { fn apply(self, f: fn(Self) -> i32) -> i32; } \
-             impl P for Apply { fn apply(self, f: fn(Q) -> i32) -> i32 { return 0; } } \
+             impl P: Apply { fn apply(self, f: fn(Q) -> i32) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -19446,7 +19446,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
              struct P { x: i32 } \
              struct Q { y: i32 } \
              interface I { fn m(self, p: Pair[Self]) -> i32; } \
-             impl P for I { fn m(self, p: Pair[Q]) -> i32 { return 0; } } \
+             impl P: I { fn m(self, p: Pair[Q]) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -19718,7 +19718,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn impl_unknown_interface_e0303() {
         let codes = errors(
             "struct P { x: i32 } \
-             impl P for Bogus { fn a(self) -> i32 { return 0; } } \
+             impl P: Bogus { fn a(self) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0303"), "expected E0303, got: {codes:?}");
@@ -20010,7 +20010,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // The blessed Ord interface is in scope; users can impl it.
         assert_clean(
             "struct Point { x: i32 } \
-             impl Point for Ord { fn cmp(self, other: Point) -> i32 { return 0; } } \
+             impl Point: Ord { fn cmp(self, other: Point) -> i32 { return 0; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -20029,7 +20029,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
     fn manual_copy_impl_rejected_e0510() {
         let codes = errors(
             "struct Point { x: i32 } \
-             impl Point for Copy {} \
+             impl Point: Copy {} \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0510"), "expected E0510, got: {codes:?}");
@@ -20868,7 +20868,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "interface Backend { fn flush(self) -> i32; } \
              struct Mac { fd: i32 } \
-             impl Mac for Backend { fn flush(self) -> i32 { return self.fd; } } \
+             impl Mac: Backend { fn flush(self) -> i32 { return self.fd; } } \
              struct App[B: Backend] { backend: B } \
              impl App[B: Backend] { fn run(self) -> i32 { return self.backend.flush(); } } \
              fn render[B: Backend](b: B) -> i32 { return b.flush(); } \
@@ -20953,7 +20953,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         assert_clean(
             "fn max[T: Ord](a: T, b: T) -> T { return a; } \
              struct Point { x: i32 } \
-             impl Point for Ord { fn cmp(self, other: Point) -> i32 { return 0; } } \
+             impl Point: Ord { fn cmp(self, other: Point) -> i32 { return 0; } } \
              fn main() -> i32 { \
                  let p: Point = Point { x: 0 }; \
                  let r: Point = max(p, p); \
@@ -21922,10 +21922,10 @@ fn mv(move r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn unsafe_impl_send_overrides_raw_ptr_struct() {
-        // `unsafe impl Handle for Send {}` re-enables the marker.
+        // `unsafe impl Handle: Send {}` re-enables the marker.
         assert_clean(
             "struct Handle { opaque p: *u8 }\n\
-             unsafe impl Handle for Send {}\n\
+             unsafe impl Handle: Send {}\n\
              fn ship[T: Send](v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
@@ -21952,11 +21952,11 @@ fn mv(move r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn unsafe_impl_send_conditional_generic_met() {
-        // `unsafe impl Arc[T: Send + Sync] for Send` — Arc[i32] is Send
+        // `unsafe impl Arc[T: Send + Sync]: Send` — Arc[i32] is Send
         // because i32 is Send + Sync.
         assert_clean(
             "struct Arc[T] { opaque ctrl: *u8 }\n\
-             unsafe impl Arc[T: Send + Sync] for Send {}\n\
+             unsafe impl Arc[T: Send + Sync]: Send {}\n\
              fn ship[T: Send](v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let a: Arc[i32] = Arc[i32] { ctrl: unsafe { 0 as *u8 } };\n\
@@ -21973,7 +21973,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct Handle { opaque p: *u8 }\n\
              struct Arc[T] { opaque ctrl: *u8 }\n\
-             unsafe impl Arc[T: Send + Sync] for Send {}\n\
+             unsafe impl Arc[T: Send + Sync]: Send {}\n\
              fn ship[T: Send](v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let a: Arc[Handle] = Arc[Handle] { ctrl: unsafe { 0 as *u8 } };\n\
@@ -21990,7 +21990,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // sub-type is itself Send (the recursion stops at the override).
         assert_clean(
             "struct Arc[T] { opaque ctrl: *u8 }\n\
-             unsafe impl Arc[T: Send + Sync] for Send {}\n\
+             unsafe impl Arc[T: Send + Sync]: Send {}\n\
              struct Wrap { inner: Arc[i32], tag: i32 }\n\
              fn ship[T: Send](v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
@@ -22006,7 +22006,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         // `Send` is an unsafe assertion — a bare `impl Send` is rejected.
         let codes = errors(
             "struct Handle { opaque p: *u8 }\n\
-             impl Handle for Send {}\n\
+             impl Handle: Send {}\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0860"), "got {:?}", codes);
@@ -22018,7 +22018,7 @@ fn mv(move r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "interface Greet { fn hi(self) -> i32; }\n\
              struct S { x: i32 }\n\
-             unsafe impl S for Greet { fn hi(self) -> i32 { return self.x; } }\n\
+             unsafe impl S: Greet { fn hi(self) -> i32 { return self.x; } }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0861"), "got {:?}", codes);

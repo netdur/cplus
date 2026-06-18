@@ -26,12 +26,12 @@
 //   - `MutexGuard[T]: !Send` — pthread_mutex_unlock must be on the
 //     same thread that called pthread_mutex_lock
 //   - Structs with raw-pointer fields default to `!Send` unless the
-//     user opts in via `unsafe impl MyType for Send {}`
+//     user opts in via `unsafe impl MyType: Send {}`
 //   - `Cell[T] / RefCell[T]: !Sync` (when those types land)
 //
 // Today this file is documentation; the marker interfaces are
 // registered globally by the compiler with no methods. Future
-// negative-impl syntax (`impl !Send for Rc[T] {}`) is a separate
+// negative-impl syntax (`impl !Send: Rc[T] {}`) is a separate
 // trait-system slice.
 //
 // **Why an empty .cplus file then?** Discoverability — `import

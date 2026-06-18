@@ -305,7 +305,7 @@ impl Parser {
                 }
                 self.parse_impl_block(false)
             }
-            // v0.0.14: `unsafe impl T for Send {}` — an unsafe marker impl.
+            // v0.0.14: `unsafe impl T: Send {}` — an unsafe marker impl.
             // TEXT.1: `unsafe fn name(...)` — an unsafe free function whose
             // call site requires an `unsafe { ... }` block. At item scope
             // `unsafe` therefore precedes either `impl` or a `fn` opener
@@ -331,7 +331,7 @@ impl Parser {
                     self.bump(); // `unsafe`
                     if !self.at(&TokenKind::Impl) {
                         return Err(self.err_at_peek(
-                            "item — `unsafe` at item scope precedes `impl` (e.g. `unsafe impl T for Send {}`) or `fn` (an unsafe function)",
+                            "item — `unsafe` at item scope precedes `impl` (e.g. `unsafe impl T: Send {}`) or `fn` (an unsafe function)",
                         ));
                     }
                     self.parse_impl_block(true)
@@ -484,7 +484,7 @@ impl Parser {
     }
 
     /// Parse an optional `[T, U: Bound + Bound2]` generic-param list. Shared
-    /// by inherent-impl targets and `unsafe impl Arc[T: Send + Sync] for Send`
+    /// by inherent-impl targets and `unsafe impl Arc[T: Send + Sync]: Send`
     /// conditional marker impls. Returns an empty Vec when no `[` follows.
     fn parse_optional_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
         if !self.at(&TokenKind::LBracket) {
@@ -613,25 +613,31 @@ impl Parser {
 
     fn parse_impl_block(&mut self, is_unsafe: bool) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Impl, "`impl`")?.span;
-        // Impl-order is `impl TYPE for INTERFACE` — the TARGET TYPE comes first,
-        // an optional `for INTERFACE` names the interface it implements:
-        //   - `impl Target { ... }`               → inherent impl
-        //   - `impl Target for Interface { ... }` → interface impl
-        // (This reverses the Rust-style `impl Interface for Type`: that order
-        // was a misread of the intended design — C+ reads "implement TYPE for
-        // INTERFACE".) Disambiguate by peeking for `for`, which in item
-        // position only ever opens the interface clause.
+        // Impl-order is type-first: the TARGET TYPE comes first, an optional
+        // `: INTERFACE` names the interface it implements:
+        //   - `impl Target { ... }`            → inherent impl
+        //   - `impl Target: Interface { ... }` → interface impl
+        // v0.0.24 de-Rust: the conformance connector is `:` (not `for`). `:`
+        // matches C+'s existing bound/conformance sigil (`[T: Copy]`) and makes
+        // a Rust-habit `impl Display for Point` fail loudly (see the `for` arm
+        // below) instead of binding backwards.
         //
         // The target carries any generic params (`impl Vec[T] { ... }`,
-        // `impl Vec[T] for Iterator { ... }`) and, for a conditional marker
-        // impl, the bound that gates it (`unsafe impl Arc[T: Send + Sync] for
-        // Send {}` — "Arc[X] is Send iff X is Send + Sync"). Interfaces stay
-        // plain (generic interface impls deferred), so params always bind to
-        // the target, parsed right after its ident.
+        // `impl Vec[T]: Iterator { ... }`) and, for a conditional marker impl,
+        // the bound that gates it (`unsafe impl Arc[T: Send + Sync]: Send {}` —
+        // "Arc[X] is Send iff X is Send + Sync"). Interfaces stay plain (generic
+        // interface impls deferred), so params bind to the target, parsed right
+        // after its ident. The `[...]` generic params are consumed before the
+        // connector, so their inner `:` bounds never clash with this `:`.
         let target = self.expect_ident()?;
         let target_generic_params = self.parse_optional_generic_params()?;
-        let interface_name = if self.eat(&TokenKind::For) {
+        let interface_name = if self.eat(&TokenKind::Colon) {
             Some(self.expect_ident()?)
+        } else if self.at(&TokenKind::For) {
+            // Rust habit: `impl T for I`. Point at the C+ spelling.
+            return Err(self.err_at_peek(
+                "`:` for interface conformance — C+ writes `impl Type: Interface`, not `impl Type for Interface`",
+            ));
         } else {
             None
         };
@@ -4052,7 +4058,7 @@ mod tests {
     #[test]
     fn unsafe_impl_still_parses() {
         // The `unsafe impl` marker path must be untouched by the `unsafe fn` add.
-        assert!(parse_src("struct S {} unsafe impl S for Send {}").is_ok());
+        assert!(parse_src("struct S {} unsafe impl S: Send {}").is_ok());
     }
 
     #[test]
@@ -4495,7 +4501,7 @@ mod tests {
         assert_eq!(s.generic_params.len(), 1);
     }
 
-    // ---- 7GEN.3 — interface declarations + impl Type for Interface ----
+    // ---- 7GEN.3 — interface declarations + impl Type: Interface ----
 
     #[test]
     fn interface_decl_parses_with_single_method() {
@@ -4556,7 +4562,7 @@ mod tests {
     fn impl_interface_for_target_parses() {
         let p = parse_src(
             "struct Point { x: i32, y: i32 }\n\
-             impl Point for Ord {\n\
+             impl Point: Ord {\n\
                  fn compare(self, other: Point) -> i32 { return 0; }\n\
              }",
         )
@@ -4568,6 +4574,24 @@ mod tests {
         assert!(b.interface_name.is_some());
         assert_eq!(b.interface_name.as_ref().unwrap().name, "Ord");
         assert_eq!(b.methods.len(), 1);
+    }
+
+    #[test]
+    fn impl_conformance_with_for_keyword_is_rejected() {
+        // v0.0.24 de-Rust: the Rust-habit `impl T for I` connector is rejected
+        // with a diagnostic pointing at the C+ `:` spelling.
+        let e = parse_src(
+            "struct Point { x: i32 }\n\
+             impl Point for Ord { fn compare(self, other: Point) -> i32 { return 0; } }",
+        )
+        .unwrap_err();
+        match e.kind {
+            ParseErrorKind::Unexpected { expected, .. } => assert!(
+                expected.contains("impl Type: Interface"),
+                "expected a `:`-pointing diagnostic, got: {expected}"
+            ),
+            other => panic!("expected Unexpected, got {other:?}"),
+        }
     }
 
     #[test]

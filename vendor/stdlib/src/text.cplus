@@ -381,8 +381,8 @@ impl Text {
 // across threads (`Sync`) are both sound — like Rust's `String`. The
 // raw-pointer field makes it `!Send`/`!Sync` by default; these markers opt in.
 // `Send` is needed for `thread::spawn` payloads; `Send + Sync` for `Arc[Text]`.
-unsafe impl Text for Send {}
-unsafe impl Text for Sync {}
+unsafe impl Text: Send {}
+unsafe impl Text: Sync {}
 
 // An owned, NUL-terminated C string — the bridge to `extern fn`s that take a
 // `const char*`. The buffer is `len + 1` bytes (the trailing NUL is not counted
