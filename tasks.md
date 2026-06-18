@@ -145,13 +145,51 @@ Tasks 1–6 are independent (any order among themselves).
   (basic/nested/arg/return, generic, move-into-field no-double-free).
   cplus-core 1550 / cpc e2e 627, both green.
 
-- [ ] **9. Binding model + params** — `const`/`static`/`let`/`var`, retire
-  `mut` entirely (no `static mut`/`let mut`/`mut` param); `move`→`take` (owned
-  = mutable); bare `x: T` = read-only borrow for EVERY type (verify E0337
-  escape coverage); `ref x: T` / `ref this` with the **`ref`-requires-a-`var`-
-  place** `is_var` check (closes the immutable-through-by-ref hole, unifies
-  E0328). *Hardest core; the headline.* Decision A resolved → scope = let/var
-  + retire `mut` + `ref`/`take`; const/static already done (confirm in-task).
+- [→] **9. Binding model + params** — `const`/`static`/`let`/`var`, retire
+  `mut` entirely; `move`→`take`; bare `x: T` = read-only borrow; `ref x:`/`ref
+  this` with the `ref`-requires-a-`var`-place `is_var` check. *Hardest core; the
+  headline.* STAGED (in progress).
+  **Recon findings (2026-06-18):** (a) today's `let` already freezes field
+  writes (`let x: A; x.b = 3` → E0305) and `let mut` allows them — so the
+  binding model is a clean RENAME (`let mut`→`var`), NOT a semantic tightening
+  of `let`. (b) Migration surface in `.cplus`: ~457 `let mut`, ~26 `static mut`,
+  ~267 other `mut` (params/receivers), ~44 `move`, ~60 `borrow`. (c) region-
+  lifetime `borrow A T` (`TypeKind::Borrowed`) is effectively unused (only a
+  bug-repro comment) but threads 9 compiler files.
+  **DECIDED with user:** `take`/`ref`/`var` are reserved as binding/param
+  NAMES (rejected with a diagnostic) but stay legal as MEMBER names (after
+  `.`/`::`/`fn`) — so `Iterator::take`, `iter.take(n)`, the `fn take`
+  definition all survive. Implemented contextually (the words stay lexer
+  identifiers; recognized as modifiers only in leading positions; member
+  positions need no change). Param-named-`take` vs take-modifier disambiguated
+  by 1-token lookahead (`take :` ⇒ name; `take <ident>` ⇒ modifier). 0 params
+  named take/ref/var exist; only 2 `let var` locals (uuid, async_fetch) need
+  renaming (Stage 2/3).
+  - [x] **Stage 1 — additive recognition (dual-spelling).** `var NAME ...` ≡
+    `let mut` (StmtKind::Let mutable:true); `ref x:`/`take x:` ≡ `mut`/`move`
+    params; `ref this`/`take this` ≡ `mut this`/`move this` receivers. All
+    contextual (only where they LEAD a binding/param/receiver, with lookahead),
+    so `let var`, `fn take`, `iter.take()`, value-position `var` are untouched.
+    Old `let mut`/`mut`/`move`/`borrow` all still work. NOTHING migrated or
+    rejected yet. parser.rs only (try_parse_receiver, parse_param modifier loop,
+    parse_var_stmt + at_var_binding, block-body + builder-entries dispatch).
+    7 parser tests + 1 e2e. cplus-core 1557 / cpc e2e 628, green.
+  - [ ] **Stage 2 — migrate the `.cplus` corpus + `.rs` test strings** to the
+    new spellings (`let mut`→`var`, `mut x:`→`ref x:`, `mut this`→`ref this`,
+    `move`→`take`, `static mut`→`static`), rename the 2 `let var` locals, and
+    rewrite the `drop_move` example (`fn take(move h)` → new spelling). Suite
+    green throughout (old spellings still accepted).
+  - [ ] **Stage 3 — hard-switch + semantics.** Reject `mut`/`move`; reserve
+    `take`/`ref`/`var` as binding/param NAMES (allow as members); `static mut`
+    →`static` becomes mutable-by-default (decide: leftover immutable `static`
+    → `const` or stays). Add the `ref`-requires-a-`var`-place `is_var` check
+    (closes the immutable-through-by-ref hole, unifies E0328). Do the bare
+    `x: T` move→borrow flip — AUDIT E0337 escape completeness (plan flags this
+    as a UB-risk surface).
+  - [ ] **Stage 4 — `borrow` removal.** Param prefix `borrow x:` folds into the
+    bare default. Region-lifetime `borrow A T` / `TypeKind::Borrowed` (9-file
+    thread, E0511/E0512, ~19 e2e region tests) — SCOPE TBD with user (in #9 vs a
+    separate follow-up).
 
 - [ ] **10. Visibility** — `pub`→`_` privacy (fields/methods; ~266 field
   `pub`s removed); `export` keyword for the C-ABI/linker/header surface;

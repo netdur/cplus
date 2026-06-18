@@ -465,6 +465,48 @@ fn inferred_struct_literal_move_into_field_no_double_free() {
     assert_eq!(run.code(), Some(5), "got {:?}", run.code());
 }
 
+// v0.0.24 de-Rust #9 (stage 1): the new binding/ownership spellings
+// `var` / `ref this` / `take this` / `take x: T` compile and run as the
+// dual-spellings of `let mut` / `mut this` / `move this` / `move x: T`. A
+// mutable (`ref this`) receiver mutates in place; `take` transfers ownership.
+// Result is stage-independent (it doesn't lean on Copy-vs-by-ref param
+// semantics, which the later hard-switch stage changes).
+#[test]
+fn var_ref_take_spellings_run() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("vrt.cplus");
+    std::fs::write(
+        &src,
+        "struct Acc { n: i32 }\n\
+         impl Acc {\n\
+            fn bump(ref this) { this.n = this.n +% 1; }\n\
+            fn consume(take this) -> i32 { return this.n; }\n\
+         }\n\
+         fn combine(take a: Acc, take b: Acc) -> i32 {\n\
+            return a.consume() + b.consume();\n\
+         }\n\
+         fn main() -> i32 {\n\
+            var a: Acc = Acc { n: 20 };\n\
+            a.bump();\n\
+            var b: Acc = Acc { n: 21 };\n\
+            return combine(a, b);\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("vrt");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "var/ref/take program must compile");
+    let run = Command::new(&bin).status().expect("run vrt");
+    // a.bump() -> 21; combine moves a,b and sums their n: 21 + 21 = 42.
+    assert_eq!(run.code(), Some(42), "got {:?}", run.code());
+}
+
 // v0.0.19: monomorphization fix — a turbofish generic call must mangle its
 // callee from its own (collision-free) AST type-args, not from `call_monos`
 // (keyed by a file-less `ByteSpan`). Two turbofish `vec::new::[T]()` calls at

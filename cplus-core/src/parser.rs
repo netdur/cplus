@@ -863,6 +863,26 @@ impl Parser {
                     Ok(None)
                 }
             }
+            // v0.0.24 de-Rust (#9 stage 1): `ref this` / `take this` are the new
+            // spellings of `mut this` / `move this`. `ref`/`take` are contextual
+            // (ordinary identifiers in the lexer) — recognized as receiver
+            // modifiers only when immediately followed by `this`. Anywhere else
+            // they stay plain identifiers (so `Iterator::take` etc. are
+            // unaffected). Dual-spelled with `mut`/`move` until the hard switch.
+            TokenKind::Ident(s)
+                if s == "ref" && matches!(self.peek_kind_n(1), TokenKind::SelfLower) =>
+            {
+                self.bump(); // `ref`
+                self.bump(); // `this`
+                Ok(Some(Receiver::Mut))
+            }
+            TokenKind::Ident(s)
+                if s == "take" && matches!(self.peek_kind_n(1), TokenKind::SelfLower) =>
+            {
+                self.bump(); // `take`
+                self.bump(); // `this`
+                Ok(Some(Receiver::Move))
+            }
             // v0.0.24 de-Rust: a Rust-style bare receiver `self` (followed by
             // `)` or `,` — not a typed `self: T` param) is rejected with a hint.
             TokenKind::Ident(s)
@@ -1438,6 +1458,29 @@ impl Parser {
                     self.bump();
                     move_ = true;
                 }
+                // v0.0.24 de-Rust (#9 stage 1): `ref x: T` / `take x: T` are the
+                // new spellings of `mut x: T` / `move x: T`. `ref`/`take` are
+                // contextual identifiers — treated as a modifier only when
+                // immediately followed by the param name (another identifier),
+                // so a param literally named `ref`/`take` (`ref: T`) still parses
+                // as the name. Dual-spelled with `mut`/`move` until the hard
+                // switch.
+                TokenKind::Ident(s)
+                    if s == "ref"
+                        && !mutable
+                        && matches!(self.peek_kind_n(1), TokenKind::Ident(_)) =>
+                {
+                    self.bump();
+                    mutable = true;
+                }
+                TokenKind::Ident(s)
+                    if s == "take"
+                        && !move_
+                        && matches!(self.peek_kind_n(1), TokenKind::Ident(_)) =>
+                {
+                    self.bump();
+                    move_ = true;
+                }
                 TokenKind::Restrict if !restrict => {
                     self.bump();
                     restrict = true;
@@ -1792,6 +1835,13 @@ impl Parser {
                 }
             }
             // Statements introduced by a keyword always end with `;`.
+            // v0.0.24 de-Rust (#9 stage 1): contextual `var NAME ...` binding.
+            // Checked before the keyword match because `var` is an identifier,
+            // not a `TokenKind`.
+            if self.at_var_binding() {
+                stmts.push(self.parse_var_stmt()?);
+                continue;
+            }
             match self.peek_kind() {
                 TokenKind::Let => {
                     stmts.push(self.parse_let_stmt()?);
@@ -1926,6 +1976,58 @@ impl Parser {
             },
             span: start.merge(end),
         })
+    }
+
+    /// v0.0.24 de-Rust (#9 stage 1): `var NAME [: T] [= expr];` is a mutable
+    /// local binding — the same lowering as `let mut` (`StmtKind::Let` with
+    /// `mutable: true`). `var` is contextual (an ordinary identifier in the
+    /// lexer); the caller confirms it leads a binding (it is followed by a name
+    /// or `_`) before dispatching here, so `let var = ...` and a value-position
+    /// `var` stay ordinary identifiers. Dual-spelled with `let mut` until the
+    /// hard switch.
+    fn parse_var_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let start = self.bump().span; // consume the `var` identifier
+        let name = if self.at(&TokenKind::Underscore) {
+            let tok = self.expect(&TokenKind::Underscore, "`_`")?;
+            Ident {
+                name: format!("_discard{}", tok.span.start),
+                span: tok.span,
+            }
+        } else {
+            self.expect_ident()?
+        };
+        let ty = if self.eat(&TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let init = if self.eat(&TokenKind::Eq) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+        let end = self.expect(&TokenKind::Semi, "`;`")?.span;
+        Ok(Stmt {
+            kind: StmtKind::Let {
+                mutable: true,
+                name,
+                ty,
+                init,
+            },
+            span: start.merge(end),
+        })
+    }
+
+    /// True when the current token is the contextual `var` binding keyword: the
+    /// identifier `var` immediately followed by a binding-name start (`Ident`
+    /// or `_`). Used at statement-leading positions to dispatch to
+    /// [`Self::parse_var_stmt`] without reserving `var` as an identifier.
+    fn at_var_binding(&self) -> bool {
+        matches!(self.peek_kind(), TokenKind::Ident(s) if s == "var")
+            && matches!(
+                self.peek_kind_n(1),
+                TokenKind::Ident(_) | TokenKind::Underscore
+            )
     }
 
     fn parse_return_stmt(&mut self) -> Result<Stmt, ParseError> {
@@ -2717,6 +2819,10 @@ impl Parser {
         while !self.at(&TokenKind::RBrace) {
             if matches!(self.peek_kind(), TokenKind::Eof) {
                 return Err(self.err_at_peek("`}`"));
+            }
+            if self.at_var_binding() {
+                entries.push(BuilderEntry::Let(self.parse_var_stmt()?));
+                continue;
             }
             match self.peek_kind() {
                 TokenKind::Let => {
@@ -4184,6 +4290,74 @@ mod tests {
             parse_src("struct P { x: i32 } impl P { fn bad(mut move this) -> i32 { return 0; } }")
                 .unwrap_err();
         assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
+    }
+
+    // v0.0.24 de-Rust (#9 stage 1): `var`/`ref`/`take` are contextual
+    // dual-spellings of `let mut` / `mut` / `move`.
+    #[test]
+    fn var_binding_lowers_to_mutable_let() {
+        let p = parse_src("fn main() -> i32 { var x: i32 = 5; return x; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!();
+        };
+        let StmtKind::Let { mutable, name, .. } = &f.body.stmts[0].kind else {
+            panic!("expected a let-binding from `var`");
+        };
+        assert!(*mutable, "`var` must lower to a mutable binding");
+        assert_eq!(name.name, "x");
+    }
+
+    #[test]
+    fn ref_param_sets_mutable_flag() {
+        let params = first_function_params("fn f(ref x: i32) -> i32 { return x; }");
+        assert!(params[0].mutable);
+        assert!(!params[0].move_);
+    }
+
+    #[test]
+    fn take_param_sets_move_flag() {
+        let params = first_function_params("fn f(take x: i32) -> i32 { return x; }");
+        assert!(!params[0].mutable);
+        assert!(params[0].move_);
+    }
+
+    #[test]
+    fn ref_self_receiver_parses() {
+        let m = first_method("struct P { x: i32 } impl P { fn write(ref this) { this.x = 0; } }");
+        assert_eq!(m.receiver, Some(Receiver::Mut));
+    }
+
+    #[test]
+    fn take_self_receiver_parses() {
+        let m = first_method(
+            "struct P { x: i32 } impl P { fn consume(take this) -> i32 { return this.x; } }",
+        );
+        assert_eq!(m.receiver, Some(Receiver::Move));
+    }
+
+    #[test]
+    fn var_still_usable_as_binding_name_after_let() {
+        // `var` is contextual — after `let` it is just the binding's name, not
+        // the mutable-binding keyword. (Reservation as a name lands in the
+        // hard-switch stage.)
+        let p = parse_src("fn main() -> i32 { let var: i32 = 7; return var; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!();
+        };
+        let StmtKind::Let { mutable, name, .. } = &f.body.stmts[0].kind else {
+            panic!();
+        };
+        assert!(!*mutable, "`let var` is an immutable binding named `var`");
+        assert_eq!(name.name, "var");
+    }
+
+    #[test]
+    fn take_still_usable_as_method_name() {
+        // `take` after `fn` / `.` is a member name, not the ownership keyword —
+        // so `Iterator::take` and `iter.take(n)` are unaffected.
+        let m = first_method("struct S { v: i32 } impl S { fn take(this, n: i32) -> i32 { return this.v + n; } }");
+        assert_eq!(m.name.name, "take");
+        assert_eq!(m.receiver, Some(Receiver::Read));
     }
 
     #[test]
