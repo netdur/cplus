@@ -256,7 +256,7 @@ let b: Text = Text::from("hello");                // copies to heap
 b.len(); b.is_empty(); b.clone();                 // Text methods
 ```
 
-A borrowed `Text` **coerces to `str`** at argument / binding / return / receiver positions, so a `str`-typed slot accepts a `Text` directly — no `.as_str()`. `Text::clone` copies/owns. `str` is forbidden in `async fn` signatures (E0900); pass `Text` instead.
+A borrowed `Text` **coerces to `str`** at argument, binding, and return positions, and when compared with a `str` (`name == "x"`), so a `str`-typed slot accepts a `Text` directly — no `.as_str()`. The coercion borrows; returning the view of a *local* `Text` is rejected (E0513). `Text::clone` copies/owns. `str` is forbidden in `async fn` signatures (E0900); pass `Text` instead.
 
 > **String ops are sparse.** There is **no `+` concatenation** and **no stdlib `split` / `parse` / `slice` / `find`** on strings. Build strings with interpolation (below), and do byte-level work via `str_ptr` / `str_len` + manual pointer logic (see the `http_get` recipe online).
 

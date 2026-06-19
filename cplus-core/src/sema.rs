@@ -626,6 +626,12 @@ pub struct MonoInfo {
     /// Keyed by the call expression's span. Codegen emits one private
     /// constant `[N x i8]` global per entry.
     pub shader_blobs: HashMap<ByteSpan, Vec<u8>>,
+    /// v0.0.24 #11: spans where a borrowed `Text` coerces to `str` (its
+    /// `{ptr,len}` prefix). Recorded in `check_expr` wherever a `str` is
+    /// expected and a `Text` is found. Codegen extracts the prefix at each
+    /// span (the old `Text::as_str` extraction, now implicit); the
+    /// view-escape check (E0513) consults it for returned aggregate leaves.
+    pub text_to_str_coercions: std::collections::HashSet<ByteSpan>,
     /// v0.0.14 graph value-depth: `(origin_file, expr_span, rendered_type)` for
     /// every type-checked expression. Empty unless the graph/LSP entry point
     /// requested it; backs inferred `type-at`.
@@ -800,6 +806,7 @@ fn check_with_files_inner<'a>(
         selectors_table: std::collections::BTreeSet::new(),
         shader_blobs_table: HashMap::new(),
         msg_send_shapes: std::collections::BTreeSet::new(),
+        text_to_str_coercion_table: std::collections::HashSet::new(),
     };
     cx.record_value_types = record_types;
     cx.register_builtins();
@@ -986,6 +993,7 @@ fn check_with_files_inner<'a>(
             .collect(),
         selectors: std::mem::take(&mut cx.selectors_table),
         shader_blobs: std::mem::take(&mut cx.shader_blobs_table),
+        text_to_str_coercions: std::mem::take(&mut cx.text_to_str_coercion_table),
         value_types: std::mem::take(&mut cx.value_types),
     };
     (sink.into_vec(), mono)
@@ -1247,6 +1255,9 @@ struct SemaCx<'a> {
     /// Keyed by call span. Codegen emits one private constant global
     /// per entry.
     shader_blobs_table: HashMap<ByteSpan, Vec<u8>>,
+    /// v0.0.24 #11: spans of `Text`→`str` coercion sites (see
+    /// [`MonoInfo::text_to_str_coercions`]).
+    text_to_str_coercion_table: std::collections::HashSet<ByteSpan>,
 }
 
 /// v0.0.9 Phase 4: sema-resolved info for a module-scope `static`.
@@ -5747,6 +5758,20 @@ impl SemaCx<'_> {
             let rendered = self.render_ty(&actual);
             self.value_types
                 .push((self.current_file.clone(), e.span, rendered));
+        }
+        // v0.0.24 #11: a borrowed `Text` coerces to `str` (its `{ptr,len}`
+        // prefix) wherever a `str` is expected — arg, binding, return,
+        // receiver. The `Text` is NOT consumed: the `str` is a view into its
+        // buffer and the owner keeps it. Record the span so codegen extracts
+        // the prefix and the view-escape check (E0513) can see a coerced view
+        // of a local `Text` that escapes through a returned aggregate.
+        if matches!(expected, Some(Ty::Str)) {
+            if let Ty::Struct(id) = actual {
+                if self.designated_string_struct == Some(id) {
+                    self.text_to_str_coercion_table.insert(e.span);
+                    return Ty::Str;
+                }
+            }
         }
         if let Some(exp) = expected {
             if exp != Ty::Error && actual != Ty::Error && exp != actual {
@@ -12279,9 +12304,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 }
             }
             ExprKind::ArrayFill { fill, .. } => self.flag_view_leaves(fill),
-            // Leaf: a `local.as_str()` / `local.as_slice()` borrowing a non-Copy local.
+            // Leaf: a `local.as_slice()` view, OR (v0.0.24 #11) a bare local
+            // `Text` coerced to `str` at this aggregate position — both borrow
+            // a non-Copy local that drops at return, so the stored view would
+            // dangle. The coercion has no `as_str` anchor, so consult the
+            // recorded coercion sites and trace the coerced expression's root.
             _ => {
-                if let Some(root) = view_producing_root(e) {
+                let mut root = view_producing_root(e);
+                if root.is_none() && self.text_to_str_coercion_table.contains(&e.span) {
+                    root = returned_borrow_root(e);
+                }
+                if let Some(root) = root {
                     if !self.current_fn_param_names.contains(root) {
                         if let Some(ty) = self.lookup_local(root).map(|i| i.ty.clone()) {
                             if !self.is_copy(&ty) {
@@ -12382,6 +12415,25 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             BinOp::Eq | BinOp::Ne => {
                 let lt = self.check_expr(lhs, None);
+                // v0.0.24 #11: comparing a `Text` to a `str` (`name == "x"`)
+                // coerces the `Text` to its `str` view, then compares
+                // str-against-str (byte content). Matching a built string
+                // against a literal is the common case, so support it directly.
+                // The mirror form (`"x" == name`) already coerces via the
+                // `check_expr(rhs, Some(lt))` below when `lt` is `str`.
+                if matches!(&lt, Ty::Struct(id) if self.designated_string_struct == Some(*id)) {
+                    let rt = self.check_expr(rhs, None);
+                    if rt == Ty::Str {
+                        self.text_to_str_coercion_table.insert(lhs.span);
+                    } else if rt != Ty::Error {
+                        self.err(
+                            "E0302",
+                            format!("`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function"),
+                            lhs.span,
+                        );
+                    }
+                    return Ty::Bool;
+                }
                 if lt.is_struct() {
                     self.err(
                         "E0302",

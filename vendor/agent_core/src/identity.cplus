@@ -265,7 +265,7 @@ impl Registry {
     fn name_of(this, node: usize) -> str {
         assert this.is_valid(node);
         return match this.names.at(node) {
-            option::Option[*text::Text]::Some(p) => { (*p).as_str() },
+            option::Option[*text::Text]::Some(p) => { (*p) },
             option::Option[*text::Text]::None => "",
         };
     }
@@ -367,7 +367,7 @@ impl Registry {
     // returned view aliases the live buffer the Vec still owns.
     fn id_view(this, node: usize) -> str {
         return match this.ids.at(node) {
-            option::Option[*text::Text]::Some(p) => { (*p).as_str() },
+            option::Option[*text::Text]::Some(p) => { (*p) },
             option::Option[*text::Text]::None => "",
         };
     }
@@ -644,9 +644,9 @@ fn test_describe_lists_every_node_with_fields() {
     // NodeId order: index 0 = app root, index `btn` = the button.
     match v.at(btn) {
         option::Option[*NodeView]::Some(p) => {
-            assert { (*p).id.as_str() } == "btn_login";
+            assert { (*p).id } == "btn_login";
             assert role_eq({ (*p).role }, Role::Button);
-            assert { (*p).name.as_str() } == "Log In";
+            assert { (*p).name } == "Log In";
             assert { (*p).actionable };
             let parent: usize = match { (*p).parent } {
                 option::Option[usize]::Some(x) => x,
@@ -723,7 +723,7 @@ fn test_describe_prunes_unexposed_and_reparents() {
     while i < v.len() {
         match v.at(i) {
             option::Option[*NodeView]::Some(p) => {
-                if { (*p).id.as_str() } == "btn" {
+                if { (*p).id } == "btn" {
                     found_btn = true;
                     let parent: usize = match { (*p).parent } {
                         option::Option[usize]::Some(x) => x,

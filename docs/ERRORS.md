@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **146 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **114** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **148 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **116** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -502,6 +502,19 @@ fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:6892 · test cplus-core/src/sema.rs:array_fill_noncopy_element_rejected_e0339</sub>
 
+### E0364 · Cannot infer struct type of `{ ... }`
+
+A type-inferred struct literal `{ field: ... }` appears where the expected type is absent or is not a known struct, so the compiler has no struct to construct.
+
+```cplus
+struct A { x: i32 }
+fn main() -> i32 { let a = { x: 1 }; return 0; }
+```
+
+**Fix.** Name the struct (`A { field: ... }`), or give the binding a struct type annotation so the literal's type can be inferred.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_inferred_struct_lit · test cplus-core/src/sema.rs:inferred_struct_lit_uninferable_e0364</sub>
+
 ## Control flow and matching
 
 ### E0333 · Implicit return (function body ends with a tail expression)
@@ -736,6 +749,18 @@ fn main() -> i32 { break; return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:5235 · test cpc/tests/e2e.rs:break_outside_loop_rejected</sub>
 
+### E0363 · Name already declared in this scope (no same-scope shadowing)
+
+Two bindings with the same name are declared in one block. C forbids redeclaring a name in a scope; Rust-style same-scope shadowing is a false friend that silently swaps a binding's type.
+
+```cplus
+fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }
+```
+
+**Fix.** Pick a new name, or assign to the existing binding. Shadowing in a nested block (or shadowing a parameter) is still allowed — only same-block re-declaration is rejected.
+
+<sub>repro: checked · cplus-core/src/sema.rs:5294 · test cplus-core/src/sema.rs:same_scope_shadow_e0363</sub>
+
 ## Ownership and borrowing
 
 ### E0370 · Move and shared-borrow of the same binding in one call
@@ -936,7 +961,7 @@ An `impl Type for Interface` block omits a method that the interface declares.
 ```cplus
 interface Two { fn first(self) -> i32; fn second(self) -> i32; }
 struct P { x: i32 }
-impl P for Two { fn first(self) -> i32 { return 0; } }
+impl P: Two { fn first(self) -> i32 { return 0; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -951,7 +976,7 @@ An `impl Type for Interface` block contains a method that the interface does not
 ```cplus
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl P for One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
+impl P: One { fn a(self) -> i32 { return 0; } fn extra(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -966,7 +991,7 @@ An impl method's signature does not match the interface's declared signature aft
 ```cplus
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl P for One { fn a(self) -> bool { return true; } }
+impl P: One { fn a(self) -> bool { return true; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -981,8 +1006,8 @@ Two `impl Type for Interface` blocks exist for the same (interface, type) pair; 
 ```cplus
 interface One { fn a(self) -> i32; }
 struct P { x: i32 }
-impl P for One { fn a(self) -> i32 { return 0; } }
-impl P for One { fn a(self) -> i32 { return 1; } }
+impl P: One { fn a(self) -> i32 { return 0; } }
+impl P: One { fn a(self) -> i32 { return 1; } }
 fn main() -> i32 { return 0; }
 ```
 
@@ -996,7 +1021,7 @@ An `impl Type for Interface` block lives in a file that declares neither the int
 
 ```cplus
 // in a third file that imports both Iface and Ty:
-impl Ty for Iface { fn a(self) -> i32 { return 0; } }
+impl Ty: Iface { fn a(self) -> i32 { return 0; } }
 ```
 
 **Fix.** Declare the impl in the same file as either the interface or the type.
@@ -1085,26 +1110,26 @@ fn main() -> i32 { return 0; }
 
 ### E0513 · Returning a `str` / `T[]` view of a local that drops
 
-A returned `str` / `T[]` view is rooted at a function-local non-Copy owned value (directly or via `as_str` / `as_slice`, including inside a returned aggregate), so the view would dangle when that local is freed at return.
+A returned `str` / `T[]` view is rooted at a function-local non-Copy owned value (a coerced `Text`, or an explicit `as_str` / `as_slice` view, including inside a returned aggregate), so the view would dangle when that local is freed at return.
 
 ```cplus
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Buf { ptr: *u8 }
 impl Buf {
-    fn drop(mut self) { unsafe { free(self.ptr); } return; }
-    fn as_str(self) -> str { return unsafe { #str_from_raw_parts(self.ptr, 4 as usize) }; }
+    fn drop(ref this) { { free(this.ptr); } return; }
+    fn as_str(this) -> str { return { #str_from_raw_parts(this.ptr, 4 as usize) }; }
 }
-fn mk_buf() -> Buf { return Buf { ptr: unsafe { malloc(4 as usize) } }; }
+fn mk_buf() -> Buf { return Buf { ptr: { malloc(4 as usize) } }; }
 fn bad() -> str {
     let s: Buf = mk_buf();
     return s.as_str();
 }
 ```
 
-**Fix.** Return an owned value (`string` / `Vec[T]`), or borrow from a parameter.
+**Fix.** Return an owned value (`Text` / `Vec[T]`), or borrow from a parameter.
 
-<sub>repro: checked · cplus-core/src/sema.rs:11441 · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
+<sub>repro: checked · cplus-core/src/sema.rs:12259 · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 
 ### E0612 · Interpolated type does not implement `ToText`
 
@@ -1959,7 +1984,7 @@ A `Send` or `Sync` marker is implemented with a bare `impl` (no `unsafe`), or wi
 
 ```cplus
 struct Handle { opaque p: *u8 }
-impl Handle for Send {}
+impl Handle: Send {}
 fn main() -> i32 { return 0; }
 // -> [E0860] `Send` is an unsafe assertion — write `unsafe impl Handle for Send {}`
 ```
@@ -1975,7 +2000,7 @@ An `impl` block carries `unsafe` but the interface being implemented is somethin
 ```cplus
 interface Greet { fn hi(self) -> i32; }
 struct S { x: i32 }
-unsafe impl S for Greet { fn hi(self) -> i32 { return self.x; } }
+unsafe impl S: Greet { fn hi(self) -> i32 { return self.x; } }
 fn main() -> i32 { return 0; }
 // -> [E0861] `unsafe impl` applies only to the `Send` / `Sync` markers
 ```
@@ -2113,7 +2138,7 @@ A raw-pointer field in a `Drop` type is freed inside `drop` only under some cond
 
 ```cplus
 struct Cell { p: *u8 }
-impl Cell for Drop {
+impl Cell: Drop {
     fn drop(self) {
         if some_condition() { free(self.p); }  // freed only conditionally
     }

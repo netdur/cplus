@@ -223,7 +223,7 @@ fn test_to_string_format() {
     let s: text::Text = u.to_text();
     assert s.len() == (36 as usize);
     // Dashes at positions 8, 13, 18, 23.
-    let p: *u8 = #str_ptr({ s.as_str() });
+    let p: *u8 = #str_ptr({ s });
     assert { *(p + 8) } == ('-' as u8);
     assert { *(p + 13) } == ('-' as u8);
     assert { *(p + 18) } == ('-' as u8);
@@ -238,7 +238,7 @@ fn test_round_trip_parse_format() {
         return;
     };
     let out: text::Text = u.to_text();
-    assert { out.as_str() } == s;
+    assert { out } == s;
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_random_uuid_round_trips() {
         return;
     };
     let s: text::Text = u.to_text();
-    guard let option::Option[Uuid]::Some(u2) = Uuid::parse({ s.as_str() }) else {
+    guard let option::Option[Uuid]::Some(u2) = Uuid::parse({ s }) else {
         assert false;
         return;
     };

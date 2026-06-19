@@ -58,7 +58,7 @@ fn print_line(s: str) {
 }
 
 fn print_text(t: text::Text) {
-    print_line({ t.as_str() });
+    print_line({ t });
     return;
 }
 

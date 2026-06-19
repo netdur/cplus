@@ -83,8 +83,8 @@ fn verb_to_str(v: events::Verb) -> str {
 // ---- surface -> JSON --------------------------------------------------------
 
 // One describe_ui node as a JSON object. Takes a raw pointer INTO the node Vec
-// and reads fields through it (Text fields via `as_str` borrows, the rest are
-// Copy) — never moving the non-Copy `UiNode` out of the Vec, which would
+// and reads fields through it (Text fields coerce to `str` borrows, the rest
+// are Copy) — never moving the non-Copy `UiNode` out of the Vec, which would
 // double-free its owned `Text`s. `parent` is the index into the node array, or
 // JSON null for the window root.
 fn node_to_json(p: *ui::UiNode) -> json::Value {
@@ -100,12 +100,12 @@ fn node_to_json(p: *ui::UiNode) -> json::Value {
     };
 
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.push(member("id", jstr({ (*p).id.as_str() })));
+    m.push(member("id", jstr({ (*p).id })));
     m.push(member("role", jstr(role_to_str({ (*p).role }))));
-    m.push(member("class", jstr({ (*p).class_name.as_str() })));
+    m.push(member("class", jstr({ (*p).class_name })));
     m.push(member("frame", json::Value::Object(frame)));
     m.push(member("hidden", jbool({ (*p).is_hidden })));
-    m.push(member("text", jstr({ (*p).text.as_str() })));
+    m.push(member("text", jstr({ (*p).text })));
     m.push(member("actionable", jbool({ (*p).actionable })));
     m.push(member("parent", parent_val));
     return json::Value::Object(m);
@@ -180,19 +180,19 @@ fn dispatch(
     }
     if method == "click" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
-        let o: surface::Outcome = surf.click({ target.as_str() });
+        let o: surface::Outcome = surf.click({ target });
         return ok_response(id, outcome_result(o));
     }
     if method == "scroll_to" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
-        let o: surface::Outcome = surf.scroll_to({ target.as_str() });
+        let o: surface::Outcome = surf.scroll_to({ target });
         return ok_response(id, outcome_result(o));
     }
     if method == "set_text" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
         let value: text::Text = json::as_str(json::object_get(params, "value"));
         let base: u64 = json::as_number(json::object_get(params, "base_version")) as u64;
-        let o: surface::Outcome = surf.set_text({ target.as_str() }, { value.as_str() }, base);
+        let o: surface::Outcome = surf.set_text({ target }, { value }, base);
         return ok_response(id, outcome_result(o));
     }
     if method == "poll_event" {
@@ -226,7 +226,7 @@ fn handle_request(
             let method_t: text::Text = json::as_str(json::object_get(req, "method"));
             let id: f64 = json::as_number(json::object_get(req, "id"));
             let params: json::Value = json::object_get(req, "params");
-            let resp: json::Value = dispatch(surf, sub, gate, { method_t.as_str() }, params, id);
+            let resp: json::Value = dispatch(surf, sub, gate, { method_t }, params, id);
             resp.to_text()
         }
         result::Result[json::Value, json::ParseError]::Err(_e) => {
@@ -317,7 +317,7 @@ fn serve_fd(
         }
         let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
         let resp: text::Text = handle_request(surf, sub, auth::serve(policy), line);
-        let rs: str = { resp.as_str() };
+        let rs: str = { resp };
         write_all(fd, #str_ptr(rs), #str_len(rs));
         let nl: u8 = '\n' as u8;
         write_all(fd, { #addr_of(nl) }, 1 as usize);

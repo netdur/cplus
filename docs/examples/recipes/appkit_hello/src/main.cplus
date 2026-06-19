@@ -73,7 +73,7 @@ fn main() -> i32 {
     // Sanity round-trip: read it back, prove the bridge preserves it.
     let current_ns: *u8 = label.string_value();
     let back: text::Text = bridge::nsstring_to_cplus_string(current_ns);
-    if { back.as_str() } != "Hello from C+" {
+    if { back } != "Hello from C+" {
         return 1;
     }
 

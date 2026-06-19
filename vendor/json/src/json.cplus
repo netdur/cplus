@@ -656,7 +656,7 @@ fn object_get(v: Value, key: str) -> Value {
             while i < n {
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
-                        if { (*p).key.as_str() } == key {
+                        if { (*p).key } == key {
                             found = clone_value({ (*p).value });
                             i = n; // break
                         } else {
@@ -823,7 +823,7 @@ fn encode_value(ref b: Buf, v: Value) -> Buf {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },
         Value::Number(n) => encode_number(b, n),
-        Value::Str(s) => encode_string(b, { s.as_str() }),
+        Value::Str(s) => encode_string(b, { s }),
         Value::Array(arr) => {
             var bb: Buf = buf_push(b, '[' as u8);
             let n: usize = arr.len();
@@ -847,7 +847,7 @@ fn encode_value(ref b: Buf, v: Value) -> Buf {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
-                        bb = encode_string(bb, { (*p).key.as_str() });
+                        bb = encode_string(bb, { (*p).key });
                         bb = buf_push(bb, ':' as u8);
                         bb = encode_value(bb, { (*p).value });
                     }
@@ -1003,14 +1003,14 @@ fn test_parse_rejects_empty() {
 fn test_round_trip_array() {
     let src: str = "[true,false,null]";
     let v: Value = parse_ok(src);
-    assert { v.to_text().as_str() } == src;
+    assert { v.to_text() } == src;
 }
 
 #[test]
 fn test_round_trip_object() {
     let src: str = "{\"k\":\"v\"}";
     let v: Value = parse_ok(src);
-    assert { v.to_text().as_str() } == src;
+    assert { v.to_text() } == src;
 }
 
 #[test]
@@ -1043,11 +1043,11 @@ fn test_emit_number_short_form() {
     // %.17g "0.10000000000000001" noise).
     let v_int: Value = Value::Number(42.0f64);
     let s_int: text::Text = v_int.to_text();
-    assert { s_int.as_str() } == "42";
+    assert { s_int } == "42";
 
     let v_dec: Value = Value::Number(0.1f64);
     let s_dec: text::Text = v_dec.to_text();
-    assert { s_dec.as_str() } == "0.1";
+    assert { s_dec } == "0.1";
 }
 
 #[test]
@@ -1057,7 +1057,7 @@ fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
     let v: Value = parse_ok("\"\\uD83D\\uDE00\"");
     let s: text::Text = as_str(v);
     assert s.len() == (4 as usize);
-    let p: *u8 = #str_ptr({ s.as_str() });
+    let p: *u8 = #str_ptr({ s });
     assert { *p } == (0xF0 as u8);
     assert { *(p + 1) } == (0x9F as u8);
     assert { *(p + 2) } == (0x98 as u8);
@@ -1070,7 +1070,7 @@ fn test_parse_bmp_unicode_escape_still_works() {
     let v: Value = parse_ok("\"\\u00e9\"");
     let s: text::Text = as_str(v);
     assert s.len() == (2 as usize);
-    let p: *u8 = #str_ptr({ s.as_str() });
+    let p: *u8 = #str_ptr({ s });
     assert { *p } == (0xC3 as u8);
     assert { *(p + 1) } == (0xA9 as u8);
 }

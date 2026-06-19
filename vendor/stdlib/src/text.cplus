@@ -2,17 +2,16 @@
 //
 // `Text` owns a heap buffer (malloc'd) and frees it on drop. It is the owned
 // string type: build it incrementally with `push_str`, read it by lending a
-// `str` view via the `unsafe` `as_str` escape hatch. Reads that search the
+// `str` view. A `Text` coerces to `str` (its `{ptr,len}` prefix) wherever a
+// `str` is expected — an argument, a binding, a return. Reads that search the
 // contents (`find`/`contains`/`starts_with`/`ends_with`) take a `str` needle
 // so any source — a literal, a slice, or another Text's view — works without
 // allocating.
 //
-// `as_str` is an `fn` on purpose (TEXT.1): the returned `str` is a view
-// into this Text's buffer with no lifetime tie back to it. If the Text drops,
-// or reallocates on a later `push_str`, the view dangles. The caller promises
-// the Text outlives the view and is not mutated while the view is held. Every
-// everyday read either copies (none here yet) or returns a value/Option, so the
-// only way to obtain a borrow is to type `unsafe`.
+// The coerced `str` is a view into this Text's buffer with no lifetime tie back
+// to it. If the Text drops, or reallocates on a later `push_str`, the view
+// dangles. Returning the view of a *local* Text is rejected (E0513); returning
+// a view of a parameter is the caller's promise that the Text outlives it.
 //
 // Bytes are stored as-is (UTF-8 when the inputs are UTF-8). Indices returned by
 // `find` are byte offsets. This is the owned half of the `Text` plan; the
@@ -165,13 +164,6 @@ impl Text {
             t.len = this.len;
         }
         return t;
-    }
-
-    // Borrow escape hatch — `fn` (TEXT.1). The returned view's lifetime
-    // is not tracked: the caller promises this Text outlives the view and is
-    // not mutated while the view is held.
-    fn as_str(this) -> str {
-        return { #str_from_raw_parts(this.ptr, this.len) };
     }
 
     fn starts_with(this, prefix: str) -> bool {
@@ -349,7 +341,7 @@ impl Text {
     // Returns None if the text contains an interior NUL byte (a C string can't
     // represent one). The returned `CString` owns its buffer and frees it on
     // drop; pass `cs.as_ptr()` to the `extern fn` and keep `cs` alive across the
-    // call. Length-based C APIs don't need this — pass `as_str`'s ptr+len.
+    // call. Length-based C APIs don't need this — pass the `str` view's ptr+len.
     fn c_str(this) -> option::Option[CString] {
         var i: usize = 0 as usize;
         while i < this.len {

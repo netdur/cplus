@@ -53,7 +53,7 @@ fn rule_path(rules_dir: str, agent_id: str) -> text::Text {
 fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
     let path: text::Text = rule_path(rules_dir, agent_id);
     guard let result::Result[fs::File, result::IoError]::Ok(f) =
-        fs::open_read({ path.as_str() }) else {
+        fs::open_read({ path }) else {
         return option::Option[auth::Decision]::None;
     };
     var fm: fs::File = f;
@@ -81,7 +81,7 @@ fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
         auth::Decision::Reject => "deny",
     };
     guard let result::Result[fs::File, result::IoError]::Ok(f) =
-        fs::create({ path.as_str() }) else {
+        fs::create({ path }) else {
         return;
     };
     var fm: fs::File = f;

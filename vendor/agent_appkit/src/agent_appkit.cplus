@@ -375,7 +375,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
     let pinned: option::Option[text::Text] = get_agent_id(view);
     let reg_node: usize = match pinned {
         option::Option[text::Text]::Some(t) => {
-            reg.add_child(parent_reg, option::Option[str]::Some({ t.as_str() }), role)
+            reg.add_child(parent_reg, option::Option[str]::Some({ t }), role)
         }
         option::Option[text::Text]::None => {
             reg.add_child(parent_reg, option::Option[str]::None, role)
@@ -408,7 +408,7 @@ fn open(window: *u8) -> Surface {
     let win_pinned: option::Option[text::Text] = get_agent_id(window);
     let win_reg: usize = match win_pinned {
         option::Option[text::Text]::Some(t) => {
-            reg.add_child(reg.root(), option::Option[str]::Some({ t.as_str() }), identity::Role::Window)
+            reg.add_child(reg.root(), option::Option[str]::Some({ t }), identity::Role::Window)
         }
         option::Option[text::Text]::None => {
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)

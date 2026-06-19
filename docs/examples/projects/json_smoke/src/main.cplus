@@ -22,7 +22,7 @@ fn main() -> i32 {
     let age_v: json::Value = json::object_get(root, "age");
     let flags_v: json::Value = json::object_get(root, "flags");
 
-    io::print("name="); io::println({ json::as_str(name_v).as_str() });
+    io::print("name="); io::println({ json::as_str(name_v) });
     let n: f64 = json::as_number(age_v);
     if n >= 30.0f64 && n < 30.5f64 { io::println("age=30 ok"); } else { io::println("age FAIL"); }
 
@@ -38,6 +38,6 @@ fn main() -> i32 {
     }
 
     let round: text::Text = root.to_text();
-    io::print("round-trip="); io::println({ round.as_str() });
+    io::print("round-trip="); io::println({ round });
     return 0;
 }

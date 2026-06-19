@@ -445,23 +445,45 @@ Tasks 1–6 are independent (any order among themselves).
     visibility tests to `_`-private members. 146 files, ~2.9k/3.0k lines.
     cplus-core 1529 / cpc e2e 618, green.
 
-- [ ] **11. `Text`→`str` coercion** — FIRST re-base the E0513 view-escape
-  check off the `as_str` NAME onto coercion sites; THEN add the borrowed-
-  `Text`→`str` coercion at arg/binding/return/receiver and drop the `as_str`
-  method. *Hardest + highest UB risk.* **Blocked by #7; E0513 re-base must
-  precede the coercion.**
-  **Recon (2026-06-19):** full implementation-ready spec in
-  `plans/task11-text-to-str-coercion.md`. Findings: `as_str` is an `unsafe fn`
-  (text.cplus:173) — the #7 link, but DECOUPLABLE (the coercion does the same
-  `{ptr,len}` extraction safely, easing #7 rather than depending on it). 37
-  `.as_str()` call sites / 12 .cplus files to migrate. Coercion hook =
-  `check_expr(e, expected)` sema.rs:5769 (Text=`Ty::Struct(designated_string_struct)`
-  → `Ty::Str`), model = the str-lit→Text coercion at 5349; codegen `{ptr,len}`
-  extraction already exists (codegen.rs:14836 `as_str` arm — keep the body, drive
-  it from a coercion span-table). E0513 re-base: view_producing_root
-  (sema.rs:15460) + returned_borrow_root (15471) key on the `as_str`/`as_slice`
-  NAME — re-point the `as_str` case onto coercion sites (keep `as_slice` for
-  Vec). NOT STARTED (sema.rs overlaps in-flight Stage 4; left for a clean tree).
+- [x] **11. `Text`→`str` coercion** — DONE 2026-06-19. Borrowed `Text` coerces
+  to `str` (its `{ptr,len}` prefix) at arg / binding / return positions; `as_str`
+  method dropped; E0513 view-escape re-based onto coercion sites. lib 1506 / e2e
+  615 (+4 new coercion tests), all green; ASan-clean.
+  **How it landed (deviations from the spec noted):**
+  - Coercion hook = the CENTRAL `check_expr` exit (sema.rs ~5762, after
+    `check_expr_kind`, before the E0302 mismatch): `expected==Str` &&
+    `actual==Ty::Struct(designated_string_struct)` → record `e.span` in
+    `text_to_str_coercion_table`, return `Ty::Str`. One hook covers arg/binding/
+    return automatically (all route through `check_expr` with an expected type).
+  - **E0513 re-base was SMALLER than feared:** the bare-`return t` case needs NO
+    re-base — once the coercion makes `t` `str`-typed, `check_returned_borrow` #3
+    (str-shaped return + local non-Copy root) already fires. Only the AGGREGATE
+    leaf (`return Holder { v: t }`) needed it: `flag_view_leaves` now consults the
+    coercion table (`returned_borrow_root` for the root) since there's no `as_str`
+    name to key on. `as_str`/`as_slice` name path KEPT for user structs (Buf).
+  - **ADDED comparison coercion** (`Text == str` / `str == Text`, BinOp::Eq|Ne) —
+    NOT in the spec's 4 positions, but the corpus needs it (matching a built Text
+    against a literal is the common op) and it's ergonomic. `str == Text` already
+    worked via the existing `check_expr(rhs, Some(lt))`; added the `Text == str`
+    (lhs) direction. RECEIVER coercion NOT implemented — `str` has no
+    user-callable methods, so it's vacuous; SKILL.md over-claim trimmed.
+  - Codegen: `gen_text_to_str` (codegen.rs) extracts `{ptr,len}` via `gen_place`
+    (Text is laid out {ptr,len,cap}); a one-span suppression guard
+    (`text_coercion_suppress`) breaks the `gen_place`-fallback→`gen_expr`
+    recursion on compound coerced exprs (`{ t }` blocks, call results). Span set
+    threaded through `generate_inner` (6 callers) onto `ModuleMetadata`.
+  - Corpus: dropped `Text::as_str` (text.cplus); migrated 36 Text `.as_str()`
+    call sites across 10 .cplus files. `docs/examples/owned_string.cplus` LEFT
+    AS-IS (its `OwnedString` is a user struct with its own `as_str`, not the
+    lang-string — coercion doesn't apply; removing it would break the example).
+    e2e.rs: bulk `.as_str() }`→` }` (21 Text sites), 2 Buf aggregate sites
+    RESTORED (Buf is a user struct, no coercion), 2 `.to_text()` round-trips
+    rewritten to `Text::contains`, 4 new tests added (E0513 local + aggregate +
+    param-guard via a minimal `#[lang("string")]` struct, plus an end-to-end run).
+  - Docs: E0513 entry in `errors.toml` updated to v0.0.24 syntax (`ref this`,
+    no `unsafe`) + coercion mention; `ERRORS.md` regenerated (synced pre-existing
+    drift: E0363/E0364, `impl P for`→`impl P:`). gen_errors.py also rewrote the
+    website md (its documented dual output) — local-only, outside this repo.
 
 ## After the renames
 

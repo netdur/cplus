@@ -117,6 +117,19 @@ struct ModuleMetadata {
     /// default of `false` is never observed because that setter always
     /// runs before any function body is emitted.
     fp_contract: Cell<bool>,
+    /// v0.0.24 #11: spans where a borrowed `Text` coerces to `str` (sema's
+    /// [`crate::sema::MonoInfo::text_to_str_coercions`]). At each, `gen_expr`
+    /// extracts the `Text`'s `{ptr,len}` prefix and packages a `str`
+    /// fat-pointer instead of yielding the owned aggregate.
+    text_to_str_coercions: RefCell<HashSet<crate::lexer::Span>>,
+    /// v0.0.24 #11: while `gen_text_to_str` materializes a coerced compound
+    /// expression (block / call result), it re-lowers that exact expression to
+    /// get the owned `Text` to address — `gen_place`'s value fallback calls
+    /// `gen_expr` again on the same span. Holding the span here suppresses the
+    /// coercion hook for that one re-entry so the recursion terminates. Only
+    /// the exact span is masked, so any *other* coercion nested in the subtree
+    /// (e.g. a `str` arg inside a block statement) still fires.
+    text_coercion_suppress: Cell<Option<crate::lexer::Span>>,
 }
 
 impl ModuleMetadata {
@@ -903,6 +916,7 @@ pub fn generate(program: &Program, mode: BuildMode) -> String {
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -932,6 +946,7 @@ pub fn generate_with_mono(
         &mono.statics,
         &mono.selectors,
         &mono.shader_blobs,
+        &mono.text_to_str_coercions,
     )
 }
 
@@ -953,6 +968,7 @@ pub fn generate_lib(program: &Program, mode: BuildMode) -> String {
         None,
         &[],
         true,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -984,6 +1000,7 @@ pub fn generate_with_debug(
         &Default::default(),
         &Default::default(),
         &Default::default(),
+        &Default::default(),
     )
 }
 
@@ -1006,6 +1023,7 @@ pub fn generate_with_options(
         source_file,
         sanitizers,
         false,
+        &Default::default(),
         &Default::default(),
         &Default::default(),
         &Default::default(),
@@ -1050,6 +1068,7 @@ pub fn generate_test_binary(
         &mono.statics,
         &mono.selectors,
         &mono.shader_blobs,
+        &mono.text_to_str_coercions,
     )
 }
 
@@ -1071,6 +1090,7 @@ fn generate_inner(
     statics_map: &std::collections::BTreeMap<String, crate::sema::StaticInfo>,
     selectors_set: &std::collections::BTreeSet<String>,
     shader_blobs_map: &HashMap<crate::lexer::Span, Vec<u8>>,
+    text_to_str_coercions: &HashSet<crate::lexer::Span>,
 ) -> String {
     let types = collect_types(program);
     let sigs = collect_sigs(program, &types);
@@ -1082,6 +1102,9 @@ fn generate_inner(
     let md = ModuleMetadata::new();
     // B-10: record the fp-contraction policy before any function body emits.
     md.fp_contract.set(fp_contract);
+    // v0.0.24 #11: stash the Text→str coercion sites so gen_expr can extract
+    // the `{ptr,len}` prefix at each. No global emission — just the span set.
+    *md.text_to_str_coercions.borrow_mut() = text_to_str_coercions.clone();
     // v0.0.8 bench-gap fix C: compute the fastcc-eligible set once. A
     // user-defined function or method gets `fastcc` iff it has internal
     // linkage (non-`pub`, non-`main`, non-extern, non-drop) AND its
@@ -9254,6 +9277,16 @@ impl<'a> FnState<'a> {
     /// where the caller can't use a value.
     fn gen_expr(&mut self, e: &Expr) -> Option<(String, Ty)> {
         let us = usize_llvm_ty();
+        // v0.0.24 #11: Text→str coercion site (sema recorded it). The Text is
+        // borrowed, not consumed — take its address and read the `{ptr,len}`
+        // prefix, packaging the same `str` fat-pointer the removed
+        // `Text::as_str` did. Sema's E0513 already rejected any coercion whose
+        // root is a local that frees at return, so the view is sound here.
+        if self.md.text_coercion_suppress.get() != Some(e.span)
+            && self.md.text_to_str_coercions.borrow().contains(&e.span)
+        {
+            return Some(self.gen_text_to_str(e));
+        }
         match &e.kind {
             // v0.0.22 DSL.2: builder blocks desugar to ordinary AST in
             // the resolver walk or `lower`; codegen never sees one.
@@ -14722,6 +14755,43 @@ impl<'a> FnState<'a> {
     /// aggregate, not a `str`). Returns the SSA value; the callee owns and drops
     /// it (the value is fresh — no caller binding to double-free). Falls through
     /// to `gen_expr` otherwise.
+    /// v0.0.24 #11: lower a `Text`→`str` coercion site. `Text` is laid out
+    /// `{ *u8 ptr, usize len, usize cap }` (the `#[lang("string")]` contract);
+    /// `str` is its `{ptr,len}` prefix. Take the `Text`'s address — `gen_place`
+    /// materializes a value-producing receiver (e.g. a call result) into one
+    /// temp alloca, so the source is evaluated exactly once — read fields 0/1,
+    /// and package the `str` fat-pointer. This is the extraction the removed
+    /// `Text::as_str` method performed, now driven by sema's coercion table.
+    fn gen_text_to_str(&mut self, e: &Expr) -> (String, Ty) {
+        let us = usize_llvm_ty();
+        // Address the `Text`. For a place (`Ident`/`Field`) this is a direct
+        // slot; for a value-producing form (a `{ … }` block, a call result)
+        // `gen_place` materializes one temp and re-lowers `e` — mask this exact
+        // span so that re-entry yields the owned aggregate instead of looping
+        // back into the coercion. Save/restore to stay correct under nesting.
+        let prev = self.md.text_coercion_suppress.replace(Some(e.span));
+        let (slot, ty) = self.gen_place(e);
+        self.md.text_coercion_suppress.set(prev);
+        let llvm_text = self.lty(&ty);
+        let pptr = self.next_tmp();
+        self.emit(&format!(
+            "{pptr} = getelementptr inbounds {llvm_text}, ptr {slot}, i32 0, i32 0"
+        ));
+        let pv = self.next_tmp();
+        self.gen_load(&pv, &Ty::RawPtr(Box::new(Ty::U8)), &pptr);
+        let lptr = self.next_tmp();
+        self.emit(&format!(
+            "{lptr} = getelementptr inbounds {llvm_text}, ptr {slot}, i32 0, i32 1"
+        ));
+        let lv = self.next_tmp();
+        self.gen_load(&lv, &Ty::Usize, &lptr);
+        let t1 = self.next_tmp();
+        self.emit(&format!("{t1} = insertvalue {{ ptr, {us} }} undef, ptr {pv}, 0"));
+        let t2 = self.next_tmp();
+        self.emit(&format!("{t2} = insertvalue {{ ptr, {us} }} {t1}, {us} {lv}, 1"));
+        (t2, Ty::Str)
+    }
+
     fn gen_value_arg(&mut self, a: &Expr, pty: &Ty) -> (String, Ty) {
         if let ExprKind::StrLit(s) = &a.kind {
             if self.is_lang_string_ty(pty) {
@@ -17312,6 +17382,7 @@ mod tests {
             None,
             &[],
             false,
+            &Default::default(),
             &Default::default(),
             &Default::default(),
             &Default::default(),

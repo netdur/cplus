@@ -4970,12 +4970,12 @@ fn try_compile_snippet(src_text: &str) -> (bool, String) {
     )
 }
 
-// R4: these borrow-check tests previously used the blessed `string` as a local
-// owned type with a safe `as_str()`. With `string` removed, they use a tiny
-// user Drop struct `Buf` whose `as_str()` borrows `self` — `returned_borrow_root`
-// recognizes any `recv.as_str()` / `recv.as_slice()` by name, so E0513 fires the
-// same way. (`Text::as_str` is `unsafe`, so it deliberately bypasses this check
-// — the view-lifetime rule for `Text` is the deferred feature.)
+// R4: these borrow-check tests exercise the `as_str`/`as_slice`-by-name view
+// root via a tiny user Drop struct `Buf` whose `as_str()` borrows `self` —
+// `returned_borrow_root` recognizes any `recv.as_str()` / `recv.as_slice()` by
+// name, so E0513 fires on a returned view of a local. (`Text` no longer has an
+// `as_str` method — it coerces to `str` directly; the coercion has its own
+// E0513 coverage in `text_coercion_*` below.)
 const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
      extern fn free(p: *u8);\n\
      struct Buf { ptr: *u8 }\n\
@@ -5110,6 +5110,129 @@ fn param_rooted_view_in_returned_struct_compiles() {
     assert!(
         ok,
         "param-rooted view in a returned struct must compile; stderr: {stderr}"
+    );
+}
+
+// v0.0.24 #11: a minimal `#[lang("string")]` struct exercises the `Text`→`str`
+// coercion and its E0513 view-escape re-base without pulling in the stdlib.
+// `opaque ptr` exempts the field from raw-pointer drop accounting (a notional
+// owner — we never allocate); the `drop` makes it non-Copy like `Text`, which
+// is what makes a returned view of a *local* one dangle.
+const LANG_STR_PRELUDE: &str = "#[lang(\"string\")]\n\
+     struct LStr { opaque ptr: *u8, len: usize, cap: usize }\n\
+     impl LStr {\n\
+         fn drop(ref this) { return; }\n\
+     }\n\
+     fn mk() -> LStr { return LStr { ptr: 0 as *u8, len: 0 as usize, cap: 0 as usize }; }\n";
+
+#[test]
+fn text_coercion_return_local_rejected_e0513() {
+    // The headline UB guard: a local lang-string coerced to `str` and returned
+    // dangles (its owner drops at function exit). The coercion has no `as_str`
+    // anchor, so E0513 must fire on the bare `return s` — `check_returned_borrow`
+    // sees the `str`-shaped return rooted at a local non-Copy value.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}fn bad() -> str {{\n\
+             let s: LStr = mk();\n\
+             return s;\n\
+         }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513 on a returned local-string view");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn text_coercion_escaping_in_aggregate_rejected_e0513() {
+    // The same dangle hidden in a returned aggregate: `Holder`'s `str` field
+    // coerces a local lang-string. There is no `as_str` to key on, so
+    // `flag_view_leaves` must consult the coercion table to find the leaf and
+    // fire E0513.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         fn keep() -> Holder {{\n\
+             let s: LStr = mk();\n\
+             return Holder {{ view: s }};\n\
+         }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(!ok, "expected E0513 on a coerced view escaping in an aggregate");
+    assert!(stderr.contains("E0513"), "expected E0513, got: {stderr}");
+}
+
+#[test]
+fn text_coercion_param_root_compiles() {
+    // Negative-guard: a view coerced from a *parameter* lang-string is
+    // caller-tied (the source outlives the call), so returning it bare or
+    // stored in an aggregate is sound — must NOT trip E0513.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}struct Holder {{ view: str }}\n\
+         fn bare(p: LStr) -> str {{ return p; }}\n\
+         fn wrap(p: LStr) -> Holder {{ return Holder {{ view: p }}; }}\n\
+         fn main() -> i32 {{ return 0; }}\n"
+    ));
+    assert!(ok, "a param-rooted coerced view must compile; stderr: {stderr}");
+}
+
+#[test]
+fn text_coercion_end_to_end() {
+    // v0.0.24 #11 positive run: a `Text` coerces to `str` at an argument, a
+    // binding, and a comparison — the borrowed view reads the live buffer
+    // (including after `push_str` reallocs it). No `as_str` method anywhere.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"textcoerce\"\n\n[[bin]]\nname = \"textcoerce\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
+    for name in &["text", "option", "vec", "iterator"] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join(format!("vendor/stdlib/src/{name}.cplus")),
+        )
+        .unwrap();
+        std::fs::write(dir.join(format!("vendor/stdlib/src/{name}.cplus")), src).unwrap();
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/text\" as text;\n\
+         fn take(s: str) -> usize { return #str_len(s); }\n\
+         fn main() -> i32 {\n\
+             var t = \"AB\".to_text();\n\
+             t.push_str(\"CD\");\n\
+             let n = take(t);\n\
+             if n != (4 as usize) { return 1; }\n\
+             let v: str = t;\n\
+             if #str_len(v) != (4 as usize) { return 2; }\n\
+             if t != \"ABCD\" { return 3; }\n\
+             if \"ABCD\" != t { return 4; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed");
+    let bin = dir.join("target/debug/textcoerce");
+    let out = Command::new(&bin).output().expect("run textcoerce");
+    assert!(
+        out.status.success(),
+        "Text→str coercion run failed (exit {:?}): the return code marks which \
+         coercion site is wrong (1=arg, 2=binding, 3/4=comparison)",
+        out.status.code()
     );
 }
 
@@ -18485,12 +18608,12 @@ fn main() -> i32 {
     let ns: *u8 = bridge::cplus_string_to_nsstring(original);
     let back: text::Text = bridge::nsstring_to_cplus_string(ns);
     if back.len() != (12 as usize) { return 1; }
-    if { back.as_str() } != "hello, world" { return 2; }
+    if { back } != "hello, world" { return 2; }
 
     // str literal path.
     let ns2: *u8 = bridge::cplus_str_to_nsstring("bridge");
     let s2: text::Text = bridge::nsstring_to_cplus_string(ns2);
-    if { s2.as_str() } != "bridge" { return 3; }
+    if { s2 } != "bridge" { return 3; }
 
     // Empty string is a corner the encoding-aware length path must handle.
     let ns3: *u8 = bridge::cplus_str_to_nsstring("");
@@ -18787,7 +18910,7 @@ fn main() -> i32 {
     // set_agent_id / get_agent_id round-trip.
     match ui::get_agent_id(btn.raw()) {
         option::Option[text::Text]::Some(t) => {
-            if { t.as_str() } != "save-btn" { return 10; }
+            if { t } != "save-btn" { return 10; }
         }
         option::Option[text::Text]::None => { return 11; }
     }
@@ -18809,8 +18932,8 @@ fn main() -> i32 {
                 if identity::role_eq(r, identity::Role::Window) { n_window = n_window +% 1; }
                 if identity::role_eq(r, identity::Role::Button) {
                     n_button = n_button +% 1;
-                    if { (*p).text.as_str() } == "Click me" { found_click = true; }
-                    if { (*p).id.as_str() } == "save-btn" { found_pinned_id = true; }
+                    if { (*p).text } == "Click me" { found_click = true; }
+                    if { (*p).id } == "save-btn" { found_pinned_id = true; }
                 }
                 if identity::role_eq(r, identity::Role::Text) { n_text = n_text +% 1; }
                 if identity::role_eq(r, identity::Role::Input) { n_input = n_input +% 1; }
@@ -19079,7 +19202,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
 }
 
 fn outcome_of(resp: text::Text) -> text::Text {
-    return match json::parse({ resp.as_str() }) {
+    return match json::parse({ resp }) {
         result::Result[json::Value, json::ParseError]::Ok(v) =>
             json::as_str(json::object_get(json::object_get(v, "result"), "outcome")),
         result::Result[json::Value, json::ParseError]::Err(_e) => "PARSE_FAIL".to_text(),
@@ -19087,7 +19210,7 @@ fn outcome_of(resp: text::Text) -> text::Text {
 }
 
 fn has_error(resp: text::Text) -> bool {
-    return match json::parse({ resp.as_str() }) {
+    return match json::parse({ resp }) {
         result::Result[json::Value, json::ParseError]::Ok(v) => json::object_get(v, "error").is_object(),
         result::Result[json::Value, json::ParseError]::Err(_e) => false,
     };
@@ -19110,19 +19233,19 @@ fn main() -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     let d: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}");
-    if !{ d.as_str() }.to_text().contains("save-btn") { return 1; }
-    if !{ d.as_str() }.to_text().contains("\"role\":\"button\"") { return 2; }
+    if !d.contains("save-btn") { return 1; }
+    if !d.contains("\"role\":\"button\"") { return 2; }
 
     let c: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}");
-    if { outcome_of(c).as_str() } != "allowed" { return 3; }
+    if { outcome_of(c) } != "allowed" { return 3; }
 
     let c2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"ghost\"},\"id\":3}");
-    if { outcome_of(c2).as_str() } != "not_found" { return 4; }
+    if { outcome_of(c2) } != "not_found" { return 4; }
 
     let s1: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"hi\",\"base_version\":0},\"id\":4}");
-    if { outcome_of(s1).as_str() } != "allowed" { return 5; }
+    if { outcome_of(s1) } != "allowed" { return 5; }
     let s2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"x\",\"base_version\":0},\"id\":5}");
-    if { outcome_of(s2).as_str() } != "version_conflict" { return 6; }
+    if { outcome_of(s2) } != "version_conflict" { return 6; }
 
     let denied: text::Text = mcp::handle_request(surf, sub, auth::deny_all(), "{\"method\":\"describe_ui\",\"params\":{},\"id\":6}");
     if !has_error(denied) { return 7; }
@@ -19274,10 +19397,10 @@ fn main() -> i32 {
     while i < nodes.len() {
         match nodes.at(i) {
             option::Option[*ui::UiNode]::Some(p) => {
-                if { (*p).id.as_str() } == "name-field" {
-                    if { (*p).text.as_str() } == "hello" { wrote_ok = true; }
+                if { (*p).id } == "name-field" {
+                    if { (*p).text } == "hello" { wrote_ok = true; }
                 }
-                if { (*p).id.as_str() } == "save-btn" {
+                if { (*p).id } == "save-btn" {
                     if { (*p).actionable } { btn_actionable = true; }
                 }
                 if !{ (*p).actionable } { have_unexposed = true; }
@@ -19514,10 +19637,10 @@ fn main() -> i32 {
     if board.set_string(#str_ptr("clip-test-123\0")) != (1 as i8) { return 1; }
     let got_ns: *u8 = board.string_ns();
     if got_ns == { 0 as *u8 } { return 2; }
-    if { conv::nsstring_to_cplus_string(got_ns).as_str() } != "clip-test-123" { return 3; }
+    if { conv::nsstring_to_cplus_string(got_ns) } != "clip-test-123" { return 3; }
     let _cc2: i64 = board.clear();
     let _ok2: i8 = board.set_string(#str_ptr("second\0"));
-    if { conv::nsstring_to_cplus_string(board.string_ns()).as_str() } != "second" { return 4; }
+    if { conv::nsstring_to_cplus_string(board.string_ns()) } != "second" { return 4; }
     pool.drain();
     return 0;
 }
@@ -19640,8 +19763,8 @@ fn main() -> i32 {
 
     let nil: *u8 = { 0 as *u8 };
     let sel_v: *u8 = rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0"));
-    if { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() } != "row-0" { return 2; }
-    if { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() } != "row-2" { return 3; }
+    if { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)) } != "row-0" { return 2; }
+    if { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)) } != "row-2" { return 3; }
 
     rt::release(ds);
     pool.drain();
@@ -20486,7 +20609,7 @@ fn main() -> i32 {
     // str -> NSString -> Text, content preserved.
     let ns: *u8 = convert::cplus_str_to_nsstring("hello world");
     let back: text::Text = convert::nsstring_to_cplus_string(ns);
-    if { back.as_str() } != "hello world" { return 1; }
+    if { back } != "hello world" { return 1; }
 
     // Vec[u8] -> NSData -> Vec[u8], bytes preserved.
     var v: vec::Vec[u8] = vec::Vec[u8]::new();
@@ -23816,7 +23939,7 @@ fn stdlib_text_core_api_builds_and_runs() {
              }\n\
              let c: text::Text = t.clone();\n\
              if c.len() == (12 as usize) { score = score +% 1; }\n\
-             let v: str = { c.as_str() };\n\
+             let v: str = { c };\n\
              if #str_len(v) == (12 as usize) { score = score +% 1; }\n\
              return score;\n\
          }\n",
@@ -23849,7 +23972,7 @@ fn stdlib_text_literal_in_let_constructs_owned_text() {
              if s.len() == (12 as usize) { score = score +% 1; }\n\
              if s.starts_with(\"hello\") { score = score +% 1; }\n\
              if s.contains(\"o, w\") { score = score +% 1; }\n\
-             let v: str = { s.as_str() };\n\
+             let v: str = { s };\n\
              if #str_len(v) == (12 as usize) { score = score +% 1; }\n\
              return score;\n\
          }\n",
