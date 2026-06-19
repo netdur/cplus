@@ -252,8 +252,26 @@ Tasks 1–6 are independent (any order among themselves).
     `constant`→`global` assertions + the parser `is_mut` assertion, deleted the
     obsolete E0X34 e2e test, fixed the const-static-globals e2e + a lower test.
     cplus-core 1563 / cpc e2e 629, green.
-  - [→] **Stage 3e — bare `x: T` move→borrow flip** (DEFERRED — verified core
-    recipe ready; the migration is a dedicated stdlib-wide pass). **VERIFIED
+  - [→] **Stage 3e — bare `x: T` move→borrow flip** (IN PROGRESS, uncommitted
+    on disk — tree RED at 10 e2e failures; do NOT assume green). PROGRESS:
+    core flip applied; **cplus-core lib GREEN (1563)**; **cpc e2e 619/629** (10
+    left, from 32). Fixes applied: identity/passthrough `(x: T)->T{return x}` →
+    `take` (lib + e2e, regex); consume/E0335 tests → `take` (echo/sink/Box::new/
+    boxed); the 3 ownership-consume matrices (dropped fn-ptr sites; `gtake`/
+    `take2`→`take`); region-borrow `owns_value` clause (region params keep the
+    pre-3e `!param.mutable` rule). **10 REMAINING (intricate — need fresh
+    context):** (1) region-lifetime collateral — `e0374`, `e0384`,
+    `longest_move_either_input_while_borrowed_rejected`,
+    `shared_region_borrow_return_drops_once` — these are Stage-4-removed; likely
+    finish them WITH Stage 4 or fix per-region-rule. (2) **fn-ptr consume GAP**
+    (`fn_pointer_call_moves_arg_no_double_free`, `enum_move_into_method_arg…`) —
+    a `fn(R)` pointer is now a BORROW type, so a `take`-consuming fn through it
+    no longer consumes; needs `fn(take R)` fn-ptr types (real feature gap) — a
+    NOTED follow-up. (3) mechanical leftovers: `phase7_…nested_generic_struct`,
+    `phase7_exit_demo`, `agent_mcp_*_theme_b` (more `take` on
+    returning/storing params). **THEN: the E0337 escape-completeness AUDIT
+    (still pending — the UB-risk safeguard).** Commit only once all green.
+    [verified recipe below still applies] **VERIFIED
     core change (tried + reverted to keep the tree green, like #7):** the flip
     is 3 small edits — (1) codegen `effective_move` → `p.move_ && matches!(ty,
     Struct|Enum|String) && !is_copy_ty` (bare no longer moves; only `take`

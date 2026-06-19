@@ -3195,7 +3195,7 @@ mod tests {
 
     #[test]
     fn identity_call_synthesizes_concrete_fn_and_rewrites_callee() {
-        let p = run("fn identity[T](x: T) -> T { return x; } \
+        let p = run("fn identity[T](take x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = identity(7); return a; }");
         // Generic template removed; synthesized concrete fn present.
         let names: Vec<&str> = p
@@ -3236,7 +3236,7 @@ mod tests {
 
     #[test]
     fn distinct_instantiations_emit_distinct_fns() {
-        let p = run("fn id[T](x: T) -> T { return x; } \
+        let p = run("fn id[T](take x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = id(7); let b: bool = id(true); return a; }");
         let names: Vec<&str> = p
             .items

@@ -612,7 +612,7 @@ fn monomorphize_inferred_same_offset_no_collision() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/idlib.cplus"),
-        "pub fn id[T](x: T) -> T { return x; }\n",
+        "pub fn id[T](take x: T) -> T { return x; }\n",
     )
     .unwrap();
     let mod_a = "import \"./idlib\" as g;\n\
@@ -1945,8 +1945,8 @@ fn generic_body_use_after_move_rejected_e0335() {
         "struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { return; } }\n\
          struct P {}\n\
-         interface Sink { fn sink(this, r: R); }\n\
-         impl P: Sink { fn sink(this, r: R) { return; } }\n\
+         interface Sink { fn sink(this, take r: R); }\n\
+         impl P: Sink { fn sink(this, take r: R) { return; } }\n\
          fn use_twice[T: Sink](t: T) -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
            t.sink(r);\n\
@@ -1966,8 +1966,8 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
         "struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { return; } }\n\
          struct P {}\n\
-         interface Sink { fn sink(this, r: R); }\n\
-         impl P: Sink { fn sink(this, r: R) { return; } }\n\
+         interface Sink { fn sink(this, take r: R); }\n\
+         impl P: Sink { fn sink(this, take r: R) { return; } }\n\
          fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
          fn main() -> i32 {\n\
            let p: P = P {};\n\
@@ -2510,7 +2510,7 @@ fn move_while_return_borrow_live_rejected() {
         "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
-fn passthrough(b: B) -> B { return b; }
+fn passthrough(take b: B) -> B { return b; }
 fn drain(take b: B) { return; }
 fn main() -> i32 {
     let x: B = B { x: 1 };
@@ -4630,7 +4630,7 @@ fn main() -> i32 {
 #[test]
 fn bare_noncopy_param_move_forwarded_no_double_free() {
     // v0.0.12 regression: a bare `x: T` non-Copy param that is forwarded back
-    // out (`fn forward(x: T) -> T { return x; }`) used to lower as a shared
+    // out (`fn forward(take x: T) -> T { return x; }`) used to lower as a shared
     // borrow — the caller dropped its binding unconditionally AND the returned
     // value's new owner dropped it, double-freeing the same heap allocation.
     // macOS libmalloc aborts on the second free, so a regression makes the
@@ -4650,7 +4650,7 @@ impl Owned {
     fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
     fn drop(ref this) { unsafe { free(this.ptr); } return; }
 }
-fn forward(x: Owned) -> Owned { return x; }
+fn forward(take x: Owned) -> Owned { return x; }
 fn main() -> i32 {
     let b: Owned = Owned::make();
     let c: Owned = forward(b);
@@ -6255,7 +6255,7 @@ fn phase7_generic_decls_and_impl_interface_clean() {
          enum Maybe[T] { Some(T), None }\n\
          struct Point { x: i32, y: i32 }\n\
          impl Point: Compare { fn compare(this, other: i32) -> i32 { return 0; } }\n\
-         fn identity[T](x: T) -> T { return x; }\n\
+         fn identity[T](take x: T) -> T { return x; }\n\
          fn main() -> i32 { return 7; }\n",
     )
     .unwrap();
@@ -6310,7 +6310,7 @@ fn phase7_generic_fn_inferred_call_runs() {
     let src = dir.join("p7gen5.cplus");
     std::fs::write(
         &src,
-        "fn identity[T](x: T) -> T { return x; }\n\
+        "fn identity[T](take x: T) -> T { return x; }\n\
          fn main() -> i32 {\n\
              let a: i32 = identity(7);\n\
              let b: i32 = identity(35);\n\
@@ -6347,7 +6347,7 @@ fn phase7_generic_fn_distinct_instantiations_emit_distinct_symbols() {
     let src = dir.join("p7gen5_distinct.cplus");
     std::fs::write(
         &src,
-        "fn id[T](x: T) -> T { return x; }\n\
+        "fn id[T](take x: T) -> T { return x; }\n\
          fn main() -> i32 {\n\
              let a: i32 = id(7);\n\
              let b: i64 = id(99i64);\n\
@@ -6379,7 +6379,7 @@ fn phase7_turbofish_explicit_type_args_runs() {
     let src = dir.join("p7tb.cplus");
     std::fs::write(
         &src,
-        "fn identity[T](x: T) -> T { return x; }\n\
+        "fn identity[T](take x: T) -> T { return x; }\n\
          fn main() -> i32 {\n\
              let a: i32 = identity::[i32](7);\n\
              let b: i32 = identity::[i32](35);\n\
@@ -6414,7 +6414,7 @@ fn phase7_turbofish_arity_mismatch_rejected_e0501() {
     let src = dir.join("p7tb_bad.cplus");
     std::fs::write(
         &src,
-        "fn id[T](x: T) -> T { return x; }\n\
+        "fn id[T](take x: T) -> T { return x; }\n\
          fn main() -> i32 { let a: i32 = id::[i32, bool](7); return a; }\n",
     )
     .unwrap();
@@ -7134,7 +7134,7 @@ fn phase7_generic_method_with_turbofish_runs() {
         &src,
         "struct P { x: i32 }\n\
          impl P {\n\
-             fn cast[T](this, value: T) -> T { return value; }\n\
+             fn cast[T](this, take value: T) -> T { return value; }\n\
          }\n\
          fn main() -> i32 {\n\
              let p: P = P { x: 0 };\n\
@@ -7174,7 +7174,7 @@ fn phase7_generic_method_on_generic_struct_runs() {
         &src,
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
-             fn id[U](this, x: U) -> U { return x; }\n\
+             fn id[U](this, take x: U) -> U { return x; }\n\
          }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32] { value: 0 };\n\
@@ -7289,7 +7289,7 @@ fn phase7_generic_method_on_generic_enum_runs() {
         &src,
         "enum Maybe[T] { Some(T), None }\n\
          impl Maybe[T] {\n\
-             fn id[U](this, x: U) -> U { return x; }\n\
+             fn id[U](this, take x: U) -> U { return x; }\n\
          }\n\
          fn main() -> i32 {\n\
              let m: Maybe[i32] = Maybe[i32]::Some(0);\n\
@@ -7326,7 +7326,7 @@ fn phase7_generic_method_on_generic_enum_two_instantiations() {
         &src,
         "enum Maybe[T] { Some(T), None }\n\
          impl Maybe[T] {\n\
-             fn id[U](this, x: U) -> U { return x; }\n\
+             fn id[U](this, take x: U) -> U { return x; }\n\
          }\n\
          fn main() -> i32 {\n\
              let m: Maybe[i32] = Maybe[i32]::Some(0);\n\
@@ -7367,7 +7367,7 @@ fn phase7_generic_assoc_fn_on_generic_struct_turbofish() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         impl Box[T] { fn make[U](x: U) -> U { return x; } }\n\
+         impl Box[T] { fn make[U](take x: U) -> U { return x; } }\n\
          fn main() -> i32 { return Box[i32]::make::[i32](7); }\n",
     )
     .unwrap();
@@ -7537,7 +7537,7 @@ fn phase7_generic_assoc_call_with_turbofish_runs() {
         &src,
         "struct P { x: i32 }\n\
          impl P {\n\
-             fn ident[T](value: T) -> T { return value; }\n\
+             fn ident[T](take value: T) -> T { return value; }\n\
          }\n\
          fn main() -> i32 {\n\
              return P::ident::[i32](42);\n\
@@ -8214,7 +8214,7 @@ fn phase7_generic_fn_returning_generic_struct_runs() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         fn boxed[T](v: T) -> Box[T] { return Box[T] { value: v }; }\n\
+         fn boxed[T](take v: T) -> Box[T] { return Box[T] { value: v }; }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = boxed::[i32](42);\n\
              return b.value;\n\
@@ -8245,7 +8245,7 @@ fn phase7_generic_fn_returning_generic_struct_inferred_runs() {
     std::fs::write(
         &src,
         "struct Box[T] { value: T }\n\
-         fn boxed[T](v: T) -> Box[T] { return Box[T] { value: v }; }\n\
+         fn boxed[T](take v: T) -> Box[T] { return Box[T] { value: v }; }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = boxed(7);\n\
              return b.value * 6;\n\
@@ -8318,7 +8318,7 @@ fn phase7_generic_type_assoc_fn_call_runs() {
         &src,
         "struct Box[T] { value: T }\n\
          impl Box[T] {\n\
-             fn new(v: T) -> Box[T] { return Box[T] { value: v }; }\n\
+             fn new(take v: T) -> Box[T] { return Box[T] { value: v }; }\n\
          }\n\
          fn main() -> i32 {\n\
              let b: Box[i32] = Box[i32]::new(42);\n\
@@ -8562,7 +8562,7 @@ fn phase11_type_alias_in_fn_signature_runs() {
     std::fs::write(
         &src,
         "type Bytes = usize;\n\
-         fn measure(n: Bytes) -> Bytes { return n; }\n\
+         fn measure(take n: Bytes) -> Bytes { return n; }\n\
          fn main() -> i32 { let n: Bytes = 42 as usize; return measure(n) as i32; }\n",
     )
     .unwrap();
@@ -11546,7 +11546,7 @@ fn generic_async_fn_multi_instantiation_round_trip() {
         dir.join("src/main.cplus"),
         "import \"stdlib/future\" as future;\n\
          import \"stdlib/executor\" as executor;\n\
-         async fn id[T](x: T) -> T { return x; }\n\
+         async fn id[T](take x: T) -> T { return x; }\n\
          fn main() -> i32 {\n\
              let f1: future::Future[i32] = id::[i32](42);\n\
              let n: i32 = executor::block_on::[i32](f1);\n\
@@ -13867,7 +13867,7 @@ fn echo_string_param_does_not_double_free() {
     std::fs::write(
         &src,
         format!("{}{}", BUF_PRELUDE, "\
-fn echo(x: Buf) -> Buf {
+fn echo(take x: Buf) -> Buf {
     return x;
 }
 fn main() -> i32 {
@@ -15134,7 +15134,7 @@ fn phase1d_async_runs_clean_under_asan() {
         dir.join("src/main.cplus"),
         "import \"stdlib/future\" as future;\n\
          import \"stdlib/executor\" as executor;\n\
-         async fn id[T](x: T) -> T { return x; }\n\
+         async fn id[T](take x: T) -> T { return x; }\n\
          async fn inner(x: i32) -> i32 { return x +% (10 as i32); }\n\
          async fn outer(x: i32) -> i32 {\n\
              let v: i32 = await inner(x);\n\
@@ -21548,7 +21548,7 @@ fn unsafe_impl_send_compiles_and_runs_end_to_end() {
         "\
 struct Handle { opaque p: *u8 }
 unsafe impl Handle: Send {}
-fn ship[T: Send](v: T) -> T { return v; }
+fn ship[T: Send](take v: T) -> T { return v; }
 fn main() -> i32 {
     let h: Handle = Handle { p: unsafe { 7 as *u8 } };
     let q: Handle = ship::[Handle](h);
@@ -21580,7 +21580,7 @@ fn raw_ptr_struct_without_override_rejected_at_compile_time() {
         &src,
         "\
 struct Handle { opaque p: *u8 }
-fn ship[T: Send](v: T) -> T { return v; }
+fn ship[T: Send](take v: T) -> T { return v; }
 fn main() -> i32 {
     let h: Handle = Handle { p: unsafe { 0 as *u8 } };
     let _q: Handle = ship::[Handle](h);

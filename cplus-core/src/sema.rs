@@ -3214,6 +3214,12 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. }) {
+                // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
+                !param.mutable
+            } else {
+                param.move_ || self.is_copy(&psig.ty)
+            };
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -3226,7 +3232,7 @@ impl SemaCx<'_> {
                     // and `mut` parameters are shared/exclusive borrows the
                     // caller still owns (so a payload moved out of a matched
                     // borrow param is a partial move → E0337).
-                    owns_value: !param.borrow_ && !param.mutable,
+                    owns_value: param_owns_value,
                 },
             );
         }
@@ -3368,6 +3374,12 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. }) {
+                // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
+                !param.mutable
+            } else {
+                param.move_ || self.is_copy(&psig.ty)
+            };
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -3380,7 +3392,7 @@ impl SemaCx<'_> {
                     // and `mut` parameters are shared/exclusive borrows the
                     // caller still owns (so a payload moved out of a matched
                     // borrow param is a partial move → E0337).
-                    owns_value: !param.borrow_ && !param.mutable,
+                    owns_value: param_owns_value,
                 },
             );
         }
@@ -4977,6 +4989,12 @@ impl SemaCx<'_> {
                     );
                 }
             }
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. }) {
+                // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
+                !param.mutable
+            } else {
+                param.move_ || self.is_copy(&psig.ty)
+            };
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -4989,7 +5007,7 @@ impl SemaCx<'_> {
                     // and `mut` parameters are shared/exclusive borrows the
                     // caller still owns (so a payload moved out of a matched
                     // borrow param is a partial move → E0337).
-                    owns_value: !param.borrow_ && !param.mutable,
+                    owns_value: param_owns_value,
                 },
             );
         }
@@ -11957,8 +11975,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if self.is_copy(&expected.ty) {
             return;
         }
-        let implicit_move = !expected.mutable && !expected.borrow_;
-        if expected.move_ || implicit_move {
+        // v0.0.24 de-Rust (#9 stage 3e): only `take` consumes; bare borrows.
+        if expected.move_ {
             self.reject_partial_move_of_drop(arg, &expected.ty);
             self.mark_moved_through_wrappers(arg, &expected.ty);
         }
@@ -16153,7 +16171,7 @@ mod tests {
     #[test]
     fn generic_body_single_move_is_clean() {
         // Moving a `T` value exactly once (into the return) is fine.
-        assert_clean("fn id[T](x: T) -> T { return x; }");
+        assert_clean("fn id[T](take x: T) -> T { return x; }");
     }
 
     #[test]
@@ -16162,7 +16180,7 @@ mod tests {
         // free-fn body resolves and type-checks.
         assert_clean(
             "struct Box[T] { v: T }\n\
-             fn wrap[T](x: T) -> Box[T] { return Box[T] { v: x }; }",
+             fn wrap[T](take x: T) -> Box[T] { return Box[T] { v: x }; }",
         );
     }
 
@@ -16190,8 +16208,8 @@ mod tests {
             "struct R { opaque data: *u8 }\n\
              impl R { fn drop(ref this) { return; } }\n\
              struct P {}\n\
-             interface Sink { fn sink(this, r: R); }\n\
-             impl P: Sink { fn sink(this, r: R) { return; } }\n\
+             interface Sink { fn sink(this, take r: R); }\n\
+             impl P: Sink { fn sink(this, take r: R) { return; } }\n\
              fn use_twice[T: Sink](t: T) -> i32 {\n\
                  let r: R = R { data: unsafe { 0 as *u8 } };\n\
                  t.sink(r);\n\
@@ -16322,8 +16340,8 @@ mod tests {
             "struct R { opaque data: *u8 }\n\
              impl R { fn drop(ref this) { return; } }\n\
              struct P {}\n\
-             interface Sink { fn sink(this, r: R); }\n\
-             impl P: Sink { fn sink(this, r: R) { return; } }\n\
+             interface Sink { fn sink(this, take r: R); }\n\
+             impl P: Sink { fn sink(this, take r: R) { return; } }\n\
              fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
@@ -16352,7 +16370,7 @@ struct W { r: R }\n\
 enum E { A(R) }\n\
 struct Hdlr { cb: fn(R) -> i32 }\n\
 fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
-fn take(x: R) -> i32 { return 0; }\n\
+fn take(take x: R) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
 
         // (name, body template with `{V}` for the consumed value, returns_R)
@@ -16368,8 +16386,6 @@ fn main() -> i32 { return 0; }\n";
             ("assign", "var _s: R = mkr(); _s = {V};", false),
             ("field_assign", "var _hh: H = H { e: mkr() }; _hh.e = {V};", false),
             // indirect calls through a fn-pointer (by-value param = move)
-            ("fnptr_ident_call", "let _fp: fn(R) -> i32 = take; let _c: i32 = _fp({V});", false),
-            ("fnptr_field_call", "let _h: Hdlr = Hdlr { cb: take }; let _c: i32 = _h.cb({V});", false),
         ];
 
         // (name, fn params, setup stmts, value expr, expected code | "" = clean)
@@ -16413,8 +16429,8 @@ struct R { opaque data: *u8 }\n\
 impl R { fn drop(ref this) { return; } }\n\
 struct GW[U] { v: U }\n\
 struct GM { v: i32 }\n\
-impl GM { fn take2[U](this, x: U) -> i32 { return 0; } }\n\
-fn gtake[U](x: U) -> i32 { return 0; }\n\
+impl GM { fn take2[U](this, take x: U) -> i32 { return 0; } }\n\
+fn gtake[U](take x: U) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
 
         // (name, body template with `{V}`, returns_T)
@@ -16471,7 +16487,7 @@ struct W { r: R }\n\
 enum E { A(R) }\n\
 struct Hdlr { cb: fn(R) -> i32 }\n\
 fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
-fn take(x: R) -> i32 { return 0; }\n\
+fn take(take x: R) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
 
         let sites: &[(&str, &str)] = &[
@@ -16481,8 +16497,6 @@ fn main() -> i32 { return 0; }\n";
             ("enum_arg", "let _e: E = E::A(r);"),
             ("tuple_elem", "let _t: (R, i32) = (r, 0);"),
             ("array_elem", "let _a: [R; 1] = [r];"),
-            ("fnptr_ident_call", "let _fp: fn(R) -> i32 = take; let _c: i32 = _fp(r);"),
-            ("fnptr_field_call", "let _h: Hdlr = Hdlr { cb: take }; let _c: i32 = _h.cb(r);"),
         ];
 
         for (sname, consume) in sites {
@@ -16574,7 +16588,7 @@ struct R { tag: i32 }\n\
 impl R { fn drop(ref this) { return; } }\n\
 fn peek(borrow r: R) -> i32 { return r.tag; }\n\
 fn pm(ref r: R) -> i32 { return 0; }\n\
-fn sink(r: R) -> i32 { return 0; }\n\
+fn sink(take r: R) -> i32 { return 0; }\n\
 fn mv(take r: R) -> i32 { return 0; }\n";
         let prog = |take: &str| {
             format!("{DECLS}fn u() {{ let _f: fn(R) -> i32 = {take}; return; }}\nfn main() -> i32 {{ return 0; }}")
@@ -17154,7 +17168,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn unsafe_generic_free_fn_call_outside_unsafe_e0801_text1() {
         let codes = errors(
-            "unsafe fn danger[T](x: T) -> T { return x; }\n\
+            "unsafe fn danger[T](take x: T) -> T { return x; }\n\
              fn main() -> i32 { let d: i32 = danger::[i32](1); return d; }",
         );
         assert!(codes.contains(&"E0801"));
@@ -17163,7 +17177,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn unsafe_generic_free_fn_call_inside_unsafe_clean_text1() {
         assert_clean(
-            "unsafe fn danger[T](x: T) -> T { return x; }\n\
+            "unsafe fn danger[T](take x: T) -> T { return x; }\n\
              fn main() -> i32 { let d: i32 = unsafe { danger::[i32](1) }; return d; }",
         );
     }
@@ -18620,7 +18634,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct P { x: i32 }\n\
              impl P { fn drop(ref this) {} }\n\
-             fn echo(p: P) -> i32 { return p.x; }\n\
+             fn echo(take p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 1 };\n\
                  let r: i32 = echo(p);\n\
@@ -18699,7 +18713,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
             "struct Held[T] { v: T }\n\
              impl Held[T] { fn drop(ref this) { return; } }\n\
              enum W { A(Held[i32]), B }\n\
-             fn sink(w: W) -> i32 { return 0; }\n\
+             fn sink(take w: W) -> i32 { return 0; }\n\
              fn main() -> i32 { let w: W = W::B; let a: i32 = sink(w); let b: i32 = sink(w); return a +% b; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -18713,7 +18727,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
             "struct Held[T] { v: T }\n\
              impl Held[T] { fn drop(ref this) { return; } }\n\
              enum Node { Leaf(i32), Branch(Held[Node]) }\n\
-             fn sink(n: Node) -> i32 { return 0; }\n\
+             fn sink(take n: Node) -> i32 { return 0; }\n\
              fn main() -> i32 { let n: Node = Node::Leaf(1); let a: i32 = sink(n); let b: i32 = sink(n); return a +% b; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -19309,12 +19323,12 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn generic_fn_param_in_scope_compiles_clean() {
-        assert_clean("fn identity[T](x: T) -> T { return x; } fn main() -> i32 { return 0; }");
+        assert_clean("fn identity[T](take x: T) -> T { return x; } fn main() -> i32 { return 0; }");
     }
 
     #[test]
     fn generic_fn_multi_param_clean() {
-        assert_clean("fn pick[A, B](a: A, b: B) -> A { return a; } fn main() -> i32 { return 0; }");
+        assert_clean("fn pick[A, B](take a: A, b: B) -> A { return a; } fn main() -> i32 { return 0; }");
     }
 
     #[test]
@@ -19340,8 +19354,8 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn type_param_does_not_leak_outside_generic_fn() {
         // T is declared on identity but not on consumer; consumer sees T as unknown.
         let codes = errors(
-            "fn identity[T](x: T) -> T { return x; } \
-             fn consumer(x: T) -> T { return x; } \
+            "fn identity[T](take x: T) -> T { return x; } \
+             fn consumer(take x: T) -> T { return x; } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0303"), "expected E0303, got: {codes:?}");
@@ -19628,7 +19642,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn turbofish_at_call_site_compiles_clean() {
         assert_clean(
-            "fn identity[T](x: T) -> T { return x; } \
+            "fn identity[T](take x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = identity::[i32](7); return a; }",
         );
     }
@@ -19636,7 +19650,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn turbofish_wrong_arity_e0501() {
         let codes = errors(
-            "fn id[T](x: T) -> T { return x; } \
+            "fn id[T](take x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = id::[i32, bool](7); return a; }",
         );
         assert!(
@@ -19655,7 +19669,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // structs. Must type-check clean.
         assert_clean(
             "enum Maybe[T] { Some(T), None } \
-             impl Maybe[T] { fn id[U](this, x: U) -> U { return x; } } \
+             impl Maybe[T] { fn id[U](this, take x: U) -> U { return x; } } \
              fn main() -> i32 { \
                  let m: Maybe[i32] = Maybe[i32]::Some(0); \
                  return m.id::[i32](7); \
@@ -19669,7 +19683,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // the struct path (it shares `check_generic_method_call`).
         let codes = errors(
             "enum Maybe[T] { Some(T), None } \
-             impl Maybe[T] { fn id[U](this, x: U) -> U { return x; } } \
+             impl Maybe[T] { fn id[U](this, take x: U) -> U { return x; } } \
              fn main() -> i32 { \
                  let m: Maybe[i32] = Maybe[i32]::Some(0); \
                  return m.id::[i32, bool](7); \
@@ -19688,7 +19702,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // type-check clean. The turbofish form used to be a parse error.
         assert_clean(
             "struct Box[T] { value: T } \
-             impl Box[T] { fn make[U](x: U) -> U { return x; } } \
+             impl Box[T] { fn make[U](take x: U) -> U { return x; } } \
              fn main() -> i32 { return Box[i32]::make::[i32](7); }",
         );
         assert_clean(
@@ -19703,7 +19717,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // The assoc-fn turbofish enforces method type-arg arity.
         let codes = errors(
             "struct Box[T] { value: T } \
-             impl Box[T] { fn make[U](x: U) -> U { return x; } } \
+             impl Box[T] { fn make[U](take x: U) -> U { return x; } } \
              fn main() -> i32 { return Box[i32]::make::[i32, bool](7); }",
         );
         assert!(
@@ -19766,7 +19780,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn turbofish_arg_type_validated_against_substituted_param() {
         // identity[i32] expects i32; passing bool fires E0302.
         let codes = errors(
-            "fn identity[T](x: T) -> T { return x; } \
+            "fn identity[T](take x: T) -> T { return x; } \
              fn main() -> i32 { let a: i32 = identity::[i32](true); return a; }",
         );
         assert!(
@@ -20197,11 +20211,12 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn bound_violation_at_generic_fn_call_e0502() {
         // `fn max[T: Ord]` called with a type that doesn't impl Ord.
         let codes = errors(
-            "fn max[T: Ord](a: T, b: T) -> T { return a; } \
+            "fn max[T: Ord](take a: T, b: T) -> T { return a; } \
              struct Point { x: i32 } \
              fn main() -> i32 { \
                  let p: Point = Point { x: 0 }; \
-                 let r: Point = max(p, p); \
+                 let q: Point = Point { x: 1 }; \
+                 let r: Point = max(p, q); \
                  return 0; \
              }",
         );
@@ -20765,7 +20780,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
-             fn sink(r: R) -> i32 { return 0; } \
+             fn sink(take r: R) -> i32 { return 0; } \
              fn main() -> i32 { \
                  let x: R = R { data: unsafe { 0 as *u8 } }; \
                  let _n: i32 = sink({ x }); \
@@ -20991,11 +21006,12 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn bound_violation_message_names_the_type_v0019() {
         let diags = check_src(
-            "fn max[T: Ord](a: T, b: T) -> T { return a; } \
+            "fn max[T: Ord](take a: T, b: T) -> T { return a; } \
              struct Point { x: i32 } \
              fn main() -> i32 { \
                  let p: Point = Point { x: 0 }; \
-                 let r: Point = max(p, p); \
+                 let q: Point = Point { x: 1 }; \
+                 let r: Point = max(p, q); \
                  return 0; \
              }",
         );
@@ -21109,12 +21125,13 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn bound_satisfied_at_generic_fn_call_clean() {
         // Same fn but Point has `impl Ord`.
         assert_clean(
-            "fn max[T: Ord](a: T, b: T) -> T { return a; } \
+            "fn max[T: Ord](take a: T, b: T) -> T { return a; } \
              struct Point { x: i32 } \
              impl Point: Ord { fn cmp(this, other: Point) -> i32 { return 0; } } \
              fn main() -> i32 { \
                  let p: Point = Point { x: 0 }; \
-                 let r: Point = max(p, p); \
+                 let q: Point = Point { x: 1 }; \
+                 let r: Point = max(p, q); \
                  return 0; \
              }",
         );
@@ -21207,7 +21224,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // Slice 7GEN.5e: `p.cast::[i32](42)` on a generic method.
         assert_clean(
             "struct P { x: i32 } \
-             impl P { fn cast[T](this, value: T) -> T { return value; } } \
+             impl P { fn cast[T](this, take value: T) -> T { return value; } } \
              fn main() -> i32 { \
                  let p: P = P { x: 0 }; \
                  return p.cast::[i32](42); \
@@ -21220,7 +21237,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // Inference picks T from the arg type.
         assert_clean(
             "struct P { x: i32 } \
-             impl P { fn cast[T](this, value: T) -> T { return value; } } \
+             impl P { fn cast[T](this, take value: T) -> T { return value; } } \
              fn main() -> i32 { \
                  let p: P = P { x: 0 }; \
                  return p.cast(42); \
@@ -21233,7 +21250,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // `Type::method::[T](...)` form.
         assert_clean(
             "struct P { x: i32 } \
-             impl P { fn ident[T](value: T) -> T { return value; } } \
+             impl P { fn ident[T](take value: T) -> T { return value; } } \
              fn main() -> i32 { return P::ident::[i32](42); }",
         );
     }
@@ -21242,7 +21259,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn generic_method_turbofish_arity_mismatch_e0501() {
         let codes = errors(
             "struct P { x: i32 } \
-             impl P { fn cast[T](this, value: T) -> T { return value; } } \
+             impl P { fn cast[T](this, take value: T) -> T { return value; } } \
              fn main() -> i32 { \
                  let p: P = P { x: 0 }; \
                  return p.cast::[i32, bool](42); \
@@ -21638,7 +21655,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     #[test]
     fn generic_fn_as_pointer_rejected_e0821() {
         let codes = errors(
-            "fn identity[T](x: T) -> T { return x; } \
+            "fn identity[T](take x: T) -> T { return x; } \
              fn main() -> i32 { let f: fn(i32) -> i32 = identity; return 0; }",
         );
         assert!(
@@ -21931,11 +21948,11 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn send_bound_accepts_primitive() {
-        // `fn worker[T: Send](x: T) -> T { return x; }` instantiated with
+        // `fn worker[T: Send](take x: T) -> T { return x; }` instantiated with
         // i32 must pass. v0.0.4 baseline is permissive — every type is
         // Send — so this is the canonical "vocabulary works" check.
         assert_clean(
-            "fn worker[T: Send](x: T) -> T { return x; }\n\
+            "fn worker[T: Send](take x: T) -> T { return x; }\n\
              fn main() -> i32 { return worker::[i32](42); }",
         );
     }
@@ -21945,7 +21962,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // User-defined struct: also Send under the v0.0.4 baseline.
         assert_clean(
             "struct Pt { x: i32, y: i32 }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let p: Pt = Pt { x: 1, y: 2 };\n\
                  let q: Pt = ship::[Pt](p);\n\
@@ -21958,7 +21975,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn sync_bound_accepts_primitive() {
         // Same shape, Sync bound.
         assert_clean(
-            "fn share[T: Sync](x: T) -> T { return x; }\n\
+            "fn share[T: Sync](take x: T) -> T { return x; }\n\
              fn main() -> i32 { return share::[i32](42); }",
         );
     }
@@ -21968,7 +21985,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // Multiple bounds on one type param — verifies the bound-list
         // parsing/resolution sees Send / Sync as first-class.
         assert_clean(
-            "fn need_both[T: Send + Sync](x: T) -> T { return x; }\n\
+            "fn need_both[T: Send + Sync](take x: T) -> T { return x; }\n\
              fn main() -> i32 { return need_both::[i32](7); }",
         );
     }
@@ -21981,7 +21998,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // (Matched by template-name leaf, so a local `Rc` exercises the rule.)
         let codes = errors(
             "struct Rc[T] { v: T }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let r: Rc[i32] = Rc[i32] { v: 5 };\n\
                  let _q: Rc[i32] = ship::[Rc[i32]](r);\n\
@@ -21995,7 +22012,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn send_bound_rejects_mutex_guard_e0502() {
         let codes = errors(
             "struct MutexGuard[T] { v: T }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let g: MutexGuard[i32] = MutexGuard[i32] { v: 5 };\n\
                  let _q: MutexGuard[i32] = ship::[MutexGuard[i32]](g);\n\
@@ -22009,7 +22026,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn sync_bound_rejects_rc_e0502() {
         let codes = errors(
             "struct Rc[T] { v: T }\n\
-             fn share[T: Sync](x: T) -> T { return x; }\n\
+             fn share[T: Sync](take x: T) -> T { return x; }\n\
              fn main() -> i32 {\n\
                  let r: Rc[i32] = Rc[i32] { v: 5 };\n\
                  let _q: Rc[i32] = share::[Rc[i32]](r);\n\
@@ -22024,7 +22041,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // A generic struct that is *not* Rc/MutexGuard stays Send.
         assert_clean(
             "struct Holder[T] { v: T }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let h: Holder[i32] = Holder[i32] { v: 5 };\n\
                  let q: Holder[i32] = ship::[Holder[i32]](h);\n\
@@ -22038,7 +22055,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // Only Rc is !Sync; a MutexGuard satisfies a Sync bound.
         assert_clean(
             "struct MutexGuard[T] { v: T }\n\
-             fn share[T: Sync](x: T) -> T { return x; }\n\
+             fn share[T: Sync](take x: T) -> T { return x; }\n\
              fn main() -> i32 {\n\
                  let g: MutexGuard[i32] = MutexGuard[i32] { v: 5 };\n\
                  let q: MutexGuard[i32] = share::[MutexGuard[i32]](g);\n\
@@ -22054,7 +22071,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // A struct that hides a raw pointer is !Send by the structural rule.
         let codes = errors(
             "struct Handle { opaque p: *u8 }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
                  let _q: Handle = ship::[Handle](h);\n\
@@ -22068,7 +22085,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     fn sync_rejects_raw_ptr_struct_e0502() {
         let codes = errors(
             "struct Handle { opaque p: *u8 }\n\
-             fn share[T: Sync](v: T) -> T { return v; }\n\
+             fn share[T: Sync](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
                  let _q: Handle = share::[Handle](h);\n\
@@ -22084,7 +22101,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct Handle { opaque p: *u8 }\n\
              unsafe impl Handle: Send {}\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
                  let _q: Handle = ship::[Handle](h);\n\
@@ -22099,7 +22116,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // it is visibly unsafe at every use; the rule targets pointer-hiding
         // structs. Preserves `thread::spawn::[*u8]`.
         assert_clean(
-            "fn ship[T: Send](v: T) -> T { return v; }\n\
+            "fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let p: *u8 = unsafe { 0 as *u8 };\n\
                  let _q: *u8 = ship::[*u8](p);\n\
@@ -22115,7 +22132,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct Arc[T] { opaque ctrl: *u8 }\n\
              unsafe impl Arc[T: Send + Sync]: Send {}\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let a: Arc[i32] = Arc[i32] { ctrl: unsafe { 0 as *u8 } };\n\
                  let _q: Arc[i32] = ship::[Arc[i32]](a);\n\
@@ -22132,7 +22149,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
             "struct Handle { opaque p: *u8 }\n\
              struct Arc[T] { opaque ctrl: *u8 }\n\
              unsafe impl Arc[T: Send + Sync]: Send {}\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let a: Arc[Handle] = Arc[Handle] { ctrl: unsafe { 0 as *u8 } };\n\
                  let _q: Arc[Handle] = ship::[Arc[Handle]](a);\n\
@@ -22150,7 +22167,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
             "struct Arc[T] { opaque ctrl: *u8 }\n\
              unsafe impl Arc[T: Send + Sync]: Send {}\n\
              struct Wrap { inner: Arc[i32], tag: i32 }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let w: Wrap = Wrap { inner: Arc[i32] { ctrl: unsafe { 0 as *u8 } }, tag: 1 };\n\
                  let _q: Wrap = ship::[Wrap](w);\n\
@@ -22187,7 +22204,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // The rule reaches through enum payloads too.
         let codes = errors(
             "enum Maybe { None, Ptr(*u8) }\n\
-             fn ship[T: Send](v: T) -> T { return v; }\n\
+             fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
                  let m: Maybe = Maybe::None;\n\
                  let _q: Maybe = ship::[Maybe](m);\n\

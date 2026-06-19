@@ -2298,7 +2298,7 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> b
 /// shared borrow: pointer-pass with `readonly`, the callee binding aliasing the
 /// caller's storage, and the caller keeping the drop. That mismatch
 /// double-freed whenever the callee duplicated the value back out —
-/// `fn f(x: T) -> T { return x; }` then `let c = f(b);` dropped the one heap
+/// `fn f(take x: T) -> T { return x; }` then `let c = f(b);` dropped the one heap
 /// allocation twice (caller's unconditional drop of `b` + new owner `c`'s drop).
 ///
 /// Collapsing the bare case onto the existing, sound `move x: T` lowering fixes
@@ -2331,13 +2331,9 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> b
 /// `Vec[T]` and other generic owning containers are `Ty::Struct` after
 /// monomorphization, so they are already covered by the struct arm.
 fn effective_move(p: &Param, ty: &Ty, t: &TypeTable) -> bool {
-    if p.move_ {
-        return true;
-    }
-    if p.mutable || p.borrow_ {
-        return false;
-    }
-    matches!(ty, Ty::Struct(_) | Ty::Enum(_) | Ty::String) && !is_copy_ty(ty, t)
+    // v0.0.24 de-Rust (#9 stage 3e): only `take` (move_) transfers ownership; a
+    // bare `x: T` is a read-only borrow (pointer-passed, caller keeps the drop).
+    p.move_ && matches!(ty, Ty::Struct(_) | Ty::Enum(_) | Ty::String) && !is_copy_ty(ty, t)
 }
 
 /// Slice 1A: full parameter attribute set (v0.0.2 LLVM information dividend).
@@ -17876,12 +17872,12 @@ mod tests {
         // like an explicit `move x: T` — struct-by-value, callee drop, caller
         // drop-flag flip — NOT the old `ptr readonly` borrow shape. The old
         // lowering double-freed when the value was forwarded back out
-        // (`fn f(x: T) -> T { return x; }`): the caller's unconditional drop
+        // (`fn f(take x: T) -> T { return x; }`): the caller's unconditional drop
         // and the new owner's drop both fired on the same heap.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
-             fn forward(x: Tag) -> Tag { return x; }\n\
+             fn forward(take x: Tag) -> Tag { return x; }\n\
              fn main() -> i32 { let b: Tag = Tag { v: 7 }; let c: Tag = forward(b); return c.v; }",
         );
         // Bare param is value-passed, like `move x: Tag`. (`forward` returns a
