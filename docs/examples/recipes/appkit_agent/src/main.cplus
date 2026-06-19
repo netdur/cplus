@@ -57,7 +57,7 @@ fn print_line(s: str) {
     return;
 }
 
-fn print_text(borrow t: text::Text) {
+fn print_text(t: text::Text) {
     print_line(unsafe { t.as_str() });
     return;
 }

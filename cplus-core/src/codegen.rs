@@ -466,11 +466,15 @@ fn mangle_o_for_tramp_with_types(ty: &Ty, types: Option<&TypeTable>) -> String {
         Ty::Array(elem, n) => format!("arr{}_{}", n, mangle_o_for_tramp_with_types(elem, types)),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let mut s = String::from("fn");
-            for p in params {
+            for (i, p) in params.iter().enumerate() {
                 s.push('_');
+                if param_takes.get(i).copied().unwrap_or(false) {
+                    s.push_str("take_");
+                }
                 s.push_str(&mangle_o_for_tramp_with_types(p, types));
             }
             if !matches!(**return_type, Ty::Unit) {
@@ -1897,11 +1901,15 @@ fn tuple_elem_mangle(ty: &Ty, types: &TypeTable) -> String {
         Ty::RawPtr(inner) => format!("ptr_{}", tuple_elem_mangle(inner, types)),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let mut s = String::from("fn");
-            for p in params {
+            for (i, p) in params.iter().enumerate() {
                 s.push('_');
+                if param_takes.get(i).copied().unwrap_or(false) {
+                    s.push_str("take_");
+                }
                 s.push_str(&tuple_elem_mangle(p, types));
             }
             if !matches!(**return_type, Ty::Unit) {
@@ -2274,7 +2282,7 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
 /// Fires on:
 /// - `mut x: T` where T is a non-Copy struct (slice 5BC.codegen) — exclusive
 ///   borrow ABI; writes propagate back, paired with LLVM `noalias` in 6BC.codegen.
-/// - `borrow x: T` where T is a non-Copy struct — shared borrow pointer-pass
+/// - `x: T` where T is a non-Copy struct — shared borrow pointer-pass
 ///   paired with LLVM `readonly`. Eliminates the byte-copy at call sites of
 ///   large non-Copy aggregates while leaving ownership (and the drop) with the
 ///   caller.
@@ -2325,7 +2333,7 @@ fn param_passes_by_ptr(ty: &Ty, move_: bool, _mutable: bool, t: &TypeTable) -> b
 /// drop freed the same buffer. Routing `Ty::String` through the move lowering —
 /// value-pass, caller `mark_moved`, callee `register_value_drop` — frees it
 /// exactly once: by the callee at scope exit, or by whoever it is forwarded to.
-/// The auto-clone-on-return net now only matters for explicit `borrow s: string`
+/// The auto-clone-on-return net now only matters for explicit `s: string`
 /// params, which keep the borrow ABI.
 ///
 /// `Vec[T]` and other generic owning containers are `Ty::Struct` after
@@ -3357,6 +3365,7 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
         // Slice 11.FN_PTR: fn-ptr lowers to LLVM `ptr` regardless of signature.
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let resolved_params: Vec<Ty> = params.iter().map(|p| ty_from(p, types)).collect();
@@ -3366,6 +3375,7 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             };
             return Ty::FnPtr {
                 params: resolved_params,
+                param_takes: param_takes.clone(),
                 return_type: Box::new(resolved_ret),
             };
         }
@@ -8111,7 +8121,7 @@ impl<'a> FnState<'a> {
     /// though `malloc(0)` is implementation-defined.
     ///
     /// Used by `StmtKind::Return` when the returned ident is a shared-
-    /// borrow parameter: the caller still owns the original; the result
+    /// parameter: the caller still owns the original; the result
     /// must be an independent allocation or Drop double-frees.
     fn clone_string_aggregate(&mut self, src: &str) -> String {
         let us = usize_llvm_ty();
@@ -9429,8 +9439,10 @@ impl<'a> FnState<'a> {
                 if let Some(sig) = self.sigs.get(name).cloned() {
                     let symbol: String = sig.link_name.clone().unwrap_or_else(|| name.to_string());
                     let params: Vec<Ty> = sig.params.iter().map(|(t, _, _, _)| t.clone()).collect();
+                    let param_takes: Vec<bool> = sig.params.iter().map(|(_, _, m, _)| *m).collect();
                     let ty = Ty::FnPtr {
                         params,
+                        param_takes,
                         return_type: Box::new(sig.return_type.clone()),
                     };
                     return Some((format!("@{symbol}"), ty));
@@ -11675,6 +11687,7 @@ impl<'a> FnState<'a> {
             if let Some((slot, ty)) = self.lookup(name).cloned() {
                 if let Ty::FnPtr {
                     params,
+                    param_takes,
                     return_type,
                 } = ty
                 {
@@ -11682,7 +11695,7 @@ impl<'a> FnState<'a> {
                     // v0.0.7 Slice 1.2: fn-ptr load — ptr leaf.
                     let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
                     self.gen_load(&v, &fnptr_ty, &slot);
-                    return self.gen_indirect_call(&v, &params, &return_type, args);
+                    return self.gen_indirect_call(&v, &params, &param_takes, &return_type, args);
                 }
             }
         }
@@ -11702,6 +11715,7 @@ impl<'a> FnState<'a> {
                     if matches!(ft, Ty::FnPtr { .. }) {
                         let Ty::FnPtr {
                             params,
+                            param_takes,
                             return_type,
                         } = ft
                         else {
@@ -11716,7 +11730,7 @@ impl<'a> FnState<'a> {
                         // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
                         let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
                         self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
-                        return self.gen_indirect_call(&fn_val, &params, &return_type, args);
+                        return self.gen_indirect_call(&fn_val, &params, &param_takes, &return_type, args);
                     }
                 }
             }
@@ -11737,22 +11751,20 @@ impl<'a> FnState<'a> {
         &mut self,
         callee_val: &str,
         params: &[Ty],
+        param_takes: &[bool],
         return_type: &Ty,
         args: &[Expr],
     ) -> Option<(String, Ty)> {
-        // Evaluate each arg to a value. A fn-pointer type `fn(R)` carries no
-        // `take`/`borrow` marker (the parser accepts only a bare type per
-        // param), so it represents the bare default — which since v0.0.24 is a
-        // BORROW. The callee therefore does not drop a non-Copy arg
-        // (`effective_move` is false for a bare param), and the caller keeps
-        // ownership and drops it at scope exit. So we must NOT `mark_moved` the
-        // source here — doing so would disarm the caller's drop while the callee
-        // never drops either, leaking the value. (To pass ownership through a
-        // fn-pointer you would need a `take` marker the fn-pointer type cannot
-        // express; such a coercion is the unsound case, not this borrow one.)
-        // All callable signatures here are C-ABI (ccc).
+        // Evaluate each arg to a value. v0.0.24 #9: a fn-pointer carries each
+        // param's ownership convention. A `fn(R)` param BORROWS — the callee
+        // does not drop it, the caller keeps ownership, so we must NOT
+        // `mark_moved` the source. A `fn(take R)` param CONSUMES — the callee
+        // owns and drops the value, so the caller must give it up (`mark_moved`,
+        // exactly as a direct `take` call). Sema's coercion check (E0312)
+        // guarantees the callee's convention matches the fn-pointer type's
+        // marker. All callable signatures here are C-ABI (ccc).
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
-        for (a, pty) in args.iter().zip(params.iter()) {
+        for (i, (a, pty)) in args.iter().zip(params.iter()).enumerate() {
             // A by-value COPY struct arg lowers through the C ABI so the indirect
             // call matches a C (or unified cpc) callee — a raw aggregate
             // segfaults a C target (the headline fn-pointer ABI bug). Non-Copy
@@ -11790,8 +11802,28 @@ impl<'a> FnState<'a> {
                     CAbiClass::Direct => {}
                 }
             }
+            let take = param_takes.get(i).copied().unwrap_or(false);
             let (v, _) = self.gen_value_arg(a, pty);
-            arg_vals.push((v, self.lty(pty)));
+            // A non-Copy struct in a BORROW slot (`fn(R)`) is passed BY POINTER:
+            // the bare callee expects `ptr readonly`, so materialize the value
+            // into a temp and pass its address. The temp is a read-only copy the
+            // callee never drops; the caller keeps and drops the original. (A
+            // `take` slot, and any Copy type — handled above — stay by value.)
+            if matches!(pty, Ty::Struct(_)) && !take {
+                let (_, al) = static_layout(pty, self.types).expect("borrow arg has layout");
+                let pty_lty = self.lty(pty);
+                let slot = self.alloca_anon(pty.clone());
+                self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {al}"));
+                arg_vals.push((slot, "ptr".to_string()));
+            } else {
+                arg_vals.push((v, self.lty(pty)));
+                // A `fn(take R)` param consumes the arg: disarm the caller's drop.
+                if take && !is_copy_ty(pty, self.types) {
+                    if let ExprKind::Ident(name) = &a.kind {
+                        self.mark_moved(name);
+                    }
+                }
+            }
         }
         let mut arg_str = String::new();
         for (i, (v, t)) in arg_vals.iter().enumerate() {
@@ -16542,12 +16574,12 @@ mod tests {
 
     #[test]
     fn shared_param_call_site_mirrors_readonly_attrs() {
-        // v0.0.8 fix B (finish): shared borrow `borrow t: Tag` ptr-passed param
+        // v0.0.8 fix B (finish): shared borrow `t: Tag` ptr-passed param
         // gets `readonly` (not `noalias`) at both def and call site.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
-             fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
+             fn peek(t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 1 }; return peek(x); }",
         );
         assert!(
@@ -17842,7 +17874,7 @@ mod tests {
 
     #[test]
     fn shared_param_noncopy_struct_lowers_to_ptr_readonly() {
-        // Slice 6BC.codegen: a non-Copy shared borrow `borrow x: T` is
+        // Slice 6BC.codegen: a non-Copy shared borrow `x: T` is
         // pointer-passed (avoids the byte-copy) and tagged
         // `readonly` (callee provably can't write). `noalias` would
         // be unsound — two shared args can be the same place.
@@ -17850,12 +17882,12 @@ mod tests {
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
-             fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
+             fn peek(t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
         assert!(
             ir.contains("i32 @peek(ptr readonly "),
-            "expected `borrow t: Tag` to lower to `ptr readonly` param, got: {ir}"
+            "expected `t: Tag` to lower to `ptr readonly` param, got: {ir}"
         );
         // v0.0.8 fix C: non-pub `peek` → fastcc at the call.
         assert!(
@@ -18161,13 +18193,13 @@ mod tests {
 
     #[test]
     fn shared_param_noncopy_struct_emits_readonly_attr_set() {
-        // Shared borrow `borrow t: Tag` (non-Copy) gets readonly (not noalias)
+        // Shared borrow `t: Tag` (non-Copy) gets readonly (not noalias)
         // plus the rest. Two shared params may legally point at the same place,
         // so noalias would be unsound.
         let ir = gen_src(
             "struct Tag { v: i32 }\n\
              impl Tag { fn drop(ref this) { return; } }\n\
-             fn peek(borrow t: Tag) -> i32 { return t.v; }\n\
+             fn peek(t: Tag) -> i32 { return t.v; }\n\
              fn main() -> i32 { let x: Tag = Tag { v: 7 }; return peek(x); }",
         );
         assert!(
@@ -18218,7 +18250,7 @@ mod tests {
         let ir = gen_src(
             "struct Big { tag: i8, n: i32 }\n\
              impl Big { fn drop(ref this) { return; } }\n\
-             fn use_it(borrow b: Big) -> i32 { return b.n; }\n\
+             fn use_it(b: Big) -> i32 { return b.n; }\n\
              fn main() -> i32 { let x: Big = Big { tag: 1, n: 42 }; return use_it(x); }",
         );
         assert!(

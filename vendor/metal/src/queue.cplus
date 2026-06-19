@@ -69,7 +69,7 @@ impl CommandBuffer {
 }
 
 impl ComputeCommandEncoder {
-    pub fn set_pipeline(this, borrow state: pipeline::ComputePipelineState) {
+    pub fn set_pipeline(this, state: pipeline::ComputePipelineState) {
         // v0.0.12 — `borrow state`: `setComputePipelineState:` doesn't
         // transfer ownership of the pipeline; the caller keeps it alive.
         // Pre-fix the param was consumed (default-move post-v0.0.10) which
@@ -83,7 +83,7 @@ impl ComputeCommandEncoder {
         return;
     }
 
-    pub fn set_buffer(this, index: usize, borrow buf: buffer::Buffer) {
+    pub fn set_buffer(this, index: usize, buf: buffer::Buffer) {
         // v0.0.12 — `borrow buf`: `setBuffer:offset:atIndex:` doesn't
         // retain the buffer. Same default-move trap as set_pipeline above;
         // also blocked calling `encoder.set_buffer(0, b)` followed by any

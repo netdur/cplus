@@ -543,28 +543,19 @@ struct SigTable {
     methods: HashMap<String, FnEntry>,
 }
 
-/// v0.0.15: the borrowck mirror of codegen's `effective_move` — does passing
-/// this parameter by value *consume* the argument (move-by-default)? A bare
-/// non-Copy aggregate is a move: `move x` always, an explicit `mut`/`borrow`
-/// never, and otherwise a bare `x: T` whose type is a **concrete** non-Copy
-/// struct/enum the oracle can resolve.
+/// v0.0.24 #9: the borrowck mirror of codegen's `effective_move` — does passing
+/// this parameter by value *consume* the argument? Only a `take` parameter
+/// consumes: a bare `x: T` is a read-only borrow (the caller keeps and drops
+/// it), and `ref` is a write-back borrow — neither moves. This mirrors codegen
+/// `effective_move` (`p.move_ && non-Copy aggregate`).
 ///
 /// Restricted to `TypeKind::Path` on purpose: borrowck runs *before*
 /// monomorphization, so a generic instantiation (`Vec[T]`, `Pair[A, B]`) or a
 /// bare generic param (`T`) is unresolved here — `definitely_non_copy` returns
-/// false for those. Treating them as non-moves keeps the analysis conservative
-/// (no false use-after-move); codegen still moves them correctly post-mono. So
-/// this catches the concrete cases (`fn f(x: SomeEnum)`, `m(x: SomeStruct)`)
-/// that previously slipped through as leniency, while the generic residual
-/// stays sound-but-undetected pending a post-mono borrowck pass.
+/// false for those. Treating them as non-moves keeps the analysis conservative;
+/// codegen still moves them correctly post-mono.
 fn param_is_effective_move(p: &crate::ast::Param, oracle: &CopyOracle) -> bool {
-    if p.move_ {
-        return true;
-    }
-    if p.mutable || p.borrow_ {
-        return false;
-    }
-    matches!(&p.ty.kind, TypeKind::Path(_)) && oracle.definitely_non_copy(&p.ty)
+    p.move_ && matches!(&p.ty.kind, TypeKind::Path(_)) && oracle.definitely_non_copy(&p.ty)
 }
 
 impl SigTable {
@@ -3098,7 +3089,7 @@ impl Analyzer<'_> {
     /// 5BC.3b / 6BC.2 / 6BC.3: emit E0372 if moving `name` would
     /// invalidate any live borrow at an overlapping place. Scans
     /// `live_borrows` for entries rooted at `name`. The diagnostic
-    /// message branches on the borrow flavor: shared (Phase 5) vs
+    /// message branches on the flavor: shared (Phase 5) vs
     /// exclusive (6BC.2). Partial-place borrows (e.g. moving `buf`
     /// while `buf.left` is borrowed) route through the same code with
     /// a refined message naming the sub-place.
@@ -3626,7 +3617,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn drain(take b: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   drain(y, peek(y));
@@ -3663,12 +3654,16 @@ fn caller() {
     // E0383 (read-while-borrowed). Pre-fix, `param_moves` used the raw `move_`
     // keyword, so the bare arg was treated as a read and mis-reported E0383.
     #[test]
-    fn bare_noncopy_struct_arg_while_borrowed_is_move_e0372() {
+    fn take_noncopy_struct_arg_while_borrowed_is_move_e0372() {
+        // v0.0.24 #9: only a `take` param consumes. Moving `v` into `take(v)`
+        // while `cur` still exclusively borrows it is a move-while-borrowed
+        // (E0372). (A bare arg is a read — that case is E0383, covered by
+        // `e0383_fires_on_read_of_exclusively_borrowed_place`.)
         let src = "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
-fn take(b: B) -> i32 { return 0; }
+fn take(take b: B) -> i32 { return 0; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -3678,18 +3673,18 @@ fn caller() {
         let codes = check_src(src);
         assert!(
             codes.iter().any(|c| c == "E0372"),
-            "bare non-Copy struct arg while borrowed should move (E0372), got {codes:?}"
+            "take non-Copy struct arg while borrowed should move (E0372), got {codes:?}"
         );
     }
 
     #[test]
-    fn bare_noncopy_enum_arg_while_borrowed_is_move_e0372() {
+    fn take_noncopy_enum_arg_while_borrowed_is_move_e0372() {
         let src = "\
 struct Leaf { tag: i32 }
 impl Leaf { fn drop(ref this) { return; } }
 enum E { A(Leaf), B }
 fn cursor(ref e: E) -> E { return e; }
-fn take(e: E) -> i32 { return 0; }
+fn take(take e: E) -> i32 { return 0; }
 fn caller() {
   let v: E = E::B;
   let cur: E = cursor(v);
@@ -3699,7 +3694,7 @@ fn caller() {
         let codes = check_src(src);
         assert!(
             codes.iter().any(|c| c == "E0372"),
-            "bare non-Copy enum arg while borrowed should move (E0372), got {codes:?}"
+            "take non-Copy enum arg while borrowed should move (E0372), got {codes:?}"
         );
     }
 
@@ -3735,7 +3730,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn drain(take b: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y = B { x: 1 };
   drain(y, peek(y));
@@ -4535,7 +4530,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn drain(take b: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   drain(y, peek(y));
@@ -4622,7 +4617,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn write_thing(ref a: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let y: B = B { x: 1 };
   write_thing(y, peek(y));
@@ -4850,7 +4845,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -4872,7 +4867,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   if true {
@@ -4898,7 +4893,7 @@ fn caller() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
@@ -5132,7 +5127,7 @@ impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(ref this) { return; } }
 fn cursor(ref i: Inner) -> Inner { return i; }
-fn peek_pair(borrow p: Pair) -> i32 { return 0; }
+fn peek_pair(p: Pair) -> i32 { return 0; }
 fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   let cur: Inner = cursor(p.left);
@@ -5217,22 +5212,6 @@ fn longest_mut(ref a: B, ref b: B) -> B {
     }
 
     #[test]
-    fn e3_mut_does_not_fire_when_some_path_returns_fresh_value() {
-        // Same shape as the design-note example: returns fresh on
-        // some path → E3-mut disqualifies (per the "elide less"
-        // bias). E0384 fires separately when any return IS rooted.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge_mut(ref a: B, ref b: B) -> B {
-  if a.x > 0 { return a; }
-  return B { x: 0 };
-}";
-        let prog = parse_prog(src);
-        assert_eq!(return_borrow_source_with_flavor(&prog, "merge_mut"), None);
-    }
-
-    #[test]
     fn e3_mut_does_not_fire_with_mixed_shared_and_mut_params() {
         // E3-mut requires *every* param to be `mut`. A function
         // mixing `a: B` (shared) and `mut b: B` (exclusive) doesn't
@@ -5245,241 +5224,7 @@ fn mixed(a: B, ref b: B) -> B { return b; }";
         assert_eq!(return_borrow_source_with_flavor(&prog, "mixed"), None);
     }
 
-    #[test]
-    fn e0384_fires_on_multi_param_with_mixed_rooting() {
-        // `merge(a, b) -> B { if c { return a; } return B::new(); }`
-        // — one return rooted, one not. Body-flow analysis disqualifies
-        // E3, but the rooted return suggests the user intends to borrow.
-        // E0384 fires with annotation guidance.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: B, b: B) -> B {
-  if a.x > 0 { return a; }
-  return B { x: 0 };
-}";
-        let codes = check_src(src);
-        assert!(
-            codes.iter().any(|c| c == "E0384"),
-            "expected E0384 in {codes:?}"
-        );
-    }
-
-    #[test]
-    fn e0384_does_not_fire_when_no_return_is_rooted() {
-        // `always_fresh` returns a fresh value on every path — the
-        // return is owned, not borrowed. No E0384 (no annotation
-        // would help; the return doesn't borrow at all).
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn always_fresh(a: B, b: B) -> B { return B { x: 0 }; }";
-        let codes = check_src(src);
-        assert!(
-            !codes.iter().any(|c| c == "E0384"),
-            "E0384 should not fire when no return is rooted; got {codes:?}"
-        );
-    }
-
-    #[test]
-    fn e0384_does_not_fire_when_e3_matches_cleanly() {
-        // `longest(a, b) -> B { if c { return a; } else { return b; } }`
-        // — every return is rooted. E3 matches; no annotation needed.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn longest(a: B, b: B) -> B {
-  if a.x > b.x { return a; }
-  return b;
-}";
-        let codes = check_src(src);
-        assert!(
-            !codes.iter().any(|c| c == "E0384"),
-            "E0384 should not fire when E3 matches; got {codes:?}"
-        );
-    }
-
-    #[test]
-    fn e0384_carries_annotation_suggestion() {
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: B, b: B) -> B {
-  if a.x > 0 { return a; }
-  return B { x: 0 };
-}";
-        let toks = tokenize(src).expect("lex");
-        let prog = parse(toks).expect("parse");
-        let diags = check(&prog, &PathBuf::from("t.cplus"), src);
-        let e0384 = diags
-            .iter()
-            .find(|d| d.code.0 == "E0384")
-            .expect("expected E0384");
-        assert!(
-            !e0384.suggestions.is_empty(),
-            "E0384 should carry a suggestion"
-        );
-        let sugg_text = &e0384.suggestions[0].description;
-        assert!(
-            sugg_text.contains("borrow REGION T"),
-            "E0384 suggestion should teach `borrow REGION T`; got: {sugg_text}"
-        );
-    }
-
-    #[test]
-    fn e0384_fires_on_method_with_mixed_rooting() {
-        // Methods qualify for E0384 too — same shape but routed
-        // through the method-collection path.
-        let src = "\
-struct B { x: i32 }
-impl B {
-  fn drop(ref this) { return; }
-  fn merge(a: B, b: B) -> B {
-    if a.x > 0 { return a; }
-    return B { x: 0 };
-  }
-}";
-        let codes = check_src(src);
-        assert!(
-            codes.iter().any(|c| c == "E0384"),
-            "expected E0384 on method in {codes:?}"
-        );
-    }
-
     // ---- 6BC.5 — explicit `borrow REGION T` annotations ----
-
-    #[test]
-    fn explicit_region_shared_single_source() {
-        // `fn through(xs: borrow A B) -> borrow A B { return xs; }` —
-        // single matching region → Shared Param(0).
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn through(xs: borrow A B) -> borrow A B { return xs; }";
-        let prog = parse_prog(src);
-        assert_eq!(
-            return_borrow_source_with_flavor(&prog, "through"),
-            Some((ReturnBorrowSource::Param(0), BorrowFlavor::Shared))
-        );
-    }
-
-    #[test]
-    fn explicit_region_shared_multi_source() {
-        // Two params sharing region A → MultiParam([0, 1]) Shared.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
-  if a.x > 0 { return a; }
-  return b;
-}";
-        let prog = parse_prog(src);
-        assert_eq!(
-            return_borrow_source_with_flavor(&prog, "merge"),
-            Some((
-                ReturnBorrowSource::MultiParam(vec![0, 1]),
-                BorrowFlavor::Shared
-            ))
-        );
-    }
-
-    #[test]
-    fn explicit_region_exclusive_when_param_is_mut() {
-        // Any `mut`-marked param in the matching region flips the
-        // result flavor to Exclusive.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn cursor(ref buf: borrow A B) -> borrow A B { return buf; }";
-        let prog = parse_prog(src);
-        assert_eq!(
-            return_borrow_source_with_flavor(&prog, "cursor"),
-            Some((ReturnBorrowSource::Param(0), BorrowFlavor::Exclusive))
-        );
-    }
-
-    #[test]
-    fn explicit_region_disjoint_regions_no_source() {
-        // `fn split(xs: borrow A B, ctx: borrow B Ctx) -> borrow A B {...}`
-        // — return matches A but only `xs` is in region A. Param(0) Shared.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-struct Ctx { v: i32 }
-impl Ctx { fn drop(ref this) { return; } }
-fn split(xs: borrow A B, ctx: borrow R Ctx) -> borrow A B { return xs; }";
-        let prog = parse_prog(src);
-        assert_eq!(
-            return_borrow_source_with_flavor(&prog, "split"),
-            Some((ReturnBorrowSource::Param(0), BorrowFlavor::Shared))
-        );
-    }
-
-    #[test]
-    fn explicit_annotation_suppresses_e0384() {
-        // Phase 6 first-cut: explicit annotations are trusted. The
-        // body's actual rooting doesn't have to match exactly — the
-        // annotation says "return borrows from region A", and we
-        // believe it. (E0385 mismatch-checking is future polish.)
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
-  if a.x > 0 { return a; }
-  return B { x: 0 };
-}";
-        let codes = check_src(src);
-        assert!(
-            !codes.iter().any(|c| c == "E0384"),
-            "E0384 should not fire when explicit annotations are present; got {codes:?}"
-        );
-    }
-
-    #[test]
-    fn explicit_region_call_site_records_multi_source_borrow() {
-        // Calling an annotated function with multi-source binding
-        // records the return as borrowing from every contributing
-        // parameter. Moving either source fires E0372.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
-  if a.x > 0 { return a; }
-  return b;
-}
-fn drain(take b: B) { return; }
-fn caller() {
-  let a: B = B { x: 1 };
-  let b: B = B { x: 2 };
-  let r: B = merge(a, b);
-  drain(a);
-  return;
-}";
-        let codes = check_src(src);
-        assert!(
-            codes.iter().any(|c| c == "E0372"),
-            "expected E0372 from multi-source annotated borrow; got {codes:?}"
-        );
-    }
-
-    #[test]
-    fn explicit_annotation_takes_precedence_over_elision() {
-        // E1 would say "Shared Param(0)" — but the annotation
-        // explicitly says region A links the two params. The
-        // explicit form wins, classifying as MultiParam.
-        let src = "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B { return a; }";
-        let prog = parse_prog(src);
-        assert_eq!(
-            return_borrow_source_with_flavor(&prog, "merge"),
-            Some((
-                ReturnBorrowSource::MultiParam(vec![0, 1]),
-                BorrowFlavor::Shared
-            ))
-        );
-    }
 
     #[test]
     fn e3_mut_multi_source_borrow_at_call_site() {
@@ -5516,7 +5261,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
 fn drain(take c: B) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);

@@ -3979,6 +3979,7 @@ fn render_param_decl(t: &cplus_core::ast::Type, name: &str) -> Option<String> {
     if let TypeKind::FnPtr {
         params,
         return_type,
+        ..
     } = &t.kind
     {
         let ret = match return_type {
@@ -4041,6 +4042,7 @@ fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
         TypeKind::FnPtr {
             params,
             return_type,
+            ..
         } => {
             let ret = match return_type {
                 Some(t) => type_to_c(t)?,

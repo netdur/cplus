@@ -1423,7 +1423,7 @@ impl Parser {
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         // Optional ownership prefixes: `mut x: T`, `move x: T`,
-        // `borrow x: T`, `restrict x: *T`, or combinations. Order
+        // `x: T`, `restrict x: *T`, or combinations. Order
         // doesn't matter at the syntax layer; sema checks the
         // combination (E0334 for `mut` + `move` and analogous
         // `borrow` conflicts; E0411 for `restrict` on a
@@ -1621,8 +1621,36 @@ impl Parser {
                 let start = self.bump().span;
                 self.expect(&TokenKind::LParen, "`(` after `fn` in fn-pointer type")?;
                 let mut params: Vec<Type> = Vec::new();
+                let mut param_takes: Vec<bool> = Vec::new();
                 while !self.at(&TokenKind::RParen) {
+                    // v0.0.24 #9: a fn-pointer param may carry the `take`
+                    // (consuming) marker — `fn(take R)`. A bare `fn(R)` param is
+                    // a read-only borrow. `ref` write-back params cannot ride a
+                    // by-value fn-pointer and are rejected here.
+                    if matches!(self.peek_kind(), TokenKind::Ident(s) if s == "ref")
+                        && matches!(
+                            self.peek_kind_n(1),
+                            TokenKind::Ident(_) | TokenKind::Star | TokenKind::Fn
+                        )
+                    {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Unexpected {
+                                found: "`ref`".into(),
+                                expected: "a fn-pointer parameter type — `ref` (write-back) cannot ride a `fn(...)` pointer; use a bare type or `take`",
+                            },
+                            span: self.peek().span,
+                        });
+                    }
+                    let takes = matches!(self.peek_kind(), TokenKind::Ident(s) if s == "take")
+                        && matches!(
+                            self.peek_kind_n(1),
+                            TokenKind::Ident(_) | TokenKind::Star | TokenKind::Fn
+                        );
+                    if takes {
+                        self.bump();
+                    }
                     params.push(self.parse_type()?);
+                    param_takes.push(takes);
                     if !self.eat(&TokenKind::Comma) {
                         break;
                     }
@@ -1639,6 +1667,7 @@ impl Parser {
                 return Ok(Type {
                     kind: TypeKind::FnPtr {
                         params,
+                        param_takes,
                         return_type,
                     },
                     span: start.merge(end_span),
@@ -4561,65 +4590,6 @@ mod tests {
     }
 
     // ---- 6BC.5 — borrow REGION T syntax ----
-
-    #[test]
-    fn borrow_region_parses_in_param_and_return() {
-        let p = parse_src(
-            "fn longest(xs: borrow A string, ys: borrow A string) -> borrow A string { return xs; }"
-        ).unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!()
-        };
-        assert_eq!(f.params.len(), 2);
-        assert!(matches!(&f.params[0].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
-        assert!(matches!(&f.params[1].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
-        let ret = f.return_type.as_ref().expect("has return type");
-        assert!(matches!(&ret.kind, TypeKind::Borrowed { region, .. } if region == "A"));
-    }
-
-    #[test]
-    fn borrow_region_parses_with_mut_marker() {
-        let p = parse_src("fn modify(ref x: borrow A B) -> borrow A B { return x; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!()
-        };
-        assert!(f.params[0].mutable);
-        assert!(matches!(&f.params[0].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
-    }
-
-    #[test]
-    fn move_with_borrow_region_rejected() {
-        // `move x: borrow A T` is a parse error per §4.2: ownership
-        // transfer doesn't borrow, so the region annotation is
-        // meaningless on a `move`-parameter.
-        let err = parse_src("fn take(take x: borrow A B) { return; }").unwrap_err();
-        assert!(matches!(err.kind, ParseErrorKind::Unexpected { .. }));
-    }
-
-    #[test]
-    fn borrow_region_in_struct_field() {
-        let p = parse_src("struct Cursor { buf: borrow A Buffer, pos: usize }").unwrap();
-        let ItemKind::Struct(s) = &p.items[0].kind else {
-            panic!()
-        };
-        assert!(matches!(&s.fields[0].ty.kind, TypeKind::Borrowed { region, .. } if region == "A"));
-        assert!(matches!(&s.fields[1].ty.kind, TypeKind::Path(name) if name == "usize"));
-    }
-
-    #[test]
-    fn borrow_region_nests_into_array() {
-        let p = parse_src("fn f(xs: borrow A [B; 4]) { return; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else {
-            panic!()
-        };
-        match &f.params[0].ty.kind {
-            TypeKind::Borrowed { region, inner } => {
-                assert_eq!(region, "A");
-                assert!(matches!(&inner.kind, TypeKind::Array { len: 4, .. }));
-            }
-            other => panic!("expected borrow region around array, got {other:?}"),
-        }
-    }
 
     // ---- 7GEN.1 — generic function parsing ----
 

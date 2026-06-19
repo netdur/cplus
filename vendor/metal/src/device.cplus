@@ -75,7 +75,7 @@ impl Device {
 
     pub fn new_compute_pipeline_state(
         this,
-        borrow function: pipeline::Function,
+        function: pipeline::Function,
     ) -> result::Result[pipeline::ComputePipelineState, runtime::MetalError] {
         return pipeline::ComputePipelineState::new(this.raw, function);
     }

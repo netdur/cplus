@@ -51,7 +51,7 @@ impl Function {
 }
 
 impl ComputePipelineState {
-    pub fn new(device_raw: *u8, borrow function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
+    pub fn new(device_raw: *u8, function: Function) -> result::Result[ComputePipelineState, runtime::MetalError] {
         // v0.0.12 — `borrow function`: `newComputePipelineStateWithFunction:`
         // retains the function internally if it keeps it. The caller may
         // want to create multiple pipelines from the same function (the

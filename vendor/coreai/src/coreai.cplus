@@ -125,7 +125,7 @@ pub fn load_model(path: str) -> result::Result[Model, CoreAIError] {
     return result::Result[Model, CoreAIError]::Ok(Model { raw: raw });
 }
 
-pub fn load_function(borrow model: Model, name: str) -> result::Result[Function, CoreAIError] {
+pub fn load_function(model: Model, name: str) -> result::Result[Function, CoreAIError] {
     if is_null(model.raw) {
         return result::Result[Function, CoreAIError]::Err(CoreAIError::NullHandle);
     }
@@ -159,9 +159,9 @@ pub fn ndarray_f32(shape: usize[], values: f32[]) -> result::Result[NDArray, Cor
 }
 
 pub fn run1_f32(
-    borrow function: Function,
+    function: Function,
     input_name: str,
-    borrow input: NDArray,
+    input: NDArray,
     output_name: str,
 ) -> result::Result[NDArray, CoreAIError] {
     if is_null(function.raw) || is_null(input.raw) {
@@ -183,7 +183,7 @@ pub fn run1_f32(
     return result::Result[NDArray, CoreAIError]::Ok(NDArray { raw: raw });
 }
 
-pub fn copy_f32(borrow array: NDArray, dest: f32[]) -> result::Result[usize, CoreAIError] {
+pub fn copy_f32(array: NDArray, dest: f32[]) -> result::Result[usize, CoreAIError] {
     if is_null(array.raw) {
         return result::Result[usize, CoreAIError]::Err(CoreAIError::NullHandle);
     }

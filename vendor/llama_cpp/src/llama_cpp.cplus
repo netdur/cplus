@@ -168,7 +168,7 @@ impl Session {
 }
 
 pub fn tokenize_to(
-    borrow session: Session,
+    session: Session,
     text: str,
     tokens: i32[],
     add_special: bool,
@@ -196,7 +196,7 @@ pub fn tokenize_to(
     return result::Result[usize, LlamaError]::Ok(n as usize);
 }
 
-pub fn decode_tokens(borrow session: Session, tokens: i32[]) -> result::Result[usize, LlamaError] {
+pub fn decode_tokens(session: Session, tokens: i32[]) -> result::Result[usize, LlamaError] {
     if is_null(session.ctx) {
         return result::Result[usize, LlamaError]::Err(LlamaError::NullHandle);
     }
@@ -212,7 +212,7 @@ pub fn decode_tokens(borrow session: Session, tokens: i32[]) -> result::Result[u
     return result::Result[usize, LlamaError]::Ok(n);
 }
 
-pub fn sample_greedy(borrow session: Session) -> result::Result[i32, LlamaError] {
+pub fn sample_greedy(session: Session) -> result::Result[i32, LlamaError] {
     if is_null(session.ctx) || is_null(session.sampler) {
         return result::Result[i32, LlamaError]::Err(LlamaError::NullHandle);
     }
@@ -224,7 +224,7 @@ pub fn sample_greedy(borrow session: Session) -> result::Result[i32, LlamaError]
     return result::Result[i32, LlamaError]::Ok(token);
 }
 
-pub fn is_eog(borrow session: Session, token: i32) -> bool {
+pub fn is_eog(session: Session, token: i32) -> bool {
     if is_null(session.vocab) {
         return true;
     }
@@ -232,7 +232,7 @@ pub fn is_eog(borrow session: Session, token: i32) -> bool {
 }
 
 pub fn token_to_piece_into(
-    borrow session: Session,
+    session: Session,
     token: i32,
     buf: u8[],
     special: bool,
@@ -259,7 +259,7 @@ pub fn token_to_piece_into(
 }
 
 fn copy_piece_to_out(
-    borrow session: Session,
+    session: Session,
     token: i32,
     out: u8[],
     offset: usize,
@@ -274,7 +274,7 @@ fn copy_piece_to_out(
 }
 
 pub fn generate_greedy_into(
-    borrow session: Session,
+    session: Session,
     prompt: str,
     max_new_tokens: i32,
     out: u8[],
@@ -365,7 +365,7 @@ pub fn mtmd_caps_from_file(path: str) -> mtmd_raw::mtmd_caps {
 }
 
 pub fn mtmd_init(
-    borrow session: Session,
+    session: Session,
     mmproj_path: str,
     params: mtmd_raw::mtmd_context_params,
 ) -> result::Result[MtmdContext, LlamaError] {

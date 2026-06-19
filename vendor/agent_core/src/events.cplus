@@ -112,7 +112,7 @@ impl Subscription {
 }
 
 // Whether `n` is `source` or an ancestor of it (the bubbling test).
-fn is_ancestor_or_self(borrow reg: identity::Registry, n: usize, source: usize) -> bool {
+fn is_ancestor_or_self(reg: identity::Registry, n: usize, source: usize) -> bool {
     var cur: option::Option[usize] = option::Option[usize]::Some(source);
     loop {
         match cur {
@@ -138,7 +138,7 @@ fn is_ancestor_or_self(borrow reg: identity::Registry, n: usize, source: usize) 
 // reading a struct-typed field by value out of `this` is a partial move the
 // move-checker rejects, but Option/enum fields copy fine, so the subscriber
 // stores them flat and passes them here.
-pub fn matches(borrow reg: identity::Registry, node_f: option::Option[usize], verb_f: option::Option[Verb], role_f: option::Option[identity::Role], source: usize, verb: Verb) -> bool {
+pub fn matches(reg: identity::Registry, node_f: option::Option[usize], verb_f: option::Option[Verb], role_f: option::Option[identity::Role], source: usize, verb: Verb) -> bool {
     let verb_ok: bool = match verb_f {
         option::Option[Verb]::Some(v) => verb_eq(v, verb),
         option::Option[Verb]::None => true,
@@ -232,7 +232,7 @@ impl Subscriber {
     // Offer an event. Enqueues iff it matches the filter, applying backpressure:
     // `ui_changed` coalesces to at most one pending; on overflow the oldest event
     // is dropped (dropped-count bumped). Never blocks.
-    pub fn offer(ref this, borrow reg: identity::Registry, ev: Event) {
+    pub fn offer(ref this, reg: identity::Registry, ev: Event) {
         let src: usize = ev.source;
         let vb: Verb = ev.verb;
         if !matches(reg, this.node, this.verb, this.role, src, vb) {

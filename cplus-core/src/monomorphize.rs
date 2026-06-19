@@ -345,12 +345,14 @@ fn ty_to_type_ast(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> Type {
         Ty::RawPtr(inner) => TypeKind::RawPtr(Box::new(ty_to_type_ast(inner, type_name_of))),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => TypeKind::FnPtr {
             params: params
                 .iter()
                 .map(|p| ty_to_type_ast(p, type_name_of))
                 .collect(),
+            param_takes: param_takes.clone(),
             return_type: if matches!(**return_type, Ty::Unit) {
                 None
             } else {
@@ -594,12 +596,14 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
         }
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => TypeKind::FnPtr {
             params: params
                 .iter()
                 .map(|p| rewrite_self_in_type(p, mangled_name))
                 .collect(),
+            param_takes: param_takes.clone(),
             return_type: return_type
                 .as_ref()
                 .map(|rt| Box::new(rewrite_self_in_type(rt, mangled_name))),
@@ -903,6 +907,7 @@ fn type_ast_to_ty_with_subst(
         }
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let params: Option<Vec<Ty>> = params
@@ -915,6 +920,7 @@ fn type_ast_to_ty_with_subst(
             };
             Some(Ty::FnPtr {
                 params: params?,
+                param_takes: param_takes.clone(),
                 return_type: Box::new(ret),
             })
         }
@@ -934,6 +940,7 @@ fn ty_contains_param(ty: &Ty) -> bool {
         Ty::FnPtr {
             params,
             return_type,
+            ..
         } => params.iter().any(ty_contains_param) || ty_contains_param(return_type),
         _ => false,
     }
@@ -952,9 +959,11 @@ fn subst_ty_plain(ty: &Ty, subst: &std::collections::HashMap<String, Ty>) -> Ty 
         Ty::RawPtr(inner) => Ty::RawPtr(Box::new(subst_ty_plain(inner, subst))),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => Ty::FnPtr {
             params: params.iter().map(|p| subst_ty_plain(p, subst)).collect(),
+            param_takes: param_takes.clone(),
             return_type: Box::new(subst_ty_plain(return_type, subst)),
         },
         other => other.clone(),
@@ -1443,12 +1452,14 @@ fn subst_type_ast(
         ))),
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => TypeKind::FnPtr {
             params: params
                 .iter()
                 .map(|p| subst_type_ast(p, subst, type_name_of, struct_lookup))
                 .collect(),
+            param_takes: param_takes.clone(),
             return_type: return_type
                 .as_ref()
                 .map(|rt| Box::new(subst_type_ast(rt, subst, type_name_of, struct_lookup))),
@@ -2809,6 +2820,7 @@ fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String,
         TypeKind::FnPtr {
             params,
             return_type,
+            ..
         } => {
             for p in params {
                 rewrite_alias_type(p, aliases);
@@ -3068,11 +3080,15 @@ fn mangle_type_ast_arg(t: &Type) -> String {
         TypeKind::RawPtr(inner) => format!("ptr_{}", mangle_type_ast_arg(inner)),
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let mut s = String::from("fn");
-            for p in params {
+            for (i, p) in params.iter().enumerate() {
                 s.push('_');
+                if param_takes.get(i).copied().unwrap_or(false) {
+                    s.push_str("take_");
+                }
                 s.push_str(&mangle_type_ast_arg(p));
             }
             if let Some(rt) = return_type {
@@ -3132,11 +3148,15 @@ fn mangle_ty(ty: &Ty, type_name_of: &dyn Fn(&Ty) -> String) -> String {
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty(inner, type_name_of)),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let mut s = String::from("fn");
-            for p in params {
+            for (i, p) in params.iter().enumerate() {
                 s.push('_');
+                if param_takes.get(i).copied().unwrap_or(false) {
+                    s.push_str("take_");
+                }
                 s.push_str(&mangle_ty(p, type_name_of));
             }
             if !matches!(**return_type, Ty::Unit) {

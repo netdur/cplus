@@ -124,7 +124,7 @@ impl Matrix {
     // Caller keeps owning their original handles; both refcounts are
     // released independently at scope exit (callers' Drops + MPSMatrix's
     // Drop when this wrapper goes out of scope).
-    pub fn new(borrow buf: buffer::Buffer, borrow desc: MatrixDescriptor) -> Matrix {
+    pub fn new(buf: buffer::Buffer, desc: MatrixDescriptor) -> Matrix {
         let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrix\0")) };
         let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
         let initialized: *u8 = unsafe {
@@ -155,7 +155,7 @@ pub struct MatrixMultiplication {
 
 impl MatrixMultiplication {
     pub fn new(
-        borrow dev: device::Device,
+        dev: device::Device,
         transpose_left: bool,
         transpose_right: bool,
         result_rows: usize,
@@ -200,10 +200,10 @@ impl MatrixMultiplication {
     // read-back on `out`).
     pub fn encode_to(
         this,
-        borrow cmd_buf: queue::CommandBuffer,
-        borrow lhs: Matrix,
-        borrow rhs: Matrix,
-        borrow out: Matrix,
+        cmd_buf: queue::CommandBuffer,
+        lhs: Matrix,
+        rhs: Matrix,
+        out: Matrix,
     ) {
         unsafe {
             #msg_send(
@@ -238,7 +238,7 @@ pub struct MatrixVectorMultiplication {
 
 impl MatrixVectorMultiplication {
     pub fn new(
-        borrow dev: device::Device,
+        dev: device::Device,
         transpose: bool,
         rows: usize,
         columns: usize,

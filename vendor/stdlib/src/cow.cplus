@@ -52,7 +52,7 @@ pub fn from_owned(take s: text::Text) -> CowStr {
 
 // Whether the wrapped data is owned (true) or borrowed (false). Mostly
 // for diagnostics + tests.
-pub fn is_owned(borrow c: CowStr) -> bool {
+pub fn is_owned(c: CowStr) -> bool {
     return match c {
         CowStr::View(_) => false,
         CowStr::Owned(_) => true,
@@ -60,7 +60,7 @@ pub fn is_owned(borrow c: CowStr) -> bool {
 }
 
 // Length in bytes (works for both variants).
-pub fn len(borrow c: CowStr) -> usize {
+pub fn len(c: CowStr) -> usize {
     return match c {
         CowStr::View(s) => #str_len(s),
         CowStr::Owned(s) => s.len(),

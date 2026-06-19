@@ -916,7 +916,7 @@ impl Lower {
             TypeKind::Borrowed { inner, .. } => self.resolve_lens_in_type(inner, consts),
             TypeKind::RawPtr(inner) => self.resolve_lens_in_type(inner, consts),
             TypeKind::Slice(inner) => self.resolve_lens_in_type(inner, consts),
-            TypeKind::FnPtr { params, return_type } => {
+            TypeKind::FnPtr { params, return_type, .. } => {
                 for p in params {
                     self.resolve_lens_in_type(p, consts);
                 }

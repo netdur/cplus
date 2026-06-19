@@ -94,9 +94,14 @@ pub enum Ty {
     /// to LLVM `ptr`. Copy semantics. No environment capture (no
     /// closures in C+); the pointer is just the symbol's address.
     /// Calling convention is always ccc. Two FnPtr values are equal
-    /// iff their parameter types and return type are equal.
+    /// iff their parameter types, per-param ownership markers, and return
+    /// type are equal.
     FnPtr {
         params: Vec<Ty>,
+        /// v0.0.24 #9: per-param ownership marker — `true` = `take` (consume),
+        /// `false` = bare read-only borrow. Same length as `params`. `fn(R)`
+        /// borrows its arg (caller keeps ownership); `fn(take R)` consumes it.
+        param_takes: Vec<bool>,
         return_type: Box<Ty>,
     },
     Enum(EnumId),
@@ -329,7 +334,7 @@ pub struct ParamSig {
     pub ty: Ty,
     pub mutable: bool,
     pub move_: bool,
-    /// v0.0.9 follow-up: `borrow x: T` — explicit shared by-value
+    /// v0.0.9 follow-up: `x: T` — explicit shared by-value
     /// parameter. Phase 5 mechanism plumbing — propagates `Param.borrow_`
     /// from the AST so call-site logic can opt out of the future
     /// "move-by-default for non-Copy" behaviour. Today this flag is
@@ -1891,11 +1896,20 @@ impl SemaCx<'_> {
             Ty::Slice(inner) => format!("{}[]", self.render_ty(inner)),
             Ty::FnPtr {
                 params,
+                param_takes,
                 return_type,
             } => {
                 let ps = params
                     .iter()
-                    .map(|p| self.render_ty(p))
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let mark = if param_takes.get(i).copied().unwrap_or(false) {
+                            "take "
+                        } else {
+                            ""
+                        };
+                        format!("{mark}{}", self.render_ty(p))
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 if matches!(**return_type, Ty::Unit) {
@@ -2205,12 +2219,10 @@ impl SemaCx<'_> {
     /// callee's, so a `#[no_alloc]` function must reject it when that teardown
     /// allocates (`!no_alloc_safe_drop`).
     fn no_alloc_param_drops_here(&self, param: &Param, ty: &Ty) -> bool {
-        let owned = param.move_
-            || (!param.mutable
-                && !param.borrow_
-                && matches!(ty, Ty::Struct(_))
-                && !self.is_copy(ty));
-        owned && matches!(ty, Ty::Struct(_) | Ty::Enum(_))
+        // v0.0.24 #9: only a `take` param owns its value and runs its drop in
+        // the callee (mirrors codegen `effective_move`). A bare param is a
+        // read-only borrow — the caller drops it, so no teardown happens here.
+        param.move_ && matches!(ty, Ty::Struct(_) | Ty::Enum(_)) && !self.is_copy(ty)
     }
 
     /// v0.0.15 `#[no_alloc]` drop-glue, temporary arm: does this expression
@@ -5083,7 +5095,7 @@ impl SemaCx<'_> {
             | Ty::F16 | Ty::F32 | Ty::F64
             | Ty::Bool
             | Ty::RawPtr(_) => None,
-            Ty::FnPtr { params, return_type } => {
+            Ty::FnPtr { params, return_type, .. } => {
                 for p in params {
                     if let Some(r) = self.c_exportable_diagnosis(p, false) {
                         return Some(format!("function-pointer parameter type `{}` is not C-ABI compatible ({r})", ty_display(p)));
@@ -8383,6 +8395,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if let Some(info) = self.lookup_local(name) {
                 if let Ty::FnPtr {
                     params,
+                    param_takes,
                     return_type,
                 } = info.ty.clone()
                 {
@@ -8416,20 +8429,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         }
                         return *return_type;
                     }
-                    // A fn-pointer's params are by-value (the `Ty::FnPtr` type
-                    // carries no borrow/mut markers), so a non-Copy arg is moved
-                    // into the call — consume the caller's binding via the shared
-                    // path (E0335 use-after-move, E0509/E0337 partial moves),
-                    // exactly like a direct call. Without this an indirect call
-                    // neither caught a use-after-move nor disarmed the source's
-                    // drop (double-free).
-                    for (a, p) in args.iter().zip(params.iter()) {
+                    // v0.0.24 #9: a `fn(R)` param borrows its arg (the caller
+                    // keeps ownership); a `fn(take R)` param consumes it. Drive
+                    // the move-check off the per-param `take` marker — a `take`
+                    // arg is consumed (E0335 use-after-move, E0509/E0337 partial
+                    // moves), a bare arg is only borrowed.
+                    for (i, (a, p)) in args.iter().zip(params.iter()).enumerate() {
                         self.check_arg_with_move(
                             a,
                             &ParamSig {
                                 ty: p.clone(),
                                 mutable: false,
-                                move_: false,
+                                move_: param_takes.get(i).copied().unwrap_or(false),
                                 borrow_: false,
                             },
                         );
@@ -8450,6 +8461,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if let Some((_, ft, _)) = sdef.field_with_pub(&name.name) {
                     if let Ty::FnPtr {
                         params,
+                        param_takes,
                         return_type,
                     } = ft
                     {
@@ -8476,15 +8488,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             }
                             return *return_type;
                         }
-                        // By-value fn-pointer params consume non-Copy args (see
+                        // v0.0.24 #9: consume `take` args, borrow bare args (see
                         // the Ident fn-pointer branch above).
-                        for (a, p) in args.iter().zip(params.iter()) {
+                        for (i, (a, p)) in args.iter().zip(params.iter()).enumerate() {
                             self.check_arg_with_move(
                                 a,
                                 &ParamSig {
                                     ty: p.clone(),
                                     mutable: false,
-                                    move_: false,
+                                    move_: param_takes.get(i).copied().unwrap_or(false),
                                     borrow_: false,
                                 },
                             );
@@ -8899,6 +8911,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if name == "__cplus_thread_spawn" {
             let expected_f = Ty::FnPtr {
                 params: vec![],
+                param_takes: vec![],
                 return_type: Box::new(o_ty.clone()),
             };
             let _f_ty = self.check_expr(&args[0], Some(expected_f));
@@ -9292,8 +9305,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 borrow_: false,
             },
         );
+        // The thread takes ownership of the input (consumed above, `move_:
+        // true`), so the worker is `fn(take I) -> O` — its param must be `take`.
         let expected_f = Ty::FnPtr {
             params: vec![i_ty.clone()],
+            param_takes: vec![true],
             return_type: Box::new(o_ty.clone()),
         };
         let _f = self.check_expr(&args[1], Some(expected_f));
@@ -9401,16 +9417,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     had_err = true;
                 }
                 // v0.0.14 soundness: consume non-Copy args, matching the
-                // non-generic path. A `move` param OR an implicit-move (bare)
-                // param moves the arg. `consume_arg_place` peels wrappers and
+                // non-generic path. v0.0.24 #9: only a `take` param consumes —
+                // a bare param is a read-only borrow (the caller keeps and drops
+                // it), so it must NOT move the arg (else a use-after-call is a
+                // spurious E0335). `consume_arg_place` peels wrappers and
                 // handles each leaf: a whole-binding Ident moves; a
                 // Field/Index/Deref projection is a partial move (E0337);
                 // rvalues (struct/enum literals, fresh call results) own their
                 // value and pass through untouched. v0.0.23: peel closes the
                 // `g({ x })` hole (no `is_addr_of_place` gate, which skipped
                 // wrapped bindings).
-                let implicit_move = !param.mutable && !param.borrow_;
-                if (param.move_ || implicit_move)
+                if param.move_
                     && !self.is_copy(&expected)
                     && !matches!(actual_before, Ty::Error)
                 {
@@ -13045,6 +13062,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // Slice 11.FN_PTR: function pointer type.
             TypeKind::FnPtr {
                 params,
+                param_takes,
                 return_type,
             } => {
                 let resolved_params: Vec<Ty> =
@@ -13055,6 +13073,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 };
                 return Ty::FnPtr {
                     params: resolved_params,
+                    param_takes: param_takes.clone(),
                     return_type: Box::new(resolved_ret),
                 };
             }
@@ -13499,6 +13518,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             Ty::RawPtr(inner) => Ty::RawPtr(Box::new(self.subst_ty_deep(inner, subst))),
             Ty::FnPtr {
                 params,
+                param_takes,
                 return_type,
             } => {
                 let params = params
@@ -13508,6 +13528,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let return_type = Box::new(self.subst_ty_deep(return_type, subst));
                 Ty::FnPtr {
                     params,
+                    param_takes: param_takes.clone(),
                     return_type,
                 }
             }
@@ -13913,6 +13934,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             TypeKind::FnPtr {
                 params,
+                param_takes,
                 return_type,
             } => {
                 let resolved_params: Vec<Ty> = params
@@ -13925,6 +13947,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 };
                 Ty::FnPtr {
                     params: resolved_params,
+                    param_takes: param_takes.clone(),
                     return_type: Box::new(resolved_ret),
                 }
             }
@@ -14084,33 +14107,66 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     );
                     return Ty::Error;
                 }
-                // A fn-pointer's params are BY VALUE — the `fn(T)` type carries
-                // no `borrow`/`mut` convention (it can't express by-pointer
-                // passing). Taking a pointer to a function whose param IS
-                // `borrow`/`mut` would form a `fn(T)` whose call sites pass that
-                // arg by value while the callee expects a pointer — an ABI
-                // mismatch that segfaults at runtime. Reject it (a `fn(borrow T)`
-                // pointer type would be a language feature, not a bug fix).
-                if let Some((i, p)) = sig
-                    .params
-                    .iter()
-                    .enumerate()
-                    .find(|(_, p)| p.borrow_ || p.mutable)
-                {
-                    let conv = if p.mutable { "mut" } else { "borrow" };
+                // v0.0.24 #9: a fn-pointer type carries each param's ownership
+                // convention — `fn(R)` borrows its arg (caller keeps ownership),
+                // `fn(take R)` consumes it. The pointed-to function's param
+                // conventions must MATCH the expected fn-pointer type's markers:
+                // a bare param ↔ a `fn(R)` borrow slot, a `take` param ↔ a
+                // `fn(take R)` consume slot. A `ref` (write-back) param cannot
+                // ride a by-value fn-pointer at all. (`borrow` is removed — a
+                // bare parameter IS the read-only borrow.)
+                let expected_takes: Vec<bool> = match expected {
+                    Some(Ty::FnPtr { param_takes, .. }) => param_takes.clone(),
+                    _ => Vec::new(),
+                };
+                // The pointed-to function's param conventions must match the
+                // fn-pointer type's per-param markers. A bare param fits a
+                // borrowing `fn(R)` slot (caller keeps ownership; non-Copy is
+                // passed by pointer); a `take` param fits a `fn(take R)` slot
+                // (callee consumes; by value). A Copy type fits any slot (Copy
+                // has no ownership). A `ref` (write-back) param cannot ride a
+                // fn-pointer.
+                let bad = sig.params.iter().enumerate().find_map(|(i, p)| {
+                    if p.mutable {
+                        return Some((
+                            i,
+                            "is `ref` (write-back), which a `fn(...)` type cannot express".to_string(),
+                        ));
+                    }
+                    if self.is_copy(&p.ty) {
+                        return None; // Copy: no ownership, fits any slot
+                    }
+                    let want_take = expected_takes.get(i).copied().unwrap_or(false);
+                    if p.move_ != want_take {
+                        let msg = if p.move_ {
+                            "is `take` (consumes ownership), but the expected fn-pointer borrows it — write `fn(take R)`"
+                        } else {
+                            "is a read-only borrow, but the expected fn-pointer consumes it (`fn(take R)`) — make it a `take` parameter"
+                        };
+                        return Some((i, msg.to_string()));
+                    }
+                    None
+                });
+                if let Some((i, msg)) = bad {
                     self.err(
                         "E0312",
-                        format!(
-                            "cannot take a fn-pointer to `{name}`: parameter {} is `{conv}` (passed by pointer), which a `fn(...)` type cannot express",
-                            i + 1
-                        ),
+                        format!("cannot coerce `{name}` to the expected fn-pointer type: parameter {} {msg}", i + 1),
                         span,
                     );
                     return Ty::Error;
                 }
                 let params: Vec<Ty> = sig.params.iter().map(|p| p.ty.clone()).collect();
+                // The coerced value's type takes the expected slot's markers (so
+                // the binding type-checks); for Copy params the marker is
+                // cosmetic, for non-Copy it equals the function's `take`.
+                let param_takes: Vec<bool> = if expected_takes.len() == params.len() {
+                    expected_takes
+                } else {
+                    sig.params.iter().map(|p| p.move_).collect()
+                };
                 return Ty::FnPtr {
                     params,
+                    param_takes,
                     return_type: Box::new(sig.return_type),
                 };
             }
@@ -14364,6 +14420,7 @@ fn ty_contains_param(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> bool 
         Ty::FnPtr {
             params,
             return_type,
+            ..
         } => {
             params.iter().any(|p| ty_contains_param(p, structs, enums))
                 || ty_contains_param(return_type, structs, enums)
@@ -14767,9 +14824,22 @@ fn ty_display(ty: &Ty) -> String {
         Ty::RawPtr(inner) => format!("*{}", ty_display(inner)),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
-            let params_s = params.iter().map(ty_display).collect::<Vec<_>>().join(", ");
+            let params_s = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let mark = if param_takes.get(i).copied().unwrap_or(false) {
+                        "take "
+                    } else {
+                        ""
+                    };
+                    format!("{mark}{}", ty_display(p))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             if matches!(**return_type, Ty::Unit) {
                 format!("fn({params_s})")
             } else {
@@ -14839,12 +14909,14 @@ fn substitute_param_in_type_ast_with_tables(
         )),
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => TypeKind::FnPtr {
             params: params
                 .iter()
                 .map(|p| substitute_param_in_type_ast_with_tables(p, subst, structs, enums))
                 .collect(),
+            param_takes: param_takes.clone(),
             return_type: return_type.as_ref().map(|rt| {
                 Box::new(substitute_param_in_type_ast_with_tables(
                     rt, subst, structs, enums,
@@ -14961,11 +15033,15 @@ fn mangle_ty_for_name(ty: &Ty, structs: &[StructDef], enums: &[EnumDef]) -> Stri
         Ty::RawPtr(inner) => format!("ptr_{}", mangle_ty_for_name(inner, structs, enums)),
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
             let mut s = String::from("fn");
-            for p in params {
+            for (i, p) in params.iter().enumerate() {
                 s.push('_');
+                if param_takes.get(i).copied().unwrap_or(false) {
+                    s.push_str("take_");
+                }
                 s.push_str(&mangle_ty_for_name(p, structs, enums));
             }
             if !matches!(**return_type, Ty::Unit) {
@@ -15024,13 +15100,16 @@ fn ty_eq_modulo_self(
         }
         Ty::FnPtr {
             params,
+            param_takes,
             return_type,
         } => match impl_ty {
             Ty::FnPtr {
                 params: bparams,
+                param_takes: btakes,
                 return_type: breturn,
             } => {
                 params.len() == bparams.len()
+                    && param_takes == btakes
                     && params
                         .iter()
                         .zip(bparams.iter())
@@ -16228,14 +16307,14 @@ mod tests {
         // double-free. Abstract `T` can't be cleared by `ty_carries_drop`
         // (which reads false for `Param`), so a non-Copy `Param` borrow is
         // flagged conservatively.
-        assert_has_code("fn leak[T](borrow t: T) -> T { return t; }", "E0337");
+        assert_has_code("fn leak[T](t: T) -> T { return t; }", "E0337");
     }
 
     #[test]
     fn generic_copy_borrow_param_returned_clean() {
         // `T: Copy` is bound-aware Copy: returning the borrow bit-copies
         // harmlessly (no destructor), so this is allowed.
-        assert_clean("fn ok[T: Copy](borrow t: T) -> T { return t; }");
+        assert_clean("fn ok[T: Copy](t: T) -> T { return t; }");
     }
 
     #[test]
@@ -16326,7 +16405,7 @@ mod tests {
              struct R { opaque data: *u8 }\n\
              impl R { fn drop(ref this) { return; } }\n\
              impl R: Take { fn take(take this) -> i32 { return 0; } }\n\
-             fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
+             fn steal[T: Take](t: T) -> i32 { return t.take(); }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
         );
@@ -16342,7 +16421,7 @@ mod tests {
              struct P {}\n\
              interface Sink { fn sink(this, take r: R); }\n\
              impl P: Sink { fn sink(this, take r: R) { return; } }\n\
-             fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
+             fn steal[T: Sink](t: T, r: R) { t.sink(r); return; }\n\
              fn main() -> i32 { return 0; }",
             "E0337",
         );
@@ -16390,7 +16469,7 @@ fn main() -> i32 { return 0; }\n";
 
         // (name, fn params, setup stmts, value expr, expected code | "" = clean)
         let forms: &[(&str, &str, &str, &str, &str)] = &[
-            ("borrow_param", "borrow r: R", "", "r", "E0337"),
+            ("borrow_param", "r: R", "", "r", "E0337"),
             ("drop_field", "", "let h: H = H { e: mkr() };", "h.e", "E0509"),
             ("raw_deref", "p: *R", "", "unsafe { *p }", "E0337"),
             ("safe_rvalue", "", "", "mkr()", ""),
@@ -16422,7 +16501,7 @@ fn main() -> i32 { return 0; }\n";
     #[test]
     fn ownership_consume_site_matrix_generic() {
         // Same grid, but the consumed value is an abstract `T` (generic-body
-        // checking). Unbounded `T` is move-only → moving a `borrow t: T` into
+        // checking). Unbounded `T` is move-only → moving a `t: T` into
         // an owned slot is E0337; `T: Copy` is a harmless bit-copy → clean.
         const PRELUDE: &str = "\
 struct R { opaque data: *u8 }\n\
@@ -16446,8 +16525,8 @@ fn main() -> i32 { return 0; }\n";
 
         // (name, fn generics, fn params, value, expected | "" = clean)
         let forms: &[(&str, &str, &str, &str, &str)] = &[
-            ("borrow_unbounded", "[T]", "borrow t: T", "t", "E0337"),
-            ("copy_borrow_safe", "[T: Copy]", "borrow t: T", "t", ""),
+            ("borrow_unbounded", "[T]", "t: T", "t", "E0337"),
+            ("copy_borrow_safe", "[T: Copy]", "t: T", "t", ""),
         ];
 
         for (sname, stmpl, returns_t) in sites {
@@ -16577,26 +16656,41 @@ fn main() -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn fn_pointer_coercion_rejects_by_pointer_params() {
-        // A `fn(...)` type is BY VALUE — it can't express a `borrow`/`mut`
-        // by-pointer param convention. Coercing such a function to a fn-pointer
-        // would form a type whose call sites pass by value while the callee
-        // expects a pointer (ABI mismatch → segfault), so it's rejected. A
-        // by-value param (plain or `move`) is fine.
+    fn fn_pointer_coercion_matches_param_conventions() {
+        // v0.0.24 #9: a fn-pointer passes its argument BY VALUE, and its type
+        // records each param's `take` marker. So a function fits a fn-pointer
+        // slot only when it is by-value-compatible AND its convention matches:
+        //   - a `take` (consuming) non-Copy param fits a `fn(take R)` slot;
+        //   - a Copy-typed param fits any slot (Copy has no ownership);
+        //   - a bare non-Copy param is a read-only borrow passed BY POINTER, so
+        //     it cannot ride a by-value fn-pointer at all;
+        //   - a `ref` (write-back) param cannot either.
         const DECLS: &str = "\
 struct R { tag: i32 }\n\
 impl R { fn drop(ref this) { return; } }\n\
-fn peek(borrow r: R) -> i32 { return r.tag; }\n\
+fn peek(r: R) -> i32 { return r.tag; }\n\
 fn pm(ref r: R) -> i32 { return 0; }\n\
 fn sink(take r: R) -> i32 { return 0; }\n\
-fn mv(take r: R) -> i32 { return 0; }\n";
-        let prog = |take: &str| {
-            format!("{DECLS}fn u() {{ let _f: fn(R) -> i32 = {take}; return; }}\nfn main() -> i32 {{ return 0; }}")
+fn cnt(n: i32) -> i32 { return n; }\n";
+        let borrow_slot = |target: &str| {
+            format!("{DECLS}fn u() {{ let _f: fn(R) -> i32 = {target}; return; }}\nfn main() -> i32 {{ return 0; }}")
         };
-        assert!(errors(&prog("peek")).contains(&"E0312"), "borrow param must reject");
-        assert!(errors(&prog("pm")).contains(&"E0312"), "mut param must reject");
-        assert!(errors(&prog("sink")).is_empty(), "by-value param must be accepted");
-        assert!(errors(&prog("mv")).is_empty(), "move param must be accepted");
+        let take_slot = |target: &str| {
+            format!("{DECLS}fn u() {{ let _f: fn(take R) -> i32 = {target}; return; }}\nfn main() -> i32 {{ return 0; }}")
+        };
+        // Marker must match: a bare param fits a borrowing `fn(R)` slot (the
+        // non-Copy value rides by pointer), a `take` param fits a `fn(take R)`
+        // slot.
+        assert!(errors(&borrow_slot("peek")).is_empty(), "bare param must fit a borrowing `fn(R)` slot");
+        assert!(errors(&take_slot("sink")).is_empty(), "take param must fit a `fn(take R)` slot");
+        // Mismatched markers are rejected in both directions.
+        assert!(errors(&take_slot("peek")).contains(&"E0312"), "bare worker must not fit a `fn(take R)` slot");
+        assert!(errors(&borrow_slot("sink")).contains(&"E0312"), "take worker must not fit a borrowing `fn(R)` slot");
+        // `ref` write-back can't ride a fn-pointer at all.
+        assert!(errors(&borrow_slot("pm")).contains(&"E0312"), "`ref` param must reject");
+        // A Copy-typed param rides any slot (Copy has no ownership).
+        let prog_copy = format!("{DECLS}fn u() {{ let _f: fn(i32) -> i32 = cnt; return; }}\nfn main() -> i32 {{ return 0; }}");
+        assert!(errors(&prog_copy).is_empty(), "Copy param must be accepted");
     }
 
     // ---- `f16` literal suffix ----
@@ -16682,15 +16776,15 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     // ---- #addr_of(x) intrinsic ----
 
-    // ---- v0.0.9 follow-up: `borrow x: T` parameter marker ----
+    // ---- v0.0.9 follow-up: `x: T` parameter marker ----
 
     #[test]
     fn borrow_param_marker_clean() {
-        // `borrow x: T` is an explicit form of the current shared
+        // `x: T` is an explicit form of the current shared
         // by-value default. Semantically a no-op for v0.0.9; reserved
         // so a future Phase 1 default-move flip has a clean opt-out.
         assert_clean(
-            "fn add(borrow a: i32, borrow b: i32) -> i32 { return a + b; }\n\
+            "fn add(a: i32, b: i32) -> i32 { return a + b; }\n\
              fn main() -> i32 { return add(2, 3); }",
         );
     }
@@ -16715,7 +16809,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn borrow_does_not_collide_with_borrow_region_type() {
-        // `borrow x: T` (param marker) and `borrow REGION T` (type
+        // `x: T` (param marker) and `borrow REGION T` (type
         // position) coexist. The region-annotated type only appears
         // after the colon — parse_type's `borrow REGION T` branch
         // handles it. The param-marker loop only fires before the
@@ -16724,7 +16818,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         // (The semantic check for `move x: borrow A T` lives in the
         // parser as a hard error — exercised in parser tests.)
         assert_clean(
-            "fn f(borrow x: borrow A i32) -> i32 { return x; }\n\
+            "fn f(x: borrow A i32) -> i32 { return x; }\n\
              fn main() -> i32 { return f(0); }",
         );
     }
@@ -18646,12 +18740,12 @@ fn mv(take r: R) -> i32 { return 0; }\n";
 
     #[test]
     fn phase5_borrow_param_does_not_consume_clean() {
-        // `borrow x: T` opts out of the move-by-default. Caller can read
+        // `x: T` opts out of the move-by-default. Caller can read
         // the binding after the call.
         assert_clean(
             "struct P { x: i32 }\n\
              impl P { fn drop(ref this) {} }\n\
-             fn peek(borrow p: P) -> i32 { return p.x; }\n\
+             fn peek(p: P) -> i32 { return p.x; }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 1 };\n\
                  let r: i32 = peek(p);\n\
@@ -19436,30 +19530,30 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn impl_interface_borrow_vs_move_param_mismatch_e0505() {
-        // Interface declares `borrow r: R` (caller keeps ownership); impl
-        // declares `r: R` (by-value move, callee consumes). Different ownership
-        // contract — a generic caller dispatching via the interface keeps and
-        // drops `r` while the impl already consumed it (double-free). The
-        // signature check must compare the `borrow`/`move` convention, not just
+    fn impl_interface_bare_vs_take_param_mismatch_e0505() {
+        // Interface declares `r: R` (bare = read-only borrow, caller keeps
+        // ownership); impl declares `take r: R` (callee consumes). Different
+        // ownership contract — a generic caller dispatching via the interface
+        // keeps and drops `r` while the impl already consumed it (double-free).
+        // The signature check must compare the bare/`take` convention, not just
         // the type. Must be E0505.
         let codes = errors(
             "struct R { tag: i32 } \
              struct P {} \
-             interface UseR { fn use_r(this, borrow r: R) -> i32; } \
-             impl P: UseR { fn use_r(this, r: R) -> i32 { return r.tag; } } \
+             interface UseR { fn use_r(this, r: R) -> i32; } \
+             impl P: UseR { fn use_r(this, take r: R) -> i32 { return r.tag; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(
             codes.contains(&"E0505"),
-            "borrow-vs-move param mismatch must be E0505, got: {codes:?}"
+            "bare-vs-take param mismatch must be E0505, got: {codes:?}"
         );
-        // The reverse (interface by-value, impl `borrow`) is also a mismatch.
+        // The reverse (interface `take`, impl bare) is also a mismatch.
         let codes_rev = errors(
             "struct R { tag: i32 } \
              struct P {} \
-             interface UseR { fn use_r(this, r: R) -> i32; } \
-             impl P: UseR { fn use_r(this, borrow r: R) -> i32 { return r.tag; } } \
+             interface UseR { fn use_r(this, take r: R) -> i32; } \
+             impl P: UseR { fn use_r(this, r: R) -> i32 { return r.tag; } } \
              fn main() -> i32 { return 0; }",
         );
         assert!(
@@ -19493,8 +19587,8 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct R { tag: i32 } \
              struct P {} \
-             interface UseR { fn use_r(this, borrow r: R) -> i32; } \
-             impl P: UseR { fn use_r(this, borrow r: R) -> i32 { return r.tag; } } \
+             interface UseR { fn use_r(this, r: R) -> i32; } \
+             impl P: UseR { fn use_r(this, r: R) -> i32 { return r.tag; } } \
              fn main() -> i32 { return 0; }",
         );
     }
@@ -20438,7 +20532,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              struct H { e: E } \
-             fn rd(borrow r: R) -> i32 { return 0; } \
+             fn rd(r: R) -> i32 { return 0; } \
              fn main() -> i32 { \
                  let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
                  let _n: i32 = match h.e { E::A(x) => rd(x), E::B => 0 }; \
@@ -20643,7 +20737,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
-             fn take(borrow e: E) -> i32 { \
+             fn take(e: E) -> i32 { \
                  let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
                  return 0; \
              } \
@@ -20660,8 +20754,8 @@ fn mv(take r: R) -> i32 { return 0; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
-             fn rd(borrow r: R) -> i32 { return 0; } \
-             fn take(borrow e: E) -> i32 { \
+             fn rd(r: R) -> i32 { return 0; } \
+             fn take(e: E) -> i32 { \
                  let n: i32 = match e { E::A(x) => rd(x), E::B => 1 }; \
                  return n; \
              } \
@@ -20846,7 +20940,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct B { x: i32 } \
              impl B { fn drop(ref this) { return; } } \
-             fn steal(borrow r: B) -> B { let out: B = r; return out; } \
+             fn steal(r: B) -> B { let out: B = r; return out; } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
@@ -20899,7 +20993,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
-             fn f(borrow r: R) -> i32 { let _a: [R; 1] = [r]; return 0; } \
+             fn f(r: R) -> i32 { let _a: [R; 1] = [r]; return 0; } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
@@ -20934,7 +21028,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
-             fn f(borrow r: R) -> i32 { let _t: (R, i32) = (r, 0); return 0; } \
+             fn f(r: R) -> i32 { let _t: (R, i32) = (r, 0); return 0; } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
@@ -20963,7 +21057,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         let codes = errors(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } fn take(take this) -> R { return this; } } \
-             fn steal(borrow r: R) -> R { return r.take(); } \
+             fn steal(r: R) -> R { return r.take(); } \
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0337"), "expected E0337, got: {codes:?}");
@@ -20990,7 +21084,7 @@ fn mv(take r: R) -> i32 { return 0; }\n";
         assert_clean(
             "struct B { x: i32 } \
              impl B { fn drop(ref this) { return; } } \
-             fn rd(borrow b: B) -> i32 { return b.x; } \
+             fn rd(b: B) -> i32 { return b.x; } \
              fn main() -> i32 { \
                  let v: B = B { x: 1 }; \
                  let a: i32 = rd(v); \
@@ -23725,24 +23819,14 @@ fn mv(take r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn no_alloc_bare_nonpcopy_param_carries_freeing_drop_e0901() {
-        // A bare `w: Wrap` non-Copy struct param is move-by-default (v0.0.10),
-        // so the callee drops it — and the auto-dropped freeing field frees.
-        let codes = errors(&format!(
-            "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
-             #[no_alloc] fn f(w: Wrap) -> i32 {{ return w.tag; }}\n\
-             fn main() -> i32 {{ return 0; }}"
-        ));
-        assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
-    }
-
-    #[test]
-    fn no_alloc_borrow_param_drop_type_clean() {
-        // `borrow` is a shared by-value parameter: the caller keeps ownership,
-        // so there's no callee-side teardown to allocate.
+    fn no_alloc_bare_param_drop_type_clean() {
+        // v0.0.24 #9: a bare `w: Wrap` non-Copy param is a read-only BORROW —
+        // the caller keeps ownership and runs the destructor, so there is no
+        // callee-side teardown to allocate. Clean. (The owning case — a `take`
+        // param whose drop frees — is the E0901 test above, `take h: Handle`.)
         assert_clean(&format!(
             "{FREEING_DROP}struct Wrap {{ name: Handle, tag: i32 }}\n\
-             #[no_alloc] fn f(borrow w: Wrap) -> i32 {{ return w.tag; }}\n\
+             #[no_alloc] fn f(w: Wrap) -> i32 {{ return w.tag; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
     }

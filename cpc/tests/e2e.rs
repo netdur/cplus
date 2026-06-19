@@ -1968,7 +1968,7 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
          struct P {}\n\
          interface Sink { fn sink(this, take r: R); }\n\
          impl P: Sink { fn sink(this, take r: R) { return; } }\n\
-         fn steal[T: Sink](t: T, borrow r: R) { t.sink(r); return; }\n\
+         fn steal[T: Sink](t: T, r: R) { t.sink(r); return; }\n\
          fn main() -> i32 {\n\
            let p: P = P {};\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
@@ -2035,7 +2035,7 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
          struct R { opaque data: *u8 }\n\
          impl R { fn drop(ref this) { return; } }\n\
          impl R: Take { fn take(take this) -> i32 { return 0; } }\n\
-         fn steal[T: Take](borrow t: T) -> i32 { return t.take(); }\n\
+         fn steal[T: Take](t: T) -> i32 { return t.take(); }\n\
          fn main() -> i32 {\n\
            let r: R = R { data: unsafe { 0 as *u8 } };\n\
            return steal::[R](r);\n\
@@ -2195,14 +2195,15 @@ fn fn_pointer_to_c_struct_return_c_abi() {
 
 #[test]
 fn fn_pointer_call_moves_arg_no_double_free() {
-    // A non-Copy value passed by value through a fn-pointer (Ident-bound and
-    // struct-field forms) is MOVED into the call — the callee drops it once, the
-    // source must NOT drop it again. `tag` makes a double-free observable: a
-    // single drop adds 7, a double adds 14. Expect DROPS=7 + n(=1) = 8.
+    // A non-Copy value moved through a `fn(take R)` pointer (Ident-bound and
+    // struct-field forms) is CONSUMED by the callee — the callee drops it once,
+    // and the caller must give up ownership (no second drop). `tag` makes a
+    // double-free observable: a single drop adds 7, a double adds 14. Expect
+    // DROPS=7 + n(=1) = 8.
     for (label, run_body) in [
         (
             "ident",
-            "let f: fn(R) -> i32 = sink; let r: R = R { tag: 7 }; return f(r);",
+            "let f: fn(take R) -> i32 = sink; let r: R = R { tag: 7 }; return f(r);",
         ),
         (
             "field",
@@ -2218,8 +2219,8 @@ fn fn_pointer_call_moves_arg_no_double_free() {
                 "static DROPS: i32 = 0;\n\
                  struct R {{ tag: i32 }}\n\
                  impl R {{ fn drop(ref this) {{ unsafe {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
-                 fn sink(r: R) -> i32 {{ return 1; }}\n\
-                 struct Handler {{ cb: fn(R) -> i32 }}\n\
+                 fn sink(take r: R) -> i32 {{ return 1; }}\n\
+                 struct Handler {{ cb: fn(take R) -> i32 }}\n\
                  fn run() -> i32 {{ {run_body} }}\n\
                  fn main() -> i32 {{ let n: i32 = run(); return unsafe {{ DROPS + n }}; }}\n"
             ),
@@ -2554,7 +2555,7 @@ fn move_and_borrow_in_same_call_rejected() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn drain(n: i32, take b: B) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let y: B = B { x: 1 };
     drain(peek(y), y);
@@ -4216,7 +4217,7 @@ fn e0381_mut_and_shared_borrow_in_same_call_rejected() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn write_thing(ref a: B, n: i32) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     var y: B = B { x: 1 };
     write_thing(y, peek(y));
@@ -4597,7 +4598,7 @@ fn shared_param_tagged_readonly_in_ir() {
         "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 7 };
     return peek(v);
@@ -4618,7 +4619,7 @@ fn main() -> i32 {
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
         ir.contains("i32 @peek(ptr readonly "),
-        "expected shared borrow `borrow b: B` to lower to `ptr readonly`; got: {ir}"
+        "expected shared borrow `b: B` to lower to `ptr readonly`; got: {ir}"
     );
     // And NOT `noalias` — shared borrows can alias per §2.9.
     assert!(
@@ -4886,45 +4887,6 @@ fn try_compile_snippet(src_text: &str) -> (bool, String) {
     (out.status.success(), String::from_utf8_lossy(&out.stderr).to_string())
 }
 
-#[test]
-fn return_region_undeclared_rejected_e0511() {
-    // v0.0.12 (#2): a return type naming a borrow region (`-> borrow Z str`)
-    // must tie that region to a parameter. An undeclared region is inert —
-    // reject it rather than silently accept (was the deferred "future polish").
-    let (ok, stderr) = try_compile_snippet(
-        "fn f(a: borrow A str) -> borrow Z str { return a; }\n\
-         fn main() -> i32 { return #str_len(f(\"x\")) as i32; }\n",
-    );
-    assert!(!ok, "expected E0511 rejection, compiled instead");
-    assert!(stderr.contains("E0511"), "expected E0511, got: {stderr}");
-}
-
-#[test]
-fn return_region_mismatch_rejected_e0512() {
-    // v0.0.12 (#2): returning a borrow from a different region than the
-    // signature declares is rejected — regions are now meaningful.
-    let (ok, stderr) = try_compile_snippet(
-        "fn weird(a: borrow A str, b: borrow B str) -> borrow A str { return b; }\n\
-         fn main() -> i32 { return #str_len(weird(\"x\", \"y\")) as i32; }\n",
-    );
-    assert!(!ok, "expected E0512 rejection, compiled instead");
-    assert!(stderr.contains("E0512"), "expected E0512, got: {stderr}");
-}
-
-#[test]
-fn return_region_matching_compiles() {
-    // v0.0.12 (#2) positive: a region-annotated return that borrows a
-    // same-region parameter is valid and must keep compiling.
-    let (ok, stderr) = try_compile_snippet(
-        "fn pick(a: borrow A str, b: borrow A str) -> borrow A str {\n\
-             if #str_len(a) > #str_len(b) { return a; }\n\
-             return b;\n\
-         }\n\
-         fn main() -> i32 { return #str_len(pick(\"hello\", \"worldlong\")) as i32; }\n",
-    );
-    assert!(ok, "valid same-region return must compile; stderr: {stderr}");
-}
-
 // R4: these borrow-check tests previously used the blessed `string` as a local
 // owned type with a safe `as_str()`. With `string` removed, they use a tiny
 // user Drop struct `Buf` whose `as_str()` borrows `self` — `returned_borrow_root`
@@ -5005,7 +4967,7 @@ fn return_slice_of_param_compiles() {
     // v0.0.12 (#3) positive: returning a view borrowed from a parameter is
     // caller-tied and sound — must not be flagged as a dangling local.
     let (ok, stderr) = try_compile_snippet(
-        "fn first(borrow s: str) -> str { return s; }\n\
+        "fn first(s: str) -> str { return s; }\n\
          fn main() -> i32 { return #str_len(first(\"x\")) as i32; }\n",
     );
     assert!(ok, "returning a borrow of a parameter must compile; stderr: {stderr}");
@@ -5050,7 +5012,7 @@ fn param_rooted_view_in_returned_struct_compiles() {
     // struct is sound — must not be flagged as a dangling local.
     let (ok, stderr) = try_compile_snippet(&format!(
         "{BUF_PRELUDE}struct Holder {{ view: str }}\n\
-         fn wrap(borrow s: Buf) -> Holder {{ return Holder {{ view: s.as_str() }}; }}\n\
+         fn wrap(s: Buf) -> Holder {{ return Holder {{ view: s.as_str() }}; }}\n\
          fn main() -> i32 {{ return 0; }}\n"
     ));
     assert!(ok, "param-rooted view in a returned struct must compile; stderr: {stderr}");
@@ -5268,194 +5230,6 @@ fn main() -> i32 {
 
 // ---- Phase 6 slice 6BC.5 — explicit `borrow REGION T` syntax ----
 
-#[test]
-fn borrow_region_annotation_compiles_and_links() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("good.cplus");
-    std::fs::write(
-        &src,
-        "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
-    if a.x > 0 { return a; }
-    return b;
-}
-fn main() -> i32 {
-    let a: B = B { x: 1 };
-    let b: B = B { x: 2 };
-    let r: B = merge(a, b);
-    return 0;
-}
-",
-    )
-    .unwrap();
-    let bin = dir.join("good");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "annotated function should compile and link; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-#[test]
-fn borrow_region_annotation_establishes_multi_source_borrow() {
-    // Verifies that the annotation flows through to call-site borrow
-    // tracking: moving either source while the result is alive fires
-    // E0372.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("bad.cplus");
-    std::fs::write(
-        &src,
-        "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
-    if a.x > 0 { return a; }
-    return b;
-}
-fn drain(take b: B) { return; }
-fn main() -> i32 {
-    let a: B = B { x: 1 };
-    let b: B = B { x: 2 };
-    let r: B = merge(a, b);
-    drain(a);
-    return 0;
-}
-",
-    )
-    .unwrap();
-    let bin = dir.join("bad");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "expected compile failure for move-while-multi-borrowed"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
-}
-
-#[test]
-fn borrow_region_with_mut_marker_is_exclusive() {
-    // `mut x: borrow A T` is an exclusive borrow in region A. The
-    // return inherits the Exclusive flavor; reading the source
-    // while the result is alive fires E0383.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("bad.cplus");
-    std::fs::write(
-        &src,
-        "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn cursor(ref buf: borrow A B) -> borrow A B { return buf; }
-fn peek(borrow b: B) -> i32 { return b.x; }
-fn main() -> i32 {
-    let v: B = B { x: 1 };
-    let cur: B = cursor(v);
-    let n: i32 = peek(v);
-    return 0;
-}
-",
-    )
-    .unwrap();
-    let bin = dir.join("bad");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    // v0.0.23: `cursor` returns a region borrow (`-> borrow A B`) of a Drop type
-    // → E0337 (would double-free), rejected before the E0383 read-conflict.
-    assert!(
-        !out.status.success(),
-        "returning a region borrow of a Drop type must be rejected"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
-}
-
-#[test]
-fn move_with_borrow_annotation_rejected_at_parse() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("bad.cplus");
-    std::fs::write(
-        &src,
-        "\
-struct B { x: i32 }
-fn take(take x: borrow A B) { return; }
-fn main() -> i32 { return 0; }
-",
-    )
-    .unwrap();
-    let bin = dir.join("bad");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "expected compile failure for move+borrow"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    // Parser error — E0100 with text about region annotations.
-    assert!(
-        stderr.contains("E0100") || stderr.contains("borrow"),
-        "expected parse error mentioning borrow, got: {stderr}"
-    );
-}
-
-#[test]
-fn explicit_annotation_fixes_e0384() {
-    // The original E0384 case (Phase 6 slice 6BC.4) becomes
-    // compilable once the user adds explicit annotations.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("good.cplus");
-    std::fs::write(
-        &src,
-        "\
-struct B { x: i32 }
-impl B { fn drop(ref this) { return; } }
-fn merge(a: borrow A B, b: borrow A B) -> borrow A B {
-    if a.x > 0 { return a; }
-    return B { x: 0 };
-}
-fn main() -> i32 { return 0; }
-",
-    )
-    .unwrap();
-    let bin = dir.join("good");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        out.status.success(),
-        "explicit annotation should suppress E0384; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 // ---- Phase 6 borrow-region tests (v0.0.23 feature-freeze note) ----
 //
 // These exercise the returned-borrow / borrow-region machinery: a function
@@ -5511,50 +5285,6 @@ fn array_and_tuple_of_owned_values_drop_once() {
             run.status.code(),
             Some(0),
             "array/tuple elements must drop exactly once; failing phase = exit code ({sanitizer})"
-        );
-    }
-}
-
-#[test]
-fn shared_region_borrow_return_drops_once() {
-    // The SURVIVING sound cursor: a SHARED region-typed borrow
-    // (`b: borrow A B`, no `mut`) returned as `borrow A B` is a non-owning
-    // reference — codegen returns the pointer, so only the original owner drops.
-    // Compiles, runs, drops exactly once (ASan-clean). Contrast the rejected
-    // unsound forms below (marker/`mut`/plain return).
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("m.cplus");
-    std::fs::write(
-        &src,
-        "static DROPS: i32 = 0;\n\
-         struct B { x: i32 }\n\
-         impl B { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
-         fn cursor(b: borrow A B) -> borrow A B { return b; }\n\
-         fn run() {\n\
-             let v: B = B { x: 7 };\n\
-             let cur: B = cursor(v);\n\
-             let _n: i32 = cur.x;\n\
-             return;\n\
-         }\n\
-         fn main() -> i32 { run(); return unsafe { DROPS }; }\n",
-    )
-    .unwrap();
-    for sanitizer in &["", "--asan"] {
-        let bin = dir.join("m");
-        let mut cmd = Command::new(cpc);
-        cmd.arg(&src).arg("-o").arg(&bin);
-        if !sanitizer.is_empty() {
-            cmd.arg(sanitizer);
-        }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
-        let run = Command::new(&bin).output().expect("run");
-        let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged shared region borrow return ({sanitizer}): {stderr}");
-        assert_eq!(
-            run.status.code(),
-            Some(1),
-            "shared region borrow return must drop the source exactly once ({sanitizer})"
         );
     }
 }
@@ -5805,7 +5535,7 @@ impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(ref this) { return; } }
 fn cursor(ref i: Inner) -> Inner { return i; }
-fn peek_pair(borrow p: Pair) -> i32 { return 0; }
+fn peek_pair(p: Pair) -> i32 { return 0; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     let cur: Inner = cursor(p.left);
@@ -5845,7 +5575,7 @@ impl Inner { fn drop(ref this) { return; } }
 struct Pair { left: Inner, right: Inner }
 impl Pair { fn drop(ref this) { return; } }
 fn cursor(ref i: Inner) -> Inner { return i; }
-fn peek(borrow i: Inner) -> i32 { return i.v; }
+fn peek(i: Inner) -> i32 { return i.v; }
 fn main() -> i32 {
     let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
     let cur: Inner = cursor(p.left);
@@ -5885,7 +5615,7 @@ fn e0383_read_of_exclusively_borrowed_place_rejected() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -5924,7 +5654,7 @@ struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
 fn drain(take c: B) { return; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -6003,7 +5733,7 @@ impl B {
     fn drop(ref this) { return; }
     fn cursor(ref this) -> B { return this; }
 }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     var v: B = B { x: 1 };
     let cur: B = v.cursor();
@@ -6042,7 +5772,7 @@ fn reading_the_exclusive_borrower_itself_accepted() {
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
 fn cursor(ref b: B) -> B { return b; }
-fn peek(borrow b: B) -> i32 { return b.x; }
+fn peek(b: B) -> i32 { return b.x; }
 fn main() -> i32 {
     let v: B = B { x: 1 };
     let cur: B = cursor(v);
@@ -19116,7 +18846,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
     return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
 }
 
-fn outcome_of(borrow resp: text::Text) -> text::Text {
+fn outcome_of(resp: text::Text) -> text::Text {
     return match json::parse(unsafe { resp.as_str() }) {
         result::Result[json::Value, json::ParseError]::Ok(v) =>
             json::as_str(json::object_get(json::object_get(v, "result"), "outcome")),
@@ -19124,7 +18854,7 @@ fn outcome_of(borrow resp: text::Text) -> text::Text {
     };
 }
 
-fn has_error(borrow resp: text::Text) -> bool {
+fn has_error(resp: text::Text) -> bool {
     return match json::parse(unsafe { resp.as_str() }) {
         result::Result[json::Value, json::ParseError]::Ok(v) => json::object_get(v, "error").is_object(),
         result::Result[json::Value, json::ParseError]::Err(_e) => false,
@@ -21424,7 +21154,7 @@ fn enum_move_into_method_arg_no_double_free() {
              }\n\
              return Node::Many(elems);\n\
          }\n\
-         fn count(borrow n: Node) -> i32 {\n\
+         fn count(n: Node) -> i32 {\n\
              return match n {\n\
                  Node::One(l) => l.tag,\n\
                  Node::Many(kids) => {\n\
@@ -21507,7 +21237,7 @@ fn enum_conditional_branch_tail_move_no_double_free() {
                  Parse::Fail => Node::One(Leaf { tag: 0 }),\n\
              };\n\
          }\n\
-         fn count(borrow n: Node) -> i32 {\n\
+         fn count(n: Node) -> i32 {\n\
              return match n {\n\
                  Node::One(l) => l.tag,\n\
                  Node::Many(kids) => {\n\

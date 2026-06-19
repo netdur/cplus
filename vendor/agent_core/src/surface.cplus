@@ -55,7 +55,7 @@ pub fn outcome_eq(a: Outcome, b: Outcome) -> bool {
 
 // Authorize a mutating/activating action (click, input). Requires the node to
 // exist, be exposed, and be within the affordance ceiling.
-pub fn authorize_action(borrow reg: identity::Registry, node: usize) -> Outcome {
+pub fn authorize_action(reg: identity::Registry, node: usize) -> Outcome {
     if !reg.is_valid(node) {
         return Outcome::NotFound;
     }
@@ -71,7 +71,7 @@ pub fn authorize_action(borrow reg: identity::Registry, node: usize) -> Outcome 
 // Authorize a read / navigation (get_text, scroll_to). Requires the node to
 // exist and be exposed; the ceiling does not apply (reading/scrolling-to an
 // observe-only node is fine — you just cannot act on it).
-pub fn authorize_read(borrow reg: identity::Registry, node: usize) -> Outcome {
+pub fn authorize_read(reg: identity::Registry, node: usize) -> Outcome {
     if !reg.is_valid(node) {
         return Outcome::NotFound;
     }
@@ -115,7 +115,7 @@ impl TextVersions {
 // `base_version` must match the current version (else a concurrent change won
 // the race). On `Allowed` the consumer applies the edit, then calls
 // `versions.bump(node)`.
-pub fn authorize_text_write(borrow reg: identity::Registry, borrow versions: TextVersions, node: usize, base_version: u64) -> Outcome {
+pub fn authorize_text_write(reg: identity::Registry, versions: TextVersions, node: usize, base_version: u64) -> Outcome {
     let act: Outcome = authorize_action(reg, node);
     if !outcome_eq(act, Outcome::Allowed) {
         return act;

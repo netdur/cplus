@@ -1944,6 +1944,7 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
         TypeKind::FnPtr {
             params,
             return_type,
+            ..
         } => {
             for p in params.iter_mut() {
                 rewrite_type(p, ctx)?;

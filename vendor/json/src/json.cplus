@@ -542,7 +542,7 @@ pub fn parse(s: str) -> result::Result[Value, ParseError] {
 // pointer, then pass `unsafe { *p }` / `unsafe { (*p).value }` to the `borrow`
 // params, which borrow without consuming — never copy a non-Copy element out of
 // storage.
-pub fn clone_value(borrow v: Value) -> Value {
+pub fn clone_value(v: Value) -> Value {
     return match v {
         Value::Null => Value::Null,
         Value::Bool(b) => Value::Bool(b),
@@ -582,35 +582,35 @@ pub fn clone_value(borrow v: Value) -> Value {
     };
 }
 
-pub fn as_bool(borrow v: Value) -> bool {
+pub fn as_bool(v: Value) -> bool {
     return match v {
         Value::Bool(x) => x,
         _ => false,
     };
 }
 
-pub fn as_number(borrow v: Value) -> f64 {
+pub fn as_number(v: Value) -> f64 {
     return match v {
         Value::Number(x) => x,
         _ => 0.0f64,
     };
 }
 
-pub fn as_str(borrow v: Value) -> text::Text {
+pub fn as_str(v: Value) -> text::Text {
     return match v {
         Value::Str(x) => x.clone(),
         _ => "".to_text(),
     };
 }
 
-pub fn array_len(borrow v: Value) -> usize {
+pub fn array_len(v: Value) -> usize {
     return match v {
         Value::Array(arr) => arr.len(),
         _ => 0 as usize,
     };
 }
 
-pub fn array_at(borrow v: Value, i: usize) -> Value {
+pub fn array_at(v: Value, i: usize) -> Value {
     return match v {
         Value::Array(arr) => match arr.at(i) {
             option::Option[*Value]::Some(p) => clone_value(unsafe { *p }),
@@ -620,14 +620,14 @@ pub fn array_at(borrow v: Value, i: usize) -> Value {
     };
 }
 
-pub fn object_len(borrow v: Value) -> usize {
+pub fn object_len(v: Value) -> usize {
     return match v {
         Value::Object(arr) => arr.len(),
         _ => 0 as usize,
     };
 }
 
-pub fn object_key_at(borrow v: Value, i: usize) -> text::Text {
+pub fn object_key_at(v: Value, i: usize) -> text::Text {
     return match v {
         Value::Object(arr) => match arr.at(i) {
             option::Option[*Member]::Some(p) => unsafe { (*p).key.clone() },
@@ -637,7 +637,7 @@ pub fn object_key_at(borrow v: Value, i: usize) -> text::Text {
     };
 }
 
-pub fn object_value_at(borrow v: Value, i: usize) -> Value {
+pub fn object_value_at(v: Value, i: usize) -> Value {
     return match v {
         Value::Object(arr) => match arr.at(i) {
             option::Option[*Member]::Some(p) => clone_value(unsafe { (*p).value }),
@@ -647,7 +647,7 @@ pub fn object_value_at(borrow v: Value, i: usize) -> Value {
     };
 }
 
-pub fn object_get(borrow v: Value, key: str) -> Value {
+pub fn object_get(v: Value, key: str) -> Value {
     return match v {
         Value::Object(arr) => {
             let n: usize = arr.len();
@@ -818,7 +818,7 @@ fn encode_number(ref b: Buf, n: f64) -> Buf {
     return b;
 }
 
-fn encode_value(ref b: Buf, borrow v: Value) -> Buf {
+fn encode_value(ref b: Buf, v: Value) -> Buf {
     let out: Buf = match v {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },

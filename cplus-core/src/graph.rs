@@ -1235,6 +1235,7 @@ fn collect_type_names(t: &Type, out: &mut Vec<(String, Span)>) {
         TypeKind::FnPtr {
             params,
             return_type,
+            ..
         } => {
             for p in params {
                 collect_type_names(p, out);
@@ -2173,9 +2174,21 @@ pub fn type_to_string(t: &Type) -> String {
         TypeKind::RawPtr(inner) => format!("*{}", type_to_string(inner)),
         TypeKind::FnPtr {
             params,
+            param_takes,
             return_type,
         } => {
-            let parts: Vec<String> = params.iter().map(type_to_string).collect();
+            let parts: Vec<String> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let mark = if param_takes.get(i).copied().unwrap_or(false) {
+                        "take "
+                    } else {
+                        ""
+                    };
+                    format!("{mark}{}", type_to_string(p))
+                })
+                .collect();
             let ret = return_type
                 .as_ref()
                 .map(|t| format!(" -> {}", type_to_string(t)))

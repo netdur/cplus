@@ -1557,7 +1557,7 @@ mod tests {
     #[test]
     fn borrow_keyword() {
         // Phase 6 slice 6BC.5 — `borrow` is a reserved keyword opening
-        // a region-annotated borrow type: `borrow A T`.
+        // a region-annotated type: `borrow A T`.
         assert_eq!(
             kinds("borrow A string"),
             vec![TokenKind::Borrow, TokenKind::Ident("A".into()),

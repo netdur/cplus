@@ -282,7 +282,7 @@ impl Vec[T] {
     }
 }
 
-pub fn get[T: Copy](borrow v: Vec[T], i: usize) -> option::Option[T] {
+pub fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
     if i >= v.len {
         return option::Option[T]::None;
     }
@@ -294,7 +294,7 @@ pub fn get[T: Copy](borrow v: Vec[T], i: usize) -> option::Option[T] {
 // directly (no Option) — the safe, ergonomic "I know this index is valid" read,
 // analogous to indexing. Copy-only (so the returned value is an independent copy,
 // never an alias into storage) and bounds-checked (aborts on out-of-bounds).
-pub fn at_copy[T: Copy](borrow v: Vec[T], i: usize) -> T {
+pub fn at_copy[T: Copy](v: Vec[T], i: usize) -> T {
     assert i < v.len;
     let slot: *T = unsafe { v.ptr + i };
     return unsafe { *slot };

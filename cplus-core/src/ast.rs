@@ -428,7 +428,7 @@ pub struct Param {
     /// part of the calling convention). Sema (E0411) restricts this to
     /// `*T` param types; on other shapes it's a hard error.
     pub restrict: bool,
-    /// v0.0.9 follow-up: `borrow x: T` — explicit shared by-value
+    /// v0.0.9 follow-up: `x: T` — explicit shared by-value
     /// parameter. For v0.0.9 this is semantically identical to the
     /// unmarked form (`x: T`) on non-Copy types — both mean "callee
     /// takes a shared copy of the binding, no ownership transfer".
@@ -501,6 +501,11 @@ pub enum TypeKind {
     /// the symbol's address. No closures, no environment capture.
     FnPtr {
         params: Vec<Type>,
+        /// v0.0.24 #9: per-param ownership marker — `true` for a `take`
+        /// (consuming) param, `false` for a bare read-only borrow. Same length
+        /// as `params`. `fn(R)` borrows; `fn(take R)` consumes. The pointed-to
+        /// function's param conventions must match this (checked at coercion).
+        param_takes: Vec<bool>,
         return_type: Option<Box<Type>>,
     },
     /// Phase 11 polish (2026-05-14): slice type `T[]` — fat-pointer
