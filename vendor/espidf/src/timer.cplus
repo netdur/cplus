@@ -8,5 +8,5 @@ extern fn esp_timer_get_time() -> i64;
 
 #[no_alloc]
 fn now_us() -> i64 {
-    return unsafe { esp_timer_get_time() };
+    return { esp_timer_get_time() };
 }

@@ -50,8 +50,8 @@ pub fn extract(src: &str) -> String {
         // next item header. The item header gives the synthesized fn a
         // human-readable suffix; if no item is found (doc comment at end of
         // file), fall back to a line-number based name.
-        let item_name = find_next_item_name(&lines, i)
-            .unwrap_or_else(|| format!("anon_l{}", block_start + 1));
+        let item_name =
+            find_next_item_name(&lines, i).unwrap_or_else(|| format!("anon_l{}", block_start + 1));
         // Walk the block body collecting fenced sections.
         for (fence_idx, fence) in find_fences(&block_bodies).into_iter().enumerate() {
             let fn_name = format!("__doctest_{item_name}_{fence_idx}");
@@ -119,10 +119,13 @@ fn find_next_item_name(lines: &[&str], from: usize) -> Option<String> {
             continue;
         }
         let mut rest = t;
-        for prefix in ["fn ", "fn ", "struct ", "struct ", "enum ", "enum ", "impl "] {
+        for prefix in [
+            "fn ", "fn ", "struct ", "struct ", "enum ", "enum ", "impl ",
+        ] {
             if let Some(after) = rest.strip_prefix(prefix) {
                 rest = after;
-                let name: String = rest.chars()
+                let name: String = rest
+                    .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                     .collect();
                 if !name.is_empty() {
@@ -240,7 +243,10 @@ fn f() {}
         // The leading `/// ` must not appear inside the synthesized body.
         let synth_start = out.find("fn __doctest_f_0()").unwrap();
         let synth_region = &out[synth_start..];
-        assert!(!synth_region.contains("///"), "doc prefix leaked into body: {synth_region}");
+        assert!(
+            !synth_region.contains("///"),
+            "doc prefix leaked into body: {synth_region}"
+        );
     }
 
     #[test]
@@ -269,8 +275,10 @@ fn f() {}
 fn pub_target() {}
 ";
         let out = extract(src);
-        assert!(out.contains("fn __doctest_pub_target_0()"),
-            "name should come from item past `pub`, got: {out}");
+        assert!(
+            out.contains("fn __doctest_pub_target_0()"),
+            "name should come from item past `pub`, got: {out}"
+        );
     }
 
     #[test]
@@ -283,8 +291,10 @@ fn pub_target() {}
 fn t() {}
 ";
         let out = extract(src);
-        assert!(out.contains("fn __doctest_t_0()"),
-            "name should skip attribute lines, got: {out}");
+        assert!(
+            out.contains("fn __doctest_t_0()"),
+            "name should skip attribute lines, got: {out}"
+        );
     }
 
     #[test]
@@ -296,8 +306,10 @@ fn f() {}
 ";
         // No `#[test]` should be synthesized — unterminated fence is ignored.
         let out = extract(src);
-        assert!(!out.contains("__doctest_"),
-            "unterminated fence should not synthesize: {out}");
+        assert!(
+            !out.contains("__doctest_"),
+            "unterminated fence should not synthesize: {out}"
+        );
     }
 
     #[test]
@@ -311,8 +323,10 @@ fn main() {}
         let out = extract(src);
         // Doc block at end of file — no following item. Falls back to
         // line-number-based name.
-        assert!(out.contains("fn __doctest_anon_"),
-            "expected anon fallback, got: {out}");
+        assert!(
+            out.contains("fn __doctest_anon_"),
+            "expected anon fallback, got: {out}"
+        );
     }
 
     #[test]

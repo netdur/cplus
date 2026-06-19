@@ -88,67 +88,67 @@ extern fn objc_msg_dispatch(
 
 // Helpers
 fn cls(name: *u8) -> *u8 {
-    return unsafe { objc_getClass(name) };
+    return { objc_getClass(name) };
 }
 
 fn sel(name: *u8) -> *u8 {
-    return unsafe { sel_registerName(name) };
+    return { sel_registerName(name) };
 }
 
 fn msg_id(recv: *u8, selector: *u8) -> *u8 {
-    return unsafe { objc_msg_id(recv, selector) };
+    return { objc_msg_id(recv, selector) };
 }
 
 fn msg_id_id(recv: *u8, selector: *u8, arg: *u8) -> *u8 {
-    return unsafe { objc_msg_id_id(recv, selector, arg) };
+    return { objc_msg_id_id(recv, selector, arg) };
 }
 
 fn msg_id_id_ptr(recv: *u8, selector: *u8, arg: *u8, err_out: *u8) -> *u8 {
-    return unsafe { objc_msg_id_id_ptr(recv, selector, arg, err_out) };
+    return { objc_msg_id_id_ptr(recv, selector, arg, err_out) };
 }
 
 fn msg_void(recv: *u8, selector: *u8) {
-    unsafe { objc_msg_void(recv, selector); };
+    { objc_msg_void(recv, selector); };
 }
 
 fn msg_id_ptr_len_opt(recv: *u8, selector: *u8, ptr: *u8, len: usize, opts: u64) -> *u8 {
-    return unsafe { objc_msg_id_ptr_len_opt(recv, selector, ptr, len, opts) };
+    return { objc_msg_id_ptr_len_opt(recv, selector, ptr, len, opts) };
 }
 
 fn msg_void_buf_idx(recv: *u8, selector: *u8, buf: *u8, offset: usize, idx: usize) {
-    unsafe { objc_msg_void_buf_idx(recv, selector, buf, offset, idx); };
+    { objc_msg_void_buf_idx(recv, selector, buf, offset, idx); };
 }
 
 fn msg_ptr(recv: *u8, selector: *u8) -> *u8 {
-    return unsafe { objc_msg_ptr(recv, selector) };
+    return { objc_msg_ptr(recv, selector) };
 }
 
 fn msg_u64(recv: *u8, selector: *u8) -> u64 {
-    return unsafe { objc_msg_u64(recv, selector) };
+    return { objc_msg_u64(recv, selector) };
 }
 
 fn msg_id_usize_u64(recv: *u8, selector: *u8, len: usize, opts: u64) -> *u8 {
-    return unsafe { objc_msg_id_usize_u64(recv, selector, len, opts) };
+    return { objc_msg_id_usize_u64(recv, selector, len, opts) };
 }
 
 fn mtl_create_system_default_device() -> *u8 {
-    return unsafe { MTLCreateSystemDefaultDevice() };
+    return { MTLCreateSystemDefaultDevice() };
 }
 
 // Release a +1-retained Objective-C object. Safe to call with a null
 // pointer (objc_release tolerates nil).
 fn release(obj: *u8) {
-    if obj == unsafe { 0 as *u8 } { return; }
-    unsafe { objc_release(obj); }
+    if obj == { 0 as *u8 } { return; }
+    { objc_release(obj); }
     return;
 }
 
 fn msg_id_pipeline(recv: *u8, selector: *u8, fn_obj: *u8, err_out: *u8) -> *u8 {
-    return unsafe { objc_msg_id_pipeline(recv, selector, fn_obj, err_out) };
+    return { objc_msg_id_pipeline(recv, selector, fn_obj, err_out) };
 }
 
 fn msg_void_pipeline(recv: *u8, selector: *u8, pipeline: *u8) {
-    unsafe { objc_msg_void_pipeline(recv, selector, pipeline); };
+    { objc_msg_void_pipeline(recv, selector, pipeline); };
 }
 
 fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSize) {
@@ -156,7 +156,7 @@ fn msg_dispatch(recv: *u8, selector: *u8, groups: MTLSize, per_group: MTLSize) {
     // a 48-byte slot, memcpy both MTLSize args in, dispatch, and free.
     // Now the by-value parameters live on the stack and we pass their
     // addresses directly. Net: 0 mallocs per dispatch call.
-    unsafe { objc_msg_dispatch(recv, selector, #addr_of(groups), #addr_of(per_group)); }
+    { objc_msg_dispatch(recv, selector, #addr_of(groups), #addr_of(per_group)); }
     return;
 }
 
@@ -166,19 +166,19 @@ fn ns_string(s: str) -> *u8 {
     let clazz: *u8 = cls(#str_ptr("NSString\0"));
     let selector: *u8 = sel(#str_ptr("stringWithBytes:length:encoding:\0"));
     let utf8_encoding: u64 = 4 as u64; // NSUTF8StringEncoding
-    return unsafe { objc_msg_id_ptr_len_enc(clazz, selector, #str_ptr(s), #str_len(s), utf8_encoding) };
+    return { objc_msg_id_ptr_len_enc(clazz, selector, #str_ptr(s), #str_len(s), utf8_encoding) };
 }
 
 // Wraps pre-allocated bytes as an NSData without copying them.
 fn ns_data_view(ptr: *u8, len: usize) -> *u8 {
     let clazz: *u8 = cls(#str_ptr("NSData\0"));
     let selector: *u8 = sel(#str_ptr("dataWithBytesNoCopy:length:freeWhenDone:\0"));
-    return unsafe { objc_msg_id_ptr_len_free(clazz, selector, ptr, len, 0 as i8) };
+    return { objc_msg_id_ptr_len_free(clazz, selector, ptr, len, 0 as i8) };
 }
 
 // Creates a dispatch_data_t from raw bytes.
 fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
-    return unsafe { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
+    return { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
 }
 
 // ---------------- Unit tests ----------------
@@ -189,25 +189,25 @@ fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
 #[test]
 fn test_sel_registers_known_selector() {
     let s: *u8 = sel(#str_ptr("alloc\0"));
-    assert unsafe { s as usize } != (0 as usize);
+    assert { #addr(s) } != (0 as usize);
 }
 
 #[test]
 fn test_cls_resolves_nsstring() {
     let c: *u8 = cls(#str_ptr("NSString\0"));
-    assert unsafe { c as usize } != (0 as usize);
+    assert { #addr(c) } != (0 as usize);
 }
 
 #[test]
 fn test_cls_unknown_class_is_null() {
     let c: *u8 = cls(#str_ptr("NoSuchClassName_zzz\0"));
-    assert unsafe { c as usize } == (0 as usize);
+    assert { #addr(c) } == (0 as usize);
 }
 
 #[test]
 fn test_ns_string_round_trips_length() {
     let s: *u8 = ns_string("hello");
-    assert unsafe { s as usize } != (0 as usize);
+    assert { #addr(s) } != (0 as usize);
     let len_sel: *u8 = sel(#str_ptr("length\0"));
     let n: u64 = msg_u64(s, len_sel);
     assert n == (5 as u64);
@@ -216,6 +216,6 @@ fn test_ns_string_round_trips_length() {
 
 #[test]
 fn test_release_tolerates_null() {
-    release(unsafe { 0 as *u8 });
+    release({ 0 as *u8 });
     assert true;
 }

@@ -78,9 +78,9 @@ struct HashMap[K: Copy, V: Copy] {
 // keys/values are a separate feature, not a soundness patch.
 fn new[K: Copy, V: Copy]() -> HashMap[K, V] {
     return HashMap[K, V] {
-        keys: unsafe { 0 as *K },
-        vals: unsafe { 0 as *V },
-        occupied: unsafe { 0 as *u8 },
+        keys: { 0 as *K },
+        vals: { 0 as *V },
+        occupied: { 0 as *u8 },
         cap: 0 as usize,
         len: 0 as usize,
     };
@@ -109,17 +109,17 @@ impl HashMap[K, V] {
         let start: usize = (h as usize) % this.cap;
         var slot: usize = start;
         loop {
-            let occ: u8 = unsafe { this.occupied[slot] };
+            let occ: u8 = { this.occupied[slot] };
             if occ == (0 as u8) {
-                unsafe { this.keys[slot] = k; }
-                unsafe { this.vals[slot] = v; }
-                unsafe { this.occupied[slot] = 1 as u8; }
+                { this.keys[slot] = k; }
+                { this.vals[slot] = v; }
+                { this.occupied[slot] = 1 as u8; }
                 this.len = this.len +% (1 as usize);
                 return;
             }
-            let existing: K = unsafe { this.keys[slot] };
+            let existing: K = { this.keys[slot] };
             if existing.eq(k) {
-                unsafe { this.vals[slot] = v; }
+                { this.vals[slot] = v; }
                 return;
             }
             slot = (slot +% (1 as usize)) % this.cap;
@@ -136,13 +136,13 @@ impl HashMap[K, V] {
         let start: usize = (h as usize) % this.cap;
         var slot: usize = start;
         loop {
-            let occ: u8 = unsafe { this.occupied[slot] };
+            let occ: u8 = { this.occupied[slot] };
             if occ == (0 as u8) {
                 return result::io_err::[V](result::IoError::NotFound);
             }
-            let existing: K = unsafe { this.keys[slot] };
+            let existing: K = { this.keys[slot] };
             if existing.eq(k) {
-                let v: V = unsafe { this.vals[slot] };
+                let v: V = { this.vals[slot] };
                 return result::io_ok::[V](v);
             }
             slot = (slot +% (1 as usize)) % this.cap;
@@ -172,33 +172,33 @@ impl HashMap[K, V] {
         let keys_bytes: usize = new_cap *% #size_of::[K]();
         let vals_bytes: usize = new_cap *% #size_of::[V]();
         let occ_bytes: usize = new_cap;
-        let nk_raw: *u8 = unsafe { malloc(keys_bytes) };
-        let nv_raw: *u8 = unsafe { malloc(vals_bytes) };
-        let no_raw: *u8 = unsafe { malloc(occ_bytes) };
+        let nk_raw: *u8 = { malloc(keys_bytes) };
+        let nv_raw: *u8 = { malloc(vals_bytes) };
+        let no_raw: *u8 = { malloc(occ_bytes) };
         // Zero the occupied buffer so empty-slot detection is correct.
-        unsafe { memset(no_raw, 0 as i32, occ_bytes); }
-        this.keys = unsafe { nk_raw as *K };
-        this.vals = unsafe { nv_raw as *V };
-        this.occupied = unsafe { no_raw as *u8 };
+        { memset(no_raw, 0 as i32, occ_bytes); }
+        this.keys = { nk_raw as *K };
+        this.vals = { nv_raw as *V };
+        this.occupied = { no_raw as *u8 };
         this.cap = new_cap;
         this.len = 0 as usize;
 
         // Re-insert every old live entry.
         var j: usize = 0 as usize;
         while j < old_cap {
-            let occ_j: u8 = unsafe { old_occ[j] };
+            let occ_j: u8 = { old_occ[j] };
             if occ_j != (0 as u8) {
-                let k: K = unsafe { old_keys[j] };
-                let v: V = unsafe { old_vals[j] };
+                let k: K = { old_keys[j] };
+                let v: V = { old_vals[j] };
                 let h: u64 = k.hash();
                 let start: usize = (h as usize) % this.cap;
                 var slot: usize = start;
                 loop {
-                    let cur: u8 = unsafe { this.occupied[slot] };
+                    let cur: u8 = { this.occupied[slot] };
                     if cur == (0 as u8) {
-                        unsafe { this.keys[slot] = k; }
-                        unsafe { this.vals[slot] = v; }
-                        unsafe { this.occupied[slot] = 1 as u8; }
+                        { this.keys[slot] = k; }
+                        { this.vals[slot] = v; }
+                        { this.occupied[slot] = 1 as u8; }
                         this.len = this.len +% (1 as usize);
                         break;
                     }
@@ -209,9 +209,9 @@ impl HashMap[K, V] {
             j = j +% (1 as usize);
         }
         if old_cap > (0 as usize) {
-            unsafe { free(old_keys as *u8); }
-            unsafe { free(old_vals as *u8); }
-            unsafe { free(old_occ); }
+            { free(old_keys as *u8); }
+            { free(old_vals as *u8); }
+            { free(old_occ); }
         }
         return;
     }
@@ -224,18 +224,18 @@ impl HashMap[K, V] {
         // and (for non-static) every key.
         var i: usize = 0 as usize;
         while i < this.cap {
-            let occ: u8 = unsafe { this.occupied[i] };
+            let occ: u8 = { this.occupied[i] };
             if occ != (0 as u8) {
-                let k_ptr: *K = unsafe { this.keys + i };
-                let v_ptr: *V = unsafe { this.vals + i };
-                unsafe { #drop_in_place::[K](k_ptr); }
-                unsafe { #drop_in_place::[V](v_ptr); }
+                let k_ptr: *K = { this.keys + i };
+                let v_ptr: *V = { this.vals + i };
+                { #drop_in_place::[K](k_ptr); }
+                { #drop_in_place::[V](v_ptr); }
             }
             i = i +% (1 as usize);
         }
-        unsafe { free(this.keys as *u8); }
-        unsafe { free(this.vals as *u8); }
-        unsafe { free(this.occupied); }
+        { free(this.keys as *u8); }
+        { free(this.vals as *u8); }
+        { free(this.occupied); }
         return;
     }
 }

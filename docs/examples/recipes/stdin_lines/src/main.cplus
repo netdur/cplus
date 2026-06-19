@@ -16,8 +16,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { break; }
         written = written +% (w as usize);
     }
@@ -27,38 +27,38 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 // Print a non-negative integer in decimal (no newline). u32 max takes
 // 10 digits; size the buffer generously and trim with len.
 fn print_u32(n: u32) {
-    let buf: *u8 = unsafe { malloc(16 as usize) };
+    let buf: *u8 = { malloc(16 as usize) };
     var len: usize = 0 as usize;
     var x: u32 = n;
     if x == (0 as u32) {
-        unsafe { buf[0 as usize] = 48 as u8; }
+        { buf[0 as usize] = 48 as u8; }
         len = 1 as usize;
     } else {
         // Emit digits LSB-first then reverse.
         while x > (0 as u32) {
             let d: u8 = ((x % (10 as u32)) as u8) +% (48 as u8);
-            unsafe { buf[len] = d; }
+            { buf[len] = d; }
             len = len +% (1 as usize);
             x = x / (10 as u32);
         }
         var i: usize = 0 as usize;
         var j: usize = len -% (1 as usize);
         while i < j {
-            let t: u8 = unsafe { buf[i] };
-            unsafe { buf[i] = buf[j]; }
-            unsafe { buf[j] = t; }
+            let t: u8 = { buf[i] };
+            { buf[i] = buf[j]; }
+            { buf[j] = t; }
             i = i +% (1 as usize);
             j = j -% (1 as usize);
         }
     }
     write_all(1 as i32, buf, len);
-    unsafe { free(buf); }
+    { free(buf); }
     return;
 }
 
 fn main() -> i32 {
     var cap: usize = 4096 as usize;
-    var buf: *u8 = unsafe { malloc(cap) };
+    var buf: *u8 = { malloc(cap) };
     var len: usize = 0 as usize;
     var line_no: u32 = 1 as u32;
 
@@ -66,11 +66,11 @@ fn main() -> i32 {
         // Grow if the buffer is full and we still haven't seen a newline.
         if len == cap {
             cap = cap *% (2 as usize);
-            buf = unsafe { realloc(buf, cap) };
+            buf = { realloc(buf, cap) };
         }
         let space: usize = cap -% len;
-        let p: *u8 = unsafe { buf + len };
-        let n: isize = unsafe { read(0 as i32, p, space) };
+        let p: *u8 = { buf + len };
+        let n: isize = { read(0 as i32, p, space) };
         if n <= (0 as isize) {
             // EOF (or error) — flush any pending partial line.
             if len > (0 as usize) {
@@ -89,7 +89,7 @@ fn main() -> i32 {
             var j: usize = 0 as usize;
             var found: bool = false;
             while j < len {
-                let b: u8 = unsafe { buf[j] };
+                let b: u8 = { buf[j] };
                 if b == (10 as u8) { nl = j; found = true; break; }
                 j = j +% (1 as usize);
             }
@@ -98,7 +98,7 @@ fn main() -> i32 {
             // Emit "<line_no>: <line>\n" (CR stripped).
             var line_end: usize = nl;
             if line_end > (0 as usize) {
-                let prev: u8 = unsafe { buf[line_end -% (1 as usize)] };
+                let prev: u8 = { buf[line_end -% (1 as usize)] };
                 if prev == (13 as u8) {
                     line_end = line_end -% (1 as usize);
                 }
@@ -114,13 +114,13 @@ fn main() -> i32 {
             let leftover: usize = len -% consumed;
             var k: usize = 0 as usize;
             while k < leftover {
-                let src: u8 = unsafe { buf[consumed +% k] };
-                unsafe { buf[k] = src; }
+                let src: u8 = { buf[consumed +% k] };
+                { buf[k] = src; }
                 k = k +% (1 as usize);
             }
             len = leftover;
         }
     }
-    unsafe { free(buf); }
+    { free(buf); }
     return 0;
 }

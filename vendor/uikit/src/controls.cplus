@@ -10,6 +10,8 @@ struct Button {
 }
 
 impl Button {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> Button {
         return Button { obj: rt::alloc_init_with_frame(#str_ptr("UIButton\0"), frame) };
     }
@@ -27,7 +29,7 @@ impl Button {
 
     fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
-        this.obj = unsafe { 0 as *u8 };
+        this.obj = { 0 as *u8 };
         return p;
     }
 
@@ -57,7 +59,7 @@ impl Button {
         rt::msg_void_id_i64(
             this.obj,
             rt::sel(#str_ptr("setTitleColor:forState:\0")),
-            color.obj,
+            color.raw(),
             0 as i64,
         );
     }
@@ -92,6 +94,8 @@ struct Slider {
 }
 
 impl Slider {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> Slider {
         return Slider { obj: rt::alloc_init_with_frame(#str_ptr("UISlider\0"), frame) };
     }
@@ -130,6 +134,8 @@ struct Switch {
 }
 
 impl Switch {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> Switch {
         return Switch { obj: rt::alloc_init_with_frame(#str_ptr("UISwitch\0"), frame) };
     }
@@ -160,6 +166,8 @@ struct SegmentedControl {
 }
 
 impl SegmentedControl {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> SegmentedControl {
         return SegmentedControl { obj: rt::alloc_init_with_frame(#str_ptr("UISegmentedControl\0"), frame) };
     }
@@ -209,6 +217,8 @@ struct ProgressView {
 }
 
 impl ProgressView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> ProgressView {
         return ProgressView { obj: rt::alloc_init_with_frame(#str_ptr("UIProgressView\0"), frame) };
     }
@@ -235,6 +245,8 @@ struct ActivityIndicator {
 }
 
 impl ActivityIndicator {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> ActivityIndicator {
         return ActivityIndicator { obj: rt::alloc_init_with_frame(#str_ptr("UIActivityIndicatorView\0"), frame) };
     }
@@ -265,6 +277,8 @@ struct PageControl {
 }
 
 impl PageControl {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> PageControl {
         return PageControl { obj: rt::alloc_init_with_frame(#str_ptr("UIPageControl\0"), frame) };
     }
@@ -299,6 +313,8 @@ struct DatePicker {
 }
 
 impl DatePicker {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> DatePicker {
         return DatePicker { obj: rt::alloc_init_with_frame(#str_ptr("UIDatePicker\0"), frame) };
     }

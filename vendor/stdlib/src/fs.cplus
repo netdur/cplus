@@ -31,7 +31,7 @@ struct File {
 
 // Open `path` for reading. macOS + Linux: O_RDONLY = 0.
 fn open_read(path: str) -> result::Result[File, result::IoError] {
-    let fd: i32 = unsafe { open(#str_ptr(path), 0 as i32, 0 as i32) };
+    let fd: i32 = { open(#str_ptr(path), 0 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return result::io_err::[File](result::IoError::NotFound);
     }
@@ -46,7 +46,7 @@ fn open_read(path: str) -> result::Result[File, result::IoError] {
 fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = 1537 as i32;
     let mode: i32 = 420 as i32;
-    let fd: i32 = unsafe { open(#str_ptr(path), flags, mode) };
+    let fd: i32 = { open(#str_ptr(path), flags, mode) };
     if fd < (0 as i32) {
         return result::io_err::[File](result::IoError::PermissionDenied);
     }
@@ -62,15 +62,15 @@ impl File {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
         let chunk_size: usize = 4096 as usize;
-        let chunk: *u8 = unsafe { malloc(chunk_size) };
+        let chunk: *u8 = { malloc(chunk_size) };
         loop {
-            let n: isize = unsafe { read(this.fd, chunk, chunk_size) };
+            let n: isize = { read(this.fd, chunk, chunk_size) };
             if n < (0 as isize) {
-                unsafe { free(chunk); }
+                { free(chunk); }
                 return result::io_err::[vec::Vec[u8]](result::IoError::Other);
             }
             if n == (0 as isize) {
-                unsafe { free(chunk); }
+                { free(chunk); }
                 return result::io_ok::[vec::Vec[u8]](buf);
             }
             let count: usize = n as usize;
@@ -87,12 +87,12 @@ impl File {
         }
         let n: usize = data.len();
         let slice: u8[] = data.as_slice();
-        let p: *u8 = unsafe { #slice_ptr(slice) };
+        let p: *u8 = { #slice_ptr(slice) };
         var written: usize = 0 as usize;
         while written < n {
             let remaining: usize = n -% written;
-            let q: *u8 = unsafe { p + written };
-            let w: isize = unsafe { write(this.fd, q, remaining) };
+            let q: *u8 = { p + written };
+            let w: isize = { write(this.fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -104,7 +104,7 @@ impl File {
     // Explicit close. Disarms Drop by setting fd to -1.
     fn close(ref this) {
         if this.fd >= (0 as i32) {
-            unsafe { close(this.fd); }
+            { close(this.fd); }
             this.fd = 0 -% 1 as i32;
         }
         return;
@@ -135,9 +135,9 @@ impl File {
     gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
         let chunk_size: usize = 4096 as usize;
-        let chunk: *u8 = unsafe { malloc(chunk_size) };
+        let chunk: *u8 = { malloc(chunk_size) };
         loop {
-            let n: isize = unsafe { read(this.fd, chunk, chunk_size) };
+            let n: isize = { read(this.fd, chunk, chunk_size) };
             if n <= (0 as isize) {
                 // EOF (n == 0) or error (n < 0). Yield any pending
                 // partial line, then stop. Read errors are silently
@@ -145,30 +145,30 @@ impl File {
                 // detail should use `read_to_end` + manual splitting.
                 if carry.len() > (0 as usize) {
                     let cs: u8[] = carry.as_slice();
-                    let cp: *u8 = unsafe { #slice_ptr(cs) };
-                    let view: str = unsafe { #str_from_raw_parts(cp, carry.len()) };
+                    let cp: *u8 = { #slice_ptr(cs) };
+                    let view: str = { #str_from_raw_parts(cp, carry.len()) };
                     yield view.to_text();
                 }
-                unsafe { free(chunk); }
+                { free(chunk); }
                 return;
             }
             let count: usize = n as usize;
             var start: usize = 0 as usize;
             var i: usize = 0 as usize;
             while i < count {
-                let bp: *u8 = unsafe { chunk + i };
-                let b: u8 = unsafe { *bp };
+                let bp: *u8 = { chunk + i };
+                let b: u8 = { *bp };
                 if b == (10 as u8) {
-                    let chunk_p: *u8 = unsafe { chunk + start };
+                    let chunk_p: *u8 = { chunk + start };
                     let chunk_len: usize = i -% start;
                     if carry.len() == (0 as usize) {
-                        let view: str = unsafe { #str_from_raw_parts(chunk_p, chunk_len) };
+                        let view: str = { #str_from_raw_parts(chunk_p, chunk_len) };
                         yield view.to_text();
                     } else {
                         carry.extend_from_raw(chunk_p, chunk_len);
                         let cs: u8[] = carry.as_slice();
-                        let cp: *u8 = unsafe { #slice_ptr(cs) };
-                        let view: str = unsafe { #str_from_raw_parts(cp, carry.len()) };
+                        let cp: *u8 = { #slice_ptr(cs) };
+                        let view: str = { #str_from_raw_parts(cp, carry.len()) };
                         yield view.to_text();
                         carry.clear();
                     }
@@ -177,7 +177,7 @@ impl File {
                 i = i +% (1 as usize);
             }
             if start < count {
-                let rest_p: *u8 = unsafe { chunk + start };
+                let rest_p: *u8 = { chunk + start };
                 carry.extend_from_raw(rest_p, count -% start);
             }
         }
@@ -187,7 +187,7 @@ impl File {
     // Destructor: close the fd if not already closed.
     fn drop(ref this) {
         if this.fd >= (0 as i32) {
-            unsafe { close(this.fd); }
+            { close(this.fd); }
         }
         return;
     }

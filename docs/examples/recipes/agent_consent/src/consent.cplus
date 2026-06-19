@@ -53,7 +53,7 @@ fn rule_path(rules_dir: str, agent_id: str) -> text::Text {
 fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
     let path: text::Text = rule_path(rules_dir, agent_id);
     guard let result::Result[fs::File, result::IoError]::Ok(f) =
-        fs::open_read(unsafe { path.as_str() }) else {
+        fs::open_read({ path.as_str() }) else {
         return option::Option[auth::Decision]::None;
     };
     var fm: fs::File = f;
@@ -62,7 +62,7 @@ fn recall(rules_dir: str, agent_id: str) -> option::Option[auth::Decision] {
         return option::Option[auth::Decision]::None;
     };
     let first: u8 = match bytes.at(0 as usize) {
-        option::Option[*u8]::Some(p) => unsafe { *p },
+        option::Option[*u8]::Some(p) => { *p },
         option::Option[*u8]::None => 0 as u8,
     };
     if first == (97 as u8) {
@@ -81,12 +81,12 @@ fn remember(rules_dir: str, agent_id: str, d: auth::Decision) {
         auth::Decision::Reject => "deny",
     };
     guard let result::Result[fs::File, result::IoError]::Ok(f) =
-        fs::create(unsafe { path.as_str() }) else {
+        fs::create({ path.as_str() }) else {
         return;
     };
     var fm: fs::File = f;
     var bytes: vec::Vec[u8] = vec::new::[u8]();
-    bytes.extend_from_raw(unsafe { #str_ptr(word) }, #str_len(word));
+    bytes.extend_from_raw({ #str_ptr(word) }, #str_len(word));
     match fm.write_all(bytes) {
         result::Result[usize, result::IoError]::Ok(_) => {}
         result::Result[usize, result::IoError]::Err(_) => {}

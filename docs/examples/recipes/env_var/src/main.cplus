@@ -17,8 +17,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { break; }
         written = written +% (w as usize);
     }
@@ -32,14 +32,14 @@ fn write_str(fd: i32, s: str) {
 
 fn main() -> i32 {
     let name: str = "HOME";
-    let val: *u8 = unsafe { getenv(#str_ptr(name)) };
-    let null: *u8 = unsafe { 0 as *u8 };
+    let val: *u8 = { getenv(#str_ptr(name)) };
+    let null: *u8 = { 0 as *u8 };
     write_str(1 as i32, name);
     write_str(1 as i32, "=");
     if val == null {
         write_str(1 as i32, "<unset>\n");
     } else {
-        let n: usize = unsafe { strlen(val) };
+        let n: usize = { strlen(val) };
         write_all(1 as i32, val, n);
         write_str(1 as i32, "\n");
     }

@@ -406,7 +406,7 @@ impl Ctx {
 
     fn walk_expr_for_loop_attrs(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.walk_block_for_loop_attrs(b),
+            ExprKind::Block(b) => self.walk_block_for_loop_attrs(b),
             ExprKind::If {
                 cond,
                 then,

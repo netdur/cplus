@@ -33,7 +33,7 @@ fn create_drag_destination_view(
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CDragDestView\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let nsview: *u8 = rt::get_class(#str_ptr("NSView\0"));
         cls = rt::allocate_class_pair(nsview, #str_ptr("CDragDestView\0"), 0 as usize);
         let _a: i8 = rt::add_method_i64_id(
@@ -69,8 +69,8 @@ fn register_for_string_drops(view: *u8) {
 // (null if absent). Call inside `perform_imp` with its `draggingInfo` argument.
 fn dragged_string_ns(dragging_info: *u8) -> *u8 {
     let pb: *u8 = rt::msg_id(dragging_info, rt::sel(#str_ptr("draggingPasteboard\0")));
-    if pb == unsafe { 0 as *u8 } {
-        return unsafe { 0 as *u8 };
+    if pb == { 0 as *u8 } {
+        return { 0 as *u8 };
     }
     let type_str: *u8 = rt::ns_string(#str_ptr("public.utf8-plain-text\0"));
     return rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), type_str);
@@ -95,7 +95,7 @@ fn create_drag_source_view(
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CDragSourceView\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let nsview: *u8 = rt::get_class(#str_ptr("NSView\0"));
         cls = rt::allocate_class_pair(nsview, #str_ptr("CDragSourceView\0"), 0 as usize);
         let _a: i8 = rt::add_method_i64_id_i64(
@@ -128,6 +128,8 @@ struct DraggingItem {
 }
 
 impl DraggingItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn from_pasteboard_writer(writer: *u8) -> DraggingItem {
         let cls: *u8 = rt::get_class(#str_ptr("NSDraggingItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -175,7 +177,7 @@ fn begin_string_drag(source_view: *u8, event: *u8, text: *u8, frame: rt::Rect, i
     let items: *u8 = rt::msg_id_id(
         rt::get_class(#str_ptr("NSArray\0")),
         rt::sel(#str_ptr("arrayWithObject:\0")),
-        item.obj,
+        item.raw(),
     );
     let _session: *u8 = begin_dragging_session(source_view, items, event);
     // `item` drops here (releasing this wrapper's +1); the array/session retain

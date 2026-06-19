@@ -39,13 +39,13 @@ struct CMalloc {}
 
 impl CMalloc: Allocator {
     fn allocate(this, bytes: usize) -> *u8 {
-        return unsafe { malloc(bytes) };
+        return { malloc(bytes) };
     }
     fn reallocate(this, p: *u8, old_bytes: usize, new_bytes: usize) -> *u8 {
-        return unsafe { realloc(p, new_bytes) };
+        return { realloc(p, new_bytes) };
     }
     fn deallocate(this, p: *u8, bytes: usize) {
-        unsafe { free(p); }
+        { free(p); }
         return;
     }
 }
@@ -70,18 +70,18 @@ impl VecI32 {
     }
 
     fn elem_ptr(this, i: usize) -> *i32 {
-        let base: *i32 = unsafe { this.ptr as *i32 };
-        return unsafe { base + i };
+        let base: *i32 = { this.ptr as *i32 };
+        return { base + i };
     }
 
     fn get(this, i: usize) -> i32 {
         let p: *i32 = this.elem_ptr(i);
-        return unsafe { *p };
+        return { *p };
     }
 
     fn set(ref this, i: usize, value: i32) {
         let p: *i32 = this.elem_ptr(i);
-        unsafe { *p = value; }
+        { *p = value; }
         return;
     }
 
@@ -100,7 +100,7 @@ impl VecI32 {
         }
         let i: usize = this.len;
         let p: *i32 = this.elem_ptr(i);
-        unsafe { *p = value; }
+        { *p = value; }
         this.len = this.len +% 1 as usize;
         return;
     }

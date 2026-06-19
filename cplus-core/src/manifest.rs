@@ -262,8 +262,16 @@ impl fmt::Display for ManifestError {
             ManifestError::BundledRequiresTriples { path } => {
                 write!(f, "manifest {}: `[link].bundled` is non-empty but `[link].triples` is empty — declare the host triples the binaries are built for", path.display())
             }
-            ManifestError::EnvExpansion { path, entry, message } => {
-                write!(f, "manifest {}: cannot expand `{entry}`: {message}", path.display())
+            ManifestError::EnvExpansion {
+                path,
+                entry,
+                message,
+            } => {
+                write!(
+                    f,
+                    "manifest {}: cannot expand `{entry}`: {message}",
+                    path.display()
+                )
             }
         }
     }
@@ -579,11 +587,10 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             // path relative to the manifest directory. We don't check
             // file existence at parse time — that happens at link time
             // (E0864) so the diagnostic carries the full link context.
-            let extra_objects: Vec<PathBuf> =
-                expand_link_entries(rl.extra_objects, manifest_path)?
-                    .into_iter()
-                    .map(|p| root.join(p))
-                    .collect();
+            let extra_objects: Vec<PathBuf> = expand_link_entries(rl.extra_objects, manifest_path)?
+                .into_iter()
+                .map(|p| root.join(p))
+                .collect();
             // Resolve each search path against the manifest dir. `join` is
             // a no-op for absolute inputs (the common case — system SDK
             // dirs like /usr/local/cuda/lib64), so this only rewrites
@@ -655,10 +662,7 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
 ///
 /// `lookup` is injected (rather than calling `std::env` directly) so the
 /// expansion logic is unit-testable without mutating process-global state.
-fn expand_env_vars(
-    input: &str,
-    lookup: &dyn Fn(&str) -> Option<String>,
-) -> Result<String, String> {
+fn expand_env_vars(input: &str, lookup: &dyn Fn(&str) -> Option<String>) -> Result<String, String> {
     let mut out = String::with_capacity(input.len());
     let mut rest = input;
     while let Some(dollar) = rest.find("${") {
@@ -1204,7 +1208,10 @@ mod tests {
     #[test]
     fn expand_env_vars_substitutes_set_variable() {
         let lookup = |k: &str| (k == "SDK").then(|| "/opt/sdk".to_string());
-        assert_eq!(expand_env_vars("${SDK}/lib", &lookup).unwrap(), "/opt/sdk/lib");
+        assert_eq!(
+            expand_env_vars("${SDK}/lib", &lookup).unwrap(),
+            "/opt/sdk/lib"
+        );
         // Multiple references in one entry all expand.
         assert_eq!(
             expand_env_vars("${SDK}/lib:${SDK}/bin", &lookup).unwrap(),
@@ -1231,7 +1238,10 @@ mod tests {
     fn expand_env_vars_unset_no_default_errors() {
         let none = |_: &str| None;
         let err = expand_env_vars("${MISSING_SDK}/lib", &none).unwrap_err();
-        assert!(err.contains("MISSING_SDK"), "error names the variable: {err}");
+        assert!(
+            err.contains("MISSING_SDK"),
+            "error names the variable: {err}"
+        );
     }
 
     #[test]
@@ -1324,7 +1334,11 @@ mod tests {
     fn link_extra_objects_also_expand_env_vars() {
         // extra-objects are paths too, so they get the same treatment.
         let var = "CPLUS_TEST_OBJ_DIR_K3";
-        let abs = if cfg!(windows) { "C:/objs" } else { "/opt/objs" };
+        let abs = if cfg!(windows) {
+            "C:/objs"
+        } else {
+            "/opt/objs"
+        };
         std::env::set_var(var, abs);
         let text = format!(
             "

@@ -129,15 +129,22 @@ fn parse_framed(buf: &[u8]) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < buf.len() {
-        let Some(header_end) = find_subseq(&buf[i..], b"\r\n\r\n") else { break; };
+        let Some(header_end) = find_subseq(&buf[i..], b"\r\n\r\n") else {
+            break;
+        };
         let header = std::str::from_utf8(&buf[i..i + header_end]).unwrap_or("");
-        let len: usize = header.lines().find_map(|l| {
-            let (k, v) = l.split_once(": ")?;
-            (k.eq_ignore_ascii_case("Content-Length")).then_some(v.trim().parse().ok())?
-        }).unwrap_or(0);
+        let len: usize = header
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(": ")?;
+                (k.eq_ignore_ascii_case("Content-Length")).then_some(v.trim().parse().ok())?
+            })
+            .unwrap_or(0);
         let body_start = i + header_end + 4;
         let body_end = body_start + len;
-        if body_end > buf.len() { break; }
+        if body_end > buf.len() {
+            break;
+        }
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf[body_start..body_end]) {
             out.push(v);
         }
@@ -155,17 +162,34 @@ fn find_subseq(hay: &[u8], needle: &[u8]) -> Option<usize> {
 #[test]
 fn initialize_responds_with_capabilities() {
     let run = drive(
-        &[init_request(), initialized_notif(), shutdown_request(2), exit_notif()],
+        &[
+            init_request(),
+            initialized_notif(),
+            shutdown_request(2),
+            exit_notif(),
+        ],
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let init_resp = run.messages.iter().find(|m| m["id"] == 1)
+    let init_resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 1)
         .expect("initialize response present");
     let caps = &init_resp["result"]["capabilities"];
-    assert!(caps["textDocumentSync"].is_object(), "expected textDocumentSync, got: {init_resp}");
-    let shutdown_resp = run.messages.iter().find(|m| m["id"] == 2)
+    assert!(
+        caps["textDocumentSync"].is_object(),
+        "expected textDocumentSync, got: {init_resp}"
+    );
+    let shutdown_resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 2)
         .expect("shutdown response present");
-    assert!(shutdown_resp["result"].is_null(), "shutdown response: {shutdown_resp}");
+    assert!(
+        shutdown_resp["result"].is_null(),
+        "shutdown response: {shutdown_resp}"
+    );
 }
 
 /// Opening a file with a sema error should publish a diagnostic for it.
@@ -190,19 +214,30 @@ fn did_open_publishes_diagnostics_on_bad_source() {
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
 
     // Find the publishDiagnostics notification for our file.
-    let diags_msg = run.messages.iter().find(|m| {
-        m["method"] == "textDocument/publishDiagnostics"
-            && m["params"]["uri"].as_str() == Some(uri.as_str())
-    }).expect("expected publishDiagnostics for our file");
+    let diags_msg = run
+        .messages
+        .iter()
+        .find(|m| {
+            m["method"] == "textDocument/publishDiagnostics"
+                && m["params"]["uri"].as_str() == Some(uri.as_str())
+        })
+        .expect("expected publishDiagnostics for our file");
 
-    let diags = diags_msg["params"]["diagnostics"].as_array()
+    let diags = diags_msg["params"]["diagnostics"]
+        .as_array()
         .expect("diagnostics array");
-    assert!(!diags.is_empty(), "expected at least one diagnostic, got: {diags_msg}");
-    // The undefined-name error is E0306 (sema's name-resolution code).
-    let has_undef = diags.iter().any(|d|
-        matches!(d["code"].as_str(), Some(c) if c.starts_with("E03"))
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic, got: {diags_msg}"
     );
-    assert!(has_undef, "expected an E03xx sema diagnostic, got: {diags:?}");
+    // The undefined-name error is E0306 (sema's name-resolution code).
+    let has_undef = diags
+        .iter()
+        .any(|d| matches!(d["code"].as_str(), Some(c) if c.starts_with("E03")));
+    assert!(
+        has_undef,
+        "expected an E03xx sema diagnostic, got: {diags:?}"
+    );
 
     // Severity should be "error" (1).
     let sev = diags[0]["severity"].as_i64().expect("severity");
@@ -231,12 +266,21 @@ fn did_open_publishes_empty_diagnostics_on_clean_source() {
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
 
-    let diags_msg = run.messages.iter().find(|m| {
-        m["method"] == "textDocument/publishDiagnostics"
-            && m["params"]["uri"].as_str() == Some(uri.as_str())
-    }).expect("expected publishDiagnostics for our file");
-    let diags = diags_msg["params"]["diagnostics"].as_array().expect("array");
-    assert!(diags.is_empty(), "expected no diagnostics for clean source; got: {diags:?}");
+    let diags_msg = run
+        .messages
+        .iter()
+        .find(|m| {
+            m["method"] == "textDocument/publishDiagnostics"
+                && m["params"]["uri"].as_str() == Some(uri.as_str())
+        })
+        .expect("expected publishDiagnostics for our file");
+    let diags = diags_msg["params"]["diagnostics"]
+        .as_array()
+        .expect("array");
+    assert!(
+        diags.is_empty(),
+        "expected no diagnostics for clean source; got: {diags:?}"
+    );
 }
 
 /// Unadvertised request methods reply with MethodNotFound instead of
@@ -262,10 +306,20 @@ fn unsupported_request_returns_method_not_found() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0);
-    let resp = run.messages.iter().find(|m| m["id"] == 99)
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
         .expect("completion response present");
-    assert!(resp["error"].is_object(), "expected error response, got: {resp}");
-    assert_eq!(resp["error"]["code"].as_i64(), Some(-32601), "MethodNotFound");
+    assert!(
+        resp["error"].is_object(),
+        "expected error response, got: {resp}"
+    );
+    assert_eq!(
+        resp["error"]["code"].as_i64(),
+        Some(-32601),
+        "MethodNotFound"
+    );
 }
 
 // ---- slice 4E.2: formatting + code-actions ----
@@ -282,7 +336,12 @@ fn formatting_request(id: i64, uri: &str) -> serde_json::Value {
     })
 }
 
-fn code_action_request(id: i64, uri: &str, range: serde_json::Value, diags: &[serde_json::Value]) -> serde_json::Value {
+fn code_action_request(
+    id: i64,
+    uri: &str,
+    range: serde_json::Value,
+    diags: &[serde_json::Value],
+) -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -316,7 +375,11 @@ fn formatting_returns_text_edit() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("formatting response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("formatting response");
     let edits = resp["result"].as_array().expect("edits array");
     assert_eq!(edits.len(), 1, "expected one TextEdit, got: {edits:?}");
     // lsp-types serializes TextEdit fields as camelCase.
@@ -345,7 +408,11 @@ fn formatting_returns_no_edits_for_canonical_source() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("formatting response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("formatting response");
     let edits = resp["result"].as_array().expect("edits array");
     assert!(edits.is_empty(), "expected no edits, got: {edits:?}");
 }
@@ -358,7 +425,11 @@ fn code_action_offers_quickfix_for_manifest_edition_error() {
     // Use a manifest with a bad edition — E0406 carries a MaybeIncorrect
     // suggestion replacing `edition = "..."` with `edition = "2026"`.
     let dir = tempdir();
-    std::fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"\nedition=\"2018\"\n").unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname=\"x\"\nedition=\"2018\"\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     let entry = dir.join("src/main.cplus");
     std::fs::write(&entry, "fn main() -> i32 { return 0; }\n").unwrap();
@@ -391,14 +462,23 @@ fn code_action_offers_quickfix_for_manifest_edition_error() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("code-action response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("code-action response");
     let actions = resp["result"].as_array().expect("actions array");
-    assert!(!actions.is_empty(), "expected at least one Quick Fix, got: {actions:?}");
+    assert!(
+        !actions.is_empty(),
+        "expected at least one Quick Fix, got: {actions:?}"
+    );
     // The first action should be a CodeAction kind=quickfix with an edit.
     let a = &actions[0];
     assert_eq!(a["kind"].as_str(), Some("quickfix"));
-    assert!(a["edit"]["changes"].is_object(),
-        "expected WorkspaceEdit.changes, got: {a:?}");
+    assert!(
+        a["edit"]["changes"].is_object(),
+        "expected WorkspaceEdit.changes, got: {a:?}"
+    );
 }
 
 /// Code-action on a range with no overlapping diagnostics → empty list.
@@ -429,9 +509,16 @@ fn code_action_empty_when_no_diagnostics_overlap() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("code-action response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("code-action response");
     let actions = resp["result"].as_array().expect("actions array");
-    assert!(actions.is_empty(), "expected no actions on clean buffer, got: {actions:?}");
+    assert!(
+        actions.is_empty(),
+        "expected no actions on clean buffer, got: {actions:?}"
+    );
 }
 
 // ---- slice 4E.3: goto-definition ----
@@ -473,7 +560,11 @@ fn definition_single_file_jumps_to_fn_declaration() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("definition response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("definition response");
     let result = &resp["result"];
     // Either a single Location or an array — both shapes are valid per LSP.
     let target = if result.is_object() {
@@ -525,7 +616,11 @@ fn definition_project_mode_jumps_across_files() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("definition response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("definition response");
     let result = &resp["result"];
     let target = if result.is_object() {
         result.clone()
@@ -538,11 +633,17 @@ fn definition_project_mode_jumps_across_files() {
     // resolver uses the canonical form. Compare by the trailing
     // `math.cplus` instead of the absolute path.
     let target_uri = target["uri"].as_str().expect("uri");
-    assert!(target_uri.ends_with("math.cplus"),
-        "expected jump to a `math.cplus`, got: {target_uri} (compare to {math_uri})");
+    assert!(
+        target_uri.ends_with("math.cplus"),
+        "expected jump to a `math.cplus`, got: {target_uri} (compare to {math_uri})"
+    );
     let r = &target["range"];
     assert_eq!(r["start"]["line"].as_u64(), Some(0));
-    assert_eq!(r["start"]["character"].as_u64(), Some(7), "expected col 7 for `square`");
+    assert_eq!(
+        r["start"]["character"].as_u64(),
+        Some(7),
+        "expected col 7 for `square`"
+    );
 }
 
 /// Clicking on whitespace / a keyword returns no definition (null /
@@ -568,17 +669,26 @@ fn definition_on_keyword_returns_empty() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("response");
     // Either an empty array or null — both indicate "no definition."
     let result = &resp["result"];
-    let empty = result.is_null()
-        || (result.is_array() && result.as_array().unwrap().is_empty());
+    let empty = result.is_null() || (result.is_array() && result.as_array().unwrap().is_empty());
     assert!(empty, "expected empty / null result, got: {result}");
 }
 
 // ---- v0.0.13: graph fold-in (references / hover / documentSymbol) ----
 
-fn references_request(id: i64, uri: &str, line: u32, character: u32, incl_decl: bool) -> serde_json::Value {
+fn references_request(
+    id: i64,
+    uri: &str,
+    line: u32,
+    character: u32,
+    incl_decl: bool,
+) -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0", "id": id, "method": "textDocument/references",
         "params": {
@@ -640,9 +750,17 @@ fn references_finds_type_use_sites() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("references response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("references response");
     let locs = resp["result"].as_array().expect("locations array");
-    assert_eq!(locs.len(), 2, "expected two type-use sites of `Point`, got: {locs:?}");
+    assert_eq!(
+        locs.len(),
+        2,
+        "expected two type-use sites of `Point`, got: {locs:?}"
+    );
     for l in locs {
         assert!(l["uri"].as_str().unwrap().ends_with("main.cplus"));
     }
@@ -669,9 +787,17 @@ fn references_finds_free_function_call_sites() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("references response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("references response");
     let locs = resp["result"].as_array().expect("locations array");
-    assert_eq!(locs.len(), 2, "expected two call sites of `helper`, got: {locs:?}");
+    assert_eq!(
+        locs.len(),
+        2,
+        "expected two call sites of `helper`, got: {locs:?}"
+    );
 }
 
 /// `textDocument/hover` reports the type of a parameter under the cursor,
@@ -695,9 +821,16 @@ fn hover_shows_parameter_type() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("hover response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("hover response");
     let value = resp["result"]["contents"]["value"].as_str().unwrap_or("");
-    assert!(value.contains("i32"), "hover should mention the type i32, got: {value:?}");
+    assert!(
+        value.contains("i32"),
+        "hover should mention the type i32, got: {value:?}"
+    );
 }
 
 /// `textDocument/documentSymbol` returns the file's top-level outline.
@@ -719,12 +852,25 @@ fn document_symbol_lists_top_level_items() {
         Duration::from_secs(5),
     );
     assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
-    let resp = run.messages.iter().find(|m| m["id"] == 99).expect("documentSymbol response");
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 99)
+        .expect("documentSymbol response");
     let syms = resp["result"].as_array().expect("symbols array");
     let names: Vec<&str> = syms.iter().filter_map(|s| s["name"].as_str()).collect();
-    assert!(names.contains(&"Point"), "expected `Point` in outline, got: {names:?}");
-    assert!(names.contains(&"helper"), "expected `helper` in outline, got: {names:?}");
-    assert!(names.contains(&"main"), "expected `main` in outline, got: {names:?}");
+    assert!(
+        names.contains(&"Point"),
+        "expected `Point` in outline, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"helper"),
+        "expected `helper` in outline, got: {names:?}"
+    );
+    assert!(
+        names.contains(&"main"),
+        "expected `main` in outline, got: {names:?}"
+    );
 }
 
 // ---- helpers ----

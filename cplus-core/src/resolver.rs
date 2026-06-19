@@ -229,7 +229,9 @@ impl std::fmt::Display for ResolveError {
                     ),
                 }
             }
-            ResolveError::UnknownItem { file, owner, name, .. } => {
+            ResolveError::UnknownItem {
+                file, owner, name, ..
+            } => {
                 write!(
                     f,
                     "[E0405] {}: no item named `{name}` in module `{owner}`",
@@ -438,8 +440,7 @@ impl LoadFailure {
         // available for span rendering. Then overlay loader.files (which
         // for successfully-parsed files carries the post-doctest source
         // that matches the spans the parser produced).
-        let mut sources: std::collections::BTreeMap<PathBuf, String> =
-            loader.raw_sources.clone();
+        let mut sources: std::collections::BTreeMap<PathBuf, String> = loader.raw_sources.clone();
         for (_, u) in &loader.files {
             sources.insert(u.canonical_path.clone(), u.source.clone());
         }
@@ -623,7 +624,12 @@ impl LoadFailure {
                 };
                 ("E0403", msg, span_in(file, *span))
             }
-            ResolveError::UnknownItem { file, span, owner, name } => {
+            ResolveError::UnknownItem {
+                file,
+                span,
+                owner,
+                name,
+            } => {
                 let msg = format!("no item named `{name}` in module `{owner}`");
                 ("E0405", msg, span_in(file, *span))
             }
@@ -845,7 +851,7 @@ pub struct LoadedProject {
 
 struct Loader {
     manifest_root: PathBuf,
-    files: BTreeMap<String, FileUnit>,       // file_id → unit
+    files: BTreeMap<String, FileUnit>, // file_id → unit
     /// v0.0.12 G-026: per-file source snapshot, populated the moment a
     /// file is read — *before* lex/parse. If lex or parse fails, the
     /// LoadFailure can still attach a real source so the diagnostic
@@ -952,8 +958,7 @@ impl Loader {
         // in either step lands in LoadFailure with a real source attached.
         // Without this the diagnostic falls back to a 1:1 span when the
         // first parse error hits the entry file.
-        self.raw_sources
-            .insert(canonical.clone(), source.clone());
+        self.raw_sources.insert(canonical.clone(), source.clone());
         // v0.0.22 file-aware spans: derive + intern the file id BEFORE
         // lexing so every span this file produces carries it. Diagnostics
         // and monomorphization route by `span.file` from here on; the
@@ -961,10 +966,11 @@ impl Loader {
         // synthesized (file-less) spans.
         let file_id = derive_file_id(&canonical, &self.manifest_root);
         let file_idx = crate::lexer::intern_file(&file_id);
-        let tokens = crate::lexer::tokenize_with_file(&source, file_idx).map_err(|e| ResolveError::Lex {
-            path: canonical.clone(),
-            source: e,
-        })?;
+        let tokens =
+            crate::lexer::tokenize_with_file(&source, file_idx).map_err(|e| ResolveError::Lex {
+                path: canonical.clone(),
+                source: e,
+            })?;
         let program = crate::parser::parse(tokens).map_err(|e| ResolveError::Parse {
             path: canonical.clone(),
             source: e,
@@ -1623,7 +1629,11 @@ impl RewriteCtx {
         // from "name exists but isn't pub". Pre-fix both lumped into
         // PrivateAccess with the same "mark it `pub`" message, which
         // was misleading when the name truly wasn't there.
-        let existing_kind = self.item_kind.get(target_id).and_then(|m| m.get(name)).copied();
+        let existing_kind = self
+            .item_kind
+            .get(target_id)
+            .and_then(|m| m.get(name))
+            .copied();
         let Some(raw_kind) = existing_kind else {
             return Err(ResolveError::UnknownItem {
                 file: self.self_file_path.clone(),
@@ -1686,7 +1696,10 @@ impl RewriteCtx {
         }
         Some(vec![
             alias.clone(),
-            Ident { name: name.to_string(), span: alias.span },
+            Ident {
+                name: name.to_string(),
+                span: alias.span,
+            },
         ])
     }
 
@@ -2163,7 +2176,10 @@ fn contextualize_entries(
     for entry in entries {
         match entry {
             BuilderEntry::Let(s) => {
-                if let StmtKind::Let { init: Some(init), .. } = &mut s.kind {
+                if let StmtKind::Let {
+                    init: Some(init), ..
+                } = &mut s.kind
+                {
                     contextualize_builder_idents(init, context, &locals, ctx);
                 }
                 if let StmtKind::Let { name, .. } = &s.kind {
@@ -2254,9 +2270,7 @@ fn contextualize_builder_idents(
             contextualize_builder_idents(receiver, context, locals, ctx);
             contextualize_builder_idents(index, context, locals, ctx);
         }
-        ExprKind::Cast { expr, .. } => {
-            contextualize_builder_idents(expr, context, locals, ctx)
-        }
+        ExprKind::Cast { expr, .. } => contextualize_builder_idents(expr, context, locals, ctx),
         ExprKind::Range { start, end, .. } => {
             if let Some(s) = start {
                 contextualize_builder_idents(s, context, locals, ctx);
@@ -2272,7 +2286,9 @@ fn contextualize_builder_idents(
                 contextualize_builder_idents(el, context, locals, ctx);
             }
         }
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
                 contextualize_builder_idents(&mut f.value, context, locals, ctx);
             }
@@ -2312,7 +2328,12 @@ fn rewrite_expr(
         | ExprKind::IncludeBytes { .. }
         | ExprKind::IncludeStr { .. }
         | ExprKind::EnvVar { .. } => {}
-        ExprKind::Intrinsic { type_args, args, ret_ty, .. } => {
+        ExprKind::Intrinsic {
+            type_args,
+            args,
+            ret_ty,
+            ..
+        } => {
             for t in type_args {
                 rewrite_type(t, ctx)?;
             }
@@ -2375,7 +2396,6 @@ fn rewrite_expr(
             rewrite_expr(e, ctx, scope)?;
         }
         ExprKind::Block(b) => rewrite_block(b, ctx, scope)?,
-        ExprKind::Unsafe(b) => rewrite_block(b, ctx, scope)?,
         ExprKind::Await(inner) => rewrite_expr(inner, ctx, scope)?,
         ExprKind::Yield(inner) => rewrite_expr(inner, ctx, scope)?,
         ExprKind::If {

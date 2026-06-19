@@ -30,7 +30,7 @@ extern fn free(p: *u8);
 fn bump(counter: *u64) -> i32 {
     var i: i32 = 0 as i32;
     while i < (100000 as i32) {
-        let _prev: u64 = unsafe {
+        let _prev: u64 = {
             atomic::atomic_fetch_add_u64(counter, 1 as u64, atomic::Ordering::SeqCst)
         };
         i = i +% (1 as i32);
@@ -43,8 +43,8 @@ fn main() -> i32 {
     // the worker threads. (Stack-allocated locals can't be safely
     // shared with workers — the parent's stack frame might unwind
     // before the workers finish.)
-    let counter: *u64 = unsafe { malloc(8 as usize) as *u64 };
-    unsafe { atomic::atomic_store_u64(counter, 0 as u64, atomic::Ordering::SeqCst); }
+    let counter: *u64 = { malloc(8 as usize) as *u64 };
+    { atomic::atomic_store_u64(counter, 0 as u64, atomic::Ordering::SeqCst); }
 
     // Two threads, both reading the same `*u64`. Raw pointers are
     // Copy, so passing `counter` to both spawn_with calls doesn't
@@ -64,10 +64,10 @@ fn main() -> i32 {
     // `*counter +%= 1` and the final value will be less than 200_000
     // (often dramatically so on contended hardware) — the canonical
     // demonstration of why "shared mutable state needs synchronization".
-    let final_val: u64 = unsafe {
+    let final_val: u64 = {
         atomic::atomic_load_u64(counter, atomic::Ordering::SeqCst)
     };
-    unsafe { free(counter as *u8); }
+    { free(counter as *u8); }
 
     if final_val != (200000 as u64) { return 1; }
     return 0;

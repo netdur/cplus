@@ -313,40 +313,11 @@ impl Parser {
                         "item — `impl` blocks don't carry attributes in Phase 5; attach the attribute to individual methods inside instead",
                     ));
                 }
-                self.parse_impl_block(false)
+                self.parse_impl_block()
             }
-            // v0.0.14: `unsafe impl T: Send {}` — an unsafe marker impl.
-            // TEXT.1: `unsafe fn name(...)` — an unsafe free function whose
-            // call site requires an `unsafe { ... }` block. At item scope
-            // `unsafe` therefore precedes either `impl` or a `fn` opener
-            // (`fn` / `async fn` / `gen fn`); any other use is an
-            // expression-level block inside a fn body.
-            TokenKind::Unsafe => match self.peek_kind_n(1) {
-                TokenKind::Fn | TokenKind::Async | TokenKind::Gen => {
-                    // `parse_function` eats the leading `unsafe` itself, so
-                    // the recorded span starts at the `unsafe` keyword.
-                    self.parse_function(is_pub, attributes)
-                }
-                _ => {
-                    if is_pub {
-                        return Err(self.err_at_peek(
-                            "item — `impl` blocks don't take `pub`; mark individual methods inside the block instead",
-                        ));
-                    }
-                    if !attributes.is_empty() {
-                        return Err(self.err_at_peek(
-                            "item — `impl` blocks don't carry attributes; attach the attribute to individual methods inside instead",
-                        ));
-                    }
-                    self.bump(); // `unsafe`
-                    if !self.at(&TokenKind::Impl) {
-                        return Err(self.err_at_peek(
-                            "item — `unsafe` at item scope precedes `impl` (e.g. `unsafe impl T: Send {}`) or `fn` (an unsafe function)",
-                        ));
-                    }
-                    self.parse_impl_block(true)
-                }
-            },
+            TokenKind::Unsafe => Err(self.err_at_peek(
+                "`unsafe` has been removed; write the operation directly (`{ ... }`, `fn`, or `impl T: Send {}`)",
+            )),
             // v0.0.24 de-Rust: dead Rust keywords are kept reserved ONLY to
             // emit a targeted "did you mean" diagnostic — C+ has none of them.
             // Keeping them reserved (rather than freeing the identifier)
@@ -610,7 +581,9 @@ impl Parser {
                 span,
             });
         }
-        let close = self.expect(&TokenKind::RParen, "`)` to close `#asm(...)`")?.span;
+        let close = self
+            .expect(&TokenKind::RParen, "`)` to close `#asm(...)`")?
+            .span;
         Ok(Expr {
             kind: ExprKind::Asm {
                 template,
@@ -621,7 +594,7 @@ impl Parser {
         })
     }
 
-    fn parse_impl_block(&mut self, is_unsafe: bool) -> Result<Item, ParseError> {
+    fn parse_impl_block(&mut self) -> Result<Item, ParseError> {
         let start = self.expect(&TokenKind::Impl, "`impl`")?.span;
         // Impl-order is type-first: the TARGET TYPE comes first, an optional
         // `: INTERFACE` names the interface it implements:
@@ -663,7 +636,6 @@ impl Parser {
                 target_generic_params,
                 methods,
                 interface_name,
-                is_unsafe,
             }),
             span: start.merge(end),
             origin_file: None,
@@ -759,8 +731,9 @@ impl Parser {
             ));
         }
         let is_pub = self.eat(&TokenKind::Export);
-        // TEXT.1: `unsafe fn` method — call site requires `unsafe { ... }`.
-        let is_unsafe = self.eat(&TokenKind::Unsafe);
+        if self.at(&TokenKind::Unsafe) {
+            return Err(self.err_at_peek("`unsafe fn` has been removed; write `fn` directly"));
+        }
         // v0.0.4 Phase 4 Slice 4E: `gen` (and `async`, when we land
         // async methods) modifier before `fn`. Methods can be generators
         // so `Vec[T]::iter(self) -> T` reads naturally.
@@ -820,7 +793,6 @@ impl Parser {
             attributes,
             is_async,
             is_gen,
-            is_unsafe,
         })
     }
 
@@ -881,10 +853,7 @@ impl Parser {
             // `)` or `,` — not a typed `self: T` param) is rejected with a hint.
             TokenKind::Ident(s)
                 if s == "self"
-                    && matches!(
-                        self.peek_kind_n(1),
-                        TokenKind::RParen | TokenKind::Comma
-                    ) =>
+                    && matches!(self.peek_kind_n(1), TokenKind::RParen | TokenKind::Comma) =>
             {
                 let tok = self.peek().clone();
                 Err(ParseError {
@@ -994,7 +963,10 @@ impl Parser {
         // Type annotation is required — sema can't infer the binding's
         // type without an initializer, and we want the const's type to
         // be unambiguous at the declaration site for cross-file readers.
-        self.expect(&TokenKind::Colon, "`:` (const requires explicit type annotation)")?;
+        self.expect(
+            &TokenKind::Colon,
+            "`:` (const requires explicit type annotation)",
+        )?;
         let ty = self.parse_type()?;
         self.expect(&TokenKind::Eq, "`=`")?;
         let value = self.parse_expr()?;
@@ -1042,7 +1014,10 @@ impl Parser {
         }
         let is_mut = true;
         let name = self.expect_ident()?;
-        self.expect(&TokenKind::Colon, "`:` (static requires explicit type annotation)")?;
+        self.expect(
+            &TokenKind::Colon,
+            "`:` (static requires explicit type annotation)",
+        )?;
         let ty = self.parse_type()?;
         self.expect(&TokenKind::Eq, "`=`")?;
         let value = self.parse_expr()?;
@@ -1082,16 +1057,17 @@ impl Parser {
                 s
             }
             _ => {
-                return Err(
-                    self.err_at_peek("string literal template inside `#asm(\"...\")` at module scope")
-                )
+                return Err(self
+                    .err_at_peek("string literal template inside `#asm(\"...\")` at module scope"))
             }
         };
         self.expect(
             &TokenKind::RParen,
             "`)` — module-scope `#asm` takes only a string template (no operands or clobbers)",
         )?;
-        let end = self.expect(&TokenKind::Semi, "`;` after module-scope `#asm(...)`")?.span;
+        let end = self
+            .expect(&TokenKind::Semi, "`;` after module-scope `#asm(...)`")?
+            .span;
         Ok(Item {
             kind: ItemKind::ModuleAsm(ModuleAsm {
                 template,
@@ -1329,9 +1305,6 @@ impl Parser {
                 generic_params: Vec::new(),
                 is_async: false,
                 is_gen: false,
-                // extern fns are gated by `is_extern` independently; the
-                // `unsafe fn` marker is for C+-defined functions.
-                is_unsafe: false,
             }),
             span: start.merge(end_span),
             origin_file: None,
@@ -1344,10 +1317,9 @@ impl Parser {
         attributes: Vec<Attribute>,
     ) -> Result<Item, ParseError> {
         let start = self.peek().span;
-        // TEXT.1: optional `unsafe` modifier before `fn` (and before any
-        // `async`/`gen`). `unsafe fn` makes the call site require an
-        // enclosing `unsafe { ... }` block (sema E0801).
-        let is_unsafe = self.eat(&TokenKind::Unsafe);
+        if self.at(&TokenKind::Unsafe) {
+            return Err(self.err_at_peek("`unsafe fn` has been removed; write `fn` directly"));
+        }
         // v0.0.3 Phase 5 Slice 5E.1: optional `async` modifier before `fn`.
         // `async fn` declares a coroutine whose declared return type T is
         // implicitly wrapped to `Future[T]` at sema (Slice 5E.2).
@@ -1393,7 +1365,6 @@ impl Parser {
                 generic_params,
                 is_async,
                 is_gen,
-                is_unsafe,
             }),
             span,
             origin_file: None,
@@ -1472,7 +1443,8 @@ impl Parser {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             found: "`mut`".into(),
-                            expected: "`ref` — `mut` is retired; a by-reference param is `ref x: T`",
+                            expected:
+                                "`ref` — `mut` is retired; a by-reference param is `ref x: T`",
                         },
                         span: tok.span,
                     });
@@ -1482,7 +1454,8 @@ impl Parser {
                     return Err(ParseError {
                         kind: ParseErrorKind::Unexpected {
                             found: "`move`".into(),
-                            expected: "`take` — `move` is retired; transfer ownership with `take x: T`",
+                            expected:
+                                "`take` — `move` is retired; transfer ownership with `take x: T`",
                         },
                         span: tok.span,
                     });
@@ -1782,7 +1755,11 @@ impl Parser {
                 };
                 let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
                 Ok(Type {
-                    kind: TypeKind::Array { elem, len, len_name },
+                    kind: TypeKind::Array {
+                        elem,
+                        len,
+                        len_name,
+                    },
                     span: start.merge(end),
                 })
             }
@@ -1983,7 +1960,8 @@ impl Parser {
             return Err(ParseError {
                 kind: ParseErrorKind::Unexpected {
                     found: "`mut`".into(),
-                    expected: "a binding name — `let mut` is retired; use `var` for a mutable local",
+                    expected:
+                        "a binding name — `let mut` is retired; use `var` for a mutable local",
                 },
                 span: tok.span,
             });
@@ -2215,7 +2193,11 @@ impl Parser {
         let body = self.parse_block()?;
         let span = start.merge(body.span);
         Ok(Stmt {
-            kind: StmtKind::While { cond, body, attributes },
+            kind: StmtKind::While {
+                cond,
+                body,
+                attributes,
+            },
             span,
         })
     }
@@ -2366,7 +2348,8 @@ impl Parser {
                 return Err(ParseError {
                     kind: ParseErrorKind::Unexpected {
                         found: "`mut`".into(),
-                        expected: "a binding name — `let mut` is retired; use `var` for a mutable local",
+                        expected:
+                            "a binding name — `let mut` is retired; use `var` for a mutable local",
                     },
                     span: tok.span,
                 });
@@ -2880,7 +2863,9 @@ impl Parser {
             self.bump();
             context.push(self.expect_ident()?);
         }
-        let lbrace = self.expect(&TokenKind::LBrace, "`{` after `@context`")?.span;
+        let lbrace = self
+            .expect(&TokenKind::LBrace, "`{` after `@context`")?
+            .span;
         // Entries parse with the line-dot flag off at the boundary: each
         // item line / modifier RHS turns it on for itself, and a nested
         // builder block must not inherit the enclosing entry's state.
@@ -2902,7 +2887,9 @@ impl Parser {
     /// Parse `{ ENTRIES }` (the braces around a builder body) — used for
     /// `if`/`for` branches and bare container elements. Entries parse with
     /// the line-dot flag reset, same as the top-level block boundary.
-    fn parse_builder_braced_entries(&mut self) -> Result<(Span, Vec<BuilderEntry>, Span), ParseError> {
+    fn parse_builder_braced_entries(
+        &mut self,
+    ) -> Result<(Span, Vec<BuilderEntry>, Span), ParseError> {
         let lbrace = self.expect(&TokenKind::LBrace, "`{`")?.span;
         let entries = self.with_line_dots_allowed(|p| p.parse_builder_entries())?;
         let rbrace = self.expect(&TokenKind::RBrace, "`}`")?.span;
@@ -3687,18 +3674,9 @@ impl Parser {
             }
             TokenKind::If => self.parse_if_expr(),
             TokenKind::Match => self.parse_match_expr(),
-            // Slice 10.FFI.3: `unsafe { ... }` block expression.
-            // Body parses like a regular block; the marker tells sema
-            // to allow pointer deref / extern calls / etc. inside.
-            TokenKind::Unsafe => {
-                let start = self.expect(&TokenKind::Unsafe, "`unsafe`")?.span;
-                let block = self.parse_block()?;
-                let span = start.merge(block.span);
-                Ok(Expr {
-                    kind: ExprKind::Unsafe(block),
-                    span,
-                })
-            }
+            TokenKind::Unsafe => Err(self.err_at_peek(
+                "`unsafe` has been removed; write the block or operation directly",
+            )),
             // v0.0.24 de-Rust: `try` is reserved only to hint here — C+ has no
             // try/`?` construct. (Kept reserved so it never mis-parses as e.g.
             // a `try { ... }` struct literal.)
@@ -3913,7 +3891,7 @@ impl Parser {
 fn is_block_like(kind: &ExprKind) -> bool {
     matches!(
         kind,
-        ExprKind::Block(_) | ExprKind::Unsafe(_) | ExprKind::If { .. } | ExprKind::Match { .. }
+        ExprKind::Block(_) | ExprKind::If { .. } | ExprKind::Match { .. }
     )
 }
 
@@ -3930,7 +3908,6 @@ fn can_start_expr(kind: &TokenKind) -> bool {
             | TokenKind::LBrace
             | TokenKind::If
             | TokenKind::Match
-            | TokenKind::Unsafe
             | TokenKind::Minus
             | TokenKind::Bang
             | TokenKind::Tilde
@@ -4065,7 +4042,10 @@ mod tests {
     fn dead_keyword_union_hints_enum_or_struct() {
         let e = parse_src("union U { a: i32 }").unwrap_err();
         let (expected, found) = unexpected(&e);
-        assert!(expected.contains("enum") && expected.contains("struct"), "got: {expected}");
+        assert!(
+            expected.contains("enum") && expected.contains("struct"),
+            "got: {expected}"
+        );
         assert!(found.contains("union"), "found: {found}");
     }
 
@@ -4157,8 +4137,7 @@ mod tests {
         // Note: parse-only; sema may reject this since chained assignment
         // typically requires a value-producing inner assign. Phase 1 is loose.
         let p =
-            parse_src("fn main() -> i32 { var a: i32 = 0; var b: i32 = 0; a = b = 1; 0 }")
-                .unwrap();
+            parse_src("fn main() -> i32 { var a: i32 = 0; var b: i32 = 0; a = b = 1; 0 }").unwrap();
         // The third stmt is `a = (b = 1)`.
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!("expected fn");
@@ -4264,48 +4243,18 @@ mod tests {
         panic!("no Function found");
     }
 
-    // ---- TEXT.1: `unsafe fn` declarations ----
-
     #[test]
-    fn plain_fn_is_not_unsafe() {
-        assert!(!first_function("fn f() -> i32 { return 0; }").is_unsafe);
-    }
-
-    #[test]
-    fn unsafe_free_fn_sets_is_unsafe() {
-        assert!(first_function("unsafe fn f() -> i32 { return 0; }").is_unsafe);
-    }
-
-    #[test]
-    fn extern_fn_is_not_unsafe_flagged() {
-        // extern fns are gated by `is_extern`, not the `unsafe fn` marker.
-        let f = first_function("extern fn malloc(n: usize) -> *u8;");
-        assert!(!f.is_unsafe);
-        assert!(f.is_extern);
-    }
-
-    #[test]
-    fn unsafe_method_sets_is_unsafe() {
-        let m = first_method("struct S { n: i32 } impl S { unsafe fn g(this) -> i32 { return this.n; } }");
-        assert!(m.is_unsafe);
-    }
-
-    #[test]
-    fn plain_method_is_not_unsafe() {
-        let m = first_method("struct S { n: i32 } impl S { fn g(this) -> i32 { return this.n; } }");
-        assert!(!m.is_unsafe);
-    }
-
-    #[test]
-    fn bare_unsafe_at_item_scope_without_impl_or_fn_errors() {
-        // `unsafe` at item scope must precede `impl` or `fn`.
+    fn unsafe_keyword_is_rejected() {
         assert!(parse_src("unsafe struct S { n: i32 }").is_err());
+        assert!(parse_src("unsafe fn f() -> i32 { return 0; }").is_err());
+        assert!(parse_src("struct S {} unsafe impl S: Send {}").is_err());
+        assert!(parse_src("fn f(p: *i32) -> i32 { return unsafe { *p }; }").is_err());
     }
 
     #[test]
     fn unsafe_impl_still_parses() {
         // The `unsafe impl` marker path must be untouched by the `unsafe fn` add.
-        assert!(parse_src("struct S {} unsafe impl S: Send {}").is_ok());
+        assert!(parse_src("struct S {} impl S: Send {}").is_ok());
     }
 
     #[test]
@@ -4464,15 +4413,18 @@ mod tests {
     fn var_in_c_style_for_init_parses() {
         // The C-style `for (init; cond; update)` header accepts a `var` binding
         // init, same as `let [mut]`.
-        let p = parse_src(
-            "fn main() -> i32 { for (var i: i32 = 0; i < 3; i = i + 1) { } return 0; }",
-        )
-        .unwrap();
+        let p =
+            parse_src("fn main() -> i32 { for (var i: i32 = 0; i < 3; i = i + 1) { } return 0; }")
+                .unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!();
         };
-        let StmtKind::For(crate::ast::ForLoop::CStyle { init: Some(init), .. }, _) =
-            &f.body.stmts[0].kind
+        let StmtKind::For(
+            crate::ast::ForLoop::CStyle {
+                init: Some(init), ..
+            },
+            _,
+        ) = &f.body.stmts[0].kind
         else {
             panic!("expected a C-style for with a var init");
         };
@@ -4487,7 +4439,9 @@ mod tests {
     fn take_still_usable_as_method_name() {
         // `take` after `fn` / `.` is a member name, not the ownership keyword —
         // so `Iterator::take` and `iter.take(n)` are unaffected.
-        let m = first_method("struct S { v: i32 } impl S { fn take(this, n: i32) -> i32 { return this.v + n; } }");
+        let m = first_method(
+            "struct S { v: i32 } impl S { fn take(this, n: i32) -> i32 { return this.v + n; } }",
+        );
         assert_eq!(m.name.name, "take");
         assert_eq!(m.receiver, Some(Receiver::Read));
     }
@@ -4839,7 +4793,10 @@ mod tests {
         match e.kind {
             ParseErrorKind::Unexpected { found, expected } => {
                 assert!(found.contains("self"), "found: {found}");
-                assert!(expected.contains("`this`"), "expected hint, got: {expected}");
+                assert!(
+                    expected.contains("`this`"),
+                    "expected hint, got: {expected}"
+                );
             }
             other => panic!("expected Unexpected, got {other:?}"),
         }
@@ -4939,8 +4896,7 @@ mod tests {
     fn inferred_struct_literal_parses() {
         // v0.0.24 de-Rust: `{ field: ... }` with no leading type name parses
         // as an InferredStructLit (the type is inferred at sema time).
-        let p =
-            parse_src(r#"fn main() -> i32 { let p: P = { x: 1, y: 2 }; return 0; }"#).unwrap();
+        let p = parse_src(r#"fn main() -> i32 { let p: P = { x: 1, y: 2 }; return 0; }"#).unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!();
         };
@@ -5292,12 +5248,22 @@ mod tests {
         // and on plain items; a plain `export` extern declaration (no body) is
         // rejected the same as the old `pub` form.
         let p = parse_src("export extern fn add(a: i32, b: i32) -> i32 { return a + b; }").unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
-        assert!(f.is_pub && f.is_extern, "export extern fn must set the exported + extern flags");
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!()
+        };
+        assert!(
+            f.is_pub && f.is_extern,
+            "export extern fn must set the exported + extern flags"
+        );
 
         let p2 = parse_src("export fn helper() -> i32 { return 0; }").unwrap();
-        let ItemKind::Function(g) = &p2.items[0].kind else { panic!() };
-        assert!(g.is_pub && !g.is_extern, "export fn must set the exported flag");
+        let ItemKind::Function(g) = &p2.items[0].kind else {
+            panic!()
+        };
+        assert!(
+            g.is_pub && !g.is_extern,
+            "export fn must set the exported flag"
+        );
 
         let p3 = parse_src("export struct Handle { fd: i32 }").unwrap();
         assert!(matches!(&p3.items[0].kind, ItemKind::Struct(s) if s.is_pub));
@@ -5307,16 +5273,27 @@ mod tests {
 
         // `export` sets the exported flag across item kinds and combines with
         // other modifiers (covers the retired pub-combo parser tests).
-        assert!(matches!(&parse_src("export enum E { A, B }").unwrap().items[0].kind, ItemKind::Enum(e) if e.is_pub));
-        assert!(matches!(&parse_src("export const K: i32 = 1;").unwrap().items[0].kind, ItemKind::Const(c) if c.is_pub));
-        assert!(matches!(&parse_src("export static S: i32 = 0;").unwrap().items[0].kind, ItemKind::Static(s) if s.is_pub));
-        assert!(matches!(&parse_src("export interface I { fn f(this) -> i32; }").unwrap().items[0].kind, ItemKind::Interface(i) if i.is_pub));
-        // export + unsafe on a free fn sets both flags.
-        let u = first_function("export unsafe fn raw() -> i32 { return 0; }");
-        assert!(u.is_pub && u.is_unsafe, "export unsafe fn must set both flags");
+        assert!(
+            matches!(&parse_src("export enum E { A, B }").unwrap().items[0].kind, ItemKind::Enum(e) if e.is_pub)
+        );
+        assert!(
+            matches!(&parse_src("export const K: i32 = 1;").unwrap().items[0].kind, ItemKind::Const(c) if c.is_pub)
+        );
+        assert!(
+            matches!(&parse_src("export static S: i32 = 0;").unwrap().items[0].kind, ItemKind::Static(s) if s.is_pub)
+        );
+        assert!(
+            matches!(&parse_src("export interface I { fn f(this) -> i32; }").unwrap().items[0].kind, ItemKind::Interface(i) if i.is_pub)
+        );
+        let u = first_function("export fn raw() -> i32 { return 0; }");
+        assert!(u.is_pub, "export fn must set the export flag");
         // export + generics + async.
-        assert!(matches!(&parse_src("export fn pick[T](x: T) -> T { return x; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && !f.generic_params.is_empty()));
-        assert!(matches!(&parse_src("export async fn job() -> i32 { return 0; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && f.is_async));
+        assert!(
+            matches!(&parse_src("export fn pick[T](x: T) -> T { return x; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && !f.generic_params.is_empty())
+        );
+        assert!(
+            matches!(&parse_src("export async fn job() -> i32 { return 0; }").unwrap().items[0].kind, ItemKind::Function(f) if f.is_pub && f.is_async)
+        );
         // export method inside an impl.
         let m = parse_src("struct P {} impl P { export fn make() -> i32 { return 0; } }").unwrap();
         assert!(matches!(&m.items[1].kind, ItemKind::Impl(b) if b.methods[0].is_pub));
@@ -5608,9 +5585,10 @@ mod tests {
 
     #[test]
     fn parses_unit_type_as_fn_return_g026() {
-        let p = parse_src("fn f() -> () { return; }\nfn main() -> i32 { return 0; }")
-            .unwrap();
-        let ItemKind::Function(f) = &p.items[0].kind else { panic!("fn"); };
+        let p = parse_src("fn f() -> () { return; }\nfn main() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else {
+            panic!("fn");
+        };
         let rt = f.return_type.as_ref().expect("explicit -> () return type");
         match &rt.kind {
             TypeKind::Path(name) => assert_eq!(name, "()"),
@@ -5629,9 +5607,8 @@ mod tests {
 
     #[test]
     fn include_bytes_intrinsic_produces_intrinsic_node() {
-        let p =
-            parse_src("fn main() -> i32 { let x = #include_bytes(\"foo.bin\"); return 0; }")
-                .unwrap();
+        let p = parse_src("fn main() -> i32 { let x = #include_bytes(\"foo.bin\"); return 0; }")
+            .unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!("fn");
         };
@@ -5654,8 +5631,7 @@ mod tests {
     #[test]
     fn include_str_intrinsic_produces_intrinsic_node() {
         let p =
-            parse_src("fn main() -> i32 { let x = #include_str(\"foo.txt\"); return 0; }")
-                .unwrap();
+            parse_src("fn main() -> i32 { let x = #include_str(\"foo.txt\"); return 0; }").unwrap();
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!("fn");
         };
@@ -5766,11 +5742,15 @@ mod tests {
     fn module_asm_coexists_with_other_items() {
         // The `#` of `#asm` must not be swallowed by the attribute loop, and
         // it must not interfere with adjacent items.
-        let p = parse_src("fn a() -> i32 { 0 }\n#asm(\".p2align 2\");\nfn b() -> i32 { 1 }").unwrap();
+        let p =
+            parse_src("fn a() -> i32 { 0 }\n#asm(\".p2align 2\");\nfn b() -> i32 { 1 }").unwrap();
         assert_eq!(p.items.len(), 3);
         assert!(matches!(p.items[0].kind, ItemKind::Function(_)));
         let ItemKind::ModuleAsm(ma) = &p.items[1].kind else {
-            panic!("expected ModuleAsm in the middle, got {:?}", p.items[1].kind);
+            panic!(
+                "expected ModuleAsm in the middle, got {:?}",
+                p.items[1].kind
+            );
         };
         assert_eq!(ma.template, ".p2align 2");
         assert!(matches!(p.items[2].kind, ItemKind::Function(_)));
@@ -5837,7 +5817,10 @@ mod tests {
         let ItemKind::Function(f) = &p.items[0].kind else {
             panic!("expected fn");
         };
-        let StmtKind::Let { init: Some(init), .. } = &f.body.stmts[0].kind else {
+        let StmtKind::Let {
+            init: Some(init), ..
+        } = &f.body.stmts[0].kind
+        else {
             panic!("expected let with init");
         };
         let ExprKind::BuilderBlock { context, body, .. } = &init.kind else {
@@ -5924,12 +5907,19 @@ mod tests {
         let BuilderEntry::Item { expr, .. } = &body.entries[2] else {
             panic!("expected nested container item");
         };
-        let ExprKind::BuilderBlock { context: inner, body: inner_body, container } = &expr.kind
+        let ExprKind::BuilderBlock {
+            context: inner,
+            body: inner_body,
+            container,
+        } = &expr.kind
         else {
             panic!("expected nested BuilderBlock, got {:?}", expr.kind);
         };
         // Container: name carried in `container`, context empty until resolve.
-        assert!(inner.is_empty(), "container context is inherited at resolve");
+        assert!(
+            inner.is_empty(),
+            "container context is inherited at resolve"
+        );
         let Some(name) = container else {
             panic!("expected container name");
         };
@@ -5964,7 +5954,12 @@ mod tests {
         };
         assert_eq!(then.len(), 1);
         assert_eq!(else_.as_ref().map(|e| e.len()), Some(1));
-        let BuilderEntry::For { var, body: for_body, .. } = &body.entries[1] else {
+        let BuilderEntry::For {
+            var,
+            body: for_body,
+            ..
+        } = &body.entries[1]
+        else {
             panic!("expected For entry, got {:?}", body.entries[1]);
         };
         assert_eq!(var.name, "x");
@@ -5997,7 +5992,13 @@ mod tests {
         let BuilderEntry::Item { expr, modifiers } = &body.entries[0] else {
             panic!("expected item entry");
         };
-        assert!(matches!(expr.kind, ExprKind::BuilderBlock { container: Some(_), .. }));
+        assert!(matches!(
+            expr.kind,
+            ExprKind::BuilderBlock {
+                container: Some(_),
+                ..
+            }
+        ));
         assert_eq!(modifiers.len(), 1);
         assert_eq!(modifiers[0].name.name, "spacing");
     }
@@ -6017,7 +6018,10 @@ mod tests {
         let ExprKind::Call { args, .. } = &expr.kind else {
             panic!("expected call item");
         };
-        assert!(matches!(args[0].kind, ExprKind::Field { .. } | ExprKind::Call { .. }));
+        assert!(matches!(
+            args[0].kind,
+            ExprKind::Field { .. } | ExprKind::Call { .. }
+        ));
     }
 
     #[test]
@@ -6044,7 +6048,14 @@ mod tests {
 
     #[test]
     fn builder_control_flow_rejected() {
-        for kw in ["return 1;", "break;", "continue;", "while x { }", "loop { }", "defer f();"] {
+        for kw in [
+            "return 1;",
+            "break;",
+            "continue;",
+            "while x { }",
+            "loop { }",
+            "defer f();",
+        ] {
             let src = format!(
                 "fn main() -> i32 {{\n    let v = @view {{\n        {kw}\n    }};\n    0\n}}"
             );

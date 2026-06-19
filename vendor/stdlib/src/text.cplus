@@ -7,7 +7,7 @@
 // so any source — a literal, a slice, or another Text's view — works without
 // allocating.
 //
-// `as_str` is an `unsafe fn` on purpose (TEXT.1): the returned `str` is a view
+// `as_str` is an `fn` on purpose (TEXT.1): the returned `str` is a view
 // into this Text's buffer with no lifetime tie back to it. If the Text drops,
 // or reallocates on a later `push_str`, the view dangles. The caller promises
 // the Text outlives the view and is not mutated while the view is held. Every
@@ -69,13 +69,13 @@ fn region_matches(hay: *u8, off: usize, needle: *u8, n: usize) -> bool {
     if n == (0 as usize) {
         return true;
     }
-    let a: *u8 = unsafe { hay + off };
-    return unsafe { memcmp(a, needle, n) } == (0 as i32);
+    let a: *u8 = { hay + off };
+    return { memcmp(a, needle, n) } == (0 as i32);
 }
 
 fn new() -> Text {
     return Text {
-        ptr: unsafe { 0 as *u8 },
+        ptr: { 0 as *u8 },
         len: 0 as usize,
         cap: 0 as usize,
     };
@@ -85,7 +85,7 @@ fn with_capacity(n: usize) -> Text {
     if n == (0 as usize) {
         return new();
     }
-    let raw: *u8 = unsafe { malloc(n) };
+    let raw: *u8 = { malloc(n) };
     assert raw.is_not_null();
     return Text {
         ptr: raw,
@@ -104,7 +104,7 @@ fn from_str(s: str) -> Text {
 impl Text {
     fn grow_to(ref this, new_cap: usize) {
         assert new_cap > this.cap;
-        let raw: *u8 = unsafe { realloc(this.ptr, new_cap) };
+        let raw: *u8 = { realloc(this.ptr, new_cap) };
         assert raw.is_not_null();
         this.ptr = raw;
         this.cap = new_cap;
@@ -140,8 +140,8 @@ impl Text {
         }
         this.reserve(n);
         let src: *u8 = #str_ptr(s);
-        let dest: *u8 = unsafe { this.ptr + this.len };
-        unsafe { memcpy(dest, src, n); }
+        let dest: *u8 = { this.ptr + this.len };
+        { memcpy(dest, src, n); }
         this.len = this.len +% n;
         return;
     }
@@ -161,17 +161,17 @@ impl Text {
     fn clone(this) -> Text {
         var t: Text = with_capacity(this.len);
         if this.len != (0 as usize) {
-            unsafe { memcpy(t.ptr, this.ptr, this.len); }
+            { memcpy(t.ptr, this.ptr, this.len); }
             t.len = this.len;
         }
         return t;
     }
 
-    // Borrow escape hatch — `unsafe fn` (TEXT.1). The returned view's lifetime
+    // Borrow escape hatch — `fn` (TEXT.1). The returned view's lifetime
     // is not tracked: the caller promises this Text outlives the view and is
     // not mutated while the view is held.
-    unsafe fn as_str(this) -> str {
-        return unsafe { #str_from_raw_parts(this.ptr, this.len) };
+    fn as_str(this) -> str {
+        return { #str_from_raw_parts(this.ptr, this.len) };
     }
 
     fn starts_with(this, prefix: str) -> bool {
@@ -247,8 +247,8 @@ impl Text {
 
     // Read the byte at `i` (caller guarantees `i < len`).
     fn byte_at_raw(this, i: usize) -> u8 {
-        let p: *u8 = unsafe { this.ptr + i };
-        return unsafe { *p };
+        let p: *u8 = { this.ptr + i };
+        return { *p };
     }
 
     // Owned copy of the byte range `[start, end)` (caller guarantees the range
@@ -257,8 +257,8 @@ impl Text {
         let n: usize = end -% start;
         var t: Text = with_capacity(n);
         if n != (0 as usize) {
-            let src: *u8 = unsafe { this.ptr + start };
-            unsafe { memcpy(t.ptr, src, n); }
+            let src: *u8 = { this.ptr + start };
+            { memcpy(t.ptr, src, n); }
             t.len = n;
         }
         return t;
@@ -358,19 +358,19 @@ impl Text {
             }
             i = i +% (1 as usize);
         }
-        let buf: *u8 = unsafe { malloc(this.len +% (1 as usize)) };
+        let buf: *u8 = { malloc(this.len +% (1 as usize)) };
         assert buf.is_not_null();
         if this.len != (0 as usize) {
-            unsafe { memcpy(buf, this.ptr, this.len); }
+            { memcpy(buf, this.ptr, this.len); }
         }
-        let term: *u8 = unsafe { buf + this.len };
-        unsafe { *term = 0 as u8; }
+        let term: *u8 = { buf + this.len };
+        { *term = 0 as u8; }
         return option::Option[CString]::Some(CString { ptr: buf, len: this.len });
     }
 
     fn drop(ref this) {
         if this.ptr.is_not_null() {
-            unsafe { free(this.ptr); }
+            { free(this.ptr); }
         }
         return;
     }
@@ -381,8 +381,8 @@ impl Text {
 // across threads (`Sync`) are both sound — like Rust's `String`. The
 // raw-pointer field makes it `!Send`/`!Sync` by default; these markers opt in.
 // `Send` is needed for `thread::spawn` payloads; `Send + Sync` for `Arc[Text]`.
-unsafe impl Text: Send {}
-unsafe impl Text: Sync {}
+impl Text: Send {}
+impl Text: Sync {}
 
 // An owned, NUL-terminated C string — the bridge to `extern fn`s that take a
 // `const char*`. The buffer is `len + 1` bytes (the trailing NUL is not counted
@@ -405,7 +405,7 @@ impl CString {
 
     fn drop(ref this) {
         if this.ptr.is_not_null() {
-            unsafe { free(this.ptr); }
+            { free(this.ptr); }
         }
         return;
     }

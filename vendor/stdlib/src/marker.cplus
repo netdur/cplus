@@ -26,7 +26,7 @@
 //   - `MutexGuard[T]: !Send` — pthread_mutex_unlock must be on the
 //     same thread that called pthread_mutex_lock
 //   - Structs with raw-pointer fields default to `!Send` unless the
-//     user opts in via `unsafe impl MyType: Send {}`
+//     user opts in via `impl MyType: Send {}`
 //   - `Cell[T] / RefCell[T]: !Sync` (when those types land)
 //
 // Today this file is documentation; the marker interfaces are

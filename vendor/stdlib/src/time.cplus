@@ -22,6 +22,6 @@ import "./reactor" as reactor;
 // stdlib's job here is just to give it a friendly `async fn` face.
 
 async fn sleep(ms: u64) {
-    unsafe { #reactor_wait_timer(ms); }
+    { #reactor_wait_timer(ms); }
     return;
 }

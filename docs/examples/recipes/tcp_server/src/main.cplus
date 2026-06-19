@@ -26,8 +26,8 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { return false; }
         written = written +% (w as usize);
     }
@@ -35,30 +35,30 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
 }
 
 fn main() -> i32 {
-    let argc: i32 = unsafe { *_NSGetArgc() };
+    let argc: i32 = { *_NSGetArgc() };
     if argc < (2 as i32) {
         let u: str = "usage: tcp_server <port>\n";
         write_all(2 as i32, #str_ptr(u), #str_len(u));
         return 1;
     }
-    let argv: **u8 = unsafe { *_NSGetArgv() };
-    let port_s: *u8 = unsafe { *(argv + (1 as usize)) };
-    let port: u16 = unsafe { atoi(port_s) } as u16;
+    let argv: **u8 = { *_NSGetArgv() };
+    let port_s: *u8 = { *(argv + (1 as usize)) };
+    let port: u16 = { atoi(port_s) } as u16;
 
-    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) { return 2; }
 
     // SO_REUSEADDR (level=SOL_SOCKET=0xffff on macOS, optname=0x4).
-    let one: *u8 = unsafe { malloc(4 as usize) };
-    unsafe {
+    let one: *u8 = { malloc(4 as usize) };
+    {
         one[0 as usize] = 1 as u8; one[1 as usize] = 0 as u8;
         one[2 as usize] = 0 as u8; one[3 as usize] = 0 as u8;
     }
-    unsafe { setsockopt(fd, 0xffff as i32, 0x4 as i32, one, 4 as u32); }
-    unsafe { free(one); }
+    { setsockopt(fd, 0xffff as i32, 0x4 as i32, one, 4 as u32); }
+    { free(one); }
 
-    let sa: *u8 = unsafe { malloc(16 as usize) };
-    unsafe {
+    let sa: *u8 = { malloc(16 as usize) };
+    {
         memset(sa, 0 as i32, 16 as usize);
         sa[0 as usize] = 16 as u8;       // sin_len
         sa[1 as usize] = 2 as u8;        // AF_INET
@@ -72,39 +72,39 @@ fn main() -> i32 {
         sa[7 as usize] = 1 as u8;
     }
 
-    let brc: i32 = unsafe { bind(fd, sa, 16 as u32) };
-    unsafe { free(sa); }
+    let brc: i32 = { bind(fd, sa, 16 as u32) };
+    { free(sa); }
     if brc != (0 as i32) {
-        unsafe { close(fd); }
+        { close(fd); }
         return 3;
     }
-    if unsafe { listen(fd, 1 as i32) } != (0 as i32) {
-        unsafe { close(fd); }
+    if { listen(fd, 1 as i32) } != (0 as i32) {
+        { close(fd); }
         return 4;
     }
 
     // Accept (blocking) — pass null addr/addrlen since we don't care
     // about the peer's address here.
-    let cfd: i32 = unsafe {
+    let cfd: i32 = {
         let null_addr: *u8 = 0 as *u8;
         let null_len: *u32 = 0 as *u32;
         accept(fd, null_addr, null_len)
     };
     if cfd < (0 as i32) {
-        unsafe { close(fd); }
+        { close(fd); }
         return 5;
     }
 
     // Echo until EOF.
     let bufcap: usize = 4096 as usize;
-    let buf: *u8 = unsafe { malloc(bufcap) };
+    let buf: *u8 = { malloc(bufcap) };
     loop {
-        let n: isize = unsafe { read(cfd, buf, bufcap) };
+        let n: isize = { read(cfd, buf, bufcap) };
         if n <= (0 as isize) { break; }
         write_all(cfd, buf, n as usize);
     }
-    unsafe { free(buf); }
-    unsafe { close(cfd); }
-    unsafe { close(fd); }
+    { free(buf); }
+    { close(cfd); }
+    { close(fd); }
     return 0;
 }

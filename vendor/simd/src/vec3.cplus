@@ -158,5 +158,5 @@ impl Vec3 {
 extern fn sqrtf(x: f32) -> f32;
 
 fn f_sqrt(x: f32) -> f32 {
-    return unsafe { sqrtf(x) };
+    return { sqrtf(x) };
 }

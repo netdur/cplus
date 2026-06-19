@@ -7,7 +7,7 @@ fn handle_notification(self_obj: *u8, _cmd: *u8, notification: *u8) {
 
 fn observer_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CUIKitNotifyObserver\0"));
-    if existing != unsafe { 0 as *u8 } {
+    if existing != { 0 as *u8 } {
         return existing;
     }
     let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
@@ -34,6 +34,8 @@ struct Observer {
 }
 
 impl Observer {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::msg_void_id(default_center(), rt::sel(#str_ptr("removeObserver:\0")), this.obj);
         rt::release(this.obj);
@@ -45,6 +47,8 @@ struct NotificationCenter {
 }
 
 impl NotificationCenter {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn default() -> NotificationCenter {
         return NotificationCenter { obj: default_center() };
     }
@@ -54,7 +58,7 @@ impl NotificationCenter {
             this.obj,
             rt::sel(#str_ptr("postNotificationName:object:\0")),
             rt::ns_string(name),
-            unsafe { 0 as *u8 },
+            { 0 as *u8 },
         );
     }
 
@@ -63,7 +67,7 @@ impl NotificationCenter {
             this.obj,
             rt::sel(#str_ptr("postNotificationName:object:\0")),
             name_ns,
-            unsafe { 0 as *u8 },
+            { 0 as *u8 },
         );
     }
 
@@ -77,7 +81,7 @@ impl NotificationCenter {
             obs,
             rt::sel(#str_ptr("handleNotification:\0")),
             rt::ns_string(name),
-            unsafe { 0 as *u8 },
+            { 0 as *u8 },
         );
         return Observer { obj: obs };
     }

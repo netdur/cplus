@@ -38,7 +38,7 @@ impl View {
     fn drop(ref this) {
         // `into_raw` nulls `obj` after transferring the global ref out;
         // JNI's DeleteGlobalRef contract does not admit NULL.
-        if this.obj != unsafe { 0 as jni::jobject } {
+        if this.obj != { 0 as jni::jobject } {
             this.env.delete_global_ref(this.obj);
         }
         return;
@@ -58,7 +58,7 @@ impl View {
 
     fn into_raw(ref this) -> jni::jobject {
         let p: jni::jobject = this.obj;
-        this.obj = unsafe { 0 as jni::jobject };
+        this.obj = { 0 as jni::jobject };
         return p;
     }
 
@@ -97,7 +97,7 @@ impl LinearLayout {
     fn drop(ref this) {
         // `into_raw` nulls `obj` after transferring the global ref out;
         // JNI's DeleteGlobalRef contract does not admit NULL.
-        if this.obj != unsafe { 0 as jni::jobject } {
+        if this.obj != { 0 as jni::jobject } {
             this.env.delete_global_ref(this.obj);
         }
         return;
@@ -118,7 +118,7 @@ impl LinearLayout {
 
     fn into_raw(ref this) -> jni::jobject {
         let p: jni::jobject = this.obj;
-        this.obj = unsafe { 0 as jni::jobject };
+        this.obj = { 0 as jni::jobject };
         return p;
     }
 

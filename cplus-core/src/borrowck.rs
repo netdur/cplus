@@ -1039,7 +1039,7 @@ fn check_stmt_returns_e3(
                     && check_block_returns_e3(body, param_names, roots, found)
             }
         },
-        StmtKind::Loop(b, _) =>check_block_returns_e3(b, param_names, roots, found),
+        StmtKind::Loop(b, _) => check_block_returns_e3(b, param_names, roots, found),
         StmtKind::Break | StmtKind::Continue => true,
         // `assert EXPR;` cannot contain a `return` (it's an expression
         // statement), so it never affects the rooted-returns set. We
@@ -1058,7 +1058,6 @@ fn check_expr_returns_e3(
 ) -> bool {
     match &e.kind {
         ExprKind::Block(b) => check_block_returns_e3(b, param_names, roots, found),
-        ExprKind::Unsafe(b) => check_block_returns_e3(b, param_names, roots, found),
         ExprKind::If {
             cond,
             then,
@@ -1119,7 +1118,9 @@ fn check_expr_returns_e3(
                 && check_expr_returns_e3(value, param_names, roots, found)
         }
         ExprKind::Cast { expr, .. } => check_expr_returns_e3(expr, param_names, roots, found),
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => fields
             .iter()
             .all(|f| check_expr_returns_e3(&f.value, param_names, roots, found)),
         ExprKind::Field { receiver, .. } => {
@@ -1236,7 +1237,7 @@ fn check_stmt_returns(s: &Stmt, root: &str, found: &mut bool) -> bool {
                 check_expr_returns(iter, root, found) && check_block_returns(body, root, found)
             }
         },
-        StmtKind::Loop(b, _) =>check_block_returns(b, root, found),
+        StmtKind::Loop(b, _) => check_block_returns(b, root, found),
         StmtKind::Break | StmtKind::Continue => true,
         StmtKind::Assert(e) => check_expr_returns(e, root, found),
         // Lowered away pre-borrowck.
@@ -1247,7 +1248,6 @@ fn check_stmt_returns(s: &Stmt, root: &str, found: &mut bool) -> bool {
 fn check_expr_returns(e: &Expr, root: &str, found: &mut bool) -> bool {
     match &e.kind {
         ExprKind::Block(b) => check_block_returns(b, root, found),
-        ExprKind::Unsafe(b) => check_block_returns(b, root, found),
         ExprKind::If {
             cond,
             then,
@@ -1304,7 +1304,9 @@ fn check_expr_returns(e: &Expr, root: &str, found: &mut bool) -> bool {
             check_expr_returns(target, root, found) && check_expr_returns(value, root, found)
         }
         ExprKind::Cast { expr, .. } => check_expr_returns(expr, root, found),
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => fields
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => fields
             .iter()
             .all(|f| check_expr_returns(&f.value, root, found)),
         ExprKind::Field { receiver, .. } => check_expr_returns(receiver, root, found),
@@ -1536,7 +1538,9 @@ fn scan_overlapping_places(
             scan_overlapping_places(receiver, primary, found);
             scan_overlapping_places(index, primary, found);
         }
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             for f in fields {
                 scan_overlapping_places(&f.value, primary, found);
             }
@@ -2085,7 +2089,7 @@ fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
                     || any_return_rooted_at_param(body, param_names)
             }
         },
-        StmtKind::Loop(body, _) =>any_return_rooted_at_param(body, param_names),
+        StmtKind::Loop(body, _) => any_return_rooted_at_param(body, param_names),
         // Lowered before borrowck — should not be present here.
         StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => false,
     }
@@ -2094,7 +2098,6 @@ fn any_return_rooted_in_stmt(s: &Stmt, param_names: &[&str]) -> bool {
 fn any_return_rooted_in_expr(e: &Expr, param_names: &[&str]) -> bool {
     match &e.kind {
         ExprKind::Block(b) => any_return_rooted_at_param(b, param_names),
-        ExprKind::Unsafe(b) => any_return_rooted_at_param(b, param_names),
         ExprKind::If {
             cond,
             then,
@@ -2326,7 +2329,7 @@ impl Analyzer<'_> {
                     *state = merge_branches(&pre_loop, &[&pre_loop, &body_state], &[false, false]);
                 }
             },
-            StmtKind::Loop(b, _) =>self.walk_loop_body(b, state),
+            StmtKind::Loop(b, _) => self.walk_loop_body(b, state),
             // Lowered away by `crate::lower`.
             StmtKind::IfLet { .. } | StmtKind::GuardLet { .. } | StmtKind::WhileLet { .. } => {}
         }
@@ -2432,10 +2435,6 @@ impl Analyzer<'_> {
                 let outer = state.clone();
                 self.walk_block_in_scope(b, state, &outer);
             }
-            ExprKind::Unsafe(b) => {
-                let outer = state.clone();
-                self.walk_block_in_scope(b, state, &outer);
-            }
             // v0.0.3 Phase 5 Slice 5E.1: `await EXPR` evaluates EXPR
             // (the Future) and then suspends. From a borrow-checker
             // standpoint the inner expr's side effects flow through;
@@ -2500,7 +2499,9 @@ impl Analyzer<'_> {
                 self.apply_expr(value, state);
             }
             ExprKind::Cast { expr, .. } => self.apply_expr(expr, state),
-            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.apply_expr(&f.value, state);
                 }
@@ -3233,9 +3234,7 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         | ExprKind::IncludeBytes { .. }
         | ExprKind::IncludeStr { .. }
         | ExprKind::EnvVar { .. } => false,
-        ExprKind::Intrinsic { args, .. } => {
-            args.iter().any(|a| expr_reads_ident(a, name))
-        }
+        ExprKind::Intrinsic { args, .. } => args.iter().any(|a| expr_reads_ident(a, name)),
         ExprKind::Asm { operands, .. } => {
             operands.iter().any(|op| expr_reads_ident(&op.value, name))
         }
@@ -3245,10 +3244,6 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
         }),
         ExprKind::Path { .. } => false,
         ExprKind::Block(b) => {
-            b.stmts.iter().any(|s| stmt_reads_ident(s, name))
-                || b.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
-        }
-        ExprKind::Unsafe(b) => {
             b.stmts.iter().any(|s| stmt_reads_ident(s, name))
                 || b.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
         }
@@ -3284,7 +3279,9 @@ fn expr_reads_ident(e: &Expr, name: &str) -> bool {
             expr_reads_ident(target, name) || expr_reads_ident(value, name)
         }
         ExprKind::Cast { expr, .. } => expr_reads_ident(expr, name),
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             fields.iter().any(|f| expr_reads_ident(&f.value, name))
         }
         ExprKind::Field { receiver, .. } => expr_reads_ident(receiver, name),
@@ -3344,7 +3341,7 @@ fn stmt_reads_ident(s: &Stmt, name: &str) -> bool {
                         .is_some_and(|t| expr_reads_ident(t, name))
             }
         },
-        StmtKind::Loop(b, _) =>{
+        StmtKind::Loop(b, _) => {
             b.stmts.iter().any(|s| stmt_reads_ident(s, name))
                 || b.tail.as_deref().is_some_and(|t| expr_reads_ident(t, name))
         }

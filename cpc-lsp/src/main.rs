@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cplus_core::ast::ItemKind;
-use cplus_core::{attrs, borrowck, fmt as cpfmt, graph, lexer, lower, manifest, parser, resolver, sema};
+use cplus_core::{
+    attrs, borrowck, fmt as cpfmt, graph, lexer, lower, manifest, parser, resolver, sema,
+};
 use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::notification::Notification as _;
 use lsp_types::{
@@ -51,17 +53,19 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
 
     let server_caps = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
-            open_close: Some(true),
-            change: Some(TextDocumentSyncKind::FULL),
-            // We want save notifications without re-sending the whole text
-            // — we already have it from didChange.
-            save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                include_text: Some(false),
-            })),
-            will_save: None,
-            will_save_wait_until: None,
-        })),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                // We want save notifications without re-sending the whole text
+                // — we already have it from didChange.
+                save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                    include_text: Some(false),
+                })),
+                will_save: None,
+                will_save_wait_until: None,
+            },
+        )),
         // Slice 4E.3 — goto-definition. v0.0.13: served from the code graph
         // (resolved) in project mode, with the name-based single-file fallback.
         definition_provider: Some(OneOf::Left(true)),
@@ -223,8 +227,16 @@ fn handle_request(conn: &Connection, state: &mut ServerState, req: Request) {
 /// a fresh `Response` carrying the original request id.
 fn resp_with_id(id: lsp_server::RequestId, body: HandlerResult) -> Response {
     match body {
-        HandlerResult::Ok(v) => Response { id, result: Some(v), error: None },
-        HandlerResult::Err(err) => Response { id, result: None, error: Some(err) },
+        HandlerResult::Ok(v) => Response {
+            id,
+            result: Some(v),
+            error: None,
+        },
+        HandlerResult::Err(err) => Response {
+            id,
+            result: None,
+            error: Some(err),
+        },
     }
 }
 
@@ -286,8 +298,14 @@ fn whole_document_range(text: &str) -> Range {
         }
     }
     Range {
-        start: Position { line: 0, character: 0 },
-        end: Position { line, character: last_line_len },
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line,
+            character: last_line_len,
+        },
     }
 }
 
@@ -306,16 +324,24 @@ fn handle_code_action(state: &ServerState, params: &CodeActionParams) -> Handler
     // suggestion, emit one code-action per suggestion.
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
     for d in diags {
-        if d.suggestions.is_empty() { continue; }
+        if d.suggestions.is_empty() {
+            continue;
+        }
         let lsp_d = map_diagnostic(d);
-        if !ranges_overlap(asked_range, lsp_d.range) { continue; }
+        if !ranges_overlap(asked_range, lsp_d.range) {
+            continue;
+        }
         for sugg in &d.suggestions {
             // The suggestion's span tells us which file to edit. For
             // 4E.2 we only emit edits in the requesting URI's file —
             // a cross-file fix is more involved (we'd need a
             // WorkspaceEdit that touches another file's buffer).
-            let Ok(target_uri) = Url::from_file_path(&sugg.span.file) else { continue; };
-            if target_uri != *uri { continue; }
+            let Ok(target_uri) = Url::from_file_path(&sugg.span.file) else {
+                continue;
+            };
+            if target_uri != *uri {
+                continue;
+            }
             let edit_range = source_span_to_range(&sugg.span);
             let edit = TextEdit {
                 range: edit_range,
@@ -426,10 +452,18 @@ fn handle_references(state: &ServerState, params: &ReferenceParams) -> HandlerRe
     let uri = &params.text_document_position.text_document.uri;
     let pos = params.text_document_position.position;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
-    let Some(snap) = state.docs.get(uri) else { return null(); };
-    let Ok(open_path) = uri.to_file_path() else { return null(); };
-    let Some(ident) = identifier_at_position(&snap.text, pos) else { return null(); };
-    let Some((g, _loaded)) = build_project_graph(state, &open_path) else { return null(); };
+    let Some(snap) = state.docs.get(uri) else {
+        return null();
+    };
+    let Ok(open_path) = uri.to_file_path() else {
+        return null();
+    };
+    let Some(ident) = identifier_at_position(&snap.text, pos) else {
+        return null();
+    };
+    let Some((g, _loaded)) = build_project_graph(state, &open_path) else {
+        return null();
+    };
 
     let mut locs: Vec<Location> = Vec::new();
     if params.context.include_declaration {
@@ -457,17 +491,29 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
     let uri = &params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
-    let Some(_snap) = state.docs.get(uri) else { return null(); };
-    let Ok(open_path) = uri.to_file_path() else { return null(); };
-    let Some((g, loaded)) = build_project_graph(state, &open_path) else { return null(); };
-    let Some(fid) = fid_for_path(&loaded, &open_path) else { return null(); };
-    let Some((_, src)) = loaded.files.get(&fid) else { return null(); };
+    let Some(_snap) = state.docs.get(uri) else {
+        return null();
+    };
+    let Ok(open_path) = uri.to_file_path() else {
+        return null();
+    };
+    let Some((g, loaded)) = build_project_graph(state, &open_path) else {
+        return null();
+    };
+    let Some(fid) = fid_for_path(&loaded, &open_path) else {
+        return null();
+    };
+    let Some((_, src)) = loaded.files.get(&fid) else {
+        return null();
+    };
     // The graph's spans are over the on-disk source; map the cursor (1-based)
     // through that source so the byte aligns with the index.
     let Some(byte) = graph::byte_offset(src, pos.line + 1, pos.character + 1) else {
         return null();
     };
-    let Some(spot) = g.type_at(&fid, byte) else { return null(); };
+    let Some(spot) = g.type_at(&fid, byte) else {
+        return null();
+    };
     let value = format!("```cplus\n{}: {}\n```", spot.what, spot.ty);
     // Highlight the spot's own span (ASCII identifiers ⇒ bytes == chars).
     let width = spot.span.end.saturating_sub(spot.span.start);
@@ -482,7 +528,10 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
         }),
         range: Some(Range {
             start,
-            end: Position { line: start.line, character: start.character + width },
+            end: Position {
+                line: start.line,
+                character: start.character + width,
+            },
         }),
     };
     HandlerResult::Ok(serde_json::to_value(hover).expect("Hover serializes"))
@@ -493,9 +542,15 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
 fn handle_document_symbol(state: &ServerState, params: &DocumentSymbolParams) -> HandlerResult {
     let uri = &params.text_document.uri;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
-    let Ok(open_path) = uri.to_file_path() else { return null(); };
-    let Some((g, loaded)) = build_project_graph(state, &open_path) else { return null(); };
-    let Some(fid) = fid_for_path(&loaded, &open_path) else { return null(); };
+    let Ok(open_path) = uri.to_file_path() else {
+        return null();
+    };
+    let Some((g, loaded)) = build_project_graph(state, &open_path) else {
+        return null();
+    };
+    let Some(fid) = fid_for_path(&loaded, &open_path) else {
+        return null();
+    };
 
     #[allow(deprecated)] // `DocumentSymbol.deprecated` field — required by the struct.
     let syms: Vec<DocumentSymbol> = g
@@ -551,9 +606,12 @@ fn build_project_graph(
         .collect();
     match find_manifest(open_path) {
         ManifestProbe::Loaded { manifest, .. } if manifest.bins[0].path.is_file() => {
-            let loaded =
-                resolver::load_project_with_overlays(&manifest.bins[0].path, &manifest.root, overlays)
-                    .ok()?;
+            let loaded = resolver::load_project_with_overlays(
+                &manifest.bins[0].path,
+                &manifest.root,
+                overlays,
+            )
+            .ok()?;
             let g = graph::CodeGraph::build(&loaded);
             Some((g, loaded))
         }
@@ -666,33 +724,52 @@ fn find_decls_in_project(
 ) -> Vec<Location> {
     let mut out = Vec::new();
     for item in &program.items {
-        let Some((name, name_span)) = item_name_and_span(item) else { continue; };
-        if !name_matches(name, target) { continue; }
-        let Some(file_id) = item.origin_file.as_ref() else { continue; };
-        let Some((path, src)) = files.get(file_id) else { continue; };
+        let Some((name, name_span)) = item_name_and_span(item) else {
+            continue;
+        };
+        if !name_matches(name, target) {
+            continue;
+        }
+        let Some(file_id) = item.origin_file.as_ref() else {
+            continue;
+        };
+        let Some((path, src)) = files.get(file_id) else {
+            continue;
+        };
         let lm = cplus_core::diagnostics::LineMap::new(src);
         let source_span = lm.span(path, name_span, src);
-        let Ok(uri) = Url::from_file_path(path) else { continue; };
-        out.push(Location { uri, range: source_span_to_range(&source_span) });
+        let Ok(uri) = Url::from_file_path(path) else {
+            continue;
+        };
+        out.push(Location {
+            uri,
+            range: source_span_to_range(&source_span),
+        });
     }
     out
 }
 
 /// Single-file fallback: parse the open buffer directly and find
 /// matching top-level items.
-fn find_decls_in_single_file(
-    target: &str,
-    open_path: &Path,
-    text: &str,
-) -> Vec<Location> {
-    let Ok(toks) = lexer::tokenize(text) else { return Vec::new(); };
-    let Ok(prog) = parser::parse(toks) else { return Vec::new(); };
+fn find_decls_in_single_file(target: &str, open_path: &Path, text: &str) -> Vec<Location> {
+    let Ok(toks) = lexer::tokenize(text) else {
+        return Vec::new();
+    };
+    let Ok(prog) = parser::parse(toks) else {
+        return Vec::new();
+    };
     let lm = cplus_core::diagnostics::LineMap::new(text);
-    let Ok(uri) = Url::from_file_path(open_path) else { return Vec::new(); };
+    let Ok(uri) = Url::from_file_path(open_path) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for item in &prog.items {
-        let Some((name, name_span)) = item_name_and_span(item) else { continue; };
-        if !name_matches(name, target) { continue; }
+        let Some((name, name_span)) = item_name_and_span(item) else {
+            continue;
+        };
+        if !name_matches(name, target) {
+            continue;
+        }
         let source_span = lm.span(&open_path.to_path_buf(), name_span, text);
         out.push(Location {
             uri: uri.clone(),
@@ -740,7 +817,10 @@ fn handle_notification(conn: &Connection, state: &mut ServerState, not: Notifica
         m if m == lsp_types::notification::DidOpenTextDocument::METHOD => {
             let params: DidOpenTextDocumentParams = match cast_notif(&not) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("cpc-lsp: bad didOpen params: {e}"); return; }
+                Err(e) => {
+                    eprintln!("cpc-lsp: bad didOpen params: {e}");
+                    return;
+                }
             };
             let uri = params.text_document.uri.clone();
             state.docs.insert(
@@ -755,11 +835,16 @@ fn handle_notification(conn: &Connection, state: &mut ServerState, not: Notifica
         m if m == lsp_types::notification::DidChangeTextDocument::METHOD => {
             let params: DidChangeTextDocumentParams = match cast_notif(&not) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("cpc-lsp: bad didChange params: {e}"); return; }
+                Err(e) => {
+                    eprintln!("cpc-lsp: bad didChange params: {e}");
+                    return;
+                }
             };
             // Full sync (we advertised TextDocumentSyncKind::FULL), so
             // the single content change carries the new buffer.
-            let Some(snap) = state.docs.get_mut(&params.text_document.uri) else { return; };
+            let Some(snap) = state.docs.get_mut(&params.text_document.uri) else {
+                return;
+            };
             snap.version = params.text_document.version;
             if let Some(change) = params.content_changes.into_iter().next() {
                 snap.text = change.text;
@@ -770,14 +855,20 @@ fn handle_notification(conn: &Connection, state: &mut ServerState, not: Notifica
         m if m == lsp_types::notification::DidSaveTextDocument::METHOD => {
             let params: DidSaveTextDocumentParams = match cast_notif(&not) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("cpc-lsp: bad didSave params: {e}"); return; }
+                Err(e) => {
+                    eprintln!("cpc-lsp: bad didSave params: {e}");
+                    return;
+                }
             };
             publish_diagnostics_for(conn, state, &params.text_document.uri);
         }
         m if m == lsp_types::notification::DidCloseTextDocument::METHOD => {
             let params: DidCloseTextDocumentParams = match cast_notif(&not) {
                 Ok(p) => p,
-                Err(e) => { eprintln!("cpc-lsp: bad didClose params: {e}"); return; }
+                Err(e) => {
+                    eprintln!("cpc-lsp: bad didClose params: {e}");
+                    return;
+                }
             };
             let uri = params.text_document.uri;
             state.docs.remove(&uri);
@@ -803,7 +894,9 @@ fn cast_notif<T: serde::de::DeserializeOwned>(not: &Notification) -> Result<T, s
 /// Also caches the *original* cplus-core diagnostics so the
 /// code-action handler can resurface their suggestions later.
 fn publish_diagnostics_for(conn: &Connection, state: &mut ServerState, uri: &Url) {
-    let Some(snap) = state.docs.get(uri).cloned() else { return; };
+    let Some(snap) = state.docs.get(uri).cloned() else {
+        return;
+    };
     let path = match uri.to_file_path() {
         Ok(p) => p,
         Err(_) => {
@@ -824,9 +917,13 @@ fn publish_diagnostics_for(conn: &Connection, state: &mut ServerState, uri: &Url
             Ok(u) => u,
             Err(_) => continue,
         };
-        if file_uri == *uri { pushed_open = true; }
+        if file_uri == *uri {
+            pushed_open = true;
+        }
         let lsp_diags: Vec<Diagnostic> = raw_diags.iter().map(map_diagnostic).collect();
-        state.last_diagnostics.insert(file_uri.clone(), raw_diags.clone());
+        state
+            .last_diagnostics
+            .insert(file_uri.clone(), raw_diags.clone());
         push_diagnostics(conn, &file_uri, &lsp_diags, snap.version);
     }
     if !pushed_open {
@@ -894,24 +991,33 @@ fn compute_diagnostics(
                         open_text,
                         loaded.files.clone(),
                     );
-                    for d in attr_diags { push_into(&mut by_file, d); }
+                    for d in attr_diags {
+                        push_into(&mut by_file, d);
+                    }
                     let lower_diags = lower::lower_multi(
                         &mut loaded.program,
                         &manifest.bins[0].path,
                         open_text,
                         loaded.files.clone(),
                     );
-                    for d in lower_diags { push_into(&mut by_file, d); }
+                    for d in lower_diags {
+                        push_into(&mut by_file, d);
+                    }
                     let diags = sema::check_multi(
                         &loaded.program,
                         manifest.bins[0].path.clone(),
                         open_text,
                         loaded.files.clone(),
                     );
-                    for d in diags { push_into(&mut by_file, d); }
+                    for d in diags {
+                        push_into(&mut by_file, d);
+                    }
                     // Phase 5 borrow checker (slice 5BC.2a).
-                    let bc_diags = borrowck::check(&loaded.program, &manifest.bins[0].path, open_text);
-                    for d in bc_diags { push_into(&mut by_file, d); }
+                    let bc_diags =
+                        borrowck::check(&loaded.program, &manifest.bins[0].path, open_text);
+                    for d in bc_diags {
+                        push_into(&mut by_file, d);
+                    }
                 }
                 Err(failure) => {
                     push_into(&mut by_file, failure.to_diagnostic());
@@ -935,21 +1041,30 @@ fn compute_diagnostics(
         Ok(p) => p,
         Err(e) => {
             let lm = cplus_core::diagnostics::LineMap::new(open_text);
-            let d = cplus_core::diagnostics::from_parse(&e, &open_path.to_path_buf(), &lm, open_text);
+            let d =
+                cplus_core::diagnostics::from_parse(&e, &open_path.to_path_buf(), &lm, open_text);
             push_into(&mut by_file, d);
             return by_file;
         }
     };
     // Phase 5 slice 5ATTR.1: attribute validation runs first.
     let attr_diags = attrs::check(&prog, open_path.to_path_buf(), open_text);
-    for d in attr_diags { push_into(&mut by_file, d); }
+    for d in attr_diags {
+        push_into(&mut by_file, d);
+    }
     let lower_diags = lower::lower(&mut prog, &open_path.to_path_buf(), open_text);
-    for d in lower_diags { push_into(&mut by_file, d); }
+    for d in lower_diags {
+        push_into(&mut by_file, d);
+    }
     let diags = sema::check(&prog, open_path.to_path_buf(), open_text);
-    for d in diags { push_into(&mut by_file, d); }
+    for d in diags {
+        push_into(&mut by_file, d);
+    }
     // Phase 5 borrow checker (slice 5BC.2a).
     let bc_diags = borrowck::check(&prog, &open_path.to_path_buf(), open_text);
-    for d in bc_diags { push_into(&mut by_file, d); }
+    for d in bc_diags {
+        push_into(&mut by_file, d);
+    }
 
     by_file.entry(open_path.to_path_buf()).or_default();
     by_file
@@ -980,7 +1095,9 @@ enum ManifestProbe {
 }
 
 fn find_manifest(open_path: &Path) -> ManifestProbe {
-    let Some(mut dir) = open_path.parent() else { return ManifestProbe::None; };
+    let Some(mut dir) = open_path.parent() else {
+        return ManifestProbe::None;
+    };
     loop {
         let candidate = dir.join("Cplus.toml");
         if candidate.is_file() {
@@ -993,7 +1110,9 @@ fn find_manifest(open_path: &Path) -> ManifestProbe {
                 Err(e) => ManifestProbe::Error(e.to_diagnostic()),
             };
         }
-        let Some(parent) = dir.parent() else { return ManifestProbe::None; };
+        let Some(parent) = dir.parent() else {
+            return ManifestProbe::None;
+        };
         dir = parent;
     }
 }
@@ -1006,14 +1125,19 @@ fn manifest_entry_missing_diagnostic(
     cplus_core::diagnostics::Diagnostic {
         severity: Severity::Error,
         code: DiagCode("E0407"),
-        message: format!(
-            "binary entry `{}` does not exist",
-            m.bins[0].path.display()
-        ),
+        message: format!("binary entry `{}` does not exist", m.bins[0].path.display()),
         primary: SourceSpan {
             file: m.bins[0].path.clone(),
-            start: P { line: 1, col: 1, byte: 0 },
-            end: P { line: 1, col: 1, byte: 0 },
+            start: P {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
+            end: P {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
         },
         labels: Vec::new(),
         notes: Vec::new(),
@@ -1059,4 +1183,3 @@ fn map_diagnostic(d: &cplus_core::diagnostics::Diagnostic) -> Diagnostic {
     }
     // Quick-fix code-actions (lifted from `d.suggestions`) land in slice 4E.2.
 }
-

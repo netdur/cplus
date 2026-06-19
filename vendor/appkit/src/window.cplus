@@ -18,7 +18,7 @@ fn create_window_delegate(
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CWindowDelegate\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
         cls = rt::allocate_class_pair(nsobject, #str_ptr("CWindowDelegate\0"), 0 as usize);
         let _a: i8 = rt::add_terminate_method(
@@ -43,6 +43,8 @@ struct Window {
 }
 
 impl Window {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect, style_mask: u64, backing: u64, defer_flag: i8) -> Window {
         let nswindow_cls: *u8 = rt::get_class(#str_ptr("NSWindow\0"));
         let window_alloc: *u8 = rt::msg_id(nswindow_cls, rt::sel(#str_ptr("alloc\0")));

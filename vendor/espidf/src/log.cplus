@@ -6,16 +6,16 @@
 extern fn printf(fmt: *u8, ...) -> i32;
 
 fn print_i32(label: *u8, v: i32) {
-    let _r: i32 = unsafe { printf(#str_ptr("%s%d\n\0"), label, v) };
+    let _r: i32 = { printf(#str_ptr("%s%d\n\0"), label, v) };
     return;
 }
 
 fn print_i64(label: *u8, v: i64) {
-    let _r: i32 = unsafe { printf(#str_ptr("%s%lld\n\0"), label, v) };
+    let _r: i32 = { printf(#str_ptr("%s%lld\n\0"), label, v) };
     return;
 }
 
 fn print_line(text: *u8) {
-    let _r: i32 = unsafe { printf(#str_ptr("%s\n\0"), text) };
+    let _r: i32 = { printf(#str_ptr("%s\n\0"), text) };
     return;
 }

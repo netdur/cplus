@@ -28,8 +28,8 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { return false; }
         written = written +% (w as usize);
     }
@@ -37,24 +37,24 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
 }
 
 fn main() -> i32 {
-    let argc: i32 = unsafe { *_NSGetArgc() };
+    let argc: i32 = { *_NSGetArgc() };
     if argc < (4 as i32) {
         let u: str = "usage: tcp_client <ip> <port> <data>\n";
         write_all(2 as i32, #str_ptr(u), #str_len(u));
         return 1;
     }
-    let argv: **u8 = unsafe { *_NSGetArgv() };
-    let ip: *u8 = unsafe { *(argv + (1 as usize)) };
-    let port_s: *u8 = unsafe { *(argv + (2 as usize)) };
-    let data: *u8 = unsafe { *(argv + (3 as usize)) };
-    let data_len: usize = unsafe { strlen(data) };
+    let argv: **u8 = { *_NSGetArgv() };
+    let ip: *u8 = { *(argv + (1 as usize)) };
+    let port_s: *u8 = { *(argv + (2 as usize)) };
+    let data: *u8 = { *(argv + (3 as usize)) };
+    let data_len: usize = { strlen(data) };
 
-    let port: u16 = unsafe { atoi(port_s) } as u16;
-    let addr: u32 = unsafe { inet_addr(ip) };
+    let port: u16 = { atoi(port_s) } as u16;
+    let addr: u32 = { inet_addr(ip) };
 
     // sockaddr_in (16 bytes, macOS).
-    let sa: *u8 = unsafe { malloc(16 as usize) };
-    unsafe {
+    let sa: *u8 = { malloc(16 as usize) };
+    {
         memset(sa, 0 as i32, 16 as usize);
         sa[0 as usize] = 16 as u8;        // sin_len
         sa[1 as usize] = 2 as u8;         // AF_INET
@@ -70,39 +70,39 @@ fn main() -> i32 {
     }
 
     // AF_INET=2, SOCK_STREAM=1.
-    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
-        unsafe { free(sa); }
+        { free(sa); }
         return 2;
     }
-    let crc: i32 = unsafe { connect(fd, sa, 16 as u32) };
+    let crc: i32 = { connect(fd, sa, 16 as u32) };
     if crc != (0 as i32) {
-        unsafe { close(fd); }
-        unsafe { free(sa); }
+        { close(fd); }
+        { free(sa); }
         return 3;
     }
-    unsafe { free(sa); }
+    { free(sa); }
 
     // Send the payload.
     if !write_all(fd, data, data_len) {
-        unsafe { close(fd); }
+        { close(fd); }
         return 4;
     }
     // Half-close the write side so the peer sees EOF and stops trying
     // to read more. Without this, a simple echo server deadlocks: it
     // waits for our EOF before closing, and we wait for its EOF before
     // exiting. SHUT_WR = 1 on darwin / linux.
-    unsafe { shutdown(fd, 1 as i32); }
+    { shutdown(fd, 1 as i32); }
 
     // Read until EOF and dump to stdout.
     let bufcap: usize = 4096 as usize;
-    let buf: *u8 = unsafe { malloc(bufcap) };
+    let buf: *u8 = { malloc(bufcap) };
     loop {
-        let n: isize = unsafe { read(fd, buf, bufcap) };
+        let n: isize = { read(fd, buf, bufcap) };
         if n <= (0 as isize) { break; }
         write_all(1 as i32, buf, n as usize);
     }
-    unsafe { free(buf); }
-    unsafe { close(fd); }
+    { free(buf); }
+    { close(fd); }
     return 0;
 }

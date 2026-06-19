@@ -49,7 +49,7 @@ struct JValue {
 }
 
 fn arg_object(obj: jobject) -> JValue {
-    return JValue { bits: unsafe { obj as usize as jlong } };
+    return JValue { bits: { #addr(obj) as jlong } };
 }
 
 fn arg_int(v: jint) -> JValue {

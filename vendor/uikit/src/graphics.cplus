@@ -9,6 +9,8 @@ struct ImageView {
 }
 
 impl ImageView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> ImageView {
         return ImageView { obj: rt::alloc_init_with_frame(#str_ptr("UIImageView\0"), frame) };
     }
@@ -30,7 +32,7 @@ impl ImageView {
     }
 
     fn set_tint_color(this, color: view::Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTintColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTintColor:\0")), color.raw());
     }
 
     fn as_view_obj(this) -> *u8 {
@@ -43,6 +45,8 @@ struct Image {
 }
 
 impl Image {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn by_name(name: str) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
         return rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")), convert::cplus_str_to_nsstring(name));
@@ -73,6 +77,8 @@ struct Font {
 }
 
 impl Font {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn system_font_of_size(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("systemFontOfSize:\0")), size);
@@ -99,6 +105,8 @@ struct BezierPath {
 }
 
 impl BezierPath {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> BezierPath {
         return BezierPath { obj: rt::alloc_init(#str_ptr("UIBezierPath\0")) };
     }

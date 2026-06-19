@@ -4,7 +4,11 @@ impl Span {
     pub fn merge(self, other: Span) -> Span {
         // File-aware: a merged span keeps the real file id when either
         // side has one (synthesized 0-spans merge transparently).
-        let file = if self.file != 0 { self.file } else { other.file };
+        let file = if self.file != 0 {
+            self.file
+        } else {
+            other.file
+        };
         Span::in_file(file, self.start.min(other.start), self.end.max(other.end))
     }
 }
@@ -264,11 +268,6 @@ pub struct ImplBlock {
     /// E0504 / E0505) and coherence (E0507). `None` for plain inherent
     /// `impl Type { ... }` blocks.
     pub interface_name: Option<Ident>,
-    /// v0.0.14: `unsafe impl T for Send {}` / `unsafe impl T for Sync {}`.
-    /// `Send`/`Sync` are unsafe assertions (the author vouches for thread
-    /// safety the compiler can't prove), so their impls must carry `unsafe`.
-    /// `false` for every ordinary `impl` / `impl Type for Interface`.
-    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.3: an interface declaration. The body holds method
@@ -323,11 +322,6 @@ pub struct Method {
     /// (async methods land alongside non-Copy `self` async).
     pub is_async: bool,
     pub is_gen: bool,
-    /// TEXT.1: `unsafe fn` method. When true, calling this method outside
-    /// an enclosing `unsafe { ... }` block is rejected (E0801). Used for
-    /// borrow-producing escape hatches like `Text::as_str` whose returned
-    /// view's lifetime the compiler can't prove.
-    pub is_unsafe: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,11 +384,6 @@ pub struct Function {
     /// resumes + reads + returns `Option::Some(v)` (or `Option::None`
     /// when the coroutine completes).
     pub is_gen: bool,
-    /// TEXT.1: `unsafe fn` declaration. When true, calling this function
-    /// outside an enclosing `unsafe { ... }` block is rejected (E0801),
-    /// mirroring the existing `extern fn` call gate. Always false for
-    /// `extern fn` (those are gated by `is_extern` independently).
-    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.1: a single type parameter declaration in a generic
@@ -698,12 +687,6 @@ pub enum ExprKind {
     },
     Ident(String),
     Block(Block),
-    /// Slice 10.FFI.3: `unsafe { ... }` block. Same body shape as a
-    /// regular Block; presence marks the enclosed code as permitted to
-    /// perform operations that the borrow checker / type system can't
-    /// verify (pointer deref, extern fn calls, `str_from_raw_parts`).
-    /// Outside an unsafe block, those operations fire E0801.
-    Unsafe(Block),
     /// v0.0.3 Phase 5 Slice 5E.1: prefix `await EXPR`. The inner
     /// expression must evaluate to a `Future[T]`; the surrounding fn
     /// must be `async`. Sema enforces both. Codegen (5E.3) lowers to

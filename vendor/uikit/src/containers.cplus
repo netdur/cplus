@@ -14,6 +14,8 @@ struct VisualEffectView {
 }
 
 impl VisualEffectView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(effect: *u8) -> VisualEffectView {
         let cls: *u8 = rt::get_class(#str_ptr("UIVisualEffectView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -43,6 +45,8 @@ struct BlurEffect {
 }
 
 impl BlurEffect {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn style(style: i64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIBlurEffect\0"));
         return rt::msg_id_u64(cls, rt::sel(#str_ptr("effectWithStyle:\0")), style as u64);
@@ -54,6 +58,8 @@ struct TableViewCell {
 }
 
 impl TableViewCell {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(style: i64, reuse_identifier: *u8) -> TableViewCell {
         let cls: *u8 = rt::get_class(#str_ptr("UITableViewCell\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

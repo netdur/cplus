@@ -6,6 +6,8 @@ struct AlertController {
 }
 
 impl AlertController {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(title: str, message: str, style: i64) -> AlertController {
         let cls: *u8 = rt::get_class(#str_ptr("UIAlertController\0"));
         let alert: *u8 = rt::msg_id_id_id_i64(
@@ -32,6 +34,8 @@ struct AlertAction {
 }
 
 impl AlertAction {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(title: str, style: i64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("UIAlertAction\0"));
         return rt::msg_id_id_i64_id(
@@ -39,7 +43,7 @@ impl AlertAction {
             rt::sel(#str_ptr("actionWithTitle:style:handler:\0")),
             convert::cplus_str_to_nsstring(title),
             style,
-            unsafe { 0 as *u8 },
+            { 0 as *u8 },
         );
     }
 }

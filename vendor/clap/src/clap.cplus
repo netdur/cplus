@@ -15,8 +15,8 @@ extern fn exit(code: i32);
 fn find_byte(ptr: *u8, len: usize, b: u8) -> option::Option[usize] {
     var i: usize = 0 as usize;
     while i < len {
-        let p: *u8 = unsafe { ptr + i };
-        if unsafe { *p } == b {
+        let p: *u8 = { ptr + i };
+        if { *p } == b {
             return option::Option[usize]::Some(i);
         }
         i = i +% (1 as usize);
@@ -96,8 +96,8 @@ fn write_out(fd: i32, s: str) {
     let n: usize = #str_len(s);
     var written: usize = 0;
     while written < n {
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, n -% written) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, n -% written) };
         if w <= (0 as isize) { return; }
         written = written +% (w as usize);
     }
@@ -206,7 +206,7 @@ impl App {
             i = i +% (1 as usize);
         }
 
-        unsafe { exit(0 as i32); }
+        { exit(0 as i32); }
         return;
     }
 
@@ -218,7 +218,7 @@ impl App {
         write_out(fd, "USAGE:\n    ");
         write_out(fd, this.name);
         write_out(fd, " [FLAGS] [OPTIONS] [POSITIONALS]\n");
-        unsafe { exit(1 as i32); }
+        { exit(1 as i32); }
         return;
     }
 
@@ -227,7 +227,7 @@ impl App {
         write_out(fd, "error: The argument '--");
         write_out(fd, name);
         write_out(fd, "' requires a value but none was supplied\n");
-        unsafe { exit(1 as i32); }
+        { exit(1 as i32); }
         return;
     }
 
@@ -236,7 +236,7 @@ impl App {
         write_out(fd, "error: The following required arguments were not provided:\n    ");
         write_out(fd, name);
         write_out(fd, "\n");
-        unsafe { exit(1 as i32); }
+        { exit(1 as i32); }
         return;
     }
 
@@ -258,26 +258,26 @@ impl App {
         while i < n {
             let arg_str: str = vec::at_copy::[str](args, i);
 
-            if #str_len(arg_str) > (1 as usize) && unsafe { *#str_ptr(arg_str) } == ('-' as u8) {
+            if #str_len(arg_str) > (1 as usize) && { *#str_ptr(arg_str) } == ('-' as u8) {
                 if arg_str == "--help" || arg_str == "-h" {
                     this.print_help_and_exit();
                 }
 
-                if #str_len(arg_str) > (2 as usize) && unsafe { *(#str_ptr(arg_str) + 1) } == ('-' as u8) {
+                if #str_len(arg_str) > (2 as usize) && { *(#str_ptr(arg_str) + 1) } == ('-' as u8) {
                     // Long option: --name OR --name=value.
-                    let body_ptr: *u8 = unsafe { #str_ptr(arg_str) + 2 };
+                    let body_ptr: *u8 = { #str_ptr(arg_str) + 2 };
                     let body_len: usize = #str_len(arg_str) -% (2 as usize);
                     let eq_pos: option::Option[usize] = find_byte(body_ptr, body_len, '=' as u8);
 
                     let opt_name: str = match eq_pos {
-                        option::Option[usize]::Some(p) => unsafe { #str_from_raw_parts(body_ptr, p) },
-                        option::Option[usize]::None => unsafe { #str_from_raw_parts(body_ptr, body_len) },
+                        option::Option[usize]::Some(p) => { #str_from_raw_parts(body_ptr, p) },
+                        option::Option[usize]::None => { #str_from_raw_parts(body_ptr, body_len) },
                     };
                     let inline_value: option::Option[str] = match eq_pos {
                         option::Option[usize]::Some(p) => {
-                            let val_ptr: *u8 = unsafe { body_ptr + (p +% (1 as usize)) };
+                            let val_ptr: *u8 = { body_ptr + (p +% (1 as usize)) };
                             let val_len: usize = body_len -% p -% (1 as usize);
-                            option::Option[str]::Some(unsafe { #str_from_raw_parts(val_ptr, val_len) })
+                            option::Option[str]::Some({ #str_from_raw_parts(val_ptr, val_len) })
                         }
                         option::Option[usize]::None => option::Option[str]::None,
                     };
@@ -318,14 +318,14 @@ impl App {
                     // the lookup OR points at a non-flag, fall back to
                     // the single-option path with the whole `-...` body
                     // as the option name.
-                    let body_ptr: *u8 = unsafe { #str_ptr(arg_str) + 1 };
+                    let body_ptr: *u8 = { #str_ptr(arg_str) + 1 };
                     let body_len: usize = #str_len(arg_str) -% (1 as usize);
 
                     var all_flags: bool = body_len > (1 as usize);
                     var k: usize = 0 as usize;
                     while all_flags && k < body_len {
-                        let bptr: *u8 = unsafe { body_ptr + k };
-                        let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
+                        let bptr: *u8 = { body_ptr + k };
+                        let one: str = { #str_from_raw_parts(bptr, 1 as usize) };
                         let oa: option::Option[Arg] = this.find_arg_by_short(one);
                         match oa {
                             option::Option[Arg]::Some(a) => {
@@ -340,8 +340,8 @@ impl App {
                         // Combined form `-abc` — insert each flag.
                         var j2: usize = 0 as usize;
                         while j2 < body_len {
-                            let bptr: *u8 = unsafe { body_ptr + j2 };
-                            let one: str = unsafe { #str_from_raw_parts(bptr, 1 as usize) };
+                            let bptr: *u8 = { body_ptr + j2 };
+                            let one: str = { #str_from_raw_parts(bptr, 1 as usize) };
                             guard let option::Option[Arg]::Some(a) = this.find_arg_by_short(one) else {
                                 // can't happen — checked in loop above
                                 return ArgMatches {
@@ -353,7 +353,7 @@ impl App {
                             j2 = j2 +% (1 as usize);
                         }
                     } else {
-                        let opt_name: str = unsafe { #str_from_raw_parts(body_ptr, body_len) };
+                        let opt_name: str = { #str_from_raw_parts(body_ptr, body_len) };
                         let opt_arg: option::Option[Arg] = this.find_arg_by_short(opt_name);
                         guard let option::Option[Arg]::Some(found) = opt_arg else {
                             this.print_unknown_arg_and_exit(arg_str);

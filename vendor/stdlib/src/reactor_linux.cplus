@@ -99,48 +99,48 @@ fn evfilt_timer() -> i16 { return (0 as i16) -% (7 as i16); }
 
 // Lazily allocate + init the reactor on first use. Idempotent.
 fn ensure() -> *u8 {
-    let cur: *u8 = unsafe { #reactor_get_state() };
-    let null_p: *u8 = unsafe { 0 as *u8 };
+    let cur: *u8 = { #reactor_get_state() };
+    let null_p: *u8 = { 0 as *u8 };
     if !ptr_is_null(cur) { return cur; }
-    let state: *u8 = unsafe { malloc(header_bytes()) };
-    let epfd: i32 = unsafe { epoll_create1(0 as i32) };
-    let kqfd_slot: *i32 = unsafe { (state + off_kqfd()) as *i32 };
-    unsafe { *kqfd_slot = epfd; }
-    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
-    unsafe { *nw_slot = 0 as i32; }
-    let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
-    unsafe { *cw_slot = 8 as i32; }
-    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
-    unsafe { *np_slot = 0 as i32; }
-    let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
-    unsafe { *cp_slot = 8 as i32; }
-    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
-    unsafe { *wf_slot = malloc((8 *% 4) as usize); }
-    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
-    unsafe { *wh_slot = malloc((8 *% 8) as usize); }
-    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
-    unsafe { *ph_slot = malloc((8 *% 8) as usize); }
-    let eb_slot: **u8 = unsafe { (state + off_evbuf()) as **u8 };
-    unsafe { *eb_slot = malloc(evbuf_bytes()); }
-    let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
-    unsafe { *wflt_slot = malloc((8 *% 2) as usize); }
-    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
-    unsafe { *nt_slot = 0 as i32; }
-    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
-    unsafe { *na_slot = 0 as i32; }
-    let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
-    unsafe { *ca_slot = 8 as i32; }
-    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
-    unsafe { *ae_slot = malloc((8 *% 8) as usize); }
-    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
-    unsafe { *ar_slot = malloc((8 *% 8) as usize); }
-    unsafe { #reactor_set_state(state); }
+    let state: *u8 = { malloc(header_bytes()) };
+    let epfd: i32 = { epoll_create1(0 as i32) };
+    let kqfd_slot: *i32 = { (state + off_kqfd()) as *i32 };
+    { *kqfd_slot = epfd; }
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    { *nw_slot = 0 as i32; }
+    let cw_slot: *i32 = { (state + off_cap_waiters()) as *i32 };
+    { *cw_slot = 8 as i32; }
+    let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
+    { *np_slot = 0 as i32; }
+    let cp_slot: *i32 = { (state + off_cap_pending()) as *i32 };
+    { *cp_slot = 8 as i32; }
+    let wf_slot: **u8 = { (state + off_waiter_fds()) as **u8 };
+    { *wf_slot = malloc((8 *% 4) as usize); }
+    let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
+    { *wh_slot = malloc((8 *% 8) as usize); }
+    let ph_slot: **u8 = { (state + off_pending_hdls()) as **u8 };
+    { *ph_slot = malloc((8 *% 8) as usize); }
+    let eb_slot: **u8 = { (state + off_evbuf()) as **u8 };
+    { *eb_slot = malloc(evbuf_bytes()); }
+    let wflt_slot: **u8 = { (state + off_waiter_filters()) as **u8 };
+    { *wflt_slot = malloc((8 *% 2) as usize); }
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    { *nt_slot = 0 as i32; }
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    { *na_slot = 0 as i32; }
+    let ca_slot: *i32 = { (state + off_cap_awaiters()) as *i32 };
+    { *ca_slot = 8 as i32; }
+    let ae_slot: **u8 = { (state + off_awaitee_hdls()) as **u8 };
+    { *ae_slot = malloc((8 *% 8) as usize); }
+    let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
+    { *ar_slot = malloc((8 *% 8) as usize); }
+    { #reactor_set_state(state); }
     let _x: *u8 = null_p;
     return state;
 }
 
 fn ptr_is_null(p: *u8) -> bool {
-    let null_p: *u8 = unsafe { 0 as *u8 };
+    let null_p: *u8 = { 0 as *u8 };
     return p == null_p;
 }
 
@@ -205,22 +205,22 @@ fn register_write(fd: i32, hdl: *u8) {
 // resumes `hdl`. Arms a fresh timerfd and parks it in the waiter table
 // under the timer sentinel; poll_one_event reaps + closes it on fire.
 fn register_timer(ms: u64, hdl: *u8) {
-    let tfd: i32 = unsafe { timerfd_create(clock_monotonic(), 0 as i32) };
+    let tfd: i32 = { timerfd_create(clock_monotonic(), 0 as i32) };
     // itimerspec is two timespec { i64 sec; i64 nsec } pairs (32 bytes):
     //   it_interval @0  (0 → one-shot), it_value @16 (sec @16, nsec @24).
-    let its: *u8 = unsafe { malloc(32 as usize) };
-    let i0: *i64 = unsafe { its as *i64 };
-    unsafe { *i0 = 0 as i64; }
-    let i1: *i64 = unsafe { (its + (8 as usize)) as *i64 };
-    unsafe { *i1 = 0 as i64; }
+    let its: *u8 = { malloc(32 as usize) };
+    let i0: *i64 = { its as *i64 };
+    { *i0 = 0 as i64; }
+    let i1: *i64 = { (its + (8 as usize)) as *i64 };
+    { *i1 = 0 as i64; }
     let secs: i64 = (ms / (1000 as u64)) as i64;
     let nsecs: i64 = ((ms % (1000 as u64)) *% (1000000 as u64)) as i64;
-    let v_sec: *i64 = unsafe { (its + (16 as usize)) as *i64 };
-    unsafe { *v_sec = secs; }
-    let v_nsec: *i64 = unsafe { (its + (24 as usize)) as *i64 };
-    unsafe { *v_nsec = nsecs; }
-    let _r: i32 = unsafe { timerfd_settime(tfd, 0 as i32, its, 0 as *u8) };
-    unsafe { free(its); }
+    let v_sec: *i64 = { (its + (16 as usize)) as *i64 };
+    { *v_sec = secs; }
+    let v_nsec: *i64 = { (its + (24 as usize)) as *i64 };
+    { *v_nsec = nsecs; }
+    let _r: i32 = { timerfd_settime(tfd, 0 as i32, its, 0 as *u8) };
+    { free(its); }
     register_filter(tfd, hdl, evfilt_timer());
     return;
 }
@@ -229,49 +229,49 @@ fn register_timer(ms: u64, hdl: *u8) {
 // with epoll. `poll_one_event` matches the firing fd back to its waiter.
 fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     let state: *u8 = ensure();
-    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
-    let cw_slot: *i32 = unsafe { (state + off_cap_waiters()) as *i32 };
-    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
-    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
-    let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
-    var n: i32 = unsafe { *nw_slot };
-    var cap: i32 = unsafe { *cw_slot };
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let cw_slot: *i32 = { (state + off_cap_waiters()) as *i32 };
+    let wf_slot: **u8 = { (state + off_waiter_fds()) as **u8 };
+    let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
+    let wflt_slot: **u8 = { (state + off_waiter_filters()) as **u8 };
+    var n: i32 = { *nw_slot };
+    var cap: i32 = { *cw_slot };
     if n == cap {
         cap = cap *% (2 as i32);
-        let new_fds: *u8 = unsafe { realloc(*wf_slot, (cap *% 4) as usize) };
-        let new_hdls: *u8 = unsafe { realloc(*wh_slot, (cap *% 8) as usize) };
-        let new_flts: *u8 = unsafe { realloc(*wflt_slot, (cap *% 2) as usize) };
-        unsafe { *wf_slot = new_fds; }
-        unsafe { *wh_slot = new_hdls; }
-        unsafe { *wflt_slot = new_flts; }
-        unsafe { *cw_slot = cap; }
+        let new_fds: *u8 = { realloc(*wf_slot, (cap *% 4) as usize) };
+        let new_hdls: *u8 = { realloc(*wh_slot, (cap *% 8) as usize) };
+        let new_flts: *u8 = { realloc(*wflt_slot, (cap *% 2) as usize) };
+        { *wf_slot = new_fds; }
+        { *wh_slot = new_hdls; }
+        { *wflt_slot = new_flts; }
+        { *cw_slot = cap; }
     }
-    let fds: *i32 = unsafe { *wf_slot as *i32 };
-    let hdls: **u8 = unsafe { *wh_slot as **u8 };
-    let flts: *i16 = unsafe { *wflt_slot as *i16 };
-    let fd_slot: *i32 = unsafe { fds + (n as usize) };
-    unsafe { *fd_slot = fd; }
-    let hdl_slot: **u8 = unsafe { hdls + (n as usize) };
-    unsafe { *hdl_slot = hdl; }
-    let flt_slot: *i16 = unsafe { flts + (n as usize) };
-    unsafe { *flt_slot = filter; }
-    unsafe { *nw_slot = n +% (1 as i32); }
+    let fds: *i32 = { *wf_slot as *i32 };
+    let hdls: **u8 = { *wh_slot as **u8 };
+    let flts: *i16 = { *wflt_slot as *i16 };
+    let fd_slot: *i32 = { fds + (n as usize) };
+    { *fd_slot = fd; }
+    let hdl_slot: **u8 = { hdls + (n as usize) };
+    { *hdl_slot = hdl; }
+    let flt_slot: *i16 = { flts + (n as usize) };
+    { *flt_slot = filter; }
+    { *nw_slot = n +% (1 as i32); }
     // Arm with epoll. events = (write? EPOLLOUT : EPOLLIN) | EPOLLONESHOT;
     // data stashes the fd so the wake-side can match it back.
-    let epfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
-    let eb: *u8 = unsafe { *((state + off_evbuf()) as **u8) };
-    let ev_slot: *u32 = unsafe { eb as *u32 };
+    let epfd: i32 = { *((state + off_kqfd()) as *i32) };
+    let eb: *u8 = { *((state + off_evbuf()) as **u8) };
+    let ev_slot: *u32 = { eb as *u32 };
     if filter == evfilt_write() {
-        unsafe { *ev_slot = epollout_oneshot(); }
+        { *ev_slot = epollout_oneshot(); }
     } else {
-        unsafe { *ev_slot = epollin_oneshot(); }
+        { *ev_slot = epollin_oneshot(); }
     }
-    let data_slot: *i64 = unsafe { (eb + (4 as usize)) as *i64 };
-    unsafe { *data_slot = fd as i64; }
-    let r: i32 = unsafe { epoll_ctl(epfd, epoll_ctl_add(), fd, eb) };
+    let data_slot: *i64 = { (eb + (4 as usize)) as *i64 };
+    { *data_slot = fd as i64; }
+    let r: i32 = { epoll_ctl(epfd, epoll_ctl_add(), fd, eb) };
     // EEXIST (fd already armed — e.g. read+write on one fd): switch to MOD.
     if r != (0 as i32) {
-        let _m: i32 = unsafe { epoll_ctl(epfd, epoll_ctl_mod(), fd, eb) };
+        let _m: i32 = { epoll_ctl(epfd, epoll_ctl_mod(), fd, eb) };
     }
     return;
 }
@@ -280,52 +280,52 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
 // calling thread on epoll_wait. Returns true if a coroutine was resumed.
 fn poll_one_event() -> bool {
     let state: *u8 = ensure();
-    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
-    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
-    let n: i32 = unsafe { *nw_slot };
-    let nt: i32 = unsafe { *nt_slot };
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    let n: i32 = { *nw_slot };
+    let nt: i32 = { *nt_slot };
     if n == (0 as i32) {
         if nt == (0 as i32) { return false; }
     }
-    let epfd: i32 = unsafe { *((state + off_kqfd()) as *i32) };
-    let eb: *u8 = unsafe { *((state + off_evbuf()) as **u8) };
-    let nev: i32 = unsafe { epoll_wait(epfd, eb, 1 as i32, (0 as i32) -% (1 as i32)) };
+    let epfd: i32 = { *((state + off_kqfd()) as *i32) };
+    let eb: *u8 = { *((state + off_evbuf()) as **u8) };
+    let nev: i32 = { epoll_wait(epfd, eb, 1 as i32, (0 as i32) -% (1 as i32)) };
     if nev <= (0 as i32) { return false; }
     // data @4 holds the fd we stored at register time.
-    let fd_ready: i32 = unsafe { *((eb + (4 as usize)) as *i32) };
-    let wf_slot: **u8 = unsafe { (state + off_waiter_fds()) as **u8 };
-    let wh_slot: **u8 = unsafe { (state + off_waiter_hdls()) as **u8 };
-    let wflt_slot: **u8 = unsafe { (state + off_waiter_filters()) as **u8 };
-    let fds: *i32 = unsafe { *wf_slot as *i32 };
-    let hdls: **u8 = unsafe { *wh_slot as **u8 };
-    let flts: *i16 = unsafe { *wflt_slot as *i16 };
+    let fd_ready: i32 = { *((eb + (4 as usize)) as *i32) };
+    let wf_slot: **u8 = { (state + off_waiter_fds()) as **u8 };
+    let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
+    let wflt_slot: **u8 = { (state + off_waiter_filters()) as **u8 };
+    let fds: *i32 = { *wf_slot as *i32 };
+    let hdls: **u8 = { *wh_slot as **u8 };
+    let flts: *i16 = { *wflt_slot as *i16 };
     var i: i32 = 0;
     while i < n {
-        let cur_fd: i32 = unsafe { *(fds + (i as usize)) };
+        let cur_fd: i32 = { *(fds + (i as usize)) };
         if cur_fd == fd_ready {
-            let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
-            let cur_flt: i16 = unsafe { *(flts + (i as usize)) };
+            let hdl: *u8 = { *(hdls + (i as usize)) };
+            let cur_flt: i16 = { *(flts + (i as usize)) };
             // Disarm in epoll (one event per registration).
-            let _d: i32 = unsafe { epoll_ctl(epfd, epoll_ctl_del(), fd_ready, eb) };
+            let _d: i32 = { epoll_ctl(epfd, epoll_ctl_del(), fd_ready, eb) };
             // A timerfd: drain its 8-byte expiration count and close it.
             if cur_flt == evfilt_timer() {
-                let scratch: *u8 = unsafe { malloc(8 as usize) };
-                let _rd: isize = unsafe { read(fd_ready, scratch, 8 as usize) };
-                unsafe { free(scratch); }
-                let _c: i32 = unsafe { close(fd_ready) };
+                let scratch: *u8 = { malloc(8 as usize) };
+                let _rd: isize = { read(fd_ready, scratch, 8 as usize) };
+                { free(scratch); }
+                let _c: i32 = { close(fd_ready) };
             }
             // Swap-remove from the parallel arrays.
             let last_i: i32 = n -% (1 as i32);
             if i != last_i {
-                let last_fd: i32 = unsafe { *(fds + (last_i as usize)) };
-                let last_hdl: *u8 = unsafe { *(hdls + (last_i as usize)) };
-                let last_flt: i16 = unsafe { *(flts + (last_i as usize)) };
-                unsafe { *(fds + (i as usize)) = last_fd; }
-                unsafe { *(hdls + (i as usize)) = last_hdl; }
-                unsafe { *(flts + (i as usize)) = last_flt; }
+                let last_fd: i32 = { *(fds + (last_i as usize)) };
+                let last_hdl: *u8 = { *(hdls + (last_i as usize)) };
+                let last_flt: i16 = { *(flts + (last_i as usize)) };
+                { *(fds + (i as usize)) = last_fd; }
+                { *(hdls + (i as usize)) = last_hdl; }
+                { *(flts + (i as usize)) = last_flt; }
             }
-            unsafe { *nw_slot = last_i; }
-            unsafe { #coro_resume(hdl); }
+            { *nw_slot = last_i; }
+            { #coro_resume(hdl); }
             return true;
         }
         i = i +% (1 as i32);
@@ -336,18 +336,18 @@ fn poll_one_event() -> bool {
 // Drain the spawn_local task queue: resume each handle once.
 fn drain_pending() -> i32 {
     let state: *u8 = ensure();
-    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
-    let n: i32 = unsafe { *np_slot };
+    let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
+    let n: i32 = { *np_slot };
     if n == (0 as i32) { return 0; }
-    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
-    let hdls: **u8 = unsafe { *ph_slot as **u8 };
-    unsafe { *np_slot = 0 as i32; }
+    let ph_slot: **u8 = { (state + off_pending_hdls()) as **u8 };
+    let hdls: **u8 = { *ph_slot as **u8 };
+    { *np_slot = 0 as i32; }
     var i: i32 = 0;
     while i < n {
-        let hdl: *u8 = unsafe { *(hdls + (i as usize)) };
-        let done: i32 = unsafe { #coro_done(hdl) };
+        let hdl: *u8 = { *(hdls + (i as usize)) };
+        let done: i32 = { #coro_done(hdl) };
         if done == (0 as i32) {
-            unsafe { #coro_resume(hdl); }
+            { #coro_resume(hdl); }
         }
         i = i +% (1 as i32);
     }
@@ -357,21 +357,21 @@ fn drain_pending() -> i32 {
 // Push a coroutine handle to the spawn_local queue.
 fn enqueue_pending(hdl: *u8) {
     let state: *u8 = ensure();
-    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
-    let cp_slot: *i32 = unsafe { (state + off_cap_pending()) as *i32 };
-    let ph_slot: **u8 = unsafe { (state + off_pending_hdls()) as **u8 };
-    var n: i32 = unsafe { *np_slot };
-    var cap: i32 = unsafe { *cp_slot };
+    let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
+    let cp_slot: *i32 = { (state + off_cap_pending()) as *i32 };
+    let ph_slot: **u8 = { (state + off_pending_hdls()) as **u8 };
+    var n: i32 = { *np_slot };
+    var cap: i32 = { *cp_slot };
     if n == cap {
         cap = cap *% (2 as i32);
-        let new_p: *u8 = unsafe { realloc(*ph_slot, (cap *% 8) as usize) };
-        unsafe { *ph_slot = new_p; }
-        unsafe { *cp_slot = cap; }
+        let new_p: *u8 = { realloc(*ph_slot, (cap *% 8) as usize) };
+        { *ph_slot = new_p; }
+        { *cp_slot = cap; }
     }
-    let hdls: **u8 = unsafe { *ph_slot as **u8 };
-    let slot: **u8 = unsafe { hdls + (n as usize) };
-    unsafe { *slot = hdl; }
-    unsafe { *np_slot = n +% (1 as i32); }
+    let hdls: **u8 = { *ph_slot as **u8 };
+    let slot: **u8 = { hdls + (n as usize) };
+    { *slot = hdl; }
+    { *np_slot = n +% (1 as i32); }
     return;
 }
 
@@ -380,42 +380,42 @@ fn enqueue_pending(hdl: *u8) {
 // zero; the sum keeps the same meaning as the kqueue backend.
 fn waiter_count() -> i32 {
     let state: *u8 = ensure();
-    let nw_slot: *i32 = unsafe { (state + off_n_waiters()) as *i32 };
-    let nt_slot: *i32 = unsafe { (state + off_n_timers()) as *i32 };
-    return unsafe { *nw_slot } +% unsafe { *nt_slot };
+    let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
+    let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
+    return { *nw_slot } +% { *nt_slot };
 }
 
 fn pending_count() -> i32 {
     let state: *u8 = ensure();
-    let np_slot: *i32 = unsafe { (state + off_n_pending()) as *i32 };
-    return unsafe { *np_slot };
+    let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
+    return { *np_slot };
 }
 
 // Register `awaiter` as waiting on `awaitee`. Append-only; entries are
 // removed by `notify_completed` (swap-remove).
 fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let state: *u8 = ensure();
-    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
-    let ca_slot: *i32 = unsafe { (state + off_cap_awaiters()) as *i32 };
-    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
-    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
-    var n: i32 = unsafe { *na_slot };
-    var cap: i32 = unsafe { *ca_slot };
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    let ca_slot: *i32 = { (state + off_cap_awaiters()) as *i32 };
+    let ae_slot: **u8 = { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
+    var n: i32 = { *na_slot };
+    var cap: i32 = { *ca_slot };
     if n == cap {
         cap = cap *% (2 as i32);
-        let new_ae: *u8 = unsafe { realloc(*ae_slot, (cap *% 8) as usize) };
-        let new_ar: *u8 = unsafe { realloc(*ar_slot, (cap *% 8) as usize) };
-        unsafe { *ae_slot = new_ae; }
-        unsafe { *ar_slot = new_ar; }
-        unsafe { *ca_slot = cap; }
+        let new_ae: *u8 = { realloc(*ae_slot, (cap *% 8) as usize) };
+        let new_ar: *u8 = { realloc(*ar_slot, (cap *% 8) as usize) };
+        { *ae_slot = new_ae; }
+        { *ar_slot = new_ar; }
+        { *ca_slot = cap; }
     }
-    let aes: **u8 = unsafe { *ae_slot as **u8 };
-    let ars: **u8 = unsafe { *ar_slot as **u8 };
-    let aes_dst: **u8 = unsafe { aes + (n as usize) };
-    unsafe { *aes_dst = awaitee; }
-    let ars_dst: **u8 = unsafe { ars + (n as usize) };
-    unsafe { *ars_dst = awaiter; }
-    unsafe { *na_slot = n +% (1 as i32); }
+    let aes: **u8 = { *ae_slot as **u8 };
+    let ars: **u8 = { *ar_slot as **u8 };
+    let aes_dst: **u8 = { aes + (n as usize) };
+    { *aes_dst = awaitee; }
+    let ars_dst: **u8 = { ars + (n as usize) };
+    { *ars_dst = awaiter; }
+    { *na_slot = n +% (1 as i32); }
     return;
 }
 
@@ -423,26 +423,26 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
 // swap-remove and enqueue the awaiter for resumption.
 fn notify_completed(awaitee: *u8) {
     let state: *u8 = ensure();
-    let na_slot: *i32 = unsafe { (state + off_n_awaiters()) as *i32 };
-    let ae_slot: **u8 = unsafe { (state + off_awaitee_hdls()) as **u8 };
-    let ar_slot: **u8 = unsafe { (state + off_awaiter_hdls()) as **u8 };
-    let n: i32 = unsafe { *na_slot };
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    let ae_slot: **u8 = { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
+    let n: i32 = { *na_slot };
     if n == (0 as i32) { return; }
-    let aes: **u8 = unsafe { *ae_slot as **u8 };
-    let ars: **u8 = unsafe { *ar_slot as **u8 };
+    let aes: **u8 = { *ae_slot as **u8 };
+    let ars: **u8 = { *ar_slot as **u8 };
     var i: i32 = 0;
     while i < n {
-        let cur_ae: *u8 = unsafe { *(aes + (i as usize)) };
+        let cur_ae: *u8 = { *(aes + (i as usize)) };
         if cur_ae == awaitee {
-            let awaiter: *u8 = unsafe { *(ars + (i as usize)) };
+            let awaiter: *u8 = { *(ars + (i as usize)) };
             let last_i: i32 = n -% (1 as i32);
             if i != last_i {
-                let last_ae: *u8 = unsafe { *(aes + (last_i as usize)) };
-                let last_ar: *u8 = unsafe { *(ars + (last_i as usize)) };
-                unsafe { *(aes + (i as usize)) = last_ae; }
-                unsafe { *(ars + (i as usize)) = last_ar; }
+                let last_ae: *u8 = { *(aes + (last_i as usize)) };
+                let last_ar: *u8 = { *(ars + (last_i as usize)) };
+                { *(aes + (i as usize)) = last_ae; }
+                { *(ars + (i as usize)) = last_ar; }
             }
-            unsafe { *na_slot = last_i; }
+            { *na_slot = last_i; }
             enqueue_pending(awaiter);
             return;
         }

@@ -25,20 +25,20 @@ fn new[T](take v: T) -> Rc[T] {
     let header: usize = 8 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
-    let raw: *u8 = unsafe { malloc(total) };
-    let refct: *u64 = unsafe { raw as *u64 };
-    unsafe { *refct = 1 as u64; }
-    let value_ptr: *T = unsafe { (raw + header) as *T };
-    unsafe { *value_ptr = v; }
+    let raw: *u8 = { malloc(total) };
+    let refct: *u64 = { raw as *u64 };
+    { *refct = 1 as u64; }
+    let value_ptr: *T = { (raw + header) as *T };
+    { *value_ptr = v; }
     return Rc[T] { ctrl: raw };
 }
 
 impl Rc[T] {
     // Non-atomic increment; returns a new Rc sharing the storage.
     fn clone(this) -> Rc[T] {
-        let refct: *u64 = unsafe { this.ctrl as *u64 };
-        let cur: u64 = unsafe { *refct };
-        unsafe { *refct = cur +% (1 as u64); }
+        let refct: *u64 = { this.ctrl as *u64 };
+        let cur: u64 = { *refct };
+        { *refct = cur +% (1 as u64); }
         return Rc[T] { ctrl: this.ctrl };
     }
 
@@ -53,8 +53,8 @@ impl Rc[T: Copy] {
     // Read inner T (bitwise copy).
     fn get(this) -> T {
         let header: usize = 8 as usize;
-        let value_ptr: *T = unsafe { (this.ctrl + header) as *T };
-        return unsafe { *value_ptr };
+        let value_ptr: *T = { (this.ctrl + header) as *T };
+        return { *value_ptr };
     }
 }
 
@@ -62,22 +62,22 @@ impl Rc[T] {
 
     // Current strong-reference count (single-threaded, exact).
     fn strong_count(this) -> u64 {
-        let refct: *u64 = unsafe { this.ctrl as *u64 };
-        return unsafe { *refct };
+        let refct: *u64 = { this.ctrl as *u64 };
+        return { *refct };
     }
 
     // Destructor: non-atomic decrement; free the block on the last ref.
     fn drop(ref this) {
-        let refct: *u64 = unsafe { this.ctrl as *u64 };
-        let cur: u64 = unsafe { *refct };
+        let refct: *u64 = { this.ctrl as *u64 };
+        let cur: u64 = { *refct };
         let new_count: u64 = cur -% (1 as u64);
-        unsafe { *refct = new_count; }
+        { *refct = new_count; }
         if new_count == (0 as u64) {
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last reference
             // before freeing the control block.
-            let value_ptr: *T = unsafe { (this.ctrl + (8 as usize)) as *T };
-            unsafe { #drop_in_place::[T](value_ptr); }
-            unsafe { free(this.ctrl); }
+            let value_ptr: *T = { (this.ctrl + (8 as usize)) as *T };
+            { #drop_in_place::[T](value_ptr); }
+            { free(this.ctrl); }
         }
         return;
     }

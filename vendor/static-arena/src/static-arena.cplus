@@ -47,7 +47,7 @@ impl StaticArena16K {
     fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
         var align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
-        let buf_base: usize = unsafe { #addr_of(this) as usize };
+        let buf_base: usize = { #addr(#addr_of(this)) };
         let cursor: usize = buf_base +% this.used;
         let remainder: usize = cursor % align;
         let aligned: usize = if remainder == (0 as usize) { cursor } else { cursor +% (align -% remainder) };
@@ -56,7 +56,7 @@ impl StaticArena16K {
             return option::Option[*u8]::None;
         }
         this.used = new_offset;
-        return option::Option[*u8]::Some(unsafe { aligned as *u8 });
+        return option::Option[*u8]::Some({ aligned as *u8 });
     }
 
     fn alloc_zeroed_bytes(ref this, n: usize) -> option::Option[*u8] {
@@ -64,7 +64,7 @@ impl StaticArena16K {
         guard let option::Option[*u8]::Some(p) = opt else {
             return option::Option[*u8]::None;
         };
-        unsafe { memset(p, 0 as i32, n); }
+        { memset(p, 0 as i32, n); }
         return option::Option[*u8]::Some(p);
     }
 
@@ -74,8 +74,8 @@ impl StaticArena16K {
         guard let option::Option[*u8]::Some(p) = opt else {
             return option::Option[str]::None;
         };
-        unsafe { memcpy(p, #str_ptr(s), n); }
-        return option::Option[str]::Some(unsafe { #str_from_raw_parts(p, n) });
+        { memcpy(p, #str_ptr(s), n); }
+        return option::Option[str]::Some({ #str_from_raw_parts(p, n) });
     }
 }
 
@@ -103,7 +103,7 @@ impl StaticArena64K {
     fn alloc_bytes_aligned(ref this, n: usize, align: usize) -> option::Option[*u8] {
         var align: usize = align;
         if align == (0 as usize) { align = 1 as usize; }
-        let buf_base: usize = unsafe { #addr_of(this) as usize };
+        let buf_base: usize = { #addr(#addr_of(this)) };
         let cursor: usize = buf_base +% this.used;
         let remainder: usize = cursor % align;
         let aligned: usize = if remainder == (0 as usize) { cursor } else { cursor +% (align -% remainder) };
@@ -112,7 +112,7 @@ impl StaticArena64K {
             return option::Option[*u8]::None;
         }
         this.used = new_offset;
-        return option::Option[*u8]::Some(unsafe { aligned as *u8 });
+        return option::Option[*u8]::Some({ aligned as *u8 });
     }
 }
 
@@ -165,8 +165,8 @@ fn test_16k_alloc_zeroed_writes_zeros() {
         assert false;
         return;
     };
-    let b0: u8 = unsafe { *p };
-    let b31: u8 = unsafe { *(p + 31) };
+    let b0: u8 = { *p };
+    let b31: u8 = { *(p + 31) };
     assert b0 == (0 as u8);
     assert b31 == (0 as u8);
 }
@@ -181,8 +181,8 @@ fn test_16k_alloc_str_round_trip() {
     };
     assert #str_len(s) == (5 as usize);
     let p: *u8 = #str_ptr(s);
-    assert unsafe { *p } == ('h' as u8);
-    assert unsafe { *(p + 4) } == ('o' as u8);
+    assert { *p } == ('h' as u8);
+    assert { *(p + 4) } == ('o' as u8);
 }
 
 #[test]

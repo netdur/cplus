@@ -5,6 +5,8 @@ struct TableView {
 }
 
 impl TableView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> TableView {
         return TableView { obj: rt::alloc_init_with_frame(#str_ptr("UITableView\0"), frame) };
     }
@@ -52,6 +54,8 @@ struct CollectionView {
 }
 
 impl CollectionView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect, layout: *u8) -> CollectionView {
         let cls: *u8 = rt::get_class(#str_ptr("UICollectionView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -108,6 +112,8 @@ struct CollectionViewFlowLayout {
 }
 
 impl CollectionViewFlowLayout {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> CollectionViewFlowLayout {
         return CollectionViewFlowLayout { obj: rt::alloc_init(#str_ptr("UICollectionViewFlowLayout\0")) };
     }
@@ -134,6 +140,8 @@ struct CollectionViewCell {
 }
 
 impl CollectionViewCell {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> CollectionViewCell {
         return CollectionViewCell { obj: rt::alloc_init_with_frame(#str_ptr("UICollectionViewCell\0"), frame) };
     }
@@ -152,6 +160,8 @@ struct PickerView {
 }
 
 impl PickerView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> PickerView {
         return PickerView { obj: rt::alloc_init_with_frame(#str_ptr("UIPickerView\0"), frame) };
     }

@@ -29,8 +29,8 @@ extern fn gethostbyname(name: *u8) -> *u8;
 fn write_all(fd: i32, p: *u8, n: usize) -> bool {
     var written: usize = 0 as usize;
     while written < n {
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, n -% written) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, n -% written) };
         if w <= (0 as isize) { return false; }
         written = written +% (w as usize);
     }
@@ -54,44 +54,44 @@ fn write_str(fd: i32, s: str) -> bool {
 //
 // h_addr_list[0] is a pointer to the 4-byte address.
 fn resolve_host(host: *u8) -> u32 {
-    let numeric: u32 = unsafe { inet_addr(host) };
+    let numeric: u32 = { inet_addr(host) };
     // inet_addr returns 0xFFFFFFFF on parse failure.
     if numeric != (0xffffffff as u32) { return numeric; }
-    let he: *u8 = unsafe { gethostbyname(host) };
-    let null: *u8 = unsafe { 0 as *u8 };
+    let he: *u8 = { gethostbyname(host) };
+    let null: *u8 = { 0 as *u8 };
     if he == null { return 0 as u32; }
     // Load h_addr_list (offset 24, `char **`). The struct slot stores a
     // pointer-to-pointer; treat the address-of-that-slot as `***u8` so
     // one deref yields the `**u8` array, another the first `*u8`.
-    let addr_list_slot: ***u8 = unsafe { (he + (24 as usize)) as ***u8 };
-    let addr_list: **u8 = unsafe { *addr_list_slot };
-    let first_addr: *u8 = unsafe { *addr_list };
+    let addr_list_slot: ***u8 = { (he + (24 as usize)) as ***u8 };
+    let addr_list: **u8 = { *addr_list_slot };
+    let first_addr: *u8 = { *addr_list };
     // First 4 bytes are the IPv4 address in network byte order — load
     // and assemble into a u32 in memory order (matches inet_addr's
     // return convention).
-    let b0: u32 = unsafe { first_addr[0 as usize] } as u32;
-    let b1: u32 = unsafe { first_addr[1 as usize] } as u32;
-    let b2: u32 = unsafe { first_addr[2 as usize] } as u32;
-    let b3: u32 = unsafe { first_addr[3 as usize] } as u32;
+    let b0: u32 = { first_addr[0 as usize] } as u32;
+    let b1: u32 = { first_addr[1 as usize] } as u32;
+    let b2: u32 = { first_addr[2 as usize] } as u32;
+    let b3: u32 = { first_addr[3 as usize] } as u32;
     return b0| (b1 << (8 as u32))| (b2 << (16 as u32))| (b3 << (24 as u32));
 }
 
 fn main() -> i32 {
-    let argc: i32 = unsafe { *_NSGetArgc() };
+    let argc: i32 = { *_NSGetArgc() };
     if argc < (2 as i32) {
         write_str(2 as i32, "usage: http_get <url>\n");
         return 1;
     }
-    let argv: **u8 = unsafe { *_NSGetArgv() };
-    let url: *u8 = unsafe { *(argv + (1 as usize)) };
-    let url_len: usize = unsafe { strlen(url) };
+    let argv: **u8 = { *_NSGetArgv() };
+    let url: *u8 = { *(argv + (1 as usize)) };
+    let url_len: usize = { strlen(url) };
 
     // ---- Parse URL: skip "http://" then split host[:port][/path] ----
     if url_len < (7 as usize) { return 2; }  // smaller than "http://"
     var i: usize = 7 as usize;
     let host_start: usize = i;
     while i < url_len {
-        let c: u8 = unsafe { url[i] };
+        let c: u8 = { url[i] };
         if c == (58 as u8) { break; }   // ':'
         if c == (47 as u8) { break; }   // '/'
         i = i +% (1 as usize);
@@ -99,12 +99,12 @@ fn main() -> i32 {
     let host_end: usize = i;
     var port: u32 = 80 as u32;
     if i < url_len {
-        let c: u8 = unsafe { url[i] };
+        let c: u8 = { url[i] };
         if c == (58 as u8) {
             i = i +% (1 as usize);
             port = 0 as u32;
             while i < url_len {
-                let d: u8 = unsafe { url[i] };
+                let d: u8 = { url[i] };
                 if d == (47 as u8) { break; }
                 let digit: u32 = (d -% (48 as u8)) as u32;
                 port = (port *% (10 as u32)) +% digit;
@@ -118,8 +118,8 @@ fn main() -> i32 {
 
     // ---- NUL-terminated host C-string ----
     let host_len: usize = host_end -% host_start;
-    let host_cstr: *u8 = unsafe { malloc(host_len +% (1 as usize)) };
-    unsafe {
+    let host_cstr: *u8 = { malloc(host_len +% (1 as usize)) };
+    {
         let src: *u8 = url + host_start;
         memcpy(host_cstr, src, host_len);
         host_cstr[host_len] = 0 as u8;
@@ -128,13 +128,13 @@ fn main() -> i32 {
     let addr: u32 = resolve_host(host_cstr);
     if addr == (0 as u32) {
         write_str(2 as i32, "DNS failed\n");
-        unsafe { free(host_cstr); }
+        { free(host_cstr); }
         return 3;
     }
 
     // ---- sockaddr_in (16 bytes) ----
-    let sa: *u8 = unsafe { malloc(16 as usize) };
-    unsafe {
+    let sa: *u8 = { malloc(16 as usize) };
+    {
         memset(sa, 0 as i32, 16 as usize);
         sa[0 as usize] = 16 as u8;       // sin_len
         sa[1 as usize] = 2 as u8;        // AF_INET
@@ -146,76 +146,76 @@ fn main() -> i32 {
         sa[7 as usize] = ((addr >> (24 as u32)) & (0xff as u32)) as u8;
     }
 
-    let fd: i32 = unsafe { socket(2 as i32, 1 as i32, 0 as i32) };
+    let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
-        unsafe { free(sa); }
-        unsafe { free(host_cstr); }
+        { free(sa); }
+        { free(host_cstr); }
         return 4;
     }
-    let crc: i32 = unsafe { connect(fd, sa, 16 as u32) };
-    unsafe { free(sa); }
+    let crc: i32 = { connect(fd, sa, 16 as u32) };
+    { free(sa); }
     if crc != (0 as i32) {
-        unsafe { close(fd); }
-        unsafe { free(host_cstr); }
+        { close(fd); }
+        { free(host_cstr); }
         return 5;
     }
 
     // ---- Build + send HTTP request ----
     let req_cap: usize = host_len +% path_len +% (128 as usize);
-    let req: *u8 = unsafe { malloc(req_cap) };
+    let req: *u8 = { malloc(req_cap) };
     var rlen: usize = 0 as usize;
 
     let s_get: str = "GET ";
-    unsafe { memcpy(req + rlen, #str_ptr(s_get), #str_len(s_get)); }
+    { memcpy(req + rlen, #str_ptr(s_get), #str_len(s_get)); }
     rlen = rlen +% #str_len(s_get);
 
     if use_default_path {
-        unsafe { (req + rlen)[0 as usize] = 47 as u8; }
+        { (req + rlen)[0 as usize] = 47 as u8; }
         rlen = rlen +% (1 as usize);
     } else {
-        unsafe { memcpy(req + rlen, url + path_start, path_len); }
+        { memcpy(req + rlen, url + path_start, path_len); }
         rlen = rlen +% path_len;
     }
 
     let s_http: str = " HTTP/1.0\r\nHost: ";
-    unsafe { memcpy(req + rlen, #str_ptr(s_http), #str_len(s_http)); }
+    { memcpy(req + rlen, #str_ptr(s_http), #str_len(s_http)); }
     rlen = rlen +% #str_len(s_http);
-    unsafe { memcpy(req + rlen, url + host_start, host_len); }
+    { memcpy(req + rlen, url + host_start, host_len); }
     rlen = rlen +% host_len;
     let s_tail: str = "\r\nConnection: close\r\n\r\n";
-    unsafe { memcpy(req + rlen, #str_ptr(s_tail), #str_len(s_tail)); }
+    { memcpy(req + rlen, #str_ptr(s_tail), #str_len(s_tail)); }
     rlen = rlen +% #str_len(s_tail);
 
     if !write_all(fd, req, rlen) {
-        unsafe { free(req); free(host_cstr); close(fd); }
+        { free(req); free(host_cstr); close(fd); }
         return 6;
     }
-    unsafe { free(req); }
-    unsafe { free(host_cstr); }
+    { free(req); }
+    { free(host_cstr); }
 
     // ---- Read response, split on \r\n\r\n, dump body ----
     var resp_cap: usize = 8192 as usize;
     var resp_len: usize = 0 as usize;
-    var resp: *u8 = unsafe { malloc(resp_cap) };
+    var resp: *u8 = { malloc(resp_cap) };
     loop {
         if resp_len == resp_cap {
             resp_cap = resp_cap *% (2 as usize);
-            resp = unsafe { realloc(resp, resp_cap) };
+            resp = { realloc(resp, resp_cap) };
         }
-        let p: *u8 = unsafe { resp + resp_len };
-        let n: isize = unsafe { read(fd, p, resp_cap -% resp_len) };
+        let p: *u8 = { resp + resp_len };
+        let n: isize = { read(fd, p, resp_cap -% resp_len) };
         if n <= (0 as isize) { break; }
         resp_len = resp_len +% (n as usize);
     }
-    unsafe { close(fd); }
+    { close(fd); }
 
     var split: usize = resp_len;
     var k: usize = 0 as usize;
     while (k +% (3 as usize)) < resp_len {
-        let b0: u8 = unsafe { resp[k] };
-        let b1: u8 = unsafe { resp[k +% (1 as usize)] };
-        let b2: u8 = unsafe { resp[k +% (2 as usize)] };
-        let b3: u8 = unsafe { resp[k +% (3 as usize)] };
+        let b0: u8 = { resp[k] };
+        let b1: u8 = { resp[k +% (1 as usize)] };
+        let b2: u8 = { resp[k +% (2 as usize)] };
+        let b3: u8 = { resp[k +% (3 as usize)] };
         if b0 == (13 as u8) && b1 == (10 as u8) && b2 == (13 as u8) && b3 == (10 as u8) {
             split = k +% (4 as usize);
             break;
@@ -224,9 +224,9 @@ fn main() -> i32 {
     }
     if split < resp_len {
         let body_len: usize = resp_len -% split;
-        let body: *u8 = unsafe { resp + split };
+        let body: *u8 = { resp + split };
         write_all(1 as i32, body, body_len);
     }
-    unsafe { free(resp); }
+    { free(resp); }
     return 0;
 }

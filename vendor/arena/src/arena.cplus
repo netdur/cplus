@@ -55,7 +55,7 @@ fn new(chunk_size: usize) -> Arena {
         chosen_size = header_size + 1024;
     }
     return Arena {
-        head: unsafe { 0 as *u8 },
+        head: { 0 as *u8 },
         chunk_size: chosen_size,
     };
 }
@@ -78,13 +78,13 @@ impl Arena {
         if align == (0 as usize) { align = 1 as usize; }
         let header_size: usize = #size_of::[Chunk]();
 
-        if unsafe { this.head as usize } != (0 as usize) {
-            let chunk: *Chunk = unsafe { this.head as *Chunk };
-            let cap: usize = unsafe { (*chunk).cap };
-            let used: usize = unsafe { (*chunk).used };
+        if { #addr(this.head) } != (0 as usize) {
+            let chunk: *Chunk = { this.head as *Chunk };
+            let cap: usize = { (*chunk).cap };
+            let used: usize = { (*chunk).used };
 
             // Pointer-as-usize math: real addresses don't wrap.
-            let p_start: usize = unsafe { (this.head as usize) +% header_size };
+            let p_start: usize = { #addr(this.head) +% header_size };
             let avail: usize = p_start +% used;
 
             let remainder: usize = avail % align;
@@ -95,10 +95,10 @@ impl Arena {
             let p_end: usize = p_start +% cap;
 
             if end_addr <= p_end {
-                unsafe {
+                {
                     (*chunk).used = end_addr -% p_start;
                 }
-                return unsafe { aligned_avail as *u8 };
+                return { aligned_avail as *u8 };
             }
         }
 
@@ -115,38 +115,38 @@ impl Arena {
         }
 
         let alloc_size: usize = header_size + next_chunk_payload;
-        let raw: *u8 = unsafe { malloc(alloc_size) };
-        if unsafe { raw as usize } == (0 as usize) {
-            return unsafe { 0 as *u8 };
+        let raw: *u8 = { malloc(alloc_size) };
+        if { #addr(raw) } == (0 as usize) {
+            return { 0 as *u8 };
         }
 
-        let new_chunk: *Chunk = unsafe { raw as *Chunk };
-        unsafe {
+        let new_chunk: *Chunk = { raw as *Chunk };
+        {
             (*new_chunk).cap = next_chunk_payload;
             (*new_chunk).used = 0;
             (*new_chunk).next = this.head;
         }
         this.head = raw;
 
-        let p_start: usize = unsafe { (raw as usize) +% header_size };
+        let p_start: usize = { #addr(raw) +% header_size };
         let remainder: usize = p_start % align;
         let aligned_avail: usize = if remainder == (0 as usize) { p_start } else { p_start +% (align -% remainder) };
 
-        unsafe {
+        {
             (*new_chunk).used = (aligned_avail +% bytes) -% p_start;
         }
-        return unsafe { aligned_avail as *u8 };
+        return { aligned_avail as *u8 };
     }
 
     fn alloc[T](ref this, take val: T) -> *T {
         let bytes: usize = #size_of::[T]();
         let align: usize = #align_of::[T]();
         let ptr: *u8 = this.alloc_bytes_aligned(bytes, align);
-        if unsafe { ptr as usize } == (0 as usize) {
-            return unsafe { 0 as *T };
+        if { #addr(ptr) } == (0 as usize) {
+            return { 0 as *T };
         }
-        let typed_ptr: *T = unsafe { ptr as *T };
-        unsafe { *typed_ptr = val; }
+        let typed_ptr: *T = { ptr as *T };
+        { *typed_ptr = val; }
         return typed_ptr;
     }
 
@@ -160,7 +160,7 @@ impl Arena {
 
     fn alloc_bytes_aligned_opt(ref this, bytes: usize, align: usize) -> option::Option[*u8] {
         let p: *u8 = this.alloc_bytes_aligned(bytes, align);
-        if unsafe { p as usize } == (0 as usize) {
+        if { #addr(p) } == (0 as usize) {
             return option::Option[*u8]::None;
         }
         return option::Option[*u8]::Some(p);
@@ -170,8 +170,8 @@ impl Arena {
     // POD structs the caller wants memset'd. Returns null on OOM.
     fn alloc_zeroed_bytes(ref this, bytes: usize) -> *u8 {
         let p: *u8 = this.alloc_bytes(bytes);
-        if unsafe { p as usize } != (0 as usize) {
-            unsafe { memset(p, 0 as i32, bytes); }
+        if { #addr(p) } != (0 as usize) {
+            { memset(p, 0 as i32, bytes); }
         }
         return p;
     }
@@ -185,11 +185,11 @@ impl Arena {
             return option::Option[str]::Some("");
         }
         let p: *u8 = this.alloc_bytes_aligned(n, 1 as usize);
-        if unsafe { p as usize } == (0 as usize) {
+        if { #addr(p) } == (0 as usize) {
             return option::Option[str]::None;
         }
-        unsafe { memcpy(p, #str_ptr(s), n); }
-        return option::Option[str]::Some(unsafe { #str_from_raw_parts(p, n) });
+        { memcpy(p, #str_ptr(s), n); }
+        return option::Option[str]::Some({ #str_from_raw_parts(p, n) });
     }
 
     // Sum of every chunk's capacity. Useful for "how much memory am I
@@ -198,10 +198,10 @@ impl Arena {
     fn total_allocated(this) -> usize {
         var total: usize = 0 as usize;
         var curr: *u8 = this.head;
-        while unsafe { curr as usize } != (0 as usize) {
-            let chunk: *Chunk = unsafe { curr as *Chunk };
-            total = total + unsafe { (*chunk).cap };
-            curr = unsafe { (*chunk).next };
+        while { #addr(curr) } != (0 as usize) {
+            let chunk: *Chunk = { curr as *Chunk };
+            total = total + { (*chunk).cap };
+            curr = { (*chunk).next };
         }
         return total;
     }
@@ -212,13 +212,13 @@ impl Arena {
     // chunk_size, but without changing the binding.
     fn reset(ref this) {
         var curr: *u8 = this.head;
-        while unsafe { curr as usize } != (0 as usize) {
-            let chunk: *Chunk = unsafe { curr as *Chunk };
-            let next: *u8 = unsafe { (*chunk).next };
-            unsafe { free(curr); }
+        while { #addr(curr) } != (0 as usize) {
+            let chunk: *Chunk = { curr as *Chunk };
+            let next: *u8 = { (*chunk).next };
+            { free(curr); }
             curr = next;
         }
-        this.head = unsafe { 0 as *u8 };
+        this.head = { 0 as *u8 };
         return;
     }
 
@@ -245,7 +245,7 @@ fn test_new_rounds_up_small_chunk_size() {
 fn test_alloc_bytes_8_aligned() {
     var a: Arena = Arena::new(4096 as usize);
     let p: *u8 = a.alloc_bytes(7 as usize);
-    let addr: usize = unsafe { p as usize };
+    let addr: usize = { #addr(p) };
     assert (addr % (8 as usize)) == (0 as usize);
 }
 
@@ -254,7 +254,7 @@ fn test_alloc_bytes_aligned_64() {
     var a: Arena = Arena::new(4096 as usize);
     let _p1: *u8 = a.alloc_bytes(1 as usize);   // bump past 0
     let p: *u8 = a.alloc_bytes_aligned(8 as usize, 64 as usize);
-    let addr: usize = unsafe { p as usize };
+    let addr: usize = { #addr(p) };
     assert (addr % (64 as usize)) == (0 as usize);
 }
 
@@ -265,7 +265,7 @@ fn test_alloc_bytes_aligned_zero_normalized() {
     // long as the call doesn't crash.
     var a: Arena = Arena::new(4096 as usize);
     let p: *u8 = a.alloc_bytes_aligned(8 as usize, 0 as usize);
-    assert (unsafe { p as usize }) != (0 as usize);
+    assert ({ #addr(p) }) != (0 as usize);
 }
 
 #[test]
@@ -274,8 +274,8 @@ fn test_alloc_zeroed_bytes_is_zero() {
     let p: *u8 = a.alloc_zeroed_bytes(16 as usize);
     var i: usize = 0 as usize;
     while i < (16 as usize) {
-        let q: *u8 = unsafe { p + i };
-        assert unsafe { *q } == (0 as u8);
+        let q: *u8 = { p + i };
+        assert { *q } == (0 as u8);
         i = i +% (1 as usize);
     }
 }
@@ -301,9 +301,9 @@ fn test_alloc_str_round_trip() {
     assert #str_len(s) == (5 as usize);
     // Bytes match the original.
     let p: *u8 = #str_ptr(s);
-    assert unsafe { *p } == ('h' as u8);
-    let p4: *u8 = unsafe { p + 4 };
-    assert unsafe { *p4 } == ('o' as u8);
+    assert { *p } == ('h' as u8);
+    let p4: *u8 = { p + 4 };
+    assert { *p4 } == ('o' as u8);
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn test_reset_frees_and_restarts() {
 fn test_alloc_i32_round_trip() {
     var a: Arena = Arena::new(4096 as usize);
     let p: *i32 = a.alloc::[i32](12345 as i32);
-    assert unsafe { *p } == (12345 as i32);
+    assert { *p } == (12345 as i32);
 }
 
 #[test]

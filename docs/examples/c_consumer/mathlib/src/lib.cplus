@@ -125,7 +125,7 @@ export extern fn color_index(c: Color) -> i32 {
 // passes its address; the C+ side fills it.
 
 export extern fn fill_with(out: *i32, value: i32) {
-    unsafe { *out = value; }
+    { *out = value; }
     return;
 }
 

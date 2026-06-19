@@ -7,6 +7,8 @@ struct TextField {
 }
 
 impl TextField {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> TextField {
         return TextField { obj: rt::alloc_init_with_frame(#str_ptr("UITextField\0"), frame) };
     }
@@ -36,7 +38,7 @@ impl TextField {
     }
 
     fn set_text_color(this, color: view::Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.raw());
     }
 
     fn set_font(this, font: *u8) {
@@ -77,6 +79,8 @@ struct TextView {
 }
 
 impl TextView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> TextView {
         return TextView { obj: rt::alloc_init_with_frame(#str_ptr("UITextView\0"), frame) };
     }
@@ -98,7 +102,7 @@ impl TextView {
     }
 
     fn set_text_color(this, color: view::Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.raw());
     }
 
     fn set_font(this, font: *u8) {
@@ -127,6 +131,8 @@ struct SearchBar {
 }
 
 impl SearchBar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> SearchBar {
         return SearchBar { obj: rt::alloc_init_with_frame(#str_ptr("UISearchBar\0"), frame) };
     }

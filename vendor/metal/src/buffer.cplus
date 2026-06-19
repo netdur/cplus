@@ -11,8 +11,8 @@ struct Buffer {
 
 impl Buffer {
     fn contents(this) -> *u8 {
-        if this.raw == unsafe { 0 as *u8 } {
-            return unsafe { 0 as *u8 };
+        if this.raw == { 0 as *u8 } {
+            return { 0 as *u8 };
         }
         let selector: *u8 = runtime::sel(#str_ptr("contents\0"));
         return runtime::msg_ptr(this.raw, selector);
@@ -26,13 +26,13 @@ impl Buffer {
     fn copy_to_slice(this, slice: u8[]) -> usize {
         let n: usize = #slice_len(slice);
         let src: *u8 = this.contents();
-        if src == unsafe { 0 as *u8 } {
+        if src == { 0 as *u8 } {
             return 0 as usize;
         }
-        let dest: *u8 = unsafe { #slice_ptr(slice) };
+        let dest: *u8 = { #slice_ptr(slice) };
         let bytes_to_copy: usize = if n < this.size { n } else { this.size };
         if bytes_to_copy > (0 as usize) {
-            unsafe { memcpy(dest, src, bytes_to_copy); }
+            { memcpy(dest, src, bytes_to_copy); }
         }
         return bytes_to_copy;
     }
@@ -40,20 +40,20 @@ impl Buffer {
     fn copy_from_slice(this, slice: u8[]) -> usize {
         let n: usize = #slice_len(slice);
         let dest: *u8 = this.contents();
-        if dest == unsafe { 0 as *u8 } {
+        if dest == { 0 as *u8 } {
             return 0 as usize;
         }
-        let src: *u8 = unsafe { #slice_ptr(slice) };
+        let src: *u8 = { #slice_ptr(slice) };
         let bytes_to_copy: usize = if n < this.size { n } else { this.size };
         if bytes_to_copy > (0 as usize) {
-            unsafe { memcpy(dest, src, bytes_to_copy); }
+            { memcpy(dest, src, bytes_to_copy); }
         }
         return bytes_to_copy;
     }
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }

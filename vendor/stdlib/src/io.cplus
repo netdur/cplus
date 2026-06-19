@@ -11,8 +11,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { return; }
         written = written +% (w as usize);
     }
@@ -21,13 +21,13 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 
 // Write `s` to stdout, no trailing newline.
 fn print(s: str) {
-    unsafe { printf(#str_ptr("%.*s\0"), #str_len(s) as i32, #str_ptr(s)); }
+    { printf(#str_ptr("%.*s\0"), #str_len(s) as i32, #str_ptr(s)); }
     return;
 }
 
 // Write `s` to stdout, followed by '\n'.
 fn println(s: str) {
-    unsafe { printf(#str_ptr("%.*s\n\0"), #str_len(s) as i32, #str_ptr(s)); }
+    { printf(#str_ptr("%.*s\n\0"), #str_len(s) as i32, #str_ptr(s)); }
     return;
 }
 

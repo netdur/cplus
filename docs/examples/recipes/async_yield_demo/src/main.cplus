@@ -35,8 +35,8 @@ extern fn free(p: *u8);
 async fn step_loop(counter: *i32, ticks: i32) -> i32 {
     var i: i32 = 0;
     while i < ticks {
-        let cur: i32 = unsafe { *counter };
-        unsafe { *counter = cur +% 1; }
+        let cur: i32 = { *counter };
+        { *counter = cur +% 1; }
         executor::yield_now();
         i = i +% 1;
     }
@@ -52,20 +52,20 @@ async fn drive_three(counter: *i32, ticks: i32) -> i32 {
     let _r: i32 = await f3;
     // f3 done. The two spawned tasks may still be queued; yield until
     // the counter shows everyone finished.
-    while unsafe { *counter } < (3 *% ticks) {
+    while { *counter } < (3 *% ticks) {
         executor::yield_now();
     }
-    return unsafe { *counter };
+    return { *counter };
 }
 
 fn main() -> i32 {
-    let counter_buf: *u8 = unsafe { malloc(4 as usize) };
-    let counter: *i32 = unsafe { counter_buf as *i32 };
-    unsafe { *counter = 0; }
+    let counter_buf: *u8 = { malloc(4 as usize) };
+    let counter: *i32 = { counter_buf as *i32 };
+    { *counter = 0; }
     let ticks: i32 = 4;
     let f: future::Future[i32] = drive_three(counter, ticks);
     let total: i32 = executor::block_on::[i32](f);
-    unsafe { free(counter_buf); }
+    { free(counter_buf); }
     if total != (3 *% ticks) {
         return 1;
     }

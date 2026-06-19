@@ -9,6 +9,8 @@ struct Window {
 }
 
 impl Window {
+    fn raw(this) -> *u8 { return this.obj; }
+
     // `alloc` + `initWithFrame:`. The returned window holds refcount 1 and
     // is never released by these bindings — UIKit expects the app's key
     // window to live for the process, and (pre-iOS-13, no scenes) nothing
@@ -21,11 +23,11 @@ impl Window {
     }
 
     fn set_root_view_controller(this, vc: controllers::ViewController) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setRootViewController:\0")), vc.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setRootViewController:\0")), vc.raw());
     }
 
     fn set_background_color(this, color: view::Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.raw());
     }
 
     fn make_key_and_visible(this) {

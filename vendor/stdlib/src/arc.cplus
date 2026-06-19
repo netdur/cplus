@@ -38,8 +38,8 @@ struct Arc[T] {
 // itself is thread-safe, so we vouch for it conditionally: `Arc[T]` is
 // `Send`/`Sync` iff `T: Send + Sync` (the value can be touched from another
 // thread, and shared `&Arc` reaches the value).
-unsafe impl Arc[T: Send + Sync]: Send {}
-unsafe impl Arc[T: Send + Sync]: Sync {}
+impl Arc[T: Send + Sync]: Send {}
+impl Arc[T: Send + Sync]: Sync {}
 
 // Header is `u64 refcount`. The value lives at `ctrl + 8` (assumes
 // align_of[T] <= 8; future align_of-driven offset lands when an
@@ -48,11 +48,11 @@ fn new[T](take v: T) -> Arc[T] {
     let header: usize = 8 as usize;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
-    let raw: *u8 = unsafe { malloc(total) };
-    let refct: *u64 = unsafe { raw as *u64 };
-    unsafe { *refct = 1 as u64; }
-    let value_ptr: *T = unsafe { (raw + header) as *T };
-    unsafe { *value_ptr = v; }
+    let raw: *u8 = { malloc(total) };
+    let refct: *u64 = { raw as *u64 };
+    { *refct = 1 as u64; }
+    let value_ptr: *T = { (raw + header) as *T };
+    { *value_ptr = v; }
     return Arc[T] { ctrl: raw };
 }
 
@@ -63,8 +63,8 @@ impl Arc[T] {
     // thread; no happens-before relationship is established by the
     // increment itself.
     fn clone(this) -> Arc[T] {
-        let refct: *u64 = unsafe { this.ctrl as *u64 };
-        let _prev: u64 = unsafe {
+        let refct: *u64 = { this.ctrl as *u64 };
+        let _prev: u64 = {
             atomic::atomic_fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
         return Arc[T] { ctrl: this.ctrl };
@@ -73,8 +73,8 @@ impl Arc[T] {
     // Current strong-reference count (snapshot — racy under load,
     // useful for tests + debugging only).
     fn strong_count(this) -> u64 {
-        let refct: *u64 = unsafe { this.ctrl as *u64 };
-        return unsafe { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
+        let refct: *u64 = { this.ctrl as *u64 };
+        return { atomic::atomic_load_u64(refct, atomic::Ordering::SeqCst) };
     }
 
     // Destructor: atomic decrement; free the block on the last ref.
@@ -83,16 +83,16 @@ impl Arc[T] {
     // prior Arc::drop's so the freeing thread sees a consistent view
     // of the value before deallocation.
     fn drop(ref this) {
-        let refct: *u64 = unsafe { this.ctrl as *u64 };
-        let prev: u64 = unsafe {
+        let refct: *u64 = { this.ctrl as *u64 };
+        let prev: u64 = {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last
             // reference before freeing the control block.
-            let value_ptr: *T = unsafe { (this.ctrl + (8 as usize)) as *T };
-            unsafe { #drop_in_place::[T](value_ptr); }
-            unsafe { free(this.ctrl); }
+            let value_ptr: *T = { (this.ctrl + (8 as usize)) as *T };
+            { #drop_in_place::[T](value_ptr); }
+            { free(this.ctrl); }
         }
         return;
     }
@@ -107,7 +107,7 @@ impl Arc[T: Copy] {
     // Read inner T (bitwise copy).
     fn get(this) -> T {
         let header: usize = 8 as usize;
-        let value_ptr: *T = unsafe { (this.ctrl + header) as *T };
-        return unsafe { *value_ptr };
+        let value_ptr: *T = { (this.ctrl + header) as *T };
+        return { *value_ptr };
     }
 }

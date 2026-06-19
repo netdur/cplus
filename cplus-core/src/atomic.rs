@@ -47,9 +47,9 @@ impl AtomicOp {
             AtomicOp::FetchAdd => "add",
             AtomicOp::FetchSub => "sub",
             AtomicOp::FetchAnd => "and",
-            AtomicOp::FetchOr  => "or",
+            AtomicOp::FetchOr => "or",
             AtomicOp::FetchXor => "xor",
-            AtomicOp::Xchg     => "xchg",
+            AtomicOp::Xchg => "xchg",
             _ => "",
         }
     }
@@ -104,12 +104,17 @@ pub fn parse_atomic_intrinsic(name: &str) -> Option<AtomicSpec> {
         "fetch_add" => AtomicOp::FetchAdd,
         "fetch_sub" => AtomicOp::FetchSub,
         "fetch_and" => AtomicOp::FetchAnd,
-        "fetch_or"  => AtomicOp::FetchOr,
+        "fetch_or" => AtomicOp::FetchOr,
         "fetch_xor" => AtomicOp::FetchXor,
         _ => return None,
     };
 
-    Some(AtomicSpec { op, ty, bits, llvm_ordering })
+    Some(AtomicSpec {
+        op,
+        ty,
+        bits,
+        llvm_ordering,
+    })
 }
 
 /// v0.0.12 G-030 (llama.cplus G-029): parse `__cplus_atomic_fence_<ord>`
@@ -130,8 +135,8 @@ pub fn parse_atomic_fence(name: &str) -> Option<&'static str> {
         "relaxed" => Some("relaxed"),
         "acquire" => Some("acquire"),
         "release" => Some("release"),
-        "acqrel"  => Some("acqrel"),
-        "seqcst"  => Some("seqcst"),
+        "acqrel" => Some("acqrel"),
+        "seqcst" => Some("seqcst"),
         _ => None,
     }
 }
@@ -158,19 +163,19 @@ fn ordering_to_llvm(ord: &str) -> Option<&'static str> {
         "relaxed" => "monotonic",
         "acquire" => "acquire",
         "release" => "release",
-        "acqrel"  => "acq_rel",
-        "seqcst"  => "seq_cst",
+        "acqrel" => "acq_rel",
+        "seqcst" => "seq_cst",
         _ => return None,
     })
 }
 
 fn type_str_to_ty(s: &str) -> Option<(Ty, u32)> {
     Some(match s {
-        "i8"  => (Ty::I8, 8),
+        "i8" => (Ty::I8, 8),
         "i16" => (Ty::I16, 16),
         "i32" => (Ty::I32, 32),
         "i64" => (Ty::I64, 64),
-        "u8"  => (Ty::U8, 8),
+        "u8" => (Ty::U8, 8),
         "u16" => (Ty::U16, 16),
         "u32" => (Ty::U32, 32),
         "u64" => (Ty::U64, 64),

@@ -20,8 +20,8 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { return false; }
         written = written +% (w as usize);
     }
@@ -29,23 +29,23 @@ fn write_all(fd: i32, p: *u8, n: usize) -> bool {
 }
 
 fn main() -> i32 {
-    let argc: i32 = unsafe { *_NSGetArgc() };
+    let argc: i32 = { *_NSGetArgc() };
     if argc < (3 as i32) {
         let usage: str = "usage: file_write <path> <text>\n";
         write_all(2 as i32, #str_ptr(usage), #str_len(usage));
         return 1;
     }
-    let argv: **u8 = unsafe { *_NSGetArgv() };
-    let path_pp: **u8 = unsafe { argv + (1 as usize) };
-    let text_pp: **u8 = unsafe { argv + (2 as usize) };
-    let path: *u8 = unsafe { *path_pp };
-    let text: *u8 = unsafe { *text_pp };
-    let text_len: usize = unsafe { strlen(text) };
+    let argv: **u8 = { *_NSGetArgv() };
+    let path_pp: **u8 = { argv + (1 as usize) };
+    let text_pp: **u8 = { argv + (2 as usize) };
+    let path: *u8 = { *path_pp };
+    let text: *u8 = { *text_pp };
+    let text_len: usize = { strlen(text) };
 
     // macOS flags: O_WRONLY=1, O_CREAT=0x200, O_TRUNC=0x400.
     let flags: i32 = (1 as i32)| (0x200 as i32)| (0x400 as i32);
     let mode: i32 = 0o644 as i32;
-    let fd: i32 = unsafe { open(path, flags, mode) };
+    let fd: i32 = { open(path, flags, mode) };
     if fd < (0 as i32) {
         let err: str = "open failed\n";
         write_all(2 as i32, #str_ptr(err), #str_len(err));
@@ -53,7 +53,7 @@ fn main() -> i32 {
     }
 
     let ok: bool = write_all(fd, text, text_len);
-    unsafe { close(fd); }
+    { close(fd); }
     if !ok {
         let err: str = "write failed\n";
         write_all(2 as i32, #str_ptr(err), #str_len(err));

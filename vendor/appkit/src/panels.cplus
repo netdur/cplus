@@ -5,6 +5,8 @@ struct Panel {
 }
 
 impl Panel {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -41,6 +43,8 @@ struct SavePanel {
 }
 
 impl SavePanel {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn shared() -> SavePanel {
         return SavePanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSSavePanel\0")), rt::sel(#str_ptr("savePanel\0"))) };
     }
@@ -75,6 +79,8 @@ struct OpenPanel {
 }
 
 impl OpenPanel {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn shared() -> OpenPanel {
         return OpenPanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSOpenPanel\0")), rt::sel(#str_ptr("openPanel\0"))) };
     }
@@ -109,6 +115,8 @@ struct PageLayout {
 }
 
 impl PageLayout {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn shared() -> PageLayout {
         return PageLayout { obj: rt::msg_id(rt::get_class(#str_ptr("NSPageLayout\0")), rt::sel(#str_ptr("pageLayout\0"))) };
     }
@@ -123,6 +131,8 @@ struct PrintPanel {
 }
 
 impl PrintPanel {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn shared() -> PrintPanel {
         return PrintPanel { obj: rt::msg_id(rt::get_class(#str_ptr("NSPrintPanel\0")), rt::sel(#str_ptr("printPanel\0"))) };
     }

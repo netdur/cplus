@@ -44,21 +44,21 @@ impl Uuid {
         // which was BSD/Darwin-only). `addr_of` writes directly into
         // the stack-allocated `bytes` field; no heap allocation.
         var uuid: Uuid = zero_uuid();
-        let fd: i32 = unsafe { open(#str_ptr("/dev/urandom\0"), 0 as i32) };
+        let fd: i32 = { open(#str_ptr("/dev/urandom\0"), 0 as i32) };
         if fd < 0 {
             return option::Option[Uuid]::None;
         }
         var filled: usize = 0 as usize;
         while filled < (16 as usize) {
-            let dst: *u8 = unsafe { (#addr_of(uuid) as *u8) + filled };
-            let n: isize = unsafe { read(fd, dst, (16 as usize) -% filled) };
+            let dst: *u8 = { (#addr_of(uuid) as *u8) + filled };
+            let n: isize = { read(fd, dst, (16 as usize) -% filled) };
             if n <= (0 as isize) {
-                unsafe { close(fd); }
+                { close(fd); }
                 return option::Option[Uuid]::None;
             }
             filled = filled +% (n as usize);
         }
-        unsafe { close(fd); }
+        { close(fd); }
 
         // RFC 4122 §4.4: set version (4) in byte 6's high nibble, and
         // the variant (10xx) in byte 8's high two bits.
@@ -75,8 +75,8 @@ impl Uuid {
 
         let p: *u8 = #str_ptr(s);
         let dash: u8 = '-' as u8;
-        if unsafe { *(p + 8) } != dash || unsafe { *(p + 13) } != dash ||
-           unsafe { *(p + 18) } != dash || unsafe { *(p + 23) } != dash {
+        if { *(p + 8) } != dash || { *(p + 13) } != dash ||
+           { *(p + 18) } != dash || { *(p + 23) } != dash {
             return option::Option[Uuid]::None;
         }
 
@@ -84,8 +84,8 @@ impl Uuid {
         var idx: usize = 0 as usize;
         while idx < (16 as usize) {
             let start_offset: usize = hex_offset_for_byte(idx);
-            let c1: u8 = unsafe { *(p + start_offset) };
-            let c2: u8 = unsafe { *(p + (start_offset +% 1 as usize)) };
+            let c1: u8 = { *(p + start_offset) };
+            let c2: u8 = { *(p + (start_offset +% 1 as usize)) };
 
             let h1: i32 = parse_hex_digit(c1);
             let h2: i32 = parse_hex_digit(c2);
@@ -112,7 +112,7 @@ impl Uuid {
             0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
             0u8, 0u8, 0u8, 0u8, 0u8,
         ];
-        let n: i32 = unsafe {
+        let n: i32 = {
             snprintf(#addr_of(buf) as *u8, 37 as usize,
             #str_ptr("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\0"),
             this.bytes[0] as i32, this.bytes[1] as i32, this.bytes[2] as i32, this.bytes[3] as i32,
@@ -121,7 +121,7 @@ impl Uuid {
             this.bytes[8] as i32, this.bytes[9] as i32,
             this.bytes[10] as i32, this.bytes[11] as i32, this.bytes[12] as i32, this.bytes[13] as i32, this.bytes[14] as i32, this.bytes[15] as i32)
         };
-        let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
+        let view: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
         return view.to_text();
     }
 }
@@ -223,11 +223,11 @@ fn test_to_string_format() {
     let s: text::Text = u.to_text();
     assert s.len() == (36 as usize);
     // Dashes at positions 8, 13, 18, 23.
-    let p: *u8 = #str_ptr(unsafe { s.as_str() });
-    assert unsafe { *(p + 8) } == ('-' as u8);
-    assert unsafe { *(p + 13) } == ('-' as u8);
-    assert unsafe { *(p + 18) } == ('-' as u8);
-    assert unsafe { *(p + 23) } == ('-' as u8);
+    let p: *u8 = #str_ptr({ s.as_str() });
+    assert { *(p + 8) } == ('-' as u8);
+    assert { *(p + 13) } == ('-' as u8);
+    assert { *(p + 18) } == ('-' as u8);
+    assert { *(p + 23) } == ('-' as u8);
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn test_round_trip_parse_format() {
         return;
     };
     let out: text::Text = u.to_text();
-    assert unsafe { out.as_str() } == s;
+    assert { out.as_str() } == s;
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_random_uuid_round_trips() {
         return;
     };
     let s: text::Text = u.to_text();
-    guard let option::Option[Uuid]::Some(u2) = Uuid::parse(unsafe { s.as_str() }) else {
+    guard let option::Option[Uuid]::Some(u2) = Uuid::parse({ s.as_str() }) else {
         assert false;
         return;
     };

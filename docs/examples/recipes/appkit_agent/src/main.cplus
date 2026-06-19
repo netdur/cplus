@@ -35,7 +35,7 @@ extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
 static SAVES: i32 = 0;
 
 fn on_save(sender: *u8) {
-    unsafe { SAVES = SAVES +% (1 as i32); }
+    { SAVES = SAVES +% (1 as i32); }
     return;
 }
 
@@ -51,14 +51,14 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
 }
 
 fn print_line(s: str) {
-    unsafe { write(1 as i32, #str_ptr(s), #str_len(s)); }
+    { write(1 as i32, #str_ptr(s), #str_len(s)); }
     let nl: u8 = 10 as u8;
-    unsafe { write(1 as i32, #addr_of(nl), 1 as usize); }
+    { write(1 as i32, #addr_of(nl), 1 as usize); }
     return;
 }
 
 fn print_text(t: text::Text) {
-    print_line(unsafe { t.as_str() });
+    print_line({ t.as_str() });
     return;
 }
 
@@ -75,22 +75,22 @@ fn main() -> i32 {
     let save: controls::Button = controls::Button::new(rect(360.0, 20.0, 100.0, 32.0));
     save.set_title(#str_ptr("Save\0"));
     save.set_on_click(on_save);
-    ui::set_agent_id(save.obj, "save-btn");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), save.obj);
+    ui::set_agent_id(save.raw(), "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), save.raw());
 
     // A name field — tagged, so the agent may read + write its text.
     let name: controls::TextField = controls::TextField::new_input_field(rect(20.0, 180.0, 300.0, 24.0));
-    ui::set_agent_id(name.obj, "name-field");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), name.obj);
+    ui::set_agent_id(name.raw(), "name-field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), name.raw());
 
     // A decorative label — deliberately UNtagged: it shows up in the tree but is
     // not actionable (the agent can see it, not act on it).
     let caption: controls::TextField = controls::TextField::new_label(rect(20.0, 140.0, 300.0, 20.0));
     caption.set_string_value(#str_ptr("Your name:\0"));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), caption.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), caption.raw());
 
     // ---- Open the agent surface ----
-    var surf: ui::Surface = ui::open(win.obj);
+    var surf: ui::Surface = ui::open(win.raw());
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     // 1) What the agent sees. `actionable:true` on the tagged nodes, `false` on
@@ -103,7 +103,7 @@ fn main() -> i32 {
     print_line("--- click save-btn ---");
     print_text(mcp::handle_request(surf, sub, auth::serve(allow_external),
     "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}"));
-    if unsafe { SAVES } == (1 as i32) {
+    if { SAVES } == (1 as i32) {
         print_line("(the real Save handler fired: SAVES == 1)");
     }
 

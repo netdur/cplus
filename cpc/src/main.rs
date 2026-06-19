@@ -431,9 +431,7 @@ fn main() -> ExitCode {
                     "off" => fp_contract = false,
                     "on" | "fast" => fp_contract = true,
                     other => {
-                        eprintln!(
-                            "cpc: --fp-contract expects off|on|fast, got `{other}`"
-                        );
+                        eprintln!("cpc: --fp-contract expects off|on|fast, got `{other}`");
                         return ExitCode::from(2);
                     }
                 }
@@ -712,9 +710,7 @@ fn main() -> ExitCode {
         (Some(Subcommand::Build), _) => {
             build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
         }
-        (Some(Subcommand::EmitLlProject), _) => {
-            emit_ll_project(diag_mode, build_mode, fp_contract)
-        }
+        (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => run_test(test_input, test_opts, diag_mode, build_mode),
         (Some(Subcommand::Lsp), _) => run_lsp(lsp_args),
@@ -1022,7 +1018,11 @@ fn ar_program_for(t: &TargetSpec, clang_prog: &str) -> String {
         }
     }
     if t.toolchain != target::ToolchainKind::HostClang {
-        let name = if cfg!(windows) { "llvm-ar.exe" } else { "llvm-ar" };
+        let name = if cfg!(windows) {
+            "llvm-ar.exe"
+        } else {
+            "llvm-ar"
+        };
         let sibling = Path::new(clang_prog).with_file_name(name);
         if sibling.is_file() {
             return sibling.to_string_lossy().to_string();
@@ -1038,7 +1038,10 @@ fn newest_default_ndk() -> Option<PathBuf> {
     let ndk_dir: PathBuf = if cfg!(target_os = "macos") {
         PathBuf::from(env::var_os("HOME")?).join("Library/Android/sdk/ndk")
     } else if cfg!(windows) {
-        PathBuf::from(env::var_os("LOCALAPPDATA")?).join("Android").join("Sdk").join("ndk")
+        PathBuf::from(env::var_os("LOCALAPPDATA")?)
+            .join("Android")
+            .join("Sdk")
+            .join("ndk")
     } else {
         PathBuf::from(env::var_os("HOME")?).join("Android/Sdk/ndk")
     };
@@ -1116,8 +1119,12 @@ fn coro_end_returns_void() -> bool {
         let prog = clang_program_for(&target::active_target())
             .unwrap_or_else(|_| clang_program().to_string());
         let output = Command::new(&prog)
-            .arg("-x").arg("ir").arg(&probe)
-            .arg("-c").arg("-o").arg(&obj)
+            .arg("-x")
+            .arg("ir")
+            .arg(&probe)
+            .arg("-c")
+            .arg("-o")
+            .arg(&obj)
             .output();
         let _ = std::fs::remove_file(&probe);
         let _ = std::fs::remove_file(&obj);
@@ -1138,7 +1145,10 @@ fn ensure_coro_end_probed() {
 /// Used by the dep walker to look up bundled binary paths in each vendor
 /// package's `src/lib/<triple>/`. Each build calls this once.
 fn detect_host_triple() -> Result<String, ExitCode> {
-    let output = match Command::new(clang_program()).arg("-print-target-triple").output() {
+    let output = match Command::new(clang_program())
+        .arg("-print-target-triple")
+        .output()
+    {
         Ok(o) => o,
         Err(e) => {
             eprintln!("cpc: invoking `clang -print-target-triple`: {e}");
@@ -1466,11 +1476,7 @@ fn collect_dep_link_args(
             // Validate existence here so the diag carries the dep name.
             for obj in &ls.extra_objects {
                 if !obj.is_file() {
-                    return Err(emit_extra_object_missing(
-                        diag_mode,
-                        obj,
-                        &vendor_manifest,
-                    ));
+                    return Err(emit_extra_object_missing(diag_mode, obj, &vendor_manifest));
                 }
                 link_args.push(obj.to_string_lossy().to_string());
             }
@@ -1488,14 +1494,19 @@ fn emit_extra_object_missing(diag_mode: DiagMode, obj: &Path, declared_in: &Path
     let d = diag::Diagnostic {
         severity: Severity::Error,
         code: diag::DiagCode("E0864"),
-        message: format!(
-            "[link] extra-objects entry `{}` not found",
-            obj.display()
-        ),
+        message: format!("[link] extra-objects entry `{}` not found", obj.display()),
         primary: diag::SourceSpan {
             file: declared_in.to_path_buf(),
-            start: diag::Position { line: 1, col: 1, byte: 0 },
-            end: diag::Position { line: 1, col: 1, byte: 0 },
+            start: diag::Position {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
+            end: diag::Position {
+                line: 1,
+                col: 1,
+                byte: 0,
+            },
         },
         labels: Vec::new(),
         notes: vec![
@@ -1590,11 +1601,17 @@ fn build_project(
     // the resolver so vendor imports (`utils/math`) resolve under
     // vendor/<dep>/src/. The consumer's bin path is the entry.
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let (program, _entry_file_id, mono) =
-        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names), m.realtime_profile.as_ref()) {
-            Ok(p) => p,
-            Err(code) => return code,
-        };
+    let (program, _entry_file_id, mono) = match load_and_check_project_full(
+        &bin.path,
+        &m.root,
+        diag_mode,
+        false,
+        Some(&dep_names),
+        m.realtime_profile.as_ref(),
+    ) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
     // v0.0.3 Phase 5 Slice 5D follow-up: forward --asan/--tsan/--ubsan/
     // --msan through codegen options + clang. Previously `cpc build`
     // silently dropped these flags (always emitted unsanitised IR and
@@ -1602,8 +1619,15 @@ fn build_project(
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
     ensure_coro_end_probed();
-    let ir =
-        codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono);
+    let ir = codegen::generate_with_mono(
+        &program,
+        build_mode,
+        fp_contract,
+        None,
+        sanitizers,
+        false,
+        &mono,
+    );
 
     let out_path = out.unwrap_or_else(|| {
         let sub = match build_mode {
@@ -1782,11 +1806,17 @@ fn build_lib_project(
         }
     };
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let (program, _entry_file_id, mono) =
-        match load_and_check_project_full(&lib.path, &m.root, diag_mode, true, Some(&dep_names), m.realtime_profile.as_ref()) {
-            Ok(p) => p,
-            Err(code) => return code,
-        };
+    let (program, _entry_file_id, mono) = match load_and_check_project_full(
+        &lib.path,
+        &m.root,
+        diag_mode,
+        true,
+        Some(&dep_names),
+        m.realtime_profile.as_ref(),
+    ) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
 
     // Phase 2 Slice 2C: dep walk runs even for library targets — a `.dylib`
     // baked from a package that itself depends on something must record
@@ -1828,8 +1858,7 @@ fn build_lib_project(
     }
 
     ensure_coro_end_probed();
-    let ir =
-        codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono);
+    let ir = codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono);
 
     let mode_subdir = match build_mode {
         BuildMode::Debug => "debug",
@@ -1914,11 +1943,11 @@ fn build_lib_project(
         // `r` replace + `c` create-if-missing + `s` index. ar quietly
         // overwrites a previous archive of the same name.
         let _ = fs::remove_file(&a_path); // ar refuses to add a duplicate entry across runs
-        // Windows/MSVC has no `ar`; LLVM ships `llvm-ar`, which speaks the
-        // same `rcs` interface. `$CPC_AR` overrides for either host.
-        // v0.0.21 rung 2: an external toolchain archives with its own
-        // llvm-ar — macOS's BSD ar can't index ELF members (ranlib skips
-        // them), leaving an archive the NDK's lld resolves no symbols from.
+                                          // Windows/MSVC has no `ar`; LLVM ships `llvm-ar`, which speaks the
+                                          // same `rcs` interface. `$CPC_AR` overrides for either host.
+                                          // v0.0.21 rung 2: an external toolchain archives with its own
+                                          // llvm-ar — macOS's BSD ar can't index ELF members (ranlib skips
+                                          // them), leaving an archive the NDK's lld resolves no symbols from.
         let ar_prog = ar_program_for(&tgt, &clang_prog);
         let ar_status = Command::new(&ar_prog)
             .arg("rcs")
@@ -2018,11 +2047,17 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
         return code;
     }
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let (program, _, mono) =
-        match load_and_check_project_full(&bin.path, &m.root, diag_mode, false, Some(&dep_names), m.realtime_profile.as_ref()) {
-            Ok(p) => p,
-            Err(code) => return code,
-        };
+    let (program, _, mono) = match load_and_check_project_full(
+        &bin.path,
+        &m.root,
+        diag_mode,
+        false,
+        Some(&dep_names),
+        m.realtime_profile.as_ref(),
+    ) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
     ensure_coro_end_probed();
     let ir =
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], false, &mono);
@@ -2068,7 +2103,7 @@ fn apply_realtime_profile(
     root: &Path,
     profile: &cplus_core::manifest::RealtimeProfile,
 ) {
-    use cplus_core::ast::{Attribute, AttrArg, Ident, ItemKind};
+    use cplus_core::ast::{AttrArg, Attribute, Ident, ItemKind};
     use cplus_core::lexer::Span;
 
     let canon_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -2089,7 +2124,10 @@ fn apply_realtime_profile(
     ) {
         let has = |n: &str, a: &[Attribute]| a.iter().any(|x| x.path.name == n);
         let bare = |name: &str| Attribute {
-            path: Ident { name: name.to_string(), span },
+            path: Ident {
+                name: name.to_string(),
+                span,
+            },
             args: Vec::new(),
             span,
         };
@@ -2102,7 +2140,10 @@ fn apply_realtime_profile(
         if let Some(n) = profile.stack_limit {
             if !has("max_stack", attrs) {
                 attrs.push(Attribute {
-                    path: Ident { name: "max_stack".to_string(), span },
+                    path: Ident {
+                        name: "max_stack".to_string(),
+                        span,
+                    },
                     args: vec![AttrArg::Int(n as i64, span)],
                     span,
                 });
@@ -2142,19 +2183,20 @@ fn load_and_check_project_full(
     deps: Option<&[String]>,
     rt_profile: Option<&cplus_core::manifest::RealtimeProfile>,
 ) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
-    let mut loaded = match resolver::load_project_full(entry, root, is_lib, deps, Default::default()) {
-        Ok(l) => l,
-        Err(failure) => {
-            // Slice 4C tail: render the resolver error as a structured
-            // Diagnostic so json/short/human all work the same way as
-            // sema diagnostics. Source for the primary span is looked
-            // up from the failure's per-file map.
-            let d = failure.to_diagnostic();
-            let src = failure.primary_source().unwrap_or("");
-            emit_diag(&d, diag_mode, src);
-            return Err(ExitCode::FAILURE);
-        }
-    };
+    let mut loaded =
+        match resolver::load_project_full(entry, root, is_lib, deps, Default::default()) {
+            Ok(l) => l,
+            Err(failure) => {
+                // Slice 4C tail: render the resolver error as a structured
+                // Diagnostic so json/short/human all work the same way as
+                // sema diagnostics. Source for the primary span is looked
+                // up from the failure's per-file map.
+                let d = failure.to_diagnostic();
+                let src = failure.primary_source().unwrap_or("");
+                emit_diag(&d, diag_mode, src);
+                return Err(ExitCode::FAILURE);
+            }
+        };
     // For sema, pass the entry file's source so diagnostics' line/col
     // mapping comes from there. Cross-file spans currently print without
     // a line map (slice 4A limitation; full per-file source threading is a
@@ -2512,7 +2554,12 @@ fn run_test(
             // that doesn't exist. The fallback lets such packages still
             // discover and run their `#[test]` fns.
             let (entry_path, is_lib_pkg, fw_list, lib_list) = if let Some(lt) = m.lib.as_ref() {
-                (lt.path.clone(), true, lt.frameworks.clone(), lt.libs.clone())
+                (
+                    lt.path.clone(),
+                    true,
+                    lt.frameworks.clone(),
+                    lt.libs.clone(),
+                )
             } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
                 let b = &m.bins[0];
                 (b.path.clone(), false, b.frameworks.clone(), b.libs.clone())
@@ -2789,10 +2836,7 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
 /// [lib], then a single real [[bin]], then the `src/<package-name>.cplus`
 /// fallback for library-only packages that declare no on-disk target. `ctx` is
 /// the command label used in error messages.
-fn resolve_project_entry(
-    m: &manifest::Manifest,
-    ctx: &str,
-) -> Result<(PathBuf, bool), ExitCode> {
+fn resolve_project_entry(m: &manifest::Manifest, ctx: &str) -> Result<(PathBuf, bool), ExitCode> {
     if let Some(lt) = m.lib.as_ref() {
         Ok((lt.path.clone(), true))
     } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
@@ -2843,18 +2887,36 @@ fn run_realtime_report(json: bool) -> ExitCode {
         Err(code) => return code,
     };
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    let mut loaded = match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names), Default::default()) {
+    let mut loaded = match resolver::load_project_full(
+        &entry_path,
+        &m.root,
+        is_lib_pkg,
+        Some(&dep_names),
+        Default::default(),
+    ) {
         Ok(l) => l,
         Err(failure) => {
-            emit_diag(&failure.to_diagnostic(), DiagMode::Human, failure.primary_source().unwrap_or(""));
+            emit_diag(
+                &failure.to_diagnostic(),
+                DiagMode::Human,
+                failure.primary_source().unwrap_or(""),
+            );
             return ExitCode::FAILURE;
         }
     };
     let entry_src = fs::read_to_string(&entry_path).unwrap_or_default();
 
     // Attributes must validate before we can trust the contract markers.
-    let attr_diags = attrs::check_multi(&loaded.program, entry_path.clone(), &entry_src, loaded.files.clone());
-    if attr_diags.iter().any(|d| matches!(d.severity, Severity::Error)) {
+    let attr_diags = attrs::check_multi(
+        &loaded.program,
+        entry_path.clone(),
+        &entry_src,
+        loaded.files.clone(),
+    );
+    if attr_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error))
+    {
         for d in &attr_diags {
             emit_diag(d, DiagMode::Human, &entry_src);
         }
@@ -2865,9 +2927,16 @@ fn run_realtime_report(json: bool) -> ExitCode {
     if let Some(profile) = m.realtime_profile.as_ref() {
         apply_realtime_profile(&mut loaded.program, &loaded.files, &m.root, profile);
     }
-    let lower_diags =
-        lower::lower_multi(&mut loaded.program, &entry_path, &entry_src, loaded.files.clone());
-    if lower_diags.iter().any(|d| matches!(d.severity, Severity::Error)) {
+    let lower_diags = lower::lower_multi(
+        &mut loaded.program,
+        &entry_path,
+        &entry_src,
+        loaded.files.clone(),
+    );
+    if lower_diags
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error))
+    {
         for d in &lower_diags {
             emit_diag(d, DiagMode::Human, &entry_src);
         }
@@ -2875,7 +2944,12 @@ fn run_realtime_report(json: bool) -> ExitCode {
     }
     // Run sema and KEEP the diagnostics (don't early-return on errors — the
     // whole point is to surface the contract violations).
-    let (diags, _mono) = sema::check_multi_with_mono(&loaded.program, entry_path.clone(), &entry_src, loaded.files.clone());
+    let (diags, _mono) = sema::check_multi_with_mono(
+        &loaded.program,
+        entry_path.clone(),
+        &entry_src,
+        loaded.files.clone(),
+    );
 
     // Map a real-time diagnostic code to its contract name.
     fn contract_of(code: &str) -> Option<&'static str> {
@@ -2895,7 +2969,12 @@ fn run_realtime_report(json: bool) -> ExitCode {
         .iter()
         .filter(|d| matches!(d.severity, Severity::Error) && contract_of(d.code.0).is_none())
         .count();
-    let count = |c: &str| violations.iter().filter(|d| contract_of(d.code.0) == Some(c)).count();
+    let count = |c: &str| {
+        violations
+            .iter()
+            .filter(|d| contract_of(d.code.0) == Some(c))
+            .count()
+    };
 
     // Count functions/methods carrying at least one real-time contract.
     fn has_rt(attrs: &[Attribute]) -> bool {
@@ -2967,7 +3046,9 @@ fn run_realtime_report(json: bool) -> ExitCode {
                 p.deny_alloc,
                 p.deny_block,
                 p.deny_unknown_extern,
-                p.stack_limit.map(|n| n.to_string()).unwrap_or_else(|| "none".to_string())
+                p.stack_limit
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "none".to_string())
             ),
             None => println!("  profile: (none — per-function contracts only)"),
         }
@@ -2995,7 +3076,9 @@ fn run_realtime_report(json: bool) -> ExitCode {
             println!("  clean");
         }
         if other_errors > 0 {
-            println!("  note: {other_errors} other front-end error(s) — run `cpc check` for details");
+            println!(
+                "  note: {other_errors} other front-end error(s) — run `cpc check` for details"
+            );
         }
     }
 
@@ -3041,7 +3124,13 @@ fn load_project_for_graph(diag_mode: DiagMode) -> Result<resolver::LoadedProject
         return Err(ExitCode::FAILURE);
     };
     let dep_names: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
-    match resolver::load_project_full(&entry_path, &m.root, is_lib_pkg, Some(&dep_names), Default::default()) {
+    match resolver::load_project_full(
+        &entry_path,
+        &m.root,
+        is_lib_pkg,
+        Some(&dep_names),
+        Default::default(),
+    ) {
         Ok(loaded) => Ok(loaded),
         Err(e) => {
             emit_diag(&e.to_diagnostic(), diag_mode, "");
@@ -3147,7 +3236,9 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                     ExitCode::SUCCESS
                 }
                 None => {
-                    eprintln!("cpc query call-hierarchy: `{sym}` is not a known function or method");
+                    eprintln!(
+                        "cpc query call-hierarchy: `{sym}` is not a known function or method"
+                    );
                     ExitCode::FAILURE
                 }
             };
@@ -3402,7 +3493,10 @@ fn phase0_hello(out: PathBuf) -> ExitCode {
     // The frozen hello.ll is platform-neutral; on Windows append the binary-
     // mode constructor so the demo prints LF, not "\r\n" (matching the real
     // codegen path). `windows_binary_mode_ctor_ir()` is empty off Windows.
-    let hello_ir = format!("{HELLO_LL}{}", cplus_core::codegen::windows_binary_mode_ctor_ir());
+    let hello_ir = format!(
+        "{HELLO_LL}{}",
+        cplus_core::codegen::windows_binary_mode_ctor_ir()
+    );
     let tmp_handle = match make_temp_file("cpc-", ".ll", hello_ir.as_bytes()) {
         Ok(h) => h,
         Err(e) => {
@@ -3432,7 +3526,15 @@ fn compile_file(
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(&input, &src, mode, build_mode, fp_contract, debug_info, sanitizers) {
+    let ir = match build_ir(
+        &input,
+        &src,
+        mode,
+        build_mode,
+        fp_contract,
+        debug_info,
+        sanitizers,
+    ) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -3520,8 +3622,7 @@ fn build_ir(
         let (manifest_root, dep_names): (PathBuf, Vec<String>) = match manifest_hit {
             Some(manifest_path) => match manifest::load(&manifest_path) {
                 Ok(m) => {
-                    let deps: Vec<String> =
-                        m.dependencies.iter().map(|d| d.name.clone()).collect();
+                    let deps: Vec<String> = m.dependencies.iter().map(|d| d.name.clone()).collect();
                     (m.root, deps)
                 }
                 Err(e) => {
@@ -3531,7 +3632,13 @@ fn build_ir(
             },
             None => (start_dir, Vec::new()),
         };
-        let loaded = match resolver::load_project_full(file, &manifest_root, false, Some(&dep_names), Default::default()) {
+        let loaded = match resolver::load_project_full(
+            file,
+            &manifest_root,
+            false,
+            Some(&dep_names),
+            Default::default(),
+        ) {
             Ok(l) => l,
             Err(failure) => {
                 let d = failure.to_diagnostic();
@@ -3594,12 +3701,8 @@ fn build_ir(
     if lower_errors {
         return Err(ExitCode::FAILURE);
     }
-    let (diags, mono) = sema::check_multi_with_mono(
-        &prog,
-        file.to_path_buf(),
-        src,
-        files_map.clone(),
-    );
+    let (diags, mono) =
+        sema::check_multi_with_mono(&prog, file.to_path_buf(), src, files_map.clone());
     let had_errors = diags.iter().any(|d| matches!(d.severity, Severity::Error));
     for d in &diags {
         emit_diag(d, mode, src);
@@ -3622,7 +3725,13 @@ fn build_ir(
     let dbg_path = if debug_info { Some(file) } else { None };
     ensure_coro_end_probed();
     Ok(codegen::generate_with_mono(
-        &post_mono, build_mode, fp_contract, dbg_path, sanitizers, false, &mono,
+        &post_mono,
+        build_mode,
+        fp_contract,
+        dbg_path,
+        sanitizers,
+        false,
+        &mono,
     ))
 }
 
@@ -3759,7 +3868,15 @@ fn dump_ll(
             return ExitCode::FAILURE;
         }
     };
-    match build_ir(&path, &src, mode, build_mode, fp_contract, debug_info, sanitizers) {
+    match build_ir(
+        &path,
+        &src,
+        mode,
+        build_mode,
+        fp_contract,
+        debug_info,
+        sanitizers,
+    ) {
         Ok(ir) => {
             print!("{ir}");
             ExitCode::SUCCESS

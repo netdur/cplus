@@ -53,8 +53,8 @@ impl SpscRingU64 {
     // also reads published slots sees a consistent view.
     #[no_alloc] #[no_block]
     fn len(this) -> usize {
-        let head: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Acquire) };
-        let tail: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Acquire) };
+        let head: u64 = { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Acquire) };
+        let tail: u64 = { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Acquire) };
         return (tail -% head) as usize;
     }
 
@@ -69,16 +69,16 @@ impl SpscRingU64 {
     #[no_alloc] #[no_block]
     fn push(ref this, v: u64) -> bool {
         // Acquire on `head` so a slot freed by the consumer is visible.
-        let head: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Acquire) };
+        let head: u64 = { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Acquire) };
         // Relaxed on `tail` — this thread is its sole writer.
-        let tail: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Relaxed) };
+        let tail: u64 = { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Relaxed) };
         if (tail -% head) >= (1024 as u64) {
             return false;
         }
         let idx: usize = (tail % (1024 as u64)) as usize;
         this.buf[idx] = v;
         // Release publishes the slot write before the index advance.
-        unsafe { atomic::atomic_store_u64(#addr_of(this.tail), tail +% (1 as u64), atomic::Ordering::Release); }
+        { atomic::atomic_store_u64(#addr_of(this.tail), tail +% (1 as u64), atomic::Ordering::Release); }
         return true;
     }
 
@@ -87,16 +87,16 @@ impl SpscRingU64 {
     #[no_alloc] #[no_block]
     fn pop(ref this) -> option::Option[u64] {
         // Acquire on `tail` so the producer's slot write is visible.
-        let tail: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Acquire) };
+        let tail: u64 = { atomic::atomic_load_u64(#addr_of(this.tail), atomic::Ordering::Acquire) };
         // Relaxed on `head` — this thread is its sole writer.
-        let head: u64 = unsafe { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Relaxed) };
+        let head: u64 = { atomic::atomic_load_u64(#addr_of(this.head), atomic::Ordering::Relaxed) };
         if head == tail {
             return option::Option[u64]::None;
         }
         let idx: usize = (head % (1024 as u64)) as usize;
         let v: u64 = this.buf[idx];
         // Release frees the slot before the consumer index advance.
-        unsafe { atomic::atomic_store_u64(#addr_of(this.head), head +% (1 as u64), atomic::Ordering::Release); }
+        { atomic::atomic_store_u64(#addr_of(this.head), head +% (1 as u64), atomic::Ordering::Release); }
         return option::Option[u64]::Some(v);
     }
 }

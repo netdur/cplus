@@ -61,7 +61,7 @@ fn next_capacity(current: usize, required: usize) -> usize {
 
 fn new[T]() -> Vec[T] {
     return Vec[T] {
-        ptr: unsafe { 0 as *T },
+        ptr: { 0 as *T },
         len: 0 as usize,
         cap: 0 as usize,
     };
@@ -72,10 +72,10 @@ fn with_capacity[T](n: usize) -> Vec[T] {
         return new::[T]();
     }
     let bytes: usize = checked_bytes::[T](n);
-    let raw: *u8 = unsafe { malloc(bytes) };
+    let raw: *u8 = { malloc(bytes) };
     assert raw.is_not_null();
     return Vec[T] {
-        ptr: unsafe { raw as *T },
+        ptr: { raw as *T },
         len: 0 as usize,
         cap: n,
     };
@@ -85,9 +85,9 @@ impl Vec[T] {
     fn grow_to(ref this, new_cap: usize) {
         assert new_cap > this.cap;
         let bytes: usize = checked_bytes::[T](new_cap);
-        let raw: *u8 = unsafe { realloc(this.ptr as *u8, bytes) };
+        let raw: *u8 = { realloc(this.ptr as *u8, bytes) };
         assert raw.is_not_null();
-        this.ptr = unsafe { raw as *T };
+        this.ptr = { raw as *T };
         this.cap = new_cap;
         return;
     }
@@ -118,8 +118,8 @@ impl Vec[T] {
         if required > this.cap {
             this.grow_to(next_capacity(this.cap, required));
         }
-        let slot: *T = unsafe { this.ptr + this.len };
-        unsafe { *slot = value; }
+        let slot: *T = { this.ptr + this.len };
+        { *slot = value; }
         this.len = required;
         return;
     }
@@ -129,8 +129,8 @@ impl Vec[T] {
             return option::Option[T]::None;
         }
         let new_len: usize = this.len -% (1 as usize);
-        let slot: *T = unsafe { this.ptr + new_len };
-        let value: T = unsafe { *slot };
+        let slot: *T = { this.ptr + new_len };
+        let value: T = { *slot };
         this.len = new_len;
         return option::Option[T]::Some(value);
     }
@@ -140,11 +140,11 @@ impl Vec[T] {
             return option::Option[T]::None;
         }
         let last: usize = this.len -% (1 as usize);
-        let slot: *T = unsafe { this.ptr + i };
-        let value: T = unsafe { *slot };
+        let slot: *T = { this.ptr + i };
+        let value: T = { *slot };
         if i != last {
-            let last_slot: *T = unsafe { this.ptr + last };
-            unsafe { *slot = *last_slot; }
+            let last_slot: *T = { this.ptr + last };
+            { *slot = *last_slot; }
         }
         this.len = last;
         return option::Option[T]::Some(value);
@@ -153,8 +153,8 @@ impl Vec[T] {
     fn clear(ref this) {
         var i: usize = 0 as usize;
         while i < this.len {
-            let elem: *T = unsafe { this.ptr + i };
-            unsafe { #drop_in_place::[T](elem); }
+            let elem: *T = { this.ptr + i };
+            { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
         this.len = 0 as usize;
@@ -167,8 +167,8 @@ impl Vec[T] {
         }
         var i: usize = new_len;
         while i < this.len {
-            let elem: *T = unsafe { this.ptr + i };
-            unsafe { #drop_in_place::[T](elem); }
+            let elem: *T = { this.ptr + i };
+            { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
         this.len = new_len;
@@ -181,22 +181,22 @@ impl Vec[T] {
         }
         if this.len == (0 as usize) {
             if this.ptr.is_not_null() {
-                unsafe { free(this.ptr as *u8); }
+                { free(this.ptr as *u8); }
             }
-            this.ptr = unsafe { 0 as *T };
+            this.ptr = { 0 as *T };
             this.cap = 0 as usize;
             return;
         }
         let bytes: usize = checked_bytes::[T](this.len);
-        let raw: *u8 = unsafe { realloc(this.ptr as *u8, bytes) };
+        let raw: *u8 = { realloc(this.ptr as *u8, bytes) };
         assert raw.is_not_null();
-        this.ptr = unsafe { raw as *T };
+        this.ptr = { raw as *T };
         this.cap = this.len;
         return;
     }
 
     fn as_slice(this) -> T[] {
-        return unsafe { #slice_from_raw_parts(this.ptr, this.len) };
+        return { #slice_from_raw_parts(this.ptr, this.len) };
     }
 
     // Pointer to element `i`, bounds-checked (None past the end).
@@ -209,14 +209,14 @@ impl Vec[T] {
     // deref is unchecked:
     //
     //     match v.at(i) {
-    //         option::Option[*T]::Some(p) => { let n = unsafe { (*p).field }; ... }
+    //         option::Option[*T]::Some(p) => { let n = { (*p).field }; ... }
     //         option::Option[*T]::None    => { ... }
     //     }
     fn at(this, i: usize) -> option::Option[*T] {
         if i >= this.len {
             return option::Option[*T]::None;
         }
-        return option::Option[*T]::Some(unsafe { this.ptr + i });
+        return option::Option[*T]::Some({ this.ptr + i });
     }
 
     // Replace element `i` with `value`, dropping the element previously there.
@@ -225,9 +225,9 @@ impl Vec[T] {
     // so there is no leak and no double free.
     fn set(ref this, i: usize, take value: T) {
         assert i < this.len;
-        let slot: *T = unsafe { this.ptr + i };
-        unsafe { #drop_in_place::[T](slot); }
-        unsafe { *slot = value; }
+        let slot: *T = { this.ptr + i };
+        { #drop_in_place::[T](slot); }
+        { *slot = value; }
         return;
     }
 
@@ -241,7 +241,7 @@ impl Vec[T] {
         var i: usize = 0 as usize;
         while i < this.len {
             match this.at(i) {
-                option::Option[*T]::Some(p) => { yield unsafe { *p }; }
+                option::Option[*T]::Some(p) => { yield { *p }; }
                 option::Option[*T]::None => { return; }
             }
             i = i +% (1 as usize);
@@ -261,9 +261,9 @@ impl Vec[T] {
         if required > this.cap {
             this.grow_to(next_capacity(this.cap, required));
         }
-        let dest: *T = unsafe { this.ptr + this.len };
+        let dest: *T = { this.ptr + this.len };
         let bytes: usize = checked_bytes::[T](count);
-        unsafe { memcpy(dest as *u8, src as *u8, bytes); }
+        { memcpy(dest as *u8, src as *u8, bytes); }
         this.len = required;
         return;
     }
@@ -271,12 +271,12 @@ impl Vec[T] {
     fn drop(ref this) {
         var i: usize = 0 as usize;
         while i < this.len {
-            let elem: *T = unsafe { this.ptr + i };
-            unsafe { #drop_in_place::[T](elem); }
+            let elem: *T = { this.ptr + i };
+            { #drop_in_place::[T](elem); }
             i = i +% (1 as usize);
         }
         if this.ptr.is_not_null() {
-            unsafe { free(this.ptr as *u8); }
+            { free(this.ptr as *u8); }
         }
         return;
     }
@@ -286,8 +286,8 @@ fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
     if i >= v.len {
         return option::Option[T]::None;
     }
-    let slot: *T = unsafe { v.ptr + i };
-    return option::Option[T]::Some(unsafe { *slot });
+    let slot: *T = { v.ptr + i };
+    return option::Option[T]::Some({ *slot });
 }
 
 // Like `get`, but asserts the index is in bounds and returns the element
@@ -296,8 +296,8 @@ fn get[T: Copy](v: Vec[T], i: usize) -> option::Option[T] {
 // never an alias into storage) and bounds-checked (aborts on out-of-bounds).
 fn at_copy[T: Copy](v: Vec[T], i: usize) -> T {
     assert i < v.len;
-    let slot: *T = unsafe { v.ptr + i };
-    return unsafe { *slot };
+    let slot: *T = { v.ptr + i };
+    return { *slot };
 }
 
 fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) {
@@ -309,10 +309,10 @@ fn extend_from_slice[T: Copy](ref v: Vec[T], s: T[]) {
     if required > v.cap {
         v.grow_to(next_capacity(v.cap, required));
     }
-    let dest: *T = unsafe { v.ptr + v.len };
-    let src: *T = unsafe { #slice_ptr(s) };
+    let dest: *T = { v.ptr + v.len };
+    let src: *T = { #slice_ptr(s) };
     let bytes: usize = checked_bytes::[T](count);
-    unsafe { memcpy(dest as *u8, src as *u8, bytes); }
+    { memcpy(dest as *u8, src as *u8, bytes); }
     v.len = required;
     return;
 }

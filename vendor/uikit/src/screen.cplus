@@ -7,6 +7,8 @@ struct Screen {
 }
 
 impl Screen {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn main() -> Screen {
         let cls: *u8 = rt::get_class(#str_ptr("UIScreen\0"));
         let screen: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("mainScreen\0")));

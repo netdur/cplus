@@ -8,6 +8,8 @@ struct Menu {
 }
 
 impl Menu {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(title: *u8) -> Menu {
         let ns_title = rt::ns_string(title);
         let cls = rt::get_class(#str_ptr("NSMenu\0"));
@@ -42,14 +44,16 @@ struct MenuItem {
 }
 
 impl MenuItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
 
     fn new(title: *u8, action: *u8, key_equiv: *u8) -> MenuItem {
         let ns_title = rt::ns_string(title);
-        var act_sel: *u8 = unsafe { 0 as *u8 };
-        if action != unsafe { 0 as *u8 } {
+        var act_sel: *u8 = { 0 as *u8 };
+        if action != { 0 as *u8 } {
             act_sel = rt::sel(action);
         }
         let ns_key = rt::ns_string(key_equiv);

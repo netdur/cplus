@@ -10,8 +10,8 @@ extern fn __error() -> *i32;
 
 // Current thread's errno value.
 fn errno() -> i32 {
-    let p: *i32 = unsafe { __error() };
-    return unsafe { *p };
+    let p: *i32 = { __error() };
+    return { *p };
 }
 
 // O_NONBLOCK for fcntl(F_SETFL). macOS: 0x0004.

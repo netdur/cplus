@@ -24,8 +24,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { break; }
         written = written +% (w as usize);
     }
@@ -37,7 +37,7 @@ fn fnv1a(bytes: *u8, len: usize) -> u64 {
     var h: u64 = 0xcbf29ce484222325 as u64;
     var i: usize = 0 as usize;
     while i < len {
-        let b: u8 = unsafe { bytes[i] };
+        let b: u8 = { bytes[i] };
         h = h ^ (b as u64);
         h = h *% (0x100000001b3 as u64);
         i = i +% (1 as usize);
@@ -60,19 +60,19 @@ fn table_new(cap: usize) -> Table {
     let keys_bytes: usize = cap *% (8 as usize);
     let lens_bytes: usize = cap *% (8 as usize);
     let vals_bytes: usize = cap *% (4 as usize);
-    let keys_raw: *u8 = unsafe { malloc(keys_bytes) };
-    let klens_raw: *u8 = unsafe { malloc(lens_bytes) };
-    let vals_raw: *u8 = unsafe { malloc(vals_bytes) };
+    let keys_raw: *u8 = { malloc(keys_bytes) };
+    let klens_raw: *u8 = { malloc(lens_bytes) };
+    let vals_raw: *u8 = { malloc(vals_bytes) };
     // Zero the entire keys + klens regions byte-by-byte so every slot
     // reads as `(klen=0, key=null)` = empty.
     var i: usize = 0 as usize;
-    while i < keys_bytes { unsafe { keys_raw[i] = 0 as u8; } i = i +% (1 as usize); }
+    while i < keys_bytes { { keys_raw[i] = 0 as u8; } i = i +% (1 as usize); }
     i = 0 as usize;
-    while i < lens_bytes { unsafe { klens_raw[i] = 0 as u8; } i = i +% (1 as usize); }
+    while i < lens_bytes { { klens_raw[i] = 0 as u8; } i = i +% (1 as usize); }
     return Table {
-        keys: unsafe { keys_raw as **u8 },
-        klens: unsafe { klens_raw as *usize },
-        vals: unsafe { vals_raw as *i32 },
+        keys: { keys_raw as **u8 },
+        klens: { klens_raw as *usize },
+        vals: { vals_raw as *i32 },
         cap: cap,
     };
 }
@@ -81,8 +81,8 @@ fn keys_equal(a: *u8, alen: usize, b: *u8, blen: usize) -> bool {
     if alen != blen { return false; }
     var i: usize = 0 as usize;
     while i < alen {
-        let x: u8 = unsafe { a[i] };
-        let y: u8 = unsafe { b[i] };
+        let x: u8 = { a[i] };
+        let y: u8 = { b[i] };
         if x != y { return false; }
         i = i +% (1 as usize);
     }
@@ -94,18 +94,18 @@ fn table_insert(t: Table, key: *u8, klen: usize, val: i32) {
     let start: usize = (h as usize) % t.cap;
     var slot: usize = start;
     loop {
-        let existing_len: usize = unsafe { t.klens[slot] };
+        let existing_len: usize = { t.klens[slot] };
         if existing_len == (0 as usize) {
-            let owned: *u8 = unsafe { malloc(klen) };
-            unsafe { memcpy(owned, key, klen); }
-            unsafe { t.keys[slot] = owned; }
-            unsafe { t.klens[slot] = klen; }
-            unsafe { t.vals[slot] = val; }
+            let owned: *u8 = { malloc(klen) };
+            { memcpy(owned, key, klen); }
+            { t.keys[slot] = owned; }
+            { t.klens[slot] = klen; }
+            { t.vals[slot] = val; }
             return;
         }
-        let existing_key: *u8 = unsafe { t.keys[slot] };
+        let existing_key: *u8 = { t.keys[slot] };
         if keys_equal(existing_key, existing_len, key, klen) {
-            unsafe { t.vals[slot] = val; }
+            { t.vals[slot] = val; }
             return;
         }
         slot = (slot +% (1 as usize)) % t.cap;
@@ -120,11 +120,11 @@ fn table_get(t: Table, key: *u8, klen: usize) -> i32 {
     let start: usize = (h as usize) % t.cap;
     var slot: usize = start;
     loop {
-        let existing_len: usize = unsafe { t.klens[slot] };
+        let existing_len: usize = { t.klens[slot] };
         if existing_len == (0 as usize) { break; }
-        let existing_key: *u8 = unsafe { t.keys[slot] };
+        let existing_key: *u8 = { t.keys[slot] };
         if keys_equal(existing_key, existing_len, key, klen) {
-            return unsafe { t.vals[slot] };
+            return { t.vals[slot] };
         }
         slot = (slot +% (1 as usize)) % t.cap;
         if slot == start { break; }
@@ -135,16 +135,16 @@ fn table_get(t: Table, key: *u8, klen: usize) -> i32 {
 fn table_free(t: Table) {
     var i: usize = 0 as usize;
     while i < t.cap {
-        let l: usize = unsafe { t.klens[i] };
+        let l: usize = { t.klens[i] };
         if l != (0 as usize) {
-            let k: *u8 = unsafe { t.keys[i] };
-            unsafe { free(k); }
+            let k: *u8 = { t.keys[i] };
+            { free(k); }
         }
         i = i +% (1 as usize);
     }
-    unsafe { free(t.keys as *u8); }
-    unsafe { free(t.klens as *u8); }
-    unsafe { free(t.vals as *u8); }
+    { free(t.keys as *u8); }
+    { free(t.klens as *u8); }
+    { free(t.vals as *u8); }
     return;
 }
 

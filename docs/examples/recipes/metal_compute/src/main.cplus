@@ -20,7 +20,7 @@ fn parse_usize(s: str) -> usize {
     var acc: usize = 0 as usize;
     var i: usize = 0 as usize;
     while i < n {
-        let b: u8 = unsafe { p[i] };
+        let b: u8 = { p[i] };
         // Stop on the first non-digit so a trailing newline (the
         // default `echo > file.size` adds one) doesn't poison the
         // result.
@@ -124,8 +124,8 @@ extern fn printf(fmt: *u8, ...) -> i32;
 // Helpers.
 // ===========================================================================
 
-fn sel(name: *u8) -> *u8 { return unsafe { sel_registerName(name) }; }
-fn cls(name: *u8) -> *u8 { return unsafe { objc_getClass(name) }; }
+fn sel(name: *u8) -> *u8 { return { sel_registerName(name) }; }
+fn cls(name: *u8) -> *u8 { return { objc_getClass(name) }; }
 
 // Wrap the embedded `.metallib` bytes as a `dispatch_data_t`. Metal's
 // `newLibraryWithData:error:` takes `dispatch_data_t`, NOT `NSData` —
@@ -136,7 +136,7 @@ fn cls(name: *u8) -> *u8 { return unsafe { objc_getClass(name) }; }
 // `.rodata` lifetime + Metal lifetime cooperate without explicit
 // retain bookkeeping.
 fn ns_dispatch_data(ptr: *u8, len: usize) -> *u8 {
-    return unsafe { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
+    return { dispatch_data_create(ptr, len, 0 as *u8, 0 as *u8) };
 }
 
 // ===========================================================================
@@ -148,26 +148,26 @@ fn main() -> i32 {
     let bytes: usize = n *% (4 as usize);   // f32 = 4 bytes
 
     // ---- Host-side input + output buffers ----
-    let host_in: *u8 = unsafe { malloc(bytes) };
-    let host_out: *u8 = unsafe { malloc(bytes) };
-    let fp: *f32 = unsafe { host_in as *f32 };
+    let host_in: *u8 = { malloc(bytes) };
+    let host_out: *u8 = { malloc(bytes) };
+    let fp: *f32 = { host_in as *f32 };
     var i: usize = 0 as usize;
     while i < n {
-        unsafe { fp[i] = (i as f32); }
+        { fp[i] = (i as f32); }
         i = i +% (1 as usize);
     }
 
     // ---- Device + queue ----
-    let device: *u8 = unsafe { MTLCreateSystemDefaultDevice() };
-    if device == unsafe { 0 as *u8 } {
-        unsafe { printf(#str_ptr("no Metal device available\n\0")); }
+    let device: *u8 = { MTLCreateSystemDefaultDevice() };
+    if device == { 0 as *u8 } {
+        { printf(#str_ptr("no Metal device available\n\0")); }
         return 1;
     }
-    let queue: *u8 = unsafe { msg_id(device, sel(#str_ptr("newCommandQueue\0"))) };
+    let queue: *u8 = { msg_id(device, sel(#str_ptr("newCommandQueue\0"))) };
 
     // ---- Embed the compiled .metallib + load it as an MTLLibrary ----
     let shader_bytes = #include_bytes("../shaders/double.metallib");
-    let shader_ptr: *u8 = unsafe { shader_bytes as *u8 };
+    let shader_ptr: *u8 = { shader_bytes as *u8 };
     // `newLibraryWithData:error:` wants a `dispatch_data_t`, NOT an NSData.
     // Passing an NSData here crashes inside the Metal library builder
     // when it tries to SHA-256 hash the bytes (reads through a bogus
@@ -175,27 +175,27 @@ fn main() -> i32 {
     // `dispatch_data_create` — that IS the type Metal expects.
     let shader_data: *u8 = ns_dispatch_data(shader_ptr, shader_len());
 
-    let err_slot: *u8 = unsafe { malloc(8 as usize) };
-    let library: *u8 = unsafe {
+    let err_slot: *u8 = { malloc(8 as usize) };
+    let library: *u8 = {
         msg_id_id_ptr(device, sel(#str_ptr("newLibraryWithData:error:\0")), shader_data, err_slot)
     };
-    if library == unsafe { 0 as *u8 } {
-        unsafe { printf(#str_ptr("newLibraryWithData:error: returned nil\n\0")); }
+    if library == { 0 as *u8 } {
+        { printf(#str_ptr("newLibraryWithData:error: returned nil\n\0")); }
         return 2;
     }
 
     // ---- Resolve the kernel function + compute pipeline ----
-    let fn_name: *u8 = unsafe {
+    let fn_name: *u8 = {
         msg_id_id(
             cls(#str_ptr("NSString\0")),
             sel(#str_ptr("stringWithUTF8String:\0")),
             #str_ptr("double_each\0"),
         )
     };
-    let kernel_fn: *u8 = unsafe {
+    let kernel_fn: *u8 = {
         msg_id_id(library, sel(#str_ptr("newFunctionWithName:\0")), fn_name)
     };
-    let pipeline: *u8 = unsafe {
+    let pipeline: *u8 = {
         msg_id_pipeline(
             device,
             sel(#str_ptr("newComputePipelineStateWithFunction:error:\0")),
@@ -204,14 +204,14 @@ fn main() -> i32 {
     };
 
     // ---- Device-side buffers ----
-    let mtl_in: *u8 = unsafe {
+    let mtl_in: *u8 = {
         msg_id_ptr_len_opt(
             device,
             sel(#str_ptr("newBufferWithBytes:length:options:\0")),
             host_in, bytes, 0 as u64,
         )
     };
-    let mtl_out: *u8 = unsafe {
+    let mtl_out: *u8 = {
         msg_id_usize_u64(
             device,
             sel(#str_ptr("newBufferWithLength:options:\0")),
@@ -220,9 +220,9 @@ fn main() -> i32 {
     };
 
     // ---- Command buffer + compute encoder ----
-    let cmd_buf: *u8 = unsafe { msg_id(queue, sel(#str_ptr("commandBuffer\0"))) };
-    let encoder: *u8 = unsafe { msg_id(cmd_buf, sel(#str_ptr("computeCommandEncoder\0"))) };
-    unsafe {
+    let cmd_buf: *u8 = { msg_id(queue, sel(#str_ptr("commandBuffer\0"))) };
+    let encoder: *u8 = { msg_id(cmd_buf, sel(#str_ptr("computeCommandEncoder\0"))) };
+    {
         msg_void_pipeline(encoder, sel(#str_ptr("setComputePipelineState:\0")), pipeline);
         msg_void_buf_idx(encoder, sel(#str_ptr("setBuffer:offset:atIndex:\0")), mtl_in, 0 as usize, 0 as usize);
         msg_void_buf_idx(encoder, sel(#str_ptr("setBuffer:offset:atIndex:\0")), mtl_out, 0 as usize, 1 as usize);
@@ -231,7 +231,7 @@ fn main() -> i32 {
     // ---- Dispatch: 64 threads in one threadgroup ----
     let groups: MTLSize = MTLSize { width: 1 as usize, height: 1 as usize, depth: 1 as usize };
     let per_group: MTLSize = MTLSize { width: n, height: 1 as usize, depth: 1 as usize };
-    unsafe {
+    {
         msg_dispatch(encoder, sel(#str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0")), #addr_of(groups), #addr_of(per_group));
         msg_void(encoder, sel(#str_ptr("endEncoding\0")));
         msg_void(cmd_buf, sel(#str_ptr("commit\0")));
@@ -239,20 +239,20 @@ fn main() -> i32 {
     }
 
     // ---- Read back + validate ----
-    let mtl_contents: *u8 = unsafe { msg_ptr(mtl_out, sel(#str_ptr("contents\0"))) };
-    unsafe { memcpy(host_out, mtl_contents, bytes); }
-    let outp: *f32 = unsafe { host_out as *f32 };
+    let mtl_contents: *u8 = { msg_ptr(mtl_out, sel(#str_ptr("contents\0"))) };
+    { memcpy(host_out, mtl_contents, bytes); }
+    let outp: *f32 = { host_out as *f32 };
 
     var bad: i32 = 0;
     var j: usize = 0 as usize;
     while j < n {
         let expected: f32 = (j as f32) * 2.0f32;
-        let got: f32 = unsafe { outp[j] };
+        let got: f32 = { outp[j] };
         if got != expected { bad = bad +% 1; }
         j = j +% (1 as usize);
     }
 
-    unsafe {
+    {
         free(host_in);
         free(host_out);
         free(err_slot);

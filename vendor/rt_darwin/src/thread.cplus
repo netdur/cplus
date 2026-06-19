@@ -37,7 +37,7 @@ fn qos_value(p: Priority) -> u32 {
 // Set the calling thread's QoS class. `Ok(0)` on success; `Err(rc)` carries
 // the nonzero libc return code.
 fn set_current_priority(p: Priority) -> result::Result[i32, i32] {
-    let rc: i32 = unsafe { pthread_set_qos_class_self_np(qos_value(p), 0 as i32) };
+    let rc: i32 = { pthread_set_qos_class_self_np(qos_value(p), 0 as i32) };
     if rc == (0 as i32) {
         return result::Result[i32, i32]::Ok(0 as i32);
     }

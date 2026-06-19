@@ -39,12 +39,12 @@ extern fn atoi(s: *u8) -> i32;
 // Read the target port from `FETCH_PORT` env var, defaulting to 7878.
 // Lets the e2e harness pick a free port without recompiling.
 fn target_port() -> u16 {
-    let env_p: *u8 = unsafe { getenv(#str_ptr("FETCH_PORT\0")) };
-    let null_p: *u8 = unsafe { 0 as *u8 };
+    let env_p: *u8 = { getenv(#str_ptr("FETCH_PORT\0")) };
+    let null_p: *u8 = { 0 as *u8 };
     if env_p == null_p {
         return 7878 as u16;
     }
-    let p: i32 = unsafe { atoi(env_p) };
+    let p: i32 = { atoi(env_p) };
     return p as u16;
 }
 
@@ -58,18 +58,18 @@ async fn fetch_one_byte(port: u16) -> i32 {
     var stream: net::TcpStream = s;
     let _nb: i32 = stream.make_nonblocking();
     // Send a one-byte request and read a one-byte reply.
-    let req: *u8 = unsafe { malloc(1 as usize) };
-    unsafe { *req = 0x41 as u8; }   // 'A'
+    let req: *u8 = { malloc(1 as usize) };
+    { *req = 0x41 as u8; }   // 'A'
     let _w: isize = await stream.write_all_async(req, 1 as usize);
-    unsafe { free(req); }
-    let buf: *u8 = unsafe { malloc(1 as usize) };
+    { free(req); }
+    let buf: *u8 = { malloc(1 as usize) };
     let n: isize = await stream.read_async(buf, 1 as usize);
     if n != (1 as isize) {
-        unsafe { free(buf); }
+        { free(buf); }
         return 0 -% 2 as i32;
     }
-    let v: u8 = unsafe { *buf };
-    unsafe { free(buf); }
+    let v: u8 = { *buf };
+    { free(buf); }
     return v as i32;
 }
 
@@ -77,6 +77,6 @@ fn main() -> i32 {
     let port: u16 = target_port();
     let f: future::Future[i32] = fetch_one_byte(port);
     let got: i32 = executor::block_on::[i32](f);
-    unsafe { printf(#str_ptr("got=%d\n\0"), got); }
+    { printf(#str_ptr("got=%d\n\0"), got); }
     return got;
 }

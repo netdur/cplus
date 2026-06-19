@@ -22,7 +22,7 @@ fn create_table_data_source(
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CTableDataSource\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
         cls = rt::allocate_class_pair(nsobject, #str_ptr("CTableDataSource\0"), 0 as usize);
         let _a: i8 = rt::add_method_i64_id(
@@ -52,7 +52,7 @@ fn create_table_data_source(
 fn create_table_delegate(selection_changed_imp: fn(*u8, *u8, *u8)) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CTableDelegate\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
         cls = rt::allocate_class_pair(nsobject, #str_ptr("CTableDelegate\0"), 0 as usize);
         let _a: i8 = rt::add_action_method(
@@ -73,6 +73,8 @@ struct TableView {
 }
 
 impl TableView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> TableView {
         return TableView { obj: rt::alloc_init_with_frame(#str_ptr("NSTableView\0"), frame) };
     }
@@ -119,6 +121,8 @@ struct TableColumn {
 }
 
 impl TableColumn {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(identifier: *u8) -> TableColumn {
         return TableColumn { obj: rt::alloc_init_with_identifier(#str_ptr("NSTableColumn\0"), identifier) };
     }
@@ -150,6 +154,8 @@ struct OutlineView {
 }
 
 impl OutlineView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -188,6 +194,8 @@ struct TableCellView {
 }
 
 impl TableCellView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -210,6 +218,8 @@ struct TableRowView {
 }
 
 impl TableRowView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -224,6 +234,8 @@ struct CollectionView {
 }
 
 impl CollectionView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -254,6 +266,8 @@ struct CollectionViewItem {
 }
 
 impl CollectionViewItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -272,6 +286,8 @@ struct CollectionViewFlowLayout {
 }
 
 impl CollectionViewFlowLayout {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -298,6 +314,8 @@ struct CollectionViewGridLayout {
 }
 
 impl CollectionViewGridLayout {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -320,6 +338,8 @@ struct RuleEditor {
 }
 
 impl RuleEditor {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -342,6 +362,8 @@ struct PredicateEditor {
 }
 
 impl PredicateEditor {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }

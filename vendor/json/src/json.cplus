@@ -119,29 +119,29 @@ fn object_new() -> Value {
 struct Buf { opaque ptr: *u8, len: usize, cap: usize }
 
 fn buf_new() -> Buf {
-    return Buf { ptr: unsafe { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
+    return Buf { ptr: { 0 as *u8 }, len: 0 as usize, cap: 0 as usize };
 }
 
 fn buf_push(ref b: Buf, byte: u8) -> Buf {
     if b.len == b.cap {
         let nc: usize = if b.cap == (0 as usize) { 16 as usize } else { b.cap *% (2 as usize) };
-        let raw: *u8 = unsafe { realloc(b.ptr, nc) };
+        let raw: *u8 = { realloc(b.ptr, nc) };
         b.ptr = raw;
         b.cap = nc;
     }
-    let slot: *u8 = unsafe { b.ptr + b.len };
-    unsafe { *slot = byte; }
+    let slot: *u8 = { b.ptr + b.len };
+    { *slot = byte; }
     b.len = b.len +% (1 as usize);
     return b;
 }
 
 fn buf_free(b: Buf) {
-    if unsafe { b.ptr as usize } != (0 as usize) { unsafe { free(b.ptr); } }
+    if { #addr(b.ptr) } != (0 as usize) { { free(b.ptr); } }
     return;
 }
 
 fn buf_to_string(b: Buf) -> text::Text {
-    let view: str = unsafe { #str_from_raw_parts(b.ptr, b.len) };
+    let view: str = { #str_from_raw_parts(b.ptr, b.len) };
     let out: text::Text = view.to_text();
     buf_free(b);
     return out;
@@ -195,14 +195,14 @@ fn parser_new(s: str) -> Parser {
 
 fn peek(p: Parser) -> i32 {
     if p.pos >= p.len { return - 1 as i32; }
-    let q: *u8 = unsafe { p.src + p.pos };
-    return unsafe { *q } as i32;
+    let q: *u8 = { p.src + p.pos };
+    return { *q } as i32;
 }
 
 fn skip_ws(ref p: Parser) -> Parser {
     while p.pos < p.len {
-        let q: *u8 = unsafe { p.src + p.pos };
-        let c: u8 = unsafe { *q };
+        let q: *u8 = { p.src + p.pos };
+        let c: u8 = { *q };
         if c == (32 as u8) || c == (9 as u8) || c == (10 as u8) || c == (13 as u8) {
             p.pos = p.pos +% (1 as usize);
         } else {
@@ -217,9 +217,9 @@ fn match_keyword(p: Parser, kw: str) -> bool {
     if p.pos +% n > p.len { return false; }
     var i: usize = 0 as usize;
     while i < n {
-        let kq: *u8 = unsafe { #str_ptr(kw) + i };
-        let sq: *u8 = unsafe { p.src + (p.pos +% i) };
-        if unsafe { *kq } != unsafe { *sq } { return false; }
+        let kq: *u8 = { #str_ptr(kw) + i };
+        let sq: *u8 = { p.src + (p.pos +% i) };
+        if { *kq } != { *sq } { return false; }
         i = i +% (1 as usize);
     }
     return true;
@@ -232,8 +232,8 @@ fn parse_string_bytes(ref p: Parser) -> StrParse {
     p.pos = p.pos +% (1 as usize);
     var b: Buf = buf_new();
     while p.pos < p.len {
-        let q: *u8 = unsafe { p.src + p.pos };
-        let c: u8 = unsafe { *q };
+        let q: *u8 = { p.src + p.pos };
+        let c: u8 = { *q };
         if c == ('"' as u8) {
             p.pos = p.pos +% (1 as usize);
             return StrParse { p: p, ok: true, buf: b };
@@ -244,8 +244,8 @@ fn parse_string_bytes(ref p: Parser) -> StrParse {
                 buf_free(b);
                 return StrParse { p: p, ok: false, buf: buf_new() };
             }
-            let eq: *u8 = unsafe { p.src + p.pos };
-            let esc: u8 = unsafe { *eq };
+            let eq: *u8 = { p.src + p.pos };
+            let esc: u8 = { *eq };
             p.pos = p.pos +% (1 as usize);
             if esc == ('"' as u8) { b = buf_push(b, '"' as u8); }
             else if esc == ('\\' as u8) { b = buf_push(b, '\\' as u8); }
@@ -260,14 +260,14 @@ fn parse_string_bytes(ref p: Parser) -> StrParse {
                     buf_free(b);
                     return StrParse { p: p, ok: false, buf: buf_new() };
                 }
-                let h1q: *u8 = unsafe { p.src + p.pos };
-                let h2q: *u8 = unsafe { p.src + (p.pos +% (1 as usize)) };
-                let h3q: *u8 = unsafe { p.src + (p.pos +% (2 as usize)) };
-                let h4q: *u8 = unsafe { p.src + (p.pos +% (3 as usize)) };
-                let h1: i32 = hex_digit(unsafe { *h1q });
-                let h2: i32 = hex_digit(unsafe { *h2q });
-                let h3: i32 = hex_digit(unsafe { *h3q });
-                let h4: i32 = hex_digit(unsafe { *h4q });
+                let h1q: *u8 = { p.src + p.pos };
+                let h2q: *u8 = { p.src + (p.pos +% (1 as usize)) };
+                let h3q: *u8 = { p.src + (p.pos +% (2 as usize)) };
+                let h4q: *u8 = { p.src + (p.pos +% (3 as usize)) };
+                let h1: i32 = hex_digit({ *h1q });
+                let h2: i32 = hex_digit({ *h2q });
+                let h3: i32 = hex_digit({ *h3q });
+                let h4: i32 = hex_digit({ *h4q });
                 if h1 < 0 || h2 < 0 || h3 < 0 || h4 < 0 {
                     buf_free(b);
                     return StrParse { p: p, ok: false, buf: buf_new() };
@@ -283,17 +283,17 @@ fn parse_string_bytes(ref p: Parser) -> StrParse {
                 // the bits intact so callers can round-trip them.
                 if cp >= 0xD800 && cp <= 0xDBFF {
                     if p.pos +% (6 as usize) <= p.len {
-                        let s0: *u8 = unsafe { p.src + p.pos };
-                        let s1: *u8 = unsafe { p.src + (p.pos +% (1 as usize)) };
-                        if unsafe { *s0 } == ('\\' as u8) && unsafe { *s1 } == ('u' as u8) {
-                            let l1q: *u8 = unsafe { p.src + (p.pos +% (2 as usize)) };
-                            let l2q: *u8 = unsafe { p.src + (p.pos +% (3 as usize)) };
-                            let l3q: *u8 = unsafe { p.src + (p.pos +% (4 as usize)) };
-                            let l4q: *u8 = unsafe { p.src + (p.pos +% (5 as usize)) };
-                            let l1: i32 = hex_digit(unsafe { *l1q });
-                            let l2: i32 = hex_digit(unsafe { *l2q });
-                            let l3: i32 = hex_digit(unsafe { *l3q });
-                            let l4: i32 = hex_digit(unsafe { *l4q });
+                        let s0: *u8 = { p.src + p.pos };
+                        let s1: *u8 = { p.src + (p.pos +% (1 as usize)) };
+                        if { *s0 } == ('\\' as u8) && { *s1 } == ('u' as u8) {
+                            let l1q: *u8 = { p.src + (p.pos +% (2 as usize)) };
+                            let l2q: *u8 = { p.src + (p.pos +% (3 as usize)) };
+                            let l3q: *u8 = { p.src + (p.pos +% (4 as usize)) };
+                            let l4q: *u8 = { p.src + (p.pos +% (5 as usize)) };
+                            let l1: i32 = hex_digit({ *l1q });
+                            let l2: i32 = hex_digit({ *l2q });
+                            let l3: i32 = hex_digit({ *l3q });
+                            let l4: i32 = hex_digit({ *l4q });
                             if l1 >= 0 && l2 >= 0 && l3 >= 0 && l4 >= 0 {
                                 let low: i32 = (l1 << 12)| (l2 << 8)| (l3 << 4)|l4;
                                 if low >= 0xDC00 && low <= 0xDFFF {
@@ -346,15 +346,15 @@ fn parse_number(ref p: Parser) -> ValParse {
     // unchanged, so acceptance is identical to before.
     var is_int: bool = true;
     while p.pos < p.len {
-        let q: *u8 = unsafe { p.src + p.pos };
-        let c: u8 = unsafe { *q };
+        let q: *u8 = { p.src + p.pos };
+        let c: u8 = { *q };
         if !is_number_byte(c) { break; }
         if c == ('.' as u8) || c == ('e' as u8) || c == ('E' as u8) { is_int = false; }
         p.pos = p.pos +% (1 as usize);
     }
     let n: usize = p.pos -% start;
     if n == (0 as usize) { return fail(p); }
-    let src_q: *u8 = unsafe { p.src + start };
+    let src_q: *u8 = { p.src + start };
 
     // Integer fast-path. A canonical `-?[0-9]+` of at most 15 digits fits
     // exactly in an f64 (|v| < 10^15 < 2^53), so accumulating in i64 and
@@ -364,7 +364,7 @@ fn parse_number(ref p: Parser) -> ValParse {
     // non-canonical (`+5`, leading `.`/`e`, `-0`, >15 digits, big ints)
     // falls through to the strtod path below, so rounding stays correct.
     if is_int {
-        let f0: u8 = unsafe { *src_q };
+        let f0: u8 = { *src_q };
         var i: usize = 0 as usize;
         var neg: bool = false;
         if f0 == ('-' as u8) { neg = true; i = 1 as usize; }
@@ -374,7 +374,7 @@ fn parse_number(ref p: Parser) -> ValParse {
             var all_digits: bool = true;
             var j: usize = i;
             while j < n {
-                let d: u8 = unsafe { *(p.src + (start +% j)) };
+                let d: u8 = { *(p.src + (start +% j)) };
                 if d < ('0' as u8) || d > ('9' as u8) { all_digits = false; break; }
                 acc = acc *% (10 as i64) +% ((d -% ('0' as u8)) as i64);
                 j = j +% (1 as usize);
@@ -396,20 +396,20 @@ fn parse_number(ref p: Parser) -> ValParse {
     var stackbuf: [u8; 64] = [0u8; 64];
     let usestack: bool = n < (63 as usize);
     let buf: *u8 = if usestack {
-        unsafe { #addr_of(stackbuf) as *u8 }
+        { #addr_of(stackbuf) as *u8 }
     } else {
-        unsafe { malloc(n +% (1 as usize)) }
+        { malloc(n +% (1 as usize)) }
     };
-    if unsafe { buf as usize } == (0 as usize) { return fail(p); }
-    unsafe { memcpy(buf, src_q, n); }
-    let nulslot: *u8 = unsafe { buf + n };
-    unsafe { *nulslot = 0 as u8; }
-    var endp_stack: *u8 = unsafe { 0 as *u8 };
-    let endp: **u8 = unsafe { #addr_of(endp_stack) };
-    let val: f64 = unsafe { strtod(buf, endp) };
-    let consumed_end: *u8 = unsafe { *endp };
-    let consumed: usize = unsafe { (consumed_end as usize) -% (buf as usize) };
-    if !usestack { unsafe { free(buf); } }
+    if { #addr(buf) } == (0 as usize) { return fail(p); }
+    { memcpy(buf, src_q, n); }
+    let nulslot: *u8 = { buf + n };
+    { *nulslot = 0 as u8; }
+    var endp_stack: *u8 = { 0 as *u8 };
+    let endp: **u8 = { #addr_of(endp_stack) };
+    let val: f64 = { strtod(buf, endp) };
+    let consumed_end: *u8 = { *endp };
+    let consumed: usize = { #addr(consumed_end) -% #addr(buf) };
+    if !usestack { { free(buf); } }
     if consumed == (0 as usize) || consumed != n { return fail(p); }
     return ValParse::Ok(Value::Number(val), p);
 }
@@ -539,7 +539,7 @@ fn parse(s: str) -> result::Result[Value, ParseError] {
 // return owning data (an inner Value or a string) clone it so the result is
 // owned outright and the borrowed source is left intact. Non-Copy Vec elements
 // (Value / Member) are read in place through `vec::at(i) -> Option[*T]`: bind the
-// pointer, then pass `unsafe { *p }` / `unsafe { (*p).value }` to the `borrow`
+// pointer, then pass `{ *p }` / `{ (*p).value }` to the `borrow`
 // params, which borrow without consuming — never copy a non-Copy element out of
 // storage.
 fn clone_value(v: Value) -> Value {
@@ -554,7 +554,7 @@ fn clone_value(v: Value) -> Value {
             var i: usize = 0 as usize;
             while i < n {
                 match arr.at(i) {
-                    option::Option[*Value]::Some(p) => { out.push(clone_value(unsafe { *p })); }
+                    option::Option[*Value]::Some(p) => { out.push(clone_value({ *p })); }
                     option::Option[*Value]::None => {}
                 }
                 i = i +% (1 as usize);
@@ -569,8 +569,8 @@ fn clone_value(v: Value) -> Value {
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
                         out.push(Member {
-                            key: unsafe { (*p).key.clone() },
-                            value: clone_value(unsafe { (*p).value }),
+                            key: { (*p).key.clone() },
+                            value: clone_value({ (*p).value }),
                         });
                     }
                     option::Option[*Member]::None => {}
@@ -613,7 +613,7 @@ fn array_len(v: Value) -> usize {
 fn array_at(v: Value, i: usize) -> Value {
     return match v {
         Value::Array(arr) => match arr.at(i) {
-            option::Option[*Value]::Some(p) => clone_value(unsafe { *p }),
+            option::Option[*Value]::Some(p) => clone_value({ *p }),
             option::Option[*Value]::None => Value::Null,
         },
         _ => Value::Null,
@@ -630,7 +630,7 @@ fn object_len(v: Value) -> usize {
 fn object_key_at(v: Value, i: usize) -> text::Text {
     return match v {
         Value::Object(arr) => match arr.at(i) {
-            option::Option[*Member]::Some(p) => unsafe { (*p).key.clone() },
+            option::Option[*Member]::Some(p) => { (*p).key.clone() },
             option::Option[*Member]::None => "".to_text(),
         },
         _ => "".to_text(),
@@ -640,7 +640,7 @@ fn object_key_at(v: Value, i: usize) -> text::Text {
 fn object_value_at(v: Value, i: usize) -> Value {
     return match v {
         Value::Object(arr) => match arr.at(i) {
-            option::Option[*Member]::Some(p) => clone_value(unsafe { (*p).value }),
+            option::Option[*Member]::Some(p) => clone_value({ (*p).value }),
             option::Option[*Member]::None => Value::Null,
         },
         _ => Value::Null,
@@ -656,8 +656,8 @@ fn object_get(v: Value, key: str) -> Value {
             while i < n {
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
-                        if unsafe { (*p).key.as_str() } == key {
-                            found = clone_value(unsafe { (*p).value });
+                        if { (*p).key.as_str() } == key {
+                            found = clone_value({ (*p).value });
                             i = n; // break
                         } else {
                             i = i +% (1 as usize);
@@ -679,8 +679,8 @@ fn buf_push_str(ref b: Buf, s: str) -> Buf {
     let p: *u8 = #str_ptr(s);
     var i: usize = 0 as usize;
     while i < n {
-        let q: *u8 = unsafe { p + i };
-        b = buf_push(b, unsafe { *q });
+        let q: *u8 = { p + i };
+        b = buf_push(b, { *q });
         i = i +% (1 as usize);
     }
     return b;
@@ -689,8 +689,8 @@ fn buf_push_str(ref b: Buf, s: str) -> Buf {
 fn buf_push_bytes(ref b: Buf, p: *u8, n: usize) -> Buf {
     var i: usize = 0 as usize;
     while i < n {
-        let q: *u8 = unsafe { p + i };
-        b = buf_push(b, unsafe { *q });
+        let q: *u8 = { p + i };
+        b = buf_push(b, { *q });
         i = i +% (1 as usize);
     }
     return b;
@@ -702,8 +702,8 @@ fn encode_string(ref b: Buf, s: str) -> Buf {
     let n: usize = #str_len(s);
     var i: usize = 0 as usize;
     while i < n {
-        let q: *u8 = unsafe { p + i };
-        let c: u8 = unsafe { *q };
+        let q: *u8 = { p + i };
+        let c: u8 = { *q };
         if c == ('"' as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, '"' as u8); }
         else if c == ('\\' as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, '\\' as u8); }
         else if c == (8 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 'b' as u8); }
@@ -712,10 +712,10 @@ fn encode_string(ref b: Buf, s: str) -> Buf {
         else if c == (13 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 'r' as u8); }
         else if c == (9 as u8) { b = buf_push(b, '\\' as u8); b = buf_push(b, 't' as u8); }
         else if c < (32 as u8) {
-            let hex: *u8 = unsafe { malloc(7 as usize) };
-            unsafe { snprintf(hex, 7 as usize, #str_ptr("\\u%04x\0"), c as i32); }
+            let hex: *u8 = { malloc(7 as usize) };
+            { snprintf(hex, 7 as usize, #str_ptr("\\u%04x\0"), c as i32); }
             b = buf_push_bytes(b, hex, 6 as usize);
-            unsafe { free(hex); }
+            { free(hex); }
         }
         else { b = buf_push(b, c); }
         i = i +% (1 as usize);
@@ -765,10 +765,10 @@ fn encode_number(ref b: Buf, n: f64) -> Buf {
     // the strtod end-pointer keep the heap untouched here too.
     var out_arr: [u8; 64] = [0u8; 64];
     var fmt_arr: [u8; 8] = [0u8; 8];
-    let buf: *u8 = unsafe { #addr_of(out_arr) as *u8 };
-    let fmt_buf: *u8 = unsafe { #addr_of(fmt_arr) as *u8 };
-    var endp_stack: *u8 = unsafe { 0 as *u8 };
-    let endp: **u8 = unsafe { #addr_of(endp_stack) };
+    let buf: *u8 = { #addr_of(out_arr) as *u8 };
+    let fmt_buf: *u8 = { #addr_of(fmt_arr) as *u8 };
+    var endp_stack: *u8 = { 0 as *u8 };
+    let endp: **u8 = { #addr_of(endp_stack) };
 
     var chosen_len: i32 = 0;
 
@@ -777,11 +777,11 @@ fn encode_number(ref b: Buf, n: f64) -> Buf {
     // simple decimals ("0.1", "3.14"), etc.
     var p: i32 = 0;
     while p <= 17 {
-        let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%df\0"), p) };
+        let fmt_n: i32 = { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%df\0"), p) };
         if fmt_n <= 0 { p = p +% 1; continue; }
-        let w: i32 = unsafe { snprintf(buf, 64 as usize, fmt_buf, n) };
+        let w: i32 = { snprintf(buf, 64 as usize, fmt_buf, n) };
         if w > 0 && w < 64 {
-            let round_trip: f64 = unsafe { strtod(buf, endp) };
+            let round_trip: f64 = { strtod(buf, endp) };
             if round_trip == n {
                 chosen_len = w;
                 p = 100;
@@ -795,11 +795,11 @@ fn encode_number(ref b: Buf, n: f64) -> Buf {
     if chosen_len == 0 {
         var q: i32 = 1;
         while q <= 17 {
-            let fmt_n: i32 = unsafe { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%dg\0"), q) };
+            let fmt_n: i32 = { snprintf(fmt_buf, 8 as usize, #str_ptr("%%.%dg\0"), q) };
             if fmt_n <= 0 { q = q +% 1; continue; }
-            let w: i32 = unsafe { snprintf(buf, 64 as usize, fmt_buf, n) };
+            let w: i32 = { snprintf(buf, 64 as usize, fmt_buf, n) };
             if w > 0 && w < 64 {
-                let round_trip: f64 = unsafe { strtod(buf, endp) };
+                let round_trip: f64 = { strtod(buf, endp) };
                 if round_trip == n {
                     chosen_len = w;
                     q = 100;
@@ -810,7 +810,7 @@ fn encode_number(ref b: Buf, n: f64) -> Buf {
     }
 
     if chosen_len == 0 {
-        chosen_len = unsafe { snprintf(buf, 64 as usize, #str_ptr("%.17g\0"), n) };
+        chosen_len = { snprintf(buf, 64 as usize, #str_ptr("%.17g\0"), n) };
     }
     if chosen_len > 0 {
         b = buf_push_bytes(b, buf, chosen_len as usize);
@@ -823,7 +823,7 @@ fn encode_value(ref b: Buf, v: Value) -> Buf {
         Value::Null => buf_push_str(b, "null"),
         Value::Bool(x) => if x { buf_push_str(b, "true") } else { buf_push_str(b, "false") },
         Value::Number(n) => encode_number(b, n),
-        Value::Str(s) => encode_string(b, unsafe { s.as_str() }),
+        Value::Str(s) => encode_string(b, { s.as_str() }),
         Value::Array(arr) => {
             var bb: Buf = buf_push(b, '[' as u8);
             let n: usize = arr.len();
@@ -831,7 +831,7 @@ fn encode_value(ref b: Buf, v: Value) -> Buf {
             while i < n {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
                 match arr.at(i) {
-                    option::Option[*Value]::Some(p) => { bb = encode_value(bb, unsafe { *p }); }
+                    option::Option[*Value]::Some(p) => { bb = encode_value(bb, { *p }); }
                     option::Option[*Value]::None => {}
                 }
                 i = i +% (1 as usize);
@@ -847,9 +847,9 @@ fn encode_value(ref b: Buf, v: Value) -> Buf {
                 if i > (0 as usize) { bb = buf_push(bb, ',' as u8); }
                 match arr.at(i) {
                     option::Option[*Member]::Some(p) => {
-                        bb = encode_string(bb, unsafe { (*p).key.as_str() });
+                        bb = encode_string(bb, { (*p).key.as_str() });
                         bb = buf_push(bb, ':' as u8);
-                        bb = encode_value(bb, unsafe { (*p).value });
+                        bb = encode_value(bb, { (*p).value });
                     }
                     option::Option[*Member]::None => {}
                 }
@@ -1003,14 +1003,14 @@ fn test_parse_rejects_empty() {
 fn test_round_trip_array() {
     let src: str = "[true,false,null]";
     let v: Value = parse_ok(src);
-    assert unsafe { v.to_text().as_str() } == src;
+    assert { v.to_text().as_str() } == src;
 }
 
 #[test]
 fn test_round_trip_object() {
     let src: str = "{\"k\":\"v\"}";
     let v: Value = parse_ok(src);
-    assert unsafe { v.to_text().as_str() } == src;
+    assert { v.to_text().as_str() } == src;
 }
 
 #[test]
@@ -1043,11 +1043,11 @@ fn test_emit_number_short_form() {
     // %.17g "0.10000000000000001" noise).
     let v_int: Value = Value::Number(42.0f64);
     let s_int: text::Text = v_int.to_text();
-    assert unsafe { s_int.as_str() } == "42";
+    assert { s_int.as_str() } == "42";
 
     let v_dec: Value = Value::Number(0.1f64);
     let s_dec: text::Text = v_dec.to_text();
-    assert unsafe { s_dec.as_str() } == "0.1";
+    assert { s_dec.as_str() } == "0.1";
 }
 
 #[test]
@@ -1057,11 +1057,11 @@ fn test_parse_surrogate_pair_decodes_to_4byte_utf8() {
     let v: Value = parse_ok("\"\\uD83D\\uDE00\"");
     let s: text::Text = as_str(v);
     assert s.len() == (4 as usize);
-    let p: *u8 = #str_ptr(unsafe { s.as_str() });
-    assert unsafe { *p } == (0xF0 as u8);
-    assert unsafe { *(p + 1) } == (0x9F as u8);
-    assert unsafe { *(p + 2) } == (0x98 as u8);
-    assert unsafe { *(p + 3) } == (0x80 as u8);
+    let p: *u8 = #str_ptr({ s.as_str() });
+    assert { *p } == (0xF0 as u8);
+    assert { *(p + 1) } == (0x9F as u8);
+    assert { *(p + 2) } == (0x98 as u8);
+    assert { *(p + 3) } == (0x80 as u8);
 }
 
 #[test]
@@ -1070,7 +1070,7 @@ fn test_parse_bmp_unicode_escape_still_works() {
     let v: Value = parse_ok("\"\\u00e9\"");
     let s: text::Text = as_str(v);
     assert s.len() == (2 as usize);
-    let p: *u8 = #str_ptr(unsafe { s.as_str() });
-    assert unsafe { *p } == (0xC3 as u8);
-    assert unsafe { *(p + 1) } == (0xA9 as u8);
+    let p: *u8 = #str_ptr({ s.as_str() });
+    assert { *p } == (0xC3 as u8);
+    assert { *(p + 1) } == (0xA9 as u8);
 }

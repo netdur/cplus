@@ -78,9 +78,9 @@ struct MatrixDescriptor {
 
 impl MatrixDescriptor {
     fn new(rows: usize, columns: usize, row_bytes: usize, dtype: DataType) -> MatrixDescriptor {
-        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixDescriptor\0")) };
+        let cls: *u8 = { objc_getClass(#str_ptr("MPSMatrixDescriptor\0")) };
         let dt: u32 = dtype_to_raw(dtype);
-        let raw: *u8 = unsafe {
+        let raw: *u8 = {
             #msg_send(
                 cls,
                 "matrixDescriptorWithRows:columns:rowBytes:dataType:",
@@ -92,15 +92,15 @@ impl MatrixDescriptor {
         };
         // `+matrixDescriptorWith...` returns +0 (autoreleased). Retain
         // so our `Drop` impl doesn't release something we don't own.
-        if raw != unsafe { 0 as *u8 } {
-            unsafe { #msg_send(raw, "retain") -> *u8; }
+        if raw != { 0 as *u8 } {
+            { #msg_send(raw, "retain") -> *u8; }
         }
         return MatrixDescriptor { raw: raw };
     }
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -125,9 +125,9 @@ impl Matrix {
     // released independently at scope exit (callers' Drops + MPSMatrix's
     // Drop when this wrapper goes out of scope).
     fn new(buf: buffer::Buffer, desc: MatrixDescriptor) -> Matrix {
-        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrix\0")) };
-        let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
-        let initialized: *u8 = unsafe {
+        let cls: *u8 = { objc_getClass(#str_ptr("MPSMatrix\0")) };
+        let alloc_obj: *u8 = { #msg_send(cls, "alloc") -> *u8 };
+        let initialized: *u8 = {
             #msg_send(alloc_obj, "initWithBuffer:descriptor:", buf.raw, desc.raw) -> *u8
         };
         return Matrix { raw: initialized };
@@ -135,7 +135,7 @@ impl Matrix {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -164,12 +164,12 @@ impl MatrixMultiplication {
         alpha: f64,
         beta: f64,
     ) -> result::Result[MatrixMultiplication, runtime::MetalError] {
-        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixMultiplication\0")) };
-        let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
+        let cls: *u8 = { objc_getClass(#str_ptr("MPSMatrixMultiplication\0")) };
+        let alloc_obj: *u8 = { #msg_send(cls, "alloc") -> *u8 };
         // BOOL is 1 byte on aarch64-darwin; pass as i8.
         let tl: i8 = if transpose_left { 1 as i8 } else { 0 as i8 };
         let tr: i8 = if transpose_right { 1 as i8 } else { 0 as i8 };
-        let initialized: *u8 = unsafe {
+        let initialized: *u8 = {
             #msg_send(
                 alloc_obj,
                 "initWithDevice:transposeLeft:transposeRight:resultRows:resultColumns:interiorColumns:alpha:beta:",
@@ -183,7 +183,7 @@ impl MatrixMultiplication {
                 beta,
             ) -> *u8
         };
-        if initialized == unsafe { 0 as *u8 } {
+        if initialized == { 0 as *u8 } {
             return result::Result[MatrixMultiplication, runtime::MetalError]::Err(
                 runtime::MetalError::PipelineCreationFailed,
             );
@@ -205,7 +205,7 @@ impl MatrixMultiplication {
         rhs: Matrix,
         out: Matrix,
     ) {
-        unsafe {
+        {
             #msg_send(
                 this.raw,
                 "encodeToCommandBuffer:leftMatrix:rightMatrix:resultMatrix:",
@@ -220,7 +220,7 @@ impl MatrixMultiplication {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -245,10 +245,10 @@ impl MatrixVectorMultiplication {
         alpha: f64,
         beta: f64,
     ) -> result::Result[MatrixVectorMultiplication, runtime::MetalError] {
-        let cls: *u8 = unsafe { objc_getClass(#str_ptr("MPSMatrixVectorMultiplication\0")) };
-        let alloc_obj: *u8 = unsafe { #msg_send(cls, "alloc") -> *u8 };
+        let cls: *u8 = { objc_getClass(#str_ptr("MPSMatrixVectorMultiplication\0")) };
+        let alloc_obj: *u8 = { #msg_send(cls, "alloc") -> *u8 };
         let t: i8 = if transpose { 1 as i8 } else { 0 as i8 };
-        let initialized: *u8 = unsafe {
+        let initialized: *u8 = {
             #msg_send(
                 alloc_obj,
                 "initWithDevice:transpose:rows:columns:alpha:beta:",
@@ -260,7 +260,7 @@ impl MatrixVectorMultiplication {
                 beta,
             ) -> *u8
         };
-        if initialized == unsafe { 0 as *u8 } {
+        if initialized == { 0 as *u8 } {
             return result::Result[MatrixVectorMultiplication, runtime::MetalError]::Err(
                 runtime::MetalError::PipelineCreationFailed,
             );
@@ -279,7 +279,7 @@ impl MatrixVectorMultiplication {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -308,7 +308,7 @@ fn test_matrix_descriptor_constructs() {
     let d: MatrixDescriptor = MatrixDescriptor::new(
         4 as usize, 4 as usize, (4 *% 4) as usize, DataType::F32,
     );
-    assert unsafe { d.raw as usize } != (0 as usize);
+    assert { #addr(d.raw) } != (0 as usize);
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn test_matrix_constructs_from_buffer() {
         4 as usize, 4 as usize, (4 *% 4) as usize, DataType::F32,
     );
     let m: Matrix = Matrix::new(buf, desc);
-    assert unsafe { m.raw as usize } != (0 as usize);
+    assert { #addr(m.raw) } != (0 as usize);
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn test_matrix_multiplication_constructs() {
         assert false;
         return;
     };
-    assert unsafe { mm.raw as usize } != (0 as usize);
+    assert { #addr(mm.raw) } != (0 as usize);
 }
 
 #[test]
@@ -356,10 +356,10 @@ fn test_2x2_matmul_identity_correctness() {
     let i_data: [f32; 4] = [1.0f32, 0.0f32, 0.0f32, 1.0f32];
 
     let buf_a: buffer::Buffer = dev.new_buffer_from_slice(
-        unsafe { #slice_from_raw_parts(#addr_of(a_data) as *u8, 16 as usize) },
+        { #slice_from_raw_parts(#addr_of(a_data) as *u8, 16 as usize) },
     );
     let buf_i: buffer::Buffer = dev.new_buffer_from_slice(
-        unsafe { #slice_from_raw_parts(#addr_of(i_data) as *u8, 16 as usize) },
+        { #slice_from_raw_parts(#addr_of(i_data) as *u8, 16 as usize) },
     );
     let buf_c: buffer::Buffer = dev.new_buffer(16 as usize);
 
@@ -393,7 +393,7 @@ fn test_2x2_matmul_identity_correctness() {
     // Read back. The result must equal A bit-for-bit.
     var out: [f32; 4] = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let _copied: usize = buf_c.copy_to_slice(
-        unsafe { #slice_from_raw_parts(#addr_of(out) as *u8, 16 as usize) },
+        { #slice_from_raw_parts(#addr_of(out) as *u8, 16 as usize) },
     );
     assert out[0] == 1.0f32;
     assert out[1] == 2.0f32;

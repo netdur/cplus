@@ -35,16 +35,16 @@ enum CudaError {
 // Pointer to libcudart's static message string for a runtime error code.
 // Returns a NUL-terminated C string suitable for `printf("%s", ...)`.
 fn error_string(code: i32) -> *u8 {
-    return unsafe { cudaGetErrorString(code) };
+    return { cudaGetErrorString(code) };
 }
 
 // Number of CUDA-capable devices visible to the process.
 fn device_count() -> result::Result[i32, CudaError] {
-    let slot: *u8 = unsafe { malloc(4 as usize) };
-    let p: *i32 = unsafe { slot as *i32 };
-    let rc: i32 = unsafe { cudaGetDeviceCount(p) };
-    let n: i32 = unsafe { *p };
-    unsafe { free(slot); }
+    let slot: *u8 = { malloc(4 as usize) };
+    let p: *i32 = { slot as *i32 };
+    let rc: i32 = { cudaGetDeviceCount(p) };
+    let n: i32 = { *p };
+    { free(slot); }
     if rc != (0 as i32) {
         return result::Result[i32, CudaError]::Err(CudaError::Runtime(rc));
     }
@@ -54,11 +54,11 @@ fn device_count() -> result::Result[i32, CudaError] {
 // Select the active device for subsequent allocations / launches.
 // Returns the raw cudaError_t (0 = success).
 fn set_device(dev: i32) -> i32 {
-    return unsafe { cudaSetDevice(dev) };
+    return { cudaSetDevice(dev) };
 }
 
 // Block the host until all previously issued device work completes.
 // Returns the raw cudaError_t (0 = success).
 fn synchronize() -> i32 {
-    return unsafe { cudaDeviceSynchronize() };
+    return { cudaDeviceSynchronize() };
 }

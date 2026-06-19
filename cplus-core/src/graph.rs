@@ -398,8 +398,7 @@ impl CodeGraph {
                         let sig = if v.payload.is_empty() {
                             None
                         } else {
-                            let parts: Vec<String> =
-                                v.payload.iter().map(type_to_string).collect();
+                            let parts: Vec<String> = v.payload.iter().map(type_to_string).collect();
                             Some(format!("({})", parts.join(", ")))
                         };
                         g.nodes.push(Node {
@@ -421,7 +420,14 @@ impl CodeGraph {
                     }
                 }
                 ItemKind::Impl(b) => {
-                    add_impl_methods(&mut g, &fid, b, &resolve, &mut callables, &mut sig_type_refs);
+                    add_impl_methods(
+                        &mut g,
+                        &fid,
+                        b,
+                        &resolve,
+                        &mut callables,
+                        &mut sig_type_refs,
+                    );
                 }
                 ItemKind::Interface(it) => {
                     let name = short_name(&it.name.name).to_string();
@@ -1299,7 +1305,10 @@ fn resolve_call_edges(
     for n in &g.nodes {
         match n.kind {
             NodeKind::Function | NodeKind::ExternFn => {
-                fn_by_name.entry(n.name.clone()).or_default().push(n.id.clone());
+                fn_by_name
+                    .entry(n.name.clone())
+                    .or_default()
+                    .push(n.id.clone());
                 fn_by_qualified.insert(n.id.replace("::", "."), n.id.clone());
             }
             NodeKind::Method => {
@@ -1314,7 +1323,10 @@ fn resolve_call_edges(
                 }
             }
             NodeKind::Struct | NodeKind::Enum | NodeKind::TypeAlias | NodeKind::Interface => {
-                type_by_name.entry(n.name.clone()).or_default().push(n.id.clone());
+                type_by_name
+                    .entry(n.name.clone())
+                    .or_default()
+                    .push(n.id.clone());
             }
             _ => {}
         }
@@ -1601,7 +1613,7 @@ impl<'a> Resolver<'a> {
                     self.walk_expr(&a.body);
                 }
             }
-            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.walk_block(b),
+            ExprKind::Block(b) => self.walk_block(b),
             ExprKind::Await(x) | ExprKind::Yield(x) => self.walk_expr(x),
             ExprKind::Field { receiver, .. } => self.walk_expr(receiver),
             ExprKind::Index { receiver, index } => {
@@ -1681,8 +1693,7 @@ impl<'a> Resolver<'a> {
                         self.spots.push((e.span, st.clone(), "self".to_string()));
                     }
                 } else if let Some(t) = self.env.get(n) {
-                    self.spots
-                        .push((e.span, t.clone(), "local".to_string()));
+                    self.spots.push((e.span, t.clone(), "local".to_string()));
                 }
             }
             ExprKind::IntLit(..)
@@ -1705,7 +1716,10 @@ impl<'a> Resolver<'a> {
             ExprKind::Ident(name) => self.resolve_fn_name(name),
             ExprKind::Path { segments } => self.resolve_path(segments),
             ExprKind::Field { receiver, name } => match self.receiver_type(receiver) {
-                Some(ty) => unique(self.method_idx.get(&(ty, short_name(&name.name).to_string()))),
+                Some(ty) => unique(
+                    self.method_idx
+                        .get(&(ty, short_name(&name.name).to_string())),
+                ),
                 None => None,
             },
             // Calling a non-name expression (a fn-pointer value, an index, …):
@@ -1985,7 +1999,9 @@ impl ScopedFlows {
                     self.walk_expr(a, arg_ctx);
                 }
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.walk_expr(&f.value, FlowKind::Construct);
                 }
@@ -2029,7 +2045,7 @@ impl ScopedFlows {
                 let _ = target;
                 self.walk_expr(value, FlowKind::Assign);
             }
-            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.walk_block(b, ctx),
+            ExprKind::Block(b) => self.walk_block(b, ctx),
             ExprKind::If {
                 cond,
                 then,
@@ -2126,7 +2142,7 @@ fn collect_let_call_dests_stmt(s: &Stmt, out: &mut Vec<(String, String, Span)>) 
 
 fn collect_let_call_dests_expr(e: &Expr, out: &mut Vec<(String, String, Span)>) {
     match &e.kind {
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_let_call_dests(b, out),
+        ExprKind::Block(b) => collect_let_call_dests(b, out),
         ExprKind::If {
             then, else_branch, ..
         } => {
@@ -2244,7 +2260,10 @@ mod tests {
         let n = node(&g, "src::add");
         assert_eq!(n.kind, NodeKind::Function);
         assert_eq!(n.name, "add");
-        assert_eq!(n.signature.as_deref(), Some("fn add(a: i32, b: i32) -> i32"));
+        assert_eq!(
+            n.signature.as_deref(),
+            Some("fn add(a: i32, b: i32) -> i32")
+        );
         assert!(n.location.is_some(), "function resolves to a location");
         assert!(g
             .edges
@@ -2256,9 +2275,7 @@ mod tests {
     fn struct_fields_become_nodes_with_has_field_edges() {
         // v0.0.24 #10: field visibility is name-based — `x` is public, `_y` is
         // module-private.
-        let g = CodeGraph::build(&project(
-            "struct Point { x: i32, _y: i32 }",
-        ));
+        let g = CodeGraph::build(&project("struct Point { x: i32, _y: i32 }"));
         let s = node(&g, "src::Point");
         assert_eq!(s.kind, NodeKind::Struct);
         let fx = node(&g, "src::Point::x");
@@ -2283,20 +2300,23 @@ mod tests {
         assert_eq!(read.signature.as_deref(), Some("fn read(this) -> i32"));
         let inc = node(&g, "src::Counter::inc");
         assert_eq!(inc.signature.as_deref(), Some("fn inc(ref this)"));
-        assert!(g
-            .edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::HasMethod
-                && e.from == "src::Counter"
-                && e.to == "src::Counter::read"));
+        assert!(g.edges.iter().any(|e| e.kind == EdgeKind::HasMethod
+            && e.from == "src::Counter"
+            && e.to == "src::Counter::read"));
         // members() reaches both methods.
-        let names: Vec<&str> = g.members("Counter").iter().map(|n| n.name.as_str()).collect();
+        let names: Vec<&str> = g
+            .members("Counter")
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
         assert!(names.contains(&"read") && names.contains(&"inc"));
     }
 
     #[test]
     fn enum_variants_become_nodes() {
-        let g = CodeGraph::build(&project("enum Shape { Circle(i32), Square(i32, i32), Empty }"));
+        let g = CodeGraph::build(&project(
+            "enum Shape { Circle(i32), Square(i32, i32), Empty }",
+        ));
         assert_eq!(node(&g, "src::Shape").kind, NodeKind::Enum);
         let sq = node(&g, "src::Shape::Square");
         assert_eq!(sq.kind, NodeKind::Variant);
@@ -2380,7 +2400,11 @@ mod tests {
         assert!(has_call(&g, "src::main", "src::helper"));
         let callees: Vec<&str> = g.callees("main").iter().map(|n| n.name.as_str()).collect();
         assert!(callees.contains(&"helper"));
-        let callers: Vec<&str> = g.callers("helper").iter().map(|n| n.name.as_str()).collect();
+        let callers: Vec<&str> = g
+            .callers("helper")
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
         assert!(callers.contains(&"main"));
     }
 
@@ -2522,8 +2546,14 @@ mod tests {
         let g = CodeGraph::build(&project(src));
         // `P { x: 1 }` constructs P, plus the `-> P` return type = 2 refs.
         let refs = g.refs("P");
-        assert!(refs.len() >= 2, "P referenced by ctor + return: {}", refs.len());
-        assert!(refs.iter().any(|r| r.in_context.as_deref() == Some("src::mk")));
+        assert!(
+            refs.len() >= 2,
+            "P referenced by ctor + return: {}",
+            refs.len()
+        );
+        assert!(refs
+            .iter()
+            .any(|r| r.in_context.as_deref() == Some("src::mk")));
     }
 
     #[test]
@@ -2548,7 +2578,10 @@ mod tests {
         assert!(j.contains("\"callees\""));
         assert!(j.contains("top"), "top is a caller of mid: {j}");
         assert!(j.contains("leaf"), "leaf is a callee of mid: {j}");
-        assert!(j.contains("\"type_refs\""), "context carries the types touched");
+        assert!(
+            j.contains("\"type_refs\""),
+            "context carries the types touched"
+        );
         // Not a function → None.
         assert!(g.context_json("nonexistent").is_none());
     }
@@ -2560,7 +2593,10 @@ mod tests {
         let g = CodeGraph::build(&project(src));
         let j = g.context_json("run").expect("run is a function");
         assert!(j.contains("\"type_refs\""));
-        assert!(j.contains("Cfg"), "context surfaces the Cfg type run touches: {j}");
+        assert!(
+            j.contains("Cfg"),
+            "context surfaces the Cfg type run touches: {j}"
+        );
     }
 
     // ---- type-at ----
@@ -2597,7 +2633,9 @@ mod tests {
             .find(|s| s.what == "parameter" && s.ty == "Point")
             .expect("p parameter spot");
         // type_at at the param's own start byte resolves to it.
-        let at = g.type_at(&param.fid, param.span.start).expect("spot at param");
+        let at = g
+            .type_at(&param.fid, param.span.start)
+            .expect("spot at param");
         assert_eq!(at.ty, "Point");
         assert_eq!(at.what, "parameter");
 
@@ -2668,7 +2706,11 @@ mod tests {
         );
 
         // `q` is re-wrapped into `Opt::Some(q)` → Construct.
-        let q = g.value_flows.iter().find(|vf| vf.binding == "q").expect("q");
+        let q = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "q")
+            .expect("q");
         assert!(
             q.uses.iter().any(|u| u.flow == FlowKind::Construct),
             "q should flow as Construct, got {:?}",
@@ -2676,7 +2718,11 @@ mod tests {
         );
 
         // `o` is the scrutinee of a `match` → Match.
-        let o = g.value_flows.iter().find(|vf| vf.binding == "o").expect("o");
+        let o = g
+            .value_flows
+            .iter()
+            .find(|vf| vf.binding == "o")
+            .expect("o");
         assert!(
             o.uses.iter().any(|u| u.flow == FlowKind::Match),
             "o should flow as Match, got {:?}",
@@ -2709,7 +2755,9 @@ mod tests {
         );
 
         // value_refs at p's definition returns p's flow.
-        let vf = g.value_refs(&p.fid, p.def_span.start).expect("value-refs at p");
+        let vf = g
+            .value_refs(&p.fid, p.def_span.start)
+            .expect("value-refs at p");
         assert_eq!(vf.binding, "p");
     }
 
@@ -2747,7 +2795,9 @@ mod tests {
         // `outer` initializer's `x` use lands on the first `x`, not the second.
         let first_x = xs.iter().min_by_key(|vf| vf.def_span.start).unwrap();
         let use_span = first_x.uses[0].span;
-        let vf = g.value_refs(&first_x.fid, use_span.start).expect("value-refs");
+        let vf = g
+            .value_refs(&first_x.fid, use_span.start)
+            .expect("value-refs");
         assert_eq!(vf.def_span, first_x.def_span, "use resolved to wrong def");
     }
 

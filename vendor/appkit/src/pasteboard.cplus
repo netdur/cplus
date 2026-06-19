@@ -22,6 +22,8 @@ fn type_string() -> *u8 {
 }
 
 impl Pasteboard {
+    fn raw(this) -> *u8 { return this.obj; }
+
     // The shared system clipboard.
     fn general() -> Pasteboard {
         let cls: *u8 = rt::get_class(#str_ptr("NSPasteboard\0"));
@@ -68,8 +70,8 @@ impl Pasteboard {
     // owned by the autorelease pool — copy it before the pool drains.
     fn string_utf8(this) -> *u8 {
         let ns: *u8 = this.string_ns();
-        if ns == unsafe { 0 as *u8 } {
-            return unsafe { 0 as *u8 };
+        if ns == { 0 as *u8 } {
+            return { 0 as *u8 };
         }
         return rt::msg_id(ns, rt::sel(#str_ptr("UTF8String\0")));
     }

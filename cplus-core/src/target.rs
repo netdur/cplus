@@ -258,8 +258,7 @@ pub const ESP32_XTENSA: TargetSpec = TargetSpec {
     // netsys/fs), and the process environment. `vendor/espidf` covers
     // the embedded equivalents (timer, task sleep, console).
     unsupported_stdlib: &[
-        "thread", "mutex", "channel", "env", "net", "netsys", "reactor",
-        "executor", "time", "fs",
+        "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
     ],
 };
 
@@ -286,8 +285,7 @@ pub const ESP32C3_RISCV32: TargetSpec = TargetSpec {
     extra_clang_args: &["-march=rv32imc_zicsr_zifencei", "-mabi=ilp32"],
     min_os_default: None,
     unsupported_stdlib: &[
-        "thread", "mutex", "channel", "env", "net", "netsys", "reactor",
-        "executor", "time", "fs",
+        "thread", "mutex", "channel", "env", "net", "netsys", "reactor", "executor", "time", "fs",
     ],
 };
 

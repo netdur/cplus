@@ -15,7 +15,7 @@ extern fn munlock(addr: *u8, len: usize) -> i32;
 // Wire `[addr, addr+len)` into RAM. `Ok(0)` on success; `Err(-1)` on failure
 // (libc sets `errno`; a richer error is a future refinement).
 fn lock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
-    let rc: i32 = unsafe { mlock(addr, len) };
+    let rc: i32 = { mlock(addr, len) };
     if rc == (0 as i32) {
         return result::Result[i32, i32]::Ok(0 as i32);
     }
@@ -24,7 +24,7 @@ fn lock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
 
 // Release a previously locked range.
 fn unlock_pages(addr: *u8, len: usize) -> result::Result[i32, i32] {
-    let rc: i32 = unsafe { munlock(addr, len) };
+    let rc: i32 = { munlock(addr, len) };
     if rc == (0 as i32) {
         return result::Result[i32, i32]::Ok(0 as i32);
     }
@@ -39,11 +39,11 @@ fn test_lock_unlock_stack_buffer() {
     // RLIMIT_MEMLOCK; if the sandbox denies it we still exercise the FFI
     // path and the unlock. Assert the round-trip returns without trapping.
     let buf: [u8; 256] = [0u8; 256];
-    let r: result::Result[i32, i32] = lock_pages(unsafe { #addr_of(buf[0]) }, 256 as usize);
+    let r: result::Result[i32, i32] = lock_pages({ #addr_of(buf[0]) }, 256 as usize);
     match r {
         result::Result[i32, i32]::Ok(_) => {
             // Locked — must unlock cleanly.
-            match unlock_pages(unsafe { #addr_of(buf[0]) }, 256 as usize) {
+            match unlock_pages({ #addr_of(buf[0]) }, 256 as usize) {
                 result::Result[i32, i32]::Ok(_) => { assert true; }
                 result::Result[i32, i32]::Err(_) => { assert false; }
             };

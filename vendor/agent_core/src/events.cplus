@@ -200,7 +200,7 @@ impl Subscriber {
         var i: usize = this.head;
         while i < this.queue.len() {
             let uc: bool = match this.queue.at(i) {
-                option::Option[*Event]::Some(p) => is_ui_changed(unsafe { (*p).verb }),
+                option::Option[*Event]::Some(p) => is_ui_changed({ (*p).verb }),
                 option::Option[*Event]::None => false,
             };
             if uc {
@@ -219,7 +219,7 @@ impl Subscriber {
         var i: usize = this.head;
         while i < this.queue.len() {
             match this.queue.at(i) {
-                option::Option[*Event]::Some(p) => { nq.push(unsafe { *p }); }
+                option::Option[*Event]::Some(p) => { nq.push({ *p }); }
                 option::Option[*Event]::None => {}
             }
             i = i +% (1 as usize);
@@ -256,7 +256,7 @@ impl Subscriber {
             return option::Option[Event]::None;
         }
         let out: option::Option[Event] = match this.queue.at(this.head) {
-            option::Option[*Event]::Some(p) => option::Option[Event]::Some(unsafe { *p }),
+            option::Option[*Event]::Some(p) => option::Option[Event]::Some({ *p }),
             option::Option[*Event]::None => option::Option[Event]::None,
         };
         this.head = this.head +% (1 as usize);

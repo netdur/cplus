@@ -24,20 +24,20 @@ fn mode_input_output() -> i32 { return 3; }
 
 #[no_alloc]
 fn reset(pin: i32) -> i32 {
-    return unsafe { gpio_reset_pin(pin) };
+    return { gpio_reset_pin(pin) };
 }
 
 #[no_alloc]
 fn set_direction(pin: i32, mode: i32) -> i32 {
-    return unsafe { gpio_set_direction(pin, mode) };
+    return { gpio_set_direction(pin, mode) };
 }
 
 #[no_alloc]
 fn set_level(pin: i32, level: u32) -> i32 {
-    return unsafe { gpio_set_level(pin, level) };
+    return { gpio_set_level(pin, level) };
 }
 
 #[no_alloc]
 fn get_level(pin: i32) -> i32 {
-    return unsafe { gpio_get_level(pin) };
+    return { gpio_get_level(pin) };
 }

@@ -133,14 +133,21 @@ pub fn render_markdown(file_label: &str, items: &[DocItem]) -> String {
     out.push('\n');
     // Per-item sections.
     for it in items {
-        out.push_str(&format!("## `{} {}` <a id=\"{}\"></a>\n\n", it.kind.label(), it.name, anchor(&it.name)));
+        out.push_str(&format!(
+            "## `{} {}` <a id=\"{}\"></a>\n\n",
+            it.kind.label(),
+            it.name,
+            anchor(&it.name)
+        ));
         out.push_str(&format!("Defined at line {}.\n\n", it.line));
         out.push_str("```\n");
         out.push_str(it.signature.trim_end());
         out.push_str("\n```\n\n");
         if !it.doc.is_empty() {
             out.push_str(&it.doc);
-            if !it.doc.ends_with('\n') { out.push('\n'); }
+            if !it.doc.ends_with('\n') {
+                out.push('\n');
+            }
             out.push('\n');
         }
     }
@@ -197,13 +204,13 @@ fn parse_item_header(
     // un-`pub` form when inside an impl that is itself pub-targeted
     // (the surrounding impl's pub-ness governs the inner methods).
     let kinds: &[(&str, ItemKind)] = &[
-        ("fn ",        ItemKind::Fn),
+        ("fn ", ItemKind::Fn),
         ("export extern fn ", ItemKind::Fn),
-        ("struct ",    ItemKind::Struct),
-        ("enum ",      ItemKind::Enum),
+        ("struct ", ItemKind::Struct),
+        ("enum ", ItemKind::Enum),
         ("interface ", ItemKind::Interface),
-        ("type ",      ItemKind::TypeAlias),
-        ("pub impl ",      ItemKind::Impl),
+        ("type ", ItemKind::TypeAlias),
+        ("pub impl ", ItemKind::Impl),
     ];
     let mut matched: Option<(&str, ItemKind, bool /* pub */)> = None;
     for (prefix, kind) in kinds {
@@ -235,13 +242,18 @@ fn parse_item_header(
         .splitn(2, ' ')
         .nth(1)
         .unwrap_or("");
-    let raw_name: String = after_kw.chars()
+    let raw_name: String = after_kw
+        .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect();
-    if raw_name.is_empty() { return None; }
+    if raw_name.is_empty() {
+        return None;
+    }
     // v0.0.24 #10: visibility is name-based — `_`-prefixed items are
     // module-private and not part of the documented public API.
-    if raw_name.starts_with('_') { return None; }
+    if raw_name.starts_with('_') {
+        return None;
+    }
     let display_name = if let (ItemKind::Fn, Some(target)) = (kind, current_impl_target) {
         format!("{target}::{raw_name}")
     } else {
@@ -254,7 +266,9 @@ fn parse_item_header(
     let mut sig = String::new();
     for j in start..lines.len() {
         let l = lines[j];
-        if !sig.is_empty() { sig.push('\n'); }
+        if !sig.is_empty() {
+            sig.push('\n');
+        }
         // Strip to the first `{` or `;` if present on this line.
         if let Some(stop) = l.bytes().position(|b| b == b'{' || b == b';') {
             sig.push_str(&l[..stop]);
@@ -267,9 +281,20 @@ fn parse_item_header(
 
 fn update_impl_tracker(line: &str, current: &mut Option<String>) {
     let t = line.trim_start();
-    if let Some(after) = t.strip_prefix("impl ").or_else(|| t.strip_prefix("pub impl ")) {
-        let name: String = after.chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '[' || *c == ']' || *c == ',' || *c == ' ')
+    if let Some(after) = t
+        .strip_prefix("impl ")
+        .or_else(|| t.strip_prefix("pub impl "))
+    {
+        let name: String = after
+            .chars()
+            .take_while(|c| {
+                c.is_ascii_alphanumeric()
+                    || *c == '_'
+                    || *c == '['
+                    || *c == ']'
+                    || *c == ','
+                    || *c == ' '
+            })
             .collect::<String>()
             .trim()
             .to_string();
@@ -282,7 +307,12 @@ fn update_impl_tracker(line: &str, current: &mut Option<String>) {
             Some(idx) => name[..idx].trim(),
             None => name.trim(),
         };
-        let target = type_part.split('[').next().unwrap_or(type_part).trim().to_string();
+        let target = type_part
+            .split('[')
+            .next()
+            .unwrap_or(type_part)
+            .trim()
+            .to_string();
         if !target.is_empty() {
             *current = Some(target);
         }
@@ -316,7 +346,9 @@ fn anchor(name: &str) -> String {
             prev_dash = true;
         }
     }
-    while out.ends_with('-') { out.pop(); }
+    while out.ends_with('-') {
+        out.pop();
+    }
     out
 }
 
@@ -383,7 +415,10 @@ type Bytes = usize;
 ";
         let items = extract(src);
         let kinds: Vec<ItemKind> = items.iter().map(|i| i.kind).collect();
-        assert_eq!(kinds, vec![ItemKind::Struct, ItemKind::Enum, ItemKind::TypeAlias]);
+        assert_eq!(
+            kinds,
+            vec![ItemKind::Struct, ItemKind::Enum, ItemKind::TypeAlias]
+        );
     }
 
     #[test]
@@ -416,7 +451,10 @@ impl Counter: Display {
 }
 ";
         let items = extract(src);
-        let show = items.iter().find(|i| i.name.ends_with("show")).expect("show method");
+        let show = items
+            .iter()
+            .find(|i| i.name.ends_with("show"))
+            .expect("show method");
         assert_eq!(show.name, "Counter::show");
     }
 

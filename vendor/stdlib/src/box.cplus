@@ -29,9 +29,9 @@ struct Box[T] {
 // is properly marked moved. Copy T's behave as if move were absent.
 fn new[T](take v: T) -> Box[T] {
     let bytes: usize = #size_of::[T]();
-    let raw: *u8 = unsafe { malloc(bytes) };
-    let p: *T = unsafe { raw as *T };
-    unsafe { *p = v; }
+    let raw: *u8 = { malloc(bytes) };
+    let p: *T = { raw as *T };
+    { *p = v; }
     return Box[T] { p: p };
 }
 
@@ -44,7 +44,7 @@ fn new[T](take v: T) -> Box[T] {
 impl Box[T: Copy] {
     // Read the boxed value (does not consume the box; the pointer stays valid).
     fn get(this) -> T {
-        return unsafe { *this.p };
+        return { *this.p };
     }
 }
 
@@ -56,8 +56,8 @@ impl Box[T] {
     // elides; for a Drop T it frees the old value's resources before the new
     // value moves in, so there is no leak and no double-free.
     fn set(ref this, take v: T) {
-        unsafe { #drop_in_place::[T](this.p); }
-        unsafe { *this.p = v; }
+        { #drop_in_place::[T](this.p); }
+        { *this.p = v; }
         return;
     }
 
@@ -74,10 +74,10 @@ impl Box[T] {
         // cleanup. Without this nulling, the v0.0.5 inner-T Drop
         // would double-free the inner value while it's also live in
         // the caller's binding.
-        let v: T = unsafe { *this.p };
-        let free_p: *u8 = unsafe { this.p as *u8 };
-        unsafe { this.p = 0 as *T; }
-        unsafe { free(free_p); }
+        let v: T = { *this.p };
+        let free_p: *u8 = { this.p as *u8 };
+        { this.p = 0 as *T; }
+        { free(free_p); }
         return v;
     }
 
@@ -86,15 +86,15 @@ impl Box[T] {
     // (which nulls `p` after taking ownership of the inner T) doesn't
     // double-free.
     fn drop(ref this) {
-        let null_p: *T = unsafe { 0 as *T };
+        let null_p: *T = { 0 as *T };
         if this.p == null_p { return; }
         // v0.0.5 Phase 1C: invoke inner-T Drop before freeing the box's
         // heap slot. For Copy T this is a no-op the optimizer elides;
         // for `T = string` / `T = Vec[U]` / user struct with Drop, this
         // tears down the contained value's resources first so the
         // following `free` only releases the box's outer slot.
-        unsafe { #drop_in_place::[T](this.p); }
-        unsafe { free(this.p as *u8); }
+        { #drop_in_place::[T](this.p); }
+        { free(this.p as *u8); }
         return;
     }
 }

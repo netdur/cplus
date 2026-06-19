@@ -19,8 +19,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { break; }
         written = written +% (w as usize);
     }
@@ -28,13 +28,13 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 }
 
 fn main() -> i32 {
-    let argc: i32 = unsafe { *_NSGetArgc() };
-    let argv: **u8 = unsafe { *_NSGetArgv() };
+    let argc: i32 = { *_NSGetArgc() };
+    let argv: **u8 = { *_NSGetArgv() };
     var i: i32 = 0 as i32;
     while i < argc {
-        let pp: **u8 = unsafe { argv + (i as usize) };
-        let arg: *u8 = unsafe { *pp };
-        let n: usize = unsafe { strlen(arg) };
+        let pp: **u8 = { argv + (i as usize) };
+        let arg: *u8 = { *pp };
+        let n: usize = { strlen(arg) };
         write_all(1 as i32, arg, n);
         write_all(1 as i32, #str_ptr("\n"), 1 as usize);
         i = i +% (1 as i32);

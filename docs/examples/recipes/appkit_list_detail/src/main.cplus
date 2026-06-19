@@ -13,7 +13,7 @@
 // Ownership note: every widget wrapper is held in a local that outlives the
 // `addSubview:` that installs it, so the parent has retained the view before the
 // wrapper drops — the "+1 normal form" (plan.appkit.md §2). Do NOT pass
-// `Widget::new().obj` inline: an owned wrapper would drop (release) immediately,
+// `Widget::new().raw()` inline: an owned wrapper would drop (release) immediately,
 // dangling the pointer.
 
 import "appkit/runtime" as rt;
@@ -41,9 +41,9 @@ fn ds_value(self_obj: *u8, _cmd: *u8, table: *u8, col: *u8, row: i64) -> *u8 {
     return rt::ns_string(item_text(row));
 }
 fn on_select(self_obj: *u8, _cmd: *u8, note: *u8) {
-    let row: i64 = rt::msg_i64(unsafe { THE_TABLE }, rt::sel(#str_ptr("selectedRow\0")));
+    let row: i64 = rt::msg_i64({ THE_TABLE }, rt::sel(#str_ptr("selectedRow\0")));
     if row < (0 as i64) { return; }
-    rt::msg_void_id(unsafe { DETAIL_LABEL }, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(item_text(row)));
+    rt::msg_void_id({ DETAIL_LABEL }, rt::sel(#str_ptr("setStringValue:\0")), rt::ns_string(item_text(row)));
     return;
 }
 fn should_terminate(self_obj: *u8, _cmd: *u8, app: *u8) -> i8 { return 1 as i8; }
@@ -69,42 +69,42 @@ fn main() -> i32 {
     let col = data::TableColumn::new(#str_ptr("name\0"));
     col.set_title(#str_ptr("Fruit\0"));
     col.set_width(180.0);
-    table.add_table_column(col.obj);
+    table.add_table_column(col.raw());
     let ds: *u8 = data::create_table_data_source(ds_rows, ds_value);
     table.set_data_source(ds);
-    unsafe { THE_TABLE = table.obj; };
+    { THE_TABLE = table.raw(); };
     let tdel: *u8 = data::create_table_delegate(on_select);
     table.set_delegate(tdel);
-    scroll.set_document_view(table.obj);
+    scroll.set_document_view(table.raw());
     table.reload_data();
 
     let detail_frame = rt::Rect { origin: rt::Point { x: 220.0, y: 140.0 }, size: rt::Size { width: 280.0, height: 40.0 } };
     let detail = controls::TextField::new_label(detail_frame);
     detail.set_string_value(#str_ptr("Select an item\0"));
-    unsafe { DETAIL_LABEL = detail.obj; };
+    { DETAIL_LABEL = detail.raw(); };
 
     let btn_frame = rt::Rect { origin: rt::Point { x: 220.0, y: 40.0 }, size: rt::Size { width: 100.0, height: 32.0 } };
     let quit = controls::Button::new(btn_frame);
     quit.set_title(#str_ptr("Quit\0"));
     quit.set_on_click(on_quit);
 
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), scroll.obj);
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), detail.obj);
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), scroll.raw());
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), detail.raw());
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit.raw());
 
     let mainmenu = menu::Menu::new(#str_ptr("MainMenu\0"));
-    let appitem = menu::MenuItem::new(#str_ptr("App\0"), unsafe { 0 as *u8 }, #str_ptr("\0"));
+    let appitem = menu::MenuItem::new(#str_ptr("App\0"), { 0 as *u8 }, #str_ptr("\0"));
     let appmenu = menu::Menu::new(#str_ptr("App\0"));
     let quititem = menu::MenuItem::new(#str_ptr("Quit\0"), #str_ptr("terminate:\0"), #str_ptr("q\0"));
-    appmenu.add_item(quititem.obj);
-    appitem.set_submenu(appmenu.obj);
-    mainmenu.add_item(appitem.obj);
-    app.set_main_menu(mainmenu.obj);
+    appmenu.add_item(quititem.raw());
+    appitem.set_submenu(appmenu.raw());
+    mainmenu.add_item(appitem.raw());
+    app.set_main_menu(mainmenu.raw());
 
-    win.make_key_and_order_front(unsafe { 0 as *u8 });
+    win.make_key_and_order_front({ 0 as *u8 });
     app.activate(1 as i8);
-    unsafe { puts(#str_ptr("READY\0")); };
-    unsafe { fflush(0 as *u8); };
+    { puts(#str_ptr("READY\0")); };
+    { fflush(0 as *u8); };
     app.run();
     pool.drain();
     return 0;

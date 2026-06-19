@@ -82,8 +82,19 @@ Tasks 1–6 are independent (any order among themselves).
   e2e 624, green. Optional later polish: sema `self.x`/`Self`-type hints (~10
   E0300/E0303 sites); docs prose.
 
-- [→] **7. Drop `unsafe`** (DEFERRED — verified recipe ready, do as a focused
-  fresh pass; #8 done first) — remove `unsafe {}`/`fn`/`impl` + the E0801 gate
+- [x] **7. Drop `unsafe`** (DONE 2026-06-19 — verified green: lib 1506 / e2e
+  611.) E0801 gate + `unsafe_depth` removed; corpus migrated (2363→0 `unsafe` in
+  code; only comments remain); `unsafe impl`→bare `impl` (Send/Sync marker
+  registers without the keyword; E0861 re-keyed off marker-ness — an empty impl
+  of a method interface still errors); parser hard-rejects `unsafe`
+  (item/method/field/block); `ExprKind::Unsafe` + `is_unsafe` removed; lexer
+  keeps the reserved-rejected token; `is_null_guard` extended to `!= 0 as *T`.
+  Behavioral: raw `*p` compiles with no `unsafe`; `unsafe {}` rejected. Spec
+  used: `plans/task7-drop-unsafe.md`
+  (refreshed 2026-06-19: 2363 `unsafe`/.cplus, ~30 E0801 gates, 9 `unsafe impl`,
+  ~30 gate-tests to delete by name, the sed un-gate, the Send/Sync marker-impl
+  change, E0510/null-guard fold-ins, `.rs` migrator risk). — remove
+  `unsafe {}`/`fn`/`impl` + the E0801 gate
   (lexer/parser/sema); migrate stdlib (unsafe blocks/fns; `unsafe impl
   Send/Sync` → bare marker impl); un-gate `#addr_of`; migrate `p as usize` →
   `#addr(p)`. *Moderate; FFI-heavy stdlib churn. Do before #11 (today's
@@ -349,18 +360,30 @@ Tasks 1–6 are independent (any order among themselves).
     E0513 (str/slice dangling-view escape — not region-specific).
     cplus-core 1540 / cpc e2e 618, both green.
 
-- [→] **10. Visibility** — `pub`→`_` privacy (fields/methods; ~266 field
+- [x] **10. Visibility** — `pub`→`_` privacy (fields/methods; ~266 field
   `pub`s removed); `export` keyword for the C-ABI/linker/header surface;
   header-gen walks `export` items; **error-level** privacy for raw-ptr /
   custom-`drop` types. Decision B resolved → drop `pub`, uniform `_`-private
-  including top-level items. CORE DONE 2026-06-19 (stages 1–3); the visibility
+  including top-level items. DONE 2026-06-19 (stages 1–4); the visibility model
+  is live, `pub` retired. STAGE 4 (Option A, auto-rule): a non-export/non-repr-C
+  struct with a raw-ptr field or custom `drop` has its fields module-private
+  regardless of name (`struct_fields_are_invariant_private`, sema.rs:401; gated
+  at the read + construct E0403 sites); +4 tests (cross-file read/construct
+  E0403, same-file clean, export/repr-C exempt); verified green. Chose the
+  auto-rule over a 235-struct `_`-rename migration (same safety, no churn,
+  can't-forget). Spec: `plans/stage4-visibility-hardening.md`.
+  --- (historical: stages 1–3 detail below) ---
+  CORE DONE 2026-06-19 (stages 1–3); the visibility
   model is live and `pub` retired. REMAINING (Stage 4, hardening): the
   `_`-rename of invariant-protecting members + the **error-level privacy for
   raw-ptr / custom-`drop` field types** sub-requirement (a struct that hides a
   raw pointer or has a custom `drop` should not expose those fields). The
   pub-drop made all formerly-private members public-by-name; this hardening
   pass `_`-marks the ones that protect invariants. Distinct from the model flip;
-  not yet done.
+  not yet done. **Scope: 235 structs / 112 files qualify (raw-ptr or custom-drop,
+  non-export/non-repr-C, with public fields). Full implementation-ready spec
+  (two options — auto-rule vs `_`-rename migration — with exact file:line hooks)
+  in `plans/stage4-visibility-hardening.md`. User is doing this themselves.**
   **Recon (2026-06-19):** `is_pub` flag on 9 AST nodes, set from
   `eat(TokenKind::Pub)`; today it does DOUBLE duty — (a) privacy: only FIELDS
   enforce it (E0403 cross-file read/construct via `field_with_pub`); item/method
@@ -427,6 +450,18 @@ Tasks 1–6 are independent (any order among themselves).
   `Text`→`str` coercion at arg/binding/return/receiver and drop the `as_str`
   method. *Hardest + highest UB risk.* **Blocked by #7; E0513 re-base must
   precede the coercion.**
+  **Recon (2026-06-19):** full implementation-ready spec in
+  `plans/task11-text-to-str-coercion.md`. Findings: `as_str` is an `unsafe fn`
+  (text.cplus:173) — the #7 link, but DECOUPLABLE (the coercion does the same
+  `{ptr,len}` extraction safely, easing #7 rather than depending on it). 37
+  `.as_str()` call sites / 12 .cplus files to migrate. Coercion hook =
+  `check_expr(e, expected)` sema.rs:5769 (Text=`Ty::Struct(designated_string_struct)`
+  → `Ty::Str`), model = the str-lit→Text coercion at 5349; codegen `{ptr,len}`
+  extraction already exists (codegen.rs:14836 `as_str` arm — keep the body, drive
+  it from a coercion span-table). E0513 re-base: view_producing_root
+  (sema.rs:15460) + returned_borrow_root (15471) key on the `as_str`/`as_slice`
+  NAME — re-point the `as_str` case onto coercion sites (keep `as_slice` for
+  Vec). NOT STARTED (sema.rs overlaps in-flight Stage 4; left for a clean tree).
 
 ## After the renames
 

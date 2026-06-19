@@ -558,7 +558,6 @@ fn synthesize_generic_typed_impls(
             target_generic_params: Vec::new(),
             methods: new_methods,
             interface_name: b.interface_name.clone(),
-            is_unsafe: b.is_unsafe,
         };
         out_items.push(Item {
             kind: ItemKind::Impl(new_impl),
@@ -684,15 +683,18 @@ fn rewrite_stmt_self(stmt: &Stmt, mangled_name: &str) -> Stmt {
         StmtKind::Return(e) => {
             StmtKind::Return(e.as_ref().map(|e| rewrite_expr_self(e, mangled_name)))
         }
-        StmtKind::While { cond, body, attributes } => StmtKind::While {
+        StmtKind::While {
+            cond,
+            body,
+            attributes,
+        } => StmtKind::While {
             cond: rewrite_expr_self(cond, mangled_name),
             body: rewrite_block_self(body, mangled_name),
             attributes: attributes.clone(),
         },
-        StmtKind::For(forloop, attributes) => StmtKind::For(
-            rewrite_for_self(forloop, mangled_name),
-            attributes.clone(),
-        ),
+        StmtKind::For(forloop, attributes) => {
+            StmtKind::For(rewrite_for_self(forloop, mangled_name), attributes.clone())
+        }
         other => other.clone(),
     };
     Stmt {
@@ -740,7 +742,6 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
         // Most expressions don't carry types, so the only thing we
         // really need to chase is nested blocks/cast/etc.
         ExprKind::Block(b) => ExprKind::Block(rewrite_block_self(b, mangled_name)),
-        ExprKind::Unsafe(b) => ExprKind::Unsafe(rewrite_block_self(b, mangled_name)),
         ExprKind::If {
             cond,
             then,
@@ -836,10 +837,18 @@ fn rewrite_expr_self(expr: &Expr, mangled_name: &str) -> Expr {
             count: *count,
             count_name: None,
         },
-        ExprKind::Intrinsic { name, type_args, args, ret_ty } => ExprKind::Intrinsic {
+        ExprKind::Intrinsic {
+            name,
+            type_args,
+            args,
+            ret_ty,
+        } => ExprKind::Intrinsic {
             name: name.clone(),
             type_args: type_args.clone(),
-            args: args.iter().map(|a| rewrite_expr_self(a, mangled_name)).collect(),
+            args: args
+                .iter()
+                .map(|a| rewrite_expr_self(a, mangled_name))
+                .collect(),
             ret_ty: ret_ty.clone(),
         },
         other => other.clone(),
@@ -988,7 +997,7 @@ fn visit_ident_calls(expr: &Expr, f: &mut impl FnMut(&str, &[Type], crate::lexer
                 visit_ident_calls(a, f);
             }
         }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => visit_ident_calls_in_block(b, f),
+        ExprKind::Block(b) => visit_ident_calls_in_block(b, f),
         ExprKind::If {
             cond,
             then,
@@ -1377,7 +1386,6 @@ fn synthesize_fn(
         generic_params: Vec::new(), // monomorphized — no longer generic
         is_async: template.is_async,
         is_gen: template.is_gen,
-        is_unsafe: template.is_unsafe,
     }
 }
 
@@ -1711,7 +1719,11 @@ fn rewrite_stmt(
                 struct_lookup,
             )
         })),
-        StmtKind::While { cond, body, attributes } => StmtKind::While {
+        StmtKind::While {
+            cond,
+            body,
+            attributes,
+        } => StmtKind::While {
             cond: rewrite_expr(
                 cond,
                 subst,
@@ -2111,9 +2123,10 @@ fn rewrite_expr(
                     // method segment by its type-arg instantiation.
                     if let Some(args_for_call) = maybe_args {
                         let method_seg_name = &segments[1].name;
-                        let is_generic = mono.method_instantiations.iter().any(|(_, mname, margs)| {
-                            mname == method_seg_name && margs == args_for_call
-                        });
+                        let is_generic =
+                            mono.method_instantiations.iter().any(|(_, mname, margs)| {
+                                mname == method_seg_name && margs == args_for_call
+                            });
                         if is_generic {
                             new_segs[1] = Ident {
                                 name: mangle_name(method_seg_name, args_for_call, type_name_of),
@@ -2166,15 +2179,6 @@ fn rewrite_expr(
             }
         }
         ExprKind::Block(b) => ExprKind::Block(rewrite_block(
-            b,
-            subst,
-            generic_names,
-            inst_lookup,
-            mono,
-            type_name_of,
-            struct_lookup,
-        )),
-        ExprKind::Unsafe(b) => ExprKind::Unsafe(rewrite_block(
             b,
             subst,
             generic_names,
@@ -2658,7 +2662,12 @@ fn rewrite_expr(
         // intrinsics' turbofish type_args (e.g. `#size_of::[T]()` inside
         // a generic body) through the active subst map. Without this,
         // codegen sees `Ty::Param("T")` and panics.
-        ExprKind::Intrinsic { name, type_args, args, ret_ty } => ExprKind::Intrinsic {
+        ExprKind::Intrinsic {
+            name,
+            type_args,
+            args,
+            ret_ty,
+        } => ExprKind::Intrinsic {
             name: name.clone(),
             type_args: type_args
                 .iter()
@@ -2947,7 +2956,7 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
                 rewrite_alias_type(t, aliases);
             }
         }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => rewrite_alias_block(b, aliases),
+        ExprKind::Block(b) => rewrite_alias_block(b, aliases),
         ExprKind::If {
             cond,
             then,
@@ -3030,7 +3039,12 @@ fn rewrite_alias_expr(e: &mut Expr, aliases: &std::collections::BTreeMap<String,
                 rewrite_alias_expr(&mut a.body, aliases);
             }
         }
-        ExprKind::Intrinsic { type_args, args, ret_ty, .. } => {
+        ExprKind::Intrinsic {
+            type_args,
+            args,
+            ret_ty,
+            ..
+        } => {
             for t in type_args {
                 rewrite_alias_type(t, aliases);
             }

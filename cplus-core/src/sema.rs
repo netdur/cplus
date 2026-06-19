@@ -312,6 +312,10 @@ pub struct StructDef {
     /// primitive-typed fields; the flag is the *stability* commitment
     /// that this won't change under future codegen optimizations.
     pub is_repr_c: bool,
+    /// True when the source declaration was marked `export struct`.
+    /// Exported structs keep their named field surface visible; invariant
+    /// privacy only applies to non-exported implementation types.
+    pub is_pub: bool,
     /// File this struct was declared in, derived from the qualified name
     /// at collection time (e.g. struct `src.math.Point` lives in file
     /// `src.math`). `None` for items without a qualified name (single-file
@@ -359,10 +363,6 @@ pub struct MethodSig {
     /// Slice 7GEN.5e step 4: bounds parallel to `generic_params`.
     /// Empty list per param when unbounded.
     pub generic_bounds: Vec<Vec<String>>,
-    /// TEXT.1: `unsafe fn` method — calling it outside an `unsafe { ... }`
-    /// block is E0801. Blessed/builtin and interface signatures are safe
-    /// (false); only user `impl` methods marked `unsafe fn` set this.
-    pub is_unsafe: bool,
 }
 
 impl StructDef {
@@ -391,6 +391,19 @@ pub fn is_private_name(name: &str) -> bool {
     name.starts_with('_')
 }
 
+/// Raw-pointer fields and custom destructors make public field mutation a
+/// soundness boundary. For non-exported, non-`repr(C)` implementation structs,
+/// treat every field as module-private regardless of spelling.
+pub fn struct_fields_are_invariant_private(def: &StructDef) -> bool {
+    !def.is_pub
+        && !def.is_repr_c
+        && (def.is_drop
+            || def
+                .fields
+                .iter()
+                .any(|(_, ty, _)| matches!(ty, Ty::RawPtr(_))))
+}
+
 #[derive(Debug, Clone)]
 pub struct FnSig {
     pub params: Vec<ParamSig>,
@@ -405,9 +418,6 @@ pub struct FnSig {
     /// name as the symbol." Only meaningful on extern fns; sema rejects
     /// the attribute on non-extern fns.
     pub link_name: Option<String>,
-    /// TEXT.1: `unsafe fn` — calling it outside an `unsafe { ... }` block
-    /// is E0801, mirroring the extern-fn call gate.
-    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.5a: a generic-fn signature with its type-parameter
@@ -425,9 +435,6 @@ pub struct GenericFnSig {
     pub bounds: Vec<Vec<String>>,
     pub params: Vec<ParamSig>,
     pub return_type: Ty,
-    /// TEXT.1: `unsafe fn` generic free function — call site requires an
-    /// `unsafe { ... }` block (E0801), same as non-generic `unsafe fn`.
-    pub is_unsafe: bool,
 }
 
 /// Slice 7GEN.4: a registered `interface Name { fn ... }` declaration.
@@ -498,7 +505,10 @@ enum ScrutineeClass {
     /// (`match { h.e }`), a raw-pointer deref (`match unsafe { *p }`), or a
     /// borrowed binding copied out. The copy aliases live storage → double-free.
     /// Rejected at the scrutinee, with the leaf span + reason.
-    Forbidden { span: ByteSpan, kind: PartialMoveKind },
+    Forbidden {
+        span: ByteSpan,
+        kind: PartialMoveKind,
+    },
 }
 
 /// Why consuming an expression's value would be an illegitimate partial move —
@@ -761,7 +771,6 @@ fn check_with_files_inner<'a>(
         current_file: None,
         files,
         loop_depth: 0,
-        unsafe_depth: 0,
         extern_fns: std::collections::HashSet::new(),
         type_params_stack: Vec::new(),
         param_bounds_stack: Vec::new(),
@@ -944,10 +953,14 @@ fn check_with_files_inner<'a>(
             let sname = cx.structs[sid.0 as usize].name.clone();
             (sname, mname.clone(), args.clone())
         })
-        .chain(cx.enum_method_instantiations.iter().map(|(eid, mname, args)| {
-            let ename = cx.enums[eid.0 as usize].name.clone();
-            (ename, mname.clone(), args.clone())
-        }))
+        .chain(
+            cx.enum_method_instantiations
+                .iter()
+                .map(|(eid, mname, args)| {
+                    let ename = cx.enums[eid.0 as usize].name.clone();
+                    (ename, mname.clone(), args.clone())
+                }),
+        )
         .collect();
     let type_aliases: std::collections::BTreeMap<String, Type> = cx
         .type_aliases
@@ -1072,13 +1085,7 @@ struct SemaCx<'a> {
     /// Incremented entering `while` / `for` / `loop` bodies; decremented
     /// on exit. `break` / `continue` require `> 0` (E0353).
     loop_depth: u32,
-    /// Slice 10.FFI.3: tracks nesting depth of `unsafe { ... }` blocks.
-    /// Zero outside an unsafe block; positive inside. Pointer deref,
-    /// extern fn calls, and `str_from_raw_parts` fire **E0801** when
-    /// invoked at depth 0.
-    unsafe_depth: u32,
     /// Slice 10.FFI.3: names of extern fns declared in this program.
-    /// Calls to these fire E0801 outside an unsafe block.
     extern_fns: std::collections::HashSet<String>,
     /// Slice 7GEN.4: stack of type-parameter scopes. Each frame holds the
     /// set of generic-param names visible at the current point. Pushed
@@ -1267,9 +1274,9 @@ pub struct StaticInfo {
 pub struct GenericImplMethodTemplate {
     pub name: String,
     pub receiver: Option<Receiver>,
-    pub params: Vec<ParamSig>,              // may contain Ty::Param
-    pub return_type: Ty,                    // may contain Ty::Param
-    pub impl_generic_params: Vec<String>,   // T from `impl Vec[T]`
+    pub params: Vec<ParamSig>,            // may contain Ty::Param
+    pub return_type: Ty,                  // may contain Ty::Param
+    pub impl_generic_params: Vec<String>, // T from `impl Vec[T]`
     /// v0.0.23: bounds on each impl-level generic param, positionally parallel
     /// to `impl_generic_params` (empty inner vec = unbounded). Enforced at the
     /// method-call site so `impl Box[T: Copy] { fn get }` rejects a non-Copy
@@ -1284,7 +1291,6 @@ pub struct GenericImplMethodTemplate {
     /// non-Copy `U` (e.g. a Drop type) was accepted — a double-free hole.
     pub method_generic_bounds: Vec<Vec<String>>,
     pub is_drop: bool, // marker for cached Drop bookkeeping (always false today)
-    pub is_unsafe: bool, // TEXT.1: `unsafe fn` method, propagated to MethodSig
 }
 
 /// Which receiver kind owns a method-level-generic call, so the shared
@@ -1405,7 +1411,6 @@ impl SemaCx<'_> {
                 return_type: Ty::Unit,
                 is_variadic: false,
                 link_name: None,
-                is_unsafe: false,
             },
         );
     }
@@ -1535,6 +1540,7 @@ impl SemaCx<'_> {
                         is_copy: false,
                         is_drop: false,
                         is_repr_c,
+                        is_pub: s.is_pub,
                         // Slice 4C: an item's origin_file is set by the
                         // resolver. For struct fields' pub gate we want
                         // the file the struct was *declared* in, not
@@ -1766,11 +1772,13 @@ impl SemaCx<'_> {
             Ty::RawPtr(_) => true,
             Ty::Array(elem, _) => self.marker_blocked(elem, marker, visited),
             Ty::Struct(id) => {
-                let leaf = self.nominal_template_leaf(ty).map(|s| s.to_string()).unwrap_or_else(
-                    || name_leaf(&self.structs[id.0 as usize].name).to_string(),
-                );
-                if let Some(bounds) =
-                    self.marker_overrides.get(&(marker.to_string(), leaf.clone()))
+                let leaf = self
+                    .nominal_template_leaf(ty)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| name_leaf(&self.structs[id.0 as usize].name).to_string());
+                if let Some(bounds) = self
+                    .marker_overrides
+                    .get(&(marker.to_string(), leaf.clone()))
                 {
                     return !self.override_satisfied(ty, bounds);
                 }
@@ -1789,11 +1797,13 @@ impl SemaCx<'_> {
                 blocked
             }
             Ty::Enum(id) => {
-                let leaf = self.nominal_template_leaf(ty).map(|s| s.to_string()).unwrap_or_else(
-                    || name_leaf(&self.enums[id.0 as usize].name).to_string(),
-                );
-                if let Some(bounds) =
-                    self.marker_overrides.get(&(marker.to_string(), leaf.clone()))
+                let leaf = self
+                    .nominal_template_leaf(ty)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| name_leaf(&self.enums[id.0 as usize].name).to_string());
+                if let Some(bounds) = self
+                    .marker_overrides
+                    .get(&(marker.to_string(), leaf.clone()))
                 {
                     return !self.override_satisfied(ty, bounds);
                 }
@@ -2199,7 +2209,9 @@ impl SemaCx<'_> {
                     return false;
                 }
                 let fields = def.fields.clone();
-                fields.iter().all(|(_, fty, _)| self.no_alloc_safe_drop(fty))
+                fields
+                    .iter()
+                    .all(|(_, fty, _)| self.no_alloc_safe_drop(fty))
             }
             Ty::Enum(id) => {
                 let variants = self.enums[id.0 as usize].variants.clone();
@@ -2249,8 +2261,7 @@ impl SemaCx<'_> {
             ExprKind::Field { receiver, .. } => self.expr_is_place(receiver),
             ExprKind::Index { receiver, .. } => self.expr_is_place(receiver),
             ExprKind::Unary {
-                op: UnaryOp::Deref,
-                ..
+                op: UnaryOp::Deref, ..
             } => true,
             _ => false,
         }
@@ -2395,7 +2406,6 @@ impl SemaCx<'_> {
                         return_type,
                         generic_params,
                         generic_bounds,
-                        is_unsafe: m.is_unsafe,
                     },
                 );
             }
@@ -2487,7 +2497,6 @@ impl SemaCx<'_> {
                         return_type: resolved_return,
                         generic_params: t.method_generic_params.clone(),
                         generic_bounds: t.method_generic_bounds.clone(),
-                        is_unsafe: t.is_unsafe,
                     },
                 );
             }
@@ -2576,7 +2585,6 @@ impl SemaCx<'_> {
                     return_type,
                     generic_params,
                     generic_bounds,
-                    is_unsafe: m.is_unsafe,
                 },
             );
         }
@@ -2699,7 +2707,6 @@ impl SemaCx<'_> {
                 method_generic_params: method_param_names,
                 method_generic_bounds: method_param_bounds,
                 is_drop: false,
-                is_unsafe: m.is_unsafe,
             });
         }
         self.self_type_stack.pop();
@@ -2798,7 +2805,6 @@ impl SemaCx<'_> {
                     generic_bounds: Vec::new(),
                     // interface signatures are not `unsafe fn` (TEXT.1 targets
                     // inherent `impl` methods); unsafe interfaces can come later.
-                    is_unsafe: false,
                 },
             );
             self.interfaces.insert(
@@ -2873,7 +2879,6 @@ impl SemaCx<'_> {
                         generic_params: Vec::new(),
                         generic_bounds: Vec::new(),
                         // `m` here is an InterfaceMethod (no `unsafe fn`).
-                        is_unsafe: false,
                     },
                 );
             }
@@ -2937,31 +2942,16 @@ impl SemaCx<'_> {
                 });
                 continue;
             }
-            // v0.0.14: `Send` / `Sync` are unsafe marker overrides. They take
-            // no methods (the body must be empty `{}`) and assert thread
-            // safety the compiler can't prove, so the impl must carry
-            // `unsafe`. A bare `impl T: Send {}` is E0860. The override is
-            // recorded for `is_send`/`is_sync`; a conditional impl
-            // (`unsafe impl Arc[T: Send + Sync]: Send`) records its
-            // per-param bounds so the marker only holds when they're met.
+            // `Send` / `Sync` are marker overrides. They take no methods (the
+            // body must be empty `{}`) and assert thread safety the compiler
+            // can't prove. A conditional impl (`impl Arc[T: Send + Sync]: Send`)
+            // records per-param bounds so the marker only holds when met.
             if iface_name.name == "Send" || iface_name.name == "Sync" {
-                if !b.is_unsafe {
-                    diags.push(Diag {
-                        code: "E0860",
-                        msg: format!(
-                            "`{}` is an unsafe assertion — write `unsafe impl {}: {} {{}}` to vouch for thread safety the compiler can't verify",
-                            iface_name.name, iface_name.name, b.target.name
-                        ),
-                        span: iface_name.span,
-                        origin_file: item.origin_file.clone(),
-                    });
-                    continue;
-                }
                 if !b.methods.is_empty() {
                     diags.push(Diag {
                         code: "E0860",
                         msg: format!(
-                            "`unsafe impl {}: {}` must have an empty body — `Send`/`Sync` are marker interfaces with no methods",
+                            "`impl {}: {}` must have an empty body — `Send`/`Sync` are marker interfaces with no methods",
                             iface_name.name, b.target.name
                         ),
                         span: iface_name.span,
@@ -2978,17 +2968,20 @@ impl SemaCx<'_> {
                 // (`vendor.stdlib.src.arc.Arc`) matches the instantiation's
                 // template leaf (`Arc`) at the use site.
                 self.marker_overrides.insert(
-                    (iface_name.name.clone(), name_leaf(&b.target.name).to_string()),
+                    (
+                        iface_name.name.clone(),
+                        name_leaf(&b.target.name).to_string(),
+                    ),
                     bounds,
                 );
                 continue;
             }
-            // `unsafe` is meaningful only on the `Send`/`Sync` markers.
-            if b.is_unsafe {
+            // Empty interface impls are meaningful only for marker assertions.
+            if b.methods.is_empty() {
                 diags.push(Diag {
                     code: "E0861",
                     msg: format!(
-                        "`unsafe impl` applies only to the `Send` / `Sync` markers, not `{}`",
+                        "empty `impl` applies only to the `Send` / `Sync` markers, not `{}`",
                         iface_name.name
                     ),
                     span: iface_name.span,
@@ -3080,7 +3073,8 @@ impl SemaCx<'_> {
                     continue;
                 };
                 // E0505 — signature equality after Self substitution.
-                if !method_sig_matches(&self.structs, &self.enums, iface_sig, impl_sig, &target_ty) {
+                if !method_sig_matches(&self.structs, &self.enums, iface_sig, impl_sig, &target_ty)
+                {
                     let span = b
                         .methods
                         .iter()
@@ -3235,7 +3229,8 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. }) {
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
+            {
                 // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
                 !param.mutable
             } else {
@@ -3395,7 +3390,8 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. }) {
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
+            {
                 // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
                 !param.mutable
             } else {
@@ -3539,7 +3535,6 @@ impl SemaCx<'_> {
                             .collect(),
                         params,
                         return_type: ret,
-                        is_unsafe: f.is_unsafe,
                     },
                 );
                 continue;
@@ -3567,7 +3562,6 @@ impl SemaCx<'_> {
                     return_type: ret,
                     is_variadic: f.is_variadic,
                     link_name: link_name.clone(),
-                    is_unsafe: f.is_unsafe,
                 },
             );
         }
@@ -3978,7 +3972,6 @@ impl SemaCx<'_> {
                 }
             }
             ExprKind::Block(b) => self.walk_block_for_param_compare(b, param_idents),
-            ExprKind::Unsafe(b) => self.walk_block_for_param_compare(b, param_idents),
             ExprKind::Match { scrutinee, arms } => {
                 self.walk_expr_for_param_compare(scrutinee, param_idents);
                 for arm in arms {
@@ -4090,8 +4083,9 @@ impl SemaCx<'_> {
         let Some(tname) = self.source_type_name(recv_ty) else {
             return;
         };
-        let Some(&(m_no_alloc, m_no_block)) =
-            self.method_contracts.get(&(tname.clone(), method.to_string()))
+        let Some(&(m_no_alloc, m_no_block)) = self
+            .method_contracts
+            .get(&(tname.clone(), method.to_string()))
         else {
             return;
         };
@@ -4489,23 +4483,43 @@ impl SemaCx<'_> {
             match &e.kind {
                 ExprKind::Field { receiver, name } => {
                     name.name == field
-                        && matches!(&receiver.kind, ExprKind::Ident(n) if n == "self")
+                        && matches!(&receiver.kind, ExprKind::Ident(n) if n == "self" || n == "this")
                 }
                 ExprKind::Cast { expr, .. } => arg_is_self_field(expr, field),
                 _ => false,
             }
         }
-        /// `self.field.is_not_null()` or `!self.field.is_null()`.
+        fn is_zero_as_raw_ptr(e: &Expr) -> bool {
+            matches!(
+                &e.kind,
+                ExprKind::Cast { expr, ty }
+                    if matches!(&expr.kind, ExprKind::IntLit(0, _))
+                        && matches!(&ty.kind, crate::ast::TypeKind::RawPtr(_))
+            )
+        }
+        /// `self.field.is_not_null()`, `!self.field.is_null()`, or
+        /// `this.field != 0 as *T`.
         fn is_null_guard(cond: &Expr, field: &str) -> bool {
             match &cond.kind {
                 ExprKind::Call { callee, args, .. } if args.is_empty() => {
                     matches!(&callee.kind, ExprKind::Field { receiver, name }
                         if name.name == "is_not_null" && arg_is_self_field(receiver, field))
                 }
-                ExprKind::Unary { op: UnaryOp::Not, operand } => matches!(
+                ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    operand,
+                } => matches!(
                     &operand.kind, ExprKind::Call { callee, args, .. } if args.is_empty()
                     && matches!(&callee.kind, ExprKind::Field { receiver, name }
                         if name.name == "is_null" && arg_is_self_field(receiver, field))),
+                ExprKind::Binary {
+                    op: BinOp::Ne,
+                    lhs,
+                    rhs,
+                } => {
+                    (arg_is_self_field(lhs, field) && is_zero_as_raw_ptr(rhs))
+                        || (is_zero_as_raw_ptr(lhs) && arg_is_self_field(rhs, field))
+                }
                 _ => false,
             }
         }
@@ -4514,11 +4528,17 @@ impl SemaCx<'_> {
                 // A direct release: `field` passed to a direct call.
                 ExprKind::Call { args, .. } => args.iter().any(|a| arg_is_self_field(a, field)),
                 // Transparent wrappers — `unsafe { ... }` and bare blocks.
-                ExprKind::Unsafe(b) | ExprKind::Block(b) => block_releases(b, field),
+                ExprKind::Block(b) => block_releases(b, field),
                 // The one allowed conditional: a null-guard on the same field,
                 // no `else`. Arbitrary conditions are intentionally NOT descended.
-                ExprKind::If { cond, then, else_branch } => {
-                    else_branch.is_none() && is_null_guard(cond, field) && block_releases(then, field)
+                ExprKind::If {
+                    cond,
+                    then,
+                    else_branch,
+                } => {
+                    else_branch.is_none()
+                        && is_null_guard(cond, field)
+                        && block_releases(then, field)
                 }
                 _ => false,
             }
@@ -4546,11 +4566,13 @@ impl SemaCx<'_> {
                             || e(callee, f)
                             || args.iter().any(|a| e(a, f))
                     }
-                    ExprKind::Unsafe(bl) | ExprKind::Block(bl) => b(bl, f),
-                    ExprKind::If { cond, then, else_branch } => {
-                        e(cond, f)
-                            || b(then, f)
-                            || else_branch.as_ref().is_some_and(|eb| e(eb, f))
+                    ExprKind::Block(bl) => b(bl, f),
+                    ExprKind::If {
+                        cond,
+                        then,
+                        else_branch,
+                    } => {
+                        e(cond, f) || b(then, f) || else_branch.as_ref().is_some_and(|eb| e(eb, f))
                     }
                     ExprKind::Match { scrutinee, arms } => {
                         e(scrutinee, f) || arms.iter().any(|a| e(&a.body, f))
@@ -4578,20 +4600,36 @@ impl SemaCx<'_> {
                     StmtKind::Loop(bl, _) => b(bl, f),
                     StmtKind::For(fl, _) => match fl {
                         ForLoop::Range { iter, body, .. } => e(iter, f) || b(body, f),
-                        ForLoop::CStyle { init, cond, update, body } => {
+                        ForLoop::CStyle {
+                            init,
+                            cond,
+                            update,
+                            body,
+                        } => {
                             init.as_ref().is_some_and(|i| s(i, f))
                                 || cond.as_ref().is_some_and(|c| e(c, f))
                                 || update.iter().any(|u| e(u, f))
                                 || b(body, f)
                         }
                     },
-                    StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+                    StmtKind::IfLet {
+                        scrutinee,
+                        body,
+                        else_body,
+                        ..
+                    } => {
                         e(scrutinee, f)
                             || b(body, f)
                             || else_body.as_ref().is_some_and(|eb| b(eb, f))
                     }
-                    StmtKind::GuardLet { scrutinee, else_body, .. } => e(scrutinee, f) || b(else_body, f),
-                    StmtKind::WhileLet { scrutinee, body, .. } => e(scrutinee, f) || b(body, f),
+                    StmtKind::GuardLet {
+                        scrutinee,
+                        else_body,
+                        ..
+                    } => e(scrutinee, f) || b(else_body, f),
+                    StmtKind::WhileLet {
+                        scrutinee, body, ..
+                    } => e(scrutinee, f) || b(body, f),
                     _ => false,
                 }
             }
@@ -4614,7 +4652,9 @@ impl SemaCx<'_> {
         }
 
         for item in &p.items {
-            let ItemKind::Struct(s) = &item.kind else { continue; };
+            let ItemKind::Struct(s) = &item.kind else {
+                continue;
+            };
             self.current_file = item.origin_file.clone();
             let body = drop_bodies.get(s.name.name.as_str());
             for f in &s.fields {
@@ -4653,7 +4693,7 @@ impl SemaCx<'_> {
                         "raw-pointer field `{fname}` is unaccounted: {detail}. \
                          Mark it `opaque {fname}: ...` if another owner frees it, \
                          or release it in `fn drop(ref this)` — e.g. \
-                         `unsafe {{ free(this.{fname}); }}`"
+                         `{{ free(this.{fname}); }}`"
                     ),
                     f.span,
                 );
@@ -4873,7 +4913,6 @@ impl SemaCx<'_> {
                 return_type: g.return_type.clone(),
                 is_variadic: false,
                 link_name: None,
-                is_unsafe: g.is_unsafe,
             })
         });
         let Some(sig) = sig else {
@@ -5010,7 +5049,8 @@ impl SemaCx<'_> {
                     );
                 }
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. }) {
+            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
+            {
                 // region borrow (Stage-4 feature): shared is returnable, `mut` is not.
                 !param.mutable
             } else {
@@ -5286,9 +5326,7 @@ impl SemaCx<'_> {
                     && matches!(&declared, Some(Ty::Struct(id))
                         if self.designated_string_struct == Some(*id));
                 let (final_ty, assigned) = match init {
-                    Some(_) if is_lang_string_literal_let => {
-                        (declared.clone().unwrap(), true)
-                    }
+                    Some(_) if is_lang_string_literal_let => (declared.clone().unwrap(), true),
                     Some(init_expr) => {
                         let inferred = self.check_expr(init_expr, declared.clone());
                         let final_ty = declared.clone().unwrap_or(inferred);
@@ -5743,12 +5781,6 @@ impl SemaCx<'_> {
             ExprKind::InterpStr { parts } => self.check_interp_str(parts, e.span),
             ExprKind::Ident(name) => self.resolve_value_ident(name, e.span, expected.clone()),
             ExprKind::Block(b) => self.check_block_as_expr(b),
-            ExprKind::Unsafe(b) => {
-                self.unsafe_depth += 1;
-                let ty = self.check_block_as_expr(b);
-                self.unsafe_depth -= 1;
-                ty
-            }
             // v0.0.3 Phase 5 Slice 5E.2: `await EXPR` evaluates to the
             // inner T of the surrounding `Future[T]` expression. Two
             // gates:
@@ -5911,7 +5943,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::I32 | Ty::Str | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`println` accepts `i32` or `str`; got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`println` accepts `i32` or `str`; got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -5922,7 +5957,10 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::Str | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`str_ptr` requires a `str` argument, got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`str_ptr` requires a `str` argument, got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -5933,26 +5971,25 @@ impl SemaCx<'_> {
             if !matches!(arg_ty, Ty::Str | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`str_len` requires a `str` argument, got `{}`", ty_display(&arg_ty)),
+                    format!(
+                        "`str_len` requires a `str` argument, got `{}`",
+                        ty_display(&arg_ty)
+                    ),
                     args[0].span,
                 );
             }
             return Some(Ty::Usize);
         }
         if name == "str_from_raw_parts" && args.len() == 2 {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`str_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    span,
-                );
-            }
             let p_ty = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(Ty::U8))));
             let _ = self.check_expr(&args[1], Some(Ty::Usize));
             if !matches!(p_ty, Ty::RawPtr(_) | Ty::Error) {
                 self.err(
                     "E0302",
-                    format!("`str_from_raw_parts` first arg must be `*u8`, got `{}`", ty_display(&p_ty)),
+                    format!(
+                        "`str_from_raw_parts` first arg must be `*u8`, got `{}`",
+                        ty_display(&p_ty)
+                    ),
                     args[0].span,
                 );
             }
@@ -5990,13 +6027,6 @@ impl SemaCx<'_> {
             return Some(Ty::Usize);
         }
         if name == "slice_from_raw_parts" && args.len() == 2 {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`slice_from_raw_parts` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    span,
-                );
-            }
             let p_ty = self.check_expr(&args[0], None);
             let _ = self.check_expr(&args[1], Some(Ty::Usize));
             let elem = match &p_ty {
@@ -6211,14 +6241,6 @@ impl SemaCx<'_> {
             self.err(
                 "E0903",
                 "`#msg_send` takes no type arguments".to_string(),
-                span,
-            );
-        }
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`#msg_send` is an unsafe FFI primitive; wrap the call in `unsafe { ... }`"
-                    .to_string(),
                 span,
             );
         }
@@ -6465,13 +6487,6 @@ impl SemaCx<'_> {
             }
             return Ty::Error;
         }
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`#addr_of` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                span,
-            );
-        }
         let arg = &args[0];
         // v0.0.12 G-025: accept any place expression — `Ident`, `Field`,
         // `Index`, `Deref`, and chains thereof — so `#addr_of((*o).field)`
@@ -6535,13 +6550,6 @@ impl SemaCx<'_> {
                 let _ = self.check_expr(a, None);
             }
             return Ty::Usize;
-        }
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`#addr` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                span,
-            );
         }
         let ty = self.check_expr(&args[0], None);
         if !matches!(ty, Ty::RawPtr(_) | Ty::Error) {
@@ -6852,16 +6860,14 @@ impl SemaCx<'_> {
     // serializing hints). Cannot read or write C+ values — that is Tier 2
     // (operands + clobbers), which needs an explicit operand-syntax design.
     //
-    // Requires `unsafe` (E0801): inline asm can violate every invariant the
-    // compiler relies on. Errors:
+    // Inline asm can violate every invariant the compiler relies on. Errors:
     //   - **E0501**: type arguments supplied.
     //   - **E0903**: a `-> T` return ascription (Tier 1 has no outputs).
     //   - **E0308**: not exactly one argument.
     //   - **E0871**: the argument is not a string literal.
-    //   - **E0801**: used outside an `unsafe` block.
     /// v0.0.14 inline asm Tier 2. `#asm("tmpl {a},{b}", a = in(reg) x,
     /// b = out(reg) y, clobber("cc"))`. Tier 1 (`#asm("dmb ish")`) is the
-    /// no-operand case. `#asm` is unsafe (E0801). Each operand: must have a
+    /// no-operand case. Each operand: must have a
     /// matching `{name}` placeholder (E0893), no duplicate names (E0890), a
     /// register-sized scalar type (E0892); an `out`/`inout` operand must be a
     /// writable variable (E0895 otherwise; E0305 if not `mut`). The expression
@@ -6873,13 +6879,6 @@ impl SemaCx<'_> {
         _clobbers: &[String],
         span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`#asm` is unsafe; wrap it in `unsafe { ... }`".to_string(),
-                span,
-            );
-        }
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for op in operands {
             if !seen.insert(op.name.as_str()) {
@@ -7321,6 +7320,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             is_copy: false,
             is_drop: false,
             is_repr_c: false,
+            is_pub: false,
             origin_file: None,
             generic_origin: Some(("__Tuple".to_string(), elem_tys.to_vec())),
         });
@@ -7340,17 +7340,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // result type. No bounds check (pointer length unknown).
             // Slice 10.FFI.3: requires `unsafe` block — pointer
             // indexing dereferences arbitrary memory.
-            Ty::RawPtr(inner) => {
-                if self.unsafe_depth == 0 {
-                    self.err(
-                        "E0801",
-                        "indexing through a raw pointer is unsafe; wrap in `unsafe { ... }`"
-                            .to_string(),
-                        span,
-                    );
-                }
-                (*inner).clone()
-            }
+            Ty::RawPtr(inner) => (*inner).clone(),
             Ty::Error => Ty::Error,
             other => {
                 self.err(
@@ -7987,6 +7977,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let declared: Vec<(String, Ty, bool)> = self.structs[id.0 as usize].fields.clone();
         let struct_name = self.structs[id.0 as usize].name.clone();
         let struct_origin = self.structs[id.0 as usize].origin_file.clone();
+        let invariant_private = struct_fields_are_invariant_private(&self.structs[id.0 as usize]);
 
         // Detect duplicate-in-literal and unknown-field; type-check each provided value.
         let mut provided: HashMap<String, ()> = HashMap::new();
@@ -8007,11 +7998,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let declared_field = declared.iter().find(|(n, _, _)| n == &lit_field.name.name);
             match declared_field {
                 Some((_, t, _is_pub)) => {
-                    // v0.0.24 #10: visibility is name-based — a field whose name
-                    // starts with `_` is private to its module. Cross-file
-                    // construction of a private field is E0403; same-file
-                    // construction always sees private fields.
-                    if is_private_name(&lit_field.name.name)
+                    // v0.0.24 #10: visibility is name-based for ordinary
+                    // fields. Additionally, raw-pointer/custom-Drop
+                    // implementation structs keep all fields module-private
+                    // because external mutation can corrupt invariants.
+                    // Same-file construction always sees private fields.
+                    if (is_private_name(&lit_field.name.name) || invariant_private)
                         && self.is_cross_file_access(&struct_origin)
                     {
                         self.err(
@@ -8023,9 +8015,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     // TEXT.R1c: a string literal for a `Text`-typed field
                     // constructs an owned Text (an rvalue — no partial move).
                     // Matches codegen's struct-lit field lowering.
-                    let is_lang_string_field =
-                        matches!(lit_field.value.kind, ExprKind::StrLit(_))
-                            && matches!(t, Ty::Struct(fid)
+                    let is_lang_string_field = matches!(lit_field.value.kind, ExprKind::StrLit(_))
+                        && matches!(t, Ty::Struct(fid)
                                 if self.designated_string_struct == Some(*fid));
                     if !is_lang_string_field {
                         let vty = self.check_expr(&lit_field.value, Some(t.clone()));
@@ -8086,11 +8077,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let def = &self.structs[id.0 as usize];
         let struct_name = def.name.clone();
         let struct_origin = def.origin_file.clone();
+        let invariant_private = struct_fields_are_invariant_private(def);
         match def.field_with_pub(&name.name) {
             Some((_, ty, _is_pub)) => {
-                // v0.0.24 #10: name-based privacy — a `_`-prefixed field is
-                // module-private; reading it cross-file is E0403/Field.
-                if is_private_name(&name.name) && self.is_cross_file_access(&struct_origin) {
+                // v0.0.24 #10: name-based privacy for `_` fields, plus
+                // invariant privacy for raw-pointer/custom-Drop implementation
+                // structs.
+                if (is_private_name(&name.name) || invariant_private)
+                    && self.is_cross_file_access(&struct_origin)
+                {
                     self.err(
                         "E0403",
                         format!("field `{}` of struct `{}` is private (its leading `_` marks it module-private; drop the `_` to expose)", name.name, struct_name),
@@ -8176,51 +8171,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             );
             return Ty::Error;
         }
-        // Phase 11 / P3 from the null-handling design (design.md):
-        // integer-to-raw-pointer casts are how C+ expresses FFI null
-        // (`0 as *u8`) and how user code constructs typed pointers from
-        // raw addresses (interop with C APIs that return integers).
-        // Gated by `unsafe` — the cast itself doesn't read memory, but
-        // the resulting pointer is meaningful only if the integer was
-        // a valid address; trusting the user is the unsafe part.
-        if from.is_int() && matches!(to, Ty::RawPtr(_)) && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "integer-to-pointer cast requires `unsafe { ... }`".to_string(),
-                span,
-            );
-        }
+        // Phase 11 / P3 from the null-handling design: integer-to-raw-pointer
+        // casts express FFI null (`0 as *u8`) and typed pointers from raw
+        // addresses.
         // v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → integer cast.
         // The `cast_allowed` check above only admits 64-bit targets
         // (usize / u64 / isize / i64); a narrower target already fell
-        // through to E0315. The remaining check is the unsafe gate:
-        // pointer-as-integer crosses the type system and the borrow
-        // checker has no visibility into what the integer is used for.
-        if matches!(from, Ty::RawPtr(_))
-            && matches!(to, Ty::Usize | Ty::U64 | Ty::Isize | Ty::I64)
-            && self.unsafe_depth == 0
-        {
-            self.err(
-                "E0801",
-                "pointer-to-integer cast requires `unsafe { ... }`".to_string(),
-                span,
-            );
-        }
-        // Phase 11: raw-pointer → raw-pointer reinterpretation also requires
-        // `unsafe`. The cast is mechanically free (both ends lower to LLVM
-        // `ptr`), but the caller is asserting the reinterpreted bytes have
-        // the new pointee's layout.
-        if matches!(from, Ty::RawPtr(_))
-            && matches!(to, Ty::RawPtr(_))
-            && from != to
-            && self.unsafe_depth == 0
-        {
-            self.err(
-                "E0801",
-                "raw-pointer reinterpretation cast requires `unsafe { ... }`".to_string(),
-                span,
-            );
-        }
+        // through to E0315.
+        // Raw-pointer -> raw-pointer reinterpretation is mechanically free;
+        // every raw pointer lowers to LLVM `ptr`.
         to
     }
 
@@ -8585,20 +8544,16 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if args.len() != 1 {
                 self.err(
                     "E0308",
-                    format!("`#drop_in_place` takes 1 value argument, got {}", args.len()),
+                    format!(
+                        "`#drop_in_place` takes 1 value argument, got {}",
+                        args.len()
+                    ),
                     call_span,
                 );
                 for a in args {
                     let _ = self.check_expr(a, None);
                 }
                 return Some(Ty::Unit);
-            }
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    "`#drop_in_place` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                    call_span,
-                );
             }
             let target_ty = self.resolve_type(&type_args[0]);
             let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty))));
@@ -8628,13 +8583,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Atomic ops `#atomic_<op>_<ty>_<ord>(...)`. All require `unsafe` (they
         // read/write through a raw pointer the compiler can't prove valid).
         if let Some(spec) = crate::atomic::parse_atomic_intrinsic(name) {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    format!("`#{}` is unsafe; wrap in `unsafe {{ ... }}`", &name["__cplus_".len()..]),
-                    call_span,
-                );
-            }
             let expected_args = 1 + spec.value_arg_count();
             if args.len() != expected_args {
                 self.err(
@@ -8694,13 +8642,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // Standalone memory fence `#atomic_fence_<ord>()`.
         if crate::atomic::parse_atomic_fence(name).is_some() {
-            if self.unsafe_depth == 0 {
-                self.err(
-                    "E0801",
-                    format!("`#{}` is unsafe; wrap in `unsafe {{ ... }}`", &name["__cplus_".len()..]),
-                    call_span,
-                );
-            }
             if !args.is_empty() {
                 self.err(
                     "E0308",
@@ -8774,30 +8715,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         };
-        // Slice 10.FFI.3: extern fn calls require `unsafe { ... }`.
-        // The callee's contract is unverified — it may have arbitrary
-        // side effects, return uninitialized memory, etc.
-        if self.extern_fns.contains(name) && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!(
-                    "calling extern fn `{}` is unsafe; wrap in `unsafe {{ ... }}`",
-                    name
-                ),
-                call_span,
-            );
-        }
-        // TEXT.1: `unsafe fn` (C+-defined) calls require `unsafe { ... }`.
-        if sig.is_unsafe && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!(
-                    "calling `unsafe fn {}` requires an enclosing `unsafe {{ ... }}` block",
-                    name
-                ),
-                call_span,
-            );
-        }
         // Slice 10.FFI.4: variadic extern fns accept any number of
         // extra args beyond their fixed-param list. Fixed-param count
         // is still enforced as a minimum.
@@ -8874,13 +8791,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!("`{}` is unsafe; wrap in `unsafe {{ ... }}`", name),
-                call_span,
-            );
-        }
         if type_args.len() != 1 {
             self.err(
                 "E0501",
@@ -8979,13 +8889,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_block_on` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if type_args.len() != 1 {
             self.err(
                 "E0501",
@@ -9035,13 +8938,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_reactor_wait_read` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if !self.current_fn_is_async {
             self.err(
                 "E0901",
@@ -9083,13 +8979,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_reactor_wait_write` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if !self.current_fn_is_async {
             self.err(
                 "E0901",
@@ -9133,13 +9022,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_reactor_wait_timer` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if !self.current_fn_is_async {
             self.err(
                 "E0901",
@@ -9182,13 +9064,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_reactor_spawn_local` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if !type_args.is_empty() {
             self.err(
                 "E0501",
@@ -9225,13 +9100,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_reactor_yield_now` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if !self.current_fn_is_async {
             self.err(
                 "E0901",
@@ -9273,13 +9141,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        if self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                "`__cplus_thread_spawn_with` is unsafe; wrap in `unsafe { ... }`".to_string(),
-                call_span,
-            );
-        }
         if type_args.len() != 2 {
             self.err(
                 "E0501",
@@ -9351,17 +9212,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         type_args: &[Type],
         call_span: ByteSpan,
     ) -> Ty {
-        // TEXT.1: `unsafe fn` generic free function requires `unsafe { ... }`.
-        if gsig.is_unsafe && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!(
-                    "calling `unsafe fn {}` requires an enclosing `unsafe {{ ... }}` block",
-                    name
-                ),
-                call_span,
-            );
-        }
         if args.len() != gsig.params.len() {
             self.err(
                 "E0308",
@@ -9441,10 +9291,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // value and pass through untouched. v0.0.23: peel closes the
                 // `g({ x })` hole (no `is_addr_of_place` gate, which skipped
                 // wrapped bindings).
-                if param.move_
-                    && !self.is_copy(&expected)
-                    && !matches!(actual_before, Ty::Error)
-                {
+                if param.move_ && !self.is_copy(&expected) && !matches!(actual_before, Ty::Error) {
                     self.reject_partial_move_of_drop(arg, &expected);
                     self.mark_moved_through_wrappers(arg, &expected);
                 }
@@ -9549,17 +9396,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         call_span: ByteSpan,
         display_ty: &str,
     ) -> bool {
-        // TEXT.1: `unsafe fn` method call requires an enclosing `unsafe { ... }`.
-        if sig.is_unsafe && self.unsafe_depth == 0 {
-            self.err(
-                "E0801",
-                format!(
-                    "calling `unsafe fn {}::{}` requires an enclosing `unsafe {{ ... }}` block",
-                    display_ty, name.name
-                ),
-                call_span,
-            );
-        }
         let Some(rcv) = sig.receiver else {
             self.err(
                 "E0327",
@@ -9577,7 +9413,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if matches!(rcv, Receiver::Mut) && !self.is_writable_place_quiet(receiver) {
             self.err(
                 "E0328",
-                format!("method `{}::{}` requires a mutable receiver", display_ty, name.name),
+                format!(
+                    "method `{}::{}` requires a mutable receiver",
+                    display_ty, name.name
+                ),
                 receiver.span,
             );
         }
@@ -9705,9 +9544,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // the normal method-lookup below; if they provide
         // `impl Foo: ToText { fn to_text(self) -> Text }`, that path handles
         // them.
-        if name.name == "to_text"
-            && args.is_empty()
-            && Self::is_blessed_to_text_receiver(&recv_ty)
+        if name.name == "to_text" && args.is_empty() && Self::is_blessed_to_text_receiver(&recv_ty)
         {
             if !type_args.is_empty() {
                 self.err(
@@ -9721,7 +9558,8 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             if self.current_fn_no_alloc {
                 self.err(
                     "E0901",
-                    "function is marked `#[no_alloc]` but calls `to_text()`, which heap-allocates".to_string(),
+                    "function is marked `#[no_alloc]` but calls `to_text()`, which heap-allocates"
+                        .to_string(),
                     call_span,
                 );
             }
@@ -9832,22 +9670,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // v0.0.12 G-028 (llama.cplus G-026): blessed `write_zeroed()` on a
         // raw-pointer receiver — zero the *T-many bytes* the pointer
         // refers to. Companion to `#zero::[T]()` for the through-pointer
-        // case (e.g. just after `malloc(#size_of::[T]())`). Unsafe
-        // because we're writing through a raw pointer the borrow checker
-        // can't reason about; sema enforces the unsafe block (E0801).
+        // case (e.g. just after `malloc(#size_of::[T]())`).
         if let Ty::RawPtr(_inner) = &recv_ty {
             if args.is_empty() && name.name == "write_zeroed" {
                 if !type_args.is_empty() {
                     self.err(
                         "E0501",
                         "`write_zeroed` takes no type arguments".to_string(),
-                        call_span,
-                    );
-                }
-                if self.unsafe_depth == 0 {
-                    self.err(
-                        "E0801",
-                        "`write_zeroed` is unsafe (writes through a raw pointer); wrap in `unsafe { ... }`".to_string(),
                         call_span,
                     );
                 }
@@ -9885,21 +9714,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // interface bounds. It runs the SAME shared checks as a concrete call
         // (`check_method_receiver` + `check_method_args_and_return`) with `Self`
         // substituted to `Ty::Param(T)` — so receiver-less (E0327), arity
-        // (E0308), `mut`-receiver (E0328), unsafe (E0801), and arg/receiver
-        // move-consumption (E0335/E0337) are all covered, not a hand-rolled
-        // subset. Codegen dispatches each monomorphized instantiation to the
+        // (E0308), `mut`-receiver (E0328), and arg/receiver move-consumption
+        // (E0335/E0337) are all covered, not a hand-rolled subset.
+        // Codegen dispatches each monomorphized instantiation to the
         // concrete impl's method.
         if let Ty::Param(ref pname) = recv_ty {
             if let Some(msig) = self.lookup_bound_method(pname, &name.name) {
-                if !self.check_method_receiver(receiver, &recv_ty, name, &msig, args, call_span, pname)
+                if !self
+                    .check_method_receiver(receiver, &recv_ty, name, &msig, args, call_span, pname)
                 {
                     return Ty::Error;
                 }
                 let mut subst = HashMap::new();
                 subst.insert("Self".to_string(), recv_ty.clone());
-                return self.check_method_args_and_return(
-                    name, &msig, &subst, type_args, args, pname,
-                );
+                return self
+                    .check_method_args_and_return(name, &msig, &subst, type_args, args, pname);
             }
         }
         let Ty::Struct(id) = recv_ty else {
@@ -9933,8 +9762,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // args; the method's originating impl bounds live on its template.
         // (Struct-declaration bounds are enforced separately at instantiation;
         // before this, impl-block bounds parsed but were silently ignored.)
-        if let Some((tmpl_name, concrete_args)) =
-            self.structs[id.0 as usize].generic_origin.clone()
+        if let Some((tmpl_name, concrete_args)) = self.structs[id.0 as usize].generic_origin.clone()
         {
             let tmpl = self
                 .generic_impl_methods
@@ -9979,7 +9807,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         // A concrete impl sig carries no `Self` placeholder, so an empty subst
         // is a no-op — identical behavior, shared code with the generic path.
-        self.check_method_args_and_return(name, &sig, &HashMap::new(), type_args, args, &struct_name)
+        self.check_method_args_and_return(
+            name,
+            &sig,
+            &HashMap::new(),
+            type_args,
+            args,
+            &struct_name,
+        )
     }
 
     /// v0.0.5 Phase 2C: type-check a method call on an enum receiver.
@@ -10725,16 +10560,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if !arity_err(self, 1) {
                     return Ty::Error;
                 }
-                if self.unsafe_depth == 0 {
-                    self.err(
-                        "E0801",
-                        format!(
-                            "`{}.store` is unsafe; wrap in `unsafe {{ ... }}`",
-                            ty_display(recv)
-                        ),
-                        call_span,
-                    );
-                }
                 let want = Ty::RawPtr(Box::new(elem_ty));
                 let _ = self.check_expr(&args[0], Some(want));
                 Ty::Unit
@@ -10934,7 +10759,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     );
                     return Ty::Error;
                 }
-                Ty::Simd { elem: Box::new(elem_ty), lanes: lanes_u / 2 }
+                Ty::Simd {
+                    elem: Box::new(elem_ty),
+                    lanes: lanes_u / 2,
+                }
             }
             // G-039b: join two equal half-width vectors into a full-width one
             // (NEON `vcombine`). `lo.combine(hi)` → twice the lanes, same lane
@@ -10947,7 +10775,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 let _ = self.check_expr(&args[0], Some(recv.clone()));
-                Ty::Simd { elem: Box::new(elem_ty), lanes: lanes_u * 2 }
+                Ty::Simd {
+                    elem: Box::new(elem_ty),
+                    lanes: lanes_u * 2,
+                }
             }
             // G-038b: widen each integer lane to the next size up, preserving
             // lane count (NEON `vmovl`: `i8x8` → `i16x8`). Signed lanes
@@ -10960,7 +10791,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 match simd_widen_elem(&elem_ty) {
-                    Some(w) => Ty::Simd { elem: Box::new(w), lanes: lanes_u },
+                    Some(w) => Ty::Simd {
+                        elem: Box::new(w),
+                        lanes: lanes_u,
+                    },
                     None => {
                         self.err(
                             "E0324",
@@ -10985,7 +10819,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 match simd_narrow_elem(&elem_ty) {
-                    Some(n) => Ty::Simd { elem: Box::new(n), lanes: lanes_u },
+                    Some(n) => Ty::Simd {
+                        elem: Box::new(n),
+                        lanes: lanes_u,
+                    },
                     None => {
                         self.err(
                             "E0324",
@@ -11012,8 +10849,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if !arity_err(self, 1) {
                     return Ty::Error;
                 }
-                let is_byte16 =
-                    matches!(&elem_ty, Ty::I8 | Ty::U8) && lanes_u == 16;
+                let is_byte16 = matches!(&elem_ty, Ty::I8 | Ty::U8) && lanes_u == 16;
                 if !is_byte16 {
                     self.err(
                         "E0324",
@@ -11028,7 +10864,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     }
                     return Ty::Error;
                 }
-                let want = Ty::Simd { elem: Box::new(Ty::U8), lanes: 16 };
+                let want = Ty::Simd {
+                    elem: Box::new(Ty::U8),
+                    lanes: 16,
+                };
                 let at = self.check_expr(&args[0], Some(want));
                 if !matches!(&at, Ty::Simd { elem, lanes } if matches!(**elem, Ty::U8) && *lanes == 16)
                     && at != Ty::Error
@@ -11287,16 +11126,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     }
                     return Ty::Error;
                 }
-                if self.unsafe_depth == 0 {
-                    self.err(
-                        "E0801",
-                        format!(
-                            "`{}::load` is unsafe; wrap in `unsafe {{ ... }}`",
-                            ty_display(recv)
-                        ),
-                        call_span,
-                    );
-                }
                 let want = Ty::RawPtr(Box::new(elem_ty));
                 let _ = self.check_expr(&args[0], Some(want));
                 recv.clone()
@@ -11323,7 +11152,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 let at = self.check_expr(&args[0], None);
-                if let Ty::Simd { elem: se, lanes: sl } = &at {
+                if let Ty::Simd {
+                    elem: se,
+                    lanes: sl,
+                } = &at
+                {
                     let src_bits = simd_lane_bits(se) * *sl;
                     let dst_bits = simd_lane_bits(&elem_ty) * lanes_u;
                     if src_bits == dst_bits && src_bits != 0 {
@@ -11376,7 +11209,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if args.len() != 1 {
                     self.err(
                         "E0308",
-                        format!("`{}::from_int` takes 1 argument, got {}", ty_display(recv), args.len()),
+                        format!(
+                            "`{}::from_int` takes 1 argument, got {}",
+                            ty_display(recv),
+                            args.len()
+                        ),
                         call_span,
                     );
                     for a in args {
@@ -11385,8 +11222,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 let at = self.check_expr(&args[0], None);
-                if let Ty::Simd { elem: se, lanes: sl } = &at {
-                    if se.is_int() && *sl == lanes_u && simd_lane_bits(se) == simd_lane_bits(&elem_ty) {
+                if let Ty::Simd {
+                    elem: se,
+                    lanes: sl,
+                } = &at
+                {
+                    if se.is_int()
+                        && *sl == lanes_u
+                        && simd_lane_bits(se) == simd_lane_bits(&elem_ty)
+                    {
                         return recv.clone();
                     }
                 }
@@ -11426,7 +11270,11 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if args.len() != 1 {
                     self.err(
                         "E0308",
-                        format!("`{}::from_float` takes 1 argument, got {}", ty_display(recv), args.len()),
+                        format!(
+                            "`{}::from_float` takes 1 argument, got {}",
+                            ty_display(recv),
+                            args.len()
+                        ),
                         call_span,
                     );
                     for a in args {
@@ -11435,8 +11283,15 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 let at = self.check_expr(&args[0], None);
-                if let Ty::Simd { elem: se, lanes: sl } = &at {
-                    if se.is_float() && *sl == lanes_u && simd_lane_bits(se) == simd_lane_bits(&elem_ty) {
+                if let Ty::Simd {
+                    elem: se,
+                    lanes: sl,
+                } = &at
+                {
+                    if se.is_float()
+                        && *sl == lanes_u
+                        && simd_lane_bits(se) == simd_lane_bits(&elem_ty)
+                    {
                         return recv.clone();
                     }
                 }
@@ -11899,13 +11754,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // (`Type::method(...)` / `Type::method::[T](...)`).
         if !sig.generic_params.is_empty() {
             return self.check_generic_method_call(
-                owner,
-                type_name,
-                method_seg,
-                sig,
-                type_args,
-                args,
-                call_span,
+                owner, type_name, method_seg, sig, type_args, args, call_span,
             );
         }
         if !type_args.is_empty() {
@@ -12204,9 +12053,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // destructor, so the owner's teardown is a no-op.
                 let abstract_param_may_drop =
                     matches!(info.ty, Ty::Param(_)) && !self.is_copy(&info.ty);
-                if !info.owns_value
-                    && (self.ty_carries_drop(&info.ty) || abstract_param_may_drop)
-                {
+                if !info.owns_value && (self.ty_carries_drop(&info.ty) || abstract_param_may_drop) {
                     return Some((e.span, PartialMoveKind::BorrowedBinding(name.clone())));
                 }
             }
@@ -12419,7 +12266,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
     fn flag_view_leaves(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.flag_view_leaves(&f.value);
                 }
@@ -12753,17 +12602,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             UnaryOp::Deref => {
                 // Slice 10.FFI.2: `*p` reads through a raw pointer.
-                // Slice 10.FFI.3: requires `unsafe` block — reads
-                // through a raw pointer can violate memory safety.
                 let op_ty = self.check_expr(operand, None);
-                if matches!(op_ty, Ty::RawPtr(_)) && self.unsafe_depth == 0 {
-                    self.err(
-                        "E0801",
-                        "dereferencing a raw pointer is unsafe; wrap in `unsafe { ... }`"
-                            .to_string(),
-                        span,
-                    );
-                }
                 match op_ty {
                     Ty::RawPtr(inner) => *inner,
                     Ty::Error => Ty::Error,
@@ -12995,9 +12834,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if !info.mutable {
                     self.err(
                         "E0305",
-                        format!(
-                            "cannot assign to immutable binding `{name}`; declare it as `var`"
-                        ),
+                        format!("cannot assign to immutable binding `{name}`; declare it as `var`"),
                         target.span,
                     );
                     return false;
@@ -13179,13 +13016,34 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // NEON D-register family. Mostly produced by `i8x16::low`/`high`
             // and consumed by `widen` / `combine`; also constructible
             // directly via `splat`/`new`. Same elem leaves, half the lanes.
-            "i8x8" => Ty::Simd { elem: Box::new(Ty::I8), lanes: 8 },
-            "u8x8" => Ty::Simd { elem: Box::new(Ty::U8), lanes: 8 },
-            "i16x4" => Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 },
-            "u16x4" => Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 },
-            "i32x2" => Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 },
-            "u32x2" => Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 },
-            "f32x2" => Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 },
+            "i8x8" => Ty::Simd {
+                elem: Box::new(Ty::I8),
+                lanes: 8,
+            },
+            "u8x8" => Ty::Simd {
+                elem: Box::new(Ty::U8),
+                lanes: 8,
+            },
+            "i16x4" => Ty::Simd {
+                elem: Box::new(Ty::I16),
+                lanes: 4,
+            },
+            "u16x4" => Ty::Simd {
+                elem: Box::new(Ty::U16),
+                lanes: 4,
+            },
+            "i32x2" => Ty::Simd {
+                elem: Box::new(Ty::I32),
+                lanes: 2,
+            },
+            "u32x2" => Ty::Simd {
+                elem: Box::new(Ty::U32),
+                lanes: 2,
+            },
+            "f32x2" => Ty::Simd {
+                elem: Box::new(Ty::F32),
+                lanes: 2,
+            },
             // v0.0.7 Slice 2.2: 256-bit widths. AArch64 splits these
             // into two 128-bit ops at codegen; AVX2 / SVE2 hosts use
             // native 256-bit vectors. Same elem-type leaves as the
@@ -13446,6 +13304,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             is_copy: false, // recomputed by compute_struct_copy_flags? not for late-synthesized
             is_drop: false,
             is_repr_c: false, // generic instantiations don't inherit repr(C); revisit when use case appears
+            is_pub: template.is_pub,
             origin_file: None,
             generic_origin: Some((name.to_string(), arg_tys.clone())),
         });
@@ -13504,7 +13363,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         // can still be `fn map[U]` inside `impl Vec[T]`.
                         generic_params: t.method_generic_params.clone(),
                         generic_bounds: t.method_generic_bounds.clone(),
-                        is_unsafe: t.is_unsafe,
                     },
                 );
             }
@@ -13899,7 +13757,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return_type: resolved_return,
                     generic_params: t.method_generic_params.clone(),
                     generic_bounds: t.method_generic_bounds.clone(),
-                    is_unsafe: t.is_unsafe,
                 },
             );
         }
@@ -14104,23 +13961,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let want_fn_ptr = matches!(expected, Some(Ty::FnPtr { .. }));
         if let Some(sig) = self.fns.get(name).cloned() {
             if want_fn_ptr {
-                // TEXT.1 soundness: coercing an `unsafe fn` to a (safe) `fn(...)`
-                // pointer launders its unsafe-ness — the resulting `fn(T) -> R`
-                // type carries no `unsafe`, so a later call through it would
-                // bypass the E0801 gate a direct call hits. C+ has no
-                // `unsafe fn(...)` pointer type, so taking the pointer is itself
-                // the unsafe act and must be acknowledged with `unsafe { ... }`,
-                // mirroring the direct-call rule.
-                if sig.is_unsafe && self.unsafe_depth == 0 {
-                    self.err(
-                        "E0801",
-                        format!(
-                            "taking a fn-pointer to `unsafe fn {name}` requires an enclosing `unsafe {{ ... }}` block (the `fn(...)` pointer type cannot carry `unsafe`, so the pointer launders it)"
-                        ),
-                        span,
-                    );
-                    return Ty::Error;
-                }
                 // v0.0.24 #9: a fn-pointer type carries each param's ownership
                 // convention — `fn(R)` borrows its arg (caller keeps ownership),
                 // `fn(take R)` consumes it. The pointed-to function's param
@@ -14250,7 +14090,7 @@ fn op_str(op: BinOp) -> &'static str {
 /// is caught the same as the bare `obj.f` — codegen bit-copies all of them.
 fn collect_value_leaves<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
     match &e.kind {
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => {
+        ExprKind::Block(b) => {
             if let Some(t) = &b.tail {
                 collect_value_leaves(t, out);
             }
@@ -14311,12 +14151,8 @@ fn unify_param_against_concrete(
         (Ty::Array(a_elem, a_len), Ty::Array(b_elem, b_len)) => {
             *a_len == *b_len && unify_param_against_concrete(a_elem, b_elem, subst, structs, enums)
         }
-        (Ty::RawPtr(a), Ty::RawPtr(b)) => {
-            unify_param_against_concrete(a, b, subst, structs, enums)
-        }
-        (Ty::Slice(a), Ty::Slice(b)) => {
-            unify_param_against_concrete(a, b, subst, structs, enums)
-        }
+        (Ty::RawPtr(a), Ty::RawPtr(b)) => unify_param_against_concrete(a, b, subst, structs, enums),
+        (Ty::Slice(a), Ty::Slice(b)) => unify_param_against_concrete(a, b, subst, structs, enums),
         // v0.0.23: a generic struct/enum parameter unifies against a concrete
         // instantiation of the *same template* by matching their type-args
         // pairwise — so a generic fn over a container parameter
@@ -14411,7 +14247,7 @@ fn is_asm_scalar(ty: &Ty) -> bool {
 fn expr_is_asm_only(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Asm { .. } => true,
-        ExprKind::Unsafe(b) | ExprKind::Block(b) => {
+        ExprKind::Block(b) => {
             b.stmts.iter().all(stmt_is_asm_only)
                 && b.tail.as_deref().map(expr_is_asm_only).unwrap_or(true)
         }
@@ -14563,7 +14399,7 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
                 walk_variant_patterns_in_expr(a, f);
             }
         }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => walk_variant_patterns_in_block(b, f),
+        ExprKind::Block(b) => walk_variant_patterns_in_block(b, f),
         ExprKind::If {
             cond,
             then,
@@ -14598,7 +14434,9 @@ fn walk_variant_patterns_in_expr(expr: &Expr, f: &mut impl FnMut(&str, &[Type]))
             walk_variant_patterns_in_expr(index, f);
         }
         ExprKind::Cast { expr, .. } => walk_variant_patterns_in_expr(expr, f),
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             for sf in fields {
                 walk_variant_patterns_in_expr(&sf.value, f);
             }
@@ -14701,13 +14539,34 @@ fn simd_ty_from_name(name: &str) -> Option<Ty> {
             lanes: 8,
         }),
         // v0.0.12 SIMD Tier-1 (G-039a): 64-bit (sub-128) widths.
-        "i8x8" => Some(Ty::Simd { elem: Box::new(Ty::I8), lanes: 8 }),
-        "u8x8" => Some(Ty::Simd { elem: Box::new(Ty::U8), lanes: 8 }),
-        "i16x4" => Some(Ty::Simd { elem: Box::new(Ty::I16), lanes: 4 }),
-        "u16x4" => Some(Ty::Simd { elem: Box::new(Ty::U16), lanes: 4 }),
-        "i32x2" => Some(Ty::Simd { elem: Box::new(Ty::I32), lanes: 2 }),
-        "u32x2" => Some(Ty::Simd { elem: Box::new(Ty::U32), lanes: 2 }),
-        "f32x2" => Some(Ty::Simd { elem: Box::new(Ty::F32), lanes: 2 }),
+        "i8x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::I8),
+            lanes: 8,
+        }),
+        "u8x8" => Some(Ty::Simd {
+            elem: Box::new(Ty::U8),
+            lanes: 8,
+        }),
+        "i16x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::I16),
+            lanes: 4,
+        }),
+        "u16x4" => Some(Ty::Simd {
+            elem: Box::new(Ty::U16),
+            lanes: 4,
+        }),
+        "i32x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::I32),
+            lanes: 2,
+        }),
+        "u32x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::U32),
+            lanes: 2,
+        }),
+        "f32x2" => Some(Ty::Simd {
+            elem: Box::new(Ty::F32),
+            lanes: 2,
+        }),
         // v0.0.7 Slice 2.2: 256-bit widths.
         "f32x8" => Some(Ty::Simd {
             elem: Box::new(Ty::F32),
@@ -15139,9 +14998,10 @@ fn ty_eq_modulo_self(
                 if let Some((bname, bargs)) = structs[bid.0 as usize].generic_origin.as_ref() {
                     return iname == bname
                         && iargs.len() == bargs.len()
-                        && iargs.iter().zip(bargs.iter()).all(|(p, b)| {
-                            ty_eq_modulo_self(structs, enums, p, b, target)
-                        });
+                        && iargs
+                            .iter()
+                            .zip(bargs.iter())
+                            .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target));
                 }
             }
             iface_ty == impl_ty
@@ -15153,9 +15013,10 @@ fn ty_eq_modulo_self(
                 if let Some((bname, bargs)) = enums[bid.0 as usize].generic_origin.as_ref() {
                     return iname == bname
                         && iargs.len() == bargs.len()
-                        && iargs.iter().zip(bargs.iter()).all(|(p, b)| {
-                            ty_eq_modulo_self(structs, enums, p, b, target)
-                        });
+                        && iargs
+                            .iter()
+                            .zip(bargs.iter())
+                            .all(|(p, b)| ty_eq_modulo_self(structs, enums, p, b, target));
                 }
             }
             iface_ty == impl_ty
@@ -15201,7 +15062,13 @@ fn method_sig_matches(
             return false;
         }
     }
-    ty_eq_modulo_self(structs, enums, &iface.return_type, &impl_.return_type, target)
+    ty_eq_modulo_self(
+        structs,
+        enums,
+        &iface.return_type,
+        &impl_.return_type,
+        target,
+    )
 }
 
 fn cast_allowed(from: &Ty, to: &Ty) -> bool {
@@ -15913,7 +15780,7 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
                 collect_effects_expr(&arm.body, out);
             }
         }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => collect_effects_block(b, out),
+        ExprKind::Block(b) => collect_effects_block(b, out),
         ExprKind::Field { receiver, .. } => collect_effects_expr(receiver, out),
         ExprKind::Index { receiver, index } => {
             collect_effects_expr(receiver, out);
@@ -16054,8 +15921,10 @@ fn body_returns_or_diverges(b: &Block) -> bool {
 
 fn expr_returns_or_diverges(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => body_returns_or_diverges(b),
-        ExprKind::If { then, else_branch, .. } => {
+        ExprKind::Block(b) => body_returns_or_diverges(b),
+        ExprKind::If {
+            then, else_branch, ..
+        } => {
             body_returns_or_diverges(then)
                 && else_branch.as_deref().is_some_and(expr_returns_or_diverges)
         }
@@ -16081,26 +15950,38 @@ fn stmt_can_break(s: &Stmt) -> bool {
         StmtKind::Break => true,
         StmtKind::Continue | StmtKind::Return(_) => false,
         // Nested loops own their `break`/`continue`.
-        StmtKind::While { .. } | StmtKind::Loop(..) | StmtKind::For(..) | StmtKind::WhileLet { .. } => {
-            false
-        }
+        StmtKind::While { .. }
+        | StmtKind::Loop(..)
+        | StmtKind::For(..)
+        | StmtKind::WhileLet { .. } => false,
         StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => expr_can_break(e),
         StmtKind::Let { init, .. } => init.as_ref().is_some_and(expr_can_break),
-        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+        StmtKind::IfLet {
+            scrutinee,
+            body,
+            else_body,
+            ..
+        } => {
             expr_can_break(scrutinee)
                 || loop_can_break(body)
                 || else_body.as_ref().is_some_and(loop_can_break)
         }
-        StmtKind::GuardLet { scrutinee, else_body, .. } => {
-            expr_can_break(scrutinee) || loop_can_break(else_body)
-        }
+        StmtKind::GuardLet {
+            scrutinee,
+            else_body,
+            ..
+        } => expr_can_break(scrutinee) || loop_can_break(else_body),
     }
 }
 
 fn expr_can_break(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => loop_can_break(b),
-        ExprKind::If { cond, then, else_branch } => {
+        ExprKind::Block(b) => loop_can_break(b),
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
             expr_can_break(cond)
                 || loop_can_break(then)
                 || else_branch.as_deref().is_some_and(expr_can_break)
@@ -16160,7 +16041,7 @@ fn block_diverges(b: &Block) -> bool {
 /// for moves: its moves are kept).
 fn expr_diverges(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => block_diverges(b),
+        ExprKind::Block(b) => block_diverges(b),
         ExprKind::If {
             then, else_branch, ..
         } => block_diverges(then) && else_branch.as_deref().is_some_and(expr_diverges),
@@ -16197,6 +16078,40 @@ mod tests {
         check(&prog, PathBuf::from("test.cplus"), src)
     }
 
+    fn check_multifile_src(entry_file: &str, files: &[(&str, &str)]) -> Vec<Diagnostic> {
+        let mut items = Vec::new();
+        let mut file_map = std::collections::BTreeMap::new();
+        let mut entry_src = "";
+        for (file_id, src) in files {
+            let toks = tokenize(src).expect("lex");
+            let mut prog = parse(toks).expect("parse");
+            for item in &mut prog.items {
+                item.origin_file = Some((*file_id).to_string());
+            }
+            items.extend(prog.items);
+            file_map.insert(
+                (*file_id).to_string(),
+                (
+                    PathBuf::from(format!("{file_id}.cplus")),
+                    (*src).to_string(),
+                ),
+            );
+            if *file_id == entry_file {
+                entry_src = src;
+            }
+        }
+        let prog = crate::ast::Program {
+            imports: Vec::new(),
+            items,
+        };
+        check_multi(
+            &prog,
+            PathBuf::from(format!("{entry_file}.cplus")),
+            entry_src,
+            file_map,
+        )
+    }
+
     fn errors(src: &str) -> Vec<&'static str> {
         check_src(src)
             .into_iter()
@@ -16217,6 +16132,14 @@ mod tests {
         );
     }
 
+    fn error_codes(diags: Vec<Diagnostic>) -> Vec<&'static str> {
+        diags
+            .into_iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .map(|d| Box::leak(d.code.0.to_string().into_boxed_str()) as &str)
+            .collect()
+    }
+
     fn assert_only_code(src: &str, code: &str) {
         let diags = check_src(src);
         assert_eq!(
@@ -16234,6 +16157,85 @@ mod tests {
             codes.contains(&code),
             "expected error {code}, got: {:#?}",
             check_src(src)
+        );
+    }
+
+    #[test]
+    fn raw_ptr_struct_field_read_cross_file_is_private_e0403() {
+        let diags = check_multifile_src(
+            "main",
+            &[
+                (
+                    "handles",
+                    "struct Handle { opaque ptr: *u8, len: usize }\n\
+                     impl Handle { fn new() -> Handle { return Handle { ptr: { 0 as *u8 }, len: 4 as usize }; } }\n",
+                ),
+                (
+                    "main",
+                    "fn main() -> i32 { let h: Handle = Handle::new(); let n: usize = h.len; return n as i32; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(codes.contains(&"E0403"), "expected E0403, got {codes:?}");
+    }
+
+    #[test]
+    fn raw_ptr_struct_literal_cross_file_is_private_e0403() {
+        let diags = check_multifile_src(
+            "main",
+            &[
+                (
+                    "handles",
+                    "struct Handle { opaque ptr: *u8, len: usize }\n",
+                ),
+                (
+                    "main",
+                    "fn main() -> i32 { let h: Handle = Handle { ptr: { 0 as *u8 }, len: 4 as usize }; return 0; }\n",
+                ),
+            ],
+        );
+        let codes = error_codes(diags);
+        assert!(codes.contains(&"E0403"), "expected E0403, got {codes:?}");
+    }
+
+    #[test]
+    fn raw_ptr_struct_fields_same_file_clean() {
+        let diags = check_multifile_src(
+            "main",
+            &[(
+                "main",
+                "struct Handle { opaque ptr: *u8, len: usize }\n\
+                 fn main() -> i32 { let h: Handle = Handle { ptr: { 0 as *u8 }, len: 4 as usize }; let n: usize = h.len; return n as i32; }\n",
+            )],
+        );
+        assert!(
+            diags.is_empty(),
+            "expected clean type-check, got: {diags:#?}"
+        );
+    }
+
+    #[test]
+    fn raw_ptr_struct_field_privacy_export_and_repr_c_exempt() {
+        let diags = check_multifile_src(
+            "main",
+            &[
+                (
+                    "handles",
+                    "export struct Exported { opaque ptr: *u8, len: usize }\n\
+                     #[repr(C)] struct CHandle { opaque ptr: *u8, len: usize }\n",
+                ),
+                (
+                    "main",
+                    "fn take_exported(h: Exported) -> i32 { let n: usize = h.len; return n as i32; }\n\
+                     fn take_c(h: CHandle) -> i32 { let n: usize = h.len; return n as i32; }\n\
+                     fn main() -> i32 { return 0; }\n",
+                ),
+            ],
+        );
+        assert!(
+            diags.is_empty(),
+            "expected clean type-check, got: {diags:#?}"
         );
     }
 
@@ -16304,7 +16306,7 @@ mod tests {
              interface Sink { fn sink(this, take r: R); }\n\
              impl P: Sink { fn sink(this, take r: R) { return; } }\n\
              fn use_twice[T: Sink](t: T) -> i32 {\n\
-                 let r: R = R { data: unsafe { 0 as *u8 } };\n\
+                 let r: R = R { data: { 0 as *u8 } };\n\
                  t.sink(r);\n\
                  let y: R = r;\n\
                  return 0;\n\
@@ -16457,12 +16459,12 @@ mod tests {
         const PRELUDE: &str = "\
 static DROPS: i32 = 0;\n\
 struct R { opaque data: *u8 }\n\
-impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; }; return; } fn sink(take this) -> i32 { return 0; } }\n\
+impl R { fn drop(ref this) { { DROPS = DROPS + 1; }; return; } fn sink(take this) -> i32 { return 0; } }\n\
 struct H { e: R }\n\
 struct W { r: R }\n\
 enum E { A(R) }\n\
 struct Hdlr { cb: fn(R) -> i32 }\n\
-fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
+fn mkr() -> R { return R { data: { 0 as *u8 } }; }\n\
 fn take(take x: R) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
 
@@ -16477,15 +16479,25 @@ fn main() -> i32 { return 0; }\n";
             ("array_elem", "let _a: [R; 1] = [{V}];", false),
             ("move_self_recv", "let _m: i32 = ({V}).sink();", false),
             ("assign", "var _s: R = mkr(); _s = {V};", false),
-            ("field_assign", "var _hh: H = H { e: mkr() }; _hh.e = {V};", false),
+            (
+                "field_assign",
+                "var _hh: H = H { e: mkr() }; _hh.e = {V};",
+                false,
+            ),
             // indirect calls through a fn-pointer (by-value param = move)
         ];
 
         // (name, fn params, setup stmts, value expr, expected code | "" = clean)
         let forms: &[(&str, &str, &str, &str, &str)] = &[
             ("borrow_param", "r: R", "", "r", "E0337"),
-            ("drop_field", "", "let h: H = H { e: mkr() };", "h.e", "E0509"),
-            ("raw_deref", "p: *R", "", "unsafe { *p }", "E0337"),
+            (
+                "drop_field",
+                "",
+                "let h: H = H { e: mkr() };",
+                "h.e",
+                "E0509",
+            ),
+            ("raw_deref", "p: *R", "", "{ *p }", "E0337"),
             ("safe_rvalue", "", "", "mkr()", ""),
         ];
 
@@ -16531,7 +16543,11 @@ fn main() -> i32 { return 0; }\n";
             ("let", "let _x: T = {V};", false),
             ("return", "return {V};", true),
             ("call_arg", "let _c: i32 = gtake::[T]({V});", false),
-            ("generic_method_call", "let _w: GM = GM { v: 0 }; let _c: i32 = _w.take2::[T]({V});", false),
+            (
+                "generic_method_call",
+                "let _w: GM = GM { v: 0 }; let _c: i32 = _w.take2::[T]({V});",
+                false,
+            ),
             ("struct_field", "let _w: GW[T] = GW[T] { v: {V} };", false),
             ("tuple_elem", "let _t: (T, i32) = ({V}, 0);", false),
             ("array_elem", "let _a: [T; 1] = [{V}];", false),
@@ -16579,7 +16595,7 @@ impl R { fn drop(ref this) { return; } }\n\
 struct W { r: R }\n\
 enum E { A(R) }\n\
 struct Hdlr { cb: fn(R) -> i32 }\n\
-fn mkr() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
+fn mkr() -> R { return R { data: { 0 as *u8 } }; }\n\
 fn take(take x: R) -> i32 { return 0; }\n\
 fn main() -> i32 { return 0; }\n";
 
@@ -16639,11 +16655,19 @@ fn main() -> i32 { return 0; }\n";
         ];
 
         for ctx in &["concrete", "generic"] {
-            let (vtok, ttok) = if *ctx == "concrete" { ("p", "P") } else { ("t", "T") };
+            let (vtok, ttok) = if *ctx == "concrete" {
+                ("p", "P")
+            } else {
+                ("t", "T")
+            };
             for (name, tmpl, needs_recv, expected) in cases {
                 let call = tmpl.replace("{V}", vtok).replace("{T}", ttok);
                 let prog = if *ctx == "concrete" {
-                    let decl = if *needs_recv { "let p: P = P { x: 4 };" } else { "" };
+                    let decl = if *needs_recv {
+                        "let p: P = P { x: 4 };"
+                    } else {
+                        ""
+                    };
                     format!(
                         "{PRELUDE}fn c_{name}() -> i32 {{ {decl} let _r: i32 = {call}; return 0; }}\n"
                     )
@@ -16695,13 +16719,28 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Marker must match: a bare param fits a borrowing `fn(R)` slot (the
         // non-Copy value rides by pointer), a `take` param fits a `fn(take R)`
         // slot.
-        assert!(errors(&borrow_slot("peek")).is_empty(), "bare param must fit a borrowing `fn(R)` slot");
-        assert!(errors(&take_slot("sink")).is_empty(), "take param must fit a `fn(take R)` slot");
+        assert!(
+            errors(&borrow_slot("peek")).is_empty(),
+            "bare param must fit a borrowing `fn(R)` slot"
+        );
+        assert!(
+            errors(&take_slot("sink")).is_empty(),
+            "take param must fit a `fn(take R)` slot"
+        );
         // Mismatched markers are rejected in both directions.
-        assert!(errors(&take_slot("peek")).contains(&"E0312"), "bare worker must not fit a `fn(take R)` slot");
-        assert!(errors(&borrow_slot("sink")).contains(&"E0312"), "take worker must not fit a borrowing `fn(R)` slot");
+        assert!(
+            errors(&take_slot("peek")).contains(&"E0312"),
+            "bare worker must not fit a `fn(take R)` slot"
+        );
+        assert!(
+            errors(&borrow_slot("sink")).contains(&"E0312"),
+            "take worker must not fit a borrowing `fn(R)` slot"
+        );
         // `ref` write-back can't ride a fn-pointer at all.
-        assert!(errors(&borrow_slot("pm")).contains(&"E0312"), "`ref` param must reject");
+        assert!(
+            errors(&borrow_slot("pm")).contains(&"E0312"),
+            "`ref` param must reject"
+        );
         // A Copy-typed param rides any slot (Copy has no ownership).
         let prog_copy = format!("{DECLS}fn u() {{ let _f: fn(i32) -> i32 = cnt; return; }}\nfn main() -> i32 {{ return 0; }}");
         assert!(errors(&prog_copy).is_empty(), "Copy param must be accepted");
@@ -16812,21 +16851,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "extern fn use_ptr(p: *i64);\n\
              fn main() -> i32 {\n\
                  let t: i64 = 0;\n\
-                 unsafe { use_ptr(#addr_of(t)); }\n\
+                 { use_ptr(#addr_of(t)); }\n\
                  return 0;\n\
              }",
-        );
-    }
-
-    #[test]
-    fn addr_of_outside_unsafe_e0801() {
-        assert_only_code(
-            "fn main() -> i32 {\n\
-                 let t: i64 = 0;\n\
-                 let p: *i64 = #addr_of(t);\n\
-                 return 0;\n\
-             }",
-            "E0801",
         );
     }
 
@@ -16840,7 +16867,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct P { x: i32, y: i32 }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 5, y: 6 };\n\
-                 let q: *i32 = unsafe { #addr_of(p.x) };\n\
+                 let q: *i32 = { #addr_of(p.x) };\n\
                  return 0;\n\
              }",
         );
@@ -16852,8 +16879,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct P { x: i32 }\n\
              fn main() -> i32 {\n\
                  let p: P = P { x: 5 };\n\
-                 let pp: *P = unsafe { #addr_of(p) };\n\
-                 let q: *i32 = unsafe { #addr_of((*pp).x) };\n\
+                 let pp: *P = { #addr_of(p) };\n\
+                 let q: *i32 = { #addr_of((*pp).x) };\n\
                  return 0;\n\
              }",
         );
@@ -16864,7 +16891,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "fn main() -> i32 {\n\
                  let a: [i32; 4] = [10, 20, 30, 40];\n\
-                 let q: *i32 = unsafe { #addr_of(a[2]) };\n\
+                 let q: *i32 = { #addr_of(a[2]) };\n\
                  return 0;\n\
              }",
         );
@@ -16875,8 +16902,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "fn main() -> i32 {\n\
                  let n: i64 = 5;\n\
-                 let p: *i64 = unsafe { #addr_of(n) };\n\
-                 let q: *i64 = unsafe { #addr_of(*p) };\n\
+                 let p: *i64 = { #addr_of(n) };\n\
+                 let q: *i64 = { #addr_of(*p) };\n\
                  return 0;\n\
              }",
         );
@@ -16888,7 +16915,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_only_code(
             "fn foo() -> i32 { return 42; }\n\
              fn main() -> i32 {\n\
-                 let q: *i32 = unsafe { #addr_of(foo()) };\n\
+                 let q: *i32 = { #addr_of(foo()) };\n\
                  return 0;\n\
              }",
             "E0302",
@@ -16900,7 +16927,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_only_code(
             "fn main() -> i32 {\n\
                  let x: i32 = 1;\n\
-                 let q: *i32 = unsafe { #addr_of(x +% 1) };\n\
+                 let q: *i32 = { #addr_of(x +% 1) };\n\
                  return 0;\n\
              }",
             "E0302",
@@ -16914,7 +16941,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn is_null_on_raw_ptr_clean_g024() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 let p: *u8 = unsafe { 0 as *u8 };\n\
+                 let p: *u8 = { 0 as *u8 };\n\
                  if p.is_null() { return 1; }\n\
                  return 0;\n\
              }",
@@ -16925,7 +16952,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn is_not_null_on_raw_ptr_clean_g024() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 let p: *u8 = unsafe { 0 as *u8 };\n\
+                 let p: *u8 = { 0 as *u8 };\n\
                  if p.is_not_null() { return 1; }\n\
                  return 0;\n\
              }",
@@ -16936,7 +16963,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn is_null_does_not_require_unsafe_g024() {
         // is_null inspects the bit pattern; no memory access, no unsafe.
         assert_clean(
-            "fn need_ptr() -> *u8 { return unsafe { 0 as *u8 }; }\n\
+            "fn need_ptr() -> *u8 { return { 0 as *u8 }; }\n\
              fn main() -> i32 {\n\
                  let p: *u8 = need_ptr();\n\
                  if p.is_null() { return 0; }\n\
@@ -16976,8 +17003,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "extern fn malloc(n: usize) -> *u8;\n\
              struct P { x: i32 }\n\
              fn main() -> i32 {\n\
-                 let p: *P = unsafe { malloc(#size_of::[P]()) as *P };\n\
-                 unsafe { p.write_zeroed(); }\n\
+                 let p: *P = { malloc(#size_of::[P]()) as *P };\n\
+                 { p.write_zeroed(); }\n\
                  return 0;\n\
              }",
         );
@@ -16990,7 +17017,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn atomic_fence_seqcst_in_unsafe_clean_g030() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 unsafe { #atomic_fence_seqcst(); }\n\
+                 { #atomic_fence_seqcst(); }\n\
                  return 0;\n\
              }",
         );
@@ -17001,23 +17028,16 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Relaxed is accepted by sema (it's a no-op at codegen).
         assert_clean(
             "fn main() -> i32 {\n\
-                 unsafe { #atomic_fence_relaxed(); }\n\
+                 { #atomic_fence_relaxed(); }\n\
                  return 0;\n\
              }",
         );
     }
-
-    #[test]
-    fn atomic_fence_outside_unsafe_e0801_g030() {
-        let codes = errors("fn main() -> i32 { #atomic_fence_seqcst(); return 0; }");
-        assert!(codes.contains(&"E0801"));
-    }
-
     #[test]
     fn atomic_fence_with_args_e0308_g030() {
         let codes = errors(
             "fn main() -> i32 {\n\
-                 unsafe { #atomic_fence_seqcst(1 as i32); }\n\
+                 { #atomic_fence_seqcst(1 as i32); }\n\
                  return 0;\n\
              }",
         );
@@ -17085,36 +17105,12 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert!(codes.contains(&"E0501"));
     }
 
-    #[test]
-    fn write_zeroed_outside_unsafe_e0801_g028() {
-        let codes = errors(
-            "extern fn malloc(n: usize) -> *u8;\n\
-             struct P { x: i32 }\n\
-             fn main() -> i32 {\n\
-                 let p: *P = unsafe { malloc(#size_of::[P]()) as *P };\n\
-                 p.write_zeroed();\n\
-                 return 0;\n\
-             }",
-        );
-        assert!(codes.contains(&"E0801"));
-    }
-
-    // ---- TEXT.1: `unsafe fn` call gate (E0801) ----
-
-    #[test]
-    fn unsafe_free_fn_call_outside_unsafe_e0801_text1() {
-        let codes = errors(
-            "unsafe fn danger() -> i32 { return 1; }\n\
-             fn main() -> i32 { let d: i32 = danger(); return d; }",
-        );
-        assert!(codes.contains(&"E0801"));
-    }
-
+    // ---- TEXT.1 retired: formerly unsafe fn call gate ----
     #[test]
     fn unsafe_free_fn_call_inside_unsafe_clean_text1() {
         assert_clean(
-            "unsafe fn danger() -> i32 { return 1; }\n\
-             fn main() -> i32 { let d: i32 = unsafe { danger() }; return d; }",
+            "fn danger() -> i32 { return 1; }\n\
+             fn main() -> i32 { let d: i32 = { danger() }; return d; }",
         );
     }
 
@@ -17125,32 +17121,15 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              fn main() -> i32 { let d: i32 = calm(); return d; }",
         );
     }
-
-    #[test]
-    fn unsafe_fn_to_fn_ptr_in_safe_code_e0801() {
-        // SOUNDNESS: coercing an `unsafe fn` to a (safe) `fn(...)` pointer
-        // launders its unsafe-ness — the pointer type can't carry `unsafe`,
-        // so a later `f(x)` call would bypass the E0801 gate a direct call
-        // hits. Taking the pointer must itself require `unsafe`.
-        let codes = errors(
-            "unsafe fn danger(x: i32) -> i32 { return x + 1; }\n\
-             fn main() -> i32 { let f: fn(i32) -> i32 = danger; return f(6); }",
-        );
-        assert!(
-            codes.contains(&"E0801"),
-            "coercing an unsafe fn to a fn-ptr in safe code must be E0801, got: {codes:?}"
-        );
-    }
-
     #[test]
     fn unsafe_fn_to_fn_ptr_inside_unsafe_clean() {
         // The escape hatch: take the pointer inside an `unsafe` block (where
         // the `let` annotation supplies the `fn(...)` type hint). The danger
         // is acknowledged at the coercion site.
         assert_clean(
-            "unsafe fn danger(x: i32) -> i32 { return x + 1; }\n\
+            "fn danger(x: i32) -> i32 { return x + 1; }\n\
              fn main() -> i32 {\n\
-                 let r: i32 = unsafe {\n\
+                 let r: i32 = {\n\
                      let f: fn(i32) -> i32 = danger;\n\
                      f(6)\n\
                  };\n\
@@ -17167,29 +17146,14 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              fn main() -> i32 { let f: fn(i32) -> i32 = add1; return f(6); }",
         );
     }
-
-    #[test]
-    fn unsafe_method_call_outside_unsafe_e0801_text1() {
-        let codes = errors(
-            "struct Counter { n: i32 }\n\
-             impl Counter { unsafe fn raw_get(this) -> i32 { return this.n; } }\n\
-             fn main() -> i32 {\n\
-                 let c: Counter = Counter { n: 7 };\n\
-                 let v: i32 = c.raw_get();\n\
-                 return v;\n\
-             }",
-        );
-        assert!(codes.contains(&"E0801"));
-    }
-
     #[test]
     fn unsafe_method_call_inside_unsafe_clean_text1() {
         assert_clean(
             "struct Counter { n: i32 }\n\
-             impl Counter { unsafe fn raw_get(this) -> i32 { return this.n; } }\n\
+             impl Counter { fn raw_get(this) -> i32 { return this.n; } }\n\
              fn main() -> i32 {\n\
                  let c: Counter = Counter { n: 7 };\n\
-                 let v: i32 = unsafe { c.raw_get() };\n\
+                 let v: i32 = { c.raw_get() };\n\
                  return v;\n\
              }",
         );
@@ -17201,7 +17165,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "struct Counter { n: i32 }\n\
              impl Counter {\n\
-                 unsafe fn raw_get(this) -> i32 { return this.n; }\n\
+                 fn raw_get(this) -> i32 { return this.n; }\n\
                  fn safe_get(this) -> i32 { return this.n; }\n\
              }\n\
              fn main() -> i32 {\n\
@@ -17211,48 +17175,23 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              }",
         );
     }
-
-    #[test]
-    fn unsafe_enum_method_call_outside_unsafe_e0801_text1() {
-        let codes = errors(
-            "enum E { A, B }\n\
-             impl E { unsafe fn raw(this) -> i32 { return 1; } }\n\
-             fn main() -> i32 {\n\
-                 let e: E = E::A;\n\
-                 let v: i32 = e.raw();\n\
-                 return v;\n\
-             }",
-        );
-        assert!(codes.contains(&"E0801"));
-    }
-
     #[test]
     fn unsafe_enum_method_call_inside_unsafe_clean_text1() {
         assert_clean(
             "enum E { A, B }\n\
-             impl E { unsafe fn raw(this) -> i32 { return 1; } }\n\
+             impl E { fn raw(this) -> i32 { return 1; } }\n\
              fn main() -> i32 {\n\
                  let e: E = E::A;\n\
-                 let v: i32 = unsafe { e.raw() };\n\
+                 let v: i32 = { e.raw() };\n\
                  return v;\n\
              }",
         );
     }
-
-    #[test]
-    fn unsafe_generic_free_fn_call_outside_unsafe_e0801_text1() {
-        let codes = errors(
-            "unsafe fn danger[T](take x: T) -> T { return x; }\n\
-             fn main() -> i32 { let d: i32 = danger::[i32](1); return d; }",
-        );
-        assert!(codes.contains(&"E0801"));
-    }
-
     #[test]
     fn unsafe_generic_free_fn_call_inside_unsafe_clean_text1() {
         assert_clean(
-            "unsafe fn danger[T](take x: T) -> T { return x; }\n\
-             fn main() -> i32 { let d: i32 = unsafe { danger::[i32](1) }; return d; }",
+            "fn danger[T](take x: T) -> T { return x; }\n\
+             fn main() -> i32 { let d: i32 = { danger::[i32](1) }; return d; }",
         );
     }
 
@@ -17333,8 +17272,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn interpolation_without_text_import_rejected_e0613_v0019() {
-        let codes =
-            errors("fn f(x: i32) -> i32 { let s = \"v=${x}\"; return 0; } fn main() -> i32 { return 0; }");
+        let codes = errors(
+            "fn f(x: i32) -> i32 { let s = \"v=${x}\"; return 0; } fn main() -> i32 { return 0; }",
+        );
         assert!(codes.contains(&"E0613"), "expected E0613, got: {codes:?}");
     }
 
@@ -17508,7 +17448,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "fn main() -> i32 {\n\
                  let x: i64 = 0;\n\
                  let y: i64 = 0;\n\
-                 let p: *i64 = unsafe { #addr_of(x, y) };\n\
+                 let p: *i64 = { #addr_of(x, y) };\n\
                  return 0;\n\
              }",
             "E0308",
@@ -17522,7 +17462,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_only_code(
             "fn main() -> i32 {\n\
                  let t: i64 = 0;\n\
-                 let p: *i64 = unsafe { addr_of::[i64](t) };\n\
+                 let p: *i64 = { addr_of::[i64](t) };\n\
                  return 0;\n\
              }",
             "E0501",
@@ -17952,7 +17892,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn e0333_unit_tail_suggests_semicolon_g022() {
         let msg = first_e0333_message(
-            "fn f() { unsafe { var x: i32 = 1; x = x +% 1; } }\n\
+            "fn f() { { var x: i32 = 1; x = x +% 1; } }\n\
              fn main() -> i32 { f(); return 0; }",
         );
         assert!(
@@ -19202,8 +19142,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     // and parameter shadowing stay legal (ordinary block scoping).
     #[test]
     fn same_scope_shadow_e0363() {
-        let codes =
-            errors("fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }");
+        let codes = errors("fn main() -> i32 { let x: i32 = 1; let x: bool = true; return 0; }");
         assert!(codes.contains(&"E0363"), "expected E0363, got: {codes:?}");
     }
 
@@ -19211,8 +19150,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn same_scope_shadow_let_then_mut_e0363() {
         // `let mut` is today's mutable spelling (→ `var` in task #9); a
         // re-declaration of an existing name is still E0363 regardless.
-        let codes =
-            errors("fn main() -> i32 { let x: i32 = 1; var x: i32 = 2; return x; }");
+        let codes = errors("fn main() -> i32 { let x: i32 = 1; var x: i32 = 2; return x; }");
         assert!(codes.contains(&"E0363"), "expected E0363, got: {codes:?}");
     }
 
@@ -19220,36 +19158,43 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn nested_scope_shadow_allowed_no_e0363() {
         let codes =
             errors("fn main() -> i32 { let x: i32 = 1; { let x: bool = true; } return x; }");
-        assert!(!codes.contains(&"E0363"), "nested shadow must be allowed, got: {codes:?}");
+        assert!(
+            !codes.contains(&"E0363"),
+            "nested shadow must be allowed, got: {codes:?}"
+        );
     }
 
     #[test]
     fn param_shadow_by_local_allowed_no_e0363() {
         let codes = errors("fn f(x: i32) -> i32 { let x: i32 = 2; return x; }");
-        assert!(!codes.contains(&"E0363"), "param shadow must be allowed, got: {codes:?}");
+        assert!(
+            !codes.contains(&"E0363"),
+            "param shadow must be allowed, got: {codes:?}"
+        );
     }
 
     // v0.0.24 de-Rust: `#addr(p)` — raw pointer → usize (loud `p as usize`).
     #[test]
     fn addr_intrinsic_on_pointer_is_usize() {
-        let codes = errors("fn f(p: *i32) -> usize { return unsafe { #addr(p) }; }");
-        assert!(!codes.contains(&"E0905"), "#addr must be a known intrinsic, got: {codes:?}");
-        assert!(!codes.contains(&"E0302"), "*i32 is a valid #addr arg, got: {codes:?}");
-        assert!(!codes.contains(&"E0801"), "inside unsafe there is no E0801, got: {codes:?}");
+        let codes = errors("fn f(p: *i32) -> usize { return { #addr(p) }; }");
+        assert!(
+            !codes.contains(&"E0905"),
+            "#addr must be a known intrinsic, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&"E0302"),
+            "*i32 is a valid #addr arg, got: {codes:?}"
+        );
     }
 
     #[test]
     fn addr_intrinsic_on_non_pointer_e0302() {
-        let codes = errors("fn f(x: i32) -> usize { return unsafe { #addr(x) }; }");
-        assert!(codes.contains(&"E0302"), "expected E0302 for non-pointer #addr, got: {codes:?}");
+        let codes = errors("fn f(x: i32) -> usize { return { #addr(x) }; }");
+        assert!(
+            codes.contains(&"E0302"),
+            "expected E0302 for non-pointer #addr, got: {codes:?}"
+        );
     }
-
-    #[test]
-    fn addr_intrinsic_outside_unsafe_e0801() {
-        let codes = errors("fn f(p: *i32) -> usize { return #addr(p); }");
-        assert!(codes.contains(&"E0801"), "expected E0801 outside unsafe, got: {codes:?}");
-    }
-
     #[test]
     fn both_branches_assign_clean() {
         // Flow merge: both arms of the if assign x, so x is definitely
@@ -19404,7 +19349,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn generic_fn_multi_param_clean() {
-        assert_clean("fn pick[A, B](take a: A, b: B) -> A { return a; } fn main() -> i32 { return 0; }");
+        assert_clean(
+            "fn pick[A, B](take a: A, b: B) -> A { return a; } fn main() -> i32 { return 0; }",
+        );
     }
 
     #[test]
@@ -19558,9 +19505,18 @@ fn cnt(n: i32) -> i32 { return n; }\n";
                  fn main() -> i32 {{ return 0; }}"
             ))
         };
-        assert!(mism("this", "take this").contains(&"E0505"), "this vs take this");
-        assert!(mism("take this", "this").contains(&"E0505"), "take this vs this");
-        assert!(mism("this", "ref this").contains(&"E0505"), "this vs ref this");
+        assert!(
+            mism("this", "take this").contains(&"E0505"),
+            "this vs take this"
+        );
+        assert!(
+            mism("take this", "this").contains(&"E0505"),
+            "take this vs this"
+        );
+        assert!(
+            mism("this", "ref this").contains(&"E0505"),
+            "this vs ref this"
+        );
     }
 
     #[test]
@@ -19633,7 +19589,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "struct P { x: i32 } \
              interface IPtr { fn m(this, p: *This) -> i32; } \
-             impl P: IPtr { fn m(this, p: *P) -> i32 { return unsafe { (*p).x }; } } \
+             impl P: IPtr { fn m(this, p: *P) -> i32 { return { (*p).x }; } } \
              fn main() -> i32 { return 0; }",
         );
         assert_clean(
@@ -19981,7 +19937,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Slice 10.FFI.3: extern call must be in `unsafe { ... }`.
         assert_clean(
             "extern fn abs(x: i32) -> i32; \
-             fn main() -> i32 { return unsafe { abs(0 -% 42) }; }",
+             fn main() -> i32 { return { abs(0 -% 42) }; }",
         );
     }
 
@@ -19989,7 +19945,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn extern_fn_call_with_wrong_arg_type_e0302() {
         let codes = errors(
             "extern fn abs(x: i32) -> i32; \
-             fn main() -> i32 { return unsafe { abs(true) }; }",
+             fn main() -> i32 { return { abs(true) }; }",
         );
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
@@ -20011,7 +19967,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // Slice 10.FFI.3: extern calls require `unsafe`.
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
-             fn main() -> i32 { let p: *u8 = unsafe { malloc(8 as usize) }; return 0; }",
+             fn main() -> i32 { let p: *u8 = { malloc(8 as usize) }; return 0; }",
         );
     }
 
@@ -20031,7 +19987,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
-                 return unsafe { \
+                 return { \
                      let p: *u8 = malloc(1 as usize); \
                      let b: u8 = *p; \
                      b as i32 \
@@ -20045,28 +20001,13 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors("fn main() -> i32 { let x: i32 = 7; return *x; }");
         assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
     }
-
-    #[test]
-    fn pointer_deref_outside_unsafe_e0801() {
-        // Slice 10.FFI.3: deref outside `unsafe` fires E0801.
-        let codes = errors(
-            "extern fn malloc(n: usize) -> *u8; \
-             fn main() -> i32 { \
-                 let p: *u8 = unsafe { malloc(1 as usize) }; \
-                 let b: u8 = *p; \
-                 return b as i32; \
-             }",
-        );
-        assert!(codes.contains(&"E0801"), "expected E0801, got: {codes:?}");
-    }
-
     #[test]
     fn variadic_extern_fn_accepts_extra_args_clean() {
         // Slice 10.FFI.4: variadic fn admits arbitrary tail args.
         assert_clean(
             "extern fn printf(fmt: *u8, ...) -> i32; \
              fn main() -> i32 { \
-                 return unsafe { printf(#str_ptr(\"hi %d\\n\"), 7) }; \
+                 return { printf(#str_ptr(\"hi %d\\n\"), 7) }; \
              }",
         );
     }
@@ -20075,27 +20016,17 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn variadic_extern_fn_too_few_fixed_args_e0308() {
         let codes = errors(
             "extern fn printf(fmt: *u8, ...) -> i32; \
-             fn main() -> i32 { return unsafe { printf() }; }",
+             fn main() -> i32 { return { printf() }; }",
         );
         assert!(codes.contains(&"E0308"), "expected E0308, got: {codes:?}");
     }
-
-    #[test]
-    fn extern_call_outside_unsafe_e0801() {
-        let codes = errors(
-            "extern fn abs(x: i32) -> i32; \
-             fn main() -> i32 { return abs(0 -% 7); }",
-        );
-        assert!(codes.contains(&"E0801"), "expected E0801, got: {codes:?}");
-    }
-
     #[test]
     fn pointer_store_through_deref_clean() {
         // Slice 10.FFI.2b + 10.FFI.3: `*p = v` inside unsafe.
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
-                 unsafe { \
+                 { \
                      let p: *u8 = malloc(1 as usize); \
                      *p = 42 as u8; \
                  } \
@@ -20110,7 +20041,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
-                 return unsafe { \
+                 return { \
                      let p: *u8 = malloc(4 as usize); \
                      p[0] = 1 as u8; \
                      let b: u8 = p[0]; \
@@ -20126,7 +20057,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
-                 return unsafe { \
+                 return { \
                      let p: *u8 = malloc(4 as usize); \
                      let q: *u8 = p + 1 as usize; \
                      *q = 7 as u8; \
@@ -20145,7 +20076,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "extern fn use_ptr(p: *u8) -> i32; \
              extern fn malloc(n: usize) -> *u8; \
              fn main() -> i32 { \
-                 return unsafe { \
+                 return { \
                      let p: *u8 = malloc(8 as usize); \
                      let a: i32 = use_ptr(p); \
                      let b: i32 = use_ptr(p); \
@@ -20281,6 +20212,16 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.contains(&"E0510"), "expected E0510, got: {codes:?}");
+    }
+
+    #[test]
+    fn raw_pointer_drop_null_guard_comparison_clean() {
+        assert_clean(
+            "extern fn free(p: *u8);\n\
+             struct Handle { ptr: *u8 }\n\
+             impl Handle { fn drop(ref this) { if this.ptr != (0 as *u8) { { free(this.ptr); }; }; } }\n\
+             fn main() -> i32 { return 0; }",
+        );
     }
 
     #[test]
@@ -20496,8 +20437,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
-                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
-                 let _r: R = match h.e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 let h: H = H { e: E::A(R { data: { 0 as *u8 } }) }; \
+                 let _r: R = match h.e { E::A(x) => x, E::B => R { data: { 0 as *u8 } } }; \
                  return 0; \
              }",
         );
@@ -20516,7 +20457,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              struct H { e: E } \
              fn rd(r: R) -> i32 { return 0; } \
              fn main() -> i32 { \
-                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let h: H = H { e: E::A(R { data: { 0 as *u8 } }) }; \
                  let _n: i32 = match h.e { E::A(x) => rd(x), E::B => 0 }; \
                  return 0; \
              }",
@@ -20533,8 +20474,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
-                 let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
-                 let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 let e: E = E::A(R { data: { 0 as *u8 } }); \
+                 let _r: R = match e { E::A(x) => x, E::B => R { data: { 0 as *u8 } } }; \
                  return 0; \
              }",
         );
@@ -20553,7 +20494,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
-                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let h: H = H { e: E::A(R { data: { 0 as *u8 } }) }; \
                  let _r: E = { h.e }; \
                  return 0; \
              }",
@@ -20572,8 +20513,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
-                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
-                 let _r: R = match { h.e } { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 let h: H = H { e: E::A(R { data: { 0 as *u8 } }) }; \
+                 let _r: R = match { h.e } { E::A(x) => x, E::B => R { data: { 0 as *u8 } } }; \
                  return 0; \
              }",
         );
@@ -20588,8 +20529,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
-                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
-                 let _r: E = if unsafe { 0 as i32 } == 0 { h.e } else { E::B }; \
+                 let h: H = H { e: E::A(R { data: { 0 as *u8 } }) }; \
+                 let _r: E = if { 0 as i32 } == 0 { h.e } else { E::B }; \
                  return 0; \
              }",
         );
@@ -20607,7 +20548,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
-                 let y: R = R { data: unsafe { 0 as *u8 } }; \
+                 let y: R = R { data: { 0 as *u8 } }; \
                  let _z1: E = E::A(y); \
                  let _z2: E = E::A(y); \
                  return 0; \
@@ -20623,7 +20564,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              struct W { r: R } \
              fn main() -> i32 { \
-                 let y: R = R { data: unsafe { 0 as *u8 } }; \
+                 let y: R = R { data: { 0 as *u8 } }; \
                  let _w1: W = W { r: y }; \
                  let _w2: W = W { r: y }; \
                  return 0; \
@@ -20644,7 +20585,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum E { A(R), B } \
              struct H { e: E } \
              fn main() -> i32 { \
-                 let h: H = H { e: E::A(R { data: unsafe { 0 as *u8 } }) }; \
+                 let h: H = H { e: E::A(R { data: { 0 as *u8 } }) }; \
                  let _r: E = match h.e { E::A(y) => E::A(y), E::B => E::B }; \
                  return 0; \
              }",
@@ -20662,9 +20603,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum E { A(R), B } \
              struct W { r: R } \
              fn main() -> i32 { \
-                 let y: R = R { data: unsafe { 0 as *u8 } }; \
+                 let y: R = R { data: { 0 as *u8 } }; \
                  let _z: E = E::A(y); \
-                 let y2: R = R { data: unsafe { 0 as *u8 } }; \
+                 let y2: R = R { data: { 0 as *u8 } }; \
                  let _w: W = W { r: y2 }; \
                  return 0; \
              }",
@@ -20684,9 +20625,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
-                 let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
-                 let p: *E = unsafe { #addr_of(e) }; \
-                 let _r: R = match unsafe { *p } { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 let e: E = E::A(R { data: { 0 as *u8 } }); \
+                 let p: *E = { #addr_of(e) }; \
+                 let _r: R = match { *p } { E::A(x) => x, E::B => R { data: { 0 as *u8 } } }; \
                  return 0; \
              }",
         );
@@ -20701,9 +20642,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
-                 let e: E = E::A(R { data: unsafe { 0 as *u8 } }); \
-                 let p: *E = unsafe { #addr_of(e) }; \
-                 let _x: E = unsafe { *p }; \
+                 let e: E = E::A(R { data: { 0 as *u8 } }); \
+                 let p: *E = { #addr_of(e) }; \
+                 let _x: E = { *p }; \
                  return 0; \
              }",
         );
@@ -20720,7 +20661,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn take(e: E) -> i32 { \
-                 let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; \
+                 let _r: R = match e { E::A(x) => x, E::B => R { data: { 0 as *u8 } } }; \
                  return 0; \
              } \
              fn main() -> i32 { return 0; }",
@@ -20756,9 +20697,9 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum Opt { Some(usize), None } \
              struct NodeView { id: R, parent: Opt } \
              fn main() -> i32 { \
-                 let nv: NodeView = NodeView { id: R { data: unsafe { 0 as *u8 } }, parent: Opt::Some(5 as usize) }; \
-                 let p: *NodeView = unsafe { #addr_of(nv) }; \
-                 let _parent: usize = match unsafe { (*p).parent } { Opt::Some(x) => x, Opt::None => 0 as usize }; \
+                 let nv: NodeView = NodeView { id: R { data: { 0 as *u8 } }, parent: Opt::Some(5 as usize) }; \
+                 let p: *NodeView = { #addr_of(nv) }; \
+                 let _parent: usize = match { (*p).parent } { Opt::Some(x) => x, Opt::None => 0 as usize }; \
                  return 0; \
              }",
         );
@@ -20775,8 +20716,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              enum Pod { X(PodS), Y } \
              fn main() -> i32 { \
                  let pd: Pod = Pod::X(PodS { a: 1 as usize }); \
-                 let pp: *Pod = unsafe { #addr_of(pd) }; \
-                 let _out: Pod = match unsafe { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y }; \
+                 let pp: *Pod = { #addr_of(pd) }; \
+                 let _out: Pod = match { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y }; \
                  return 0; \
              }",
         );
@@ -20795,7 +20736,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  let _y: R = { x }; \
                  let _z: R = x; \
                  return 0; \
@@ -20810,8 +20751,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
-                 let _y: R = if unsafe { 0 as i32 } == 0 { x } else { R { data: unsafe { 0 as *u8 } } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
+                 let _y: R = if { 0 as i32 } == 0 { x } else { R { data: { 0 as *u8 } } }; \
                  let _z: R = x; \
                  return 0; \
              }",
@@ -20826,7 +20767,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              enum E { A(R), B } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  let _a: E = E::A({ x }); \
                  let _z: R = x; \
                  return 0; \
@@ -20842,7 +20783,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              struct W { r: R } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  let _w: W = W { r: { x } }; \
                  let _z: R = x; \
                  return 0; \
@@ -20858,7 +20799,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              fn sink(take r: R) -> i32 { return 0; } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  let _n: i32 = sink({ x }); \
                  let _z: R = x; \
                  return 0; \
@@ -20873,8 +20814,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
-                 var t: R = R { data: unsafe { 0 as *u8 } }; \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 var t: R = R { data: { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  t = { x }; \
                  let _z: R = x; \
                  return 0; \
@@ -20890,7 +20831,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  let _y: R = { x }; \
                  return 0; \
              }",
@@ -20905,7 +20846,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
-             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn mkR() -> R { return R { data: { 0 as *u8 } }; } \
              fn sink(take r: R) -> i32 { return 0; } \
              fn main() -> i32 { let _n: i32 = sink(mkR()); return 0; }",
         );
@@ -20960,7 +20901,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
-             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn mkR() -> R { return R { data: { 0 as *u8 } }; } \
              fn main() -> i32 { let x: R = mkR(); let _a: [R; 2] = [x, x]; return 0; }",
         );
         assert!(codes.contains(&"E0335"), "expected E0335, got: {codes:?}");
@@ -20973,7 +20914,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              impl R { fn drop(ref this) { return; } } \
              struct H { r: R } \
              impl H { fn drop(ref this) { return; } } \
-             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn mkR() -> R { return R { data: { 0 as *u8 } }; } \
              fn main() -> i32 { let h: H = H { r: mkR() }; let _a: [R; 1] = [h.r]; return 0; }",
         );
         assert!(codes.contains(&"E0509"), "expected E0509, got: {codes:?}");
@@ -20996,7 +20937,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } } \
-             fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; } \
+             fn mkR() -> R { return R { data: { 0 as *u8 } }; } \
              fn main() -> i32 { \
                  let p: R = mkR(); let q: R = mkR(); \
                  let _a: [R; 2] = [p, q]; \
@@ -21026,7 +20967,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct R { opaque data: *u8 } \
              impl R { fn drop(ref this) { return; } fn take(take this) -> R { return this; } } \
              fn main() -> i32 { \
-                 let x: R = R { data: unsafe { 0 as *u8 } }; \
+                 let x: R = R { data: { 0 as *u8 } }; \
                  let _y: R = x.take(); \
                  return 0; \
              }",
@@ -21105,29 +21046,16 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         );
     }
 
-    // v0.0.19 `__cplus_*` → `#` sigil migration: the runtime/atomic builtins are
-    // now spelled `#name(...)`. The delegation to the shared named-call checker
-    // preserves the unsafe gating (E0801) — an atomic op outside `unsafe` errors.
-    #[test]
-    fn migrated_atomic_intrinsic_outside_unsafe_e0801_v0019() {
-        let codes = errors(
-            "fn f() -> i32 { \
-                 var x: i32 = 0; \
-                 let p: *i32 = unsafe { #addr_of(x) }; \
-                 return #atomic_load_i32_seqcst(p); \
-             }",
-        );
-        assert!(codes.contains(&"E0801"), "expected E0801, got: {codes:?}");
-    }
-
-    // The same atomic op inside `unsafe` is clean and types as the spec type.
+    // v0.0.19 `__cplus_*` -> `#` sigil migration: the runtime/atomic builtins are
+    // now spelled `#name(...)`.
+    // Atomic ops are clean and type as their spec type.
     #[test]
     fn migrated_atomic_intrinsic_in_unsafe_clean_v0019() {
         assert_clean(
             "fn f() -> i32 { \
                  var x: i32 = 0; \
-                 let p: *i32 = unsafe { #addr_of(x) }; \
-                 return unsafe { #atomic_load_i32_seqcst(p) }; \
+                 let p: *i32 = { #addr_of(x) }; \
+                 return { #atomic_load_i32_seqcst(p) }; \
              }",
         );
     }
@@ -21147,8 +21075,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "fn f() -> i32 { \
                  var x: i32 = 0; \
-                 let p: *i32 = unsafe { #addr_of(x) }; \
-                 return unsafe { __cplus_atomic_load_i32_seqcst(p) }; \
+                 let p: *i32 = { #addr_of(x) }; \
+                 return { __cplus_atomic_load_i32_seqcst(p) }; \
              }",
         );
         assert!(codes.contains(&"E0300"), "expected E0300, got: {codes:?}");
@@ -21435,30 +21363,20 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn int_to_raw_pointer_cast_in_unsafe_clean() {
-        assert_clean("fn main() -> i32 { let p: *u8 = unsafe { 0 as *u8 }; return 0; }");
+        assert_clean("fn main() -> i32 { let p: *u8 = { 0 as *u8 }; return 0; }");
     }
-
-    #[test]
-    fn int_to_raw_pointer_cast_outside_unsafe_rejected_e0801() {
-        let codes = errors("fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }");
-        assert!(
-            codes.contains(&"E0801"),
-            "expected E0801 outside unsafe, got: {codes:?}"
-        );
-    }
-
     #[test]
     fn usize_to_raw_pointer_cast_in_unsafe_clean() {
         // Real-world FFI: take an integer-flavored address from a C API
         // (e.g. mmap's return) and treat it as a typed pointer.
         assert_clean(
-            "fn main() -> i32 { let addr: usize = 0xDEAD as usize; let p: *u8 = unsafe { addr as *u8 }; return 0; }",
+            "fn main() -> i32 { let addr: usize = 0xDEAD as usize; let p: *u8 = { addr as *u8 }; return 0; }",
         );
     }
 
     #[test]
     fn cast_to_double_indirection_pointer_clean() {
-        assert_clean("fn main() -> i32 { let p: **i32 = unsafe { 0 as **i32 }; return 0; }");
+        assert_clean("fn main() -> i32 { let p: **i32 = { 0 as **i32 }; return 0; }");
     }
 
     // ---- v0.0.9 Phase 6 (cpc-gaps G-016): raw-pointer → integer cast ----
@@ -21469,8 +21387,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         //   `(p as usize) % alignment`
         assert_clean(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: usize = unsafe { p as usize }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: usize = { p as usize }; \
                 return 0; \
              }",
         );
@@ -21480,8 +21398,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pointer_to_u64_cast_in_unsafe_clean() {
         assert_clean(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: u64 = unsafe { p as u64 }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: u64 = { p as u64 }; \
                 return 0; \
              }",
         );
@@ -21491,8 +21409,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pointer_to_isize_cast_in_unsafe_clean() {
         assert_clean(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: isize = unsafe { p as isize }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: isize = { p as isize }; \
                 return 0; \
              }",
         );
@@ -21502,8 +21420,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pointer_to_i64_cast_in_unsafe_clean() {
         assert_clean(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: i64 = unsafe { p as i64 }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: i64 = { p as i64 }; \
                 return 0; \
              }",
         );
@@ -21516,39 +21434,21 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // raw-ptr-to-integer cast in a single unsafe block.
         assert_clean(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let fp: *f32 = unsafe { p as *f32 }; \
-                let addr: usize = unsafe { fp as usize }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let fp: *f32 = { p as *f32 }; \
+                let addr: usize = { fp as usize }; \
                 return 0; \
              }",
         );
     }
-
-    #[test]
-    fn pointer_to_usize_outside_unsafe_e0801() {
-        // Cast itself is admitted by `cast_allowed`, but the unsafe gate
-        // in `check_cast` fires when not inside an unsafe block.
-        let codes = errors(
-            "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: usize = p as usize; \
-                return 0; \
-             }",
-        );
-        assert!(
-            codes.contains(&"E0801"),
-            "expected E0801 outside unsafe, got {codes:?}"
-        );
-    }
-
     #[test]
     fn pointer_to_u32_rejected_e0315() {
         // u32 isn't 64 bits — narrowing a pointer is almost always a bug,
         // so `cast_allowed` doesn't admit it even inside unsafe.
         let codes = errors(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: u32 = unsafe { p as u32 }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: u32 = { p as u32 }; \
                 return 0; \
              }",
         );
@@ -21562,8 +21462,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pointer_to_i32_rejected_e0315() {
         let codes = errors(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: i32 = unsafe { p as i32 }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: i32 = { p as i32 }; \
                 return 0; \
              }",
         );
@@ -21577,8 +21477,8 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn pointer_to_bool_rejected_e0315() {
         let codes = errors(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let alive: bool = unsafe { p as bool }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let alive: bool = { p as bool }; \
                 return 0; \
              }",
         );
@@ -21594,10 +21494,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         //   addr = p as usize; if addr % align == 0 { return addr as *T; }
         assert_clean(
             "fn main() -> i32 { \
-                let p: *u8 = unsafe { 0 as *u8 }; \
-                let addr: usize = unsafe { p as usize }; \
+                let p: *u8 = { 0 as *u8 }; \
+                let addr: usize = { p as usize }; \
                 let aligned: usize = addr; \
-                let back: *u8 = unsafe { aligned as *u8 }; \
+                let back: *u8 = { aligned as *u8 }; \
                 return 0; \
              }",
         );
@@ -21612,7 +21512,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn link_name_on_extern_fn_clean() {
         assert_clean(
             "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32; \
-             fn main() -> i32 { return unsafe { my_abs(0 -% 42) }; }",
+             fn main() -> i32 { return { my_abs(0 -% 42) }; }",
         );
     }
 
@@ -21732,7 +21632,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "extern fn atexit(cb: fn()) -> i32; \
              fn cleanup() { } \
-             fn main() -> i32 { return unsafe { atexit(cleanup) }; }",
+             fn main() -> i32 { return { atexit(cleanup) }; }",
         );
     }
 
@@ -21756,7 +21656,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
 
     #[test]
     fn pub_extern_fn_with_raw_pointer_clean() {
-        assert_clean("export extern fn load(p: *i32) -> i32 { return unsafe { *p }; }");
+        assert_clean("export extern fn load(p: *i32) -> i32 { return { *p }; }");
     }
 
     #[test]
@@ -21872,12 +21772,13 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     // blessed `string` in tests that just need "some owned heap-ish type" now
     // that the `string` spelling is gone and `Text` is import-required (so it
     // can't appear in a single unvendored snippet).
-    const DROP_STRUCT: &str = "struct Owned { x: i32 } impl Owned { fn drop(ref this) { return; } } ";
+    const DROP_STRUCT: &str =
+        "struct Owned { x: i32 } impl Owned { fn drop(ref this) { return; } } ";
 
     // R4: a user-defined struct whose `drop` *frees* heap — the freeing-drop
     // signal `#[no_alloc]` (E0901) keys on. Replaces a `string` field, which
     // used to be the convenient freeing-drop type before the spelling's removal.
-    const FREEING_DROP: &str = "extern fn free(p: *u8); struct Handle { opaque p: *u8 } impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } } ";
+    const FREEING_DROP: &str = "extern fn free(p: *u8); struct Handle { opaque p: *u8 } impl Handle { fn drop(ref this) { { free(this.p); }; } } ";
 
     #[test]
     fn async_fn_body_returns_inner_type() {
@@ -22123,7 +22024,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct Handle { opaque p: *u8 }\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
+                 let h: Handle = Handle { p: { 0 as *u8 } };\n\
                  let _q: Handle = ship::[Handle](h);\n\
                  return 0;\n\
              }",
@@ -22137,7 +22038,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct Handle { opaque p: *u8 }\n\
              fn share[T: Sync](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
+                 let h: Handle = Handle { p: { 0 as *u8 } };\n\
                  let _q: Handle = share::[Handle](h);\n\
                  return 0;\n\
              }",
@@ -22150,10 +22051,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // `unsafe impl Handle: Send {}` re-enables the marker.
         assert_clean(
             "struct Handle { opaque p: *u8 }\n\
-             unsafe impl Handle: Send {}\n\
+             impl Handle: Send {}\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let h: Handle = Handle { p: unsafe { 0 as *u8 } };\n\
+                 let h: Handle = Handle { p: { 0 as *u8 } };\n\
                  let _q: Handle = ship::[Handle](h);\n\
                  return 0;\n\
              }",
@@ -22168,7 +22069,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let p: *u8 = unsafe { 0 as *u8 };\n\
+                 let p: *u8 = { 0 as *u8 };\n\
                  let _q: *u8 = ship::[*u8](p);\n\
                  return 0;\n\
              }",
@@ -22181,10 +22082,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // because i32 is Send + Sync.
         assert_clean(
             "struct Arc[T] { opaque ctrl: *u8 }\n\
-             unsafe impl Arc[T: Send + Sync]: Send {}\n\
+             impl Arc[T: Send + Sync]: Send {}\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let a: Arc[i32] = Arc[i32] { ctrl: unsafe { 0 as *u8 } };\n\
+                 let a: Arc[i32] = Arc[i32] { ctrl: { 0 as *u8 } };\n\
                  let _q: Arc[i32] = ship::[Arc[i32]](a);\n\
                  return 0;\n\
              }",
@@ -22198,10 +22099,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "struct Handle { opaque p: *u8 }\n\
              struct Arc[T] { opaque ctrl: *u8 }\n\
-             unsafe impl Arc[T: Send + Sync]: Send {}\n\
+             impl Arc[T: Send + Sync]: Send {}\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let a: Arc[Handle] = Arc[Handle] { ctrl: unsafe { 0 as *u8 } };\n\
+                 let a: Arc[Handle] = Arc[Handle] { ctrl: { 0 as *u8 } };\n\
                  let _q: Arc[Handle] = ship::[Arc[Handle]](a);\n\
                  return 0;\n\
              }",
@@ -22215,11 +22116,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // sub-type is itself Send (the recursion stops at the override).
         assert_clean(
             "struct Arc[T] { opaque ctrl: *u8 }\n\
-             unsafe impl Arc[T: Send + Sync]: Send {}\n\
+             impl Arc[T: Send + Sync]: Send {}\n\
              struct Wrap { inner: Arc[i32], tag: i32 }\n\
              fn ship[T: Send](take v: T) -> T { return v; }\n\
              fn main() -> i32 {\n\
-                 let w: Wrap = Wrap { inner: Arc[i32] { ctrl: unsafe { 0 as *u8 } }, tag: 1 };\n\
+                 let w: Wrap = Wrap { inner: Arc[i32] { ctrl: { 0 as *u8 } }, tag: 1 };\n\
                  let _q: Wrap = ship::[Wrap](w);\n\
                  return 0;\n\
              }",
@@ -22227,23 +22128,20 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     }
 
     #[test]
-    fn safe_impl_send_rejected_e0860() {
-        // `Send` is an unsafe assertion — a bare `impl Send` is rejected.
-        let codes = errors(
+    fn bare_impl_send_registers_marker_override() {
+        assert_clean(
             "struct Handle { opaque p: *u8 }\n\
              impl Handle: Send {}\n\
              fn main() -> i32 { return 0; }",
         );
-        assert!(codes.iter().any(|c| *c == "E0860"), "got {:?}", codes);
     }
 
     #[test]
-    fn unsafe_impl_on_regular_interface_rejected_e0861() {
-        // `unsafe` applies only to the Send/Sync markers.
+    fn empty_impl_on_regular_interface_rejected_e0861() {
         let codes = errors(
             "interface Greet { fn hi(this) -> i32; }\n\
              struct S { x: i32 }\n\
-             unsafe impl S: Greet { fn hi(this) -> i32 { return this.x; } }\n\
+             impl S: Greet {}\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0861"), "got {:?}", codes);
@@ -23024,33 +22922,17 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "extern fn malloc(n: usize) -> *u8; \
              extern fn free(p: *u8); \
              fn main() -> i32 { \
-                let buf: *u8 = unsafe { malloc(16 as usize) }; \
-                let fp: *f32 = unsafe { buf as *f32 }; \
+                let buf: *u8 = { malloc(16 as usize) }; \
+                let fp: *f32 = { buf as *f32 }; \
                 let v: f32x4 = f32x4::splat(1.0f32); \
-                unsafe { v.store(fp); } \
-                let r: f32x4 = unsafe { f32x4::load(fp) }; \
-                unsafe { free(buf); } \
+                { v.store(fp); } \
+                let r: f32x4 = { f32x4::load(fp) }; \
+                { free(buf); } \
                 if r.lane(0 as u32) != 0.0f32 { return 1; } \
                 return 0; \
              }",
         );
     }
-
-    #[test]
-    fn simd_load_outside_unsafe_e0801() {
-        let codes = errors(
-            "extern fn malloc(n: usize) -> *u8; \
-             fn main() -> i32 { \
-                let buf: *u8 = unsafe { malloc(16 as usize) }; \
-                let fp: *f32 = unsafe { buf as *f32 }; \
-                let r: f32x4 = f32x4::load(fp); \
-                if r.lane(0 as u32) != 0.0f32 { return 1; } \
-                return 0; \
-             }",
-        );
-        assert!(codes.contains(&"E0801"), "expected E0801, got {:?}", codes);
-    }
-
     #[test]
     fn simd_i64x2_and_u32x4_resolve_and_arithmetic_clean() {
         assert_clean(
@@ -23180,22 +23062,6 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             }",
         );
     }
-
-    #[test]
-    fn simd_store_outside_unsafe_e0801() {
-        let codes = errors(
-            "extern fn malloc(n: usize) -> *u8; \
-             fn main() -> i32 { \
-                let buf: *u8 = unsafe { malloc(16 as usize) }; \
-                let fp: *f32 = unsafe { buf as *f32 }; \
-                let v: f32x4 = f32x4::splat(1.0f32); \
-                v.store(fp); \
-                return 0; \
-             }",
-        );
-        assert!(codes.contains(&"E0801"), "expected E0801, got {:?}", codes);
-    }
-
     // ---- v0.0.9 Phase 4: module-scope `const` and `static` ----
 
     /// Run the lower pass before sema. Required for const-substitution
@@ -23283,13 +23149,21 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn array_literal_in_static_accepted_g043() {
         let codes = lowered_errors("static T: [i32; 4] = [1, 2, 3, 4];");
-        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
     }
 
     #[test]
     fn fill_array_in_static_accepted_g043() {
         let codes = lowered_errors("static T: [u8; 256] = [0u8; 256];");
-        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
     }
 
     // G-043 keeps `const` literal-only: an array literal on a `const` is still
@@ -23297,7 +23171,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn array_literal_in_const_still_rejected_e0x30_g043() {
         let codes = lowered_errors("const C: [i32; 4] = [1, 2, 3, 4];");
-        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
+        assert!(
+            codes.iter().any(|c| c == "E0X30"),
+            "expected E0X30, got {:?}",
+            codes
+        );
     }
 
     // v0.0.13 G-043 (second half): a non-generic struct literal whose fields are
@@ -23308,7 +23186,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct P { x: i32, y: f32, ok: bool } \
              static S: P = P { x: 1, y: 2.0f32, ok: true };",
         );
-        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
     }
 
     // Struct-of-struct and array-of-struct compose recursively.
@@ -23323,7 +23205,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
                  Outer { i: Inner { a: 3 }, n: 4 } \
              ];",
         );
-        assert!(!codes.iter().any(|c| c == "E0X30"), "expected no E0X30, got {:?}", codes);
+        assert!(
+            !codes.iter().any(|c| c == "E0X30"),
+            "expected no E0X30, got {:?}",
+            codes
+        );
     }
 
     // A struct literal with a non-literal field value is still E0X30.
@@ -23334,7 +23220,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
              fn f() -> i32 { return 3; } \
              static S: P = P { x: f() };",
         );
-        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
+        assert!(
+            codes.iter().any(|c| c == "E0X30"),
+            "expected E0X30, got {:?}",
+            codes
+        );
     }
 
     // The generic struct-literal form is excluded (it reaches codegen
@@ -23345,16 +23235,22 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "struct Pair[A, B] { first: A, second: B } \
              static G: Pair[i32, bool] = Pair[i32, bool] { first: 1, second: true };",
         );
-        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
+        assert!(
+            codes.iter().any(|c| c == "E0X30"),
+            "expected E0X30, got {:?}",
+            codes
+        );
     }
 
     // `const` stays literal-only: a struct literal on a `const` is E0X30.
     #[test]
     fn struct_literal_in_const_still_rejected_e0x30_g043b() {
-        let codes = lowered_errors(
-            "struct P { x: i32 } const C: P = P { x: 1 };",
+        let codes = lowered_errors("struct P { x: i32 } const C: P = P { x: 1 };");
+        assert!(
+            codes.iter().any(|c| c == "E0X30"),
+            "expected E0X30, got {:?}",
+            codes
         );
-        assert!(codes.iter().any(|c| c == "E0X30"), "expected E0X30, got {:?}", codes);
     }
 
     #[test]
@@ -23454,7 +23350,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "static COUNTER: i32 = 0; \
              fn main() -> i32 { return COUNTER; }",
         );
-        assert!(codes.is_empty(), "static read should be bare, got {:?}", codes);
+        assert!(
+            codes.is_empty(),
+            "static read should be bare, got {:?}",
+            codes
+        );
     }
 
     #[test]
@@ -23463,7 +23363,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "static COUNTER: i32 = 0; \
              fn main() -> i32 { COUNTER = 5; return COUNTER; }",
         );
-        assert!(codes.is_empty(), "static write should be bare, got {:?}", codes);
+        assert!(
+            codes.is_empty(),
+            "static write should be bare, got {:?}",
+            codes
+        );
     }
 
     #[test]
@@ -23528,7 +23432,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn no_alloc_direct_malloc_call_e0901() {
         let codes = errors(
             "extern fn malloc(n: usize) -> *u8;\n\
-             #[no_alloc] fn f() { unsafe { malloc(8 as usize); } return; }\n\
+             #[no_alloc] fn f() { { malloc(8 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
@@ -23538,7 +23442,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn no_alloc_direct_free_call_e0901() {
         let codes = errors(
             "extern fn free(p: *u8);\n\
-             #[no_alloc] fn f(p: *u8) { unsafe { free(p); } return; }\n\
+             #[no_alloc] fn f(p: *u8) { { free(p); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
@@ -23550,7 +23454,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // source-level name is something else.
         let codes = errors(
             "#[link_name = \"realloc\"] extern fn grow(p: *u8, n: usize) -> *u8;\n\
-             #[no_alloc] fn f(p: *u8) { unsafe { grow(p, 16 as usize); } return; }\n\
+             #[no_alloc] fn f(p: *u8) { { grow(p, 16 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
@@ -23581,7 +23485,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;\n\
              #[no_alloc] fn copy(dest: *u8, src: *u8, n: usize) {\n\
-                 unsafe { memcpy(dest, src, n); }\n\
+                 { memcpy(dest, src, n); }\n\
                  return;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -23595,7 +23499,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // on the extern decl.
         let codes = errors(
             "extern fn mystery(x: i32) -> i32;\n\
-             #[no_alloc] fn caller(x: i32) -> i32 { return unsafe { mystery(x) }; }\n\
+             #[no_alloc] fn caller(x: i32) -> i32 { return { mystery(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
@@ -23606,7 +23510,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // The user vouches for the extern by marking it `#[no_alloc]`.
         assert_clean(
             "#[no_alloc] extern fn vouch(x: i32) -> i32;\n\
-             #[no_alloc] fn caller(x: i32) -> i32 { return unsafe { vouch(x) }; }\n\
+             #[no_alloc] fn caller(x: i32) -> i32 { return { vouch(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -23690,7 +23594,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
-             impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } }\n\
+             impl Handle { fn drop(ref this) { { free(this.p); }; } }\n\
              #[no_alloc] fn f(raw: *u8) -> i32 {\n\
                  let h: Handle = Handle { p: raw };\n\
                  return 0;\n\
@@ -23767,7 +23671,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
-             impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } }\n\
+             impl Handle { fn drop(ref this) { { free(this.p); }; } }\n\
              #[no_alloc] fn f(take h: Handle) -> i32 { return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
@@ -23818,7 +23722,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
              impl Handle {\n\
-                 fn drop(ref this) { unsafe { free(this.p); }; }\n\
+                 fn drop(ref this) { { free(this.p); }; }\n\
                  #[no_alloc] fn consume(take this) -> i32 { return 0; }\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -23834,7 +23738,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "extern fn free(p: *u8);\n\
              struct Handle { opaque p: *u8 }\n\
-             impl Handle { fn drop(ref this) { unsafe { free(this.p); }; } }\n\
+             impl Handle { fn drop(ref this) { { free(this.p); }; } }\n\
              #[no_alloc] fn f(raw: *u8) -> i32 { Handle { p: raw }; return 0; }\n\
              fn main() -> i32 { return 0; }",
         );
@@ -23905,7 +23809,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn no_block_direct_mutex_lock_e0907() {
         let codes = errors(
             "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
-             #[no_block] fn f(m: *u8) { unsafe { pthread_mutex_lock(m); } return; }\n\
+             #[no_block] fn f(m: *u8) { { pthread_mutex_lock(m); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
@@ -23915,7 +23819,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn no_block_direct_sleep_e0907() {
         let codes = errors(
             "extern fn sleep(secs: u32) -> u32;\n\
-             #[no_block] fn f() { unsafe { sleep(1); } return; }\n\
+             #[no_block] fn f() { { sleep(1); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
@@ -23926,7 +23830,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // `read` is a blocking syscall — rejected even though it never heap-allocs.
         let codes = errors(
             "extern fn read(fd: i32, buf: *u8, n: usize) -> isize;\n\
-             #[no_block] fn f(fd: i32, buf: *u8) { unsafe { read(fd, buf, 8 as usize); } return; }\n\
+             #[no_block] fn f(fd: i32, buf: *u8) { { read(fd, buf, 8 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
@@ -23938,7 +23842,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // source name is something else.
         let codes = errors(
             "#[link_name = \"pthread_cond_wait\"] extern fn park(c: *u8, m: *u8) -> i32;\n\
-             #[no_block] fn f(c: *u8, m: *u8) { unsafe { park(c, m); } return; }\n\
+             #[no_block] fn f(c: *u8, m: *u8) { { park(c, m); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
@@ -23949,7 +23853,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // `sqrtf` is a pure leaf — fine to call from #[no_block].
         assert_clean(
             "extern fn sqrtf(x: f32) -> f32;\n\
-             #[no_block] fn root(x: f32) -> f32 { return unsafe { sqrtf(x) }; }\n\
+             #[no_block] fn root(x: f32) -> f32 { return { sqrtf(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -23959,7 +23863,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // The nonblocking `pthread_mutex_trylock` is on the safe-leaf set.
         assert_clean(
             "extern fn pthread_mutex_trylock(m: *u8) -> i32;\n\
-             #[no_block] fn f(m: *u8) -> i32 { return unsafe { pthread_mutex_trylock(m) }; }\n\
+             #[no_block] fn f(m: *u8) -> i32 { return { pthread_mutex_trylock(m) }; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -23987,7 +23891,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn no_block_unknown_extern_e0907() {
         let codes = errors(
             "extern fn mystery(x: i32) -> i32;\n\
-             #[no_block] fn caller(x: i32) -> i32 { return unsafe { mystery(x) }; }\n\
+             #[no_block] fn caller(x: i32) -> i32 { return { mystery(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
@@ -23998,7 +23902,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         // The user vouches for the extern by marking it `#[no_block]`.
         assert_clean(
             "#[no_block] extern fn vouch(x: i32) -> i32;\n\
-             #[no_block] fn caller(x: i32) -> i32 { return unsafe { vouch(x) }; }\n\
+             #[no_block] fn caller(x: i32) -> i32 { return { vouch(x) }; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -24039,7 +23943,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn realtime_alloc_violation_e0901() {
         let codes = errors(
             "extern fn malloc(n: usize) -> *u8;\n\
-             #[realtime] fn f() { unsafe { malloc(8 as usize); } return; }\n\
+             #[realtime] fn f() { { malloc(8 as usize); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0901"), "got {:?}", codes);
@@ -24049,7 +23953,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn realtime_block_violation_e0907() {
         let codes = errors(
             "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
-             #[realtime] fn f(m: *u8) { unsafe { pthread_mutex_lock(m); } return; }\n\
+             #[realtime] fn f(m: *u8) { { pthread_mutex_lock(m); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0907"), "got {:?}", codes);
@@ -24242,7 +24146,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     // v0.0.16 move tracking: `let y = x;` on a non-Copy whole binding *moves* it.
     const MOVE_HDR: &str = "struct B { opaque data: *u8 }\n\
          impl B { fn drop(ref this) { return; } }\n\
-         fn nb() -> B { return B { data: unsafe { 0 as *u8 } }; }\n";
+         fn nb() -> B { return B { data: { 0 as *u8 } }; }\n";
 
     #[test]
     fn let_move_then_use_is_e0335() {
@@ -24306,24 +24210,11 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         );
         assert!(codes.iter().any(|c| *c == "E0903"), "got {:?}", codes);
     }
-
-    #[test]
-    fn intrinsic_msg_send_outside_unsafe_e0801() {
-        let codes = errors(
-            "fn main() -> i32 {\n\
-                 let obj: *u8 = unsafe { 0 as *u8 };\n\
-                 #msg_send(obj, \"hello\");\n\
-                 return 0;\n\
-             }",
-        );
-        assert!(codes.iter().any(|c| *c == "E0801"), "got {:?}", codes);
-    }
-
     #[test]
     fn intrinsic_msg_send_inside_unsafe_clean() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 unsafe {\n\
+                 {\n\
                      let obj: *u8 = 0 as *u8;\n\
                      #msg_send(obj, \"hello\");\n\
                  }\n\
@@ -24336,29 +24227,17 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn intrinsic_msg_send_with_return_type_clean() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 let obj: *u8 = unsafe { 0 as *u8 };\n\
-                 let n: u64 = unsafe { #msg_send(obj, \"length\") -> u64 };\n\
+                 let obj: *u8 = { 0 as *u8 };\n\
+                 let n: u64 = { #msg_send(obj, \"length\") -> u64 };\n\
                  return n as i32;\n\
              }",
         );
     }
-
-    #[test]
-    fn intrinsic_asm_outside_unsafe_e0801() {
-        let codes = errors(
-            "fn main() -> i32 {\n\
-                 #asm(\"nop\");\n\
-                 return 0;\n\
-             }",
-        );
-        assert!(codes.iter().any(|c| *c == "E0801"), "got {:?}", codes);
-    }
-
     #[test]
     fn intrinsic_asm_inside_unsafe_clean() {
         assert_clean(
             "fn main() -> i32 {\n\
-                 unsafe { #asm(\"dmb ish\"); }\n\
+                 { #asm(\"dmb ish\"); }\n\
                  return 0;\n\
              }",
         );
@@ -24381,7 +24260,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert!(parse_fails_src(
             "fn main() -> i32 {\n\
                  let x: i32 = 1;\n\
-                 unsafe { #asm(x); }\n\
+                 { #asm(x); }\n\
                  return 0;\n\
              }",
         ));
@@ -24391,7 +24270,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn asm_type_args_rejected() {
         assert!(parse_fails_src(
             "fn main() -> i32 {\n\
-                 unsafe { #asm::[i32](\"nop\"); }\n\
+                 { #asm::[i32](\"nop\"); }\n\
                  return 0;\n\
              }",
         ));
@@ -24401,7 +24280,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn asm_ret_ascription_rejected() {
         assert!(parse_fails_src(
             "fn main() -> i32 {\n\
-                 unsafe { let _x: i32 = #asm(\"nop\") -> i32; }\n\
+                 { let _x: i32 = #asm(\"nop\") -> i32; }\n\
                  return 0;\n\
              }",
         ));
@@ -24411,7 +24290,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     fn asm_second_arg_must_be_operand_rejected() {
         assert!(parse_fails_src(
             "fn main() -> i32 {\n\
-                 unsafe { #asm(\"a\", \"b\"); }\n\
+                 { #asm(\"a\", \"b\"); }\n\
                  return 0;\n\
              }",
         ));
@@ -24422,7 +24301,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn asm_tier1_no_operands_still_clean() {
         assert_clean(
-            "fn f() { unsafe { #asm(\"dmb ish\"); } return; }\n\
+            "fn f() { { #asm(\"dmb ish\"); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
     }
@@ -24432,7 +24311,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "fn add(a: i64, b: i64) -> i64 {\n\
                  var s: i64 = 0;\n\
-                 unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
+                 { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
                  return s;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -24444,7 +24323,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "fn inc(x: i64) -> i64 {\n\
                  var v: i64 = x;\n\
-                 unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
+                 { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
                  return v;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -24457,32 +24336,18 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "fn getpid() -> i64 {\n\
                  var p: i64 = 0;\n\
-                 unsafe { #asm(\"mov x16, #20\", p = out(\"x0\") p, clobber(\"x16\")); }\n\
+                 { #asm(\"mov x16, #20\", p = out(\"x0\") p, clobber(\"x16\")); }\n\
                  return p;\n\
              }\n\
              fn main() -> i32 { return 0; }",
         );
     }
-
-    #[test]
-    fn asm_tier2_outside_unsafe_e0801() {
-        let codes = errors(
-            "fn f(a: i64) -> i64 {\n\
-                 var s: i64 = 0;\n\
-                 #asm(\"mov {s}, {a}\", s = out(reg) s, a = in(reg) a);\n\
-                 return s;\n\
-             }\n\
-             fn main() -> i32 { return 0; }",
-        );
-        assert!(codes.iter().any(|c| *c == "E0801"), "got {:?}", codes);
-    }
-
     #[test]
     fn asm_tier2_out_needs_mut_e0305() {
         let codes = errors(
             "fn f(a: i64) -> i64 {\n\
                  let s: i64 = 0;\n\
-                 unsafe { #asm(\"mov {s}, {a}\", s = out(reg) s, a = in(reg) a); }\n\
+                 { #asm(\"mov {s}, {a}\", s = out(reg) s, a = in(reg) a); }\n\
                  return s;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -24493,7 +24358,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn asm_tier2_non_scalar_operand_e0892() {
         let codes = errors(&format!(
-            "{DROP_STRUCT}fn f(a: Owned) {{ unsafe {{ #asm(\"nop {{a}}\", a = in(reg) a); }} return; }}\n\
+            "{DROP_STRUCT}fn f(a: Owned) {{ {{ #asm(\"nop {{a}}\", a = in(reg) a); }} return; }}\n\
              fn main() -> i32 {{ return 0; }}"
         ));
         assert!(codes.iter().any(|c| *c == "E0892"), "got {:?}", codes);
@@ -24502,7 +24367,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
     #[test]
     fn asm_tier2_reg_missing_placeholder_e0893() {
         let codes = errors(
-            "fn f(a: i64) { unsafe { #asm(\"nop\", a = in(reg) a); } return; }\n\
+            "fn f(a: i64) { { #asm(\"nop\", a = in(reg) a); } return; }\n\
              fn main() -> i32 { return 0; }",
         );
         assert!(codes.iter().any(|c| *c == "E0893"), "got {:?}", codes);
@@ -24513,7 +24378,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         let codes = errors(
             "struct P { x: i64 }\n\
              fn f(ref p: P, a: i64) {\n\
-                 unsafe { #asm(\"mov {o}, {a}\", o = out(reg) p.x, a = in(reg) a); }\n\
+                 { #asm(\"mov {o}, {a}\", o = out(reg) p.x, a = in(reg) a); }\n\
                  return;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -24528,7 +24393,7 @@ fn cnt(n: i32) -> i32 { return n; }\n";
         assert_clean(
             "#[naked]\n\
              fn raw_add(a: i64, b: i64) -> i64 {\n\
-                 unsafe { #asm(\"add x0, x0, x1\\nret\"); }\n\
+                 { #asm(\"add x0, x0, x1\\nret\"); }\n\
              }\n\
              fn main() -> i32 { return 0; }",
         );
@@ -24595,7 +24460,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
                  return b.v;\n\
              }",
         );
-        assert!(tys.iter().any(|t| t == "Box[i32]"), "no Box[i32] spot: {tys:?}");
+        assert!(
+            tys.iter().any(|t| t == "Box[i32]"),
+            "no Box[i32] spot: {tys:?}"
+        );
     }
 
     #[test]
@@ -24609,7 +24477,10 @@ fn cnt(n: i32) -> i32 { return n; }\n";
             "fn main() -> i32 { let x: i32 = 1; return x; }",
             std::collections::BTreeMap::new(),
         );
-        assert!(mono.value_types.is_empty(), "compile path should not record types");
+        assert!(
+            mono.value_types.is_empty(),
+            "compile path should not record types"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // Phase 8 + 10.FFI demo: an owned, growable string type implemented
 // entirely at the user level on top of `extern fn malloc/free/memcpy`
 // (10.FFI.1) and raw pointer operations (10.FFI.2). All FFI calls and
-// pointer dereferences are wrapped in `unsafe { ... }` blocks per
+// pointer dereferences are wrapped in `{ ... }` blocks per
 // 10.FFI.3 — the explicit marker makes dangerous code grep-able.
 //
 // Why this is here: the original Phase-8 plan had `string` as a
@@ -29,7 +29,7 @@ struct OwnedString {
 impl OwnedString {
     fn with_capacity(cap: usize) -> OwnedString {
         return OwnedString {
-            ptr: unsafe { malloc(cap) },
+            ptr: { malloc(cap) },
             len: 0 as usize,
             cap: cap,
         };
@@ -41,7 +41,7 @@ impl OwnedString {
         // are unsafe and must be wrapped.
         let src: *u8 = #str_ptr(s);
         let n: usize = #str_len(s);
-        unsafe {
+        {
             let dest: *u8 = this.ptr + this.len;
             memcpy(dest, src, n);
         }
@@ -49,11 +49,11 @@ impl OwnedString {
     }
 
     fn as_str(this) -> str {
-        return unsafe { #str_from_raw_parts(this.ptr, this.len) };
+        return { #str_from_raw_parts(this.ptr, this.len) };
     }
 
     fn drop(ref this) {
-        unsafe { free(this.ptr) };
+        { free(this.ptr) };
     }
 }
 

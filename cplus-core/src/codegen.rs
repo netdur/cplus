@@ -3175,7 +3175,9 @@ fn scan_moves_in_expr(
             scan_moves_in_expr(receiver, sigs, types, set);
             scan_moves_in_expr(index, sigs, types, set);
         }
-        ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. }
+        | ExprKind::InferredStructLit { fields }
+        | ExprKind::GenericStructLit { fields, .. } => {
             // G-023 fix: a field initialized from a bare-Ident source
             // (`Wrap { m: m }`) consumes that binding into the struct
             // slot. Pre-register so the runtime drop_flag gets allocated
@@ -3206,7 +3208,6 @@ fn scan_moves_in_expr(
             }
         }
         ExprKind::Block(b) => scan_moves_in_block(b, sigs, types, set),
-        ExprKind::Unsafe(b) => scan_moves_in_block(b, sigs, types, set),
         ExprKind::Await(inner) => scan_moves_in_expr(inner, sigs, types, set),
         ExprKind::Yield(inner) => scan_moves_in_expr(inner, sigs, types, set),
         ExprKind::If {
@@ -3793,7 +3794,9 @@ fn write_preamble(out: &mut String) {
     // single biggest enabler for LLVM's alias analysis to disambiguate
     // heap regions against pre-existing pointers, which lets SROA /
     // mem2reg / GVN forward more loads.
-    out.push_str(&format!("declare noalias noundef ptr @malloc({us} noundef)\n"));
+    out.push_str(&format!(
+        "declare noalias noundef ptr @malloc({us} noundef)\n"
+    ));
     // v0.0.8 bench-gap fix B (finish): free is a no-capture deallocator
     // — `nocapture` says the function doesn't retain the pointer beyond
     // the call, so LLVM can keep deriving facts about prior pointers to
@@ -4198,7 +4201,6 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                 }
             }
             ExprKind::Block(b) => walk_block(b, table, next_id, out),
-            ExprKind::Unsafe(b) => walk_block(b, table, next_id, out),
             ExprKind::Await(inner) => walk_expr(inner, table, next_id, out),
             ExprKind::Yield(inner) => walk_expr(inner, table, next_id, out),
             ExprKind::If {
@@ -4247,7 +4249,9 @@ fn collect_and_emit_str_lits(out: &mut String, program: &Program) -> StrLitTable
                     walk_expr(&a.body, table, next_id, out);
                 }
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     walk_expr(&f.value, table, next_id, out);
                 }
@@ -4380,7 +4384,7 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                     visit_expr(a, sigs, taken);
                 }
             }
-            ExprKind::Block(b) | ExprKind::Unsafe(b) => visit_block(b, sigs, taken),
+            ExprKind::Block(b) => visit_block(b, sigs, taken),
             ExprKind::Await(inner) | ExprKind::Yield(inner) => visit_expr(inner, sigs, taken),
             ExprKind::If {
                 cond,
@@ -4422,7 +4426,9 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                     visit_expr(&a.body, sigs, taken);
                 }
             }
-            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     visit_expr(&f.value, sigs, taken);
                 }
@@ -5495,7 +5501,10 @@ fn gen_function(
                 // doesn't use byval — caller and callee implicitly share
                 // the layout via the bare pointer. Xtensa (per the esp-clang
                 // probe) passes >24-byte aggregates `byval` like sysv.
-                if matches!(active_target().arch, TargetArch::X86_64 | TargetArch::Xtensa) {
+                if matches!(
+                    active_target().arch,
+                    TargetArch::X86_64 | TargetArch::Xtensa
+                ) {
                     let (_sz, al) = static_layout(pty, types).unwrap_or((8, 8));
                     let inner = llvm_ty(pty, types);
                     write!(out, "ptr byval({inner}) align {al} %{llvm_idx}").unwrap();
@@ -7334,7 +7343,10 @@ enum DropKind {
     /// dropped at scope exit. The drop body reconstructs
     /// `Ty::Array(elem, count)` and routes through `gen_drop_in_place`.
     /// Array *fields* of a struct stay reached via struct field recursion.
-    Array { elem: Box<Ty>, count: u32 },
+    Array {
+        elem: Box<Ty>,
+        count: u32,
+    },
 }
 
 /// Slice 6BC.opt: per-Drop-binding lowering choice.
@@ -9473,7 +9485,6 @@ impl<'a> FnState<'a> {
             ExprKind::Block(b) => self.gen_block_expr(b),
             // Slice 10.FFI.3: `unsafe { ... }` is a marker for sema;
             // codegen treats it as a regular block.
-            ExprKind::Unsafe(b) => self.gen_block_expr(b),
 
             // v0.0.3 Phase 5 Slice 5E.3: `await EXPR`. EXPR evaluates
             // to a `Future[U]`; we drive it to completion in a
@@ -9893,9 +9904,7 @@ impl<'a> FnState<'a> {
                 // v0.0.19: runtime / async / atomic builtins (`#name`). Lowered
                 // by `dispatch_gen_cplus_intrinsic` under the legacy spelling.
                 let legacy = format!("__cplus_{name}");
-                if let Some(result) =
-                    self.dispatch_gen_cplus_intrinsic(&legacy, args, type_args)
-                {
+                if let Some(result) = self.dispatch_gen_cplus_intrinsic(&legacy, args, type_args) {
                     return result;
                 }
                 // Extern-fn runtime helpers (`#coro_resume`, `#reactor_get_state`,
@@ -11468,8 +11477,7 @@ impl<'a> FnState<'a> {
                             // and the `_` half of `Pair(r, _)` both hit this.
                             // No-op for a non-Drop payload or a borrow scrutinee.
                             if consumed {
-                                let pty =
-                                    variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
+                                let pty = variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
                                 if self.needs_drop(&pty) {
                                     let slot_ptr = self.payload_slot_ptr(
                                         &llvm_enum,
@@ -11613,7 +11621,11 @@ impl<'a> FnState<'a> {
             // min/max and maps NaN→0 — matching Rust ≥1.45 `as`. Emit the call
             // and return early (the generic `inst` path can't express a call).
             (a, b) if a.is_float() && b.is_int() => {
-                let sat = if b.is_signed_int() { "fptosi" } else { "fptoui" };
+                let sat = if b.is_signed_int() {
+                    "fptosi"
+                } else {
+                    "fptoui"
+                };
                 let ibits = ty_bit_width(b);
                 let fbits = ty_bit_width(a);
                 self.emit(&format!(
@@ -11730,7 +11742,13 @@ impl<'a> FnState<'a> {
                         // v0.0.7 Slice 1.2: fn-ptr field load — ptr leaf.
                         let fnptr_ty = Ty::RawPtr(Box::new(Ty::Unit));
                         self.gen_load(&fn_val, &fnptr_ty, &field_ptr);
-                        return self.gen_indirect_call(&fn_val, &params, &param_takes, &return_type, args);
+                        return self.gen_indirect_call(
+                            &fn_val,
+                            &params,
+                            &param_takes,
+                            &return_type,
+                            args,
+                        );
                     }
                 }
             }
@@ -11779,9 +11797,12 @@ impl<'a> FnState<'a> {
                     } => {
                         let (v, _) = self.gen_expr(a).expect("indirect call arg is a value");
                         let pty_lty = self.lty(pty);
-                        let (_, struct_al) = static_layout(pty, self.types).unwrap_or((size, align));
+                        let (_, struct_al) =
+                            static_layout(pty, self.types).unwrap_or((size, align));
                         let slot = self.alloca_named_raw("arg.coerce", &llvm_ty, align);
-                        self.emit(&format!("store {pty_lty} {v}, ptr {slot}, align {struct_al}"));
+                        self.emit(&format!(
+                            "store {pty_lty} {v}, ptr {slot}, align {struct_al}"
+                        ));
                         let coerced = self.next_tmp();
                         self.emit(&format!(
                             "{coerced} = load {llvm_ty}, ptr {slot}, align {align}"
@@ -12260,7 +12281,12 @@ impl<'a> FnState<'a> {
         // slot. Can't musttail (the caller's return shape differs). Gated like
         // the sret case (extern / non-fastcc only).
         if want_c_abi_ret {
-            if let CAbiClass::Coerce { llvm_ty: clty, align, .. } = &ret_c_abi {
+            if let CAbiClass::Coerce {
+                llvm_ty: clty,
+                align,
+                ..
+            } = &ret_c_abi
+            {
                 let ret = sig.return_type.clone();
                 let cc = self.md.fastcc_prefix(symbol);
                 let cv = self.next_tmp();
@@ -13097,9 +13123,7 @@ impl<'a> FnState<'a> {
         // The receiver is a primitive value, not a place — handle before
         // gen_place (which expects a place-producing expression).
         if name.name == "to_text" && args.is_empty() {
-            let (rv, rt) = self
-                .gen_expr(receiver)
-                .expect("to_text receiver has value");
+            let (rv, rt) = self.gen_expr(receiver).expect("to_text receiver has value");
             if Self::is_blessed_to_text_receiver_codegen(&rt) {
                 let (sv, _) = self.gen_to_text_intrinsic(&rv, &rt);
                 return Some(self.lang_string_or_string(sv));
@@ -15778,8 +15802,8 @@ mod tests {
     const OWNED24: &str = "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct S24 { a: *u8, b: i64, c: i64 }\n\
-         impl S24 { fn drop(ref this) { unsafe { free(this.a); } return; } }\n\
-         fn mk24() -> S24 { return S24 { a: unsafe { malloc(8 as usize) }, b: 0 as i64, c: 0 as i64 }; }\n";
+         impl S24 { fn drop(ref this) { { free(this.a); } return; } }\n\
+         fn mk24() -> S24 { return S24 { a: { malloc(8 as usize) }, b: 0 as i64, c: 0 as i64 }; }\n";
 
     fn gen_src_with(src: &str, mode: BuildMode) -> String {
         let toks = tokenize(src).expect("lex");
@@ -16252,9 +16276,9 @@ mod tests {
             "struct Entry { key: i32, val: i32 }\n\
              extern fn malloc(n: usize) -> *u8;\n\
              fn main() -> i32 {\n\
-                 let buf: *u8 = unsafe { malloc(8 as usize) };\n\
-                 let t: *Entry = unsafe { buf as *Entry };\n\
-                 unsafe { t[0 as usize] = Entry { key: 7, val: 42 }; }\n\
+                 let buf: *u8 = { malloc(8 as usize) };\n\
+                 let t: *Entry = { buf as *Entry };\n\
+                 { t[0 as usize] = Entry { key: 7, val: 42 }; }\n\
                  return 0;\n\
              }",
         );
@@ -16431,26 +16455,23 @@ mod tests {
 
     #[test]
     fn while_loop_has_header_and_exit() {
-        let ir = gen_src(
-            "fn main() -> i32 { var i: i32 = 0; while i < 5 { i = i + 1; } return i; }",
-        );
+        let ir =
+            gen_src("fn main() -> i32 { var i: i32 = 0; while i < 5 { i = i + 1; } return i; }");
         assert!(ir.contains("br label %bb"));
         assert!(ir.contains("icmp slt"));
     }
 
     #[test]
     fn for_range_inclusive_uses_sle() {
-        let ir = gen_src(
-            "fn main() -> i32 { var s: i32 = 0; for i in 0..=3 { s = s + i; } return s; }",
-        );
+        let ir =
+            gen_src("fn main() -> i32 { var s: i32 = 0; for i in 0..=3 { s = s + i; } return s; }");
         assert!(ir.contains("icmp sle i32"));
     }
 
     #[test]
     fn for_range_exclusive_uses_slt() {
-        let ir = gen_src(
-            "fn main() -> i32 { var s: i32 = 0; for i in 0..3 { s = s + i; } return s; }",
-        );
+        let ir =
+            gen_src("fn main() -> i32 { var s: i32 = 0; for i in 0..3 { s = s + i; } return s; }");
         assert!(ir.contains("icmp slt i32"));
     }
 
@@ -16724,8 +16745,8 @@ mod tests {
         let ir = gen_src(
             "fn axpy(n: usize, restrict x: *f32, restrict y: *f32) { return; }\n\
              fn main() -> i32 {\n\
-                 let p: *f32 = unsafe { 0 as *f32 };\n\
-                 let q: *f32 = unsafe { 0 as *f32 };\n\
+                 let p: *f32 = { 0 as *f32 };\n\
+                 let q: *f32 = { 0 as *f32 };\n\
                  axpy(0 as usize, p, q);\n\
                  return 0;\n\
              }",
@@ -17018,9 +17039,9 @@ mod tests {
              impl R { fn drop(ref this) { return; } }\n\
              fn mk() -> R { return R { id: 0 }; }\n\
              fn f() {\n\
-                 let pr: *R = unsafe { malloc(#size_of::[R]()) as *R };\n\
-                 unsafe { *pr = mk(); }\n\
-                 unsafe { #drop_in_place::[R](pr); }\n\
+                 let pr: *R = { malloc(#size_of::[R]()) as *R };\n\
+                 { *pr = mk(); }\n\
+                 { #drop_in_place::[R](pr); }\n\
                  return;\n\
              }\n\
              fn main() -> i32 { f(); return 0; }",
@@ -17038,7 +17059,7 @@ mod tests {
     fn inline_asm_tier1_emits_sideeffect_call() {
         // v0.0.14 inline-asm Tier 1: a bare template lowers to an operand-free,
         // side-effecting asm call (`sideeffect` so DCE can't drop it).
-        let ir = gen_src("fn main() -> i32 { unsafe { #asm(\"dmb ish\"); } return 0; }");
+        let ir = gen_src("fn main() -> i32 { { #asm(\"dmb ish\"); } return 0; }");
         assert!(
             ir.contains("call void asm sideeffect \"dmb ish\", \"\"()"),
             "expected operand-free sideeffect asm call, got:\n{ir}"
@@ -17052,7 +17073,7 @@ mod tests {
         let ir = gen_src(
             "fn add(a: i64, b: i64) -> i64 {\n\
                  var s: i64 = 0;\n\
-                 unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
+                 { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
                  return s;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -17074,7 +17095,7 @@ mod tests {
         let ir = gen_src(
             "fn inc(x: i64) -> i64 {\n\
                  var v: i64 = x;\n\
-                 unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
+                 { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
                  return v;\n\
              }\n\
              fn main() -> i32 { return 0; }",
@@ -17405,11 +17426,17 @@ mod tests {
         // (defined on overflow/NaN), NOT a raw `fptosi`/`fptoui` (which is UB).
         let ir1 =
             gen_src("fn main() -> i32 { let a: f64 = 1.5; let _b: i32 = a as i32; return 0; }");
-        assert!(ir1.contains("@llvm.fptosi.sat.i32.f64"), "expected saturating fptosi, got: {ir1}");
+        assert!(
+            ir1.contains("@llvm.fptosi.sat.i32.f64"),
+            "expected saturating fptosi, got: {ir1}"
+        );
         assert!(!ir1.contains(" = fptosi "), "must not emit a raw fptosi");
         let ir2 =
             gen_src("fn main() -> i32 { let a: f64 = 1.5; let _b: u32 = a as u32; return 0; }");
-        assert!(ir2.contains("@llvm.fptoui.sat.i32.f64"), "expected saturating fptoui, got: {ir2}");
+        assert!(
+            ir2.contains("@llvm.fptoui.sat.i32.f64"),
+            "expected saturating fptoui, got: {ir2}"
+        );
         assert!(!ir2.contains(" = fptoui "), "must not emit a raw fptoui");
     }
 
@@ -17418,14 +17445,17 @@ mod tests {
         // v0.0.24 de-Rust soundness: the shift count is masked to [0, bitwidth)
         // so a count >= bitwidth is defined (not LLVM poison/UB).
         let ir = gen_src("fn f(x: i32, n: i32) -> i32 { return x << n; }");
-        assert!(ir.contains("and i32"), "shift count must be masked, got: {ir}");
+        assert!(
+            ir.contains("and i32"),
+            "shift count must be masked, got: {ir}"
+        );
         assert!(ir.contains(" = shl i32 "), "expected shl, got: {ir}");
     }
 
     #[test]
     fn addr_intrinsic_emits_ptrtoint_v0024() {
         // v0.0.24 de-Rust: `#addr(p)` lowers to `ptrtoint` (the loud `p as usize`).
-        let ir = gen_src("fn f(p: *i32) -> usize { return unsafe { #addr(p) }; }");
+        let ir = gen_src("fn f(p: *i32) -> usize { return { #addr(p) }; }");
         assert!(ir.contains("ptrtoint ptr"), "expected ptrtoint, got: {ir}");
     }
 
@@ -17435,11 +17465,20 @@ mod tests {
         // sdiv). The guard compares against INT_MIN and -1 and ORs with the
         // zero check.
         let ir = gen_src("fn f(a: i32, b: i32) -> i32 { return a / b; }");
-        assert!(ir.contains("-2147483648"), "expected i32 INT_MIN check, got: {ir}");
-        assert!(ir.contains("or i1"), "expected zero||overflow trap condition, got: {ir}");
+        assert!(
+            ir.contains("-2147483648"),
+            "expected i32 INT_MIN check, got: {ir}"
+        );
+        assert!(
+            ir.contains("or i1"),
+            "expected zero||overflow trap condition, got: {ir}"
+        );
         // Unsigned division has no overflow case — only the zero check.
         let iru = gen_src("fn f(a: u32, b: u32) -> i32 { let _q: u32 = a / b; return 0; }");
-        assert!(!iru.contains("-2147483648"), "unsigned div must not add the INT_MIN check");
+        assert!(
+            !iru.contains("-2147483648"),
+            "unsigned div must not add the INT_MIN check"
+        );
     }
 
     #[test]
@@ -17558,7 +17597,7 @@ mod tests {
     fn struct_field_write_uses_gep_store() {
         let ir = gen_src(
             "struct Counter { count: i32 }\n\
-             fn main() -> i32 { var c: Counter = Counter { count: 0 }; c.count = 5; return 0; }"
+             fn main() -> i32 { var c: Counter = Counter { count: 0 }; c.count = 5; return 0; }",
         );
         assert!(ir.contains("getelementptr inbounds %Counter"));
         assert!(ir.contains("store i32 5, ptr"));
@@ -18268,7 +18307,7 @@ mod tests {
         // Raw pointers may be null in `unsafe` (slice 11.INTPTR via `0 as *T`).
         let ir = gen_src(
             "fn take(p: *u8) -> i32 { return 0; }\n\
-             fn main() -> i32 { return take(unsafe { 0 as *u8 }); }",
+             fn main() -> i32 { return take({ 0 as *u8 }); }",
         );
         // Look for the @take signature line; it must say `ptr noundef` but
         // not the pointer-target attribute set.
@@ -18304,7 +18343,10 @@ mod tests {
             .lines()
             .find(|l| l.contains("i32 @use_p("))
             .expect("@use_p must be emitted");
-        assert!(line.contains("i64"), "expected C-ABI-coerced i64 param: {line}");
+        assert!(
+            line.contains("i64"),
+            "expected C-ABI-coerced i64 param: {line}"
+        );
         assert!(
             !line.contains("noundef"),
             "coerced scalar param must not carry noundef: {line}"
@@ -18383,9 +18425,9 @@ mod tests {
         let ir = gen_src(
             "extern fn malloc(n: usize) -> *u8;\n\
              fn main() -> i32 {\n\
-               let buf: *u8 = unsafe { malloc(16 as usize) };\n\
-               let p: *i32 = unsafe { buf as *i32 };\n\
-               let s: i32[] = unsafe { #slice_from_raw_parts(p, 3 as usize) };\n\
+               let buf: *u8 = { malloc(16 as usize) };\n\
+               let p: *i32 = { buf as *i32 };\n\
+               let s: i32[] = { #slice_from_raw_parts(p, 3 as usize) };\n\
                let n: usize = #slice_len(s);\n\
                return n as i32;\n\
              }",
@@ -19080,7 +19122,7 @@ mod tests {
         // `#[repr(C)]` struct would hit the same path.
         let ir = gen_src(&format!(
             "{OWNED24}extern fn make_str() -> S24;\n\
-             fn main() -> i32 {{ let s: S24 = unsafe {{ make_str() }}; return 0; }}"
+             fn main() -> i32 {{ let s: S24 = {{ make_str() }}; return 0; }}"
         ));
         assert!(
             ir.contains("declare void @make_str(ptr sret"),
@@ -19102,7 +19144,7 @@ mod tests {
              extern fn take_s8(s: S8) -> i64;\n\
              fn main() -> i32 {\n\
                  let v: S8 = S8 { a: 1 as i64 };\n\
-                 let _r: i64 = unsafe { take_s8(v) };\n\
+                 let _r: i64 = { take_s8(v) };\n\
                  return 0;\n\
              }",
         );
@@ -19125,7 +19167,7 @@ mod tests {
              extern fn take_s16(s: S16) -> i64;\n\
              fn main() -> i32 {\n\
                  let v: S16 = S16 { a: 1 as i64, b: 2 as i64 };\n\
-                 let _r: i64 = unsafe { take_s16(v) };\n\
+                 let _r: i64 = { take_s16(v) };\n\
                  return 0;\n\
              }",
         );
@@ -19167,7 +19209,7 @@ mod tests {
              extern fn take_s24(s: S24) -> i64;\n\
              fn main() -> i32 {\n\
                  let v: S24 = S24 { a: 1 as i64, b: 2 as i64, c: 3 as i64 };\n\
-                 let _r: i64 = unsafe { take_s24(v) };\n\
+                 let _r: i64 = { take_s24(v) };\n\
                  return 0;\n\
              }",
         );
@@ -19384,7 +19426,7 @@ mod tests {
     const ATOMIC_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n";
 
     fn atomic_test_src(body: &str) -> String {
-        format!("{ATOMIC_PRELUDE}fn main() -> i32 {{ unsafe {{ {body} }} return 0; }}")
+        format!("{ATOMIC_PRELUDE}fn main() -> i32 {{ {{ {body} }} return 0; }}")
     }
 
     #[test]
@@ -19487,23 +19529,9 @@ mod tests {
             "expected release+monotonic, got:\n{ir}"
         );
     }
-
-    #[test]
-    fn atomic_load_outside_unsafe_is_rejected() {
-        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { let p: *i32 = unsafe { malloc(4 as usize) as *i32 }; let _v: i32 = #atomic_load_i32_seqcst(p); return 0; }";
-        let toks = crate::lexer::tokenize(src).expect("lex");
-        let prog = crate::parser::parse(toks).expect("parse");
-        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
-        assert!(
-            diags.iter().any(|d| d.code.0 == "E0801"),
-            "expected E0801 (unsafe required), got:\n{:?}",
-            diags
-        );
-    }
-
     #[test]
     fn atomic_load_wrong_ptr_type_is_rejected() {
-        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { unsafe { let p: *i32 = malloc(4 as usize) as *i32; let _v: i64 = #atomic_load_i64_seqcst(p); } return 0; }";
+        let src = "extern fn malloc(n: usize) -> *u8; fn main() -> i32 { { let p: *i32 = malloc(4 as usize) as *i32; let _v: i64 = #atomic_load_i64_seqcst(p); } return 0; }";
         let toks = crate::lexer::tokenize(src).expect("lex");
         let prog = crate::parser::parse(toks).expect("parse");
         let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
@@ -19523,7 +19551,7 @@ mod tests {
     fn thread_spawn_emits_pthread_create_and_trampoline() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ #thread_spawn::[i64](worker) }}; \
+             let h: JoinHandle[i64] = {{ #thread_spawn::[i64](worker) }}; \
              return 0; \
              }}"
         );
@@ -19550,8 +19578,8 @@ mod tests {
     fn thread_join_emits_pthread_join_load_free() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ #thread_spawn::[i64](worker) }}; \
-             let r: i64 = unsafe {{ #thread_join::[i64](h) }}; \
+             let h: JoinHandle[i64] = {{ #thread_spawn::[i64](worker) }}; \
+             let r: i64 = {{ #thread_join::[i64](h) }}; \
              return 0; \
              }}"
         );
@@ -19585,7 +19613,7 @@ mod tests {
         let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn flag() -> bool { return true; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[bool] = unsafe { #thread_spawn::[bool](flag) }; \
+                       let h: JoinHandle[bool] = { #thread_spawn::[bool](flag) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -19596,49 +19624,11 @@ mod tests {
             "bool trampoline must store the i1 result with align 1, got:\n{tramp}"
         );
     }
-
-    #[test]
-    fn thread_spawn_outside_unsafe_is_rejected() {
-        let src = format!(
-            "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = #thread_spawn::[i64](worker); \
-             return 0; \
-             }}"
-        );
-        let toks = crate::lexer::tokenize(&src).expect("lex");
-        let prog = crate::parser::parse(toks).expect("parse");
-        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), &src);
-        assert!(
-            diags.iter().any(|d| d.code.0 == "E0801"),
-            "expected E0801 (unsafe required), got:\n{:?}",
-            diags
-        );
-    }
-
-    #[test]
-    fn thread_join_outside_unsafe_is_rejected() {
-        let src = format!(
-            "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ #thread_spawn::[i64](worker) }}; \
-             let r: i64 = #thread_join::[i64](h); \
-             return 0; \
-             }}"
-        );
-        let toks = crate::lexer::tokenize(&src).expect("lex");
-        let prog = crate::parser::parse(toks).expect("parse");
-        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), &src);
-        assert!(
-            diags.iter().any(|d| d.code.0 == "E0801"),
-            "expected E0801 (unsafe required), got:\n{:?}",
-            diags
-        );
-    }
-
     #[test]
     fn thread_spawn_without_turbofish_is_rejected() {
         let src = format!(
             "{THREAD_PRELUDE}fn main() -> i32 {{ \
-             let h: JoinHandle[i64] = unsafe {{ #thread_spawn(worker) }}; \
+             let h: JoinHandle[i64] = {{ #thread_spawn(worker) }}; \
              return 0; \
              }}"
         );
@@ -19666,7 +19656,7 @@ mod tests {
         let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](21 as i32, double) }; \
+                       let h: JoinHandle[i32] = { #thread_spawn_with::[i32, i32](21 as i32, double) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -19698,7 +19688,7 @@ mod tests {
         let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](7 as i32, double) }; \
+                       let h: JoinHandle[i32] = { #thread_spawn_with::[i32, i32](7 as i32, double) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -19717,7 +19707,7 @@ mod tests {
         let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i64] = unsafe { #thread_spawn_with::[i64, i64](5 as i64, negate) }; \
+                       let h: JoinHandle[i64] = { #thread_spawn_with::[i64, i64](5 as i64, negate) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -19739,8 +19729,8 @@ mod tests {
                    fn d32(x: i32) -> i32 { return x; } \
                    fn d64(x: i64) -> i64 { return x; } \
                    fn main() -> i32 { \
-                       let h1: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32, i32](1 as i32, d32) }; \
-                       let h2: JoinHandle[i64] = unsafe { #thread_spawn_with::[i64, i64](2 as i64, d64) }; \
+                       let h1: JoinHandle[i32] = { #thread_spawn_with::[i32, i32](1 as i32, d32) }; \
+                       let h2: JoinHandle[i64] = { #thread_spawn_with::[i64, i64](2 as i64, d64) }; \
                        return 0; \
                    }";
         let ir = gen_src_mono(src);
@@ -19753,31 +19743,12 @@ mod tests {
             "expected second trampoline (distinct (I, O) pair), got:\n{ir}"
         );
     }
-
-    #[test]
-    fn thread_spawn_with_outside_unsafe_is_rejected() {
-        let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
-                   fn double(x: i32) -> i32 { return x +% x; } \
-                   fn main() -> i32 { \
-                       let h: JoinHandle[i32] = #thread_spawn_with::[i32, i32](21 as i32, double); \
-                       return 0; \
-                   }";
-        let toks = crate::lexer::tokenize(src).expect("lex");
-        let prog = crate::parser::parse(toks).expect("parse");
-        let diags = crate::sema::check(&prog, PathBuf::from("test.cplus"), src);
-        assert!(
-            diags.iter().any(|d| d.code.0 == "E0801"),
-            "expected E0801 (unsafe required), got:\n{:?}",
-            diags
-        );
-    }
-
     #[test]
     fn thread_spawn_with_wrong_type_arg_count_is_rejected() {
         let src = "struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
-                       let h: JoinHandle[i32] = unsafe { #thread_spawn_with::[i32](21 as i32, double) }; \
+                       let h: JoinHandle[i32] = { #thread_spawn_with::[i32](21 as i32, double) }; \
                        return 0; \
                    }";
         let toks = crate::lexer::tokenize(src).expect("lex");
@@ -20018,7 +19989,11 @@ mod tests {
                 "V3",
             );
             match classify_c_abi_for(&ty, &types, &ESP32_XTENSA) {
-                CAbiClass::Coerce { llvm_ty, size, align } => {
+                CAbiClass::Coerce {
+                    llvm_ty,
+                    size,
+                    align,
+                } => {
                     assert_eq!(llvm_ty, "[3 x i32]");
                     assert_eq!(size, 12);
                     assert_eq!(align, 4);
@@ -20725,11 +20700,11 @@ mod tests {
              fn main() -> i32 { \
                 let cond: bool = true; \
                 let p: *u8 = if cond { \
-                    unsafe { malloc(8 as usize) } \
+                    { malloc(8 as usize) } \
                 } else { \
-                    unsafe { 0 as *u8 } \
+                    { 0 as *u8 } \
                 }; \
-                let _addr: usize = unsafe { p as usize }; \
+                let _addr: usize = { p as usize }; \
                 return 0; \
              }",
         );
@@ -20860,7 +20835,7 @@ mod tests {
     #[test]
     fn intrinsic_msg_send_typed_return() {
         let src = "fn main() -> i32 {\n\
-                     unsafe {\n\
+                     {\n\
                          let obj: *u8 = 0 as *u8;\n\
                          let n: u64 = #msg_send(obj, \"length\") -> u64;\n\
                      }\n\
@@ -20883,7 +20858,7 @@ mod tests {
     #[test]
     fn intrinsic_msg_send_void_return() {
         let src = "fn main() -> i32 {\n\
-                     unsafe {\n\
+                     {\n\
                          let obj: *u8 = 0 as *u8;\n\
                          #msg_send(obj, \"release\");\n\
                      }\n\
@@ -20900,7 +20875,7 @@ mod tests {
     #[test]
     fn intrinsic_msg_send_forwards_extra_args() {
         let src = "fn main() -> i32 {\n\
-                     unsafe {\n\
+                     {\n\
                          let obj: *u8 = 0 as *u8;\n\
                          let s: *u8 = #str_ptr(\"x\");\n\
                          let r: *u8 = #msg_send(obj, \"stringWithUTF8String:\", s) -> *u8;\n\

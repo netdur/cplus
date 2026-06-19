@@ -51,16 +51,16 @@ fn loop_body_locals_drop_each_iteration() {
         &src,
         "static FREES: i32 = 0;\n\
          struct B { opaque data: *u8 }\n\
-         impl B { fn drop(ref this) { unsafe { FREES = FREES + 1; } return; } }\n\
+         impl B { fn drop(ref this) { { FREES = FREES + 1; } return; } }\n\
          fn work() {\n\
              var i: i32 = 0;\n\
-             while i < 3 { let b: B = B { data: unsafe { 0 as *u8 } }; i = i + 1; }\n\
-             for j in 0..2 { let c: B = B { data: unsafe { 0 as *u8 } }; }\n\
+             while i < 3 { let b: B = B { data: { 0 as *u8 } }; i = i + 1; }\n\
+             for j in 0..2 { let c: B = B { data: { 0 as *u8 } }; }\n\
              var k: i32 = 0;\n\
-             loop { let d: B = B { data: unsafe { 0 as *u8 } }; if k == 1 { break; } k = k + 1; }\n\
+             loop { let d: B = B { data: { 0 as *u8 } }; if k == 1 { break; } k = k + 1; }\n\
              return;\n\
          }\n\
-         fn main() -> i32 { work(); return unsafe { FREES }; }\n",
+         fn main() -> i32 { work(); return { FREES }; }\n",
     )
     .unwrap();
     let bin = dir.join("loopdrop");
@@ -94,7 +94,7 @@ fn static_narrowing_literal_cast_runs() {
         &src,
         "static X: i8 = 5 as i8;\n\
          static Y: i16 = -3 as i16;\n\
-         fn main() -> i32 { let d: i32 = unsafe { (X as i32) - (Y as i32) }; return d; }\n",
+         fn main() -> i32 { let d: i32 = { (X as i32) - (Y as i32) }; return d; }\n",
     )
     .unwrap();
     let bin = dir.join("statcast");
@@ -104,7 +104,10 @@ fn static_narrowing_literal_cast_runs() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(status.success(), "static narrowing-cast program must compile");
+    assert!(
+        status.success(),
+        "static narrowing-cast program must compile"
+    );
     let run = Command::new(&bin).status().expect("run statcast");
     // 5 - (-3) = 8.
     assert_eq!(run.code(), Some(8), "got {:?}", run.code());
@@ -130,11 +133,11 @@ fn match_consumes_owned_scrutinee_exactly_once() {
         &src,
         "static DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(ref this) { { DROPS = DROPS + 1; } return; } }\n\
          enum E { A(R), B }\n\
          enum P { Pair(R, R), None }\n\
-         fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
-         fn mkp() -> P { return P::Pair(R { data: unsafe { 0 as *u8 } }, R { data: unsafe { 0 as *u8 } }); }\n\
+         fn mke() -> E { return E::A(R { data: { 0 as *u8 } }); }\n\
+         fn mkp() -> P { return P::Pair(R { data: { 0 as *u8 } }, R { data: { 0 as *u8 } }); }\n\
          fn consume(take r: R) -> i32 { return 0; }\n\
          struct H { e: E }\n\
          impl H { fn drop(ref this) { return; } }\n\
@@ -148,15 +151,15 @@ fn match_consumes_owned_scrutinee_exactly_once() {
          fn p_pair_mixed() { let p: P = mkp(); let _n: i32 = match p { P::Pair(r, _) => 7, P::None => 0 }; return; }\n\
          fn p_pair_moved() { let p: P = mkp(); let _n: i32 = match p { P::Pair(r, _) => consume(r), P::None => 0 }; return; }\n\
          fn main() -> i32 {\n\
-             p_bind();      if unsafe { DROPS } != 1 { return 1; } unsafe { DROPS = 0; }\n\
-             p_wild();      if unsafe { DROPS } != 1 { return 2; } unsafe { DROPS = 0; }\n\
-             p_temp_var();  if unsafe { DROPS } != 1 { return 3; } unsafe { DROPS = 0; }\n\
-             p_temp_moved();if unsafe { DROPS } != 1 { return 4; } unsafe { DROPS = 0; }\n\
-             p_field();     if unsafe { DROPS } != 1 { return 5; } unsafe { DROPS = 0; }\n\
-             p_wc_payload();if unsafe { DROPS } != 1 { return 6; } unsafe { DROPS = 0; }\n\
-             p_wc_temp();   if unsafe { DROPS } != 1 { return 7; } unsafe { DROPS = 0; }\n\
-             p_pair_mixed();if unsafe { DROPS } != 2 { return 8; } unsafe { DROPS = 0; }\n\
-             p_pair_moved();if unsafe { DROPS } != 2 { return 9; } unsafe { DROPS = 0; }\n\
+             p_bind();      if { DROPS } != 1 { return 1; } { DROPS = 0; }\n\
+             p_wild();      if { DROPS } != 1 { return 2; } { DROPS = 0; }\n\
+             p_temp_var();  if { DROPS } != 1 { return 3; } { DROPS = 0; }\n\
+             p_temp_moved();if { DROPS } != 1 { return 4; } { DROPS = 0; }\n\
+             p_field();     if { DROPS } != 1 { return 5; } { DROPS = 0; }\n\
+             p_wc_payload();if { DROPS } != 1 { return 6; } { DROPS = 0; }\n\
+             p_wc_temp();   if { DROPS } != 1 { return 7; } { DROPS = 0; }\n\
+             p_pair_mixed();if { DROPS } != 2 { return 8; } { DROPS = 0; }\n\
+             p_pair_moved();if { DROPS } != 2 { return 9; } { DROPS = 0; }\n\
              return 0;\n\
          }\n",
     )
@@ -168,10 +171,16 @@ fn match_consumes_owned_scrutinee_exactly_once() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
         let run = Command::new(&bin).output().expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged match scrutinee teardown ({sanitizer}): {stderr}");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged match scrutinee teardown ({sanitizer}): {stderr}"
+        );
         assert_eq!(
             run.status.code(),
             Some(0),
@@ -197,35 +206,35 @@ fn match_model_allowed_reads_runtime_safe() {
         &src,
         "static DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
+         impl R { fn drop(ref this) { { DROPS = DROPS + 1; } return; } }\n\
          enum Opt { Some(usize), None }\n\
          struct NodeView { id: R, parent: Opt }\n\
          struct PodS { a: usize }\n\
          enum Pod { X(PodS), Y }\n\
          enum E { A(R), B }\n\
-         fn mke() -> E { return E::A(R { data: unsafe { 0 as *u8 } }); }\n\
+         fn mke() -> E { return E::A(R { data: { 0 as *u8 } }); }\n\
          // Copy field of a Drop struct via raw deref → reads the Copy value, the\n\
          // struct still drops its R exactly once.\n\
          fn copy_field_via_deref() {\n\
-             let nv: NodeView = NodeView { id: R { data: unsafe { 0 as *u8 } }, parent: Opt::Some(7 as usize) };\n\
-             let p: *NodeView = unsafe { #addr_of(nv) };\n\
-             let _parent: usize = match unsafe { (*p).parent } { Opt::Some(x) => x, Opt::None => 0 as usize };\n\
+             let nv: NodeView = NodeView { id: R { data: { 0 as *u8 } }, parent: Opt::Some(7 as usize) };\n\
+             let p: *NodeView = { #addr_of(nv) };\n\
+             let _parent: usize = match { (*p).parent } { Opt::Some(x) => x, Opt::None => 0 as usize };\n\
              return;\n\
          }\n\
          // Drop-free POD copied out of *p → harmless bit-copy, no destructor.\n\
          fn pod_via_deref() -> i32 {\n\
              let pd: Pod = Pod::X(PodS { a: 9 as usize });\n\
-             let pp: *Pod = unsafe { #addr_of(pd) };\n\
-             let out: Pod = match unsafe { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y };\n\
+             let pp: *Pod = { #addr_of(pd) };\n\
+             let out: Pod = match { *pp } { Pod::X(s) => Pod::X(s), Pod::Y => Pod::Y };\n\
              let v: usize = match out { Pod::X(s) => s.a, Pod::Y => 0 as usize };\n\
              return v as i32;\n\
          }\n\
          // Correct owned-match move-out: drops the R exactly once.\n\
-         fn owned_move_once() { let e: E = mke(); let _r: R = match e { E::A(x) => x, E::B => R { data: unsafe { 0 as *u8 } } }; return; }\n\
+         fn owned_move_once() { let e: E = mke(); let _r: R = match e { E::A(x) => x, E::B => R { data: { 0 as *u8 } } }; return; }\n\
          fn main() -> i32 {\n\
-             copy_field_via_deref(); if unsafe { DROPS } != 1 { return 1; } unsafe { DROPS = 0; }\n\
+             copy_field_via_deref(); if { DROPS } != 1 { return 1; } { DROPS = 0; }\n\
              if pod_via_deref() != 9 { return 2; }\n\
-             owned_move_once();      if unsafe { DROPS } != 1 { return 3; } unsafe { DROPS = 0; }\n\
+             owned_move_once();      if { DROPS } != 1 { return 3; } { DROPS = 0; }\n\
              return 0;\n\
          }\n",
     )
@@ -237,10 +246,16 @@ fn match_model_allowed_reads_runtime_safe() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
         let run = Command::new(&bin).output().expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged an allowed model read ({sanitizer}): {stderr}");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged an allowed model read ({sanitizer}): {stderr}"
+        );
         assert_eq!(
             run.status.code(),
             Some(0),
@@ -298,18 +313,18 @@ fn cplus_intrinsic_sigil_forms_run() {
         &src,
         "static DROPPED: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { DROPPED = DROPPED + 1; } return; } }\n\
+         impl R { fn drop(ref this) { { DROPPED = DROPPED + 1; } return; } }\n\
          fn main() -> i32 {\n\
              var x: i32 = 41;\n\
-             let p: *i32 = unsafe { #addr_of(x) };\n\
-             unsafe { #atomic_store_i32_seqcst(p, 7); }\n\
-             let v: i32 = unsafe { #atomic_load_i32_seqcst(p) };\n\
-             let old: i32 = unsafe { #atomic_fetch_add_i32_seqcst(p, 35) };\n\
-             unsafe { #atomic_fence_seqcst(); }\n\
-             var r: R = R { data: unsafe { 0 as *u8 } };\n\
-             let rp: *R = unsafe { #addr_of(r) };\n\
-             unsafe { #drop_in_place::[R](rp); }\n\
-             return v + old + unsafe { DROPPED };\n\
+             let p: *i32 = { #addr_of(x) };\n\
+             { #atomic_store_i32_seqcst(p, 7); }\n\
+             let v: i32 = { #atomic_load_i32_seqcst(p) };\n\
+             let old: i32 = { #atomic_fetch_add_i32_seqcst(p, 35) };\n\
+             { #atomic_fence_seqcst(); }\n\
+             var r: R = R { data: { 0 as *u8 } };\n\
+             let rp: *R = { #addr_of(r) };\n\
+             { #drop_in_place::[R](rp); }\n\
+             return v + old + { DROPPED };\n\
          }\n",
     )
     .unwrap();
@@ -337,9 +352,9 @@ fn addr_intrinsic_matches_ptr_to_usize_cast() {
         &src,
         "fn main() -> i32 {\n\
             var x: i32 = 41;\n\
-            let p: *i32 = unsafe { #addr_of(x) };\n\
-            let via_intrinsic: usize = unsafe { #addr(p) };\n\
-            let via_cast: usize = unsafe { p as usize };\n\
+            let p: *i32 = { #addr_of(x) };\n\
+            let via_intrinsic: usize = { #addr(p) };\n\
+            let via_cast: usize = { p as usize };\n\
             if via_intrinsic == via_cast { return 0; }\n\
             return 1;\n\
         }\n",
@@ -393,7 +408,10 @@ fn inferred_struct_literal_runs() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(status.success(), "inferred-struct-literal program must compile");
+    assert!(
+        status.success(),
+        "inferred-struct-literal program must compile"
+    );
     let run = Command::new(&bin).status().expect("run inf");
     // 7+3 (o) + 101 (s) + 3+4 (m) = 118.
     assert_eq!(run.code(), Some(118), "got {:?}", run.code());
@@ -425,7 +443,10 @@ fn inferred_struct_literal_generic_runs() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(status.success(), "generic inferred-literal program must compile");
+    assert!(
+        status.success(),
+        "generic inferred-literal program must compile"
+    );
     let run = Command::new(&bin).status().expect("run infgen");
     assert_eq!(run.code(), Some(42), "got {:?}", run.code());
 }
@@ -460,7 +481,10 @@ fn inferred_struct_literal_move_into_field_no_double_free() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(status.success(), "move-into-inferred-field program must compile");
+    assert!(
+        status.success(),
+        "move-into-inferred-field program must compile"
+    );
     let run = Command::new(&bin).status().expect("run infmove");
     assert_eq!(run.code(), Some(5), "got {:?}", run.code());
 }
@@ -528,8 +552,16 @@ fn ref_param_writes_back_to_var_caller() {
     )
     .unwrap();
     let bin = dir.join("rb");
-    let status = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(status.success(), "ref-param write-back program must compile");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        status.success(),
+        "ref-param write-back program must compile"
+    );
     let run = Command::new(&bin).status().expect("run rb");
     // add_one mutated c through the `ref` param: 41 -> 42.
     assert_eq!(run.code(), Some(42), "got {:?}", run.code());
@@ -553,7 +585,9 @@ fn monomorphize_turbofish_same_offset_no_collision() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
     let mod_a = "import \"stdlib/vec\" as vec;\n\
@@ -583,7 +617,10 @@ fn monomorphize_turbofish_same_offset_no_collision() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc build");
-    assert!(status.success(), "same-offset turbofish build failed: {status}");
+    assert!(
+        status.success(),
+        "same-offset turbofish build failed: {status}"
+    );
     let run = Command::new(dir.join("target/debug/mono_span"))
         .status()
         .expect("run mono_span");
@@ -637,7 +674,10 @@ fn monomorphize_inferred_same_offset_no_collision() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc build");
-    assert!(status.success(), "same-offset inferred build failed: {status}");
+    assert!(
+        status.success(),
+        "same-offset inferred build failed: {status}"
+    );
     let run = Command::new(dir.join("target/debug/infer_span"))
         .status()
         .expect("run infer_span");
@@ -709,16 +749,39 @@ fn retired_keywords_rejected_with_hints() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let cases: &[(&str, &str, &str)] = &[
-        ("lm.cplus", "fn main() -> i32 { let mut x: i32 = 0; return x; }", "var"),
-        ("mp.cplus", "fn f(mut x: i32) -> i32 { return x; }\nfn main() -> i32 { return f(1); }", "ref"),
-        ("mv.cplus", "fn f(move x: i32) -> i32 { return x; }\nfn main() -> i32 { return f(1); }", "take"),
-        ("vn.cplus", "fn main() -> i32 { let var: i32 = 0; return 0; }", "reserved"),
+        (
+            "lm.cplus",
+            "fn main() -> i32 { let mut x: i32 = 0; return x; }",
+            "var",
+        ),
+        (
+            "mp.cplus",
+            "fn f(mut x: i32) -> i32 { return x; }\nfn main() -> i32 { return f(1); }",
+            "ref",
+        ),
+        (
+            "mv.cplus",
+            "fn f(move x: i32) -> i32 { return x; }\nfn main() -> i32 { return f(1); }",
+            "take",
+        ),
+        (
+            "vn.cplus",
+            "fn main() -> i32 { let var: i32 = 0; return 0; }",
+            "reserved",
+        ),
     ];
     for (name, src, hint) in cases {
         let p = dir.join(name);
         std::fs::write(&p, src).unwrap();
-        let out = Command::new(cpc).arg("check").arg(&p).output().expect("invoke cpc");
-        assert!(!out.status.success(), "{name}: expected rejection, compiled clean");
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&p)
+            .output()
+            .expect("invoke cpc");
+        assert!(
+            !out.status.success(),
+            "{name}: expected rejection, compiled clean"
+        );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             stderr.contains(hint),
@@ -931,15 +994,15 @@ fn zero_initialized_static_aggregate_cross_lang_g033() {
          extern fn c_set_struct(a: i32, b: i64);\n\
          fn main() -> i32 {\n\
              // initial: cpc-owned, both zero\n\
-             let v0: i32 = unsafe { MUT_I32_TABLE[5] };\n\
+             let v0: i32 = { MUT_I32_TABLE[5] };\n\
              if v0 != (0 as i32) { return 1; }\n\
-             if unsafe { MUT_STRUCT.a } != (0 as i32) { return 2; }\n\
+             if { MUT_STRUCT.a } != (0 as i32) { return 2; }\n\
              // C writes through extern decl, cpc reads same storage\n\
-             unsafe { c_set_table(5 as i32, 42 as i32); }\n\
-             unsafe { c_set_struct(7 as i32, 99 as i64); }\n\
-             if unsafe { MUT_I32_TABLE[5] } != (42 as i32) { return 3; }\n\
-             if unsafe { MUT_STRUCT.a } != (7 as i32) { return 4; }\n\
-             if unsafe { MUT_STRUCT.b } != (99 as i64) { return 5; }\n\
+             { c_set_table(5 as i32, 42 as i32); }\n\
+             { c_set_struct(7 as i32, 99 as i64); }\n\
+             if { MUT_I32_TABLE[5] } != (42 as i32) { return 3; }\n\
+             if { MUT_STRUCT.a } != (7 as i32) { return 4; }\n\
+             if { MUT_STRUCT.b } != (99 as i64) { return 5; }\n\
              return 0;\n\
          }",
     )
@@ -1029,7 +1092,10 @@ fn atomic_thread_fence_runtime_g030() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc build");
-    assert!(status.success(), "atomic_thread_fence must compile under cpc build");
+    assert!(
+        status.success(),
+        "atomic_thread_fence must compile under cpc build"
+    );
     let run = Command::new(dir.join("target/debug/f"))
         .output()
         .expect("run");
@@ -1095,7 +1161,7 @@ fn inline_asm_tier1_runtime() {
     std::fs::write(
         &src,
         "fn main() -> i32 {\n\
-             unsafe { #asm(\"nop\"); }\n\
+             { #asm(\"nop\"); }\n\
              return 0;\n\
          }",
     )
@@ -1135,12 +1201,12 @@ fn inline_asm_tier2_operands_run_aarch64() {
         &src,
         "fn add(a: i64, b: i64) -> i64 {\n\
              var s: i64 = 0;\n\
-             unsafe { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
+             { #asm(\"add {s}, {a}, {b}\", s = out(reg) s, a = in(reg) a, b = in(reg) b); }\n\
              return s;\n\
          }\n\
          fn inc(x: i64) -> i64 {\n\
              var v: i64 = x;\n\
-             unsafe { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
+             { #asm(\"add {v}, {v}, #1\", v = inout(reg) v); }\n\
              return v;\n\
          }\n\
          fn main() -> i32 {\n\
@@ -1177,7 +1243,7 @@ fn inline_asm_tier3_naked_fn_runs_aarch64() {
         &src,
         "#[naked]\n\
          fn raw_add(a: i64, b: i64) -> i64 {\n\
-             unsafe { #asm(\"add x0, x0, x1\\nret\"); }\n\
+             { #asm(\"add x0, x0, x1\\nret\"); }\n\
          }\n\
          fn main() -> i32 {\n\
              let r: i64 = raw_add(40 as i64, 2 as i64);\n\
@@ -1208,30 +1274,6 @@ fn inline_asm_tier3_naked_fn_runs_aarch64() {
         ir.contains("@raw_add") && ir.contains("naked noinline"),
         "expected naked attribute on raw_add, got:\n{ir}"
     );
-}
-
-#[test]
-fn inline_asm_outside_unsafe_rejected_e0801() {
-    // Negative: `#asm` is unsafe; using it outside an `unsafe` block fails.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("asm_unsafe.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 {\n\
-             #asm(\"nop\");\n\
-             return 0;\n\
-         }",
-    )
-    .unwrap();
-    let out = Command::new(cpc)
-        .arg("--emit-ll")
-        .arg(&src)
-        .output()
-        .expect("invoke cpc");
-    assert!(!out.status.success(), "#asm outside unsafe must be rejected");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0801"), "expected E0801, got:\n{stderr}");
 }
 
 // GAP 3 (v0.0.19): a lower-pass error (E0X30 bad static initializer) in an
@@ -1453,12 +1495,12 @@ fn zero_intrinsic_and_write_zeroed_runtime_g028() {
              c.size = 64 as usize;\n\
              if c.size != (64 as usize) { return 3; }\n\
              // *T.write_zeroed() — heap pointer, T-many bytes zeroed.\n\
-             let p: *Chunk = unsafe { malloc(#size_of::[Chunk]()) as *Chunk };\n\
-             unsafe { p.write_zeroed(); }\n\
-             let d: Chunk = unsafe { *p };\n\
+             let p: *Chunk = { malloc(#size_of::[Chunk]()) as *Chunk };\n\
+             { p.write_zeroed(); }\n\
+             let d: Chunk = { *p };\n\
              if d.offset != (0 as usize) { return 4; }\n\
              if d.size   != (0 as usize) { return 5; }\n\
-             unsafe { free(p as *u8); }\n\
+             { free(p as *u8); }\n\
              return 0;\n\
          }",
     )
@@ -1472,7 +1514,11 @@ fn zero_intrinsic_and_write_zeroed_runtime_g028() {
         .expect("invoke cpc");
     assert!(status.success(), "#zero / write_zeroed must compile");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "expected exit 0, got {:?}", run.status);
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?}",
+        run.status
+    );
 }
 
 #[test]
@@ -1503,20 +1549,22 @@ fn extern_struct_return_sret_cross_language_g027() {
              Big24 r = { x + 1, x + 2, x + 3 };\n\
              return r;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     std::fs::write(
         &cplus_src,
         "#[repr(C)]\n\
          struct Big24 { a: i64, b: i64, c: i64 }\n\
          extern fn make_big(x: i64) -> Big24;\n\
          fn main() -> i32 {\n\
-             let r: Big24 = unsafe { make_big(10 as i64) };\n\
+             let r: Big24 = { make_big(10 as i64) };\n\
              if r.a != (11 as i64) { return 1; }\n\
              if r.b != (12 as i64) { return 2; }\n\
              if r.c != (13 as i64) { return 3; }\n\
              return 0;\n\
          }\n",
-    ).unwrap();
+    )
+    .unwrap();
     let clang_c = Command::new("clang")
         .args(["-c", "-o"])
         .arg(&c_obj)
@@ -1593,13 +1641,13 @@ fn extern_struct_param_abi_cross_language_g034() {
          extern fn take_s24(s: S24) -> i64;\n\
          fn main() -> i32 {\n\
              let v8: S8 = S8 { a: 1 as i64 };\n\
-             let r8: i64 = unsafe { take_s8(v8) };\n\
+             let r8: i64 = { take_s8(v8) };\n\
              if r8 != (1 as i64) { return 1; }\n\
              let v16: S16 = S16 { a: 1 as i64, b: 2 as i64 };\n\
-             let r16: i64 = unsafe { take_s16(v16) };\n\
+             let r16: i64 = { take_s16(v16) };\n\
              if r16 != (12 as i64) { return 2; }\n\
-             let v24: S24 = S24 { a: 1 as usize, b: unsafe { 0 as *u8 }, c: true };\n\
-             let r24: i64 = unsafe { take_s24(v24) };\n\
+             let v24: S24 = S24 { a: 1 as usize, b: { 0 as *u8 }, c: true };\n\
+             let r24: i64 = { take_s24(v24) };\n\
              if r24 != (1001 as i64) { return 3; }\n\
              return 0;\n\
          }\n",
@@ -1724,12 +1772,12 @@ fn is_null_methods_runtime_g024() {
         "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
-             let p: *u8 = unsafe { malloc(64 as usize) };\n\
+             let p: *u8 = { malloc(64 as usize) };\n\
              if p.is_null() { return 1; }\n\
-             let nilp: *u8 = unsafe { 0 as *u8 };\n\
+             let nilp: *u8 = { 0 as *u8 };\n\
              if nilp.is_not_null() { return 2; }\n\
              if !nilp.is_null() { return 3; }\n\
-             unsafe { free(p); }\n\
+             { free(p); }\n\
              return 0;\n\
          }",
     )
@@ -1743,7 +1791,11 @@ fn is_null_methods_runtime_g024() {
         .expect("invoke cpc");
     assert!(status.success(), "is_null methods must compile");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "is_null program returned non-zero: {:?}", run.status);
+    assert!(
+        run.status.success(),
+        "is_null program returned non-zero: {:?}",
+        run.status
+    );
 }
 
 #[test]
@@ -1759,14 +1811,14 @@ fn addr_of_field_through_pointer_runtime_g025() {
         &src,
         "struct HashSet { count: i32, capacity: i32 }\n\
          struct Galloc  { id: i32, hash_set: HashSet, extra: i64 }\n\
-         fn use_hs(hs: *HashSet) -> i32 { return unsafe { (*hs).count }; }\n\
+         fn use_hs(hs: *HashSet) -> i32 { return { (*hs).count }; }\n\
          fn main() -> i32 {\n\
              let g: Galloc = Galloc { id: 7, hash_set: HashSet { count: 99, capacity: 256 }, extra: 1000 as i64 };\n\
-             let gp: *Galloc = unsafe { #addr_of(g) };\n\
-             let hsp: *HashSet = unsafe { #addr_of((*gp).hash_set) };\n\
+             let gp: *Galloc = { #addr_of(g) };\n\
+             let hsp: *HashSet = { #addr_of((*gp).hash_set) };\n\
              let a: [i32; 4] = [10, 20, 30, 40];\n\
-             let aip: *i32 = unsafe { #addr_of(a[2]) };\n\
-             let third: i32 = unsafe { *aip };\n\
+             let aip: *i32 = { #addr_of(a[2]) };\n\
+             let third: i32 = { *aip };\n\
              return (use_hs(hsp) - 99) + (third - 30);\n\
          }",
     )
@@ -1780,7 +1832,11 @@ fn addr_of_field_through_pointer_runtime_g025() {
         .expect("invoke cpc");
     assert!(status.success(), "#addr_of place-expression must compile");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "expected exit 0, got {:?}", run.status);
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?}",
+        run.status
+    );
 }
 
 #[test]
@@ -1821,7 +1877,10 @@ fn neg_lit_with_lhs_type_runtime_g023() {
         .expect("invoke cpc");
     assert!(status.success(), "neg-literal G-023 must compile");
     let run = Command::new(&bin).output().expect("run");
-    assert!(run.status.success(), "neg-literal program returned non-zero");
+    assert!(
+        run.status.success(),
+        "neg-literal program returned non-zero"
+    );
 }
 
 #[test]
@@ -1948,7 +2007,7 @@ fn generic_body_use_after_move_rejected_e0335() {
          interface Sink { fn sink(this, take r: R); }\n\
          impl P: Sink { fn sink(this, take r: R) { return; } }\n\
          fn use_twice[T: Sink](t: T) -> i32 {\n\
-           let r: R = R { data: unsafe { 0 as *u8 } };\n\
+           let r: R = R { data: { 0 as *u8 } };\n\
            t.sink(r);\n\
            let y: R = r;\n\
            return 0;\n\
@@ -1971,7 +2030,7 @@ fn generic_body_move_out_of_borrow_rejected_e0337() {
          fn steal[T: Sink](t: T, r: R) { t.sink(r); return; }\n\
          fn main() -> i32 {\n\
            let p: P = P {};\n\
-           let r: R = R { data: unsafe { 0 as *u8 } };\n\
+           let r: R = R { data: { 0 as *u8 } };\n\
            steal::[P](p, r);\n\
            return 0;\n\
          }\n",
@@ -2037,7 +2096,7 @@ fn generic_move_self_through_bound_on_borrow_rejected_e0337() {
          impl R: Take { fn take(take this) -> i32 { return 0; } }\n\
          fn steal[T: Take](t: T) -> i32 { return t.take(); }\n\
          fn main() -> i32 {\n\
-           let r: R = R { data: unsafe { 0 as *u8 } };\n\
+           let r: R = R { data: { 0 as *u8 } };\n\
            return steal::[R](r);\n\
          }\n",
         "E0337",
@@ -2076,10 +2135,10 @@ fn fn_pointer_to_c_struct_by_value_c_abi() {
          fn main() -> i32 {\n\
              let f1: fn(Big) -> i64 = c_sum;\n\
              let b: Big = Big { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 };\n\
-             if unsafe { f1(b) } != (10 as i64) { return 1; }\n\
+             if { f1(b) } != (10 as i64) { return 1; }\n\
              let f2: fn(Pf) -> f64 = c_f;\n\
              let p: Pf = Pf { x: 3.0, y: 4.0 };\n\
-             if unsafe { f2(p) } != 3004.0 { return 2; }\n\
+             if { f2(p) } != 3004.0 { return 2; }\n\
              return 0;\n\
          }\n",
     )
@@ -2158,15 +2217,15 @@ fn fn_pointer_to_c_struct_return_c_abi() {
          extern fn c_pf() -> Pf;\n\
          fn main() -> i32 {\n\
              let f1: fn() -> Big = c_make;\n\
-             let b: Big = unsafe { f1() };\n\
+             let b: Big = { f1() };\n\
              if b.a != (10 as i64) { return 1; }\n\
              if b.d != (40 as i64) { return 2; }\n\
              let f2: fn() -> P16 = c_p16;\n\
-             let p: P16 = unsafe { f2() };\n\
+             let p: P16 = { f2() };\n\
              if p.a != (7 as i64) { return 3; }\n\
              if p.b != (9 as i64) { return 4; }\n\
              let f3: fn() -> Pf = c_pf;\n\
-             let q: Pf = unsafe { f3() };\n\
+             let q: Pf = { f3() };\n\
              if q.x != 2.0 { return 5; }\n\
              if q.y != 8.0 { return 6; }\n\
              return 0;\n\
@@ -2174,15 +2233,35 @@ fn fn_pointer_to_c_struct_return_c_abi() {
     )
     .unwrap();
     assert!(
-        Command::new("clang").args(["-c", "-o"]).arg(&c_obj).arg(&c_src).status().expect("clang").success(),
+        Command::new("clang")
+            .args(["-c", "-o"])
+            .arg(&c_obj)
+            .arg(&c_src)
+            .status()
+            .expect("clang")
+            .success(),
         "clang -c failed"
     );
     assert!(
-        Command::new(cpc).arg("--emit-obj").arg(&cplus_src).arg("-o").arg(&cplus_obj).status().expect("cpc").success(),
+        Command::new(cpc)
+            .arg("--emit-obj")
+            .arg(&cplus_src)
+            .arg("-o")
+            .arg(&cplus_obj)
+            .status()
+            .expect("cpc")
+            .success(),
         "cpc --emit-obj failed"
     );
     assert!(
-        Command::new("clang").arg(&cplus_obj).arg(&c_obj).arg("-o").arg(&bin).status().expect("link").success(),
+        Command::new("clang")
+            .arg(&cplus_obj)
+            .arg(&c_obj)
+            .arg("-o")
+            .arg(&bin)
+            .status()
+            .expect("link")
+            .success(),
         "link failed"
     );
     let run = Command::new(&bin).status().expect("run");
@@ -2218,11 +2297,11 @@ fn fn_pointer_call_moves_arg_no_double_free() {
             format!(
                 "static DROPS: i32 = 0;\n\
                  struct R {{ tag: i32 }}\n\
-                 impl R {{ fn drop(ref this) {{ unsafe {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
+                 impl R {{ fn drop(ref this) {{ {{ DROPS = DROPS + this.tag; }}; return; }} }}\n\
                  fn sink(take r: R) -> i32 {{ return 1; }}\n\
                  struct Handler {{ cb: fn(take R) -> i32 }}\n\
                  fn run() -> i32 {{ {run_body} }}\n\
-                 fn main() -> i32 {{ let n: i32 = run(); return unsafe {{ DROPS + n }}; }}\n"
+                 fn main() -> i32 {{ let n: i32 = run(); return {{ DROPS + n }}; }}\n"
             ),
         )
         .unwrap();
@@ -2269,19 +2348,17 @@ fn generic_body_copy_bound_reuse_compiles_and_runs() {
 }
 
 #[test]
-fn unsafe_fn_pointer_inside_unsafe_runs() {
-    // Soundness regression: taking a fn-pointer to an `unsafe fn` requires
-    // `unsafe` (a safe `fn(...)` pointer can't carry the unsafe-ness, so it
-    // would launder it). Inside an `unsafe` block the coercion is allowed and
-    // the call through the pointer runs: `f(6)` → danger(6) → 7.
+fn fn_pointer_to_plain_fn_runs() {
+    // After dropping `unsafe fn`, function pointers carry ordinary function
+    // types and the indirect call runs: `f(6)` -> danger(6) -> 7.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    let src = dir.join("unsafe_fnptr.cplus");
+    let src = dir.join("fnptr.cplus");
     std::fs::write(
         &src,
-        "unsafe fn danger(x: i32) -> i32 { return x + 1; }\n\
+        "fn danger(x: i32) -> i32 { return x + 1; }\n\
          fn main() -> i32 {\n\
-             let r: i32 = unsafe {\n\
+             let r: i32 = {\n\
                  let f: fn(i32) -> i32 = danger;\n\
                  f(6)\n\
              };\n\
@@ -2289,15 +2366,20 @@ fn unsafe_fn_pointer_inside_unsafe_runs() {
          }\n",
     )
     .unwrap();
-    let bin = dir.join("unsafe_fnptr");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let bin = dir.join("fnptr");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
-        "unsafe-fn pointer taken inside unsafe block should build: stderr={}",
+        "function pointer to plain fn should build: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
     let run = Command::new(&bin).status().expect("run binary");
-    assert_eq!(run.code(), Some(7), "f(6) → danger(6) → 7");
+    assert_eq!(run.code(), Some(7), "f(6) -> danger(6) -> 7");
 }
 
 #[test]
@@ -2966,8 +3048,8 @@ fn manifest_libs_links_libobjc() {
         "extern fn objc_getClass(name: *u8) -> *u8;\n\
          fn main() -> i32 {\n\
            let cstr: str = \"NSObject\";\n\
-           let p: *u8 = unsafe { #str_ptr(cstr) };\n\
-           let cls: *u8 = unsafe { objc_getClass(p) };\n\
+           let p: *u8 = { #str_ptr(cstr) };\n\
+           let cls: *u8 = { objc_getClass(p) };\n\
            return 0;\n\
          }\n",
     )
@@ -4391,10 +4473,7 @@ fn main() -> i32 {
         "returning `self` by value from a Drop type must be rejected"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0337"),
-        "expected E0337, got: {stderr}"
-    );
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
 }
 
 #[test]
@@ -4648,8 +4727,8 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
-    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(ref this) { unsafe { free(this.ptr); } return; }
+    fn make() -> Owned { return Owned { ptr: { malloc(16 as usize) } }; }
+    fn drop(ref this) { { free(this.ptr); } return; }
 }
 fn forward(take x: Owned) -> Owned { return x; }
 fn main() -> i32 {
@@ -4696,12 +4775,12 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
-    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(ref this) { unsafe { free(this.ptr); } return; }
+    fn make() -> Owned { return Owned { ptr: { malloc(16 as usize) } }; }
+    fn drop(ref this) { { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 impl Pair {
-    fn drop(ref this) { unsafe { free(this.a.ptr); } unsafe { free(this.b.ptr); } return; }
+    fn drop(ref this) { { free(this.a.ptr); } { free(this.b.ptr); } return; }
 }
 fn main() -> i32 {
     let p: Pair = Pair { a: Owned::make(), b: Owned::make() };
@@ -4721,10 +4800,7 @@ fn main() -> i32 {
         "expected E0509 rejection, but compile succeeded"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0509"),
-        "expected E0509, got: {stderr}"
-    );
+    assert!(stderr.contains("E0509"), "expected E0509, got: {stderr}");
 }
 
 #[test]
@@ -4740,8 +4816,8 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Owned { ptr: *u8 }
 impl Owned {
-    fn make() -> Owned { return Owned { ptr: unsafe { malloc(16 as usize) } }; }
-    fn drop(ref this) { unsafe { free(this.ptr); } return; }
+    fn make() -> Owned { return Owned { ptr: { malloc(16 as usize) } }; }
+    fn drop(ref this) { { free(this.ptr); } return; }
 }
 struct Pair { a: Owned, b: Owned }
 fn main() -> i32 {
@@ -4789,7 +4865,10 @@ fn enum_multi_payload_large_first_value_layout() {
     let bin = dir.join("t");
     std::fs::write(
         &src,
-        format!("{}{}", BUF_PRELUDE, "\
+        format!(
+            "{}{}",
+            BUF_PRELUDE,
+            "\
 struct P { x: i32 }
 enum R { Both(Buf, P), None }
 fn mk() -> R { return R::Both(mk_buf(), P { x: 9 }); }
@@ -4801,7 +4880,8 @@ fn main() -> i32 {
     };
     return out -% 13;
 }
-"),
+"
+        ),
     )
     .unwrap();
     let st = Command::new(cpc)
@@ -4836,8 +4916,8 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 struct Res { p: *u8 }
 impl Res {
-    fn make() -> Res { return Res { p: unsafe { malloc(16 as usize) } }; }
-    fn drop(ref this) { unsafe { free(this.p); } return; }
+    fn make() -> Res { return Res { p: { malloc(16 as usize) } }; }
+    fn drop(ref this) { { free(this.p); } return; }
 }
 struct Holder { r: Res }
 fn consume(take h: Holder) -> i32 { return 0; }
@@ -4884,7 +4964,10 @@ fn try_compile_snippet(src_text: &str) -> (bool, String) {
         .arg(&src)
         .output()
         .expect("invoke cpc");
-    (out.status.success(), String::from_utf8_lossy(&out.stderr).to_string())
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
 }
 
 // R4: these borrow-check tests previously used the blessed `string` as a local
@@ -4897,11 +4980,11 @@ const BUF_PRELUDE: &str = "extern fn malloc(n: usize) -> *u8;\n\
      extern fn free(p: *u8);\n\
      struct Buf { ptr: *u8 }\n\
      impl Buf {\n\
-         fn drop(ref this) { unsafe { free(this.ptr); } return; }\n\
-         fn as_str(this) -> str { return unsafe { #str_from_raw_parts(this.ptr, 4 as usize) }; }\n\
+         fn drop(ref this) { { free(this.ptr); } return; }\n\
+         fn as_str(this) -> str { return { #str_from_raw_parts(this.ptr, 4 as usize) }; }\n\
          fn len(this) -> usize { return 4 as usize; }\n\
      }\n\
-     fn mk_buf() -> Buf { return Buf { ptr: unsafe { malloc(4 as usize) } }; }\n";
+     fn mk_buf() -> Buf { return Buf { ptr: { malloc(4 as usize) } }; }\n";
 
 #[test]
 fn return_borrow_of_local_owned_rejected_e0513() {
@@ -4959,7 +5042,10 @@ fn return_literal_str_view_compiles() {
         "fn ok() -> str { let s: str = \"literal\"; return s; }\n\
          fn main() -> i32 { return #str_len(ok()) as i32; }\n",
     );
-    assert!(ok, "returning a literal-backed str must compile; stderr: {stderr}");
+    assert!(
+        ok,
+        "returning a literal-backed str must compile; stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -4970,7 +5056,10 @@ fn return_slice_of_param_compiles() {
         "fn first(s: str) -> str { return s; }\n\
          fn main() -> i32 { return #str_len(first(\"x\")) as i32; }\n",
     );
-    assert!(ok, "returning a borrow of a parameter must compile; stderr: {stderr}");
+    assert!(
+        ok,
+        "returning a borrow of a parameter must compile; stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -5002,7 +5091,10 @@ fn move_owned_field_into_returned_struct_compiles() {
          }}\n\
          fn main() -> i32 {{ let o: Owner = mk2(); return 0; }}\n"
     ));
-    assert!(ok, "moving an owned value into a returned struct must compile; stderr: {stderr}");
+    assert!(
+        ok,
+        "moving an owned value into a returned struct must compile; stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -5015,7 +5107,10 @@ fn param_rooted_view_in_returned_struct_compiles() {
          fn wrap(s: Buf) -> Holder {{ return Holder {{ view: s.as_str() }}; }}\n\
          fn main() -> i32 {{ return 0; }}\n"
     ));
-    assert!(ok, "param-rooted view in a returned struct must compile; stderr: {stderr}");
+    assert!(
+        ok,
+        "param-rooted view in a returned struct must compile; stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -5051,7 +5146,11 @@ fn main() -> i32 { return #str_len(pick(true)) as i32; }
         String::from_utf8_lossy(&compile.stderr)
     );
     let run = Command::new(&bin).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(3), "expected #str_len(\"aaa\") == 3");
+    assert_eq!(
+        run.status.code(),
+        Some(3),
+        "expected #str_len(\"aaa\") == 3"
+    );
 }
 
 #[test]
@@ -5259,13 +5358,13 @@ fn array_and_tuple_of_owned_values_drop_once() {
         &src,
         "static DROPS: i32 = 0;\n\
          struct R { opaque data: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { DROPS = DROPS + 1; } return; } }\n\
-         fn mkR() -> R { return R { data: unsafe { 0 as *u8 } }; }\n\
+         impl R { fn drop(ref this) { { DROPS = DROPS + 1; } return; } }\n\
+         fn mkR() -> R { return R { data: { 0 as *u8 } }; }\n\
          fn arr() { let p: R = mkR(); let q: R = mkR(); let _a: [R; 2] = [p, q]; return; }\n\
          fn tup() { let p: R = mkR(); let q: R = mkR(); let _t: (R, R) = (p, q); return; }\n\
          fn main() -> i32 {\n\
-             arr(); if unsafe { DROPS } != 2 { return 1; } unsafe { DROPS = 0; }\n\
-             tup(); if unsafe { DROPS } != 2 { return 2; } unsafe { DROPS = 0; }\n\
+             arr(); if { DROPS } != 2 { return 1; } { DROPS = 0; }\n\
+             tup(); if { DROPS } != 2 { return 2; } { DROPS = 0; }\n\
              return 0;\n\
          }\n",
     )
@@ -5277,10 +5376,16 @@ fn array_and_tuple_of_owned_values_drop_once() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
         let run = Command::new(&bin).output().expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged array/tuple element teardown ({sanitizer}): {stderr}");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged array/tuple element teardown ({sanitizer}): {stderr}"
+        );
         assert_eq!(
             run.status.code(),
             Some(0),
@@ -5517,7 +5622,10 @@ fn main() -> i32 {
     // v0.0.24 #9 stage 3e, where a `ref` arg requires a `var` place — E0328.
     // All are correct refusals of `write_pair(p, p.left)`.
     assert!(
-        stderr.contains("E0374") || stderr.contains("E0337") || stderr.contains("E0509") || stderr.contains("E0328"),
+        stderr.contains("E0374")
+            || stderr.contains("E0337")
+            || stderr.contains("E0509")
+            || stderr.contains("E0328"),
         "expected E0374 / E0337 / E0509, got: {stderr}"
     );
 }
@@ -6352,7 +6460,7 @@ fn phase10_extern_fn_abs_runs() {
         &src,
         "extern fn abs(x: i32) -> i32;\n\
          fn main() -> i32 {\n\
-             return unsafe { abs(0 -% 42) };\n\
+             return { abs(0 -% 42) };\n\
          }\n",
     )
     .unwrap();
@@ -6381,7 +6489,7 @@ fn phase10_extern_fn_emits_declare_not_define() {
     std::fs::write(
         &src,
         "extern fn abs(x: i32) -> i32;\n\
-         fn main() -> i32 { return unsafe { abs(7) }; }\n",
+         fn main() -> i32 { return { abs(7) }; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -6483,7 +6591,7 @@ fn phase10_varargs_printf_runs() {
         "extern fn printf(fmt: *u8, ...) -> i32;\n\
          fn main() -> i32 {\n\
              let fmt: str = \"answer = %d\\n\";\n\
-             return unsafe { printf(#str_ptr(fmt), 42) };\n\
+             return { printf(#str_ptr(fmt), 42) };\n\
          }\n",
     )
     .unwrap();
@@ -6548,7 +6656,7 @@ fn phase10_pointer_roundtrip_via_malloc_runs() {
         "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
-             return unsafe {\n\
+             return {\n\
                  let p: *u8 = malloc(1 as usize);\n\
                  *p = 42 as u8;\n\
                  let b: u8 = *p;\n\
@@ -6589,7 +6697,7 @@ fn phase10_pointer_index_and_arithmetic_runs() {
         "extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
-             return unsafe {\n\
+             return {\n\
                  let p: *u8 = malloc(4 as usize);\n\
                  p[0] = 10 as u8;\n\
                  p[1] = 20 as u8;\n\
@@ -6630,7 +6738,7 @@ fn phase10_raw_pointer_in_extern_signature_compiles() {
         &src,
         "extern fn strlen(s: *u8) -> usize;\n\
          extern fn abs(x: i32) -> i32;\n\
-         fn main() -> i32 { return unsafe { abs(0 -% 5) }; }\n",
+         fn main() -> i32 { return { abs(0 -% 5) }; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -6957,7 +7065,12 @@ fn phase7_method_generic_interface_bound_satisfied_runs() {
     )
     .unwrap();
     let bin = dir.join("mgbound");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
         "satisfying interface bound on generic-struct method should build: stderr={}",
@@ -7170,7 +7283,12 @@ fn phase7_no_arg_assoc_fn_on_generic_struct_runs() {
     )
     .unwrap();
     let bin = dir.join("noarg_struct");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
         "no-arg assoc fn on generic struct should build: stderr={}",
@@ -7196,7 +7314,12 @@ fn phase7_assoc_fn_on_generic_enum_runs() {
     )
     .unwrap();
     let bin = dir.join("enum_assoc");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
         "assoc fn on generic enum should build: stderr={}",
@@ -7227,7 +7350,12 @@ fn phase7_assoc_fn_on_generic_enum_factory_self_instance() {
     )
     .unwrap();
     let bin = dir.join("enum_factory");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
         "enum assoc-fn factory returning own instance should build: stderr={}",
@@ -7251,7 +7379,12 @@ fn phase7_assoc_fn_on_nongeneric_enum_runs() {
     )
     .unwrap();
     let bin = dir.join("ng_enum_assoc");
-    let out = Command::new(cpc).arg(&src).arg("-o").arg(&bin).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
         "assoc fn on non-generic enum should build: stderr={}",
@@ -7466,10 +7599,10 @@ fn phase11_raw_ptr_reinterpret_cast_in_unsafe_compiles() {
         &src,
         "extern fn malloc(n: usize) -> *u8;\n\
          fn main() -> i32 {\n\
-             let p: *u8 = unsafe { malloc(4 as usize) };\n\
-             let q: *i32 = unsafe { p as *i32 };\n\
-             unsafe { *q = 42; }\n\
-             return unsafe { *q };\n\
+             let p: *u8 = { malloc(4 as usize) };\n\
+             let q: *i32 = { p as *i32 };\n\
+             { *q = 42; }\n\
+             return { *q };\n\
          }\n",
     )
     .unwrap();
@@ -7483,37 +7616,6 @@ fn phase11_raw_ptr_reinterpret_cast_in_unsafe_compiles() {
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(42));
-}
-
-#[test]
-fn phase11_raw_ptr_reinterpret_outside_unsafe_rejected_e0801() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("ptr_reinterpret_unsafe.cplus");
-    std::fs::write(
-        &src,
-        "extern fn malloc(n: usize) -> *u8;\n\
-         fn main() -> i32 {\n\
-             let p: *u8 = unsafe { malloc(4 as usize) };\n\
-             let q: *i32 = p as *i32;\n\
-             return 0;\n\
-         }\n",
-    )
-    .unwrap();
-    let out = Command::new(cpc)
-        .arg("--emit-ll")
-        .arg(&src)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "ptr-to-ptr reinterpret outside unsafe should reject"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0801"),
-        "expected E0801 in stderr: {stderr}"
-    );
 }
 
 #[test]
@@ -7623,7 +7725,7 @@ fn phase11_fn_pointer_to_libc_atexit_runs() {
         &src,
         "extern fn atexit(cb: fn()) -> i32;\n\
          fn cleanup() { #println(42); }\n\
-         fn main() -> i32 { unsafe { atexit(cleanup); } return 0; }\n",
+         fn main() -> i32 { { atexit(cleanup); } return 0; }\n",
     )
     .unwrap();
     let bin = dir.join("fnptr_atexit");
@@ -7665,11 +7767,11 @@ fn phase11_fn_pointer_signature_mismatch_rejected_e0302() {
 }
 
 // Phase 11 / P3 from null design: integer-to-raw-pointer cast.
-// `0 as *T` inside `unsafe { }` is how C+ expresses FFI null without
-// adding a `null` keyword to the language.
+// `0 as *T` is how C+ expresses FFI null without adding a `null` keyword to the
+// language.
 
 #[test]
-fn phase11_int_to_ptr_cast_inside_unsafe_compiles() {
+fn phase11_int_to_ptr_cast_compiles() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("int_to_ptr.cplus");
@@ -7677,8 +7779,8 @@ fn phase11_int_to_ptr_cast_inside_unsafe_compiles() {
         &src,
         "extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
-             let null_ptr: *u8 = unsafe { 0 as *u8 };\n\
-             unsafe { free(null_ptr); }\n\
+             let null_ptr: *u8 = { 0 as *u8 };\n\
+             { free(null_ptr); }\n\
              return 0;\n\
          }\n",
     )
@@ -7690,40 +7792,13 @@ fn phase11_int_to_ptr_cast_inside_unsafe_compiles() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(compile.success(), "0 as *u8 inside unsafe should compile");
+    assert!(compile.success(), "0 as *u8 should compile");
     // libc's free(NULL) is a no-op per POSIX, so the binary should exit 0.
     let run = Command::new(&bin).output().expect("run binary");
     assert_eq!(run.status.code(), Some(0));
 }
 
-#[test]
-fn phase11_int_to_ptr_cast_outside_unsafe_rejected_e0801() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("int_to_ptr_unsafe.cplus");
-    std::fs::write(
-        &src,
-        "fn main() -> i32 { let p: *u8 = 0 as *u8; return 0; }\n",
-    )
-    .unwrap();
-    let out = Command::new(cpc)
-        .arg("--emit-ll")
-        .arg(&src)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "0 as *u8 outside unsafe should reject"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0801"),
-        "expected E0801 in stderr: {stderr}"
-    );
-}
-
 // Phase 11 / ObjC interop: `#[link_name = "..."]` attribute.
-
 #[test]
 fn phase11_link_name_aliases_symbol_runs() {
     // Declare libc's `abs` under a different C+ name via #[link_name].
@@ -7735,7 +7810,7 @@ fn phase11_link_name_aliases_symbol_runs() {
     std::fs::write(
         &src,
         "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32;\n\
-         fn main() -> i32 { return unsafe { my_abs(0 -% 42) }; }\n",
+         fn main() -> i32 { return { my_abs(0 -% 42) }; }\n",
     )
     .unwrap();
     let bin = dir.join("link_name_abs");
@@ -7760,7 +7835,7 @@ fn phase11_link_name_emits_alias_in_ir() {
     std::fs::write(
         &src,
         "#[link_name = \"abs\"] extern fn my_abs(x: i32) -> i32;\n\
-         fn main() -> i32 { return unsafe { my_abs(0 -% 7) }; }\n",
+         fn main() -> i32 { return { my_abs(0 -% 7) }; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -7795,7 +7870,7 @@ fn phase11_link_name_dedups_multiple_decls() {
         &src,
         "#[link_name = \"abs\"] extern fn abs_i32(x: i32) -> i32;\n\
          #[link_name = \"abs\"] extern fn abs_again(x: i32) -> i32;\n\
-         fn main() -> i32 { return unsafe { abs_i32(0 -% 7) + abs_again(0 -% 35) }; }\n",
+         fn main() -> i32 { return { abs_i32(0 -% 7) + abs_again(0 -% 35) }; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -8558,10 +8633,10 @@ fn phase11_asan_catches_heap_overflow() {
         &src,
         "extern fn malloc(n: usize) -> *u8;\n\
          fn main() -> i32 {\n\
-             let p: *u8 = unsafe { malloc(8 as usize) };\n\
+             let p: *u8 = { malloc(8 as usize) };\n\
              var i: usize = 0 as usize;\n\
              while i < 100 as usize {\n\
-                 unsafe { *(p + i) = 42 as u8; }\n\
+                 { *(p + i) = 42 as u8; }\n\
                  i = i +% 1 as usize;\n\
              }\n\
              return 0;\n\
@@ -8841,21 +8916,21 @@ fn sum_i32(xs: i32[]) -> i32 {
     var acc: i32 = 0;
     var i: usize = 0 as usize;
     while i < n {
-        acc = acc +% unsafe { *(p + i) };
+        acc = acc +% { *(p + i) };
         i = i +% 1 as usize;
     }
     return acc;
 }
 
 fn main() -> i32 {
-    let buf: *u8 = unsafe { malloc(16 as usize) };
-    let p: *i32 = unsafe { buf as *i32 };
-    unsafe {
+    let buf: *u8 = { malloc(16 as usize) };
+    let p: *i32 = { buf as *i32 };
+    {
         *(p + 0 as usize) = 10;
         *(p + 1 as usize) = 20;
         *(p + 2 as usize) = 12;
     }
-    let xs: i32[] = unsafe { #slice_from_raw_parts(p, 3 as usize) };
+    let xs: i32[] = { #slice_from_raw_parts(p, 3 as usize) };
     return sum_i32(xs);
 }
 ",
@@ -8875,38 +8950,6 @@ fn main() -> i32 {
     );
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(42), "sum of [10,20,12] = 42");
-}
-
-#[test]
-fn phase11_slice_from_raw_parts_outside_unsafe_rejected() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("nu.cplus");
-    std::fs::write(
-        &src,
-        "\
-fn main() -> i32 {
-    let p: *i32 = unsafe { 0 as *i32 };
-    let xs: i32[] = #slice_from_raw_parts(p, 0 as usize);
-    return #slice_len(xs) as i32;
-}
-",
-    )
-    .unwrap();
-    let out = Command::new(cpc)
-        .arg("--emit-ll")
-        .arg(&src)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "slice_from_raw_parts outside unsafe should reject"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0801"),
-        "expected E0801 in stderr: {stderr}"
-    );
 }
 
 #[test]
@@ -8954,8 +8997,8 @@ fn phase11_slice_type_distinct_element_types() {
         "\
 fn takes_i32_slice(xs: i32[]) -> i32 { return #slice_len(xs) as i32; }
 fn main() -> i32 {
-    let p: *u8 = unsafe { 0 as *u8 };
-    let bytes: u8[] = unsafe { #slice_from_raw_parts(p, 0 as usize) };
+    let p: *u8 = { 0 as *u8 };
+    let bytes: u8[] = { #slice_from_raw_parts(p, 0 as usize) };
     return takes_i32_slice(bytes);
 }
 ",
@@ -9460,7 +9503,10 @@ fn bin_package_link_libs_warns_w0003() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("W0003"), "expected W0003 warning, got: {stderr}");
+    assert!(
+        stderr.contains("W0003"),
+        "expected W0003 warning, got: {stderr}"
+    );
     assert!(
         stderr.contains("[[bin]] libs"),
         "warning should point to `[[bin]] libs`: {stderr}"
@@ -9512,7 +9558,7 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     std::fs::create_dir_all(dir.join("vendor/tiny/src")).unwrap();
     std::fs::write(
         dir.join("vendor/tiny/src/api.cplus"),
-        "fn double(n: i32) -> i32 { return unsafe { tiny_double(n) }; }\n\
+        "fn double(n: i32) -> i32 { return { tiny_double(n) }; }\n\
          extern fn tiny_double(n: i32) -> i32;\n",
     )
     .unwrap();
@@ -9576,7 +9622,7 @@ fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
     .unwrap();
     std::fs::write(
         dir.join("vendor/mathy/src/api.cplus"),
-        "fn answer() -> i32 { return unsafe { extra_answer() }; }\n\
+        "fn answer() -> i32 { return { extra_answer() }; }\n\
          extern fn extra_answer() -> i32;\n",
     )
     .unwrap();
@@ -9600,7 +9646,10 @@ fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
         .env("CPLUS_E2E_OBJDIR", objs_dir.to_string_lossy().into_owned())
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "build with ${{CPLUS_E2E_OBJDIR}} set should link");
+    assert!(
+        st.success(),
+        "build with ${{CPLUS_E2E_OBJDIR}} set should link"
+    );
     let run = Command::new(dir.join("target/debug/app"))
         .status()
         .expect("run");
@@ -9613,7 +9662,10 @@ fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
         .env_remove("CPLUS_E2E_OBJDIR")
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "build must fail when the var is unset");
+    assert!(
+        !out.status.success(),
+        "build must fail when the var is unset"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0865"), "expected E0865, got: {stderr}");
     assert!(
@@ -9954,15 +10006,42 @@ fn cpc_bindgen_round_trips_via_c_library() {
     // cpc-bindgen emits each C function as a `#[link_name]` extern (`__c_<name>`)
     // plus a safe `pub fn <name>` wrapper that calls it in `unsafe` — so callers
     // get a safe surface and the raw extern stays private.
-    assert!(bindings.contains("#[link_name = \"add_ints\"]"), "{bindings}");
-    assert!(bindings.contains("extern fn __c_add_ints(a: i32, b: i32) -> i32;"), "{bindings}");
-    assert!(bindings.contains("fn add_ints(a: i32, b: i32) -> i32 {"), "{bindings}");
-    assert!(bindings.contains("extern fn __c_max_u32(a: u32, b: u32) -> u32;"), "{bindings}");
-    assert!(bindings.contains("fn max_u32(a: u32, b: u32) -> u32 {"), "{bindings}");
-    assert!(bindings.contains("extern fn __c_count_bytes(s: *i8) -> i64;"), "{bindings}");
-    assert!(bindings.contains("fn count_bytes(s: *i8) -> i64 {"), "{bindings}");
-    assert!(bindings.contains("extern fn __c_area_of_rect(w: f64, h: f64) -> f64;"), "{bindings}");
-    assert!(bindings.contains("fn area_of_rect(w: f64, h: f64) -> f64 {"), "{bindings}");
+    assert!(
+        bindings.contains("#[link_name = \"add_ints\"]"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("extern fn __c_add_ints(a: i32, b: i32) -> i32;"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("fn add_ints(a: i32, b: i32) -> i32 {"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("extern fn __c_max_u32(a: u32, b: u32) -> u32;"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("fn max_u32(a: u32, b: u32) -> u32 {"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("extern fn __c_count_bytes(s: *i8) -> i64;"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("fn count_bytes(s: *i8) -> i64 {"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("extern fn __c_area_of_rect(w: f64, h: f64) -> f64;"),
+        "{bindings}"
+    );
+    assert!(
+        bindings.contains("fn area_of_rect(w: f64, h: f64) -> f64 {"),
+        "{bindings}"
+    );
 
     // Consume the bindings the way generated bindings are actually used: as an
     // imported module. The safe `pub fn` wrappers are then module-mangled, so
@@ -9970,8 +10049,8 @@ fn cpc_bindgen_round_trips_via_c_library() {
     // the bindings into one file would make `add_ints` the wrapper and the
     // link-name clash). Build a package that links libtiny.a via `[link]`.
     let _ = lib; // libtiny.dylib is linked by name (`libs`) + search-path below
-    // The consumer's own libs go on `[[bin]]`; `[link]` supplies its
-    // search-paths (and `-Wl,-rpath` so the dylib resolves at run time).
+                 // The consumer's own libs go on `[[bin]]`; `[link]` supplies its
+                 // search-paths (and `-Wl,-rpath` so the dylib resolves at run time).
     std::fs::write(
         dir.join("Cplus.toml"),
         format!(
@@ -9987,7 +10066,7 @@ fn cpc_bindgen_round_trips_via_c_library() {
         "import \"./api\" as api;\n\
          fn main() -> i32 {\n\
          \x20   let s: str = \"hello\\0\";\n\
-         \x20   let p: *i8 = unsafe { #str_ptr(s) as *i8 };\n\
+         \x20   let p: *i8 = { #str_ptr(s) as *i8 };\n\
          \x20   if api::count_bytes(p) != (5 as i64) { return 1; }\n\
          \x20   if api::add_ints(20 as i32, 22 as i32) != (42 as i32) { return 2; }\n\
          \x20   if api::max_u32(7 as u32, 11 as u32) != (11 as u32) { return 3; }\n\
@@ -10230,7 +10309,7 @@ fn stdlib_hash_map_noncopy_value_rejected_e0502() {
         "import \"stdlib/hash_map\" as hm;\n\
          struct Owner { p: *u8 }\n\
          impl Owner {\n\
-             fn drop(ref this) { unsafe { free(this.p); } return; }\n\
+             fn drop(ref this) { { free(this.p); } return; }\n\
              fn hash(this) -> u64 { return 7 as u64; }\n\
              fn eq(this, other: This) -> bool { return true; }\n\
          }\n\
@@ -10331,7 +10410,7 @@ fn stdlib_net_tcp_round_trip() {
                  return 0;\n\
              }}\n\
              fn run_client() -> usize {{\n\
-                 unsafe {{ sleep(1 as u32); }}\n\
+                 {{ sleep(1 as u32); }}\n\
                  guard let result::Result[net::TcpStream, result::IoError]::Ok(s) = net::connect_tcp(\"127.0.0.1\", {port} as u16)\n\
                      else {{ return 0 as usize; }};\n\
                  var stream: net::TcpStream = s;\n\
@@ -10346,16 +10425,16 @@ fn stdlib_net_tcp_round_trip() {
                  return got.len();\n\
              }}\n\
              fn main() -> i32 {{\n\
-                 let pid: i32 = unsafe {{ fork() }};\n\
+                 let pid: i32 = {{ fork() }};\n\
                  if pid < (0 as i32) {{ return 9; }}\n\
                  if pid == (0 as i32) {{\n\
                      let rc: i32 = run_server();\n\
-                     unsafe {{ _exit(rc); }}\n\
+                     {{ _exit(rc); }}\n\
                      return rc;\n\
                  }}\n\
                  let n: usize = run_client();\n\
-                 let null_status: *i32 = unsafe {{ 0 as *i32 }};\n\
-                 unsafe {{ waitpid(pid, null_status, 0 as i32); }}\n\
+                 let null_status: *i32 = {{ 0 as *i32 }};\n\
+                 {{ waitpid(pid, null_status, 0 as i32); }}\n\
                  if n != (2 as usize) {{ return 1; }}\n\
                  return 0;\n\
              }}\n"
@@ -11066,11 +11145,11 @@ fn stdlib_thread_spawn_join_raw_pointer_o() {
         "import \"stdlib/thread\" as thread;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
-         fn produce() -> *u8 { return unsafe { malloc(64 as usize) }; }\n\
+         fn produce() -> *u8 { return { malloc(64 as usize) }; }\n\
          fn main() -> i32 {\n\
              let h: thread::JoinHandle[*u8] = thread::spawn::[*u8](produce);\n\
              let p: *u8 = h.join();\n\
-             unsafe { free(p); }\n\
+             { free(p); }\n\
              return 0;\n\
          }\n",
     )
@@ -11522,14 +11601,14 @@ fn stdlib_mutex_guard_outlives_handle_no_uaf() {
          extern fn free(p: *u8);\n\
          static FREES: i32 = 0;\n\
          struct Res { p: *u8 }\n\
-         impl Res { fn drop(ref this) { unsafe { FREES = FREES +% 1; free(this.p); } return; } }\n\
+         impl Res { fn drop(ref this) { { FREES = FREES +% 1; free(this.p); } return; } }\n\
          fn make_locked() -> mutex::MutexGuard[Res] {\n\
-             let m: mutex::Mutex[Res] = mutex::new::[Res](Res { p: unsafe { malloc(8 as usize) } });\n\
+             let m: mutex::Mutex[Res] = mutex::new::[Res](Res { p: { malloc(8 as usize) } });\n\
              return m.lock();\n\
          }\n\
          fn main() -> i32 {\n\
              { let _g: mutex::MutexGuard[Res] = make_locked(); }\n\
-             return unsafe { FREES };\n\
+             return { FREES };\n\
          }\n",
     )
     .unwrap();
@@ -11592,11 +11671,11 @@ fn stdlib_box_set_drops_old_value() {
          static A: i32 = 0;\n\
          static F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
-         fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         impl R { fn drop(ref this) { { F = F +% 1; free(this.p); } return; } }\n\
+         fn mk() -> R { { A = A +% 1; } return R { p: { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              { var b: box::Box[R] = box::new::[R](mk()); b.set(mk()); }\n\
-             return unsafe { A -% F };\n\
+             return { A -% F };\n\
          }\n",
     )
     .unwrap();
@@ -11606,11 +11685,23 @@ fn stdlib_box_set_drops_old_value() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
-        let run = Command::new(dir.join("target/debug/boxset")).output().expect("run");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
+        let run = Command::new(dir.join("target/debug/boxset"))
+            .output()
+            .expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged Box::set ({sanitizer}): {stderr}");
-        assert_eq!(run.status.code(), Some(0), "Box::set must drop the old value (balanced alloc/free) ({sanitizer})");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged Box::set ({sanitizer}): {stderr}"
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "Box::set must drop the old value (balanced alloc/free) ({sanitizer})"
+        );
     }
 }
 
@@ -11645,8 +11736,8 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { free(this.p); } return; } }\n\
-         fn mk() -> R { return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         impl R { fn drop(ref this) { { free(this.p); } return; } }\n\
+         fn mk() -> R { return R { p: { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              let b: box::Box[R] = box::new::[R](mk());\n\
              let _r: R = b.get();\n\
@@ -11659,7 +11750,10 @@ fn stdlib_box_get_noncopy_rejected_e0502() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "expected compile failure for Box::get on a non-Copy T");
+    assert!(
+        !out.status.success(),
+        "expected compile failure for Box::get on a non-Copy T"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("E0502"),
@@ -11719,11 +11813,23 @@ fn stdlib_text_reassign_str_literal_coerces() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
-        let run = Command::new(dir.join("target/debug/txtre")).output().expect("run");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
+        let run = Command::new(dir.join("target/debug/txtre"))
+            .output()
+            .expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged Text reassign ({sanitizer}): {stderr}");
-        assert_eq!(run.status.code(), Some(0), "Text literal reassignment must coerce + drop old cleanly ({sanitizer})");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged Text reassign ({sanitizer}): {stderr}"
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "Text literal reassignment must coerce + drop old cleanly ({sanitizer})"
+        );
     }
 }
 
@@ -11770,11 +11876,11 @@ fn stdlib_vec_assoc_new_with_struct_element() {
          static A: i32 = 0;\n\
          static F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
-         fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         impl R { fn drop(ref this) { { F = F +% 1; free(this.p); } return; } }\n\
+         fn mk() -> R { { A = A +% 1; } return R { p: { malloc(8 as usize) } }; }\n\
          fn main() -> i32 {\n\
              { var v: vec::Vec[R] = vec::Vec[R]::new(); v.push(mk()); v.push(mk()); v.push(mk()); }\n\
-             return unsafe { A -% F };\n\
+             return { A -% F };\n\
          }\n",
     )
     .unwrap();
@@ -11784,11 +11890,23 @@ fn stdlib_vec_assoc_new_with_struct_element() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer}) — Vec[Struct]::new() regressed");
-        let run = Command::new(dir.join("target/debug/vecassoc")).output().expect("run");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer}) — Vec[Struct]::new() regressed"
+        );
+        let run = Command::new(dir.join("target/debug/vecassoc"))
+            .output()
+            .expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged Vec[Struct] assoc ({sanitizer}): {stderr}");
-        assert_eq!(run.status.code(), Some(0), "Vec[Struct]::new() assoc form must build + drop all elements ({sanitizer})");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged Vec[Struct] assoc ({sanitizer}): {stderr}"
+        );
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "Vec[Struct]::new() assoc form must build + drop all elements ({sanitizer})"
+        );
     }
 }
 
@@ -11852,10 +11970,18 @@ fn stdlib_for_in_break_does_not_crash() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
-        let run = Command::new(dir.join("target/debug/brk")).output().expect("run");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
+        let run = Command::new(dir.join("target/debug/brk"))
+            .output()
+            .expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged for-in break ({sanitizer}): {stderr}");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged for-in break ({sanitizer}): {stderr}"
+        );
         assert_eq!(
             run.status.code(),
             Some(0),
@@ -11908,19 +12034,19 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
          static A: i32 = 0;\n\
          static F: i32 = 0;\n\
          struct R { p: *u8 }\n\
-         impl R { fn drop(ref this) { unsafe { F = F +% 1; free(this.p); } return; } }\n\
-         fn mk() -> R { unsafe { A = A +% 1; } return R { p: unsafe { malloc(8 as usize) } }; }\n\
+         impl R { fn drop(ref this) { { F = F +% 1; free(this.p); } return; } }\n\
+         fn mk() -> R { { A = A +% 1; } return R { p: { malloc(8 as usize) } }; }\n\
          gen fn one() -> i32 { let r: R = mk(); yield 1; yield 2; return; }\n\
          gen fn staggered() -> i32 { let r1: R = mk(); yield 1; let r2: R = mk(); yield 2; return; }\n\
          fn main() -> i32 {\n\
              { for x in one() { if x == 1 { break; } } }\n\
-             if unsafe { A -% F } != 0 { return 1; }\n\
-             unsafe { A = 0; F = 0; }\n\
+             if { A -% F } != 0 { return 1; }\n\
+             { A = 0; F = 0; }\n\
              { for x in staggered() { if x == 1 { break; } } }\n\
-             if unsafe { A -% F } != 0 { return 2; }\n\
-             unsafe { A = 0; F = 0; }\n\
+             if { A -% F } != 0 { return 2; }\n\
+             { A = 0; F = 0; }\n\
              { var s: i32 = 0; for x in one() { s = s +% x; } }\n\
-             if unsafe { A -% F } != 0 { return 3; }\n\
+             if { A -% F } != 0 { return 3; }\n\
              return 0;\n\
          }\n",
     )
@@ -11931,10 +12057,18 @@ fn stdlib_for_in_break_drops_inscope_coroutine_locals() {
         if !sanitizer.is_empty() {
             cmd.arg(sanitizer);
         }
-        assert!(cmd.status().expect("invoke cpc").success(), "build failed ({sanitizer})");
-        let run = Command::new(dir.join("target/debug/brkd")).output().expect("run");
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "build failed ({sanitizer})"
+        );
+        let run = Command::new(dir.join("target/debug/brkd"))
+            .output()
+            .expect("run");
         let stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(!stderr.contains("AddressSanitizer"), "ASan flagged coroutine cancel-drop ({sanitizer}): {stderr}");
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged coroutine cancel-drop ({sanitizer}): {stderr}"
+        );
         assert_eq!(
             run.status.code(),
             Some(0),
@@ -11965,7 +12099,13 @@ fn stdlib_block_on_infers_type_arg_no_turbofish() {
         "[package]\nname = \"stdlib\"\n",
     )
     .unwrap();
-    for name in &["future", "executor", "reactor", "reactor_linux", "reactor_windows"] {
+    for name in &[
+        "future",
+        "executor",
+        "reactor",
+        "reactor_linux",
+        "reactor_windows",
+    ] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -11987,10 +12127,23 @@ fn stdlib_block_on_infers_type_arg_no_turbofish() {
          }\n",
     )
     .unwrap();
-    let st = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc");
-    assert!(st.success(), "block_on without turbofish must type-check (generic-struct inference)");
-    let run = Command::new(dir.join("target/debug/boninf")).status().expect("run");
-    assert_eq!(run.code(), Some(0), "block_on(amain()) must run and return the inner result");
+    let st = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "block_on without turbofish must type-check (generic-struct inference)"
+    );
+    let run = Command::new(dir.join("target/debug/boninf"))
+        .status()
+        .expect("run");
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "block_on(amain()) must run and return the inner result"
+    );
 }
 
 /// v0.0.4 Phase 2 Slice 2F: `Channel[T]` — MPMC FIFO between threads.
@@ -12193,16 +12346,16 @@ fn stdlib_thread_drop_is_non_blocking() {
          struct Ts { sec: i64, ns: i64 }\n\
          extern fn clock_gettime(clk: i32, ts: *Ts) -> i32;\n\
          fn now_ns() -> i64 {\n\
-             let raw: *u8 = unsafe { malloc(16 as usize) };\n\
-             let p: *Ts = unsafe { raw as *Ts };\n\
-             let _r: i32 = unsafe { clock_gettime(6 as i32, p) };\n\
-             let s: i64 = unsafe { p[0].sec };\n\
-             let n: i64 = unsafe { p[0].ns };\n\
-             unsafe { free(raw); }\n\
+             let raw: *u8 = { malloc(16 as usize) };\n\
+             let p: *Ts = { raw as *Ts };\n\
+             let _r: i32 = { clock_gettime(6 as i32, p) };\n\
+             let s: i64 = { p[0].sec };\n\
+             let n: i64 = { p[0].ns };\n\
+             { free(raw); }\n\
              return s *% (1000000000 as i64) +% n;\n\
          }\n\
          fn slow_worker() -> i32 {\n\
-             let _r: i32 = unsafe { usleep(200000 as u32) };\n\
+             let _r: i32 = { usleep(200000 as u32) };\n\
              return 0 as i32;\n\
          }\n\
          fn main() -> i32 {\n\
@@ -12215,7 +12368,7 @@ fn stdlib_thread_drop_is_non_blocking() {
              let elapsed_us: i64 = (t1 -% t0) / (1000 as i64);\n\
              // Give the worker time to finish cleanly so ASan doesn't see\n\
              // the process exit with a still-running thread.\n\
-             let _r: i32 = unsafe { usleep(250000 as u32) };\n\
+             let _r: i32 = { usleep(250000 as u32) };\n\
              // Return 0 if drop was non-blocking (< 50ms), else the\n\
              // elapsed ms clamped to i32.\n\
              if elapsed_us > (50000 as i64) {\n\
@@ -12442,30 +12595,30 @@ fn stdlib_reactor_wait_fd_readable_kqueue_round_trip() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          async fn await_and_read(rfd: i32) -> i32 {\n\
-             unsafe { #reactor_wait_read(rfd); }\n\
-             let buf: *u8 = unsafe { malloc(1 as usize) };\n\
-             let n: isize = unsafe { read(rfd, buf, 1 as usize) };\n\
-             let v: u8 = unsafe { *buf };\n\
-             unsafe { free(buf); }\n\
+             { #reactor_wait_read(rfd); }\n\
+             let buf: *u8 = { malloc(1 as usize) };\n\
+             let n: isize = { read(rfd, buf, 1 as usize) };\n\
+             let v: u8 = { *buf };\n\
+             { free(buf); }\n\
              if n != (1 as isize) { return -1 as i32; }\n\
              return v as i32;\n\
          }\n\
          fn main() -> i32 {\n\
-             let fds_buf: *u8 = unsafe { malloc(8 as usize) };\n\
-             let _r: i32 = unsafe { pipe(fds_buf) };\n\
-             let fds_i32: *i32 = unsafe { fds_buf as *i32 };\n\
-             let rfd: i32 = unsafe { *fds_i32 };\n\
-             let wfd_p: *i32 = unsafe { fds_i32 + (1 as usize) };\n\
-             let wfd: i32 = unsafe { *wfd_p };\n\
-             let payload: *u8 = unsafe { malloc(1 as usize) };\n\
-             unsafe { *payload = 42 as u8; }\n\
-             let _w: isize = unsafe { write(wfd, payload, 1 as usize) };\n\
-             unsafe { free(payload); }\n\
+             let fds_buf: *u8 = { malloc(8 as usize) };\n\
+             let _r: i32 = { pipe(fds_buf) };\n\
+             let fds_i32: *i32 = { fds_buf as *i32 };\n\
+             let rfd: i32 = { *fds_i32 };\n\
+             let wfd_p: *i32 = { fds_i32 + (1 as usize) };\n\
+             let wfd: i32 = { *wfd_p };\n\
+             let payload: *u8 = { malloc(1 as usize) };\n\
+             { *payload = 42 as u8; }\n\
+             let _w: isize = { write(wfd, payload, 1 as usize) };\n\
+             { free(payload); }\n\
              let f: future::Future[i32] = await_and_read(rfd);\n\
              let got: i32 = executor::block_on::[i32](f);\n\
-             unsafe { close(rfd); }\n\
-             unsafe { close(wfd); }\n\
-             unsafe { free(fds_buf); }\n\
+             { close(rfd); }\n\
+             { close(wfd); }\n\
+             { free(fds_buf); }\n\
              return got;\n\
          }\n",
     )
@@ -12691,10 +12844,10 @@ fn stdlib_fs_file_read_async_compiles() {
              // tripping the E0900 (mut-pointer-pass + await) guard.\n\
              var f: fs::File = f;\n\
              let _nb: i32 = f.make_nonblocking();\n\
-             let buf: *u8 = unsafe {{ malloc(1 as usize) }};\n\
+             let buf: *u8 = {{ malloc(1 as usize) }};\n\
              let n: isize = await f.read_async(buf, 1 as usize);\n\
-             let v: u8 = unsafe {{ *buf }};\n\
-             unsafe {{ free(buf); }}\n\
+             let v: u8 = {{ *buf }};\n\
+             {{ free(buf); }}\n\
              if n != (1 as isize) {{ return 0 -% 1 as i32; }}\n\
              return v as i32;\n\
          }}\n\
@@ -12851,11 +13004,11 @@ fn phase4f_concurrent_n_sleeps_stress() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn now_ms() -> u64 {\n\
-             let buf: *u8 = unsafe { malloc(16 as usize) };\n\
-             let _rc: i32 = unsafe { gettimeofday(buf, 0 as *u8) };\n\
-             let sec: i64 = unsafe { *(buf as *i64) };\n\
-             let usec: i64 = unsafe { *((buf + (8 as usize)) as *i64) };\n\
-             unsafe { free(buf); }\n\
+             let buf: *u8 = { malloc(16 as usize) };\n\
+             let _rc: i32 = { gettimeofday(buf, 0 as *u8) };\n\
+             let sec: i64 = { *(buf as *i64) };\n\
+             let usec: i64 = { *((buf + (8 as usize)) as *i64) };\n\
+             { free(buf); }\n\
              return ((sec *% (1000 as i64)) +% (usec / (1000 as i64))) as u64;\n\
          }\n\
          async fn unit_sleep() -> i32 {\n\
@@ -12864,24 +13017,24 @@ fn phase4f_concurrent_n_sleeps_stress() {
          }\n\
          async fn stress(n: i32) -> i32 {\n\
              let bytes: usize = (n as usize) *% (8 as usize);\n\
-             let buf: *u8 = unsafe { malloc(bytes) };\n\
-             let hdls: **u8 = unsafe { buf as **u8 };\n\
+             let buf: *u8 = { malloc(bytes) };\n\
+             let hdls: **u8 = { buf as **u8 };\n\
              var i: i32 = 0;\n\
              while i < n {\n\
                  let f: future::Future[i32] = unit_sleep();\n\
-                 let slot: **u8 = unsafe { hdls + (i as usize) };\n\
-                 unsafe { *slot = f.handle; }\n\
+                 let slot: **u8 = { hdls + (i as usize) };\n\
+                 { *slot = f.handle; }\n\
                  i = i +% (1 as i32);\n\
              }\n\
              var j: i32 = 0;\n\
              while j < n {\n\
-                 let slot: **u8 = unsafe { hdls + (j as usize) };\n\
-                 let h: *u8 = unsafe { *slot };\n\
+                 let slot: **u8 = { hdls + (j as usize) };\n\
+                 let h: *u8 = { *slot };\n\
                  let f: future::Future[i32] = future::Future[i32] { handle: h };\n\
                  let _r: i32 = await f;\n\
                  j = j +% (1 as i32);\n\
              }\n\
-             unsafe { free(buf); }\n\
+             { free(buf); }\n\
              return 0 as i32;\n\
          }\n\
          fn main() -> i32 {\n\
@@ -12995,33 +13148,33 @@ fn async_method_on_user_struct_round_trip() {
          struct PipeReader { fd: i32 }\n\
          impl PipeReader {\n\
              async fn read_byte(ref this) -> i32 {\n\
-                 let buf: *u8 = unsafe { malloc(1 as usize) };\n\
+                 let buf: *u8 = { malloc(1 as usize) };\n\
                  let n: isize = await net::read_fd_async(this.fd, buf, 1 as usize);\n\
-                 let v: u8 = unsafe { *buf };\n\
-                 unsafe { free(buf); }\n\
+                 let v: u8 = { *buf };\n\
+                 { free(buf); }\n\
                  if n != (1 as isize) { return -1 as i32; }\n\
                  return v as i32;\n\
              }\n\
          }\n\
          fn main() -> i32 {\n\
-             let fds_buf: *u8 = unsafe { malloc(8 as usize) };\n\
-             let _r: i32 = unsafe { pipe(fds_buf) };\n\
-             let fds_i32: *i32 = unsafe { fds_buf as *i32 };\n\
-             let rfd: i32 = unsafe { *fds_i32 };\n\
-             let wfd_p: *i32 = unsafe { fds_i32 + (1 as usize) };\n\
-             let wfd: i32 = unsafe { *wfd_p };\n\
+             let fds_buf: *u8 = { malloc(8 as usize) };\n\
+             let _r: i32 = { pipe(fds_buf) };\n\
+             let fds_i32: *i32 = { fds_buf as *i32 };\n\
+             let rfd: i32 = { *fds_i32 };\n\
+             let wfd_p: *i32 = { fds_i32 + (1 as usize) };\n\
+             let wfd: i32 = { *wfd_p };\n\
              let nb: i32 = net::set_nonblocking(rfd);\n\
              if nb != (0 as i32) { return 90 as i32; }\n\
              var reader: PipeReader = PipeReader { fd: rfd };\n\
              let f: future::Future[i32] = reader.read_byte();\n\
-             let payload: *u8 = unsafe { malloc(1 as usize) };\n\
-             unsafe { *payload = 42 as u8; }\n\
-             let _w: isize = unsafe { write(wfd, payload, 1 as usize) };\n\
-             unsafe { free(payload); }\n\
+             let payload: *u8 = { malloc(1 as usize) };\n\
+             { *payload = 42 as u8; }\n\
+             let _w: isize = { write(wfd, payload, 1 as usize) };\n\
+             { free(payload); }\n\
              let got: i32 = executor::block_on::[i32](f);\n\
-             let _c1: i32 = unsafe { close(rfd) };\n\
-             let _c2: i32 = unsafe { close(wfd) };\n\
-             unsafe { free(fds_buf); }\n\
+             let _c1: i32 = { close(rfd) };\n\
+             let _c2: i32 = { close(wfd) };\n\
+             { free(fds_buf); }\n\
              return got;\n\
          }\n",
     )
@@ -13104,11 +13257,11 @@ fn stdlib_time_sleep_round_trip() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn now_ms() -> u64 {\n\
-             let buf: *u8 = unsafe { malloc(16 as usize) };\n\
-             let _rc: i32 = unsafe { gettimeofday(buf, 0 as *u8) };\n\
-             let sec: i64 = unsafe { *(buf as *i64) };\n\
-             let usec: i64 = unsafe { *((buf + (8 as usize)) as *i64) };\n\
-             unsafe { free(buf); }\n\
+             let buf: *u8 = { malloc(16 as usize) };\n\
+             let _rc: i32 = { gettimeofday(buf, 0 as *u8) };\n\
+             let sec: i64 = { *(buf as *i64) };\n\
+             let usec: i64 = { *((buf + (8 as usize)) as *i64) };\n\
+             { free(buf); }\n\
              return ((sec *% (1000 as i64)) +% (usec / (1000 as i64))) as u64;\n\
          }\n\
          async fn do_sleep(ms: u64) -> i32 {\n\
@@ -13224,20 +13377,20 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          async fn reader(rfd: i32) -> i32 {\n\
-             let buf: *u8 = unsafe { malloc(1 as usize) };\n\
+             let buf: *u8 = { malloc(1 as usize) };\n\
              let n: isize = await net::read_fd_async(rfd, buf, 1 as usize);\n\
-             let v: u8 = unsafe { *buf };\n\
-             unsafe { free(buf); }\n\
+             let v: u8 = { *buf };\n\
+             { free(buf); }\n\
              if n != (1 as isize) { return -1 as i32; }\n\
              return v as i32;\n\
          }\n\
          fn main() -> i32 {\n\
-             let fds_buf: *u8 = unsafe { malloc(8 as usize) };\n\
-             let _r: i32 = unsafe { pipe(fds_buf) };\n\
-             let fds_i32: *i32 = unsafe { fds_buf as *i32 };\n\
-             let rfd: i32 = unsafe { *fds_i32 };\n\
-             let wfd_p: *i32 = unsafe { fds_i32 + (1 as usize) };\n\
-             let wfd: i32 = unsafe { *wfd_p };\n\
+             let fds_buf: *u8 = { malloc(8 as usize) };\n\
+             let _r: i32 = { pipe(fds_buf) };\n\
+             let fds_i32: *i32 = { fds_buf as *i32 };\n\
+             let rfd: i32 = { *fds_i32 };\n\
+             let wfd_p: *i32 = { fds_i32 + (1 as usize) };\n\
+             let wfd: i32 = { *wfd_p };\n\
              let nb: i32 = net::set_nonblocking(rfd);\n\
              if nb != (0 as i32) { return 90 as i32; }\n\
              // Start the reader coroutine; reactor body runs eagerly,\n\
@@ -13245,14 +13398,14 @@ fn stdlib_net_read_fd_async_eagain_round_trip() {
              let f: future::Future[i32] = reader(rfd);\n\
              // Now write the byte synchronously. kqueue's EVFILT_READ on\n\
              // rfd will fire when block_on calls kevent_wait below.\n\
-             let payload: *u8 = unsafe { malloc(1 as usize) };\n\
-             unsafe { *payload = 42 as u8; }\n\
-             let _w: isize = unsafe { write(wfd, payload, 1 as usize) };\n\
-             unsafe { free(payload); }\n\
+             let payload: *u8 = { malloc(1 as usize) };\n\
+             { *payload = 42 as u8; }\n\
+             let _w: isize = { write(wfd, payload, 1 as usize) };\n\
+             { free(payload); }\n\
              let got: i32 = executor::block_on::[i32](f);\n\
-             let _c1: i32 = unsafe { close(rfd) };\n\
-             let _c2: i32 = unsafe { close(wfd) };\n\
-             unsafe { free(fds_buf); }\n\
+             let _c1: i32 = { close(rfd) };\n\
+             let _c2: i32 = { close(wfd) };\n\
+             { free(fds_buf); }\n\
              return got;\n\
          }\n",
     )
@@ -13419,7 +13572,10 @@ fn main() -> i32 {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for Self-in-fn-ptr interface");
+    assert!(
+        st.success(),
+        "cpc build failed for Self-in-fn-ptr interface"
+    );
     let run = Command::new(&bin).status().expect("run applyself");
     assert_eq!(run.code(), Some(7), "call::[P](p, read) should be 7 (p.x)");
 }
@@ -13459,7 +13615,10 @@ fn main() -> i32 {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for Self-in-generic-instantiation");
+    assert!(
+        st.success(),
+        "cpc build failed for Self-in-generic-instantiation"
+    );
     let run = Command::new(&bin).status().expect("run holderself");
     assert_eq!(run.code(), Some(9), "run::[P](p).v.x should be 9");
 }
@@ -13516,7 +13675,10 @@ fn echo_string_param_does_not_double_free() {
     let src = dir.join("echo.cplus");
     std::fs::write(
         &src,
-        format!("{}{}", BUF_PRELUDE, "\
+        format!(
+            "{}{}",
+            BUF_PRELUDE,
+            "\
 fn echo(take x: Buf) -> Buf {
     return x;
 }
@@ -13526,7 +13688,8 @@ fn main() -> i32 {
     if t.len() != (4 as usize) { return 1 as i32; }
     return 0 as i32;
 }
-"),
+"
+        ),
     )
     .unwrap();
     let bin = dir.join("echo");
@@ -13794,10 +13957,23 @@ fn main() -> i32 {
     )
     .unwrap();
     let bin = dir.join("conv");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for SIMD convert/reinterpret e2e");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for SIMD convert/reinterpret e2e"
+    );
     let run = Command::new(&bin).status().expect("run conv");
-    assert_eq!(run.code(), Some(0), "SIMD convert/reinterpret failed; exit {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "SIMD convert/reinterpret failed; exit {:?}",
+        run.code()
+    );
 }
 
 /// Negative: the SIMD Tier-1 conversions reject shape mismatches with E0324.
@@ -13807,21 +13983,40 @@ fn simd_convert_rejects_shape_mismatches() {
     let dir = tempdir();
     let cases: &[(&str, &str)] = &[
         // from_int needs an int source of the same lane width
-        ("from_int_lane_width", "let a: i16x8 = i16x8::splat(1i16); let _b: f32x4 = f32x4::from_int(a);"),
+        (
+            "from_int_lane_width",
+            "let a: i16x8 = i16x8::splat(1i16); let _b: f32x4 = f32x4::from_int(a);",
+        ),
         // from_int target must be float
-        ("from_int_int_target", "let a: i32x4 = i32x4::splat(1); let _b: i32x4 = i32x4::from_int(a);"),
+        (
+            "from_int_int_target",
+            "let a: i32x4 = i32x4::splat(1); let _b: i32x4 = i32x4::from_int(a);",
+        ),
         // from_float target must be int
-        ("from_float_float_target", "let a: f32x4 = f32x4::splat(1.0f32); let _b: f32x4 = f32x4::from_float(a);"),
+        (
+            "from_float_float_target",
+            "let a: f32x4 = f32x4::splat(1.0f32); let _b: f32x4 = f32x4::from_float(a);",
+        ),
         // reinterpret needs equal total width (128 vs 256 bits)
-        ("reinterpret_width", "let a: f64x4 = f64x4::splat(1.0f64); let _b: i8x16 = i8x16::reinterpret(a);"),
+        (
+            "reinterpret_width",
+            "let a: f64x4 = f64x4::splat(1.0f64); let _b: i8x16 = i8x16::reinterpret(a);",
+        ),
     ];
     for (label, body) in cases {
         let src = dir.join(format!("{label}.cplus"));
         std::fs::write(&src, format!("fn main() -> i32 {{ {body} return 0; }}\n")).unwrap();
-        let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
         assert!(!out.status.success(), "{label}: expected rejection");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("E0324"), "{label}: expected E0324, got:\n{stderr}");
+        assert!(
+            stderr.contains("E0324"),
+            "{label}: expected E0324, got:\n{stderr}"
+        );
     }
 }
 
@@ -13861,10 +14056,23 @@ fn main() -> i32 {
     )
     .unwrap();
     let bin = dir.join("halves");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for SIMD low/high/combine/widen/narrow");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for SIMD low/high/combine/widen/narrow"
+    );
     let run = Command::new(&bin).status().expect("run halves");
-    assert_eq!(run.code(), Some(0), "SIMD half/widen/narrow failed; exit {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "SIMD half/widen/narrow failed; exit {:?}",
+        run.code()
+    );
 }
 
 /// G-036 keystone: a widening integer dot product is now *composable* from
@@ -13897,10 +14105,20 @@ fn main() -> i32 {
     )
     .unwrap();
     let bin = dir.join("qdot");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed for widening dot product");
     let run = Command::new(&bin).status().expect("run qdot");
-    assert_eq!(run.code(), Some(0), "widening dot product wrong; exit {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "widening dot product wrong; exit {:?}",
+        run.code()
+    );
 }
 
 /// SIMD Tier-1 (G-040): data-dependent byte table lookup (`vqtbl1q`).
@@ -13931,10 +14149,20 @@ fn main() -> i32 {
     )
     .unwrap();
     let bin = dir.join("tbl");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(st.success(), "cpc build failed for SIMD table lookup");
     let run = Command::new(&bin).status().expect("run tbl");
-    assert_eq!(run.code(), Some(0), "SIMD table lookup wrong; exit {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "SIMD table lookup wrong; exit {:?}",
+        run.code()
+    );
 }
 
 /// W0001 lint: a horizontal `sum`/`product` over narrow integer lanes
@@ -13955,10 +14183,20 @@ fn simd_narrow_int_sum_warns_but_compiles() {
          }\n",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
-    assert!(out.status.success(), "W0001 is a warning — must not fail the build");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "W0001 is a warning — must not fail the build"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("W0001"), "expected W0001 warning, got:\n{stderr}");
+    assert!(
+        stderr.contains("W0001"),
+        "expected W0001 warning, got:\n{stderr}"
+    );
 
     // The correct widening sum (i32x4) must NOT warn.
     let ok = dir.join("ok.cplus");
@@ -13967,10 +14205,17 @@ fn simd_narrow_int_sum_warns_but_compiles() {
         "fn main() -> i32 { let a: i32x4 = i32x4::splat(5); return a.sum(); }\n",
     )
     .unwrap();
-    let out2 = Command::new(cpc).arg("check").arg(&ok).output().expect("invoke cpc");
+    let out2 = Command::new(cpc)
+        .arg("check")
+        .arg(&ok)
+        .output()
+        .expect("invoke cpc");
     assert!(out2.status.success());
     let stderr2 = String::from_utf8_lossy(&out2.stderr);
-    assert!(!stderr2.contains("W0001"), "i32x4 sum must not warn, got:\n{stderr2}");
+    assert!(
+        !stderr2.contains("W0001"),
+        "i32x4 sum must not warn, got:\n{stderr2}"
+    );
 }
 
 /// Negative: `table` requires a 16-byte SIMD table.
@@ -13989,7 +14234,11 @@ fn simd_table_rejects_non_byte16() {
          }\n",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(!out.status.success(), "table on i32x4 must be rejected");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0324"), "expected E0324, got:\n{stderr}");
@@ -14001,17 +14250,33 @@ fn simd_widen_narrow_reject_invalid() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let cases: &[(&str, &str)] = &[
-        ("widen_float", "let a: f32x4 = f32x4::splat(1.0f32); let _b = a.widen();"),
-        ("widen_64bit_lane", "let a: i64x2 = i64x2::splat(1i64); let _b = a.widen();"),
-        ("narrow_byte_lane", "let a: i8x16 = i8x16::splat(1i8); let _b = a.narrow();"),
+        (
+            "widen_float",
+            "let a: f32x4 = f32x4::splat(1.0f32); let _b = a.widen();",
+        ),
+        (
+            "widen_64bit_lane",
+            "let a: i64x2 = i64x2::splat(1i64); let _b = a.widen();",
+        ),
+        (
+            "narrow_byte_lane",
+            "let a: i8x16 = i8x16::splat(1i8); let _b = a.narrow();",
+        ),
     ];
     for (label, body) in cases {
         let src = dir.join(format!("{label}.cplus"));
         std::fs::write(&src, format!("fn main() -> i32 {{ {body} return 0; }}\n")).unwrap();
-        let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+        let out = Command::new(cpc)
+            .arg("check")
+            .arg(&src)
+            .output()
+            .expect("invoke cpc");
         assert!(!out.status.success(), "{label}: expected rejection");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("E0324"), "{label}: expected E0324, got:\n{stderr}");
+        assert!(
+            stderr.contains("E0324"),
+            "{label}: expected E0324, got:\n{stderr}"
+        );
     }
 }
 
@@ -14115,8 +14380,7 @@ fn main() -> i32 {
 }
 
 /// v0.0.6 Slice 1B expansion: SIMD `load` / `store` round-trip through a
-/// `malloc`'d buffer. Exercises both raw-pointer interop and the
-/// `unsafe { ... }` requirement.
+/// `malloc`'d buffer. Exercises raw-pointer interop.
 #[test]
 fn simd_load_store_through_malloc_buffer() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -14129,13 +14393,13 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 fn main() -> i32 {
-    let buf: *u8 = unsafe { malloc(16 as usize) };
-    let fp: *f32 = unsafe { buf as *f32 };
+    let buf: *u8 = { malloc(16 as usize) };
+    let fp: *f32 = { buf as *f32 };
     let v: f32x4 = f32x4::new(2.0f32, 4.0f32, 6.0f32, 8.0f32);
-    unsafe { v.store(fp); }
-    let r: f32x4 = unsafe { f32x4::load(fp) };
+    { v.store(fp); }
+    let r: f32x4 = { f32x4::load(fp) };
     let s: f32 = r.lane(0 as u32) + r.lane(1 as u32) + r.lane(2 as u32) + r.lane(3 as u32);
-    unsafe { free(buf); }
+    { free(buf); }
     if s != 20.0f32 { return 1; }
     return 0;
 }
@@ -14337,11 +14601,11 @@ fn include_bytes_embeds_file_and_reads_bytes_back() {
         "\
 fn main() -> i32 {
     let p: *[u8; 6] = #include_bytes(\"hello.bin\");
-    let bytes: *u8 = unsafe { p as *u8 };
-    let b0: u8 = unsafe { bytes[0 as usize] };
-    let b1: u8 = unsafe { bytes[1 as usize] };
-    let b4: u8 = unsafe { bytes[4 as usize] };
-    let b5: u8 = unsafe { bytes[5 as usize] };
+    let bytes: *u8 = { p as *u8 };
+    let b0: u8 = { bytes[0 as usize] };
+    let b1: u8 = { bytes[1 as usize] };
+    let b4: u8 = { bytes[4 as usize] };
+    let b5: u8 = { bytes[5 as usize] };
     if b0 != (104 as u8) { return 1 as i32; }
     if b1 != (101 as u8) { return 2 as i32; }
     if b4 != (111 as u8) { return 3 as i32; }
@@ -14383,10 +14647,10 @@ fn include_bytes_dedupes_repeated_path() {
 fn main() -> i32 {
     let p1: *[u8; 3] = #include_bytes(\"a.bin\");
     let p2: *[u8; 3] = #include_bytes(\"a.bin\");
-    let b1: *u8 = unsafe { p1 as *u8 };
-    let b2: *u8 = unsafe { p2 as *u8 };
-    let v1: u8 = unsafe { b1[0 as usize] };
-    let v2: u8 = unsafe { b2[0 as usize] };
+    let b1: *u8 = { p1 as *u8 };
+    let b2: *u8 = { p2 as *u8 };
+    let v1: u8 = { b1[0 as usize] };
+    let v2: u8 = { b2[0 as usize] };
     if v1 != v2 { return 1 as i32; }
     if v1 != (97 as u8) { return 2 as i32; }
     return 0 as i32;
@@ -14436,9 +14700,9 @@ fn main() -> i32 {
     let s: str = #include_str(\"greet.txt\");
     if #str_len(s) != (3 as usize) { return 1 as i32; }
     let p: *u8 = #str_ptr(s);
-    let b0: u8 = unsafe { p[0 as usize] };
-    let b1: u8 = unsafe { p[1 as usize] };
-    let b2: u8 = unsafe { p[2 as usize] };
+    let b0: u8 = { p[0 as usize] };
+    let b1: u8 = { p[1 as usize] };
+    let b2: u8 = { p[2 as usize] };
     if b0 != (104 as u8) { return 2 as i32; }
     if b1 != (105 as u8) { return 3 as i32; }
     if b2 != (33 as u8)  { return 4 as i32; }
@@ -14553,7 +14817,9 @@ fn mixed_if_arm_with_call_and_struct_literal_does_not_panic() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("mixed.cplus");
-    std::fs::write(&src, "\
+    std::fs::write(
+        &src,
+        "\
 struct V { x: f32, y: f32, z: f32 }
 fn v_make(x: f32, y: f32) -> V { return V { x: x, y: y, z: 0.0f32 }; }
 
@@ -14579,13 +14845,27 @@ fn main() -> i32 {
     if r_false.x != 2.0f32 { return 3; }
     return 0;
 }
-").unwrap();
+",
+    )
+    .unwrap();
     let bin = dir.join("mixed");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for mixed-if-arm reproducer (regression)");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for mixed-if-arm reproducer (regression)"
+    );
     let run = Command::new(&bin).status().expect("run mixed");
-    assert_eq!(run.code(), Some(0),
-        "mixed-if-arm reproducer expected exit 0; got {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(0),
+        "mixed-if-arm reproducer expected exit 0; got {:?}",
+        run.code()
+    );
 }
 
 #[test]
@@ -14595,7 +14875,10 @@ fn block_tail_ident_non_copy_does_not_double_free() {
     let src = dir.join("blkmv.cplus");
     std::fs::write(
         &src,
-        format!("{}{}", BUF_PRELUDE, "\
+        format!(
+            "{}{}",
+            BUF_PRELUDE,
+            "\
 fn main() -> i32 {
     // Block-tail rebind.
     let f: Buf = {
@@ -14614,7 +14897,8 @@ fn main() -> i32 {
     if g.len() != (4 as usize) { return 2 as i32; }
     return 0 as i32;
 }
-"),
+"
+        ),
     )
     .unwrap();
     let bin = dir.join("blkmv");
@@ -15405,36 +15689,36 @@ fn stdlib_atomic_round_trips() {
          extern fn malloc(n: usize) -> *u8;\n\
          extern fn free(p: *u8);\n\
          fn main() -> i32 {\n\
-             let p64: *u64 = unsafe { malloc(8 as usize) as *u64 };\n\
+             let p64: *u64 = { malloc(8 as usize) as *u64 };\n\
              atomic::atomic_store_u64(p64, 0 as u64, atomic::Ordering::SeqCst);\n\
              let prev: u64 = atomic::atomic_fetch_add_u64(p64, 10 as u64, atomic::Ordering::SeqCst);\n\
-             if prev != (0 as u64) { unsafe { free(p64 as *u8); } return 1; }\n\
+             if prev != (0 as u64) { { free(p64 as *u8); } return 1; }\n\
              let cur: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
-             if cur != (10 as u64) { unsafe { free(p64 as *u8); } return 2; }\n\
+             if cur != (10 as u64) { { free(p64 as *u8); } return 2; }\n\
              let _s: u64 = atomic::atomic_fetch_sub_u64(p64, 3 as u64, atomic::Ordering::SeqCst);\n\
              let after_sub: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
-             if after_sub != (7 as u64) { unsafe { free(p64 as *u8); } return 3; }\n\
+             if after_sub != (7 as u64) { { free(p64 as *u8); } return 3; }\n\
              let cx: u64 = atomic::atomic_compare_exchange_u64(p64, 7 as u64, 42 as u64, atomic::Ordering::SeqCst);\n\
-             if cx != (7 as u64) { unsafe { free(p64 as *u8); } return 4; }\n\
+             if cx != (7 as u64) { { free(p64 as *u8); } return 4; }\n\
              let after_cx: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
-             if after_cx != (42 as u64) { unsafe { free(p64 as *u8); } return 5; }\n\
+             if after_cx != (42 as u64) { { free(p64 as *u8); } return 5; }\n\
              let cx_fail: u64 = atomic::atomic_compare_exchange_u64(p64, 0 as u64, 99 as u64, atomic::Ordering::SeqCst);\n\
-             if cx_fail != (42 as u64) { unsafe { free(p64 as *u8); } return 6; }\n\
+             if cx_fail != (42 as u64) { { free(p64 as *u8); } return 6; }\n\
              let after_fail: u64 = atomic::atomic_load_u64(p64, atomic::Ordering::SeqCst);\n\
-             if after_fail != (42 as u64) { unsafe { free(p64 as *u8); } return 7; }\n\
-             unsafe { free(p64 as *u8); }\n\
-             let p32: *i32 = unsafe { malloc(4 as usize) as *i32 };\n\
+             if after_fail != (42 as u64) { { free(p64 as *u8); } return 7; }\n\
+             { free(p64 as *u8); }\n\
+             let p32: *i32 = { malloc(4 as usize) as *i32 };\n\
              atomic::atomic_store_i32(p32, 0xF0 as i32, atomic::Ordering::SeqCst);\n\
              let _o: i32 = atomic::atomic_fetch_or_i32(p32, 0x0F as i32, atomic::Ordering::SeqCst);\n\
              let or_val: i32 = atomic::atomic_load_i32(p32, atomic::Ordering::SeqCst);\n\
-             if or_val != (0xFF as i32) { unsafe { free(p32 as *u8); } return 8; }\n\
+             if or_val != (0xFF as i32) { { free(p32 as *u8); } return 8; }\n\
              let _a: i32 = atomic::atomic_fetch_and_i32(p32, 0x0F as i32, atomic::Ordering::SeqCst);\n\
              let and_val: i32 = atomic::atomic_load_i32(p32, atomic::Ordering::SeqCst);\n\
-             if and_val != (0x0F as i32) { unsafe { free(p32 as *u8); } return 9; }\n\
+             if and_val != (0x0F as i32) { { free(p32 as *u8); } return 9; }\n\
              let _x: i32 = atomic::atomic_fetch_xor_i32(p32, 0x0F as i32, atomic::Ordering::SeqCst);\n\
              let xor_val: i32 = atomic::atomic_load_i32(p32, atomic::Ordering::SeqCst);\n\
-             if xor_val != (0 as i32) { unsafe { free(p32 as *u8); } return 10; }\n\
-             unsafe { free(p32 as *u8); }\n\
+             if xor_val != (0 as i32) { { free(p32 as *u8); } return 10; }\n\
+             { free(p32 as *u8); }\n\
              return 0;\n\
          }\n",
     ).unwrap();
@@ -15486,7 +15770,7 @@ fn stdlib_atomic_ir_contains_every_ordering() {
         "import \"stdlib/atomic\" as atomic;\n\
          extern fn malloc(n: usize) -> *u8;\n\
          fn main() -> i32 {\n\
-             let p: *u64 = unsafe { malloc(8 as usize) as *u64 };\n\
+             let p: *u64 = { malloc(8 as usize) as *u64 };\n\
              atomic::atomic_store_u64(p, 0 as u64, atomic::Ordering::Relaxed);\n\
              let _a: u64 = atomic::atomic_fetch_add_u64(p, 1 as u64, atomic::Ordering::Acquire);\n\
              let _b: u64 = atomic::atomic_fetch_add_u64(p, 1 as u64, atomic::Ordering::SeqCst);\n\
@@ -16288,11 +16572,7 @@ fn emit_obj_produces_relocatable_object() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("foo.cplus");
-    std::fs::write(
-        &src,
-        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "fn add(a: i32, b: i32) -> i32 { return a + b; }\n").unwrap();
     let out = dir.join("foo.o");
     let st = Command::new(cpc)
         .arg("--emit-obj")
@@ -16645,7 +16925,7 @@ fn emit_header_skips_extern_import_declarations() {
     std::fs::write(
         &src,
         "extern fn malloc(n: usize) -> *u8;\n\
-         export extern fn my_alloc(n: usize) -> *u8 { return unsafe { malloc(n) }; }\n",
+         export extern fn my_alloc(n: usize) -> *u8 { return { malloc(n) }; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16682,7 +16962,7 @@ fn emit_header_passes_clang_syntax_check() {
            return v.x * v.x + v.y * v.y + v.z * v.z;\n\
          }\n\
          export extern fn area(s: Shape, side: f64) -> f64 { return side; }\n\
-         export extern fn buf_ptr(n: usize) -> *u8 { unsafe { return 0 as *u8; } }\n",
+         export extern fn buf_ptr(n: usize) -> *u8 { { return 0 as *u8; } }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -17717,19 +17997,19 @@ fn racy_counter_provokes_tsan_warning() {
          fn bump_racy(counter: *u64) -> i32 {\n\
              var i: i32 = 0 as i32;\n\
              while i < (100000 as i32) {\n\
-                 unsafe { *counter = *counter +% (1 as u64); }\n\
+                 { *counter = *counter +% (1 as u64); }\n\
                  i = i +% (1 as i32);\n\
              }\n\
              return 0 as i32;\n\
          }\n\
          fn main() -> i32 {\n\
-             let counter: *u64 = unsafe { malloc(8 as usize) as *u64 };\n\
-             unsafe { *counter = 0 as u64; }\n\
+             let counter: *u64 = { malloc(8 as usize) as *u64 };\n\
+             { *counter = 0 as u64; }\n\
              let h1: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](counter, bump_racy);\n\
              let h2: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](counter, bump_racy);\n\
              let _r1: i32 = h1.join();\n\
              let _r2: i32 = h2.join();\n\
-             unsafe { free(counter as *u8); }\n\
+             { free(counter as *u8); }\n\
              return 0;\n\
          }\n",
     ).unwrap();
@@ -18182,7 +18462,9 @@ fn appkit_bridge_round_trip() {
 
     // Symlink the in-tree vendor packages so the build picks up the
     // current convert.cplus + runtime.cplus.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
     std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
@@ -18203,12 +18485,12 @@ fn main() -> i32 {
     let ns: *u8 = bridge::cplus_string_to_nsstring(original);
     let back: text::Text = bridge::nsstring_to_cplus_string(ns);
     if back.len() != (12 as usize) { return 1; }
-    if unsafe { back.as_str() } != "hello, world" { return 2; }
+    if { back.as_str() } != "hello, world" { return 2; }
 
     // str literal path.
     let ns2: *u8 = bridge::cplus_str_to_nsstring("bridge");
     let s2: text::Text = bridge::nsstring_to_cplus_string(ns2);
-    if unsafe { s2.as_str() } != "bridge" { return 3; }
+    if { s2.as_str() } != "bridge" { return 3; }
 
     // Empty string is a corner the encoding-aware length path must handle.
     let ns3: *u8 = bridge::cplus_str_to_nsstring("");
@@ -18231,14 +18513,18 @@ fn main() -> i32 {
     return 0;
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     let status = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
         .status()
         .expect("invoke cpc build");
-    assert!(status.success(), "cpc build for bridge round-trip failed: {status}");
+    assert!(
+        status.success(),
+        "cpc build for bridge round-trip failed: {status}"
+    );
 
     let bin = dir.join("target/debug/bridge_rt");
     assert!(bin.is_file(), "expected binary at {}", bin.display());
@@ -18260,13 +18546,19 @@ fn appkit_run_program(pkg: &str, program: &str) {
         format!("[package]\nname = \"{pkg}\"\n\n[[bin]]\nname = \"{pkg}\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nappkit = \"*\"\n"),
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
     std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
     std::fs::write(dir.join("src/main.cplus"), program).unwrap();
 
-    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
     assert!(status.success(), "cpc build for {pkg} failed: {status}");
     let bin = dir.join(format!("target/debug/{pkg}"));
     assert!(bin.is_file(), "expected binary at {}", bin.display());
@@ -18297,7 +18589,7 @@ fn main() -> i32 {
     let cls: *u8 = rt::get_class(#str_ptr("NSImage\0"));
     let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
     let img: *u8 = rt::msg_id(alloced, rt::sel(#str_ptr("init\0")));   // +1
-    let nullp: *u8 = unsafe { 0 as *u8 };
+    let nullp: *u8 = { 0 as *u8 };
     if img == nullp { return 1; }
 
     // Build a symbol configuration and apply it. The selector must be
@@ -18344,7 +18636,7 @@ fn make_view() -> *u8 {
 }
 
 fn main() -> i32 {
-    let nullp: *u8 = unsafe { 0 as *u8 };
+    let nullp: *u8 = { 0 as *u8 };
     let raw: *u8 = make_view();
     if raw == nullp { return 1; }
     // Object must still be alive across the boundary (would be UAF/0 if freed).
@@ -18358,7 +18650,7 @@ fn main() -> i32 {
     };
     let parent: view::View = view::View::new(pr);
     let child: view::View = view::View::from_raw(raw);
-    parent.add_subview(child.obj);
+    parent.add_subview(child.raw());
     return 0;
 }
 "#,
@@ -18385,7 +18677,7 @@ import "appkit/controls" as controls;
 import "appkit/toolbar" as toolbar;
 
 fn main() -> i32 {
-    let nullp: *u8 = unsafe { 0 as *u8 };
+    let nullp: *u8 = { 0 as *u8 };
     let frame: rt::Rect = rt::Rect {
         origin: rt::Point { x: 0.0, y: 0.0 },
         size: rt::Size { width: 120.0, height: 48.0 },
@@ -18407,13 +18699,13 @@ fn main() -> i32 {
     iv.set_image(sym);
     iv.set_symbol_configuration(cfg);
     iv.set_content_tint_color(gfx::Color::label_color());
-    card.add_subview(iv.obj);
+    card.add_subview(iv.raw());
 
     // GAP 4: wrapping label + focus-ring tweak.
     let lbl: controls::TextField = controls::TextField::new_wrapping_label(frame);
     lbl.set_focus_ring_type(1 as i64);
     lbl.set_string_value(#str_ptr("a long wrapping caption\0"));
-    card.add_subview(lbl.obj);
+    card.add_subview(lbl.raw());
 
     // GAP 4: toolbar style + centered item + (deprecated) item sizing.
     let tb: toolbar::Toolbar = toolbar::Toolbar::new(#str_ptr("tb\0"));
@@ -18447,14 +18739,13 @@ fn agent_appkit_describe_ui_walk_theme_b() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     for pkg in ["stdlib", "appkit", "agent_core", "agent_appkit"] {
-        std::os::unix::fs::symlink(
-            root.join("vendor").join(pkg),
-            dir.join("vendor").join(pkg),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(root.join("vendor").join(pkg), dir.join("vendor").join(pkg))
+            .unwrap();
     }
     std::fs::write(
         dir.join("src/main.cplus"),
@@ -18483,25 +18774,25 @@ fn main() -> i32 {
 
     let btn: controls::Button = controls::Button::new(rect(10.0, 10.0, 100.0, 30.0));
     btn.set_title(#str_ptr("Click me\0"));
-    ui::set_agent_id(btn.obj, "save-btn");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+    ui::set_agent_id(btn.raw(), "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.raw());
 
     let lbl: controls::TextField = controls::TextField::new_label(rect(10.0, 50.0, 200.0, 20.0));
     lbl.set_string_value(#str_ptr("Hello\0"));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.raw());
 
     let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0, 90.0, 200.0, 24.0));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.raw());
 
     // set_agent_id / get_agent_id round-trip.
-    match ui::get_agent_id(btn.obj) {
+    match ui::get_agent_id(btn.raw()) {
         option::Option[text::Text]::Some(t) => {
-            if unsafe { t.as_str() } != "save-btn" { return 10; }
+            if { t.as_str() } != "save-btn" { return 10; }
         }
         option::Option[text::Text]::None => { return 11; }
     }
 
-    let nodes: vec::Vec[ui::UiNode] = ui::describe(win.obj);
+    let nodes: vec::Vec[ui::UiNode] = ui::describe(win.raw());
 
     var n_window: i32 = 0;
     var n_button: i32 = 0;
@@ -18514,12 +18805,12 @@ fn main() -> i32 {
     while i < nodes.len() {
         match nodes.at(i) {
             option::Option[*ui::UiNode]::Some(p) => {
-                let r: identity::Role = unsafe { (*p).role };
+                let r: identity::Role = { (*p).role };
                 if identity::role_eq(r, identity::Role::Window) { n_window = n_window +% 1; }
                 if identity::role_eq(r, identity::Role::Button) {
                     n_button = n_button +% 1;
-                    if unsafe { (*p).text.as_str() } == "Click me" { found_click = true; }
-                    if unsafe { (*p).id.as_str() } == "save-btn" { found_pinned_id = true; }
+                    if { (*p).text.as_str() } == "Click me" { found_click = true; }
+                    if { (*p).id.as_str() } == "save-btn" { found_pinned_id = true; }
                 }
                 if identity::role_eq(r, identity::Role::Text) { n_text = n_text +% 1; }
                 if identity::role_eq(r, identity::Role::Input) { n_input = n_input +% 1; }
@@ -18596,22 +18887,22 @@ fn main() -> i32 {
 
     // Two views opt into Auto Layout (translates=NO) via the constraint API.
     let a: controls::TextField = controls::TextField::new_label(rect(0.0,0.0,10.0,10.0));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), a.obj);
-    layout::use_constraints(a.obj);
-    let _wa = layout::activate(layout::equal_const(layout::width(a.obj), 50.0));
-    let _ha = layout::activate(layout::equal_const(layout::height(a.obj), 20.0));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), a.raw());
+    layout::use_constraints(a.raw());
+    let _wa = layout::activate(layout::equal_const(layout::width(a.raw()), 50.0));
+    let _ha = layout::activate(layout::equal_const(layout::height(a.raw()), 20.0));
 
     let b: controls::TextField = controls::TextField::new_label(rect(0.0,0.0,10.0,10.0));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), b.obj);
-    layout::use_constraints(b.obj);
-    let _wb = layout::activate(layout::equal_const(layout::width(b.obj), 80.0));
-    let _hb = layout::activate(layout::equal_const(layout::height(b.obj), 20.0));
-    let _lb = layout::activate(layout::equal(layout::leading(b.obj), layout::leading(content)));
-    let _tb = layout::activate(layout::equal(layout::top(b.obj), layout::top(content)));
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), b.raw());
+    layout::use_constraints(b.raw());
+    let _wb = layout::activate(layout::equal_const(layout::width(b.raw()), 80.0));
+    let _hb = layout::activate(layout::equal_const(layout::height(b.raw()), 20.0));
+    let _lb = layout::activate(layout::equal(layout::leading(b.raw()), layout::leading(content)));
+    let _tb = layout::activate(layout::equal(layout::top(b.raw()), layout::top(content)));
 
     rt::msg_void(content, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0")));
 
-    let surf: ui::Surface = ui::open(win.obj);
+    let surf: ui::Surface = ui::open(win.raw());
     let diags: vec::Vec[ui::LayoutDiagnostic] = surf.layout_diagnostics();
     var n_auto: i32 = 0;
     for d in diags.iter() {
@@ -18642,13 +18933,20 @@ fn agent_appkit_run(pkg: &str, program: &str) {
         format!("[package]\nname = \"{pkg}\"\n\n[[bin]]\nname = \"{pkg}\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\nappkit = \"*\"\nagent_core = \"*\"\nagent_appkit = \"*\"\n"),
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     for p in ["stdlib", "appkit", "agent_core", "agent_appkit"] {
-        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p)).unwrap();
+        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p))
+            .unwrap();
     }
     std::fs::write(dir.join("src/main.cplus"), program).unwrap();
-    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
     assert!(status.success(), "cpc build for {pkg} failed: {status}");
     let bin = dir.join(format!("target/debug/{pkg}"));
     let run = Command::new(bin).status().expect("run program");
@@ -18666,13 +18964,27 @@ fn agent_mcp_run(pkg: &str, program: &str) {
         format!("[package]\nname = \"{pkg}\"\n\n[[bin]]\nname = \"{pkg}\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\njson = \"*\"\nappkit = \"*\"\nagent_core = \"*\"\nagent_appkit = \"*\"\nagent_mcp = \"*\"\n"),
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
-    for p in ["stdlib", "json", "appkit", "agent_core", "agent_appkit", "agent_mcp"] {
-        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p)).unwrap();
+    for p in [
+        "stdlib",
+        "json",
+        "appkit",
+        "agent_core",
+        "agent_appkit",
+        "agent_mcp",
+    ] {
+        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p))
+            .unwrap();
     }
     std::fs::write(dir.join("src/main.cplus"), program).unwrap();
-    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
     assert!(status.success(), "cpc build for {pkg} failed: {status}");
     let bin = dir.join(format!("target/debug/{pkg}"));
     let run = Command::new(bin).status().expect("run program");
@@ -18707,10 +19019,13 @@ fn agent_consent_middleware_three_paths() {
         include_str!("../../docs/examples/recipes/agent_consent/src/main.cplus"),
     )
     .unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     for p in ["stdlib", "agent_core"] {
-        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p)).unwrap();
+        std::os::unix::fs::symlink(root.join("vendor").join(p), dir.join("vendor").join(p))
+            .unwrap();
     }
     let status = Command::new(cpc)
         .arg("build")
@@ -18764,7 +19079,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
 }
 
 fn outcome_of(resp: text::Text) -> text::Text {
-    return match json::parse(unsafe { resp.as_str() }) {
+    return match json::parse({ resp.as_str() }) {
         result::Result[json::Value, json::ParseError]::Ok(v) =>
             json::as_str(json::object_get(json::object_get(v, "result"), "outcome")),
         result::Result[json::Value, json::ParseError]::Err(_e) => "PARSE_FAIL".to_text(),
@@ -18772,7 +19087,7 @@ fn outcome_of(resp: text::Text) -> text::Text {
 }
 
 fn has_error(resp: text::Text) -> bool {
-    return match json::parse(unsafe { resp.as_str() }) {
+    return match json::parse({ resp.as_str() }) {
         result::Result[json::Value, json::ParseError]::Ok(v) => json::object_get(v, "error").is_object(),
         result::Result[json::Value, json::ParseError]::Err(_e) => false,
     };
@@ -18785,29 +19100,29 @@ fn main() -> i32 {
     let content: *u8 = win.content_view();
     let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
     btn.set_title(#str_ptr("Save\0"));
-    ui::set_agent_id(btn.obj, "save-btn");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+    ui::set_agent_id(btn.raw(), "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.raw());
     let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,50.0,200.0,24.0));
-    ui::set_agent_id(inp.obj, "name-field");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+    ui::set_agent_id(inp.raw(), "name-field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.raw());
 
-    var surf: ui::Surface = ui::open(win.obj);
+    var surf: ui::Surface = ui::open(win.raw());
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     let d: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}");
-    if !unsafe { d.as_str() }.to_text().contains("save-btn") { return 1; }
-    if !unsafe { d.as_str() }.to_text().contains("\"role\":\"button\"") { return 2; }
+    if !{ d.as_str() }.to_text().contains("save-btn") { return 1; }
+    if !{ d.as_str() }.to_text().contains("\"role\":\"button\"") { return 2; }
 
     let c: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"save-btn\"},\"id\":2}");
-    if unsafe { outcome_of(c).as_str() } != "allowed" { return 3; }
+    if { outcome_of(c).as_str() } != "allowed" { return 3; }
 
     let c2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"click\",\"params\":{\"id\":\"ghost\"},\"id\":3}");
-    if unsafe { outcome_of(c2).as_str() } != "not_found" { return 4; }
+    if { outcome_of(c2).as_str() } != "not_found" { return 4; }
 
     let s1: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"hi\",\"base_version\":0},\"id\":4}");
-    if unsafe { outcome_of(s1).as_str() } != "allowed" { return 5; }
+    if { outcome_of(s1).as_str() } != "allowed" { return 5; }
     let s2: text::Text = mcp::handle_request(surf, sub, auth::serve(allow_all), "{\"method\":\"set_text\",\"params\":{\"id\":\"name-field\",\"value\":\"x\",\"base_version\":0},\"id\":5}");
-    if unsafe { outcome_of(s2).as_str() } != "version_conflict" { return 6; }
+    if { outcome_of(s2).as_str() } != "version_conflict" { return 6; }
 
     let denied: text::Text = mcp::handle_request(surf, sub, auth::deny_all(), "{\"method\":\"describe_ui\",\"params\":{},\"id\":6}");
     if !has_error(denied) { return 7; }
@@ -18859,31 +19174,31 @@ fn main() -> i32 {
     let _app = application::Application::shared();
     let win: window::Window = window::Window::new(rect(0.0,0.0,300.0,200.0), 1 as u64, 2 as u64, 0 as i8);
     let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
-    ui::set_agent_id(btn.obj, "save-btn");
-    rt::msg_void_id(win.content_view(), rt::sel(#str_ptr("addSubview:\0")), btn.obj);
-    var surf: ui::Surface = ui::open(win.obj);
+    ui::set_agent_id(btn.raw(), "save-btn");
+    rt::msg_void_id(win.content_view(), rt::sel(#str_ptr("addSubview:\0")), btn.raw());
+    var surf: ui::Surface = ui::open(win.raw());
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     var sv: [i32; 2] = [0 as i32, 0 as i32];
-    if unsafe { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(sv[0])) } != (0 as i32) { return 10; }
+    if { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(sv[0])) } != (0 as i32) { return 10; }
     let client: i32 = sv[0];
     let server: i32 = sv[1];
 
     let req: str = "{\"method\":\"describe_ui\",\"params\":{},\"id\":1}\n";
-    unsafe { write(client, #str_ptr(req), #str_len(req)); }
-    unsafe { shutdown(client, 1 as i32); }
+    { write(client, #str_ptr(req), #str_len(req)); }
+    { shutdown(client, 1 as i32); }
 
     mcp::serve_fd(surf, sub, allow_all, server);
 
     var rbuf: [u8; 4096] = [0 as u8; 4096];
-    let n: i64 = unsafe { read(client, #addr_of(rbuf[0]), 4096 as usize) };
+    let n: i64 = { read(client, #addr_of(rbuf[0]), 4096 as usize) };
     if n <= (0 as i64) { return 11; }
-    let resp: str = unsafe { #str_from_raw_parts(#addr_of(rbuf[0]), n as usize) };
+    let resp: str = { #str_from_raw_parts(#addr_of(rbuf[0]), n as usize) };
     if !resp.to_text().contains("save-btn") { return 1; }
     if !resp.to_text().contains("\"result\"") { return 2; }
 
-    unsafe { close(client); }
-    unsafe { close(server); }
+    { close(client); }
+    { close(server); }
     pool.drain();
     return 0;
 }
@@ -18915,7 +19230,7 @@ import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 
 static CLICKED: i32 = 0;
-fn on_click(sender: *u8) { unsafe { CLICKED = CLICKED +% 1; } return; }
+fn on_click(sender: *u8) { { CLICKED = CLICKED +% 1; } return; }
 
 fn rect(x: f64, y: f64, w: f64, h: f64) -> rt::Rect {
     return rt::Rect { origin: rt::Point { x: x, y: y }, size: rt::Size { width: w, height: h } };
@@ -18930,21 +19245,21 @@ fn main() -> i32 {
     let btn: controls::Button = controls::Button::new(rect(10.0,10.0,100.0,30.0));
     btn.set_title(#str_ptr("Save\0"));
     btn.set_on_click(on_click);
-    ui::set_agent_id(btn.obj, "save-btn");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+    ui::set_agent_id(btn.raw(), "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.raw());
 
     let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,50.0,200.0,24.0));
-    ui::set_agent_id(inp.obj, "name-field");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
+    ui::set_agent_id(inp.raw(), "name-field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.raw());
 
     let lbl: controls::TextField = controls::TextField::new_label(rect(10.0,90.0,200.0,20.0));
     lbl.set_string_value(#str_ptr("static\0"));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), lbl.raw());
 
-    var s: ui::Surface = ui::open(win.obj);
+    var s: ui::Surface = ui::open(win.raw());
 
     if !surface::outcome_eq(s.click("save-btn"), surface::Outcome::Allowed) { return 1; }
-    if unsafe { CLICKED } != (1 as i32) { return 2; }
+    if { CLICKED } != (1 as i32) { return 2; }
     if !surface::outcome_eq(s.click("nope"), surface::Outcome::NotFound) { return 3; }
     if s.text_version("name-field") != (0 as u64) { return 4; }
     if !surface::outcome_eq(s.set_text("name-field", "hello", 0 as u64), surface::Outcome::Allowed) { return 5; }
@@ -18959,13 +19274,13 @@ fn main() -> i32 {
     while i < nodes.len() {
         match nodes.at(i) {
             option::Option[*ui::UiNode]::Some(p) => {
-                if unsafe { (*p).id.as_str() } == "name-field" {
-                    if unsafe { (*p).text.as_str() } == "hello" { wrote_ok = true; }
+                if { (*p).id.as_str() } == "name-field" {
+                    if { (*p).text.as_str() } == "hello" { wrote_ok = true; }
                 }
-                if unsafe { (*p).id.as_str() } == "save-btn" {
-                    if unsafe { (*p).actionable } { btn_actionable = true; }
+                if { (*p).id.as_str() } == "save-btn" {
+                    if { (*p).actionable } { btn_actionable = true; }
                 }
-                if !unsafe { (*p).actionable } { have_unexposed = true; }
+                if !{ (*p).actionable } { have_unexposed = true; }
             }
             option::Option[*ui::UiNode]::None => {}
         }
@@ -19015,9 +19330,9 @@ fn main() -> i32 {
     let win: window::Window = window::Window::new(rect(0.0,0.0,300.0,200.0), 1 as u64, 2 as u64, 0 as i8);
     let content: *u8 = win.content_view();
     let inp: controls::TextField = controls::TextField::new_input_field(rect(10.0,10.0,200.0,24.0));
-    ui::set_agent_id(inp.obj, "field");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.obj);
-    var s: ui::Surface = ui::open(win.obj);
+    ui::set_agent_id(inp.raw(), "field");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), inp.raw());
+    var s: ui::Surface = ui::open(win.raw());
 
     // scroll_to is exposed (tagged) -> Allowed; routes through the main-thread
     // scroll path (direct send while on main).
@@ -19063,10 +19378,10 @@ fn main() -> i32 {
     let win: window::Window = window::Window::new(rect(0.0,0.0,300.0,200.0), 1 as u64, 2 as u64, 0 as i8);
     let content: *u8 = win.content_view();
     let btn: controls::Button = controls::Button::new(rect(10.0,10.0,80.0,24.0));
-    ui::set_agent_id(btn.obj, "save-btn");
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.obj);
+    ui::set_agent_id(btn.raw(), "save-btn");
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), btn.raw());
 
-    let s: ui::Surface = ui::open(win.obj);
+    let s: ui::Surface = ui::open(win.raw());
     var sub: events::Subscriber = events::subscriber(events::everything(), 8 as usize);
 
     // Emit a translated event on the tagged node -> delivered.
@@ -19156,7 +19471,7 @@ fn add_button(content: *u8) {
     let b: controls::Button = controls::Button::new(
         rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 80.0, height: 24.0 } });
     b.set_title(#str_ptr("Hi\0"));
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), b.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), b.raw());
     return;   // b drops here -> release; content retained it, so it survives
 }
 
@@ -19198,11 +19513,11 @@ fn main() -> i32 {
     let _cc: i64 = board.clear();
     if board.set_string(#str_ptr("clip-test-123\0")) != (1 as i8) { return 1; }
     let got_ns: *u8 = board.string_ns();
-    if got_ns == unsafe { 0 as *u8 } { return 2; }
-    if unsafe { conv::nsstring_to_cplus_string(got_ns).as_str() } != "clip-test-123" { return 3; }
+    if got_ns == { 0 as *u8 } { return 2; }
+    if { conv::nsstring_to_cplus_string(got_ns).as_str() } != "clip-test-123" { return 3; }
     let _cc2: i64 = board.clear();
     let _ok2: i8 = board.set_string(#str_ptr("second\0"));
-    if unsafe { conv::nsstring_to_cplus_string(board.string_ns()).as_str() } != "second" { return 4; }
+    if { conv::nsstring_to_cplus_string(board.string_ns()).as_str() } != "second" { return 4; }
     pool.drain();
     return 0;
 }
@@ -19230,10 +19545,10 @@ fn main() -> i32 {
     let cf = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 10.0, height: 10.0 } };
     let parent: view::View = view::View::new(pf);
     let child: view::View = view::View::new(cf);
-    parent.add_subview(child.obj);
-    layout::use_constraints(child.obj);
-    let c1: *u8 = layout::activate(layout::equal(layout::leading(child.obj), layout::leading(parent.obj)));
-    let c2: *u8 = layout::activate(layout::equal_const(layout::width(child.obj), 200.0));
+    parent.add_subview(child.raw());
+    layout::use_constraints(child.raw());
+    let c1: *u8 = layout::activate(layout::equal(layout::leading(child.raw()), layout::leading(parent.raw())));
+    let c2: *u8 = layout::activate(layout::equal_const(layout::width(child.raw()), 200.0));
     if layout::is_active(c1) != (1 as i8) { return 1; }
     if layout::is_active(c2) != (1 as i8) { return 2; }
     let w: f64 = rt::msg_f64(c2, rt::sel(#str_ptr("constant\0")));
@@ -19265,7 +19580,7 @@ import "appkit/notifications" as notify;
 static COUNT: i32 = 0;
 
 fn on_note(note: *u8) {
-    unsafe { COUNT = COUNT +% (1 as i32); };
+    { COUNT = COUNT +% (1 as i32); };
     return;
 }
 
@@ -19278,10 +19593,10 @@ fn main() -> i32 {
         center.post(#str_ptr("CPlusTestNote\0"));
     }
     // Two posts while subscribed.
-    if unsafe { COUNT } != (2 as i32) { return 1; }
+    if { COUNT } != (2 as i32) { return 1; }
     // Observer dropped above -> unsubscribed; this post must not fire.
     center.post(#str_ptr("CPlusTestNote\0"));
-    if unsafe { COUNT } != (2 as i32) { return 2; }
+    if { COUNT } != (2 as i32) { return 2; }
     pool.drain();
     return 0;
 }
@@ -19320,13 +19635,13 @@ fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
     let ds: *u8 = data::create_table_data_source(ds_row_count, ds_value);
 
-    let n: i64 = rt::msg_i64_id(ds, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), unsafe { 0 as *u8 });
+    let n: i64 = rt::msg_i64_id(ds, rt::sel(#str_ptr("numberOfRowsInTableView:\0")), { 0 as *u8 });
     if n != (3 as i64) { return 1; }
 
-    let nil: *u8 = unsafe { 0 as *u8 };
+    let nil: *u8 = { 0 as *u8 };
     let sel_v: *u8 = rt::sel(#str_ptr("tableView:objectValueForTableColumn:row:\0"));
-    if unsafe { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() } != "row-0" { return 2; }
-    if unsafe { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() } != "row-2" { return 3; }
+    if { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 0 as i64)).as_str() } != "row-0" { return 2; }
+    if { conv::nsstring_to_cplus_string(rt::msg_id_id_id_i64(ds, sel_v, nil, nil, 2 as i64)).as_str() } != "row-2" { return 3; }
 
     rt::release(ds);
     pool.drain();
@@ -19357,21 +19672,21 @@ static WILL_CLOSE: i32 = 0;
 static SEL_CHANGED: i32 = 0;
 
 fn should_close(self_obj: *u8, _cmd: *u8, sender: *u8) -> i8 { return 1 as i8; }
-fn will_close(self_obj: *u8, _cmd: *u8, note: *u8) { unsafe { WILL_CLOSE = 1 as i32; }; return; }
-fn sel_changed(self_obj: *u8, _cmd: *u8, note: *u8) { unsafe { SEL_CHANGED = 1 as i32; }; return; }
+fn will_close(self_obj: *u8, _cmd: *u8, note: *u8) { { WILL_CLOSE = 1 as i32; }; return; }
+fn sel_changed(self_obj: *u8, _cmd: *u8, note: *u8) { { SEL_CHANGED = 1 as i32; }; return; }
 
 fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
-    let nil: *u8 = unsafe { 0 as *u8 };
+    let nil: *u8 = { 0 as *u8 };
 
     let wd: *u8 = window::create_window_delegate(should_close, will_close);
     if rt::msg_i8_id(wd, rt::sel(#str_ptr("windowShouldClose:\0")), nil) != (1 as i8) { return 1; }
     rt::msg_void_id(wd, rt::sel(#str_ptr("windowWillClose:\0")), nil);
-    if unsafe { WILL_CLOSE } != (1 as i32) { return 2; }
+    if { WILL_CLOSE } != (1 as i32) { return 2; }
 
     let td: *u8 = data::create_table_delegate(sel_changed);
     rt::msg_void_id(td, rt::sel(#str_ptr("tableViewSelectionDidChange:\0")), nil);
-    if unsafe { SEL_CHANGED } != (1 as i32) { return 3; }
+    if { SEL_CHANGED } != (1 as i32) { return 3; }
 
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 10.0, height: 10.0 } };
     let table: data::TableView = data::TableView::new(f);
@@ -19438,8 +19753,8 @@ static DREW: i32 = 0;
 static DRAW_W: f64 = 0.0;
 
 fn my_draw(self_obj: *u8, _cmd: *u8, dirty: rt::Rect) {
-    unsafe { DREW = 1 as i32; };
-    unsafe { DRAW_W = dirty.size.width; };
+    { DREW = 1 as i32; };
+    { DRAW_W = dirty.size.width; };
     return;
 }
 
@@ -19448,9 +19763,9 @@ fn main() -> i32 {
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
     let v: view::View = view::create_custom_view(f, my_draw);
     let dirty = rt::Rect { origin: rt::Point { x: 1.0, y: 2.0 }, size: rt::Size { width: 42.0, height: 7.0 } };
-    rt::msg_void_rect(v.obj, rt::sel(#str_ptr("drawRect:\0")), dirty);
-    if unsafe { DREW } != (1 as i32) { return 1; }
-    if unsafe { DRAW_W } != 42.0 { return 2; }
+    rt::msg_void_rect(v.raw(), rt::sel(#str_ptr("drawRect:\0")), dirty);
+    if { DREW } != (1 as i32) { return 1; }
+    if { DRAW_W } != 42.0 { return 2; }
     pool.drain();
     return 0;
 }
@@ -19478,17 +19793,17 @@ fn main() -> i32 {
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 400.0, height: 400.0 } };
     let parent: view::View = view::View::new(f);
     let child: view::View = view::View::new(f);
-    parent.add_subview(child.obj);
-    layout::use_constraints(child.obj);
+    parent.add_subview(child.raw());
+    layout::use_constraints(child.raw());
 
-    let c: *u8 = layout::equal_const(layout::width(child.obj), 50.0);
+    let c: *u8 = layout::equal_const(layout::width(child.raw()), 50.0);
     let _p: *u8 = layout::set_priority(c, layout::priority_high());
     if layout::priority(c) != (750.0 as f32) { return 1; }
     let _a: *u8 = layout::activate(c);
     if layout::is_active(c) != (1 as i8) { return 2; }
 
-    let guide: *u8 = layout::add_guide(parent.obj);
-    let c2: *u8 = layout::activate(layout::equal(layout::leading(child.obj), layout::leading(guide)));
+    let guide: *u8 = layout::add_guide(parent.raw());
+    let c2: *u8 = layout::activate(layout::equal(layout::leading(child.raw()), layout::leading(guide)));
     if layout::is_active(c2) != (1 as i8) { return 3; }
 
     pool.drain();
@@ -19518,7 +19833,7 @@ import "appkit/runtime" as rt;
 static DROPPED: i32 = 0;
 
 fn on_entered(self_obj: *u8, _cmd: *u8, info: *u8) -> i64 { return drag::drag_op_copy(); }
-fn on_perform(self_obj: *u8, _cmd: *u8, info: *u8) -> i8 { unsafe { DROPPED = 1 as i32; }; return 1 as i8; }
+fn on_perform(self_obj: *u8, _cmd: *u8, info: *u8) -> i8 { { DROPPED = 1 as i32; }; return 1 as i8; }
 
 fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
@@ -19526,10 +19841,10 @@ fn main() -> i32 {
     let v: *u8 = drag::create_drag_destination_view(f, on_entered, on_perform);
     drag::register_for_string_drops(v);
 
-    let nil: *u8 = unsafe { 0 as *u8 };
+    let nil: *u8 = { 0 as *u8 };
     if rt::msg_i64_id(v, rt::sel(#str_ptr("draggingEntered:\0")), nil) != drag::drag_op_copy() { return 1; }
     if rt::msg_i8_id(v, rt::sel(#str_ptr("performDragOperation:\0")), nil) != (1 as i8) { return 2; }
-    if unsafe { DROPPED } != (1 as i32) { return 3; }
+    if { DROPPED } != (1 as i32) { return 3; }
 
     rt::release(v);
     pool.drain();
@@ -19566,7 +19881,7 @@ fn src_mask(self_obj: *u8, _cmd: *u8, session: *u8, context: i64) -> i64 {
 // whole initiation path.
 fn src_dragged(self_obj: *u8, _cmd: *u8, event: *u8) {
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 60.0, height: 20.0 } };
-    drag::begin_string_drag(self_obj, event, #str_ptr("payload\0"), f, unsafe { 0 as *u8 });
+    drag::begin_string_drag(self_obj, event, #str_ptr("payload\0"), f, { 0 as *u8 });
     return;
 }
 
@@ -19574,7 +19889,7 @@ fn main() -> i32 {
     let pool = application::AutoreleasePool::new();
     let f = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 100.0, height: 100.0 } };
     let v: *u8 = drag::create_drag_source_view(f, src_mask, src_dragged);
-    let nil: *u8 = unsafe { 0 as *u8 };
+    let nil: *u8 = { 0 as *u8 };
     let m: i64 = rt::msg_i64_id_i64(v, rt::sel(#str_ptr("draggingSession:sourceOperationMaskForDraggingContext:\0")), nil, 0 as i64);
     if m != drag::drag_op_copy() { return 1; }
 
@@ -19583,7 +19898,7 @@ fn main() -> i32 {
     let img: *u8 = rt::alloc_init(#str_ptr("NSImage\0"));
     let item = drag::DraggingItem::from_string(#str_ptr("hi\0"));
     item.set_dragging_frame_contents(f, img);
-    if item.obj == nil { return 2; }
+    if item.raw() == nil { return 2; }
 
     rt::release(v);
     pool.drain();
@@ -19603,7 +19918,9 @@ fn main() -> i32 {
 fn appkit_list_detail_recipe_builds() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     let recipe = root.join("docs/examples/recipes/appkit_list_detail");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::copy(recipe.join("Cplus.toml"), dir.join("Cplus.toml")).unwrap();
@@ -19612,8 +19929,15 @@ fn appkit_list_detail_recipe_builds() {
     std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
     std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
 
-    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
-    assert!(status.success(), "appkit_list_detail recipe failed to build");
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
+    assert!(
+        status.success(),
+        "appkit_list_detail recipe failed to build"
+    );
     assert!(
         dir.join("target/debug/appkit_list_detail").is_file(),
         "expected the list_detail binary"
@@ -19629,7 +19953,9 @@ fn appkit_list_detail_recipe_builds() {
 fn appkit_drag_drop_recipe_builds() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     let recipe = root.join("docs/examples/recipes/appkit_drag_drop");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::copy(recipe.join("Cplus.toml"), dir.join("Cplus.toml")).unwrap();
@@ -19638,7 +19964,11 @@ fn appkit_drag_drop_recipe_builds() {
     std::os::unix::fs::symlink(root.join("vendor/stdlib"), dir.join("vendor/stdlib")).unwrap();
     std::os::unix::fs::symlink(root.join("vendor/appkit"), dir.join("vendor/appkit")).unwrap();
 
-    let status = Command::new(cpc).arg("build").current_dir(&dir).status().expect("invoke cpc build");
+    let status = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .status()
+        .expect("invoke cpc build");
     assert!(status.success(), "appkit_drag_drop recipe failed to build");
     assert!(
         dir.join("target/debug/appkit_drag_drop").is_file(),
@@ -19666,12 +19996,12 @@ import "appkit/controls" as controls;
 fn main() -> i32 {
     let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 120.0, height: 24.0 } };
     let label = controls::TextField::new_label(f);
-    if rt::msg_i8(label.obj, rt::sel(#str_ptr("isEditable\0"))) != (0 as i8) { return 1; }
-    if rt::msg_i8(label.obj, rt::sel(#str_ptr("isBezeled\0"))) != (0 as i8) { return 2; }
-    if rt::msg_i8(label.obj, rt::sel(#str_ptr("isSelectable\0"))) != (0 as i8) { return 3; }
+    if rt::msg_i8(label.raw(), rt::sel(#str_ptr("isEditable\0"))) != (0 as i8) { return 1; }
+    if rt::msg_i8(label.raw(), rt::sel(#str_ptr("isBezeled\0"))) != (0 as i8) { return 2; }
+    if rt::msg_i8(label.raw(), rt::sel(#str_ptr("isSelectable\0"))) != (0 as i8) { return 3; }
     // An input field stays editable (the contrast case).
     let field = controls::TextField::new_input_field(f);
-    if rt::msg_i8(field.obj, rt::sel(#str_ptr("isEditable\0"))) != (1 as i8) { return 4; }
+    if rt::msg_i8(field.raw(), rt::sel(#str_ptr("isEditable\0"))) != (1 as i8) { return 4; }
     return 0;
 }
 "#,
@@ -19791,7 +20121,7 @@ fn main() -> i32 {
     {
         let s = controls::Slider::new(f);
         s.set_double_value(7.0);
-        rt::msg_void_id(parent, rt::sel(#str_ptr("addSubview:\0")), s.obj);
+        rt::msg_void_id(parent, rt::sel(#str_ptr("addSubview:\0")), s.raw());
     }
     let subs: *u8 = rt::msg_id(parent, rt::sel(#str_ptr("subviews\0")));
     if rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) != (1 as u64) { return 1; }
@@ -19829,7 +20159,7 @@ fn main() -> i32 {
     let parent: *u8 = rt::alloc_init_with_frame(#str_ptr("NSView\0"), f);
     {
         let child = view::View::new(f);
-        rt::msg_void_id(parent, rt::sel(#str_ptr("addSubview:\0")), child.obj);
+        rt::msg_void_id(parent, rt::sel(#str_ptr("addSubview:\0")), child.raw());
     }
     let subs: *u8 = rt::msg_id(parent, rt::sel(#str_ptr("subviews\0")));
     if rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) != (1 as u64) { return 1; }
@@ -19859,12 +20189,12 @@ fn main() -> i32 {
     tv.set_string(#str_ptr("hello world\0"));
     tv.set_editable(1 as i8);
     tv.set_rich_text(0 as i8);
-    if tv.string() == unsafe { 0 as *u8 } { return 1; }
+    if tv.string() == { 0 as *u8 } { return 1; }
 
     let secure = text::SecureTextField::new(f);
     secure.set_placeholder_string(#str_ptr("password\0"));
     secure.set_string_value(#str_ptr("pw\0"));
-    if secure.string_value() == unsafe { 0 as *u8 } { return 2; }
+    if secure.string_value() == { 0 as *u8 } { return 2; }
 
     let search = text::SearchField::new(f);
     search.set_placeholder_string(#str_ptr("search\0"));
@@ -19872,7 +20202,7 @@ fn main() -> i32 {
 
     let tokens = text::TokenField::new(f);
     tokens.set_string_value(#str_ptr("a,b\0"));
-    if tokens.string_value() == unsafe { 0 as *u8 } { return 3; }
+    if tokens.string_value() == { 0 as *u8 } { return 3; }
 
     let combo = text::ComboBox::new(f);
     combo.add_item(#str_ptr("one\0"));
@@ -19916,7 +20246,7 @@ fn main() -> i32 {
     let item = containers::TabViewItem::new(#str_ptr("id1\0"));
     item.set_label(#str_ptr("Tab 1\0"));
     item.set_view(v);
-    tab.add_tab_view_item(item.obj);
+    tab.add_tab_view_item(item.raw());
     tab.select_tab_view_item_at_index(0 as i64);
 
     let vfx = containers::VisualEffectView::new(f);
@@ -19976,11 +20306,11 @@ fn main() -> i32 {
 
     let bar = toolbar::StatusBar::system();
     let item_obj: *u8 = bar.status_item_with_length(-1.0);
-    if item_obj == unsafe { 0 as *u8 } { return 1; }
+    if item_obj == { 0 as *u8 } { return 1; }
     let si = toolbar::StatusItem::from_obj(item_obj);
     si.set_length(24.0);
     let btn_obj: *u8 = si.button();
-    if btn_obj != unsafe { 0 as *u8 } {
+    if btn_obj != { 0 as *u8 } {
         let sbb = toolbar::StatusBarButton::from_obj(btn_obj);
         sbb.set_title(#str_ptr("S\0"));
     }
@@ -20053,7 +20383,7 @@ fn main() -> i32 {
 
     let vc = controllers::ViewController::new();
     vc.set_view(v);
-    if vc.view() == unsafe { 0 as *u8 } { return 1; }
+    if vc.view() == { 0 as *u8 } { return 1; }
 
     let wc = controllers::WindowController::new();
     let _w: *u8 = wc.window();
@@ -20094,15 +20424,15 @@ fn main() -> i32 {
     let quit = menu::MenuItem::new(#str_ptr("Quit\0"), #str_ptr("terminate:\0"), #str_ptr("q\0"));
     quit.set_enabled(1 as i8);
     quit.set_key_equivalent_modifier_mask(1048576 as u64);
-    m.add_item(quit.obj);
+    m.add_item(quit.raw());
 
     let sep: *u8 = menu::MenuItem::separator();
     m.add_item(sep);
 
     let submenu = menu::Menu::new(#str_ptr("More\0"));
-    let parent = menu::MenuItem::new(#str_ptr("More\0"), unsafe { 0 as *u8 }, #str_ptr("\0"));
-    parent.set_submenu(submenu.obj);
-    m.add_item(parent.obj);
+    let parent = menu::MenuItem::new(#str_ptr("More\0"), { 0 as *u8 }, #str_ptr("\0"));
+    parent.set_submenu(submenu.raw());
+    m.add_item(parent.raw());
 
     return 0;
 }
@@ -20156,7 +20486,7 @@ fn main() -> i32 {
     // str -> NSString -> Text, content preserved.
     let ns: *u8 = convert::cplus_str_to_nsstring("hello world");
     let back: text::Text = convert::nsstring_to_cplus_string(ns);
-    if unsafe { back.as_str() } != "hello world" { return 1; }
+    if { back.as_str() } != "hello world" { return 1; }
 
     // Vec[u8] -> NSData -> Vec[u8], bytes preserved.
     var v: vec::Vec[u8] = vec::Vec[u8]::new();
@@ -20204,8 +20534,8 @@ import "appkit/graphics" as graphics;
 fn main() -> i32 {
     let f: rt::Rect = rt::Rect { origin: rt::Point { x: 0.0, y: 0.0 }, size: rt::Size { width: 64.0, height: 64.0 } };
 
-    if graphics::Color::red() == unsafe { 0 as *u8 } { return 1; }
-    if graphics::Color::rgba(0.5, 0.25, 0.75, 1.0) == unsafe { 0 as *u8 } { return 2; }
+    if graphics::Color::red() == { 0 as *u8 } { return 1; }
+    if graphics::Color::rgba(0.5, 0.25, 0.75, 1.0) == { 0 as *u8 } { return 2; }
     let _b = graphics::Color::black();
     let _w = graphics::Color::white();
     let _c = graphics::Color::clear();
@@ -20214,7 +20544,7 @@ fn main() -> i32 {
     let _gn = graphics::Color::green();
     let _bl = graphics::Color::blue();
 
-    if graphics::Font::system_font_of_size(13.0) == unsafe { 0 as *u8 } { return 3; }
+    if graphics::Font::system_font_of_size(13.0) == { 0 as *u8 } { return 3; }
     let _bold = graphics::Font::bold_system_font_of_size(13.0);
     let _label = graphics::Font::label_font_of_size(11.0);
 
@@ -20222,7 +20552,7 @@ fn main() -> i32 {
 
     let iv = graphics::ImageView::new(f);
     iv.set_scaling(0 as i64);
-    if named != unsafe { 0 as *u8 } { iv.set_image(named); }
+    if named != { 0 as *u8 } { iv.set_image(named); }
 
     let path = graphics::BezierPath::new();
     path.move_to(0.0, 0.0);
@@ -20263,15 +20593,15 @@ fn main() -> i32 {
 
     // 2×f64 HFA (NSPoint) argument.
     let p: rt::Point = rt::Point { x: 12.0, y: 34.0 };
-    let vp: *u8 = unsafe { value_with_point(nsvalue, rt::sel(#str_ptr("valueWithPoint:\0")), p) };
+    let vp: *u8 = { value_with_point(nsvalue, rt::sel(#str_ptr("valueWithPoint:\0")), p) };
     let gp: rt::Point = rt::msg_point(vp, rt::sel(#str_ptr("pointValue\0")));
     if gp.x < 11.0 { return 1; }
     if gp.y < 33.0 { return 2; }
 
     // 4×f64 HFA (NSRect) argument — passed Indirect before the fix.
     let r: rt::Rect = rt::Rect { origin: rt::Point { x: 5.0, y: 6.0 }, size: rt::Size { width: 7.0, height: 8.0 } };
-    let vr: *u8 = unsafe { value_with_rect(nsvalue, rt::sel(#str_ptr("valueWithRect:\0")), r) };
-    let gr: rt::Rect = unsafe { rect_value(vr, rt::sel(#str_ptr("rectValue\0"))) };
+    let vr: *u8 = { value_with_rect(nsvalue, rt::sel(#str_ptr("valueWithRect:\0")), r) };
+    let gr: rt::Rect = { rect_value(vr, rt::sel(#str_ptr("rectValue\0"))) };
     if gr.origin.x < 4.0 { return 3; }
     if gr.size.width < 6.0 { return 4; }
     if gr.size.height < 7.0 { return 5; }
@@ -20374,7 +20704,7 @@ fn main() -> i32 {
     let tab_view = appkit::TabView::new(frame);
     let tab_item = appkit::TabViewItem::new(#str_ptr("main\0"));
     tab_item.set_label(#str_ptr("Main\0"));
-    tab_view.add_tab_view_item(tab_item.obj);
+    tab_view.add_tab_view_item(tab_item.raw());
     let visual = appkit::VisualEffectView::new(frame);
     visual.set_material(0 as i64);
     let grid = appkit::GridView::new(frame);
@@ -20384,7 +20714,7 @@ fn main() -> i32 {
     let matrix = appkit::Matrix::new(frame);
     matrix.set_mode(0 as i64);
     let clip = appkit::ClipView::new(frame);
-    clip.set_document_view(text_view.obj);
+    clip.set_document_view(text_view.raw());
     let ruler = appkit::RulerView::new(frame);
     ruler.set_orientation(0 as i64);
     let popover = appkit::Popover::new();
@@ -20393,17 +20723,17 @@ fn main() -> i32 {
     let table = appkit::TableView::new(frame);
     let col = appkit::TableColumn::new(#str_ptr("name\0"));
     col.set_title(#str_ptr("Name\0"));
-    table.add_table_column(col.obj);
+    table.add_table_column(col.raw());
     table.reload_data();
     let outline = appkit::OutlineView::new(frame);
-    outline.add_table_column(col.obj);
+    outline.add_table_column(col.raw());
     let cell = appkit::TableCellView::new(frame);
-    cell.set_text_field(secure.obj);
+    cell.set_text_field(secure.raw());
     let row = appkit::TableRowView::new(frame);
     let collection = appkit::CollectionView::new(frame);
     let flow = appkit::CollectionViewFlowLayout::new();
     flow.set_item_size(appkit::Size { width: 44.0, height: 44.0 });
-    collection.set_collection_view_layout(flow.obj);
+    collection.set_collection_view_layout(flow.raw());
     let grid_layout = appkit::CollectionViewGridLayout::new();
     grid_layout.set_minimum_item_size(appkit::Size { width: 20.0, height: 20.0 });
     let rule = appkit::RuleEditor::new(frame);
@@ -20424,19 +20754,19 @@ fn main() -> i32 {
     let touch_item = appkit::TouchBarItem::new(#str_ptr("touch\0"));
 
     let vc = appkit::ViewController::new();
-    vc.set_view(text_view.obj);
+    vc.set_view(text_view.raw());
     let wc = appkit::WindowController::new();
     let tabs = appkit::TabViewController::new();
     // NSTabViewController insists on (a) a fresh NSTabViewItem (not
     // one already attached to another tab parent) and (b) the item
     // having a non-nil viewController. The original smoke had neither —
-    // it reused tab_item.obj from `tab_view` above. Fix both.
+    // it reused tab_item.raw() from `tab_view` above. Fix both.
     let tab_item2 = appkit::TabViewItem::new(#str_ptr("controllers\0"));
     tab_item2.set_label(#str_ptr("Controllers\0"));
     let tab_vc = appkit::ViewController::new();
-    tab_vc.set_view(visual.obj);
-    tab_item2.set_view_controller(tab_vc.obj);
-    tabs.add_tab_view_item(tab_item2.obj);
+    tab_vc.set_view(visual.raw());
+    tab_item2.set_view_controller(tab_vc.raw());
+    tabs.add_tab_view_item(tab_item2.raw());
     let array_controller = appkit::ArrayController::new();
     let object_controller = appkit::ObjectController::new();
     
@@ -20466,7 +20796,8 @@ fn main() -> i32 {
     // source. We don't run the event loop, so 0 is unreachable —
     // 42 is the success exit.
     assert_eq!(
-        run.code(), Some(42),
+        run.code(),
+        Some(42),
         "smoke_app expected exit 42 (all calls completed), got: {run}"
     );
 }
@@ -20555,9 +20886,7 @@ fn simd_vendor_package_smoke() {
         if path.extension().and_then(|s| s.to_str()) != Some("cplus") {
             continue;
         }
-        let dst = dir
-            .join("vendor/simd/src")
-            .join(path.file_name().unwrap());
+        let dst = dir.join("vendor/simd/src").join(path.file_name().unwrap());
         std::fs::copy(path, dst).unwrap();
     }
 
@@ -20783,7 +21112,10 @@ fn main() -> i32 {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for if-arm enum-ctor reproducer");
+    assert!(
+        st.success(),
+        "cpc build failed for if-arm enum-ctor reproducer"
+    );
     let run = Command::new(&bin).status().expect("run ifarm");
     assert_eq!(
         run.code(),
@@ -20839,7 +21171,10 @@ fn main() -> i32 {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for if-arm method-call reproducer");
+    assert!(
+        st.success(),
+        "cpc build failed for if-arm method-call reproducer"
+    );
     let run = Command::new(&bin).status().expect("run ifmeth");
     assert_eq!(
         run.code(),
@@ -20859,11 +21194,7 @@ fn module_asm_item_compiles_links_and_runs() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("modasm.cplus");
-    std::fs::write(
-        &src,
-        "#asm(\".text\");\nfn main() -> i32 { return 0; }\n",
-    )
-    .unwrap();
+    std::fs::write(&src, "#asm(\".text\");\nfn main() -> i32 { return 0; }\n").unwrap();
 
     // The emitted IR carries the module-level directive verbatim. (`--emit-ll`
     // compiles the given FILE; `--emit-ir` is the frozen Phase-0 demo that
@@ -20907,7 +21238,11 @@ fn vec_element_drop_runs_per_element_by_count() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     for name in &["vec", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -20923,7 +21258,7 @@ fn vec_element_drop_runs_per_element_by_count() {
         "import \"stdlib/vec\" as vec;\n\
          static DROPS: i32 = 0;\n\
          struct Cell { tag: i32 }\n\
-         impl Cell { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Cell { fn drop(ref this) { { DROPS = DROPS +% 1; }; } }\n\
          struct Wrap { items: vec::Vec[Cell], name: i32 }\n\
          fn direct() {\n\
              var v: vec::Vec[Cell] = vec::new::[Cell]();\n\
@@ -20942,7 +21277,7 @@ fn vec_element_drop_runs_per_element_by_count() {
          fn main() -> i32 {\n\
              direct();\n\
              nested();\n\
-             return unsafe { DROPS };\n\
+             return { DROPS };\n\
          }\n",
     )
     .unwrap();
@@ -20952,10 +21287,20 @@ fn vec_element_drop_runs_per_element_by_count() {
         .arg("build")
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for vec element-drop count test");
-    let run = Command::new(dir.join("target/debug/vd")).status().expect("run vd");
+    assert!(
+        st.success(),
+        "cpc build failed for vec element-drop count test"
+    );
+    let run = Command::new(dir.join("target/debug/vd"))
+        .status()
+        .expect("run vd");
     // 3 (direct) + 2 (nested, auto-dropped through Wrap) = 5 element drops.
-    assert_eq!(run.code(), Some(5), "expected 5 element drops, got {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(5),
+        "expected 5 element drops, got {:?}",
+        run.code()
+    );
 }
 
 /// v0.0.14: consumed-enum payload leak fix. Matching an owned enum consumes
@@ -20973,7 +21318,7 @@ fn consumed_enum_payload_drops_once_per_arm() {
         "\
 static DROPS: i32 = 0;
 struct Res { tag: i32 }
-impl Res { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }
+impl Res { fn drop(ref this) { { DROPS = DROPS +% 1; }; } }
 enum Box1 { Some(Res), None }
 enum Wrap { W(Res), X }
 fn consume(r: Res) -> i32 { return r.tag; }
@@ -21002,18 +21347,31 @@ fn main() -> i32 {
     s_consumed();
     s_rewrap();
     s_tail();
-    return unsafe { DROPS };
+    return { DROPS };
 }
 ",
     )
     .unwrap();
     let bin = dir.join("ce");
-    let st = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for consumed-enum payload test");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for consumed-enum payload test"
+    );
     let run = Command::new(&bin).status().expect("run ce");
     // Each scenario drops its payload exactly once: leak fixed (s_not_moved)
     // and no double-free on any move-out path. 4 total.
-    assert_eq!(run.code(), Some(4), "expected 4 drops, got {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(4),
+        "expected 4 drops, got {:?}",
+        run.code()
+    );
 }
 
 /// v0.0.15 double-free fix (vendor/json segfault): a heap-owning ENUM moved by
@@ -21035,7 +21393,11 @@ fn enum_move_into_method_arg_no_double_free() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     for name in &["vec", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21053,7 +21415,7 @@ fn enum_move_into_method_arg_no_double_free() {
          static DROPS: i32 = 0;\n\
          static SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
-         impl Leaf { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Leaf { fn drop(ref this) { { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
          enum Parse { Ok(Node, i32), Fail(i32) }\n\
          fn make_inner() -> Parse {\n\
@@ -21077,30 +21439,44 @@ fn enum_move_into_method_arg_no_double_free() {
                  Node::Many(kids) => {\n\
                      var total: i32 = 0;\n\
                      var i: usize = 0 as usize;\n\
-                     while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count(unsafe { *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
+                     while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count({ *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
                      total\n\
                  }\n\
              };\n\
          }\n\
          fn run_once() {\n\
              let n: Node = build();\n\
-             unsafe { SUM = SUM +% count(n); }\n\
+             { SUM = SUM +% count(n); }\n\
              return;\n\
          }\n\
          fn main() -> i32 {\n\
              var iter: i32 = 0;\n\
              while iter < 8 { run_once(); iter = iter +% 1; }\n\
-             if unsafe { SUM } != 24 { return 100; }\n\
-             return unsafe { DROPS };\n\
+             if { SUM } != 24 { return 100; }\n\
+             return { DROPS };\n\
          }\n",
     )
     .unwrap();
-    let st = Command::new(cpc).current_dir(&dir).arg("build").status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for enum-move double-free test");
-    let run = Command::new(dir.join("target/debug/df")).status().expect("run df");
+    let st = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("build")
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for enum-move double-free test"
+    );
+    let run = Command::new(dir.join("target/debug/df"))
+        .status()
+        .expect("run df");
     // 2 leaves per iter × 8 iters = 16 drops, each exactly once. A double-free
     // (the bug) crashes or yields a different count.
-    assert_eq!(run.code(), Some(16), "expected 16 leaf drops (no double-free), got {:?}", run.code());
+    assert_eq!(
+        run.code(),
+        Some(16),
+        "expected 16 leaf drops (no double-free), got {:?}",
+        run.code()
+    );
 }
 
 /// v0.0.15 double-free fix (companion): a heap-owning enum payload moved out of
@@ -21120,7 +21496,11 @@ fn enum_conditional_branch_tail_move_no_double_free() {
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/stdlib/src")).unwrap();
-    std::fs::write(dir.join("vendor/stdlib/Cplus.toml"), "[package]\nname = \"stdlib\"\n").unwrap();
+    std::fs::write(
+        dir.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\n",
+    )
+    .unwrap();
     for name in &["vec", "iterator", "option"] {
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21138,7 +21518,7 @@ fn enum_conditional_branch_tail_move_no_double_free() {
          static DROPS: i32 = 0;\n\
          static SUM: i32 = 0;\n\
          struct Leaf { tag: i32 }\n\
-         impl Leaf { fn drop(ref this) { unsafe { DROPS = DROPS +% 1; }; } }\n\
+         impl Leaf { fn drop(ref this) { { DROPS = DROPS +% 1; }; } }\n\
          enum Node { One(Leaf), Many(vec::Vec[Node]) }\n\
          enum Parse { Ok(Node), Fail }\n\
          fn make() -> Parse {\n\
@@ -21160,37 +21540,52 @@ fn enum_conditional_branch_tail_move_no_double_free() {
                  Node::Many(kids) => {\n\
                      var total: i32 = 0;\n\
                      var i: usize = 0 as usize;\n\
-                     while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count(unsafe { *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
+                     while i < kids.len() { match kids.at(i) { option::Option[*Node]::Some(p) => { total = total +% count({ *p }); } option::Option[*Node]::None => {} } i = i +% (1 as usize); }\n\
                      total\n\
                  }\n\
              };\n\
          }\n\
          fn run_once() {\n\
              let n: Node = unwrap_or(false);\n\
-             unsafe { SUM = SUM +% count(n); }\n\
+             { SUM = SUM +% count(n); }\n\
              return;\n\
          }\n\
          fn main() -> i32 {\n\
              var iter: i32 = 0;\n\
              while iter < 8 { run_once(); iter = iter +% 1; }\n\
-             if unsafe { SUM } != 24 { return 100; }\n\
-             return unsafe { DROPS };\n\
+             if { SUM } != 24 { return 100; }\n\
+             return { DROPS };\n\
          }\n",
     )
     .unwrap();
-    let st = Command::new(cpc).current_dir(&dir).arg("build").status().expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for conditional-branch-tail move test");
-    let run = Command::new(dir.join("target/debug/cb")).status().expect("run cb");
-    assert_eq!(run.code(), Some(16), "expected 16 leaf drops (no double-free), got {:?}", run.code());
+    let st = Command::new(cpc)
+        .current_dir(&dir)
+        .arg("build")
+        .status()
+        .expect("invoke cpc");
+    assert!(
+        st.success(),
+        "cpc build failed for conditional-branch-tail move test"
+    );
+    let run = Command::new(dir.join("target/debug/cb"))
+        .status()
+        .expect("run cb");
+    assert_eq!(
+        run.code(),
+        Some(16),
+        "expected 16 leaf drops (no double-free), got {:?}",
+        run.code()
+    );
 }
 
-// ---- v0.0.14: broad raw-ptr !Send rule + `unsafe impl Send/Sync` ----
+// ---- v0.0.14: broad raw-ptr !Send rule + explicit Send/Sync marker impls ----
 
 #[test]
-fn unsafe_impl_send_compiles_and_runs_end_to_end() {
-    // A raw-ptr-hiding struct is !Send by the structural rule; `unsafe impl
-    // Send for Handle {}` re-enables it. Verifies the override flows through
-    // parser + sema + codegen and runs (the impl is sema-only — no codegen).
+fn marker_impl_send_compiles_and_runs_end_to_end() {
+    // A raw-ptr-hiding struct is !Send by the structural rule; empty
+    // `impl Handle: Send {}` re-enables it. Verifies the override flows
+    // through parser + sema + codegen and runs (the impl is sema-only, with
+    // no codegen).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("snd.cplus");
@@ -21198,12 +21593,12 @@ fn unsafe_impl_send_compiles_and_runs_end_to_end() {
         &src,
         "\
 struct Handle { opaque p: *u8 }
-unsafe impl Handle: Send {}
+impl Handle: Send {}
 fn ship[T: Send](take v: T) -> T { return v; }
 fn main() -> i32 {
-    let h: Handle = Handle { p: unsafe { 7 as *u8 } };
+    let h: Handle = Handle { p: { 7 as *u8 } };
     let q: Handle = ship::[Handle](h);
-    return unsafe { q.p as usize as i32 };
+    return { q.p as usize as i32 };
 }
 ",
     )
@@ -21215,14 +21610,14 @@ fn main() -> i32 {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build failed for unsafe impl Send program");
+    assert!(st.success(), "cpc build failed for impl Send program");
     let run = Command::new(&bin).status().expect("run snd");
     assert_eq!(run.code(), Some(7), "expected exit 7, got {:?}", run.code());
 }
 
 #[test]
 fn raw_ptr_struct_without_override_rejected_at_compile_time() {
-    // The same program without the `unsafe impl Send` must fail to compile
+    // The same program without the explicit marker impl must fail to compile
     // with E0502 (Handle does not satisfy the `Send` bound).
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
@@ -21233,7 +21628,7 @@ fn raw_ptr_struct_without_override_rejected_at_compile_time() {
 struct Handle { opaque p: *u8 }
 fn ship[T: Send](take v: T) -> T { return v; }
 fn main() -> i32 {
-    let h: Handle = Handle { p: unsafe { 0 as *u8 } };
+    let h: Handle = Handle { p: { 0 as *u8 } };
     let _q: Handle = ship::[Handle](h);
     return 0;
 }
@@ -21364,8 +21759,15 @@ fn hash_map_combos_project_runs() {
     let bin = dir.join("target/debug/hash_map_combos");
     assert!(bin.is_file(), "expected binary at {}", bin.display());
     let out = Command::new(&bin).output().expect("run binary");
-    assert!(out.status.success(), "binary exited non-zero: {}", out.status);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), "hash_map combos: 6/6 ok\n");
+    assert!(
+        out.status.success(),
+        "binary exited non-zero: {}",
+        out.status
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "hash_map combos: 6/6 ok\n"
+    );
 }
 
 // ---- v0.0.9 Phase 8 (cpc-gaps G-001): [link] extra-objects in Cplus.toml ----
@@ -21405,7 +21807,7 @@ fn link_extra_objects_e2e_runs() {
         src_dir.join("main.cplus"),
         "extern fn the_answer() -> i32;\n\
          fn main() -> i32 {\n\
-             #println(unsafe { the_answer() });\n\
+             #println({ the_answer() });\n\
              return 0;\n\
          }\n",
     )
@@ -21632,42 +22034,7 @@ fn pointer_to_int_cast_emits_ptrtoint() {
     );
 }
 
-#[test]
-fn pointer_to_int_cast_outside_unsafe_rejected() {
-    // Negative: ptr-to-int cast outside unsafe must fail with E0801.
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("bad.cplus");
-    std::fs::write(
-        &src,
-        "extern fn malloc(n: usize) -> *u8;\n\
-         fn main() -> i32 {\n\
-             let p: *u8 = unsafe { malloc(8 as usize) };\n\
-             let addr: usize = p as usize;\n\
-             return addr as i32;\n\
-         }\n",
-    )
-    .unwrap();
-    let bin = dir.join("bad");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "expected cpc to reject ptr→int cast outside unsafe"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("E0801"),
-        "expected E0801 in stderr, got:\n{stderr}"
-    );
-}
-
 // ---- v0.0.9 Phase 4: module-scope `const` and `static` ----
-
 #[test]
 fn const_static_basic_runs() {
     // End-to-end: const substitution (200) + immutable static load (100) +
@@ -21733,7 +22100,7 @@ fn static_str_immutable_runs() {
          fn main() -> i32 {\n\
              let n: usize = #str_len(GREETING);\n\
              let p: *u8 = #str_ptr(GREETING);\n\
-             let _w: isize = unsafe { write(1 as i32, p, n) };\n\
+             let _w: isize = { write(1 as i32, p, n) };\n\
              if n != (13 as usize) { return 1; }\n\
              return 0;\n\
          }\n",
@@ -21746,9 +22113,16 @@ fn static_str_immutable_runs() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(compile.success(), "cpc failed to compile static-str program");
+    assert!(
+        compile.success(),
+        "cpc failed to compile static-str program"
+    );
     let out = Command::new(&bin).output().expect("run produced binary");
-    assert!(out.status.success(), "static str round-trip failed; exited {:?}", out.status);
+    assert!(
+        out.status.success(),
+        "static str round-trip failed; exited {:?}",
+        out.status
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "hello, world\n");
 }
 
@@ -21766,7 +22140,7 @@ fn static_str_with_hex_escape_runs() {
              // 4 bytes: ESC, '[', '0', 'm'\n\
              if #str_len(RESET) != (4 as usize) { return 1; }\n\
              let p: *u8 = #str_ptr(RESET);\n\
-             if unsafe { *p } != (27 as u8) { return 2; }\n\
+             if { *p } != (27 as u8) { return 2; }\n\
              return 0;\n\
          }\n",
     )
@@ -21778,7 +22152,10 @@ fn static_str_with_hex_escape_runs() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(compile.success(), "cpc failed to compile \\xHH-in-static-str");
+    assert!(
+        compile.success(),
+        "cpc failed to compile \\xHH-in-static-str"
+    );
     let out = Command::new(&bin).output().expect("run produced binary");
     assert!(
         out.status.success(),
@@ -21814,7 +22191,7 @@ fn simd_mask_compare_select_runs() {
              let l1: f32 = r.lane(1 as u32);\n\
              let l2: f32 = r.lane(2 as u32);\n\
              let l3: f32 = r.lane(3 as u32);\n\
-             unsafe { printf(#str_ptr(\"%g %g %g %g\\n\\0\"), l0 as f64, l1 as f64, l2 as f64, l3 as f64); }\n\
+             { printf(#str_ptr(\"%g %g %g %g\\n\\0\"), l0 as f64, l1 as f64, l2 as f64, l3 as f64); }\n\
              // Round-trip: any() should be true (at least lanes 0,1 set);\n\
              // all() should be false (lanes 2,3 not set).\n\
              if !m.any() { return 1; }\n\
@@ -21870,7 +22247,7 @@ fn addr_of_round_trips_through_libc_time() {
          \n\
          fn main() -> i32 {\n\
              var t: i64 = 0;\n\
-             let returned: i64 = unsafe { time(#addr_of(t)) };\n\
+             let returned: i64 = { time(#addr_of(t)) };\n\
              if t == returned { return 0; }\n\
              return 1;\n\
          }\n",
@@ -21906,7 +22283,7 @@ fn addr_of_emits_no_alloca_or_load_extras() {
         "extern fn time(t: *i64) -> i64;\n\
          fn main() -> i32 {\n\
              var t: i64 = 0;\n\
-             let _r: i64 = unsafe { time(#addr_of(t)) };\n\
+             let _r: i64 = { time(#addr_of(t)) };\n\
              return 0;\n\
          }\n",
     )
@@ -21922,9 +22299,7 @@ fn addr_of_emits_no_alloca_or_load_extras() {
     // `%t.addr1`). The addr_of result reuses that pointer literally —
     // no GEP, no `inttoptr`, no extra alloca for the pointer itself.
     // Match `@time(ptr %t...)` to allow the suffix the lowering picks.
-    let calls_time_with_t_addr = ir
-        .lines()
-        .any(|l| l.contains("call i64 @time(ptr %t"));
+    let calls_time_with_t_addr = ir.lines().any(|l| l.contains("call i64 @time(ptr %t"));
     assert!(
         calls_time_with_t_addr,
         "expected `call i64 @time(ptr %t<suffix>)` — the alloca pointer fed \
@@ -22014,12 +22389,11 @@ fn g023_struct_literal_field_init_does_not_double_drop() {
 
 #[test]
 fn g023_raw_pointer_store_does_not_double_drop() {
-    // Repro for the `unsafe { *p = v; }` shape used by `Box::new[T]`
-    // and `arena::alloc[T]`. A non-Copy `move v: T` parameter is
-    // bitwise-stored into a malloc'd slot; pre-fix, v's scope-exit
-    // Drop ran anyway and freed inner heap storage (the Vec's `ptr`
-    // buffer) while the slot aliased it. Post-fix, the assign's bare-
-    // Ident RHS flips v's drop_flag.
+    // Repro for the `*p = v` shape used by `Box::new[T]` and
+    // `arena::alloc[T]`. A non-Copy `move v: T` parameter is bitwise-stored
+    // into a malloc'd slot; pre-fix, v's scope-exit Drop ran anyway and freed
+    // inner heap storage (the Vec's `ptr` buffer) while the slot aliased it.
+    // Post-fix, the assign's bare-Ident RHS flips v's drop_flag.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
@@ -22045,9 +22419,9 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          extern fn malloc(n: usize) -> *u8;\n\
          \n\
          fn place[T](take val: T) -> *T {\n\
-             let raw: *u8 = unsafe { malloc(#size_of::[T]()) };\n\
-             let p: *T = unsafe { raw as *T };\n\
-             unsafe { *p = val; }\n\
+             let raw: *u8 = { malloc(#size_of::[T]()) };\n\
+             let p: *T = { raw as *T };\n\
+             { *p = val; }\n\
              return p;\n\
          }\n\
          \n\
@@ -22060,8 +22434,8 @@ fn g023_raw_pointer_store_does_not_double_drop() {
          \n\
          fn main() -> i32 {\n\
              let p: *vec::Vec[i32] = place::[vec::Vec[i32]](make_vec());\n\
-             let len: usize = unsafe { (*p).len() };\n\
-             let v0: i32 = vec::at_copy::[i32](unsafe { *p }, 0 as usize);\n\
+             let len: usize = { (*p).len() };\n\
+             let v0: i32 = vec::at_copy::[i32]({ *p }, 0 as usize);\n\
              if len == (2 as usize) && v0 == (100 as i32) { return 0; }\n\
              return 1;\n\
          }\n",
@@ -22109,7 +22483,7 @@ fn realtime_profile_rejects_local_allocation() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "extern fn malloc(n: usize) -> *u8;\n\
-         fn hot() -> *u8 { return unsafe { malloc(64 as usize) }; }\n\
+         fn hot() -> *u8 { return { malloc(64 as usize) }; }\n\
          fn main() -> i32 { let _p: *u8 = hot(); return 0; }",
     )
     .unwrap();
@@ -22118,7 +22492,10 @@ fn realtime_profile_rejects_local_allocation() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc check");
-    assert!(!out.status.success(), "profile must reject local allocation");
+    assert!(
+        !out.status.success(),
+        "profile must reject local allocation"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0901"), "expected E0901, got: {stderr}");
 }
@@ -22148,7 +22525,10 @@ fn realtime_profile_clean_program_passes() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc check");
-    assert!(status.success(), "clean realtime program must pass cpc check");
+    assert!(
+        status.success(),
+        "clean realtime program must pass cpc check"
+    );
 }
 
 /// v0.0.12 realtime Phase 1 (method-dispatch hole): a `#[no_alloc]` function
@@ -22165,18 +22545,28 @@ fn no_alloc_rejects_allocating_method_through_receiver() {
         "extern fn malloc(n: usize) -> *u8;\n\
          struct Bag { ptr: *u8 }\n\
          impl Bag {\n\
-             fn grow(ref this) { unsafe { this.ptr = malloc(64 as usize); } return; }\n\
+             fn grow(ref this) { { this.ptr = malloc(64 as usize); } return; }\n\
          }\n\
          #[no_alloc]\n\
          fn hot(ref b: Bag) { b.grow(); return; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "allocating method via receiver must be rejected");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "allocating method via receiver must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0901"), "expected E0901, got:\n{stderr}");
-    assert!(stderr.contains("Bag::grow"), "diagnostic should name the method, got:\n{stderr}");
+    assert!(
+        stderr.contains("Bag::grow"),
+        "diagnostic should name the method, got:\n{stderr}"
+    );
 }
 
 /// Companion positive case: a `#[no_alloc]` function calling a method that is
@@ -22199,7 +22589,11 @@ fn no_alloc_allows_marked_method_through_receiver() {
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
     assert!(
         out.status.success(),
         "calling a #[no_alloc] method from a #[no_alloc] fn must pass; stderr:\n{}",
@@ -22221,8 +22615,15 @@ fn no_alloc_rejects_to_string() {
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "to_string in #[no_alloc] must be rejected");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "to_string in #[no_alloc] must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0901"), "expected E0901, got:\n{stderr}");
 }
@@ -22240,15 +22641,22 @@ fn no_block_rejects_blocking_method_through_receiver() {
         "extern fn pthread_mutex_lock(m: *u8) -> i32;\n\
          struct Lock { h: *u8 }\n\
          impl Lock {\n\
-             fn take(this) { unsafe { let _r: i32 = pthread_mutex_lock(this.h); } return; }\n\
+             fn take(this) { { let _r: i32 = pthread_mutex_lock(this.h); } return; }\n\
          }\n\
          #[no_block]\n\
          fn hot(l: Lock) { l.take(); return; }\n\
          fn main() -> i32 { return 0; }\n",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc");
-    assert!(!out.status.success(), "blocking method via receiver must be rejected");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        !out.status.success(),
+        "blocking method via receiver must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0907"), "expected E0907, got:\n{stderr}");
 }
@@ -22432,7 +22840,10 @@ fn g043_const_array_initializer_still_rejected() {
         .arg(&src)
         .output()
         .expect("invoke cpc check");
-    assert!(!out.status.success(), "const array initializer must be rejected");
+    assert!(
+        !out.status.success(),
+        "const array initializer must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0X30"), "expected E0X30, got: {stderr}");
 }
@@ -22452,14 +22863,14 @@ fn g034_static_mut_indexed_write() {
          fn fill() {\n\
              var i: usize = 0 as usize;\n\
              while i < (16 as usize) {\n\
-                 unsafe { TABLE[i] = (i as i32) *% (2 as i32); };\n\
+                 { TABLE[i] = (i as i32) *% (2 as i32); };\n\
                  i = i +% (1 as usize);\n\
              }\n\
              return;\n\
          }\n\
          fn main() -> i32 {\n\
              fill();\n\
-             let v: i32 = unsafe { TABLE[5 as usize] };\n\
+             let v: i32 = { TABLE[5 as usize] };\n\
              if v != 10 { return 1; }\n\
              return 0;\n\
          }",
@@ -22493,7 +22904,10 @@ fn g034_undefined_indexed_write_still_e0300() {
         .arg(&src)
         .output()
         .expect("invoke cpc check");
-    assert!(!out.status.success(), "undefined indexed write must be rejected");
+    assert!(
+        !out.status.success(),
+        "undefined indexed write must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0300"), "expected E0300, got: {stderr}");
 }
@@ -22541,7 +22955,12 @@ fn g045_f16_scalar_end_to_end() {
          }",
     )
     .unwrap();
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("invoke cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
     assert!(compile.success(), "G-045 program must compile: {compile}");
     let run = Command::new(&bin).status().expect("run f16");
     assert!(run.success(), "G-045 program must exit 0, got {run}");
@@ -22559,8 +22978,15 @@ fn g045_from_bits_wrong_arg_type_e0302() {
         "fn f() -> f16 { return f16::from_bits(1.0f32); }\nfn main() -> i32 { return 0; }",
     )
     .unwrap();
-    let out = Command::new(cpc).arg("check").arg(&src).output().expect("invoke cpc check");
-    assert!(!out.status.success(), "from_bits with float arg must be rejected");
+    let out = Command::new(cpc)
+        .arg("check")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc check");
+    assert!(
+        !out.status.success(),
+        "from_bits with float arg must be rejected"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0302"), "expected E0302, got: {stderr}");
 }
@@ -22601,12 +23027,19 @@ fn graph_emits_nodes_and_edges_json() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc graph");
-    assert!(out.status.success(), "cpc graph exited non-zero: {}", out.status);
+    assert!(
+        out.status.success(),
+        "cpc graph exited non-zero: {}",
+        out.status
+    );
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("\"nodes\""), "missing nodes array: {s}");
     assert!(s.contains("\"edges\""), "missing edges array: {s}");
     assert!(s.contains("\"name\": \"Point\""), "missing Point node: {s}");
-    assert!(s.contains("\"name\": \"sum\""), "missing sum method node: {s}");
+    assert!(
+        s.contains("\"name\": \"sum\""),
+        "missing sum method node: {s}"
+    );
     assert!(s.contains("\"has_field\""), "missing has_field edge: {s}");
     assert!(s.contains("\"has_method\""), "missing has_method edge: {s}");
     assert!(s.contains("\"defines\""), "missing defines edge: {s}");
@@ -22623,7 +23056,10 @@ fn query_def_and_members_resolve() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc query def");
-    assert!(def.status.success(), "query def Point should find the symbol");
+    assert!(
+        def.status.success(),
+        "query def Point should find the symbol"
+    );
     let s = String::from_utf8_lossy(&def.stdout);
     assert!(s.contains("\"kind\": \"struct\""), "def not a struct: {s}");
     assert!(s.contains("\"name\": \"Point\""), "def wrong name: {s}");
@@ -22636,8 +23072,14 @@ fn query_def_and_members_resolve() {
         .expect("invoke cpc query members");
     assert!(mem.status.success());
     let m = String::from_utf8_lossy(&mem.stdout);
-    assert!(m.contains("\"name\": \"x\""), "members missing field x: {m}");
-    assert!(m.contains("\"name\": \"sum\""), "members missing method sum: {m}");
+    assert!(
+        m.contains("\"name\": \"x\""),
+        "members missing field x: {m}"
+    );
+    assert!(
+        m.contains("\"name\": \"sum\""),
+        "members missing method sum: {m}"
+    );
 }
 
 #[test]
@@ -22692,7 +23134,10 @@ fn query_type_at_resolves_a_typed_local() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc query type-at");
-    assert!(!bad.status.success(), "malformed position must exit non-zero");
+    assert!(
+        !bad.status.success(),
+        "malformed position must exit non-zero"
+    );
 }
 
 #[test]
@@ -22707,8 +23152,14 @@ fn query_callers_and_callees_resolve_method_calls() {
         .expect("invoke cpc query callers");
     assert!(callers.status.success());
     let c = String::from_utf8_lossy(&callers.stdout);
-    assert!(c.contains("\"name\": \"main\""), "main should call sum: {c}");
-    assert!(c.contains("\"unresolved\""), "callers carries unresolved count: {c}");
+    assert!(
+        c.contains("\"name\": \"main\""),
+        "main should call sum: {c}"
+    );
+    assert!(
+        c.contains("\"unresolved\""),
+        "callers carries unresolved count: {c}"
+    );
 
     let callees = Command::new(cpc)
         .args(["query", "callees", "main"])
@@ -22717,7 +23168,10 @@ fn query_callers_and_callees_resolve_method_calls() {
         .expect("invoke cpc query callees");
     assert!(callees.status.success());
     let ce = String::from_utf8_lossy(&callees.stdout);
-    assert!(ce.contains("\"name\": \"sum\""), "callees of main include sum: {ce}");
+    assert!(
+        ce.contains("\"name\": \"sum\""),
+        "callees of main include sum: {ce}"
+    );
 }
 
 #[test]
@@ -22734,8 +23188,14 @@ fn query_refs_returns_call_sites_with_locations() {
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("\"kind\": \"refs\""));
     assert!(s.contains("\"scope\""), "refs states its coverage: {s}");
-    assert!(s.contains("\"in_context\""), "a reference carries its enclosing item: {s}");
-    assert!(s.contains("\"line\""), "a reference carries a location: {s}");
+    assert!(
+        s.contains("\"in_context\""),
+        "a reference carries its enclosing item: {s}"
+    );
+    assert!(
+        s.contains("\"line\""),
+        "a reference carries a location: {s}"
+    );
 
     // An unknown symbol exits non-zero.
     let u = Command::new(cpc)
@@ -22778,8 +23238,14 @@ fn query_callers_resolves_free_function_calls() {
         .expect("invoke cpc query callers");
     assert!(callers.status.success());
     let c = String::from_utf8_lossy(&callers.stdout);
-    assert!(c.contains("\"name\": \"mid\""), "mid should call helper: {c}");
-    assert!(c.contains("\"unresolved\": 0"), "free calls must resolve, not land in unresolved: {c}");
+    assert!(
+        c.contains("\"name\": \"mid\""),
+        "mid should call helper: {c}"
+    );
+    assert!(
+        c.contains("\"unresolved\": 0"),
+        "free calls must resolve, not land in unresolved: {c}"
+    );
     // refs(helper) finds both call sites.
     let refs = Command::new(cpc)
         .args(["query", "refs", "helper"])
@@ -22787,7 +23253,11 @@ fn query_callers_resolves_free_function_calls() {
         .output()
         .expect("invoke cpc query refs");
     let r = String::from_utf8_lossy(&refs.stdout);
-    assert_eq!(r.matches("\"line\"").count(), 2, "two call sites of helper: {r}");
+    assert_eq!(
+        r.matches("\"line\"").count(),
+        2,
+        "two call sites of helper: {r}"
+    );
 }
 
 /// The honest floor: a call *through a function pointer* genuinely can't be
@@ -22817,7 +23287,10 @@ fn query_fn_pointer_call_stays_unresolved() {
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
     // The indirect `f(5)` call is unresolved; `h` is not a resolved callee.
-    assert!(s.contains("\"unresolved\": 1"), "fn-pointer call is the unresolved floor: {s}");
+    assert!(
+        s.contains("\"unresolved\": 1"),
+        "fn-pointer call is the unresolved floor: {s}"
+    );
 }
 
 #[test]
@@ -22834,16 +23307,25 @@ fn query_context_packs_the_neighborhood() {
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("\"kind\": \"context\""));
-    assert!(s.contains("\"target\""), "context carries the target node: {s}");
+    assert!(
+        s.contains("\"target\""),
+        "context carries the target node: {s}"
+    );
     assert!(s.contains("\"callees\""), "context carries callees: {s}");
-    assert!(s.contains("\"name\": \"sum\""), "main's callee sum appears: {s}");
+    assert!(
+        s.contains("\"name\": \"sum\""),
+        "main's callee sum appears: {s}"
+    );
 
     let u = Command::new(cpc)
         .args(["query", "context", "Point"]) // a struct, not a fn → not found
         .current_dir(&dir)
         .output()
         .expect("invoke cpc query context");
-    assert!(!u.status.success(), "context of a non-function exits non-zero");
+    assert!(
+        !u.status.success(),
+        "context of a non-function exits non-zero"
+    );
 }
 
 #[test]
@@ -22894,7 +23376,10 @@ fn mcp_server_handshake_and_tool_call() {
 
     let call: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
     let text = call["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("\"name\": \"main\""), "main calls sum: {text}");
+    assert!(
+        text.contains("\"name\": \"main\""),
+        "main calls sum: {text}"
+    );
 }
 
 #[test]
@@ -22928,8 +23413,8 @@ fn cstring_literal_compiles_and_runs() {
         "extern fn printf(fmt: *u8, ...) -> i32;\n\
          fn main() -> i32 {\n\
              let m: *u8 = c\"hi\\n\";\n\
-             unsafe { printf(m); }\n\
-             unsafe { printf(c\"n=%d\\n\", 7 as i32); }\n\
+             { printf(m); }\n\
+             { printf(c\"n=%d\\n\", 7 as i32); }\n\
              return 0;\n\
          }\n",
     )
@@ -22958,7 +23443,7 @@ fn f16_literal_compiles_and_runs() {
          fn main() -> i32 {\n\
              let h: f16 = 0.5f16;\n\
              let x: f32 = h as f32;\n\
-             unsafe { printf(c\"%.3f\\n\", x as f64); }\n\
+             { printf(c\"%.3f\\n\", x as f64); }\n\
              return 0;\n\
          }\n",
     )
@@ -23019,7 +23504,10 @@ fn struct_literal_static_compiles_and_runs() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(compile.success(), "struct-literal-static program must compile");
+    assert!(
+        compile.success(),
+        "struct-literal-static program must compile"
+    );
     let run = Command::new(&bin).output().expect("run produced binary");
     assert_eq!(run.status.code(), Some(121), "expected exit 121");
 }
@@ -23150,7 +23638,12 @@ fn inline_always_inlines_at_debug_o0() {
     );
     // And it still runs correctly.
     let bin = dir.join("inl");
-    let compile = Command::new(cpc).arg(&src).arg("-o").arg(&bin).status().expect("cpc");
+    let compile = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("cpc");
     assert!(compile.success());
     let run = Command::new(&bin).output().expect("run");
     assert_eq!(run.status.code(), Some(6), "expected exit 6");
@@ -23175,7 +23668,7 @@ fn realtime_report_json_flags_violations() {
     std::fs::write(
         dir.join("src/main.cplus"),
         "extern fn malloc(n: usize) -> *u8;\n\
-         fn bad() -> i32 { let p: *u8 = unsafe { malloc(8 as usize) }; if p.is_null() { return 1; } return 0; }\n\
+         fn bad() -> i32 { let p: *u8 = { malloc(8 as usize) }; if p.is_null() { return 1; } return 0; }\n\
          fn main() -> i32 { return bad(); }\n",
     )
     .unwrap();
@@ -23185,10 +23678,19 @@ fn realtime_report_json_flags_violations() {
         .output()
         .expect("invoke cpc --realtime-report=json");
     // Non-zero: violations present (CI gate).
-    assert!(!out.status.success(), "expected non-zero exit on violations");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit on violations"
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("\"kind\": \"realtime-report\""), "stdout:\n{stdout}");
-    assert!(stdout.contains("E0901"), "expected a no_alloc violation; stdout:\n{stdout}");
+    assert!(
+        stdout.contains("\"kind\": \"realtime-report\""),
+        "stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("E0901"),
+        "expected a no_alloc violation; stdout:\n{stdout}"
+    );
     assert!(stdout.contains("\"clean\": false"), "stdout:\n{stdout}");
     assert!(stdout.contains("\"no_alloc\": 1"), "stdout:\n{stdout}");
 }
@@ -23219,26 +23721,28 @@ fn realtime_report_clean_exits_zero() {
     assert!(out.status.success(), "clean project must exit zero");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("clean"), "stdout:\n{stdout}");
-    assert!(stdout.contains("functions under contract: 2"), "stdout:\n{stdout}");
+    assert!(
+        stdout.contains("functions under contract: 2"),
+        "stdout:\n{stdout}"
+    );
 }
 
-/// TEXT.1: an `unsafe fn` (free function and method) compiles and runs when
-/// every call is inside an `unsafe { ... }` block. The exit code threads the
-/// returned values through to prove the bodies actually executed.
+/// TEXT.1 retired: ordinary functions and methods that used to be `unsafe fn`
+/// now compile and run directly.
 #[test]
-fn unsafe_fn_compiles_and_runs_when_called_in_unsafe_block() {
+fn formerly_unsafe_fn_compiles_and_runs_directly() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let src = dir.join("unsafe_ok.cplus");
     std::fs::write(
         &src,
         "struct Counter { n: i32 }\n\
-         impl Counter { unsafe fn raw_get(this) -> i32 { return this.n; } }\n\
-         unsafe fn danger() -> i32 { return 42; }\n\
+         impl Counter { fn raw_get(this) -> i32 { return this.n; } }\n\
+         fn danger() -> i32 { return 42; }\n\
          fn main() -> i32 {\n\
              let c: Counter = Counter { n: 7 };\n\
-             let a: i32 = unsafe { c.raw_get() };\n\
-             let b: i32 = unsafe { danger() };\n\
+             let a: i32 = { c.raw_get() };\n\
+             let b: i32 = { danger() };\n\
              return a +% b;\n\
          }\n",
     )
@@ -23250,34 +23754,9 @@ fn unsafe_fn_compiles_and_runs_when_called_in_unsafe_block() {
         .arg(&bin)
         .status()
         .expect("invoke cpc");
-    assert!(status.success(), "cpc must compile unsafe-fn program");
+    assert!(status.success(), "cpc must compile direct-call program");
     let run = Command::new(&bin).status().expect("run binary");
     assert_eq!(run.code(), Some(49), "7 + 42 should reach the exit code");
-}
-
-/// TEXT.1 (negative): calling an `unsafe fn` outside an `unsafe { ... }` block
-/// is a compile error (E0801) — the program must not build.
-#[test]
-fn unsafe_fn_call_outside_unsafe_block_fails_to_compile() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    let src = dir.join("unsafe_bad.cplus");
-    std::fs::write(
-        &src,
-        "unsafe fn danger() -> i32 { return 1; }\n\
-         fn main() -> i32 { return danger(); }\n",
-    )
-    .unwrap();
-    let bin = dir.join("unsafe_bad");
-    let out = Command::new(cpc)
-        .arg(&src)
-        .arg("-o")
-        .arg(&bin)
-        .output()
-        .expect("invoke cpc");
-    assert!(!out.status.success(), "bare unsafe-fn call must fail to compile");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0801"), "expected E0801, stderr:\n{stderr}");
 }
 
 /// TEXT.2: vendor the `stdlib/text` module (and its `option` dep) into a temp
@@ -23312,7 +23791,7 @@ fn setup_text_project(dir: &std::path::Path, main_src: &str) {
 
 /// TEXT.2: the `Text` stdlib type builds, links, and its core API
 /// (from_str / push_str / len / starts_with / ends_with / contains / find /
-/// clone / `unsafe` as_str) returns correct results. The exit code is the
+/// clone / as_str) returns correct results. The exit code is the
 /// number of the 7 checks that passed, so a wrong answer is visible.
 #[test]
 #[cfg(target_os = "macos")]
@@ -23337,7 +23816,7 @@ fn stdlib_text_core_api_builds_and_runs() {
              }\n\
              let c: text::Text = t.clone();\n\
              if c.len() == (12 as usize) { score = score +% 1; }\n\
-             let v: str = unsafe { c.as_str() };\n\
+             let v: str = { c.as_str() };\n\
              if #str_len(v) == (12 as usize) { score = score +% 1; }\n\
              return score;\n\
          }\n",
@@ -23352,36 +23831,6 @@ fn stdlib_text_core_api_builds_and_runs() {
         .status()
         .expect("run");
     assert_eq!(run.code(), Some(7), "all 7 Text API checks must pass");
-}
-
-/// TEXT.2 + TEXT.1: `Text::as_str` is an `unsafe fn`, so calling it without an
-/// `unsafe { ... }` block fails to compile (E0801) — the dangling-view escape
-/// hatch is opt-in even through the real stdlib type.
-#[test]
-#[cfg(target_os = "macos")]
-fn stdlib_text_as_str_requires_unsafe_block() {
-    let cpc = env!("CARGO_BIN_EXE_cpc");
-    let dir = tempdir();
-    setup_text_project(
-        &dir,
-        "import \"stdlib/text\" as text;\n\
-         fn main() -> i32 {\n\
-             let t: text::Text = text::from_str(\"hi\");\n\
-             let v: str = t.as_str();\n\
-             return 0;\n\
-         }\n",
-    );
-    let out = Command::new(cpc)
-        .arg("build")
-        .current_dir(&dir)
-        .output()
-        .expect("invoke cpc");
-    assert!(
-        !out.status.success(),
-        "bare Text::as_str call must fail to compile"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0801"), "expected E0801, stderr:\n{stderr}");
 }
 
 /// TEXT.R1: a string literal in a `Text`-typed `let` constructs an owned `Text`
@@ -23400,7 +23849,7 @@ fn stdlib_text_literal_in_let_constructs_owned_text() {
              if s.len() == (12 as usize) { score = score +% 1; }\n\
              if s.starts_with(\"hello\") { score = score +% 1; }\n\
              if s.contains(\"o, w\") { score = score +% 1; }\n\
-             let v: str = unsafe { s.as_str() };\n\
+             let v: str = { s.as_str() };\n\
              if #str_len(v) == (12 as usize) { score = score +% 1; }\n\
              return score;\n\
          }\n",
@@ -23452,7 +23901,11 @@ fn stdlib_text_literal_as_arg_constructs_owned_text() {
     let run = Command::new(dir.join("target/debug/textt"))
         .status()
         .expect("run");
-    assert_eq!(run.code(), Some(3), "free/method/assoc Text-arg checks must pass");
+    assert_eq!(
+        run.code(),
+        Some(3),
+        "free/method/assoc Text-arg checks must pass"
+    );
 }
 
 /// TEXT.R1 + multi-line: a triple-quoted `"""..."""` literal in a `Text`-typed
@@ -23548,7 +24001,10 @@ fn stdlib_text_literal_in_struct_field_constructs_owned_text() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build of struct Text field literal failed");
+    assert!(
+        st.success(),
+        "cpc build of struct Text field literal failed"
+    );
     let run = Command::new(dir.join("target/debug/textt"))
         .status()
         .expect("run");
@@ -23626,11 +24082,18 @@ fn stdlib_text_slice_rfind_trim_split() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc build of Text slice/rfind/trim/split failed");
+    assert!(
+        st.success(),
+        "cpc build of Text slice/rfind/trim/split failed"
+    );
     let run = Command::new(dir.join("target/debug/textt"))
         .status()
         .expect("run");
-    assert_eq!(run.code(), Some(4), "slice/rfind/trim/split checks must pass");
+    assert_eq!(
+        run.code(),
+        Some(4),
+        "slice/rfind/trim/split checks must pass"
+    );
 }
 
 /// TEXT.R3b: `Text::c_str` builds an owning, NUL-terminated `CString` for C FFI.
@@ -23651,7 +24114,7 @@ fn stdlib_text_c_str_round_trips_through_libc() {
              let t: text::Text = \"hello\";\n\
              match t.c_str() {\n\
                  option::Option[text::CString]::Some(cs) => {\n\
-                     if unsafe { strlen(cs.as_ptr()) } == (5 as usize) { score = score +% 1; }\n\
+                     if { strlen(cs.as_ptr()) } == (5 as usize) { score = score +% 1; }\n\
                      if cs.len() == (5 as usize) { score = score +% 1; }\n\
                  }\n\
                  option::Option[text::CString]::None => { }\n\
@@ -23673,7 +24136,11 @@ fn stdlib_text_c_str_round_trips_through_libc() {
     let run = Command::new(dir.join("target/debug/textt"))
         .status()
         .expect("run");
-    assert_eq!(run.code(), Some(3), "c_str strlen round-trip + interior-NUL checks");
+    assert_eq!(
+        run.code(),
+        Some(3),
+        "c_str strlen round-trip + interior-NUL checks"
+    );
 }
 
 /// TEXT.R3b: `.to_string()` produces an owned `Text` (when `stdlib/text` is
@@ -23804,7 +24271,10 @@ fn target_ios_emit_ll_pins_triple_and_target_arch() {
         .arg(&src)
         .output()
         .expect("invoke cpc");
-    assert!(out.status.success(), "emit-ll --target ios-arm64 must succeed");
+    assert!(
+        out.status.success(),
+        "emit-ll --target ios-arm64 must succeed"
+    );
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
         ir.contains("target triple = \"arm64-apple-ios13.0\""),
@@ -23958,7 +24428,11 @@ fn target_ios_bin_project_build_is_rejected() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     let out = Command::new(cpc)
         .arg("build")
         .arg("--target")
@@ -23966,7 +24440,10 @@ fn target_ios_bin_project_build_is_rejected() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "[[bin]] + external-builder target must fail");
+    assert!(
+        !out.status.success(),
+        "[[bin]] + external-builder target must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("`[[bin]]` projects can't be built"),
@@ -24000,7 +24477,10 @@ fn target_ios_cdylib_crate_type_is_rejected() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "cdylib needs a final link — must fail");
+    assert!(
+        !out.status.success(),
+        "cdylib needs a final link — must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("cdylib"),
@@ -24050,7 +24530,10 @@ fn target_check_accepts_explicit_target() {
         .arg("ios-arm64")
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "cpc check --target ios-arm64 must pass on clean source");
+    assert!(
+        st.success(),
+        "cpc check --target ios-arm64 must pass on clean source"
+    );
 }
 
 #[test]
@@ -24088,7 +24571,11 @@ fn target_ios_staticlib_build_lands_in_per_target_tree() {
     // iOS artifacts of one package never collide.
     for artifact in ["gadget.o", "libgadget.a", "gadget.h"] {
         let p = dir.join("target/ios-arm64/debug").join(artifact);
-        assert!(p.is_file(), "expected {} in the per-target tree", p.display());
+        assert!(
+            p.is_file(),
+            "expected {} in the per-target tree",
+            p.display()
+        );
     }
     // The object inside the per-target tree is an arm64 Mach-O.
     let bytes = std::fs::read(dir.join("target/ios-arm64/debug/gadget.o")).unwrap();
@@ -24101,7 +24588,10 @@ fn target_ios_staticlib_build_lands_in_per_target_tree() {
         .current_dir(&dir)
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "host build of the same package must still work");
+    assert!(
+        st.success(),
+        "host build of the same package must still work"
+    );
     assert!(
         dir.join("target/debug/libgadget.a").is_file(),
         "host build must keep the target/<mode>/ layout"
@@ -24120,7 +24610,11 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("vendor/gadget/src/lib/arm64-apple-ios")).unwrap();
     std::fs::write(
         dir.join("vendor/gadget/Cplus.toml"),
@@ -24187,7 +24681,11 @@ fn target_dep_unsupported_target_triple_fires_e0862() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "fn main() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("vendor/gadget/src/lib/riscv32-unknown-none")).unwrap();
     std::fs::write(
         dir.join("vendor/gadget/Cplus.toml"),
@@ -24233,7 +24731,11 @@ fn ndk_clang_for_test() -> Option<std::path::PathBuf> {
         }
     }
     let mut root: Option<std::path::PathBuf> = None;
-    for var in ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK_LATEST_HOME"] {
+    for var in [
+        "ANDROID_NDK_HOME",
+        "ANDROID_NDK_ROOT",
+        "ANDROID_NDK_LATEST_HOME",
+    ] {
         if let Ok(v) = std::env::var(var) {
             if !v.is_empty() {
                 let p = std::path::PathBuf::from(v);
@@ -24448,10 +24950,18 @@ fn target_android_staticlib_links_under_ndk_clang() {
     );
     for artifact in ["droid.o", "libdroid.a", "droid.h"] {
         let p = dir.join("target/android-arm64/debug").join(artifact);
-        assert!(p.is_file(), "expected {} in the per-target tree", p.display());
+        assert!(
+            p.is_file(),
+            "expected {} in the per-target tree",
+            p.display()
+        );
     }
     let obj_bytes = std::fs::read(dir.join("target/android-arm64/debug/droid.o")).unwrap();
-    assert_eq!(&obj_bytes[0..4], b"\x7fELF", "per-target object must be ELF");
+    assert_eq!(
+        &obj_bytes[0..4],
+        b"\x7fELF",
+        "per-target object must be ELF"
+    );
 
     std::fs::write(
         dir.join("main.c"),
@@ -24489,8 +24999,10 @@ fn esp_clang_for_test() -> Option<std::path::PathBuf> {
     }
     let root = match std::env::var("IDF_TOOLS_PATH") {
         Ok(v) if !v.is_empty() => std::path::PathBuf::from(v),
-        _ => std::path::PathBuf::from(std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?)
-            .join(".espressif"),
+        _ => std::path::PathBuf::from(
+            std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?,
+        )
+        .join(".espressif"),
     };
     let tool_dir = root.join("tools/esp-clang");
     let mut best: Option<(Vec<u64>, std::path::PathBuf)> = None;
@@ -24508,10 +25020,11 @@ fn esp_clang_for_test() -> Option<std::path::PathBuf> {
             best = Some((nums, path));
         }
     }
-    let clang = best?
-        .1
-        .join("esp-clang/bin")
-        .join(if cfg!(windows) { "clang.exe" } else { "clang" });
+    let clang =
+        best?
+            .1
+            .join("esp-clang/bin")
+            .join(if cfg!(windows) { "clang.exe" } else { "clang" });
     if clang.is_file() {
         Some(clang)
     } else {
@@ -24537,8 +25050,8 @@ fn target_esp32_emits_32_bit_ir_with_xtensa_abi() {
          export extern fn drive() -> i64 {\n\
              let v: V3 = V3 { x: 1, y: 2, z: 3 };\n\
              let b: Big = Big { a: 1 as i64, b: 2 as i64, c: 3 as i64, d: 4 as i64 };\n\
-             let r1: i32 = unsafe { c_take_v3(v) };\n\
-             let r2: i64 = unsafe { c_take_big(b) };\n\
+             let r1: i32 = { c_take_v3(v) };\n\
+             let r2: i64 = { c_take_big(b) };\n\
              return (r1 as i64) + r2;\n\
          }\n",
     )
@@ -24610,7 +25123,10 @@ fn target_esp32_realtime_contract_holds_across_targets() {
         .arg("esp32-xtensa")
         .status()
         .expect("invoke cpc");
-    assert!(st.success(), "#[realtime] PID must check clean for esp32-xtensa");
+    assert!(
+        st.success(),
+        "#[realtime] PID must check clean for esp32-xtensa"
+    );
     // ...and the same contract rejects allocation regardless of target.
     let bad = dir.join("bad.cplus");
     std::fs::write(
@@ -24618,7 +25134,7 @@ fn target_esp32_realtime_contract_holds_across_targets() {
         "extern fn malloc(n: usize) -> *u8;\n\
          #[realtime]\n\
          fn rt_with_alloc() -> *u8 {\n\
-             return unsafe { malloc(64 as usize) };\n\
+             return { malloc(64 as usize) };\n\
          }\n\
          fn main() -> i32 { return 0; }\n",
     )
@@ -24630,7 +25146,10 @@ fn target_esp32_realtime_contract_holds_across_targets() {
         .arg("esp32-xtensa")
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "allocation under #[realtime] must fail");
+    assert!(
+        !out.status.success(),
+        "allocation under #[realtime] must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0901"), "expected E0901, got: {stderr}");
 }
@@ -24715,7 +25234,10 @@ fn target_esp32_emit_obj_produces_xtensa_elf_object() {
     assert!(bytes.len() > 20);
     // ELF magic, 32-bit class, e_machine EM_XTENSA (94 = 0x5e) at offset 18.
     assert_eq!(&bytes[0..4], b"\x7fELF", "object must be ELF");
-    assert_eq!(bytes[4], 1, "object must be ELFCLASS32 (the first 32-bit target)");
+    assert_eq!(
+        bytes[4], 1,
+        "object must be ELFCLASS32 (the first 32-bit target)"
+    );
     assert_eq!(
         (bytes[18], bytes[19]),
         (0x5e, 0x00),
@@ -24800,7 +25322,9 @@ fn target_esp32_text_and_vec_compile_to_xtensa_object() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
     std::fs::write(
@@ -24880,7 +25404,9 @@ fn target_esp32_gated_stdlib_modules_fire_e0866() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     symlink_dir(&root.join("vendor/stdlib"), &dir.join("vendor/stdlib"));
 
@@ -24904,7 +25430,10 @@ fn target_esp32_gated_stdlib_modules_fire_e0866() {
             "stdlib/{module} must be rejected on esp32-xtensa"
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.contains("E0866"), "expected E0866 for {module}: {stderr}");
+        assert!(
+            stderr.contains("E0866"),
+            "expected E0866 for {module}: {stderr}"
+        );
         assert!(
             stderr.contains("vendor/espidf"),
             "E0866 must point at the embedded package: {stderr}"
@@ -24991,9 +25520,14 @@ fn android_view_project_checks_and_builds() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
-    symlink_dir(&root.join("vendor/android_view"), &dir.join("vendor/android_view"));
+    symlink_dir(
+        &root.join("vendor/android_view"),
+        &dir.join("vendor/android_view"),
+    );
     symlink_dir(&root.join("vendor/jni"), &dir.join("vendor/jni"));
     std::fs::write(
         dir.join("src/lib.cplus"),
@@ -25099,7 +25633,7 @@ fn target_esp32c3_emits_rv32_ir_and_object() {
          }\n\
          export extern fn drive() -> i32 {\n\
              let v: V3 = V3 { x: 1, y: 2, z: 3 };\n\
-             return unsafe { c_take_v3(v) };\n\
+             return { c_take_v3(v) };\n\
          }\n",
     )
     .unwrap();
@@ -25160,13 +25694,21 @@ fn target_min_os_overrides_versioned_triples() {
     let src = dir.join("t.cplus");
     std::fs::write(&src, "fn main() -> i32 { return 0; }\n").unwrap();
     for (target, ver, expect) in [
-        ("ios-arm64", "15.2", "target triple = \"arm64-apple-ios15.2\""),
+        (
+            "ios-arm64",
+            "15.2",
+            "target triple = \"arm64-apple-ios15.2\"",
+        ),
         (
             "ios-arm64-simulator",
             "14.0",
             "target triple = \"arm64-apple-ios14.0-simulator\"",
         ),
-        ("android-arm64", "28", "target triple = \"aarch64-linux-android28\""),
+        (
+            "android-arm64",
+            "28",
+            "target triple = \"aarch64-linux-android28\"",
+        ),
     ] {
         let out = Command::new(cpc)
             .arg("--target")
@@ -25177,19 +25719,31 @@ fn target_min_os_overrides_versioned_triples() {
             .arg(&src)
             .output()
             .expect("invoke cpc");
-        assert!(out.status.success(), "--min-os {ver} for {target} must work");
+        assert!(
+            out.status.success(),
+            "--min-os {ver} for {target} must work"
+        );
         let ir = String::from_utf8_lossy(&out.stdout);
-        assert!(ir.contains(expect), "expected `{expect}` for {target}: {ir}");
+        assert!(
+            ir.contains(expect),
+            "expected `{expect}` for {target}: {ir}"
+        );
     }
     // Unversioned targets reject the flag with the placement hint.
-    for args in [vec!["--min-os", "15.0"], vec!["--target", "esp32-xtensa", "--min-os", "9"]] {
+    for args in [
+        vec!["--min-os", "15.0"],
+        vec!["--target", "esp32-xtensa", "--min-os", "9"],
+    ] {
         let out = Command::new(cpc)
             .args(&args)
             .arg("--emit-ll")
             .arg(&src)
             .output()
             .expect("invoke cpc");
-        assert!(!out.status.success(), "--min-os must be rejected for {args:?}");
+        assert!(
+            !out.status.success(),
+            "--min-os must be rejected for {args:?}"
+        );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             stderr.contains("versioned triple"),
@@ -25231,7 +25785,7 @@ fn extern_import_of_program_defined_symbol_links_and_runs() {
         dir.join("src/caller.cplus"),
         "extern fn app_hook(x: i32) -> i32;\n\
          fn call_through_hook(x: i32) -> i32 {\n\
-             return unsafe { app_hook(x) };\n\
+             return { app_hook(x) };\n\
          }\n",
     )
     .unwrap();
@@ -25275,7 +25829,9 @@ fn espidf_firmware_project_passes_check() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     symlink_dir(&root.join("vendor/espidf"), &dir.join("vendor/espidf"));
     std::fs::write(
@@ -25428,7 +25984,9 @@ fn uikit_demo_project() -> std::path::PathBuf {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
     std::fs::create_dir_all(dir.join("vendor")).unwrap();
     symlink_dir(&root.join("vendor/uikit"), &dir.join("vendor/uikit"));
     std::fs::write(dir.join("src/lib.cplus"), UIKIT_DEMO_LIB).unwrap();
@@ -25538,11 +26096,19 @@ fn tempdir() -> std::path::PathBuf {
 /// toolchain on every host.
 #[allow(dead_code)]
 fn ar_prog() -> &'static str {
-    if cfg!(windows) { "llvm-ar" } else { "ar" }
+    if cfg!(windows) {
+        "llvm-ar"
+    } else {
+        "ar"
+    }
 }
 #[allow(dead_code)]
 fn nm_prog() -> &'static str {
-    if cfg!(windows) { "llvm-nm" } else { "nm" }
+    if cfg!(windows) {
+        "llvm-nm"
+    } else {
+        "nm"
+    }
 }
 
 /// Make `link` a directory alias for the existing directory `target`.

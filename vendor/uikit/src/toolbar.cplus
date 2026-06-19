@@ -6,6 +6,8 @@ struct Toolbar {
 }
 
 impl Toolbar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> Toolbar {
         return Toolbar { obj: rt::alloc_init_with_frame(#str_ptr("UIToolbar\0"), frame) };
     }
@@ -32,6 +34,8 @@ struct NavigationBar {
 }
 
 impl NavigationBar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> NavigationBar {
         return NavigationBar { obj: rt::alloc_init_with_frame(#str_ptr("UINavigationBar\0"), frame) };
     }
@@ -54,6 +58,8 @@ struct BarButtonItem {
 }
 
 impl BarButtonItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(title: str, style: i64, target: *u8, action: *u8) -> BarButtonItem {
         let cls: *u8 = rt::get_class(#str_ptr("UIBarButtonItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -82,6 +88,8 @@ struct TabBar {
 }
 
 impl TabBar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> TabBar {
         return TabBar { obj: rt::alloc_init_with_frame(#str_ptr("UITabBar\0"), frame) };
     }
@@ -104,6 +112,8 @@ struct TabBarItem {
 }
 
 impl TabBarItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(title: str, image: *u8, tag: i64) -> TabBarItem {
         let cls: *u8 = rt::get_class(#str_ptr("UITabBarItem\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));

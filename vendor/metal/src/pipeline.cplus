@@ -17,7 +17,7 @@ struct ComputePipelineState {
 
 impl Library {
     fn new_function(this, name: str) -> result::Result[Function, runtime::MetalError] {
-        if this.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } {
             return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
         let ns_name: *u8 = runtime::ns_string(name);
@@ -29,7 +29,7 @@ impl Library {
         // `newFunctionWithName:` retains the name internally if it needs
         // it past the call, so it's safe to drop our reference here.
         runtime::release(ns_name);
-        if func_raw == unsafe { 0 as *u8 } {
+        if func_raw == { 0 as *u8 } {
             return result::Result[Function, runtime::MetalError]::Err(runtime::MetalError::FunctionNotFound);
         }
         return result::Result[Function, runtime::MetalError]::Ok(Function { raw: func_raw });
@@ -37,7 +37,7 @@ impl Library {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -45,7 +45,7 @@ impl Library {
 impl Function {
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -59,13 +59,13 @@ impl ComputePipelineState {
         // post-v0.0.10 default-move dropped the cpc Function wrapper at
         // fn-exit, releasing the underlying MTLFunction before Metal had
         // safely retained it.
-        if device_raw == unsafe { 0 as *u8 } || function.raw == unsafe { 0 as *u8 } {
+        if device_raw == { 0 as *u8 } || function.raw == { 0 as *u8 } {
             return result::Result[ComputePipelineState, runtime::MetalError]::Err(runtime::MetalError::PipelineCreationFailed);
         }
         let selector: *u8 = runtime::sel(#str_ptr("newComputePipelineStateWithFunction:error:\0"));
-        let null_err: *u8 = unsafe { 0 as *u8 };
+        let null_err: *u8 = { 0 as *u8 };
         let pipeline_raw: *u8 = runtime::msg_id_pipeline(device_raw, selector, function.raw, null_err);
-        if pipeline_raw == unsafe { 0 as *u8 } {
+        if pipeline_raw == { 0 as *u8 } {
             return result::Result[ComputePipelineState, runtime::MetalError]::Err(runtime::MetalError::PipelineCreationFailed);
         }
         return result::Result[ComputePipelineState, runtime::MetalError]::Ok(ComputePipelineState { raw: pipeline_raw });
@@ -73,7 +73,7 @@ impl ComputePipelineState {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }

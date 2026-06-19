@@ -6,6 +6,8 @@ struct Pasteboard {
 }
 
 impl Pasteboard {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn general() -> Pasteboard {
         let cls: *u8 = rt::get_class(#str_ptr("UIPasteboard\0"));
         return Pasteboard { obj: rt::msg_id(cls, rt::sel(#str_ptr("generalPasteboard\0"))) };

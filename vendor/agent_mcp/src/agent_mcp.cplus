@@ -89,24 +89,24 @@ fn verb_to_str(v: events::Verb) -> str {
 // JSON null for the window root.
 fn node_to_json(p: *ui::UiNode) -> json::Value {
     var frame: vec::Vec[json::Member] = vec::new::[json::Member]();
-    frame.push(member("x", jnum(unsafe { (*p).frame.origin.x })));
-    frame.push(member("y", jnum(unsafe { (*p).frame.origin.y })));
-    frame.push(member("w", jnum(unsafe { (*p).frame.size.width })));
-    frame.push(member("h", jnum(unsafe { (*p).frame.size.height })));
+    frame.push(member("x", jnum({ (*p).frame.origin.x })));
+    frame.push(member("y", jnum({ (*p).frame.origin.y })));
+    frame.push(member("w", jnum({ (*p).frame.size.width })));
+    frame.push(member("h", jnum({ (*p).frame.size.height })));
 
-    let parent_val: json::Value = match unsafe { (*p).parent } {
+    let parent_val: json::Value = match { (*p).parent } {
         option::Option[usize]::Some(pi) => jnum(pi as f64),
         option::Option[usize]::None => json::Value::Null,
     };
 
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.push(member("id", jstr(unsafe { (*p).id.as_str() })));
-    m.push(member("role", jstr(role_to_str(unsafe { (*p).role }))));
-    m.push(member("class", jstr(unsafe { (*p).class_name.as_str() })));
+    m.push(member("id", jstr({ (*p).id.as_str() })));
+    m.push(member("role", jstr(role_to_str({ (*p).role }))));
+    m.push(member("class", jstr({ (*p).class_name.as_str() })));
     m.push(member("frame", json::Value::Object(frame)));
-    m.push(member("hidden", jbool(unsafe { (*p).is_hidden })));
-    m.push(member("text", jstr(unsafe { (*p).text.as_str() })));
-    m.push(member("actionable", jbool(unsafe { (*p).actionable })));
+    m.push(member("hidden", jbool({ (*p).is_hidden })));
+    m.push(member("text", jstr({ (*p).text.as_str() })));
+    m.push(member("actionable", jbool({ (*p).actionable })));
     m.push(member("parent", parent_val));
     return json::Value::Object(m);
 }
@@ -180,19 +180,19 @@ fn dispatch(
     }
     if method == "click" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
-        let o: surface::Outcome = surf.click(unsafe { target.as_str() });
+        let o: surface::Outcome = surf.click({ target.as_str() });
         return ok_response(id, outcome_result(o));
     }
     if method == "scroll_to" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
-        let o: surface::Outcome = surf.scroll_to(unsafe { target.as_str() });
+        let o: surface::Outcome = surf.scroll_to({ target.as_str() });
         return ok_response(id, outcome_result(o));
     }
     if method == "set_text" {
         let target: text::Text = json::as_str(json::object_get(params, "id"));
         let value: text::Text = json::as_str(json::object_get(params, "value"));
         let base: u64 = json::as_number(json::object_get(params, "base_version")) as u64;
-        let o: surface::Outcome = surf.set_text(unsafe { target.as_str() }, unsafe { value.as_str() }, base);
+        let o: surface::Outcome = surf.set_text({ target.as_str() }, { value.as_str() }, base);
         return ok_response(id, outcome_result(o));
     }
     if method == "poll_event" {
@@ -226,7 +226,7 @@ fn handle_request(
             let method_t: text::Text = json::as_str(json::object_get(req, "method"));
             let id: f64 = json::as_number(json::object_get(req, "id"));
             let params: json::Value = json::object_get(req, "params");
-            let resp: json::Value = dispatch(surf, sub, gate, unsafe { method_t.as_str() }, params, id);
+            let resp: json::Value = dispatch(surf, sub, gate, { method_t.as_str() }, params, id);
             resp.to_text()
         }
         result::Result[json::Value, json::ParseError]::Err(_e) => {
@@ -259,7 +259,7 @@ extern fn getpid() -> i32;
 // The PID of this process — for an agent socket path like
 // `/tmp/cplus-agent-<pid>.sock` (the path convention is the app's choice).
 fn current_pid() -> i32 {
-    return unsafe { getpid() };
+    return { getpid() };
 }
 
 // Read one newline-terminated line into `buf` (without the newline). Returns the
@@ -272,7 +272,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
             break;
         }
         var byte: u8 = 0 as u8;
-        let r: i64 = unsafe { read(fd, #addr_of(byte), 1 as usize) };
+        let r: i64 = { read(fd, #addr_of(byte), 1 as usize) };
         if r <= (0 as i64) {
             if n == (0 as usize) {
                 return - 1 as i64;
@@ -282,7 +282,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
         if byte == ('\n' as u8) {
             break;
         }
-        unsafe { *(buf_ptr + n) = byte; }
+        { *(buf_ptr + n) = byte; }
         n = n +% (1 as usize);
     }
     return n as i64;
@@ -291,7 +291,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
 fn write_all(fd: i32, ptr: *u8, len: usize) {
     var off: usize = 0 as usize;
     while off < len {
-        let w: i64 = unsafe { write(fd, ptr + off, len -% off) };
+        let w: i64 = { write(fd, ptr + off, len -% off) };
         if w <= (0 as i64) {
             return;
         }
@@ -311,16 +311,16 @@ fn serve_fd(
 ) -> i32 {
     var buf: [u8; 8192] = [0 as u8; 8192];
     loop {
-        let len: i64 = read_line(fd, unsafe { #addr_of(buf[0]) }, 8192 as usize);
+        let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192 as usize);
         if len < (0 as i64) {
             break;
         }
-        let line: str = unsafe { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
+        let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
         let resp: text::Text = handle_request(surf, sub, auth::serve(policy), line);
-        let rs: str = unsafe { resp.as_str() };
+        let rs: str = { resp.as_str() };
         write_all(fd, #str_ptr(rs), #str_len(rs));
         let nl: u8 = '\n' as u8;
-        write_all(fd, unsafe { #addr_of(nl) }, 1 as usize);
+        write_all(fd, { #addr_of(nl) }, 1 as usize);
     }
     return 0;
 }
@@ -344,34 +344,34 @@ fn serve_uds(
     let pbytes: *u8 = #str_ptr(path);
     var i: usize = 0 as usize;
     while i < plen {
-        addr[(2 as usize) +% i] = unsafe { *(pbytes + i) };
+        addr[(2 as usize) +% i] = { *(pbytes + i) };
         i = i +% (1 as usize);
     }
-    let path_c: *u8 = unsafe { #addr_of(addr[2]) }; // NUL-terminated path inside the struct
+    let path_c: *u8 = { #addr_of(addr[2]) }; // NUL-terminated path inside the struct
     let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
 
-    let fd: i32 = unsafe { socket(1 as i32, 1 as i32, 0 as i32) };
+    let fd: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) {
         return - 1 as i32;
     }
-    unsafe { unlink(path_c); }
-    if unsafe { bind(fd, #addr_of(addr[0]), addrlen) } != (0 as i32) {
-        unsafe { close(fd); }
+    { unlink(path_c); }
+    if { bind(fd, #addr_of(addr[0]), addrlen) } != (0 as i32) {
+        { close(fd); }
         return - 2 as i32;
     }
-    if unsafe { listen(fd, 4 as i32) } != (0 as i32) {
-        unsafe { close(fd); }
+    if { listen(fd, 4 as i32) } != (0 as i32) {
+        { close(fd); }
         return - 3 as i32;
     }
     loop {
-        let conn: i32 = unsafe { accept(fd, 0 as *u8, 0 as *u32) };
+        let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
         if conn < (0 as i32) {
             break;
         }
         serve_fd(surf, sub, policy, conn);
-        unsafe { close(conn); }
+        { close(conn); }
     }
-    unsafe { close(fd); }
-    unsafe { unlink(path_c); }
+    { close(fd); }
+    { unlink(path_c); }
     return 0;
 }

@@ -12,20 +12,26 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum Severity { Error, Warning, Note }
+pub enum Severity {
+    Error,
+    Warning,
+    Note,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct DiagCode(pub &'static str);
 
 impl fmt::Display for DiagCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 pub struct Position {
-    pub line: u32,    // 1-based
-    pub col: u32,     // 1-based, in chars
-    pub byte: u32,    // 0-based byte offset
+    pub line: u32, // 1-based
+    pub col: u32,  // 1-based, in chars
+    pub byte: u32, // 0-based byte offset
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -157,12 +163,19 @@ impl LineMap {
     }
 
     pub fn position(&self, byte: u32, src: &str) -> Position {
-        let line_idx = self.line_starts.partition_point(|&s| s <= byte).saturating_sub(1);
+        let line_idx = self
+            .line_starts
+            .partition_point(|&s| s <= byte)
+            .saturating_sub(1);
         let line_start = self.line_starts[line_idx];
         let line_byte = (byte as usize).min(src.len());
         let line_text = &src[line_start as usize..line_byte];
         let col = line_text.chars().count() as u32 + 1;
-        Position { line: (line_idx + 1) as u32, col, byte }
+        Position {
+            line: (line_idx + 1) as u32,
+            col,
+            byte,
+        }
     }
 
     pub fn span(&self, file: &PathBuf, span: ByteSpan, src: &str) -> SourceSpan {
@@ -182,19 +195,35 @@ pub struct DiagSink {
 }
 
 impl DiagSink {
-    pub fn new() -> Self { Self::default() }
-    pub fn emit(&mut self, d: Diagnostic) { self.diags.push(d); }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn emit(&mut self, d: Diagnostic) {
+        self.diags.push(d);
+    }
     /// Number of diagnostics emitted so far. Paired with `truncate` to run a
     /// throwaway analysis pass whose diagnostics are discarded (sema's loop
     /// move-check pre-pass).
-    pub fn len(&self) -> usize { self.diags.len() }
-    pub fn is_empty(&self) -> bool { self.diags.is_empty() }
+    pub fn len(&self) -> usize {
+        self.diags.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.diags.is_empty()
+    }
     /// Drop diagnostics back to a previous `len()` mark.
-    pub fn truncate(&mut self, mark: usize) { self.diags.truncate(mark); }
-    pub fn diagnostics(&self) -> &[Diagnostic] { &self.diags }
-    pub fn into_vec(self) -> Vec<Diagnostic> { self.diags }
+    pub fn truncate(&mut self, mark: usize) {
+        self.diags.truncate(mark);
+    }
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diags
+    }
+    pub fn into_vec(self) -> Vec<Diagnostic> {
+        self.diags
+    }
     pub fn has_errors(&self) -> bool {
-        self.diags.iter().any(|d| matches!(d.severity, Severity::Error))
+        self.diags
+            .iter()
+            .any(|d| matches!(d.severity, Severity::Error))
     }
 }
 
@@ -291,17 +320,54 @@ pub fn from_parse(err: &ParseError, file: &PathBuf, lm: &LineMap, src: &str) -> 
 mod tests {
     use super::*;
 
-    fn pb(s: &str) -> PathBuf { PathBuf::from(s) }
+    fn pb(s: &str) -> PathBuf {
+        PathBuf::from(s)
+    }
 
     #[test]
     fn line_map_basic() {
         let src = "a\nbb\nccc";
         let lm = LineMap::new(src);
-        assert_eq!(lm.position(0, src), Position { line: 1, col: 1, byte: 0 });
-        assert_eq!(lm.position(1, src), Position { line: 1, col: 2, byte: 1 });
-        assert_eq!(lm.position(2, src), Position { line: 2, col: 1, byte: 2 });
-        assert_eq!(lm.position(4, src), Position { line: 2, col: 3, byte: 4 });
-        assert_eq!(lm.position(5, src), Position { line: 3, col: 1, byte: 5 });
+        assert_eq!(
+            lm.position(0, src),
+            Position {
+                line: 1,
+                col: 1,
+                byte: 0
+            }
+        );
+        assert_eq!(
+            lm.position(1, src),
+            Position {
+                line: 1,
+                col: 2,
+                byte: 1
+            }
+        );
+        assert_eq!(
+            lm.position(2, src),
+            Position {
+                line: 2,
+                col: 1,
+                byte: 2
+            }
+        );
+        assert_eq!(
+            lm.position(4, src),
+            Position {
+                line: 2,
+                col: 3,
+                byte: 4
+            }
+        );
+        assert_eq!(
+            lm.position(5, src),
+            Position {
+                line: 3,
+                col: 1,
+                byte: 5
+            }
+        );
     }
 
     #[test]
@@ -322,8 +388,16 @@ mod tests {
             message: "expected `;` after expression".to_string(),
             primary: SourceSpan {
                 file: pb("foo.cplus"),
-                start: Position { line: 12, col: 5, byte: 234 },
-                end: Position { line: 12, col: 5, byte: 234 },
+                start: Position {
+                    line: 12,
+                    col: 5,
+                    byte: 234,
+                },
+                end: Position {
+                    line: 12,
+                    col: 5,
+                    byte: 234,
+                },
             },
             labels: Vec::new(),
             notes: Vec::new(),
@@ -331,8 +405,16 @@ mod tests {
                 description: "insert `;`".to_string(),
                 span: SourceSpan {
                     file: pb("foo.cplus"),
-                    start: Position { line: 12, col: 5, byte: 234 },
-                    end: Position { line: 12, col: 5, byte: 234 },
+                    start: Position {
+                        line: 12,
+                        col: 5,
+                        byte: 234,
+                    },
+                    end: Position {
+                        line: 12,
+                        col: 5,
+                        byte: 234,
+                    },
                 },
                 replacement: ";".to_string(),
                 applicability: Applicability::MachineApplicable,
@@ -366,7 +448,12 @@ mod tests {
         let toks = crate::lexer::tokenize("fn main() -> i32 { 1 < 2 < 3 }").unwrap();
         let err = crate::parser::parse(toks).unwrap_err();
         let lm = LineMap::new("fn main() -> i32 { 1 < 2 < 3 }");
-        let d = from_parse(&err, &pb("test.cplus"), &lm, "fn main() -> i32 { 1 < 2 < 3 }");
+        let d = from_parse(
+            &err,
+            &pb("test.cplus"),
+            &lm,
+            "fn main() -> i32 { 1 < 2 < 3 }",
+        );
         assert_eq!(d.code, DiagCode("E0102"));
     }
 
@@ -392,10 +479,20 @@ mod tests {
             message: "x".into(),
             primary: SourceSpan {
                 file: pb("a"),
-                start: Position { line: 1, col: 1, byte: 0 },
-                end: Position { line: 1, col: 1, byte: 0 },
+                start: Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
+                end: Position {
+                    line: 1,
+                    col: 1,
+                    byte: 0,
+                },
             },
-            labels: Vec::new(), notes: Vec::new(), suggestions: Vec::new(),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
         });
         assert!(sink.has_errors());
         assert_eq!(sink.diagnostics().len(), 1);
@@ -409,10 +506,20 @@ mod tests {
             message: "boom".to_string(),
             primary: SourceSpan {
                 file: pb("foo.cplus"),
-                start: Position { line: 12, col: 5, byte: 0 },
-                end: Position { line: 12, col: 5, byte: 0 },
+                start: Position {
+                    line: 12,
+                    col: 5,
+                    byte: 0,
+                },
+                end: Position {
+                    line: 12,
+                    col: 5,
+                    byte: 0,
+                },
             },
-            labels: Vec::new(), notes: Vec::new(), suggestions: Vec::new(),
+            labels: Vec::new(),
+            notes: Vec::new(),
+            suggestions: Vec::new(),
         };
         assert_eq!(d.render_short(), "foo.cplus:12:5: error[E0001]: boom");
     }

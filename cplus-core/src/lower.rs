@@ -98,7 +98,11 @@ struct Lower {
 }
 
 impl Lower {
-    fn new(entry_file: PathBuf, entry_src: &str, files: BTreeMap<String, (PathBuf, String)>) -> Self {
+    fn new(
+        entry_file: PathBuf,
+        entry_src: &str,
+        files: BTreeMap<String, (PathBuf, String)>,
+    ) -> Self {
         let entry_lm = LineMap::new(entry_src);
         let mut compiled = BTreeMap::new();
         for (id, (path, src)) in files {
@@ -347,7 +351,6 @@ impl Lower {
                 }
             }
             ExprKind::Block(b) => self.lower_block(b),
-            ExprKind::Unsafe(b) => self.lower_block(b),
             ExprKind::Await(inner) => self.lower_expr(inner),
             ExprKind::Yield(inner) => self.lower_expr(inner),
             ExprKind::If {
@@ -386,7 +389,9 @@ impl Lower {
             }
             ExprKind::Cast { expr, .. } => self.lower_expr(expr),
             ExprKind::Path { .. } => {}
-            ExprKind::StructLit { fields, .. } | ExprKind::InferredStructLit { fields } | ExprKind::GenericStructLit { fields, .. } => {
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
                 for f in fields {
                     self.lower_expr(&mut f.value);
                 }
@@ -411,7 +416,9 @@ impl Lower {
                 }
             }
             // Handled by the pre-check above; never reached.
-            ExprKind::BuilderBlock { .. } => unreachable!("BuilderBlock handled in lower_expr pre-check"),
+            ExprKind::BuilderBlock { .. } => {
+                unreachable!("BuilderBlock handled in lower_expr pre-check")
+            }
         }
     }
 
@@ -907,7 +914,11 @@ impl Lower {
     ) {
         let span = t.span;
         match &mut t.kind {
-            TypeKind::Array { elem, len, len_name } => {
+            TypeKind::Array {
+                elem,
+                len,
+                len_name,
+            } => {
                 if let Some(name) = len_name.take() {
                     *len = self.resolve_one_len(&name, span, consts);
                 }
@@ -916,7 +927,11 @@ impl Lower {
             TypeKind::Borrowed { inner, .. } => self.resolve_lens_in_type(inner, consts),
             TypeKind::RawPtr(inner) => self.resolve_lens_in_type(inner, consts),
             TypeKind::Slice(inner) => self.resolve_lens_in_type(inner, consts),
-            TypeKind::FnPtr { params, return_type, .. } => {
+            TypeKind::FnPtr {
+                params,
+                return_type,
+                ..
+            } => {
                 for p in params {
                     self.resolve_lens_in_type(p, consts);
                 }
@@ -980,7 +995,12 @@ impl Lower {
                     self.resolve_lens_in_expr(iter, consts);
                     self.resolve_lens_in_block(body, consts);
                 }
-                ForLoop::CStyle { init, cond, update, body } => {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
                     if let Some(i) = init {
                         self.resolve_lens_in_stmt(i, consts);
                     }
@@ -996,18 +1016,29 @@ impl Lower {
             StmtKind::Expr(e) | StmtKind::Defer(e) | StmtKind::Assert(e) => {
                 self.resolve_lens_in_expr(e, consts)
             }
-            StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+            StmtKind::IfLet {
+                scrutinee,
+                body,
+                else_body,
+                ..
+            } => {
                 self.resolve_lens_in_expr(scrutinee, consts);
                 self.resolve_lens_in_block(body, consts);
                 if let Some(b) = else_body {
                     self.resolve_lens_in_block(b, consts);
                 }
             }
-            StmtKind::GuardLet { scrutinee, else_body, .. } => {
+            StmtKind::GuardLet {
+                scrutinee,
+                else_body,
+                ..
+            } => {
                 self.resolve_lens_in_expr(scrutinee, consts);
                 self.resolve_lens_in_block(else_body, consts);
             }
-            StmtKind::WhileLet { scrutinee, body, .. } => {
+            StmtKind::WhileLet {
+                scrutinee, body, ..
+            } => {
                 self.resolve_lens_in_expr(scrutinee, consts);
                 self.resolve_lens_in_block(body, consts);
             }
@@ -1022,7 +1053,11 @@ impl Lower {
     ) {
         let span = e.span;
         match &mut e.kind {
-            ExprKind::ArrayFill { fill, count, count_name } => {
+            ExprKind::ArrayFill {
+                fill,
+                count,
+                count_name,
+            } => {
                 if let Some(name) = count_name.take() {
                     *count = self.resolve_one_len(&name, span, consts);
                 }
@@ -1032,7 +1067,11 @@ impl Lower {
                 self.resolve_lens_in_expr(expr, consts);
                 self.resolve_lens_in_type(ty, consts);
             }
-            ExprKind::Call { callee, args, type_args } => {
+            ExprKind::Call {
+                callee,
+                args,
+                type_args,
+            } => {
                 self.resolve_lens_in_expr(callee, consts);
                 for a in args {
                     self.resolve_lens_in_expr(a, consts);
@@ -1041,8 +1080,12 @@ impl Lower {
                     self.resolve_lens_in_type(t, consts);
                 }
             }
-            ExprKind::Block(b) | ExprKind::Unsafe(b) => self.resolve_lens_in_block(b, consts),
-            ExprKind::If { cond, then, else_branch } => {
+            ExprKind::Block(b) => self.resolve_lens_in_block(b, consts),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
                 self.resolve_lens_in_expr(cond, consts);
                 self.resolve_lens_in_block(then, consts);
                 if let Some(eb) = else_branch {
@@ -1072,7 +1115,9 @@ impl Lower {
                     self.resolve_lens_in_expr(&mut f.value, consts);
                 }
             }
-            ExprKind::GenericStructLit { fields, type_args, .. } => {
+            ExprKind::GenericStructLit {
+                fields, type_args, ..
+            } => {
                 for f in fields {
                     self.resolve_lens_in_expr(&mut f.value, consts);
                 }
@@ -1080,7 +1125,9 @@ impl Lower {
                     self.resolve_lens_in_type(t, consts);
                 }
             }
-            ExprKind::GenericEnumCall { type_args, args, .. } => {
+            ExprKind::GenericEnumCall {
+                type_args, args, ..
+            } => {
                 for t in type_args {
                     self.resolve_lens_in_type(t, consts);
                 }
@@ -1103,7 +1150,12 @@ impl Lower {
                     self.resolve_lens_in_expr(&mut a.body, consts);
                 }
             }
-            ExprKind::Intrinsic { type_args, args, ret_ty, .. } => {
+            ExprKind::Intrinsic {
+                type_args,
+                args,
+                ret_ty,
+                ..
+            } => {
                 for t in type_args {
                     self.resolve_lens_in_type(t, consts);
                 }
@@ -1138,7 +1190,10 @@ fn is_const_initializer(e: &Expr) -> bool {
         | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_)
         | ExprKind::CStrLit(_) => true,
-        ExprKind::Unary { op: UnaryOp::Neg, operand } => matches!(
+        ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } => matches!(
             operand.kind,
             ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
         ),
@@ -1151,14 +1206,16 @@ fn is_const_initializer(e: &Expr) -> bool {
         // form `= 1` worked, which was a surprising asymmetry. Bool and
         // string casts are intentionally excluded: they have no
         // narrowing-literal use and would not render as scalar globals.
-        ExprKind::Cast { expr, .. } => matches!(
-            &expr.kind,
-            ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
-        ) || matches!(
-            &expr.kind,
-            ExprKind::Unary { op: UnaryOp::Neg, operand }
-                if matches!(operand.kind, ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _))
-        ),
+        ExprKind::Cast { expr, .. } => {
+            matches!(
+                &expr.kind,
+                ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _),
+            ) || matches!(
+                &expr.kind,
+                ExprKind::Unary { op: UnaryOp::Neg, operand }
+                    if matches!(operand.kind, ExprKind::IntLit(_, _) | ExprKind::FloatLit(_, _))
+            )
+        }
         // v0.0.12 G-033 (llama.cplus G-032): `#zero::[T]()` is a
         // sema-known constant zero of type T. For statics this lowers
         // to LLVM `zeroinitializer` — no runtime memset, just BSS.
@@ -1167,9 +1224,12 @@ fn is_const_initializer(e: &Expr) -> bool {
         // the C side previously held an all-zero / partially-init
         // aggregate that cpc now owns. Type-arg arity is validated
         // downstream by `check_intrinsic_zero` (E0501 on wrong shape).
-        ExprKind::Intrinsic { name, args, type_args, .. } => {
-            name == "zero" && args.is_empty() && type_args.len() == 1
-        }
+        ExprKind::Intrinsic {
+            name,
+            args,
+            type_args,
+            ..
+        } => name == "zero" && args.is_empty() && type_args.len() == 1,
         _ => false,
     }
 }
@@ -1232,7 +1292,12 @@ fn subst_stmt(s: &mut Stmt, consts: &std::collections::HashMap<String, (Expr, Ty
             subst_block(body, consts);
         }
         StmtKind::For(fl, _) => match fl {
-            ForLoop::CStyle { init, cond, update, body } => {
+            ForLoop::CStyle {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 if let Some(i) = init {
                     subst_stmt(i, consts);
                 }
@@ -1257,18 +1322,29 @@ fn subst_stmt(s: &mut Stmt, consts: &std::collections::HashMap<String, (Expr, Ty
         // are rewritten into match-using forms; no original nodes
         // survive here. The arms are defense-in-depth no-ops in case
         // a future change orders the passes differently.
-        StmtKind::IfLet { scrutinee, body, else_body, .. } => {
+        StmtKind::IfLet {
+            scrutinee,
+            body,
+            else_body,
+            ..
+        } => {
             subst_expr(scrutinee, consts);
             subst_block(body, consts);
             if let Some(eb) = else_body {
                 subst_block(eb, consts);
             }
         }
-        StmtKind::WhileLet { scrutinee, body, .. } => {
+        StmtKind::WhileLet {
+            scrutinee, body, ..
+        } => {
             subst_expr(scrutinee, consts);
             subst_block(body, consts);
         }
-        StmtKind::GuardLet { scrutinee, else_body, .. } => {
+        StmtKind::GuardLet {
+            scrutinee,
+            else_body,
+            ..
+        } => {
             subst_expr(scrutinee, consts);
             subst_block(else_body, consts);
         }
@@ -1361,9 +1437,13 @@ fn subst_expr(e: &mut Expr, consts: &std::collections::HashMap<String, (Expr, Ty
                 }
             }
         }
-        ExprKind::Block(b) | ExprKind::Unsafe(b) => subst_block(b, consts),
+        ExprKind::Block(b) => subst_block(b, consts),
         ExprKind::Await(inner) | ExprKind::Yield(inner) => subst_expr(inner, consts),
-        ExprKind::If { cond, then, else_branch } => {
+        ExprKind::If {
+            cond,
+            then,
+            else_branch,
+        } => {
             subst_expr(cond, consts);
             subst_block(then, consts);
             if let Some(eb) = else_branch {
@@ -1463,7 +1543,12 @@ pub fn desugar_builder_block(e: &mut Expr) {
         &mut e.kind,
         ExprKind::IntLit(0, crate::lexer::NumSuffix::None),
     );
-    let ExprKind::BuilderBlock { context, body, container } = kind else {
+    let ExprKind::BuilderBlock {
+        context,
+        body,
+        container,
+    } = kind
+    else {
         unreachable!("desugar_builder_block called on a non-builder expression");
     };
 
@@ -1472,13 +1557,22 @@ pub fn desugar_builder_block(e: &mut Expr) {
 
     // let mut __b = ctx::Builder::new();
     let mut new_path = context.clone();
-    new_path.push(Ident { name: "Builder".to_string(), span: ctx_span });
-    new_path.push(Ident { name: "new".to_string(), span: ctx_span });
+    new_path.push(Ident {
+        name: "Builder".to_string(),
+        span: ctx_span,
+    });
+    new_path.push(Ident {
+        name: "new".to_string(),
+        span: ctx_span,
+    });
     let mut stmts: Vec<Stmt> = Vec::new();
     stmts.push(Stmt {
         kind: StmtKind::Let {
             mutable: true,
-            name: Ident { name: b_name.clone(), span: ctx_span },
+            name: Ident {
+                name: b_name.clone(),
+                span: ctx_span,
+            },
             ty: None,
             init: Some(Expr {
                 kind: ExprKind::Call {
@@ -1542,7 +1636,10 @@ fn desugar_builder_entry(entry: BuilderEntry, b_name: &str, out: &mut Vec<Stmt>)
             out.push(Stmt {
                 kind: StmtKind::Let {
                     mutable: true,
-                    name: Ident { name: i_name.clone(), span: item_span },
+                    name: Ident {
+                        name: i_name.clone(),
+                        span: item_span,
+                    },
                     ty: None,
                     init: Some(expr),
                 },
@@ -1671,7 +1768,10 @@ fn method_call(recv: &str, method: &str, args: Vec<Expr>, span: Span) -> Expr {
                         kind: ExprKind::Ident(recv.to_string()),
                         span,
                     }),
-                    name: Ident { name: method.to_string(), span },
+                    name: Ident {
+                        name: method.to_string(),
+                        span,
+                    },
                 },
                 span,
             }),
@@ -1764,7 +1864,6 @@ pub(crate) fn stmt_diverges(s: &Stmt) -> bool {
 pub(crate) fn expr_diverges(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Block(b) => block_diverges(b),
-        ExprKind::Unsafe(b) => block_diverges(b),
         ExprKind::Await(inner) => expr_diverges(inner),
         ExprKind::Yield(inner) => expr_diverges(inner),
         ExprKind::If {
@@ -1814,7 +1913,11 @@ mod tests {
         lib_id: &str,
         lib_path: &str,
         lib_src: &str,
-    ) -> (Program, std::collections::BTreeMap<String, (PathBuf, String)>, PathBuf) {
+    ) -> (
+        Program,
+        std::collections::BTreeMap<String, (PathBuf, String)>,
+        PathBuf,
+    ) {
         let mut prog = parse(tokenize(entry_src).expect("lex entry")).expect("parse entry");
         for it in &mut prog.items {
             it.origin_file = Some(entry_id.to_string());
@@ -1861,11 +1964,7 @@ mod tests {
         );
         // The bad static is on line 2 of lib_src — not clamped to the short
         // entry source.
-        assert_eq!(
-            d.primary.start.line, 2,
-            "wrong line: {:?}",
-            d.primary.start
-        );
+        assert_eq!(d.primary.start.line, 2, "wrong line: {:?}", d.primary.start);
     }
 
     #[test]
@@ -2109,10 +2208,8 @@ mod tests {
 
     #[test]
     fn const_array_length_folds_to_literal() {
-        let (prog, diags) = run(
-            "const CAP: usize = 8;\n\
-             fn main() -> i32 { let a: [i32; CAP] = [0; CAP]; return a[0]; }",
-        );
+        let (prog, diags) = run("const CAP: usize = 8;\n\
+             fn main() -> i32 { let a: [i32; CAP] = [0; CAP]; return a[0]; }");
         assert!(!first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
         // The `len_name` placeholder is folded into a literal `8` and cleared.
         assert_eq!(first_let_array_len(&prog), Some((8, None)));
@@ -2120,10 +2217,8 @@ mod tests {
 
     #[test]
     fn const_fill_count_folds_to_literal() {
-        let (prog, _diags) = run(
-            "const N: u32 = 4;\n\
-             fn main() -> i32 { let a: [i32; 4] = [7; N]; return a[0]; }",
-        );
+        let (prog, _diags) = run("const N: u32 = 4;\n\
+             fn main() -> i32 { let a: [i32; 4] = [7; N]; return a[0]; }");
         // Walk to the fill expr and confirm count folded to 4, name cleared.
         let f = prog
             .items
@@ -2136,7 +2231,10 @@ mod tests {
         let mut found = false;
         for s in &f.body.stmts {
             if let StmtKind::Let { init: Some(e), .. } = &s.kind {
-                if let ExprKind::ArrayFill { count, count_name, .. } = &e.kind {
+                if let ExprKind::ArrayFill {
+                    count, count_name, ..
+                } = &e.kind
+                {
                     assert_eq!((*count, count_name.clone()), (4, None));
                     found = true;
                 }
@@ -2153,28 +2251,31 @@ mod tests {
 
     #[test]
     fn non_integer_const_array_length_e0x36() {
-        let (_, diags) = run(
-            "const NAME: str = \"hi\";\n\
-             fn main() -> i32 { let a: [i32; NAME] = [0; 1]; return 0; }",
-        );
+        let (_, diags) = run("const NAME: str = \"hi\";\n\
+             fn main() -> i32 { let a: [i32; NAME] = [0; 1]; return 0; }");
         assert!(first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
     }
 
     #[test]
     fn const_array_length_in_struct_field_folds() {
         // A const length used in a struct field type resolves too.
-        let (prog, diags) = run(
-            "const W: u32 = 16;\n\
+        let (prog, diags) = run("const W: u32 = 16;\n\
              struct Buf { data: [u8; W] }\n\
-             fn main() -> i32 { return 0; }",
-        );
+             fn main() -> i32 { return 0; }");
         assert!(!first_codes(&diags).contains(&"E0X36"), "diags: {diags:?}");
         let s = prog.items.iter().find_map(|it| match &it.kind {
             ItemKind::Struct(s) if s.name.name == "Buf" => Some(s),
             _ => None,
         });
         let fld_ty = &s.unwrap().fields[0].ty;
-        assert!(matches!(&fld_ty.kind, TypeKind::Array { len: 16, len_name: None, .. }));
+        assert!(matches!(
+            &fld_ty.kind,
+            TypeKind::Array {
+                len: 16,
+                len_name: None,
+                ..
+            }
+        ));
     }
 
     // ---- v0.0.22 DSL.2: builder-block desugar ----
@@ -2187,7 +2288,10 @@ mod tests {
         let ItemKind::Function(f) = &prog.items[0].kind else {
             panic!("expected fn");
         };
-        let StmtKind::Let { init: Some(init), .. } = &f.body.stmts[0].kind else {
+        let StmtKind::Let {
+            init: Some(init), ..
+        } = &f.body.stmts[0].kind
+        else {
             panic!("expected let with init");
         };
         let ExprKind::Block(b) = &init.kind else {
@@ -2218,7 +2322,13 @@ mod tests {
         let src = "fn main() -> i32 {\n    let v = @view {\n        text(1)\n            .font = 2\n            .pad(3)\n        text(4)\n    };\n    return 0;\n}\n";
         let b = desugared_builder(src);
         // let mut __b = view::Builder::new();
-        let StmtKind::Let { mutable: true, name, init: Some(init), .. } = &b.stmts[0].kind else {
+        let StmtKind::Let {
+            mutable: true,
+            name,
+            init: Some(init),
+            ..
+        } = &b.stmts[0].kind
+        else {
             panic!("expected builder let, got {:?}", b.stmts[0].kind);
         };
         assert!(name.name.starts_with("__b"), "builder temp: {}", name.name);
@@ -2231,15 +2341,29 @@ mod tests {
         let path: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(path, ["view", "Builder", "new"]);
         // let mut __i = text(1);
-        let StmtKind::Let { mutable: true, name: item_name, .. } = &b.stmts[1].kind else {
+        let StmtKind::Let {
+            mutable: true,
+            name: item_name,
+            ..
+        } = &b.stmts[1].kind
+        else {
             panic!("expected item let, got {:?}", b.stmts[1].kind);
         };
-        assert!(item_name.name.starts_with("__i"), "item temp: {}", item_name.name);
+        assert!(
+            item_name.name.starts_with("__i"),
+            "item temp: {}",
+            item_name.name
+        );
         // __i.font = 2;
         let StmtKind::Expr(assign) = &b.stmts[2].kind else {
             panic!("expected assign stmt");
         };
-        let ExprKind::Assign { op: AssignOp::Assign, target, .. } = &assign.kind else {
+        let ExprKind::Assign {
+            op: AssignOp::Assign,
+            target,
+            ..
+        } = &assign.kind
+        else {
             panic!("expected plain assign, got {:?}", assign.kind);
         };
         let ExprKind::Field { name: fld, .. } = &target.kind else {
@@ -2287,25 +2411,41 @@ mod tests {
         let src = "fn main() -> i32 {\n    let v = @view {\n        row {\n            text(1)\n        }\n    };\n    return 0;\n}\n";
         let b = desugared_builder(src);
         // outer stmts[1] is the item-let; its init is the container's block.
-        let StmtKind::Let { init: Some(inner), .. } = &b.stmts[1].kind else {
+        let StmtKind::Let {
+            init: Some(inner), ..
+        } = &b.stmts[1].kind
+        else {
             panic!("expected container item let");
         };
         let ExprKind::Block(inner) = &inner.kind else {
             panic!("container must desugar to a Block, got {:?}", inner.kind);
         };
         // Inner accumulator: `let mut __b = Builder::new();`
-        let StmtKind::Let { init: Some(new_call), .. } = &inner.stmts[0].kind else {
+        let StmtKind::Let {
+            init: Some(new_call),
+            ..
+        } = &inner.stmts[0].kind
+        else {
             panic!("expected inner builder let");
         };
-        assert!(matches!(new_call.kind, ExprKind::Call { .. }), "Builder::new call");
+        assert!(
+            matches!(new_call.kind, ExprKind::Call { .. }),
+            "Builder::new call"
+        );
         // Inner finisher (tail) is the container constructor call `row(__b)`,
         // NOT `.finish()`.
         let tail = inner.tail.as_ref().expect("container finisher tail");
         let ExprKind::Call { callee, args, .. } = &tail.kind else {
-            panic!("container tail must be a constructor call, got {:?}", tail.kind);
+            panic!(
+                "container tail must be a constructor call, got {:?}",
+                tail.kind
+            );
         };
         let ExprKind::Path { segments } = &callee.kind else {
-            panic!("container constructor must be a path, got {:?}", callee.kind);
+            panic!(
+                "container constructor must be a path, got {:?}",
+                callee.kind
+            );
         };
         assert_eq!(segments.last().unwrap().name, "row");
         assert_eq!(args.len(), 1, "constructor takes the filled Builder");
@@ -2317,27 +2457,35 @@ mod tests {
         let src = "fn main() -> i32 {\n    let v = @view {\n        text(0)\n        if flag {\n            text(1)\n        }\n        for x in xs {\n            text(2)\n        }\n    };\n    return 0;\n}\n";
         let b = desugared_builder(src);
         // Locate the `if` statement and the `for` statement among the block.
-        let has_if = b.stmts.iter().any(|s| matches!(
-            &s.kind,
-            StmtKind::Expr(e) if matches!(e.kind, ExprKind::If { .. })
-        ));
+        let has_if = b.stmts.iter().any(|s| {
+            matches!(
+                &s.kind,
+                StmtKind::Expr(e) if matches!(e.kind, ExprKind::If { .. })
+            )
+        });
         let has_for = b.stmts.iter().any(|s| matches!(&s.kind, StmtKind::For(..)));
         assert!(has_if, "if entry lowers to an if statement");
         assert!(has_for, "for entry lowers to a for statement");
         // The if's then-block contains an `__b.add(...)` (adds into the
         // enclosing builder, not a fresh one).
-        let if_stmt = b.stmts.iter().find_map(|s| match &s.kind {
-            StmtKind::Expr(e) => match &e.kind {
-                ExprKind::If { then, .. } => Some(then),
+        let if_stmt = b
+            .stmts
+            .iter()
+            .find_map(|s| match &s.kind {
+                StmtKind::Expr(e) => match &e.kind {
+                    ExprKind::If { then, .. } => Some(then),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
-        }).expect("if statement");
-        let add_call = if_stmt.stmts.iter().any(|s| matches!(
-            &s.kind,
-            StmtKind::Expr(e) if matches!(&e.kind, ExprKind::Call { callee, .. }
-                if matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "add"))
-        ));
+            })
+            .expect("if statement");
+        let add_call = if_stmt.stmts.iter().any(|s| {
+            matches!(
+                &s.kind,
+                StmtKind::Expr(e) if matches!(&e.kind, ExprKind::Call { callee, .. }
+                    if matches!(&callee.kind, ExprKind::Field { name, .. } if name.name == "add"))
+            )
+        });
         assert!(add_call, "if-branch items add into the enclosing builder");
     }
 
@@ -2351,7 +2499,10 @@ mod tests {
         };
         let mut names = Vec::new();
         for s in &f.body.stmts {
-            if let StmtKind::Let { init: Some(init), .. } = &s.kind {
+            if let StmtKind::Let {
+                init: Some(init), ..
+            } = &s.kind
+            {
                 if let ExprKind::Block(b) = &init.kind {
                     if let StmtKind::Let { name, .. } = &b.stmts[0].kind {
                         names.push(name.name.clone());

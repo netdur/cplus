@@ -14,6 +14,8 @@ struct TextView {
 }
 
 impl TextView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -70,6 +72,8 @@ struct SecureTextField {
 }
 
 impl SecureTextField {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -105,6 +109,8 @@ struct SearchField {
 }
 
 impl SearchField {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -148,6 +154,8 @@ struct TokenField {
 }
 
 impl TokenField {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -179,6 +187,8 @@ struct ComboBox {
 }
 
 impl ComboBox {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -218,6 +228,8 @@ struct Form {
 }
 
 impl Form {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }

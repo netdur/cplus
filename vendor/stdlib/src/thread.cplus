@@ -56,7 +56,7 @@ struct JoinHandle[O] {
 // Future tightening rejects `Rc[T]`, `MutexGuard[T]`, and structs
 // with raw-pointer fields (unless explicitly opted-in).
 fn spawn[O: Send](f: fn() -> O) -> JoinHandle[O] {
-    return unsafe { #thread_spawn::[O](f) };
+    return { #thread_spawn::[O](f) };
 }
 
 // Spawn a fresh OS thread that will run `f(input)`. The `input` value
@@ -74,7 +74,7 @@ fn spawn[O: Send](f: fn() -> O) -> JoinHandle[O] {
 // becomes the owner), but spawn_with's output-side O retains the
 // scalar-only restriction from Slice 5B.
 fn spawn_with[I: Send, O: Send](take input: I, f: fn(take I) -> O) -> JoinHandle[O] {
-    return unsafe { #thread_spawn_with::[I, O](input, f) };
+    return { #thread_spawn_with::[I, O](input, f) };
 }
 
 impl JoinHandle[O] {
@@ -83,7 +83,7 @@ impl JoinHandle[O] {
     // enforced by the move-semantics receiver. The borrow checker
     // catches double-join at compile time.
     fn join(take this) -> O {
-        return unsafe { #thread_join::[O](this) };
+        return { #thread_join::[O](this) };
     }
 
     // Drop an un-joined handle: detach the worker from the OS (so its
@@ -99,13 +99,13 @@ impl JoinHandle[O] {
     // worker would race the worker's result-store. With the refcount
     // both sides safely cooperate on lifetime.
     fn drop(ref this) {
-        unsafe { pthread_detach(this.tid); }
-        let refct: *u64 = unsafe { this.ctx as *u64 };
-        let prev: u64 = unsafe {
+        { pthread_detach(this.tid); }
+        let refct: *u64 = { this.ctx as *u64 };
+        let prev: u64 = {
             atomic::atomic_fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            unsafe { free(this.ctx); }
+            { free(this.ctx); }
         }
         return;
     }

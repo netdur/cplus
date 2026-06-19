@@ -9,6 +9,8 @@ struct ViewController {
 }
 
 impl ViewController {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> ViewController {
         let cls: *u8 = rt::get_class(#str_ptr("UIViewController\0"));
         let vc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("new\0")));
@@ -21,7 +23,7 @@ impl ViewController {
 
     fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
-        this.obj = unsafe { 0 as *u8 };
+        this.obj = { 0 as *u8 };
         return p;
     }
 
@@ -31,7 +33,7 @@ impl ViewController {
 
     fn view(this) -> view::View {
         let v: *u8 = rt::msg_id(this.obj, rt::sel(#str_ptr("view\0")));
-        return view::View { obj: v };
+        return view::View::from_raw(v);
     }
 
     fn set_view(this, v: *u8) {
@@ -57,7 +59,7 @@ impl ViewController {
             rt::sel(#str_ptr("presentViewController:animated:completion:\0")),
             child,
             animated,
-            unsafe { 0 as *u8 },
+            { 0 as *u8 },
         );
     }
 
@@ -66,7 +68,7 @@ impl ViewController {
             this.obj,
             rt::sel(#str_ptr("dismissViewControllerAnimated:completion:\0")),
             animated,
-            unsafe { 0 as *u8 },
+            { 0 as *u8 },
         );
     }
 }
@@ -76,6 +78,8 @@ struct NavigationController {
 }
 
 impl NavigationController {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(root: *u8) -> NavigationController {
         let cls: *u8 = rt::get_class(#str_ptr("UINavigationController\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -105,6 +109,8 @@ struct TabBarController {
 }
 
 impl TabBarController {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> TabBarController {
         return TabBarController { obj: rt::new_object(#str_ptr("UITabBarController\0")) };
     }
@@ -127,6 +133,8 @@ struct SplitViewController {
 }
 
 impl SplitViewController {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> SplitViewController {
         return SplitViewController { obj: rt::new_object(#str_ptr("UISplitViewController\0")) };
     }
@@ -145,6 +153,8 @@ struct PageViewController {
 }
 
 impl PageViewController {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> PageViewController {
         return PageViewController { obj: rt::new_object(#str_ptr("UIPageViewController\0")) };
     }

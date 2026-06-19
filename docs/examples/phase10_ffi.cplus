@@ -1,7 +1,7 @@
 // Phase 10 exit demo — exercises every Phase-10 feature in one program:
 //   - `extern fn` declarations (10.FFI.1)
 //   - raw pointer type `*T` and pointer operations (10.FFI.2)
-//   - `unsafe { ... }` blocks gating dangerous operations (10.FFI.3)
+//   - `{ ... }` blocks gating dangerous operations (10.FFI.3)
 //   - varargs in extern fn with `...` (10.FFI.4)
 //   - `#[repr(C)]` for C-compatible struct layout (10.FFI.5)
 //
@@ -20,18 +20,18 @@ struct Measurement {
 }
 
 fn main() -> i32 {
-    let p: *u8 = unsafe { malloc(4 as usize) };
-    unsafe {
+    let p: *u8 = { malloc(4 as usize) };
+    {
         p[0] = 10 as u8;
         p[1] = 20 as u8;
         p[2] = 12 as u8;
         p[3] = 0 as u8;
     }
     let m: Measurement = Measurement {
-        sum: unsafe { (p[0] + p[1] + p[2]) as i32 },
+        sum: { (p[0] + p[1] + p[2]) as i32 },
         count: 3,
     };
-    unsafe { printf(#str_ptr("sum=%d count=%d\n"), m.sum, m.count); }
-    unsafe { free(p); }
+    { printf(#str_ptr("sum=%d count=%d\n"), m.sum, m.count); }
+    { free(p); }
     return m.sum;   // 42
 }

@@ -5,6 +5,8 @@ struct SplitView {
 }
 
 impl SplitView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -35,6 +37,8 @@ struct TabView {
 }
 
 impl TabView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -61,6 +65,8 @@ struct TabViewItem {
 }
 
 impl TabViewItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -92,6 +98,8 @@ struct VisualEffectView {
 }
 
 impl VisualEffectView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -118,6 +126,8 @@ struct GridView {
 }
 
 impl GridView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -144,6 +154,8 @@ struct Browser {
 }
 
 impl Browser {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -170,6 +182,8 @@ struct Matrix {
 }
 
 impl Matrix {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -192,6 +206,8 @@ struct ClipView {
 }
 
 impl ClipView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -210,6 +226,8 @@ struct RulerView {
 }
 
 impl RulerView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -228,6 +246,8 @@ struct Popover {
 }
 
 impl Popover {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }

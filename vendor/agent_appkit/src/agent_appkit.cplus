@@ -32,7 +32,7 @@ import "agent_core/surface" as surface;
 import "agent_core/events" as events;
 
 fn null() -> *u8 {
-    return unsafe { 0 as *u8 };
+    return { 0 as *u8 };
 }
 
 fn is_null(p: *u8) -> bool {
@@ -89,7 +89,7 @@ fn cplus_scroll_self_visible(view: *u8, _cmd: *u8, _sender: *u8) {
 }
 
 fn ensure_scroll_method() {
-    if unsafe { SCROLL_METHOD_REGISTERED } {
+    if { SCROLL_METHOD_REGISTERED } {
         return;
     }
     let cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
@@ -101,7 +101,7 @@ fn ensure_scroll_method() {
             #str_ptr("v@:@\0"),
         );
     }
-    unsafe { SCROLL_METHOD_REGISTERED = true; }
+    { SCROLL_METHOD_REGISTERED = true; }
     return;
 }
 
@@ -130,7 +130,7 @@ fn scroll_visible_on_main(view: *u8) {
 static AGENT_ID_KEY: u8 = 0;
 
 fn agent_id_key() -> *u8 {
-    return unsafe { #addr_of(AGENT_ID_KEY) };
+    return { #addr_of(AGENT_ID_KEY) };
 }
 
 // Pin a stable agent-id on a view (developer tagging). The walk uses a pinned id
@@ -259,7 +259,7 @@ fn class_name_text(view: *u8) -> text::Text {
     if is_null(c) {
         return "".to_text();
     }
-    let view_str: str = unsafe { #str_from_raw_parts(c, c_strlen(c)) };
+    let view_str: str = { #str_from_raw_parts(c, c_strlen(c)) };
     return view_str.to_text();
 }
 
@@ -267,7 +267,7 @@ fn class_name_text(view: *u8) -> text::Text {
 fn c_strlen(p: *u8) -> usize {
     var n: usize = 0 as usize;
     loop {
-        let b: u8 = unsafe { *(p + n) };
+        let b: u8 = { *(p + n) };
         if b == (0 as u8) {
             break;
         }
@@ -375,7 +375,7 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
     let pinned: option::Option[text::Text] = get_agent_id(view);
     let reg_node: usize = match pinned {
         option::Option[text::Text]::Some(t) => {
-            reg.add_child(parent_reg, option::Option[str]::Some(unsafe { t.as_str() }), role)
+            reg.add_child(parent_reg, option::Option[str]::Some({ t.as_str() }), role)
         }
         option::Option[text::Text]::None => {
             reg.add_child(parent_reg, option::Option[str]::None, role)
@@ -408,7 +408,7 @@ fn open(window: *u8) -> Surface {
     let win_pinned: option::Option[text::Text] = get_agent_id(window);
     let win_reg: usize = match win_pinned {
         option::Option[text::Text]::Some(t) => {
-            reg.add_child(reg.root(), option::Option[str]::Some(unsafe { t.as_str() }), identity::Role::Window)
+            reg.add_child(reg.root(), option::Option[str]::Some({ t.as_str() }), identity::Role::Window)
         }
         option::Option[text::Text]::None => {
             reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window)
@@ -433,7 +433,7 @@ fn describe(window: *u8) -> vec::Vec[UiNode] {
 impl Surface {
     fn view_of(this, node: usize) -> *u8 {
         return match this.views.at(node) {
-            option::Option[*ViewRef]::Some(r) => unsafe { (*r).p },
+            option::Option[*ViewRef]::Some(r) => { (*r).p },
             option::Option[*ViewRef]::None => null(),
         };
     }

@@ -5,6 +5,8 @@ struct Toolbar {
 }
 
 impl Toolbar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -44,7 +46,7 @@ fn create_toolbar_delegate(
 ) -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CToolbarDelegate\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let nsobject: *u8 = rt::get_class(#str_ptr("NSObject\0"));
         cls = rt::allocate_class_pair(nsobject, #str_ptr("CToolbarDelegate\0"), 0 as usize);
 
@@ -76,6 +78,8 @@ struct ToolbarItem {
 }
 
 impl ToolbarItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -133,6 +137,8 @@ struct ToolbarItemGroup {
 }
 
 impl ToolbarItemGroup {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -154,6 +160,8 @@ struct StatusBar {
 }
 
 impl StatusBar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn system() -> StatusBar {
         return StatusBar { obj: rt::msg_id(rt::get_class(#str_ptr("NSStatusBar\0")), rt::sel(#str_ptr("systemStatusBar\0"))) };
     }
@@ -168,6 +176,8 @@ struct StatusItem {
 }
 
 impl StatusItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn from_obj(obj: *u8) -> StatusItem {
         return StatusItem { obj: obj };
     }
@@ -190,6 +200,8 @@ struct StatusBarButton {
 }
 
 impl StatusBarButton {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn from_obj(obj: *u8) -> StatusBarButton {
         return StatusBarButton { obj: obj };
     }
@@ -212,6 +224,8 @@ struct TouchBar {
 }
 
 impl TouchBar {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -230,6 +244,8 @@ struct TouchBarItem {
 }
 
 impl TouchBarItem {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }

@@ -5,6 +5,8 @@ struct ImageView {
 }
 
 impl ImageView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn drop(ref this) {
         rt::release(this.obj);
     }
@@ -25,7 +27,7 @@ impl ImageView {
     // trap it prevents.
     fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
-        this.obj = unsafe { 0 as *u8 };
+        this.obj = { 0 as *u8 };
         return p;
     }
 
@@ -56,6 +58,8 @@ struct Image {
 }
 
 impl Image {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn by_name(name: *u8) -> *u8 {
         let ns_name = rt::ns_string(name);
         let cls = rt::get_class(#str_ptr("NSImage\0"));
@@ -141,6 +145,8 @@ struct RoundedView {
 }
 
 impl RoundedView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> RoundedView {
         let cls: *u8 = rt::get_class(#str_ptr("NSView\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -186,7 +192,7 @@ impl RoundedView {
     // rationale + the use-after-free trap these prevent.
     fn into_raw(ref this) -> *u8 {
         let p: *u8 = this.obj;
-        this.obj = unsafe { 0 as *u8 };
+        this.obj = { 0 as *u8 };
         return p;
     }
 
@@ -204,6 +210,8 @@ struct BezierPath {
 }
 
 impl BezierPath {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> BezierPath {
         return BezierPath { obj: rt::alloc_init(#str_ptr("NSBezierPath\0")) };
     }
@@ -260,6 +268,8 @@ struct Font {
 }
 
 impl Font {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn system_font_of_size(size: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSFont\0"));
         return rt::msg_id_f64(cls, rt::sel(#str_ptr("systemFontOfSize:\0")), size);
@@ -281,6 +291,8 @@ struct Color {
 }
 
 impl Color {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn rgba(r: f64, g: f64, b: f64, a: f64) -> *u8 {
         let cls: *u8 = rt::get_class(#str_ptr("NSColor\0"));
         return rt::msg_id_rgba(cls, rt::sel(#str_ptr("colorWithCalibratedRed:green:blue:alpha:\0")), r, g, b, a);

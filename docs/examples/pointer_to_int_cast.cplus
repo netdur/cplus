@@ -11,10 +11,10 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
 fn main() -> i32 {
-    let p: *u8 = unsafe { malloc(64 as usize) };
-    let addr: usize = unsafe { p as usize };
+    let p: *u8 = { malloc(64 as usize) };
+    let addr: usize = { #addr(p) };
     let misalignment: usize = addr % (16 as usize);
-    unsafe { free(p); }
+    { free(p); }
     #println(misalignment as i32);
     return 0;
 }

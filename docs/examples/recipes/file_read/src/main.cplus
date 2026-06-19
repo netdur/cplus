@@ -20,8 +20,8 @@ fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
         let remaining: usize = n -% written;
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, remaining) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, remaining) };
         if w <= (0 as isize) { break; }
         written = written +% (w as usize);
     }
@@ -29,17 +29,17 @@ fn write_all(fd: i32, p: *u8, n: usize) {
 }
 
 fn main() -> i32 {
-    let argc: i32 = unsafe { *_NSGetArgc() };
+    let argc: i32 = { *_NSGetArgc() };
     if argc < (2 as i32) {
         write_all(2 as i32, #str_ptr("usage: file_read <path>\n"), #str_len("usage: file_read <path>\n"));
         return 1;
     }
-    let argv: **u8 = unsafe { *_NSGetArgv() };
-    let path_pp: **u8 = unsafe { argv + (1 as usize) };
-    let path: *u8 = unsafe { *path_pp };
+    let argv: **u8 = { *_NSGetArgv() };
+    let path_pp: **u8 = { argv + (1 as usize) };
+    let path: *u8 = { *path_pp };
 
     // O_RDONLY = 0. `open` is variadic; for read-only no mode is needed.
-    let fd: i32 = unsafe { open(path, 0 as i32) };
+    let fd: i32 = { open(path, 0 as i32) };
     if fd < (0 as i32) {
         write_all(2 as i32, #str_ptr("open failed\n"), #str_len("open failed\n"));
         return 2;
@@ -47,21 +47,21 @@ fn main() -> i32 {
 
     var cap: usize = 4096 as usize;
     var len: usize = 0 as usize;
-    var buf: *u8 = unsafe { malloc(cap) };
+    var buf: *u8 = { malloc(cap) };
     loop {
         if len == cap {
             cap = cap *% (2 as usize);
-            buf = unsafe { realloc(buf, cap) };
+            buf = { realloc(buf, cap) };
         }
-        let p: *u8 = unsafe { buf + len };
+        let p: *u8 = { buf + len };
         let want: usize = cap -% len;
-        let n: isize = unsafe { read(fd, p, want) };
+        let n: isize = { read(fd, p, want) };
         if n <= (0 as isize) { break; }
         len = len +% (n as usize);
     }
-    unsafe { close(fd); }
+    { close(fd); }
 
     write_all(1 as i32, buf, len);
-    unsafe { free(buf); }
+    { free(buf); }
     return 0;
 }

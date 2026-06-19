@@ -28,7 +28,7 @@ export extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
     status.set_text(#str_ptr("clicks: 0\0"));
     // A second global ref, owned by the click handler's static state —
     // the wrapper's own ref dies with the wrapper at end of scope.
-    unsafe { STATUS_REF = env.new_global_ref(status.as_view_obj()) as usize; }
+    { STATUS_REF = #addr(env.new_global_ref(status.as_view_obj())); }
     root.add_view(status.as_view_obj());
 
     let button: av::Button = av::Button::new(env, act.as_context());
@@ -48,7 +48,7 @@ export extern fn cplus_on_click(
 ) {
     let env: av::Env = av::from_native(envp);
     var n: i32 = 0;
-    unsafe {
+    {
         CLICKS = CLICKS + 1;
         n = CLICKS;
     }
@@ -68,8 +68,8 @@ export extern fn cplus_on_click(
     buf[i as usize] = (48 + n % 10) as u8;
     buf[(i + 1) as usize] = 0 as u8;
 
-    let status: jni::jobject = unsafe { STATUS_REF as *u8 };
-    let s: jni::jstring = env.new_string_utf(unsafe { #addr_of(buf[0]) });
+    let status: jni::jobject = { STATUS_REF as *u8 };
+    let s: jni::jstring = env.new_string_utf({ #addr_of(buf[0]) });
     env.call_void_1(
         status,
         #str_ptr("android/widget/TextView\0"),

@@ -65,7 +65,7 @@ fn main() -> i32 {
     let greeting: text::Text = "Hello from C+".to_text();
     let ns_greeting: *u8 = bridge::cplus_string_to_nsstring(greeting);
     rt::msg_void_id(
-        label.obj,
+        label.raw(),
         rt::sel(#str_ptr("setStringValue:\0")),
         ns_greeting,
     );
@@ -73,7 +73,7 @@ fn main() -> i32 {
     // Sanity round-trip: read it back, prove the bridge preserves it.
     let current_ns: *u8 = label.string_value();
     let back: text::Text = bridge::nsstring_to_cplus_string(current_ns);
-    if unsafe { back.as_str() } != "Hello from C+" {
+    if { back.as_str() } != "Hello from C+" {
         return 1;
     }
 
@@ -88,17 +88,17 @@ fn main() -> i32 {
 
     // ---- Wire subviews ----
     let content: *u8 = win.content_view();
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), label.obj);
-    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit_btn.obj);
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), label.raw());
+    rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), quit_btn.raw());
 
     // ---- Show + activate ----
-    let null_sender: *u8 = unsafe { 0 as *u8 };
+    let null_sender: *u8 = { 0 as *u8 };
     win.make_key_and_order_front(null_sender);
     app.activate(1 as i8);
 
     // READY marker — spec convention for headless test harnesses.
-    unsafe { puts(#str_ptr("READY\0")); }
-    unsafe { fflush(0 as *u8); }
+    { puts(#str_ptr("READY\0")); }
+    { fflush(0 as *u8); }
 
     // ---- Event loop ----
     app.run();

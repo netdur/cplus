@@ -18,8 +18,8 @@ struct ComputeCommandEncoder {
 
 impl CommandQueue {
     fn new_command_buffer(this) -> CommandBuffer {
-        if this.raw == unsafe { 0 as *u8 } {
-            return CommandBuffer { raw: unsafe { 0 as *u8 } };
+        if this.raw == { 0 as *u8 } {
+            return CommandBuffer { raw: { 0 as *u8 } };
         }
         let selector: *u8 = runtime::sel(#str_ptr("commandBuffer\0"));
         let buf_raw: *u8 = runtime::msg_id(this.raw, selector);
@@ -28,15 +28,15 @@ impl CommandQueue {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
 
 impl CommandBuffer {
     fn new_compute_encoder(this) -> ComputeCommandEncoder {
-        if this.raw == unsafe { 0 as *u8 } {
-            return ComputeCommandEncoder { raw: unsafe { 0 as *u8 } };
+        if this.raw == { 0 as *u8 } {
+            return ComputeCommandEncoder { raw: { 0 as *u8 } };
         }
         let selector: *u8 = runtime::sel(#str_ptr("computeCommandEncoder\0"));
         let enc_raw: *u8 = runtime::msg_id(this.raw, selector);
@@ -44,7 +44,7 @@ impl CommandBuffer {
     }
 
     fn commit(this) {
-        if this.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } {
             return;
         }
         let selector: *u8 = runtime::sel(#str_ptr("commit\0"));
@@ -53,7 +53,7 @@ impl CommandBuffer {
     }
 
     fn wait_until_completed(this) {
-        if this.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } {
             return;
         }
         let selector: *u8 = runtime::sel(#str_ptr("waitUntilCompleted\0"));
@@ -63,7 +63,7 @@ impl CommandBuffer {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -75,7 +75,7 @@ impl ComputeCommandEncoder {
         // Pre-fix the param was consumed (default-move post-v0.0.10) which
         // dropped the cpc wrapper at fn exit → `objc_release` on the still-
         // referenced pipeline → eventual use-after-free.
-        if this.raw == unsafe { 0 as *u8 } || state.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } || state.raw == { 0 as *u8 } {
             return;
         }
         let selector: *u8 = runtime::sel(#str_ptr("setComputePipelineState:\0"));
@@ -88,7 +88,7 @@ impl ComputeCommandEncoder {
         // retain the buffer. Same default-move trap as set_pipeline above;
         // also blocked calling `encoder.set_buffer(0, b)` followed by any
         // other use of `b` (the very common multi-buffer dispatch pattern).
-        if this.raw == unsafe { 0 as *u8 } || buf.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } || buf.raw == { 0 as *u8 } {
             return;
         }
         let selector: *u8 = runtime::sel(#str_ptr("setBuffer:offset:atIndex:\0"));
@@ -97,7 +97,7 @@ impl ComputeCommandEncoder {
     }
 
     fn dispatch(this, groups: runtime::MTLSize, per_group: runtime::MTLSize) {
-        if this.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } {
             return;
         }
         let selector: *u8 = runtime::sel(#str_ptr("dispatchThreadgroups:threadsPerThreadgroup:\0"));
@@ -106,7 +106,7 @@ impl ComputeCommandEncoder {
     }
 
     fn end_encoding(this) {
-        if this.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } {
             return;
         }
         let selector: *u8 = runtime::sel(#str_ptr("endEncoding\0"));
@@ -116,7 +116,7 @@ impl ComputeCommandEncoder {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }

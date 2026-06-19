@@ -9,6 +9,8 @@ struct Alert {
 }
 
 impl Alert {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new() -> Alert {
         let cls = rt::get_class(#str_ptr("NSAlert\0"));
         let alert = rt::msg_id(cls, rt::sel(#str_ptr("new\0")));

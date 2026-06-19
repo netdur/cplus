@@ -12,7 +12,7 @@ struct Device {
 
 fn default() -> result::Result[Device, runtime::MetalError] {
     let dev_raw: *u8 = runtime::mtl_create_system_default_device();
-    if dev_raw == unsafe { 0 as *u8 } {
+    if dev_raw == { 0 as *u8 } {
         return result::Result[Device, runtime::MetalError]::Err(runtime::MetalError::NoDefaultDevice);
     }
     return result::Result[Device, runtime::MetalError]::Ok(Device { raw: dev_raw });
@@ -20,8 +20,8 @@ fn default() -> result::Result[Device, runtime::MetalError] {
 
 impl Device {
     fn new_command_queue(this) -> queue::CommandQueue {
-        if this.raw == unsafe { 0 as *u8 } {
-            return queue::CommandQueue { raw: unsafe { 0 as *u8 } };
+        if this.raw == { 0 as *u8 } {
+            return queue::CommandQueue { raw: { 0 as *u8 } };
         }
         let selector: *u8 = runtime::sel(#str_ptr("newCommandQueue\0"));
         let queue_raw: *u8 = runtime::msg_id(this.raw, selector);
@@ -29,10 +29,10 @@ impl Device {
     }
 
     fn new_library_with_data(this, data: u8[]) -> result::Result[pipeline::Library, runtime::MetalError] {
-        if this.raw == unsafe { 0 as *u8 } {
+        if this.raw == { 0 as *u8 } {
             return result::Result[pipeline::Library, runtime::MetalError]::Err(runtime::MetalError::LibraryLoadFailed);
         }
-        let data_ptr: *u8 = unsafe { #slice_ptr(data) };
+        let data_ptr: *u8 = { #slice_ptr(data) };
         let data_len: usize = #slice_len(data);
         // Per Apple docs: `dispatch_data_create(buf, len, NULL queue,
         // NULL destructor)` defaults to DISPATCH_DATA_DESTRUCTOR_DEFAULT,
@@ -43,19 +43,19 @@ impl Device {
         let dispatch_data: *u8 = runtime::ns_dispatch_data(data_ptr, data_len);
 
         let selector: *u8 = runtime::sel(#str_ptr("newLibraryWithData:error:\0"));
-        let null_err: *u8 = unsafe { 0 as *u8 };
+        let null_err: *u8 = { 0 as *u8 };
         let lib_raw: *u8 = runtime::msg_id_id_ptr(this.raw, selector, dispatch_data, null_err);
         runtime::release(dispatch_data);
 
-        if lib_raw == unsafe { 0 as *u8 } {
+        if lib_raw == { 0 as *u8 } {
             return result::Result[pipeline::Library, runtime::MetalError]::Err(runtime::MetalError::LibraryLoadFailed);
         }
         return result::Result[pipeline::Library, runtime::MetalError]::Ok(pipeline::Library { raw: lib_raw });
     }
 
     fn new_buffer(this, len: usize) -> buffer::Buffer {
-        if this.raw == unsafe { 0 as *u8 } {
-            return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
+        if this.raw == { 0 as *u8 } {
+            return buffer::Buffer { raw: { 0 as *u8 }, size: 0 as usize };
         }
         let selector: *u8 = runtime::sel(#str_ptr("newBufferWithLength:options:\0"));
         let buf_raw: *u8 = runtime::msg_id_usize_u64(this.raw, selector, len, 0 as u64);
@@ -63,10 +63,10 @@ impl Device {
     }
 
     fn new_buffer_from_slice(this, slice: u8[]) -> buffer::Buffer {
-        if this.raw == unsafe { 0 as *u8 } {
-            return buffer::Buffer { raw: unsafe { 0 as *u8 }, size: 0 as usize };
+        if this.raw == { 0 as *u8 } {
+            return buffer::Buffer { raw: { 0 as *u8 }, size: 0 as usize };
         }
-        let ptr: *u8 = unsafe { #slice_ptr(slice) };
+        let ptr: *u8 = { #slice_ptr(slice) };
         let len: usize = #slice_len(slice);
         let selector: *u8 = runtime::sel(#str_ptr("newBufferWithBytes:length:options:\0"));
         let buf_raw: *u8 = runtime::msg_id_ptr_len_opt(this.raw, selector, ptr, len, 0 as u64);
@@ -82,7 +82,7 @@ impl Device {
 
     fn drop(ref this) {
         runtime::release(this.raw);
-        this.raw = unsafe { 0 as *u8 };
+        this.raw = { 0 as *u8 };
         return;
     }
 }
@@ -101,7 +101,7 @@ fn test_default_returns_ok_on_macos() {
         assert false;
         return;
     };
-    assert unsafe { d.raw as usize } != (0 as usize);
+    assert { #addr(d.raw) } != (0 as usize);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn test_default_device_can_make_command_queue() {
         return;
     };
     let q: queue::CommandQueue = dev.new_command_queue();
-    assert unsafe { q.raw as usize } != (0 as usize);
+    assert { #addr(q.raw) } != (0 as usize);
 }
 
 #[test]
@@ -121,6 +121,6 @@ fn test_default_device_can_make_buffer() {
         return;
     };
     let buf: buffer::Buffer = dev.new_buffer(64 as usize);
-    assert unsafe { buf.raw as usize } != (0 as usize);
+    assert { #addr(buf.raw) } != (0 as usize);
     assert buf.size == (64 as usize);
 }

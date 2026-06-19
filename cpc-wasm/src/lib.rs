@@ -89,7 +89,8 @@ fn run(source: &str) -> serde_json::Value {
         return finish(&diags, None);
     }
 
-    let (sema_diags, mono) = sema::check_multi_with_mono(&prog, path.clone(), source, BTreeMap::new());
+    let (sema_diags, mono) =
+        sema::check_multi_with_mono(&prog, path.clone(), source, BTreeMap::new());
     diags.extend(sema_diags);
     if has_error(&diags) {
         return finish(&diags, None);

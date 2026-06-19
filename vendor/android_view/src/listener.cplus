@@ -30,7 +30,7 @@ export extern fn cplus_av_native_on_click(
     token: i64,
     view: jni::jobject,
 ) {
-    unsafe { cplus_on_click(envp, token, view); }
+    { cplus_on_click(envp, token, view); }
     return;
 }
 
@@ -52,14 +52,14 @@ static LISTENER_CLASS: usize = 0;
 // `set_on_click`. The dex bytes live in the binary (static lifetime), so
 // the direct ByteBuffer wrapping them stays valid for the loader's reads.
 fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
-    let cached: usize = unsafe { LISTENER_CLASS };
+    let cached: usize = { LISTENER_CLASS };
     if cached != 0 {
-        return unsafe { cached as *u8 };
+        return { cached as *u8 };
     }
     let dex: *[u8; 976] = #include_bytes("../adapter/adapter.dex");
-    let dex_ptr: *u8 = unsafe { dex as *u8 };
-    let buffer: jni::jobject = unsafe {
-        (*(*env.env)).NewDirectByteBuffer(env.env, dex_ptr, 976 as i64)
+    let dex_ptr: *u8 = { dex as *u8 };
+    let buffer: jni::jobject = {
+        (*(*env.raw())).NewDirectByteBuffer(env.raw(), dex_ptr, 976 as i64)
     };
 
     // The app's classloader, reached through any view's Context.
@@ -84,8 +84,8 @@ fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
         #str_ptr("(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V\0"),
     );
     var ctor_args: [jni::JValue; 2] = [jni::arg_object(buffer), jni::arg_object(app_loader)];
-    let loader: jni::jobject = unsafe {
-        (*(*env.env)).NewObjectA(env.env, imdcl, ctor, #addr_of(ctor_args[0]))
+    let loader: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), imdcl, ctor, #addr_of(ctor_args[0]))
     };
 
     // loadClass uses the binary (dotted) name.
@@ -104,13 +104,13 @@ fn ensure_listener_class(env: rt::Env, any_view: jni::jobject) -> jni::jobject {
         signature: #str_ptr("(JLandroid/view/View;)V\0"),
         fn_ptr: cplus_av_native_on_click,
     };
-    let _rc: i32 = unsafe {
-        (*(*env.env)).RegisterNatives(env.env, cls_local, #addr_of(record) as *u8, 1)
+    let _rc: i32 = {
+        (*(*env.raw())).RegisterNatives(env.raw(), cls_local, #addr_of(record) as *u8, 1)
     };
 
     // The class global ref also keeps its loader (and the dex) reachable.
     let cls_global: jni::jobject = env.new_global_ref(cls_local);
-    unsafe { LISTENER_CLASS = cls_global as usize; }
+    { LISTENER_CLASS = #addr(cls_global); }
     env.delete_local_ref(cls_local);
     env.delete_local_ref(class_name);
     env.delete_local_ref(loader);
@@ -127,8 +127,8 @@ fn set_on_click(env: rt::Env, view: jni::jobject, token: i64) {
     let cls: jni::jobject = ensure_listener_class(env, view);
     let ctor: jni::jmethodID = env.get_method_id(cls, #str_ptr("<init>\0"), #str_ptr("(J)V\0"));
     var args: [jni::JValue; 1] = [jni::arg_long(token as i64)];
-    let listener: jni::jobject = unsafe {
-        (*(*env.env)).NewObjectA(env.env, cls, ctor, #addr_of(args[0]))
+    let listener: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0]))
     };
     env.call_void_1(
         view,

@@ -58,7 +58,7 @@ struct NDArray {
 }
 
 fn null() -> *u8 {
-    return unsafe { 0 as *u8 };
+    return { 0 as *u8 };
 }
 
 fn is_null(p: *u8) -> bool {
@@ -68,7 +68,7 @@ fn is_null(p: *u8) -> bool {
 impl Model {
     fn drop(ref this) {
         if !is_null(this.raw) {
-            unsafe { cplus_coreai_release(this.raw); }
+            { cplus_coreai_release(this.raw); }
             this.raw = null();
         }
         return;
@@ -78,7 +78,7 @@ impl Model {
 impl Function {
     fn drop(ref this) {
         if !is_null(this.raw) {
-            unsafe { cplus_coreai_release(this.raw); }
+            { cplus_coreai_release(this.raw); }
             this.raw = null();
         }
         return;
@@ -88,7 +88,7 @@ impl Function {
 impl NDArray {
     fn drop(ref this) {
         if !is_null(this.raw) {
-            unsafe { cplus_coreai_release(this.raw); }
+            { cplus_coreai_release(this.raw); }
             this.raw = null();
         }
         return;
@@ -96,7 +96,7 @@ impl NDArray {
 }
 
 fn runtime_available() -> bool {
-    let ok: i32 = unsafe { cplus_coreai_runtime_available() };
+    let ok: i32 = { cplus_coreai_runtime_available() };
     return ok != 0;
 }
 
@@ -105,7 +105,7 @@ fn last_error_into(buf: u8[]) -> usize {
     if n == (0 as usize) {
         return 0 as usize;
     }
-    let wrote: i32 = unsafe { cplus_coreai_last_error(unsafe { #slice_ptr(buf) }, n) };
+    let wrote: i32 = { cplus_coreai_last_error({ #slice_ptr(buf) }, n) };
     if wrote < 0 {
         return 0 as usize;
     }
@@ -116,7 +116,7 @@ fn load_model(path: str) -> result::Result[Model, CoreAIError] {
     if !runtime_available() {
         return result::Result[Model, CoreAIError]::Err(CoreAIError::RuntimeUnavailable);
     }
-    let raw: *u8 = unsafe {
+    let raw: *u8 = {
         cplus_coreai_model_load(#str_ptr(path), #str_len(path))
     };
     if is_null(raw) {
@@ -129,7 +129,7 @@ fn load_function(model: Model, name: str) -> result::Result[Function, CoreAIErro
     if is_null(model.raw) {
         return result::Result[Function, CoreAIError]::Err(CoreAIError::NullHandle);
     }
-    let raw: *u8 = unsafe {
+    let raw: *u8 = {
         cplus_coreai_model_load_function(model.raw, #str_ptr(name), #str_len(name))
     };
     if is_null(raw) {
@@ -144,7 +144,7 @@ fn ndarray_f32(shape: usize[], values: f32[]) -> result::Result[NDArray, CoreAIE
     if rank == (0 as usize) {
         return result::Result[NDArray, CoreAIError]::Err(CoreAIError::InvalidArgument);
     }
-    let raw: *u8 = unsafe {
+    let raw: *u8 = {
         cplus_coreai_ndarray_create_f32(
             #slice_ptr(shape) as *u64,
             rank as u64,
@@ -167,7 +167,7 @@ fn run1_f32(
     if is_null(function.raw) || is_null(input.raw) {
         return result::Result[NDArray, CoreAIError]::Err(CoreAIError::NullHandle);
     }
-    let raw: *u8 = unsafe {
+    let raw: *u8 = {
         cplus_coreai_function_run1_f32(
             function.raw,
             #str_ptr(input_name),
@@ -188,7 +188,7 @@ fn copy_f32(array: NDArray, dest: f32[]) -> result::Result[usize, CoreAIError] {
         return result::Result[usize, CoreAIError]::Err(CoreAIError::NullHandle);
     }
     let n: usize = #slice_len(dest);
-    let wrote: i64 = unsafe {
+    let wrote: i64 = {
         cplus_coreai_ndarray_copy_f32(array.raw, #slice_ptr(dest), n as u64)
     };
     if wrote < (0 as i64) {

@@ -34,7 +34,10 @@ fn main() {
     let mut seen_dashdash = false;
     for a in args {
         if !seen_dashdash {
-            if a == "--" { seen_dashdash = true; continue; }
+            if a == "--" {
+                seen_dashdash = true;
+                continue;
+            }
         }
         clang_args.push(a);
     }
@@ -44,10 +47,13 @@ fn main() {
     // the TU; we filter to top-level decls actually in `header`.
     let mut cmd = Command::new("clang");
     cmd.arg("-Xclang")
-       .arg("-ast-dump=json")
-       .arg("-fsyntax-only")
-       .arg("-x").arg("c");
-    for a in &clang_args { cmd.arg(a); }
+        .arg("-ast-dump=json")
+        .arg("-fsyntax-only")
+        .arg("-x")
+        .arg("c");
+    for a in &clang_args {
+        cmd.arg(a);
+    }
     cmd.arg(&header);
     let out = match cmd.output() {
         Ok(o) => o,
@@ -93,7 +99,7 @@ impl Emitter {
         out.push_str(&format!("// Source header: {header_path}\n"));
         out.push_str("//\n");
         out.push_str("// Every declaration below targets the C ABI. Calls into these from\n");
-        out.push_str("// C+ require `unsafe { ... }` blocks.\n\n");
+        out.push_str("// C+ require `{ ... }` blocks.\n\n");
         Emitter {
             header_path: header_path.to_string(),
             out,
@@ -111,7 +117,9 @@ impl Emitter {
         self.last_tu_inner = Some(inner.clone());
         // Two-pass: structs/typedefs first so functions reference defined types.
         for decl in inner {
-            if !self.decl_in_header(decl) { continue; }
+            if !self.decl_in_header(decl) {
+                continue;
+            }
             match decl.get("kind").and_then(|v| v.as_str()) {
                 Some("RecordDecl") => self.emit_record(decl),
                 Some("TypedefDecl") => self.emit_typedef(decl),
@@ -120,7 +128,9 @@ impl Emitter {
             }
         }
         for decl in inner {
-            if !self.decl_in_header(decl) { continue; }
+            if !self.decl_in_header(decl) {
+                continue;
+            }
             if decl.get("kind").and_then(|v| v.as_str()) == Some("FunctionDecl") {
                 self.emit_function(decl);
             }
@@ -149,7 +159,8 @@ impl Emitter {
         match file {
             Some(f) => {
                 let basename = |p: &str| -> String {
-                    std::path::Path::new(p).file_name()
+                    std::path::Path::new(p)
+                        .file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_default()
                 };
@@ -159,7 +170,9 @@ impl Emitter {
         }
     }
 
-    fn finish(self) -> String { self.out }
+    fn finish(self) -> String {
+        self.out
+    }
 
     fn emit_function(&mut self, decl: &serde_json::Value) {
         let name = match decl.get("name").and_then(|v| v.as_str()) {
@@ -171,7 +184,8 @@ impl Emitter {
         if decl.get("isImplicit").and_then(|v| v.as_bool()) == Some(true) {
             return;
         }
-        let qual_type = decl.get("type")
+        let qual_type = decl
+            .get("type")
             .and_then(|t| t.get("qualType"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -187,18 +201,27 @@ impl Emitter {
         let ret_cplus = match map_c_type_to_cplus(&ret_c) {
             Ok(t) => t,
             Err(why) => {
-                self.out.push_str(&format!("// SKIPPED `{name}`: return type — {why}\n"));
+                self.out
+                    .push_str(&format!("// SKIPPED `{name}`: return type — {why}\n"));
                 return;
             }
         };
         // Pull parameter names from the AST if present (better-than-anon).
-        let param_names: Vec<String> = decl.get("inner").and_then(|v| v.as_array())
+        let param_names: Vec<String> = decl
+            .get("inner")
+            .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter(|d| d.get("kind").and_then(|k| k.as_str()) == Some("ParmVarDecl"))
-                    .map(|d| d.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string())
+                    .map(|d| {
+                        d.get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    })
                     .collect()
-            }).unwrap_or_default();
+            })
+            .unwrap_or_default();
         let mut params_out: Vec<String> = Vec::with_capacity(params_c.len());
         let mut arg_names: Vec<String> = Vec::with_capacity(params_c.len());
         for (i, p_c) in params_c.iter().enumerate() {
@@ -211,7 +234,8 @@ impl Emitter {
                     return;
                 }
             };
-            let pname = param_names.get(i)
+            let pname = param_names
+                .get(i)
                 .cloned()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("arg{i}"));
@@ -222,7 +246,9 @@ impl Emitter {
         if variadic {
             let mut line = format!("extern fn {name}(");
             line.push_str(&params_out.join(", "));
-            if !params_out.is_empty() { line.push_str(", "); }
+            if !params_out.is_empty() {
+                line.push_str(", ");
+            }
             line.push_str("...");
             line.push(')');
             if ret_cplus != "()" {
@@ -250,9 +276,9 @@ impl Emitter {
         line.push_str(" {\n");
         let call = format!("{}({})", c_name, arg_names.join(", "));
         if ret_cplus == "()" {
-            line.push_str(&format!("    unsafe {{ {call}; }}\n    return;\n"));
+            line.push_str(&format!("    {{ {call}; }}\n    return;\n"));
         } else {
-            line.push_str(&format!("    return unsafe {{ {call} }};\n"));
+            line.push_str(&format!("    return {{ {call} }};\n"));
         }
         line.push_str("}\n");
         self.out.push_str(&line);
@@ -263,9 +289,18 @@ impl Emitter {
         // structs only; anonymous records get materialized inline when a
         // typedef wraps them.
         let name = decl.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if name.is_empty() { return; }
-        let kind = decl.get("tagUsed").and_then(|v| v.as_str()).unwrap_or("struct");
-        if !decl.get("completeDefinition").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if name.is_empty() {
+            return;
+        }
+        let kind = decl
+            .get("tagUsed")
+            .and_then(|v| v.as_str())
+            .unwrap_or("struct");
+        if !decl
+            .get("completeDefinition")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             // Forward declaration only. Skip — typedefs may reference it
             // and we map them as opaque pointers.
             return;
@@ -292,15 +327,28 @@ impl Emitter {
         }
         // struct: walk fields, emit a #[repr(C)] struct.
         self.out.push_str(&format!("#[repr(C)] struct {name} {{\n"));
-        let inner = decl.get("inner").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let inner = decl
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
         let mut bitfields: Vec<(String, String, u32, u32)> = Vec::new(); // (parent, name, bit_offset, width)
         let mut bit_cursor: u32 = 0;
         let mut storage_field_idx = 0u32;
         for field in &inner {
-            if field.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") { continue; }
-            let fname = field.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-            let qt = field.get("type").and_then(|t| t.get("qualType"))
-                .and_then(|v| v.as_str()).unwrap_or("");
+            if field.get("kind").and_then(|k| k.as_str()) != Some("FieldDecl") {
+                continue;
+            }
+            let fname = field
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+            let qt = field
+                .get("type")
+                .and_then(|t| t.get("qualType"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             // Bitfield: `isBitfield=true` with a width sub-expression.
             if field.get("isBitfield").and_then(|v| v.as_bool()) == Some(true) {
                 let width = bitfield_width(field).unwrap_or(0);
@@ -313,20 +361,24 @@ impl Emitter {
                 // Flush the accumulated bitfield run into a storage field.
                 let bytes = ((bit_cursor + 7) / 8).max(1);
                 let _ = bytes;
-                self.out.push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
+                self.out
+                    .push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
                 storage_field_idx += 1;
                 bit_cursor = 0;
             }
             let cplus_ty = match map_c_type_to_cplus(qt) {
                 Ok(t) => t,
                 Err(why) => {
-                    self.out.push_str(&format!(
-                        "    // SKIPPED field `{fname}: {qt}` — {why}\n"
-                    ));
+                    self.out
+                        .push_str(&format!("    // SKIPPED field `{fname}: {qt}` — {why}\n"));
                     continue;
                 }
             };
-            let field_prefix = if cplus_ty.starts_with('*') { "opaque " } else { "" };
+            let field_prefix = if cplus_ty.starts_with('*') {
+                "opaque "
+            } else {
+                ""
+            };
             self.out.push_str(&format!(
                 "    {field_prefix}{}: {},\n",
                 sanitize_ident(&fname),
@@ -334,13 +386,20 @@ impl Emitter {
             ));
         }
         if !bitfields.is_empty() {
-            self.out.push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
+            self.out
+                .push_str(&format!("    _packed{storage_field_idx}: u32,\n"));
         }
         self.out.push_str("}\n");
         // Emit bitfield accessors after the struct.
         for (parent, fname, off, width) in bitfields {
-            if width == 0 { continue; }
-            let mask: u64 = if width >= 32 { 0xFFFF_FFFF } else { (1u64 << width) - 1 };
+            if width == 0 {
+                continue;
+            }
+            let mask: u64 = if width >= 32 {
+                0xFFFF_FFFF
+            } else {
+                (1u64 << width) - 1
+            };
             self.out.push_str(&format!(
                 "impl {parent} {{\n\
                  \x20   fn {fname}(self) -> u32 {{ return (self._packed0 >> ({off} as u32)) & ({mask} as u32); }}\n\
@@ -351,10 +410,13 @@ impl Emitter {
 
     fn emit_typedef(&mut self, decl: &serde_json::Value) {
         let name = decl.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if name.is_empty() { return; }
+        if name.is_empty() {
+            return;
+        }
         // Simple typedef (`typedef int32_t llama_token;`) — emit a public C+
         // alias so later generated declarations can refer to it.
-        let qual_type = decl.get("type")
+        let qual_type = decl
+            .get("type")
             .and_then(|t| t.get("qualType"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -366,11 +428,8 @@ impl Emitter {
                 && !lhs.contains("union ")
             {
                 if let Ok(cplus_ty) = map_c_type_to_cplus(lhs.trim()) {
-                    self.out.push_str(&format!(
-                        "type {} = {};\n",
-                        sanitize_ident(name),
-                        cplus_ty
-                    ));
+                    self.out
+                        .push_str(&format!("type {} = {};\n", sanitize_ident(name), cplus_ty));
                     return;
                 }
             }
@@ -383,31 +442,44 @@ impl Emitter {
         //       ownedTagDecl = RecordDecl (anonymous, with fields)
         //       inner[0] = RecordType → decl points back at the same record
         let inner = decl.get("inner").and_then(|v| v.as_array());
-        let elaborated = inner.and_then(|a| a.iter()
-            .find(|x| x.get("kind").and_then(|v| v.as_str()) == Some("ElaboratedType")));
-        let Some(elab) = elaborated else { return; };
+        let elaborated = inner.and_then(|a| {
+            a.iter()
+                .find(|x| x.get("kind").and_then(|v| v.as_str()) == Some("ElaboratedType"))
+        });
+        let Some(elab) = elaborated else {
+            return;
+        };
         // The owned RecordDecl carries `kind` + `name`. If it's anonymous
         // (name empty), pull its fields by id from the TU. Simpler: clang
         // sometimes inlines the fields directly under the ElaboratedType's
         // RecordType.decl — but for the anonymous case we have to look
         // up by id. For MVP, leverage the fact that the typedef body
         // includes the full RecordDecl as an inner item in newer clangs.
-        let record = elab.get("inner").and_then(|v| v.as_array())
-            .and_then(|a| a.iter().find(|x| {
-                x.get("kind").and_then(|v| v.as_str()) == Some("RecordType")
-            }))
+        let record = elab
+            .get("inner")
+            .and_then(|v| v.as_array())
+            .and_then(|a| {
+                a.iter()
+                    .find(|x| x.get("kind").and_then(|v| v.as_str()) == Some("RecordType"))
+            })
             .and_then(|rt| rt.get("decl"))
             .and_then(|d| d.get("id"))
             .and_then(|i| i.as_str())
             .map(|s| s.to_string());
-        let Some(rec_id) = record else { return; };
+        let Some(rec_id) = record else {
+            return;
+        };
         // Find the original RecordDecl in the TU by id.
-        let Some(tu_inner) = self.last_tu_inner.as_ref() else { return; };
+        let Some(tu_inner) = self.last_tu_inner.as_ref() else {
+            return;
+        };
         let original = tu_inner.iter().find(|d| {
             d.get("kind").and_then(|v| v.as_str()) == Some("RecordDecl")
                 && d.get("id").and_then(|v| v.as_str()) == Some(rec_id.as_str())
         });
-        let Some(orig) = original else { return; };
+        let Some(orig) = original else {
+            return;
+        };
         // Synthesize a named record by cloning + injecting the name.
         let mut synth = orig.clone();
         synth["name"] = serde_json::Value::String(name.to_string());
@@ -416,11 +488,15 @@ impl Emitter {
 
     fn emit_enum(&mut self, decl: &serde_json::Value) {
         let name = decl.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if name.is_empty() { return; }
+        if name.is_empty() {
+            return;
+        }
         // C enums map to plain `enum Name { ... }` with explicit i32 values.
         // For MVP we just emit a type alias comment — explicit C constants
         // would require deeper enum-value reading from clang's AST.
-        self.out.push_str(&format!("// C enum `{name}` — use `i32` at FFI boundary.\n"));
+        self.out.push_str(&format!(
+            "// C enum `{name}` — use `i32` at FFI boundary.\n"
+        ));
     }
 }
 
@@ -431,7 +507,9 @@ fn parse_fn_qual_type(qt: &str) -> Option<(String, Vec<String>, bool)> {
     // declaration ordering — return type then `(arg, arg, ...)`.
     let open = qt.find('(')?;
     let close = qt.rfind(')')?;
-    if close <= open { return None; }
+    if close <= open {
+        return None;
+    }
     let ret = qt[..open].trim().to_string();
     let inside = &qt[open + 1..close];
     let mut params: Vec<String> = Vec::new();
@@ -439,24 +517,38 @@ fn parse_fn_qual_type(qt: &str) -> Option<(String, Vec<String>, bool)> {
     let mut cur = String::new();
     for c in inside.chars() {
         match c {
-            '(' => { depth += 1; cur.push(c); }
-            ')' => { depth -= 1; cur.push(c); }
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
             ',' if depth == 0 => {
                 let t = cur.trim().to_string();
-                if !t.is_empty() { params.push(t); }
+                if !t.is_empty() {
+                    params.push(t);
+                }
                 cur.clear();
             }
             _ => cur.push(c),
         }
     }
     let last = cur.trim().to_string();
-    if !last.is_empty() { params.push(last); }
+    if !last.is_empty() {
+        params.push(last);
+    }
     // Detect `...` variadic marker.
     let mut variadic = false;
     if let Some(last) = params.last() {
-        if last == "..." { variadic = true; }
+        if last == "..." {
+            variadic = true;
+        }
     }
-    if variadic { params.pop(); }
+    if variadic {
+        params.pop();
+    }
     // `(void)` is an empty param list in C.
     if params.len() == 1 && params[0] == "void" {
         params.clear();
@@ -471,8 +563,13 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
     let s = c_ty.trim();
     // Strip a trailing `const` qualifier (it's at the start on field types
     // like `const char *`, end on params occasionally).
-    let s = s.trim_start_matches("const ").trim_end_matches(" const").trim();
-    if s.is_empty() { return Err("empty type".to_string()); }
+    let s = s
+        .trim_start_matches("const ")
+        .trim_end_matches(" const")
+        .trim();
+    if s.is_empty() {
+        return Err("empty type".to_string());
+    }
     // Pointer types — `T *` or `T*`. Be greedy: each `*` consumes one
     // level. Recurse on the inner.
     if let Some(inner) = s.strip_suffix('*') {
@@ -494,7 +591,7 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
         return Ok("*u8".to_string());
     }
     Ok(match s {
-        "void"   => "()".to_string(),
+        "void" => "()".to_string(),
         "_Bool" | "bool" => "bool".to_string(),
         "char" | "signed char" => "i8".to_string(),
         "unsigned char" => "u8".to_string(),
@@ -502,30 +599,37 @@ fn map_c_type_to_cplus(c_ty: &str) -> Result<String, String> {
         "unsigned short" | "unsigned short int" => "u16".to_string(),
         "int" | "signed" | "signed int" => "i32".to_string(),
         "unsigned" | "unsigned int" => "u32".to_string(),
-        "long" | "signed long" | "long int" | "signed long int"
-        | "long long" | "signed long long" | "long long int" | "signed long long int" => "i64".to_string(),
-        "unsigned long" | "unsigned long int"
-        | "unsigned long long" | "unsigned long long int" => "u64".to_string(),
-        "float"  => "f32".to_string(),
+        "long"
+        | "signed long"
+        | "long int"
+        | "signed long int"
+        | "long long"
+        | "signed long long"
+        | "long long int"
+        | "signed long long int" => "i64".to_string(),
+        "unsigned long" | "unsigned long int" | "unsigned long long" | "unsigned long long int" => {
+            "u64".to_string()
+        }
+        "float" => "f32".to_string(),
         "double" => "f64".to_string(),
-        "size_t"   => "usize".to_string(),
-        "ssize_t"  => "isize".to_string(),
+        "size_t" => "usize".to_string(),
+        "ssize_t" => "isize".to_string(),
         "intptr_t" => "isize".to_string(),
-        "uintptr_t"=> "usize".to_string(),
-        "int8_t"   => "i8".to_string(),
-        "uint8_t"  => "u8".to_string(),
-        "int16_t"  => "i16".to_string(),
+        "uintptr_t" => "usize".to_string(),
+        "int8_t" => "i8".to_string(),
+        "uint8_t" => "u8".to_string(),
+        "int16_t" => "i16".to_string(),
         "uint16_t" => "u16".to_string(),
-        "int32_t"  => "i32".to_string(),
+        "int32_t" => "i32".to_string(),
         "uint32_t" => "u32".to_string(),
-        "int64_t"  => "i64".to_string(),
+        "int64_t" => "i64".to_string(),
         "uint64_t" => "u64".to_string(),
         "long double" => return Err("long double unsupported".to_string()),
         // Struct types: `struct Foo` or just `Foo` after typedef. Emit as
         // a bare name; user must have included the struct decl.
         s if s.starts_with("struct ") => s.trim_start_matches("struct ").to_string(),
-        s if s.starts_with("union ")  => s.trim_start_matches("union ").to_string(),
-        s if s.starts_with("enum ")   => "i32".to_string(),
+        s if s.starts_with("union ") => s.trim_start_matches("union ").to_string(),
+        s if s.starts_with("enum ") => "i32".to_string(),
         // Unknown — punt. User adds a typedef on their side.
         _ => s.to_string(),
     })
@@ -548,17 +652,23 @@ fn bitfield_width(field: &serde_json::Value) -> Option<u32> {
     //   inner[0].kind == "ConstantExpr" → inner[0].inner[0].kind == "IntegerLiteral" with `value: "N"`
     //   inner[0].kind == "IntegerLiteral" with `value: "N"` (older clang)
     fn read_value(v: &serde_json::Value) -> Option<u32> {
-        v.get("value").and_then(|x| x.as_str()).and_then(|s| s.parse::<u32>().ok())
+        v.get("value")
+            .and_then(|x| x.as_str())
+            .and_then(|s| s.parse::<u32>().ok())
     }
     let inner = field.get("inner")?.as_array()?;
     for entry in inner {
         let kind = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
         if kind == "ConstantExpr" || kind == "IntegerLiteral" {
-            if let Some(n) = read_value(entry) { return Some(n); }
+            if let Some(n) = read_value(entry) {
+                return Some(n);
+            }
             // Recurse one level for the nested IntegerLiteral case.
             if let Some(arr) = entry.get("inner").and_then(|v| v.as_array()) {
                 for sub in arr {
-                    if let Some(n) = read_value(sub) { return Some(n); }
+                    if let Some(n) = read_value(sub) {
+                        return Some(n);
+                    }
                 }
             }
         }
@@ -567,12 +677,14 @@ fn bitfield_width(field: &serde_json::Value) -> Option<u32> {
 }
 
 fn sanitize_ident(name: &str) -> String {
-    if name.is_empty() { return "_".to_string(); }
+    if name.is_empty() {
+        return "_".to_string();
+    }
     // C+ reserved keywords that might collide with C identifiers.
     const RESERVED: &[&str] = &[
-        "fn", "let", "mut", "if", "else", "return", "while", "for", "loop",
-        "match", "struct", "enum", "impl", "pub", "export", "extern", "import", "as",
-        "self", "Self", "true", "false", "unsafe", "guard", "type",
+        "fn", "let", "mut", "if", "else", "return", "while", "for", "loop", "match", "struct",
+        "enum", "impl", "pub", "export", "extern", "import", "as", "self", "Self", "true", "false",
+        "unsafe", "guard", "type",
     ];
     if RESERVED.iter().any(|r| *r == name) {
         return format!("{name}_");
@@ -597,8 +709,7 @@ mod tests {
 
     #[test]
     fn fn_qual_type_parses() {
-        let (ret, params, var) =
-            parse_fn_qual_type("int (int, const char *)").unwrap();
+        let (ret, params, var) = parse_fn_qual_type("int (int, const char *)").unwrap();
         assert_eq!(ret, "int");
         assert_eq!(params, vec!["int", "const char *"]);
         assert!(!var);
@@ -606,8 +717,7 @@ mod tests {
 
     #[test]
     fn fn_qual_type_variadic() {
-        let (ret, params, var) =
-            parse_fn_qual_type("int (const char *, ...)").unwrap();
+        let (ret, params, var) = parse_fn_qual_type("int (const char *, ...)").unwrap();
         assert_eq!(ret, "int");
         assert_eq!(params, vec!["const char *"]);
         assert!(var);

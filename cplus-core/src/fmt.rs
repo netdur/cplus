@@ -82,7 +82,11 @@ struct BracketCtx {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BracketKind { Paren, Bracket, Brace }
+enum BracketKind {
+    Paren,
+    Bracket,
+    Brace,
+}
 
 impl<'a> Printer<'a> {
     fn new(src: &'a str) -> Self {
@@ -121,7 +125,9 @@ impl<'a> Printer<'a> {
         // Walk every token except trailing Eof.
         for i in 0..toks.len() {
             let t = &toks[i];
-            if matches!(t.kind, TokenKind::Eof) { break; }
+            if matches!(t.kind, TokenKind::Eof) {
+                break;
+            }
             self.emit(t, toks, i);
         }
     }
@@ -134,14 +140,19 @@ impl<'a> Printer<'a> {
         // ----- whitespace before this token -----
         let is_trailing_comment = newlines == 0
             && self.started
-            && matches!(tok.kind, TokenKind::LineComment(_) | TokenKind::BlockComment(_));
+            && matches!(
+                tok.kind,
+                TokenKind::LineComment(_) | TokenKind::BlockComment(_)
+            );
 
         if !self.started {
             // First token: emit at indent 0; ignore any source leading whitespace.
         } else if newlines > 0 {
             // Newlines in source → emit at most one blank-line separator (= 2 newlines).
             let n = newlines.min(2);
-            for _ in 0..n { self.out.push('\n'); }
+            for _ in 0..n {
+                self.out.push('\n');
+            }
             // For statement-starting tokens use computed indent. For
             // continuation lines (inside a multi-line expression, after
             // `,` or a binary op or an open bracket) preserve the user's
@@ -206,11 +217,14 @@ impl<'a> Printer<'a> {
         use TokenKind::*;
         // Closing brackets always re-anchor to their enclosing scope's
         // indent.
-        if matches!(curr, RBrace | RParen | RBracket) { return true; }
+        if matches!(curr, RBrace | RParen | RBracket) {
+            return true;
+        }
         // Look at the immediately preceding token.
         match &self.prev_kind {
-            None => true,   // very first token
-            Some(prev) => matches!(prev,
+            None => true, // very first token
+            Some(prev) => matches!(
+                prev,
                 Semi | RBrace | LBrace
                 // Comma terminates a list element — its successor is the
                 // next element, which is a "fresh start" at the list's
@@ -243,7 +257,7 @@ impl<'a> Printer<'a> {
             match b {
                 b' ' => self.out.push(' '),
                 b'\t' => self.out.push_str(INDENT),
-                _ => break,   // stop at first non-whitespace (shouldn't happen)
+                _ => break, // stop at first non-whitespace (shouldn't happen)
             }
         }
     }
@@ -255,28 +269,65 @@ impl<'a> Printer<'a> {
     fn emit_indent_for_token(&mut self, kind: &TokenKind) {
         let mut depth = self.indent_depth();
         let pop_one = match kind {
-            TokenKind::RBrace if self.brackets.last().map(|b| b.open == BracketKind::Brace && b.multi_line).unwrap_or(false) => true,
-            TokenKind::RParen if self.brackets.last().map(|b| b.open == BracketKind::Paren && b.multi_line).unwrap_or(false) => true,
-            TokenKind::RBracket if self.brackets.last().map(|b| b.open == BracketKind::Bracket && b.multi_line).unwrap_or(false) => true,
+            TokenKind::RBrace
+                if self
+                    .brackets
+                    .last()
+                    .map(|b| b.open == BracketKind::Brace && b.multi_line)
+                    .unwrap_or(false) =>
+            {
+                true
+            }
+            TokenKind::RParen
+                if self
+                    .brackets
+                    .last()
+                    .map(|b| b.open == BracketKind::Paren && b.multi_line)
+                    .unwrap_or(false) =>
+            {
+                true
+            }
+            TokenKind::RBracket
+                if self
+                    .brackets
+                    .last()
+                    .map(|b| b.open == BracketKind::Bracket && b.multi_line)
+                    .unwrap_or(false) =>
+            {
+                true
+            }
             _ => false,
         };
-        if pop_one { depth = depth.saturating_sub(1); }
-        for _ in 0..depth { self.out.push_str(INDENT); }
+        if pop_one {
+            depth = depth.saturating_sub(1);
+        }
+        for _ in 0..depth {
+            self.out.push_str(INDENT);
+        }
     }
 
     fn update_bracket_stack(&mut self, kind: &TokenKind, all: &[Token], idx: usize) {
         match kind {
             TokenKind::LBrace => {
                 let multi_line = is_open_multi_line(all, idx, self.src);
-                self.brackets.push(BracketCtx { open: BracketKind::Brace, multi_line });
+                self.brackets.push(BracketCtx {
+                    open: BracketKind::Brace,
+                    multi_line,
+                });
             }
             TokenKind::LParen => {
                 let multi_line = is_open_multi_line(all, idx, self.src);
-                self.brackets.push(BracketCtx { open: BracketKind::Paren, multi_line });
+                self.brackets.push(BracketCtx {
+                    open: BracketKind::Paren,
+                    multi_line,
+                });
             }
             TokenKind::LBracket => {
                 let multi_line = is_open_multi_line(all, idx, self.src);
-                self.brackets.push(BracketCtx { open: BracketKind::Bracket, multi_line });
+                self.brackets.push(BracketCtx {
+                    open: BracketKind::Bracket,
+                    multi_line,
+                });
             }
             TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
                 self.brackets.pop();
@@ -291,7 +342,10 @@ impl<'a> Printer<'a> {
 /// the byte gap from the open's end to the next token's start.
 fn is_open_multi_line(all: &[Token], idx: usize, src: &str) -> bool {
     let open_end = all[idx].span.end as usize;
-    let next_start = all.get(idx + 1).map(|t| t.span.start as usize).unwrap_or(src.len());
+    let next_start = all
+        .get(idx + 1)
+        .map(|t| t.span.start as usize)
+        .unwrap_or(src.len());
     src[open_end..next_start].contains('\n')
 }
 
@@ -319,7 +373,11 @@ fn token_text(kind: &TokenKind, src: &str, start: usize, end: usize) -> String {
 /// - curr is `*` and prev is `:` or `->` (we're emitting `: *T`)
 /// - prev is `*` and prev_prev is `:` or `->` or `*` (between
 ///   a type-position star and its inner type, no space)
-fn needs_space_between_ctx(prev_prev: Option<&TokenKind>, prev: &TokenKind, curr: &TokenKind) -> bool {
+fn needs_space_between_ctx(
+    prev_prev: Option<&TokenKind>,
+    prev: &TokenKind,
+    curr: &TokenKind,
+) -> bool {
     use TokenKind::*;
     // Type-position `*` is tight on both sides.
     if matches!(curr, Star) && matches!(prev, Colon | Arrow) {
@@ -349,15 +407,28 @@ fn needs_space_between_ctx(prev_prev: Option<&TokenKind>, prev: &TokenKind, curr
         // is an operator / opener / statement-boundary token.
         let unary_prefix = matches!(
             prev_prev,
-            None
-            | Some(LParen) | Some(LBrace)
-            | Some(Comma) | Some(Semi)
-            | Some(Eq) | Some(EqEq) | Some(BangEq)
-            | Some(Lt) | Some(Le) | Some(Gt) | Some(Ge)
-            | Some(Plus) | Some(Minus) | Some(Slash) | Some(Percent)
-            | Some(AmpAmp) | Some(PipePipe)
-            | Some(Return) | Some(If) | Some(Else) | Some(While)
-            | Some(FatArrow)
+            None | Some(LParen)
+                | Some(LBrace)
+                | Some(Comma)
+                | Some(Semi)
+                | Some(Eq)
+                | Some(EqEq)
+                | Some(BangEq)
+                | Some(Lt)
+                | Some(Le)
+                | Some(Gt)
+                | Some(Ge)
+                | Some(Plus)
+                | Some(Minus)
+                | Some(Slash)
+                | Some(Percent)
+                | Some(AmpAmp)
+                | Some(PipePipe)
+                | Some(Return)
+                | Some(If)
+                | Some(Else)
+                | Some(While)
+                | Some(FatArrow)
         );
         if unary_prefix {
             return false;
@@ -376,8 +447,12 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     use TokenKind::*;
 
     // No space at any open-bracket boundary.
-    if matches!(prev, LParen | LBracket) { return false; }
-    if matches!(curr, RParen | RBracket | Comma | Semi) { return false; }
+    if matches!(prev, LParen | LBracket) {
+        return false;
+    }
+    if matches!(curr, RParen | RBracket | Comma | Semi) {
+        return false;
+    }
 
     // `{` and `}` for inline blocks (e.g. struct literal `Point { x: 1 }`)
     // get one space on the inside. The multi-line case never hits this
@@ -392,22 +467,34 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     }
 
     // `::` and `.` are tight on both sides.
-    if matches!(prev, ColonColon | Dot) { return false; }
-    if matches!(curr, ColonColon | Dot) { return false; }
+    if matches!(prev, ColonColon | Dot) {
+        return false;
+    }
+    if matches!(curr, ColonColon | Dot) {
+        return false;
+    }
 
     // Slice 10.FFI.5: attribute prefix `#[` is tight — `#` immediately
     // adjoins `[`. (Re-checked in pre-comments-special-case below.)
-    if matches!(prev, Pound) { return false; }
+    if matches!(prev, Pound) {
+        return false;
+    }
 
     // v0.0.22 DSL.1: builder-block opener `@ctx` is tight — `@`
     // immediately adjoins the context path. Full builder-block layout is
     // DSL.4; this only keeps the marker glued to its name.
-    if matches!(prev, At) { return false; }
+    if matches!(prev, At) {
+        return false;
+    }
 
     // Range operators `..` and `..=` are tight on both sides: `0..5`,
     // `1..=10`. Same convention as Rust.
-    if matches!(prev, DotDot | DotDotEq) { return false; }
-    if matches!(curr, DotDot | DotDotEq) { return false; }
+    if matches!(prev, DotDot | DotDotEq) {
+        return false;
+    }
+    if matches!(curr, DotDot | DotDotEq) {
+        return false;
+    }
 
     // `|` is used only as the complement-pattern delimiter in `guard let
     // ... else |Pat| { ... }` (no bitwise-or in any in-tree sample as of
@@ -425,15 +512,19 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     }
 
     // `:` in `name: T` — no space before, one after.
-    if matches!(curr, Colon) { return false; }
-    if matches!(prev, Colon) { return true; }
+    if matches!(curr, Colon) {
+        return false;
+    }
+    if matches!(prev, Colon) {
+        return true;
+    }
 
     // Function-call / index-call boundary: ident or `)` or `]` immediately
     // followed by `(` or `[` is tight.
     if matches!(curr, LParen | LBracket) {
-        if matches!(prev,
-            Ident(_) | SelfLower | SelfUpper | RParen | RBracket | RBrace
-            | Int(..) | Float(..)
+        if matches!(
+            prev,
+            Ident(_) | SelfLower | SelfUpper | RParen | RBracket | RBrace | Int(..) | Float(..)
         ) {
             return false;
         }
@@ -449,9 +540,13 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
     }
 
     // After `,` always one space.
-    if matches!(prev, Comma) { return true; }
+    if matches!(prev, Comma) {
+        return true;
+    }
     // After `;` (rare in inline contexts: `for (init; cond; update)`) → space.
-    if matches!(prev, Semi) { return true; }
+    if matches!(prev, Semi) {
+        return true;
+    }
 
     // Unary operators (always prefix): `!`, `~`, and `-` in operand
     // position. After unary → no space.
@@ -468,8 +563,12 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
 
     // Comments: leading trailing-space handling is special-cased in the
     // caller; reaching here means newline-separated, no space needed.
-    if matches!(prev, LineComment(_) | BlockComment(_)) { return false; }
-    if matches!(curr, LineComment(_) | BlockComment(_)) { return false; }
+    if matches!(prev, LineComment(_) | BlockComment(_)) {
+        return false;
+    }
+    if matches!(curr, LineComment(_) | BlockComment(_)) {
+        return false;
+    }
 
     // Keyword → ident/literal/keyword: one space.
     // Ident → keyword: one space.
@@ -480,7 +579,9 @@ fn needs_space_between(prev: &TokenKind, curr: &TokenKind) -> bool {
 fn is_unary_prefix(t: &TokenKind) -> bool {
     use TokenKind::*;
     // `!` and `~` are always unary prefix in C+ syntax.
-    if matches!(t, Bang | Tilde) { return true; }
+    if matches!(t, Bang | Tilde) {
+        return true;
+    }
     // `-`: unary if it's in an operand-introducing position. Heuristic:
     // by the time we're calling this with prev=`-`, we'd need to know
     // what came BEFORE the `-`. We don't track that. Treat `Minus` here
@@ -493,16 +594,42 @@ fn is_unary_prefix(t: &TokenKind) -> bool {
 
 fn is_binary_op(t: &TokenKind) -> bool {
     use TokenKind::*;
-    matches!(t,
-        Plus | Minus | Star | Slash | Percent
-        | PlusPercent | MinusPercent | StarPercent
-        | EqEq | BangEq | Lt | Le | Gt | Ge
-        | AmpAmp | PipePipe
-        | Amp | Caret | Shl | Shr
-        | Eq | PlusEq | MinusEq | StarEq | SlashEq | PercentEq
-        | AmpEq | PipeEq | CaretEq | ShlEq | ShrEq
-        | Arrow | FatArrow
-        | As | In
+    matches!(
+        t,
+        Plus | Minus
+            | Star
+            | Slash
+            | Percent
+            | PlusPercent
+            | MinusPercent
+            | StarPercent
+            | EqEq
+            | BangEq
+            | Lt
+            | Le
+            | Gt
+            | Ge
+            | AmpAmp
+            | PipePipe
+            | Amp
+            | Caret
+            | Shl
+            | Shr
+            | Eq
+            | PlusEq
+            | MinusEq
+            | StarEq
+            | SlashEq
+            | PercentEq
+            | AmpEq
+            | PipeEq
+            | CaretEq
+            | ShlEq
+            | ShrEq
+            | Arrow
+            | FatArrow
+            | As
+            | In
     )
     // Excluded here (handled separately):
     //   `Pipe` — complement-pattern delimiter; tight on both sides.
@@ -550,12 +677,16 @@ mod tests {
         // (preserving formatter — user's line breaks win).
         let src = "struct Point { x: i32, y: i32 }\nfn main() -> i32 { return 0; }\n";
         let out = fmt(src);
-        assert!(out.contains("struct Point { x: i32, y: i32 }"), "got: {out}");
+        assert!(
+            out.contains("struct Point { x: i32, y: i32 }"),
+            "got: {out}"
+        );
     }
 
     #[test]
     fn tight_path_separator() {
-        let out = fmt("enum Color { Red, Blue }\nfn f() -> i32 { let c = Color::Red; return 0; }\n");
+        let out =
+            fmt("enum Color { Red, Blue }\nfn f() -> i32 { let c = Color::Red; return 0; }\n");
         assert!(out.contains("Color::Red"), "got: {out}");
         assert!(!out.contains("Color :: Red"), "got: {out}");
     }
@@ -568,7 +699,11 @@ mod tests {
         let out = fmt(src);
         assert!(out.contains("@view {"), "got: {out}");
         assert!(!out.contains("@ view"), "got: {out}");
-        assert_eq!(fmt(&out), out, "format must be idempotent on builder blocks");
+        assert_eq!(
+            fmt(&out),
+            out,
+            "format must be idempotent on builder blocks"
+        );
     }
 
     #[test]
@@ -577,7 +712,11 @@ mod tests {
         // item-control round-trip unchanged (token-level formatting).
         let src = "fn f() -> i32 {\n    let v = @view {\n        vstack {\n            text(1)\n            if flag {\n                text(2)\n            }\n            for x in xs {\n                row(x)\n            }\n        }\n    };\n    return 0;\n}\n";
         let out = fmt(src);
-        assert_eq!(fmt(&out), out, "format must be idempotent on DSL.4 builder blocks");
+        assert_eq!(
+            fmt(&out),
+            out,
+            "format must be idempotent on DSL.4 builder blocks"
+        );
     }
 
     #[test]
@@ -602,11 +741,15 @@ mod tests {
         // formatter has drifted.
         use std::fs;
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap().join("docs/examples");
+            .parent()
+            .unwrap()
+            .join("docs/examples");
         let mut failures: Vec<String> = vec![];
         for entry in fs::read_dir(&dir).expect("read docs/examples").flatten() {
             let p = entry.path();
-            if p.extension().and_then(|s| s.to_str()) != Some("cplus") { continue; }
+            if p.extension().and_then(|s| s.to_str()) != Some("cplus") {
+                continue;
+            }
             let src = fs::read_to_string(&p).expect("read sample");
             let out = match format_source(&src) {
                 Ok(s) => s,

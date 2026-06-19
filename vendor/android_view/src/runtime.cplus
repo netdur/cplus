@@ -20,42 +20,46 @@ fn from_native(envp: *jni::JNIEnv) -> Env {
 }
 
 impl Env {
+    fn raw(this) -> *jni::JNIEnv {
+        return this.env;
+    }
+
     fn get_version(this) -> jni::jint {
-        return unsafe { (*(*this.env)).GetVersion(this.env) };
+        return { (*(*this.env)).GetVersion(this.env) };
     }
 
     fn find_class(this, name: *u8) -> jni::jclass {
-        return unsafe { (*(*this.env)).FindClass(this.env, name) };
+        return { (*(*this.env)).FindClass(this.env, name) };
     }
 
     fn get_method_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
-        return unsafe { (*(*this.env)).GetMethodID(this.env, cls, name, sig) };
+        return { (*(*this.env)).GetMethodID(this.env, cls, name, sig) };
     }
 
     fn exception_occurred(this) -> jni::jthrowable {
-        return unsafe { (*(*this.env)).ExceptionOccurred(this.env) };
+        return { (*(*this.env)).ExceptionOccurred(this.env) };
     }
 
     fn exception_clear(this) {
-        unsafe { (*(*this.env)).ExceptionClear(this.env); };
+        { (*(*this.env)).ExceptionClear(this.env); };
     }
 
     fn new_global_ref(this, obj: jni::jobject) -> jni::jobject {
-        return unsafe { (*(*this.env)).NewGlobalRef(this.env, obj) };
+        return { (*(*this.env)).NewGlobalRef(this.env, obj) };
     }
 
     fn delete_global_ref(this, obj: jni::jobject) {
-        unsafe { (*(*this.env)).DeleteGlobalRef(this.env, obj); };
+        { (*(*this.env)).DeleteGlobalRef(this.env, obj); };
     }
 
     fn delete_local_ref(this, obj: jni::jobject) {
-        unsafe { (*(*this.env)).DeleteLocalRef(this.env, obj); };
+        { (*(*this.env)).DeleteLocalRef(this.env, obj); };
     }
 
     // `utf8` must be NUL-terminated modified UTF-8, matching JNI's
     // NewStringUTF contract. String-literal call sites should include `\0`.
     fn new_string_utf(this, utf8: *u8) -> jni::jstring {
-        return unsafe { (*(*this.env)).NewStringUTF(this.env, utf8) };
+        return { (*(*this.env)).NewStringUTF(this.env, utf8) };
     }
 
     fn method(this, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
@@ -68,7 +72,7 @@ impl Env {
     fn new_object_0(this, class_name: *u8, ctor_sig: *u8) -> jni::jobject {
         let cls: jni::jclass = this.find_class(class_name);
         let ctor: jni::jmethodID = this.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
-        let obj: jni::jobject = unsafe {
+        let obj: jni::jobject = {
             (*(*this.env)).NewObjectA(this.env, cls, ctor, 0 as *jni::JValue)
         };
         this.delete_local_ref(cls);
@@ -79,7 +83,7 @@ impl Env {
         let cls: jni::jclass = this.find_class(class_name);
         let ctor: jni::jmethodID = this.get_method_id(cls, #str_ptr("<init>\0"), ctor_sig);
         var args: [jni::JValue; 1] = [arg0];
-        let obj: jni::jobject = unsafe {
+        let obj: jni::jobject = {
             (*(*this.env)).NewObjectA(this.env, cls, ctor, #addr_of(args[0]))
         };
         this.delete_local_ref(cls);
@@ -88,13 +92,13 @@ impl Env {
 
     fn call_void_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
-        unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, 0 as *jni::JValue); };
+        { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, 0 as *jni::JValue); };
     }
 
     fn call_void_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         var args: [jni::JValue; 1] = [arg0];
-        unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
+        { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
     }
 
     fn call_void_2(
@@ -108,24 +112,24 @@ impl Env {
     ) {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         var args: [jni::JValue; 2] = [arg0, arg1];
-        unsafe { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
+        { (*(*this.env)).CallVoidMethodA(this.env, obj, mid, #addr_of(args[0])); };
     }
 
     fn call_object_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
-        return unsafe { (*(*this.env)).CallObjectMethodA(this.env, obj, mid, 0 as *u8) };
+        return { (*(*this.env)).CallObjectMethodA(this.env, obj, mid, 0 as *u8) };
     }
 
     fn call_object_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         var args: [jni::JValue; 1] = [arg0];
-        return unsafe {
+        return {
             (*(*this.env)).CallObjectMethodA(this.env, obj, mid, #addr_of(args[0]) as *u8)
         };
     }
 
     fn exception_check(this) -> i8 {
-        return unsafe { (*(*this.env)).ExceptionCheck(this.env) } as i8;
+        return { (*(*this.env)).ExceptionCheck(this.env) } as i8;
     }
 
     fn retain_local_as_global(this, local: jni::jobject) -> jni::jobject {
@@ -150,4 +154,3 @@ fn arg_bool(v: i8) -> jni::JValue {
 fn arg_long(v: i64) -> jni::JValue {
     return jni::arg_long(v as jni::jlong);
 }
-

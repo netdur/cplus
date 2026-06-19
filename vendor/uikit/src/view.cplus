@@ -6,7 +6,7 @@ import "./convert" as convert;
 fn create_custom_view(frame: rt::Rect, draw_imp: fn(*u8, *u8, rt::Rect)) -> View {
     let existing: *u8 = rt::get_class(#str_ptr("CUIKitCustomView\0"));
     var cls: *u8 = existing;
-    if existing == unsafe { 0 as *u8 } {
+    if existing == { 0 as *u8 } {
         let uiview: *u8 = rt::get_class(#str_ptr("UIView\0"));
         cls = rt::allocate_class_pair(uiview, #str_ptr("CUIKitCustomView\0"), 0 as usize);
         let _added: i8 = rt::add_method_draw_rect(
@@ -27,6 +27,8 @@ struct View {
 }
 
 impl View {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> View {
         return View { obj: rt::alloc_init_with_frame(#str_ptr("UIView\0"), frame) };
     }
@@ -48,7 +50,7 @@ impl View {
     }
 
     fn set_background_color(this, color: Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.raw());
     }
 
     fn frame(this) -> rt::Rect {
@@ -114,6 +116,8 @@ fn text_alignment_center() -> i64 { return 1; }
 fn text_alignment_right() -> i64 { return 2; }
 
 impl Label {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> Label {
         let cls: *u8 = rt::get_class(#str_ptr("UILabel\0"));
         let alloc: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -131,7 +135,7 @@ impl Label {
     }
 
     fn set_text_color(this, color: Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setTextColor:\0")), color.raw());
     }
 
     fn set_font(this, font: *u8) {
@@ -147,7 +151,7 @@ impl Label {
     }
 
     fn set_background_color(this, color: Color) {
-        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.obj);
+        rt::msg_void_id(this.obj, rt::sel(#str_ptr("setBackgroundColor:\0")), color.raw());
     }
 
     fn as_view_obj(this) -> *u8 {
@@ -160,6 +164,8 @@ struct Color {
 }
 
 impl Color {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn white() -> Color {
         let cls: *u8 = rt::get_class(#str_ptr("UIColor\0"));
         return Color { obj: rt::msg_id(cls, rt::sel(#str_ptr("whiteColor\0"))) };
@@ -226,6 +232,8 @@ struct StackView {
 }
 
 impl StackView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> StackView {
         return StackView { obj: rt::alloc_init_with_frame(#str_ptr("UIStackView\0"), frame) };
     }
@@ -268,6 +276,8 @@ struct ScrollView {
 }
 
 impl ScrollView {
+    fn raw(this) -> *u8 { return this.obj; }
+
     fn new(frame: rt::Rect) -> ScrollView {
         return ScrollView { obj: rt::alloc_init_with_frame(#str_ptr("UIScrollView\0"), frame) };
     }

@@ -41,6 +41,6 @@ fn main() -> i32 {
     // Pre-fix, the caller also dropped `x` at scope exit (bare owning params used
     // a borrow ABI; the caller was not `mark_moved`), so buffer B was freed by
     // both `x`'s drop and the Vec's drop -> double free.
-    unsafe { write(2 as i32, #str_ptr("reached end\n"), 12 as usize); }
+    { write(2 as i32, #str_ptr("reached end\n"), 12 as usize); }
     return 0;
 }

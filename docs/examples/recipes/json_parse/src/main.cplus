@@ -34,8 +34,8 @@ struct Parser {
 fn write_all(fd: i32, p: *u8, n: usize) {
     var written: usize = 0 as usize;
     while written < n {
-        let q: *u8 = unsafe { p + written };
-        let w: isize = unsafe { write(fd, q, n -% written) };
+        let q: *u8 = { p + written };
+        let w: isize = { write(fd, q, n -% written) };
         if w <= (0 as isize) { return; }
         written = written +% (w as usize);
     }
@@ -56,14 +56,14 @@ fn err_at(p: Parser) {
 fn slurp_stdin() -> Parser {
     var cap: usize = 4096 as usize;
     var len: usize = 0 as usize;
-    var buf: *u8 = unsafe { malloc(cap) };
+    var buf: *u8 = { malloc(cap) };
     loop {
         if len == cap {
             cap = cap *% (2 as usize);
-            buf = unsafe { realloc(buf, cap) };
+            buf = { realloc(buf, cap) };
         }
-        let q: *u8 = unsafe { buf + len };
-        let n: isize = unsafe { read(0 as i32, q, cap -% len) };
+        let q: *u8 = { buf + len };
+        let n: isize = { read(0 as i32, q, cap -% len) };
         if n <= (0 as isize) { break; }
         len = len +% (n as usize);
     }
@@ -72,13 +72,13 @@ fn slurp_stdin() -> Parser {
 
 fn peek(p: Parser) -> u8 {
     if p.pos >= p.len { return 0 as u8; }
-    return unsafe { p.buf[p.pos] };
+    return { p.buf[p.pos] };
 }
 
 fn skip_ws(p: Parser) -> Parser {
     var q: Parser = p;
     while q.pos < q.len {
-        let c: u8 = unsafe { q.buf[q.pos] };
+        let c: u8 = { q.buf[q.pos] };
         if c == (0x20 as u8) || c == (0x09 as u8) || c == (0x0a as u8) || c == (0x0d as u8) {
             q.pos = q.pos +% (1 as usize);
         } else {
@@ -96,8 +96,8 @@ fn match_kw(p: Parser, kw: str) -> Parser {
     if p.pos +% kl > p.len { return p; }
     var i: usize = 0 as usize;
     while i < kl {
-        let a: u8 = unsafe { p.buf[p.pos +% i] };
-        let b: u8 = unsafe { kp[i] };
+        let a: u8 = { p.buf[p.pos +% i] };
+        let b: u8 = { kp[i] };
         if a != b { return p; }
         i = i +% (1 as usize);
     }
@@ -125,7 +125,7 @@ fn parse_string(p: Parser, label: str) -> Parser {
             print_str("\"\n");
             return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
         }
-        let c: u8 = unsafe { q.buf[q.pos] };
+        let c: u8 = { q.buf[q.pos] };
         if c == (34 as u8) {            // closing '"'
         q.pos = q.pos +% (1 as usize);
         print_str("\"\n");
@@ -136,7 +136,7 @@ fn parse_string(p: Parser, label: str) -> Parser {
             print_str("\"\n");
             return Parser { buf: q.buf, pos: q.len, len: q.len, err: true };
         }
-        let e: u8 = unsafe { q.buf[q.pos +% (1 as usize)] };
+        let e: u8 = { q.buf[q.pos +% (1 as usize)] };
         var out: u8 = e;
         if e == (110 as u8) { out = 10 as u8; }   // n -> LF
         else if e == (116 as u8) { out = 9 as u8; }   // t -> TAB
@@ -146,16 +146,16 @@ fn parse_string(p: Parser, label: str) -> Parser {
         // Any other escape is passed through verbatim — good enough
         // for the recipe.
         write_all(1 as i32, #str_ptr("X"), 0 as usize); // no-op anchor
-        let buf: *u8 = unsafe { malloc(1 as usize) };
-        unsafe { buf[0 as usize] = out; }
+        let buf: *u8 = { malloc(1 as usize) };
+        { buf[0 as usize] = out; }
         write_all(1 as i32, buf, 1 as usize);
-        unsafe { free(buf); }
+        { free(buf); }
         q.pos = q.pos +% (2 as usize);
         } else {
-            let buf: *u8 = unsafe { malloc(1 as usize) };
-            unsafe { buf[0 as usize] = c; }
+            let buf: *u8 = { malloc(1 as usize) };
+            { buf[0 as usize] = c; }
             write_all(1 as i32, buf, 1 as usize);
-            unsafe { free(buf); }
+            { free(buf); }
             q.pos = q.pos +% (1 as usize);
         }
     }
@@ -168,23 +168,23 @@ fn parse_number(p: Parser) -> Parser {
     print_str("num ");
     var q: Parser = p;
     // Optional sign.
-    let first: u8 = unsafe { q.buf[q.pos] };
+    let first: u8 = { q.buf[q.pos] };
     if first == (45 as u8) {           // '-'
-    let buf: *u8 = unsafe { malloc(1 as usize) };
-    unsafe { buf[0 as usize] = 45 as u8; }
+    let buf: *u8 = { malloc(1 as usize) };
+    { buf[0 as usize] = 45 as u8; }
     write_all(1 as i32, buf, 1 as usize);
-    unsafe { free(buf); }
+    { free(buf); }
     q.pos = q.pos +% (1 as usize);
     }
     while q.pos < q.len {
-        let c: u8 = unsafe { q.buf[q.pos] };
+        let c: u8 = { q.buf[q.pos] };
         let is_digit: bool = (c >= (48 as u8)) && (c <= (57 as u8));
         let is_dot: bool = c == (46 as u8);
         if !(is_digit || is_dot) { break; }
-        let buf: *u8 = unsafe { malloc(1 as usize) };
-        unsafe { buf[0 as usize] = c; }
+        let buf: *u8 = { malloc(1 as usize) };
+        { buf[0 as usize] = c; }
         write_all(1 as i32, buf, 1 as usize);
-        unsafe { free(buf); }
+        { free(buf); }
         q.pos = q.pos +% (1 as usize);
     }
     print_str("\n");
@@ -196,7 +196,7 @@ fn parse_value(p: Parser) -> Parser {
     if q0.pos >= q0.len {
         return Parser { buf: q0.buf, pos: q0.len, len: q0.len, err: true };
     }
-    let c: u8 = unsafe { q0.buf[q0.pos] };
+    let c: u8 = { q0.buf[q0.pos] };
 
     if c == (34 as u8) {                       // '"' — string
     let q1: Parser = Parser { buf: q0.buf, pos: q0.pos +% (1 as usize), len: q0.len, err: false };
@@ -283,7 +283,7 @@ fn main() -> i32 {
     let trail: Parser = skip_ws(after);
     // Success ⇔ no error flag AND no trailing garbage past the value.
     let ok: bool = !after.err && trail.pos == trail.len;
-    unsafe { free(p.buf); }
+    { free(p.buf); }
     if !ok { return 1; }
     return 0;
 }

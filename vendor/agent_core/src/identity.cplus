@@ -106,26 +106,26 @@ struct NodeView {
 // shorter id rather than corrupting memory.
 fn make_path_id(parent: str, tag: str, index: usize) -> text::Text {
     var buf: [u8; 256] = [0u8; 256];
-    let n: i32 = unsafe {
+    let n: i32 = {
         snprintf(#addr_of(buf) as *u8, 256 as usize,
         #str_ptr("%.*s/%.*s#%llu\0"),
         #str_len(parent) as i32, #str_ptr(parent),
         #str_len(tag) as i32, #str_ptr(tag),
         index as u64)
     };
-    let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
+    let view: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
     return view.to_text();
 }
 
 // `parent/key` as an owned string (the list-item form).
 fn make_key_id(parent: str, key: u64) -> text::Text {
     var buf: [u8; 256] = [0u8; 256];
-    let n: i32 = unsafe {
+    let n: i32 = {
         snprintf(#addr_of(buf) as *u8, 256 as usize,
         #str_ptr("%.*s/%llu\0"),
         #str_len(parent) as i32, #str_ptr(parent), key)
     };
-    let view: str = unsafe { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
+    let view: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
     return view.to_text();
 }
 
@@ -239,7 +239,7 @@ impl Registry {
     fn role_of(this, node: usize) -> Role {
         assert this.is_valid(node);
         return match this.roles.at(node) {
-            option::Option[*Role]::Some(p) => unsafe { *p },
+            option::Option[*Role]::Some(p) => { *p },
             option::Option[*Role]::None => Role::Group,
         };
     }
@@ -247,7 +247,7 @@ impl Registry {
     fn parent_of(this, node: usize) -> option::Option[usize] {
         assert this.is_valid(node);
         return match this.parents.at(node) {
-            option::Option[*option::Option[usize]]::Some(p) => unsafe { *p },
+            option::Option[*option::Option[usize]]::Some(p) => { *p },
             option::Option[*option::Option[usize]]::None => option::Option[usize]::None,
         };
     }
@@ -265,7 +265,7 @@ impl Registry {
     fn name_of(this, node: usize) -> str {
         assert this.is_valid(node);
         return match this.names.at(node) {
-            option::Option[*text::Text]::Some(p) => unsafe { (*p).as_str() },
+            option::Option[*text::Text]::Some(p) => { (*p).as_str() },
             option::Option[*text::Text]::None => "",
         };
     }
@@ -279,7 +279,7 @@ impl Registry {
     fn is_enabled(this, node: usize) -> bool {
         assert this.is_valid(node);
         return match this.enabled.at(node) {
-            option::Option[*bool]::Some(p) => unsafe { *p },
+            option::Option[*bool]::Some(p) => { *p },
             option::Option[*bool]::None => false,
         };
     }
@@ -297,7 +297,7 @@ impl Registry {
     fn is_agent_actionable(this, node: usize) -> bool {
         assert this.is_valid(node);
         let ceiling: bool = match this.actionable.at(node) {
-            option::Option[*bool]::Some(p) => unsafe { *p },
+            option::Option[*bool]::Some(p) => { *p },
             option::Option[*bool]::None => false,
         };
         return ceiling && this.is_enabled(node);
@@ -310,7 +310,7 @@ impl Registry {
     fn is_exposed(this, node: usize) -> bool {
         assert this.is_valid(node);
         return match this.exposed.at(node) {
-            option::Option[*bool]::Some(p) => unsafe { *p },
+            option::Option[*bool]::Some(p) => { *p },
             option::Option[*bool]::None => false,
         };
     }
@@ -367,7 +367,7 @@ impl Registry {
     // returned view aliases the live buffer the Vec still owns.
     fn id_view(this, node: usize) -> str {
         return match this.ids.at(node) {
-            option::Option[*text::Text]::Some(p) => unsafe { (*p).as_str() },
+            option::Option[*text::Text]::Some(p) => { (*p).as_str() },
             option::Option[*text::Text]::None => "",
         };
     }
@@ -644,11 +644,11 @@ fn test_describe_lists_every_node_with_fields() {
     // NodeId order: index 0 = app root, index `btn` = the button.
     match v.at(btn) {
         option::Option[*NodeView]::Some(p) => {
-            assert unsafe { (*p).id.as_str() } == "btn_login";
-            assert role_eq(unsafe { (*p).role }, Role::Button);
-            assert unsafe { (*p).name.as_str() } == "Log In";
-            assert unsafe { (*p).actionable };
-            let parent: usize = match unsafe { (*p).parent } {
+            assert { (*p).id.as_str() } == "btn_login";
+            assert role_eq({ (*p).role }, Role::Button);
+            assert { (*p).name.as_str() } == "Log In";
+            assert { (*p).actionable };
+            let parent: usize = match { (*p).parent } {
                 option::Option[usize]::Some(x) => x,
                 option::Option[usize]::None => 999 as usize,
             };
@@ -668,8 +668,8 @@ fn test_describe_reflects_ceiling() {
     let v: vec::Vec[NodeView] = r.describe();
     match v.at(b) {
         option::Option[*NodeView]::Some(p) => {
-            assert unsafe { (*p).enabled };
-            assert (unsafe { (*p).actionable }) == false;
+            assert { (*p).enabled };
+            assert ({ (*p).actionable }) == false;
         }
         option::Option[*NodeView]::None => { assert false; }
     }
@@ -723,9 +723,9 @@ fn test_describe_prunes_unexposed_and_reparents() {
     while i < v.len() {
         match v.at(i) {
             option::Option[*NodeView]::Some(p) => {
-                if unsafe { (*p).id.as_str() } == "btn" {
+                if { (*p).id.as_str() } == "btn" {
                     found_btn = true;
-                    let parent: usize = match unsafe { (*p).parent } {
+                    let parent: usize = match { (*p).parent } {
                         option::Option[usize]::Some(x) => x,
                         option::Option[usize]::None => 999 as usize,
                     };
