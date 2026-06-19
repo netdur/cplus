@@ -1,16 +1,15 @@
 # The C+ Language Specification
 
-Version 0.0.22 · normative reference.
+Version 0.0.24 · normative reference.
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 
 ## 0. About this document
 
-This is the normative reference for the C+ language as of the v0.0.22
-language feature freeze. It describes syntax and semantics; it is not a
-tutorial (see the tutorial) nor an implementation guide (see
-`docs/COMPILER.md`). For a dense "how to write C+" companion aimed at
-LLMs, see `docs/SKILL.md`.
+This is the normative reference for the C+ language. It describes syntax
+and semantics; it is not an implementation guide (see `docs/COMPILER.md`).
+For a dense "how to write C+" companion aimed at LLMs, see
+`docs/SKILL.md`.
 
 **The compiler is the ultimate authority.** This document is verified
 against `cpc` and its test suite, but where the two ever disagree, the
@@ -62,15 +61,27 @@ preserves them.
 
 ### 1.3 Tokens
 
-**Keywords** (reserved):
+**Keywords** (reserved — cannot be used as identifiers):
 
 ```
-fn let mut const static if else while for in return
-true false as unsafe extern struct enum union match
-trait impl pub use mod import self Self defer try
-break continue loop move restrict opaque guard assert
-async await gen yield borrow interface type
+fn let const static if else while for in return
+true false as extern struct enum union match impl
+export use mod import this This defer break continue
+loop restrict opaque guard assert interface type
+async await gen yield
 ```
+
+`var`, `ref`, and `take` are **contextual** keywords: they are lexed as
+identifiers and recognized only in binding or parameter position (a local
+`var x`, a receiver `ref this` / `take this`, a parameter prefix
+`ref x: T` / `take x: T`). Elsewhere they are ordinary names.
+
+The tokens `mut`, `unsafe`, `pub`, `trait`, `move`, `borrow`, and `try`
+remain **reserved but rejected**: the parser recognizes each and emits a
+hint pointing at the current form (`var`/`static`, the raw-operation
+syntax, `export`/`_`, `interface`, `take`, a parameter prefix,
+`match`/`guard`), so legacy source fails with a precise diagnostic rather
+than a generic parse error.
 
 **Identifiers** start with an ASCII letter or `_`, continue with ASCII
 alphanumerics or `_`. `_` alone is the wildcard token.
@@ -93,7 +104,7 @@ character literal lexes to an `Int` with a `u8` suffix — i.e. `'A'` *is*
 literals. Two further forms:
 
 - **C strings**: `c"..."` — a NUL-terminated `*u8` into `.rodata`, for
-  FFI. Safe to form; dereferencing needs `unsafe`.
+  FFI.
 - **Interpolated strings**: `"... ${expr} ..."` — see §11. A bare `$`
   not followed by `{` or `$` is a literal `$`; `$$` is an escaped `$`.
 
@@ -121,7 +132,7 @@ block (`@ctx { ... }`, §17). There is no `->` member access — field and
 method access is always `.` (§3.4). Binary `&` is bitwise-and; unary
 `&` / `&mut` parse but are rejected by the type checker (**E0312**) —
 C+ has no value-site references (§6.3). Unary `*` dereferences a raw
-pointer (unsafe, §6.7).
+pointer (§6.6).
 
 ---
 
@@ -137,25 +148,24 @@ item        = attribute* ( function | struct | enum | impl
                          | interface | type_alias | const | static
                          | module_asm ) ;
 
-function    = 'pub'? ( 'unsafe' | 'extern' | 'async' | 'gen' )*
+function    = 'export'? ( 'extern' | 'async' | 'gen' )*
               'fn' IDENT generic_params? '(' params? ')' ret? ( block | ';' ) ;
 ret         = '->' type ;
 params      = param ( ',' param )* ( ',' '...' )? ;
-param       = receiver | IDENT ':' type ;
-receiver    = 'self' | 'mut' 'self' | 'move' 'self' ;
+param       = receiver | ( 'ref' | 'take' )? IDENT ':' type ;
+receiver    = 'this' | 'ref' 'this' | 'take' 'this' ;
 
-struct      = 'pub'? 'struct' IDENT generic_params? '{' field* '}' ;
-field       = 'pub'? ( 'opaque' )? IDENT ':' type ','? ;
+struct      = 'export'? 'struct' IDENT generic_params? '{' field* '}' ;
+field       = 'opaque'? IDENT ':' type ','? ;
 
-enum        = 'pub'? 'enum' IDENT generic_params? '{' variant* '}' ;
+enum        = 'export'? 'enum' IDENT generic_params? '{' variant* '}' ;
 variant     = IDENT ( '(' type ( ',' type )* ')' )? ','? ;
 
-impl        = ( 'unsafe' )? 'impl' generic_params? type_path
-              ( 'for' type )? '{' method* '}' ;
+impl        = 'impl' generic_params? type_path ( ':' type )? '{' method* '}' ;
 interface   = 'interface' IDENT generic_params? '{' fn_sig* '}' ;
-type_alias  = 'pub'? 'type' IDENT generic_params? '=' type ';' ;
-const       = 'pub'? 'const' IDENT ':' type '=' expr ';' ;
-static      = 'pub'? 'static' 'mut'? IDENT ':' type '=' expr ';' ;
+type_alias  = 'export'? 'type' IDENT generic_params? '=' type ';' ;
+const       = 'export'? 'const' IDENT ':' type '=' expr ';' ;
+static      = 'export'? 'static' IDENT ':' type '=' expr ';' ;
 
 generic_params = '[' generic_param ( ',' generic_param )* ']' ;
 generic_param  = IDENT ( ':' bound ( '+' bound )* )? ;
@@ -176,8 +186,8 @@ type     = primitive
          | '[' type ';' (INT | IDENT) ']'   // array (length: literal or const)
          | '(' type ( ',' type )+ ')'       // tuple (arity >= 2)
          | '(' ')'                          // unit
-         | 'fn' '(' (type (',' type)*)? ')' ret?   // function pointer
-         | 'borrow' IDENT type ;            // region-annotated borrow
+         | 'fn' '(' (fn_arg (',' fn_arg)*)? ')' ret? ;  // function pointer
+fn_arg       = 'take'? type ;        // `take` marks an argument the pointer consumes
 generic_args = '[' type ( ',' type )* ']' ;
 type_path    = IDENT ( '::' IDENT )* ;
 primitive    = 'i8'|'i16'|'i32'|'i64'|'u8'|'u16'|'u32'|'u64'
@@ -195,14 +205,15 @@ stmt     = let_stmt | return_stmt | while_stmt | for_stmt | loop_stmt
          | if_let_stmt | while_let_stmt | guard_let_stmt
          | expr ';' | block_like_expr ;
 
-let_stmt = 'let' 'mut'? pattern ( ':' type )? ( '=' expr )? ';' ;
+let_stmt = ( 'let' | 'var' ) pattern ( ':' type )? ( '=' expr )? ';' ;
 ```
 
-A block is an expression: with a trailing expression (no `;`) it
-evaluates to that expression's value; otherwise to unit. A `let` without
-an initializer requires a type annotation and is subject to
-definite-assignment analysis (every read MUST be preceded by an
-assignment).
+A local binding is `let` (immutable: no rebind, no field write) or `var`
+(mutable). There is no `mut`. A block is an expression: with a trailing
+expression (no `;`) it evaluates to that expression's value; otherwise to
+unit. A `let`/`var` without an initializer requires a type annotation and
+is subject to definite-assignment analysis (every read MUST be preceded
+by an assignment).
 
 ### 2.4 Expressions
 
@@ -223,7 +234,7 @@ cast        = unary ( 'as' type )* ;
 unary       = ( '-' | '!' | '~' )* postfix ;
 postfix     = primary ( call_args | index | field | turbofish )* ;
 primary     = literal | path | IDENT | '(' expr ')' | tuple | array
-            | block | 'unsafe' block | if_expr | match_expr
+            | block | if_expr | match_expr
             | struct_lit | intrinsic | builder_block | 'await' expr
             | 'yield' expr ;
 ```
@@ -292,11 +303,16 @@ resolved. Paths of unsupported length or unknown prefix are errors
 
 ### 3.3 Visibility
 
-Items are private to their file unless marked `pub`. Cross-file access to
-a non-`pub` item is an error (**E0403**); referencing a name that does
-not exist in the target module is a distinct error (**E0404**/**E0405**).
-Struct fields carry their own `pub` (field privacy is enforced
-per-field). A `pub type` alias may re-export a type as a small facade.
+Visibility is name-based: a name beginning with an underscore (`_name`) is
+private to its file; every other item, field, and method is public to
+other modules. Reading a `_`-private name across files is an error
+(**E0403**); referencing a name that does not exist in the target module
+is a distinct error (**E0404**/**E0405**). The `export` keyword marks an
+item as part of the C-ABI surface (external linkage and a generated header
+entry); it is independent of the `_` privacy rule. A struct that carries a
+raw-pointer field or a custom `drop`, and is neither `export` nor
+`#[repr(C)]`, has all its fields treated as private regardless of name, so
+its representation invariants cannot be read or constructed cross-file.
 
 ### 3.4 `::` versus `.`
 
@@ -322,8 +338,8 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
 
 ### 4.2 Aggregates
 
-- **struct** — nominal product type; named fields, each possibly `pub`
-  and/or `opaque` (§6.6).
+- **struct** — nominal product type; named fields, each optionally
+  `opaque` (§6.6). A field whose name begins with `_` is module-private.
 - **enum** — tagged union; each variant optionally carries a tuple
   payload. Pattern matching is exhaustiveness-checked (§8).
 - **tuple** `(A, B, ...)` — arity ≥ 2; lowered to a synthesized struct
@@ -334,8 +350,8 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
   every slot. Indexing is bounds-checked at runtime.
 - **slice** `T[]` — a `{ptr, len}` view over a contiguous run of `T`;
   Copy (it is a view, not an owner). Constructed via
-  `#slice_from_raw_parts` (unsafe); `#slice_ptr` / `#slice_len` read its
-  parts (safe). Indexing is bounds-checked.
+  `#slice_from_raw_parts`; `#slice_ptr` / `#slice_len` read its parts.
+  Indexing is bounds-checked.
 
 ### 4.3 Strings
 
@@ -343,14 +359,17 @@ pointers (`str`, slices) carry a pointer and a `usize` length.
   (string literals, `#include_str`, `#env`). Copy.
 - **`Text`** — the owned, growable string type. `Text` is a library type
   with one compiler lang-item hook (interpolation builds a `Text`); it
-  must be imported like any other type. (The earlier owned `string` type
-  was removed in favor of `Text`.)
+  must be imported like any other type. A borrowed `Text` coerces to its
+  `str` view (`{ptr,len}` prefix) wherever a `str` is expected — argument,
+  binding, return, or comparison with a `str`; the coercion borrows, so a
+  view of a local `Text` cannot outlive it (**E0513**).
 
 ### 4.4 Pointers and function pointers
 
-- **raw pointer** `*T` — an unmanaged address. Forming a `*T` is safe;
-  dereferencing requires `unsafe` (§6.7). The safe null substitute in FFI
-  is `0 as *T` inside `unsafe`; there is no null keyword (§6.5).
+- **raw pointer** `*T` — an unmanaged address. Forming a `*T`, and
+  dereferencing it with unary `*`, are both ordinary expressions: the
+  syntax is self-flagging, so no enclosing block marks them. The null
+  substitute in FFI is `0 as *T`; there is no null keyword (§6.5).
 - **function pointer** `fn(A, B) -> R` — the address of a top-level
   function, taken by naming it in a function-pointer-typed context. No
   closures, no environment capture. Integers and function pointers do not
@@ -412,30 +431,30 @@ family.
 
 ### 6.3 Receivers
 
-Methods take an explicit receiver — there is no implicit `&self`:
+Methods take an explicit receiver — there is no implicit `self`:
 
-- **`self`** — reads the receiver (by value/borrow as the type allows).
-- **`mut self`** — mutates the receiver in place.
-- **`move self`** — consumes the receiver (used by finalizers like
+- **`this`** — reads the receiver (a borrow; the caller keeps ownership).
+- **`ref this`** — mutates the receiver in place; the write is reflected
+  back to the caller's value, which must therefore be a `var`.
+- **`take this`** — consumes the receiver (used by finalizers like
   `finish`).
 
 C+ has no value-site references: unary `&` / `&mut` parse but are
 rejected by the type checker (**E0312**, "references are not yet
-supported"). The receiver forms and ordinary by-value passing cover
-their uses. (A region-annotated `borrow A T` *type* exists for advanced
-APIs but is not a value-site `&`.)
+supported"). The receiver forms, the parameter prefixes `ref` / `take`,
+and ordinary by-value passing cover their uses.
 
 ### 6.4 Drop
 
-A type may implement `Drop` (a `drop(mut self)` method). Drop glue runs
+A type may implement `Drop` (a `drop(ref this)` method). Drop glue runs
 at scope exit in reverse declaration order, interleaved with `defer`
 statements (lexically, LIFO). A type with a `Drop` impl is never Copy.
 
-### 6.5 No null in safe code
+### 6.5 No null
 
-There is no `null` keyword and no null value in safe code. Optionality is
-expressed with `Option[T]`. In FFI, a null pointer is written `0 as *T`
-inside an `unsafe` block — visibly unsafe, never implicit.
+There is no `null` keyword and no null value. Optionality is expressed
+with `Option[T]`. In FFI, a null pointer is written `0 as *T`; there is
+no implicit null.
 
 ### 6.6 Raw-pointer accountability
 
@@ -443,16 +462,10 @@ A struct field of raw-pointer type (directly or transitively) MUST be
 accounted for: either released in the type's `Drop`, or explicitly marked
 `opaque` to declare "this pointer is not owned here." An unaccounted raw
 pointer field is an error (**E0510**). This keeps ownership of FFI
-handles explicit.
-
-### 6.7 `unsafe`
-
-Operations the type system cannot verify are confined to `unsafe { ... }`
-blocks (or `unsafe fn` bodies): dereferencing a raw pointer, calling an
-`extern` function, the raw-parts constructors, reading/writing
-`static mut`. Performing them outside `unsafe` is **E0801**. `unsafe`
-does not disable the borrow checker; it grants exactly the enumerated
-extra operations.
+handles explicit. Every UB-capable operation is self-flagging in the
+syntax — a raw dereference `*p`, a pointer cast `x as *T`, the
+`#addr(p)` intrinsic, an `extern` call — so there is no `unsafe` block or
+`unsafe fn`; the act of writing the operation is the marker.
 
 ---
 
@@ -502,24 +515,24 @@ Three sugar forms bind patterns outside `match`; all are lowered to
 ### 9.1 Functions and methods
 
 Functions are declared with `fn`; methods live in `impl` blocks and take
-a receiver (§6.3). Modifiers `pub`, `unsafe`, `extern`, `async`, `gen`
-precede `fn`. The return type follows `->`; its absence means unit.
+a receiver (§6.3). Modifiers `export`, `extern`, `async`, `gen` precede
+`fn`. The return type follows `->`; its absence means unit.
 
 ### 9.2 Interfaces (bounded polymorphism)
 
 ```cplus
-interface Eq { fn eq(self, other: Self) -> bool; }
+interface Eq { fn eq(this, other: This) -> bool; }
 ```
 
 An `interface` lists method signatures that implementing types must
-provide. `Self` denotes the implementing type. Generic bounds (§10) name
+provide. `This` denotes the implementing type. Generic bounds (§10) name
 interfaces; a call requiring a bound the type does not satisfy is an
 error.
 
 ### 9.3 Impls
 
-`impl Type { ... }` adds methods; `impl Type for Interface { ... }`
-provides an interface. Both may be generic.
+`impl Type { ... }` adds methods; `impl Type: Interface { ... }` provides
+an interface (the `:` reads "Type is an Interface"). Both may be generic.
 
 ### 9.4 Marker interfaces
 
@@ -529,17 +542,18 @@ interfaces with structural inference:
 | Interface | Meaning |
 |---|---|
 | `Copy` | duplicate-on-use (§6.1) |
-| `Clone` | explicit `clone(self) -> Self` |
+| `Clone` | explicit `clone(this) -> This` |
 | `Eq` / `Ord` / `Hash` | `eq` / `cmp` / `hash` |
-| `ToText` | `to_text(self) -> Text` (blessed for primitives + `str`) |
+| `ToText` | `to_text(this) -> Text` (blessed for primitives + `str`) |
 | `Send` | safe to transfer across threads |
 | `Sync` | safe to share across threads |
 
 `Send`/`Sync` gate cross-thread transfer and sharing (§16). A type that
-hides a raw pointer is `!Send`/`!Sync`; to vouch for one, write
-`unsafe impl T for Send {}` (the body MUST be empty, and `unsafe impl`
-applies only to `Send`/`Sync` — **E0860**/**E0861**). Conditional forms
-are allowed: `unsafe impl Arc[T: Send + Sync] for Send {}`.
+hides a raw pointer is `!Send`/`!Sync`; to vouch for one, write an empty
+marker impl `impl T: Send {}` (the body MUST be empty, and an empty
+marker impl applies only to `Send`/`Sync` — **E0860**/**E0861**). The act
+of hand-writing a marker impl the compiler will not auto-derive is the
+assertion. Conditional forms are allowed: `impl Arc[T: Send + Sync]: Send {}`.
 
 ---
 
@@ -586,7 +600,8 @@ and/or a return-type ascription. An unknown intrinsic is **E0905**.
 | Intrinsic | Result |
 |---|---|
 | `#size_of::[T]()` / `#align_of::[T]()` | layout of `T` (`usize`) |
-| `#addr_of(place)` | address of a place (unsafe to use as `*T`) |
+| `#addr_of(place)` | address of a place as a `*T` |
+| `#addr(p)` | raw pointer → `usize` (the loud ptr-to-int form) |
 | `#str_ptr(s)` / `#str_from_raw_parts(p, n)` | `str` ↔ raw parts |
 | `#slice_ptr(s)` / `#slice_len(s)` / `#slice_from_raw_parts(p, n)` | slice parts |
 | `#msg_send(recv, "sel") -> T` | Objective-C message send (interop) |
@@ -615,14 +630,15 @@ C+ has a **one-way** C ABI: `cpc` emits standard object files / static
 libraries that C and other languages can link; it does not compile `.c`.
 
 ```cplus
-extern fn printf(fmt: *u8, ...) -> i32;   // declaration; calls need unsafe
+extern fn printf(fmt: *u8, ...) -> i32;   // C-ABI declaration
 ```
 
-`extern fn` declares a C-ABI function; calling one is **E0801** outside
-`unsafe`. `...` declares varargs (extern signatures only). `#[repr(C)]`
-(§14) gives a struct C-compatible layout. A `[lib]` target's entry-file
-`pub` items keep their bare symbol names so C consumers link `add` as
-`_add`; imported files stay mangled.
+`extern fn` declares a C-ABI function; calling one is an ordinary call
+(the `extern` declaration is itself the marker that this crosses to C).
+`...` declares varargs (extern signatures only). `#[repr(C)]` (§14) gives
+a struct C-compatible layout. A `[lib]` target's entry-file `export`
+items keep their bare symbol names so C consumers link `add` as `_add`;
+non-`export` items stay mangled.
 
 ABI lowering (argument coercion, struct-by-value rules, `sret`) follows
 the target's C ABI and is pinned per target (§19).
@@ -684,7 +700,7 @@ primitives (`mutex`, `atomic`, `arc`) exist but are secondary.
 
 `async fn` / `await` provide coroutines on 64-bit targets; the executor
 is a library (`stdlib/executor`). Borrow-shaped parameters (`str`, `T[]`,
-`mut x: NonCopy`) are rejected in `async fn` (**E0900**) — use owned
+`ref x: NonCopy`) are rejected in `async fn` (**E0900**) — use owned
 types. On 32-bit targets, async is unavailable (**E0867**) and
 pthread-backed stdlib modules are gated (**E0866**); see §19.
 
@@ -740,17 +756,17 @@ Children of a container inherit the enclosing context.
 A context package provides, with these fixed names:
 
 ```cplus
-pub struct Item { ... }                      // one element type per context
-pub fn text(...) -> Item { ... }             // leaf element constructor(s)
+struct Item { ... }                          // one element type per context
+fn text(...) -> Item { ... }                 // leaf element constructor(s)
 
-pub struct Builder { ... }                   // the accumulator
+struct Builder { ... }                       // the accumulator
 impl Builder {
-    pub fn new() -> Builder { ... }
-    pub fn add(mut self, item: Item) { ... }
-    pub fn finish(move self) -> Root { ... } // root finisher (Root may differ from Item)
+    fn new() -> Builder { ... }
+    fn add(ref this, item: Item) { ... }
+    fn finish(take this) -> Root { ... }     // root finisher (Root may differ from Item)
 }
 
-pub fn vstack(b: Builder) -> Item { ... }    // container element: takes a filled Builder
+fn vstack(b: Builder) -> Item { ... }        // container element: takes a filled Builder
 ```
 
 There is one `Item` type per context (C+ has no overloading). A container
@@ -788,12 +804,12 @@ written code.
    { badge() }   vstack { for r in rows { item(r) } } }`:
 
 ```cplus
-let mut __b = view::Builder::new();
-let mut __i = view::text("t");
+var __b = view::Builder::new();
+var __i = view::text("t");
 __i.font = big;
 __b.add(__i);
 if c { __b.add(view::badge()); }
-let __c = { let mut __cb = view::Builder::new();
+let __c = { var __cb = view::Builder::new();
             for r in rows { __cb.add(view::item(r)); }
             view::vstack(__cb) };      // container finisher
 __b.add(__c);
@@ -841,12 +857,11 @@ span, and optional labels/notes/suggestions. Codes group by phase:
 | `E0340`–`E0360` | `match`, pattern-let, `break`/`continue` context (`E0347`–`E0352` pattern-let, `E0353` break/continue outside loop) |
 | `E0370`–`E0385` | borrow conflicts, moves |
 | `E0401`–`E0412` | modules, paths, visibility (`E0403` private, `E0404`/`E0405` unknown item) |
-| `E0500`–`E0513` | ownership/borrow checker, `Send` (`E0502`), raw-pointer accountability (`E0510`) |
-| `E0801` | operation requires `unsafe` |
-| `E0852`–`E0867` | imports/packages (`E0852` check-without-manifest), `unsafe impl` (`E0860`/`E0861`), embedded profile (`E0866`/`E0867`) |
+| `E0500`–`E0513` | ownership/borrow checker, `Send` (`E0502`), raw-pointer accountability (`E0510`), escaping view (`E0513`) |
+| `E0852`–`E0867` | imports/packages (`E0852` check-without-manifest), empty marker-impl misuse (`E0860`/`E0861`), embedded profile (`E0866`/`E0867`) |
 | `E0870`–`E0876` | compile-time builtins (`E0875` invalid UTF-8, `E0876` unset env) |
 | `E0890`–`E0909` | attributes, real-time contracts, intrinsics (`E0905` unknown intrinsic), async constraints (`E0900`) |
-| `E0X20`–`E0X36` | char literals (`E0X20`), `const`/`static` initializers (`E0X30`/`E0X31`), `static mut` access (`E0X33`/`E0X34`), const array length (`E0X36`) |
+| `E0X20`–`E0X36` | char literals (`E0X20`), `const`/`static` initializers (`E0X30`/`E0X31`), const array length (`E0X36`) |
 
 The compiler's diagnostic system is authoritative for exact messages and
 for any code not listed; this table fixes the categories.
@@ -870,5 +885,5 @@ document is in error — please report it.
   syntactically off.
 - `cpc query` / `cpc mcp` / `cpc lsp` — the resolved, typed
   code-knowledge graph for editors and agents.
-- `cpc doc` — extract `pub` items and their `///` docs.
+- `cpc doc` — extract public (non-`_`) items and their `///` docs.
 ```

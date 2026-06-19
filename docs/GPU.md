@@ -299,7 +299,7 @@ Worth tracking but not blocking:
 - **[vendor/metal](../vendor/metal/)** — current Metal bindings (v0.0.9). 6 files, ~620 LOC. Drop-clean, Result-returning. Lacks MPS bindings — that's the fast follow-up.
 - **[docs/COMPILER.md](COMPILER.md)** — compiler-internals reference. §11 explains the codegen / IR-text contract that `#compile_shader` plugs into.
 - **research.md** — the original "what would it take" survey. Predates the position decision; its framing of GPU as "feasible but massive" is correct but the conclusion (build it anyway) is what we rejected.
-- **[tutorial.md](../tutorial.md)** — language tutorial. §27 "Beyond stdlib" lists the existing vendor packages.
+- **[SKILL.md](SKILL.md)** — how to write C+ (the LLM-facing reference). §9 lists the existing vendor packages.
 
 ---
 

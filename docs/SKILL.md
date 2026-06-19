@@ -12,9 +12,9 @@ This file is a standalone reference dropped into your project; the C+ repo (exam
 
 ## 1. What C+ is
 
-Systems language. LLVM backend. Manual memory, no GC. Rust-style borrow checker. One-way C ABI (cpc emits standard object files; `.c` doesn't compile). Designed for LLMs to write correctly: explicit beats clever, locality is paramount, the type system carries weight.
+Systems language. LLVM backend. Manual memory, no GC. Ownership with a borrow checker (aliasing XOR mutability). One-way C ABI (cpc emits standard object files; `.c` doesn't compile). Designed for LLMs to write correctly: explicit beats clever, locality is paramount, the type system carries weight.
 
-**The language is feature-frozen.** v0.0.24 was a one-time **vocabulary refactor** (the "de-Rust" pass: `this`/`This`, `var`/`ref`/`take`, `impl T: I`, `#addr`, type-inferred literals — keywords moved off Rust shapes onto C/C++/TypeScript intuitions so LLMs stop pattern-matching to Rust). Apart from that, the core takes bug fixes only — no new keywords, syntax, or type-system changes. New capability lives in **packages** (`vendor/`, §9) and tooling, never the language. Don't propose language features; propose a package.
+**The language is feature-frozen.** The core takes bug fixes only — no new keywords, syntax, or type-system changes. New capability lives in **packages** (`vendor/`, §9) and tooling, never the language. Don't propose language features; propose a package.
 
 File extension `.cplus`. Compiler `cpc`. Project layout: `Cplus.toml` at root, sources in `src/`, deps in `vendor/`. Imports are explicit + aliased, no `.cplus` extension:
 
@@ -341,7 +341,7 @@ fn main() -> i32 {
 
 `defer` shares one scope-exit stack with `Drop` — they interleave in declaration order, popped LIFO.
 
-### Auto field-drop — v0.0.14
+### Auto field-drop
 
 Teardown is recursive and automatic. When a value goes out of scope, the compiler runs any user `drop(ref this)` first, then drops each **owning field** in reverse declaration order — no hand-written per-field drops needed:
 
@@ -358,7 +358,7 @@ Consequences to know:
 - `match`ing an *owned* enum **consumes** it (its drop is suppressed; the matched-out payload becomes the caller's). `match`ing through a `borrow` does not.
 - A container's heap *elements* behind a raw pointer (a `Vec[T]`'s `T`s) are dropped by the container's own `drop` (which walks them via `__cplus_drop_in_place::[T]`), not by auto field-drop. Binding an owning payload from a consumed enum and then *not* moving it out drops it at arm exit (no leak).
 
-### Raw-pointer accountability (`opaque`) — v0.0.13
+### Raw-pointer accountability (`opaque`)
 Every raw-pointer (`*T`) struct field must be **accounted for**, or it's a compile error (**E0510**) — no silent-leak default. Account for it one of two ways:
 
 ```cplus
@@ -516,7 +516,7 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `env` | env vars + argv |
 | `thread` | `spawn::[T](fn)` / `spawn_with::[I, O](data, fn)` / `JoinHandle[T]` |
 | `atomic` | `atomic_fetch_add_*` + `Ordering::{Relaxed,Acquire,Release,AcqRel,SeqCst}` |
-| `mutex` | pthread-backed, internally refcounted (collapses the `Arc<Mutex>` pair) |
+| `mutex` | pthread-backed, internally refcounted (no separate reference-count wrapper) |
 | `box` / `arc` / `rc` | Owned-on-heap; atomic refcount; non-atomic refcount |
 | `channel` | typed MPMC message passing |
 | `future` / `executor` / `reactor` / `time` | `async fn`, `await`, kqueue reactor |
@@ -567,9 +567,9 @@ fn main() -> i32 { return executor::block_on::[i32](outer()); }
 
 Borrow-shaped params (`str`, `T[]`, `ref x: NonCopy`) are rejected in `async fn` (E0900). Use `Text`, `Vec[T]`.
 
-Shared mutable state exists (`mutex`, `atomic`, `arc`), but prefer partition+join. There is no literal `Arc<Mutex<T>>` pattern — `Mutex[T]` is internally refcounted, so reach for it directly only when message-passing or partitioning won't do.
+Shared mutable state exists (`mutex`, `atomic`, `arc`), but prefer partition+join. `Mutex[T]` is internally refcounted (no separate wrapper needed) — reach for it directly only when message-passing or partitioning won't do.
 
-### `Send` / `Sync` marker impls — v0.0.14
+### `Send` / `Sync` marker impls
 
 `spawn`/`spawn_with` require their type params to be `Send`. A struct or enum that **hides a raw pointer** (directly or through a field) is `!Send` and `!Sync` — passing one across a `Send`/`Sync` bound is a compile error (**E0502**). A *bare* `*T` used directly (e.g. `thread::spawn::[*u8]`) stays Send. `Rc`/`MutexGuard` are `!Send` (Rc also `!Sync`).
 
@@ -589,7 +589,7 @@ A marker impl applies only to `Send`/`Sync` (E0861 elsewhere); the body is empty
 
 ## 11. SIMD types (one-paragraph summary)
 
-Nineteen widths: `f32x4 f64x2 f32x8 f64x4 i{8,16,32,64}x{16,8,4,2} u...` plus 256-bit doublings, plus `mask{N}x{M}` types distinct from signed-int SIMD. Constructors `splat`/`new`/`load`/`from_array`/`to_array`. Methods follow lane type: `add/sub/mul/div`, float `fma/sqrt/abs`, int `and/or/xor/shl/shr`. Compare returns `mask`, blend via `mask.select(a,b)`. SIMD does NOT cross `extern fn` boundaries — round-trip via `[f32; N]` (E0410 otherwise). Full reference: tutorial.md §32.
+Nineteen widths: `f32x4 f64x2 f32x8 f64x4 i{8,16,32,64}x{16,8,4,2} u...` plus 256-bit doublings, plus `mask{N}x{M}` types distinct from signed-int SIMD. Constructors `splat`/`new`/`load`/`from_array`/`to_array`. Methods follow lane type: `add/sub/mul/div`, float `fma/sqrt/abs`, int `and/or/xor/shl/shr`. Compare returns `mask`, blend via `mask.select(a,b)`. SIMD does NOT cross `extern fn` boundaries — round-trip via `[f32; N]` (E0410 otherwise). Full reference: SPEC.md.
 
 ---
 
@@ -616,8 +616,8 @@ fn hot(x: i32) -> i32 { return x; }              // (always) forces inline even 
 | Code | Meaning | Fix |
 |---|---|---|
 | E0001 | Lexer: unexpected character | Bad token (e.g. `?`, `\{`) — not part of C+ |
-| E0100 | Parser: unexpected token | Wrong form (closure, `<T>`, `class`, `mut`/`move`, etc.) |
-| E0300 | Undefined name | Typo / missing import / `pub` (also `null`) |
+| E0100 | Parser: unexpected token | Wrong form (closure, `<T>`, `class`, `&T`, etc.) |
+| E0300 | Undefined name | Typo / missing import (also `null`) |
 | E0301 | Duplicate definition | No overloading — rename |
 | E0302 | Type mismatch | Insert `as` or fix declared type |
 | E0303 | Unknown type | Typo / missing import / generic param oos |
@@ -636,7 +636,7 @@ fn hot(x: i32) -> i32 { return x; }              // (always) forces inline even 
 | W0002 | *(warn)* raw-ptr field freed only conditionally in `drop` | Expected for refcounted types; confirm every owning path frees |
 | E0X30 | Non-literal `const`/`static` initializer | Use a literal (or array/struct literal for `static`) |
 | E0X36 | Array length isn't a literal or non-neg int `const` | Use a literal or an in-scope int `const` |
-| E0403 | Private symbol used across modules | Mark it `pub` |
+| E0403 | Private symbol used across modules | Drop the leading `_` (or `export` it for the C ABI) |
 | E0411 | `restrict` on non-pointer param | Only `*T` accepts `restrict` |
 | E0500/E0501 | Inference fail / wrong type-arg count | Use `name::[T1, T2](...)` |
 | E0337 | A bare borrow escapes (return / field-store / re-pass to `take`) | Take it by value (`take`) or `.clone()` |
@@ -755,7 +755,7 @@ Canonical patterns: [`cpc/tests/e2e.rs`](https://github.com/netdur/cplus/blob/ma
 
 ---
 
-## 16. Contextual builder blocks — `@ctx { ... }` (v0.0.22)
+## 16. Contextual builder blocks — `@ctx { ... }`
 
 A package-extensible *declarative construction* syntax (UI trees, route tables, config) with **no macros, closures, or compiler plugins**. The compiler owns only the syntax + lowering; a package supplies ordinary types and functions. `@` was an unused character — purely additive.
 

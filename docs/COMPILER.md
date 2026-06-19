@@ -2,7 +2,7 @@
 
 A compiler-internals reference for [`cplus-core`](../cplus-core/src/) (the library), [`cpc`](../cpc/src/) (the driver binary), and [`cpc-lsp`](../cpc-lsp/src/) (the language server). Audience: someone reading the source.
 
-If you want to use the language, read [tutorial.md](../tutorial.md). If you want to extend it, read this file then `sema.rs` and `codegen.rs`.
+If you want to use the language, read [SKILL.md](SKILL.md) (how to write C+) and [SPEC.md](SPEC.md) (the normative reference). If you want to extend it, read this file then `sema.rs` and `codegen.rs`.
 
 ---
 
@@ -311,7 +311,7 @@ Sema emits ~77 unique `Exxxx` codes. The main ranges:
 | E0852–E0864 | Vendor packages + `[link]` validation |
 | E0900 | Borrow-shaped params in async fns |
 
-Each code lives in the file that emits it. There is no central error registry — the codes are documented in [tutorial.md §29](../tutorial.md#29-common-error-codes) and the error message itself.
+Each code lives in the file that emits it. There is no central error registry — the codes are documented in [ERRORS.md](ERRORS.md) and the error message itself.
 
 ---
 
@@ -605,7 +605,7 @@ After all three: the typed json refactor (994 LOC) shipped with 23 in-package `#
 | Task | Files to touch | Notes |
 |---|---|---|
 | Add a new attribute | `attrs.rs`, possibly `codegen.rs`, `cpc/tests/e2e.rs` | Attribute table is the single source. Read §5. |
-| Add a new error code | The file that emits it. Tutorial table (E0xxx). | No central registry. Make the message specific. |
+| Add a new error code | The file that emits it. Document it in `docs/errors.toml` (E0xxx). | No central registry. Make the message specific. |
 | Add a new builtin type | `ast.rs` (`Ty` variant), `sema.rs` (resolution + ops), `codegen.rs` (lowering), `monomorphize.rs` (mangling). | Mask was the most recent — search for `Ty::Mask` to see every site touched. |
 | Add a new compile-time intrinsic | `sema.rs` (`check_named_call`), `codegen.rs` (lowering), `MonoInfo` field if it carries data. | `addr_of` is the smallest example. |
 | Add a new generic stdlib type | `vendor/stdlib/src/<name>.cplus`, plus a smoke test under `docs/examples/projects/`. | No compiler changes if the type uses existing primitives. |
