@@ -113,7 +113,7 @@ impl Vec[T] {
         return;
     }
 
-    pub fn push(ref this, value: T) {
+    pub fn push(ref this, take value: T) {
         let required: usize = required_len(this.len, 1 as usize);
         if required > this.cap {
             this.grow_to(next_capacity(this.cap, required));
@@ -223,7 +223,7 @@ impl Vec[T] {
     // Asserts the index is in bounds. Works for any `T`: the old element's Drop
     // runs (freeing e.g. a `string`'s buffer) before the new value is moved in,
     // so there is no leak and no double free.
-    pub fn set(ref this, i: usize, value: T) {
+    pub fn set(ref this, i: usize, take value: T) {
         assert i < this.len;
         let slot: *T = unsafe { this.ptr + i };
         unsafe { #drop_in_place::[T](slot); }

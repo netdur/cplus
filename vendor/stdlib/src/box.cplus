@@ -55,7 +55,7 @@ impl Box[T] {
     // for any T — for Copy T the `#drop_in_place` is a no-op the optimizer
     // elides; for a Drop T it frees the old value's resources before the new
     // value moves in, so there is no leak and no double-free.
-    pub fn set(ref this, v: T) {
+    pub fn set(ref this, take v: T) {
         unsafe { #drop_in_place::[T](this.p); }
         unsafe { *this.p = v; }
         return;

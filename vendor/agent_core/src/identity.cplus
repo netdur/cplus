@@ -376,7 +376,7 @@ impl Registry {
     // string into `ids` FIRST, then take the index key as a view of the stored
     // copy (`id_view`). Taking the view before the move would double-free on
     // drop (see the ordering rule at the top of this file).
-    fn push_node(ref this, id: text::Text, role: Role, parent: option::Option[usize], exposed: bool) -> usize {
+    fn push_node(ref this, take id: text::Text, role: Role, parent: option::Option[usize], exposed: bool) -> usize {
         let node_id: usize = this.ids.len();
         this.ids.push(id);
         this.index.insert(this.id_view(node_id), node_id);

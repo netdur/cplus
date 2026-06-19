@@ -173,7 +173,7 @@ impl MutexGuard[T] {
     // inner T is always initialized (`new` moved it in), so the drop-then-store
     // is sound for any T — a no-op `#drop_in_place` for Copy T, and a proper
     // teardown of the old value for a Drop T (no leak, no double-free).
-    pub fn set(ref this, v: T) {
+    pub fn set(ref this, take v: T) {
         let value_off: usize = (8 as usize) +% (64 as usize);
         let value_ptr: *T = unsafe { (this.ctrl + value_off) as *T };
         unsafe { #drop_in_place::[T](value_ptr); }

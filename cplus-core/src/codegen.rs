@@ -11740,13 +11740,17 @@ impl<'a> FnState<'a> {
         return_type: &Ty,
         args: &[Expr],
     ) -> Option<(String, Ty)> {
-        // Evaluate each arg to a value. FnPtr params are value-passed (the
-        // fn-pointer type carries no `mut`/`borrow` markers). The type erases
-        // those markers, but a non-Copy value passed BY VALUE is still moved
-        // into the call (the callee owns and drops it), so disarm the source
-        // binding's scope-exit drop — exactly as a direct call does for a move
-        // param. Without this, the source and the callee both drop it
-        // (double-free). All callable signatures here are C-ABI (ccc).
+        // Evaluate each arg to a value. A fn-pointer type `fn(R)` carries no
+        // `take`/`borrow` marker (the parser accepts only a bare type per
+        // param), so it represents the bare default — which since v0.0.24 is a
+        // BORROW. The callee therefore does not drop a non-Copy arg
+        // (`effective_move` is false for a bare param), and the caller keeps
+        // ownership and drops it at scope exit. So we must NOT `mark_moved` the
+        // source here — doing so would disarm the caller's drop while the callee
+        // never drops either, leaking the value. (To pass ownership through a
+        // fn-pointer you would need a `take` marker the fn-pointer type cannot
+        // express; such a coercion is the unsound case, not this borrow one.)
+        // All callable signatures here are C-ABI (ccc).
         let mut arg_vals: Vec<(String, String)> = Vec::with_capacity(args.len());
         for (a, pty) in args.iter().zip(params.iter()) {
             // A by-value COPY struct arg lowers through the C ABI so the indirect
@@ -11788,11 +11792,6 @@ impl<'a> FnState<'a> {
             }
             let (v, _) = self.gen_value_arg(a, pty);
             arg_vals.push((v, self.lty(pty)));
-            if !is_copy_ty(pty, self.types) {
-                if let ExprKind::Ident(name) = &a.kind {
-                    self.mark_moved(name);
-                }
-            }
         }
         let mut arg_str = String::new();
         for (i, (v, t)) in arg_vals.iter().enumerate() {

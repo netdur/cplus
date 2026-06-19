@@ -97,7 +97,7 @@ impl HashMap[K, V] {
 
     // Insert or overwrite `k -> v`. Key + value are bitwise-copied into
     // the table (their `Copy` bound makes this safe).
-    pub fn insert(ref this, k: K, v: V) {
+    pub fn insert(ref this, take k: K, take v: V) {
         if this.cap == (0 as usize) {
             this.grow_to(16 as usize);
         }

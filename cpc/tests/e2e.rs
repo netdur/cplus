@@ -2486,12 +2486,12 @@ fn main() -> i32 {
         "expected compile failure for move-while-multi-source-borrowed"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // Under v0.0.10 Phase 5 the same bug surfaces as E0335 (use-after-move)
-    // rather than E0372 (move-while-borrowed) — `longest(a, b)` already
-    // consumed `a` by the time `drain(a)` runs.
+    // v0.0.24 #9 stage 3e: bare params are read-only borrows, so moving a
+    // borrowed region input into an owned value is the borrow-escape E0337
+    // (previously surfaced as E0335/E0372). Still correctly rejected.
     assert!(
-        stderr.contains("E0335") || stderr.contains("E0372"),
-        "expected E0335 or E0372, got: {stderr}"
+        stderr.contains("E0335") || stderr.contains("E0372") || stderr.contains("E0337"),
+        "expected E0335 / E0372 / E0337, got: {stderr}"
     );
 }
 
@@ -5668,13 +5668,18 @@ fn main() -> i32 { return 0; }
         .expect("invoke cpc");
     assert!(
         !out.status.success(),
-        "expected compile failure for ambiguous elision"
+        "expected compile failure: `return a` escapes a borrowed input"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("E0384"), "expected E0384, got: {stderr}");
+    // v0.0.24 #9 stage 3e: bare params are borrows, so `return a` escapes a
+    // borrowed binding — the precise error is now E0337 (borrow escape), and
+    // the actionable fix is to take ownership (`take a: B`), not the old
+    // region annotation (E0384 / `borrow REGION T`), which this shape no
+    // longer needs. The region-suggestion path is revisited in #9 stage 4.
+    assert!(stderr.contains("E0337"), "expected E0337, got: {stderr}");
     assert!(
-        stderr.contains("borrow REGION T"),
-        "E0384 suggestion should reference `borrow REGION T`; got: {stderr}"
+        stderr.contains("Take ownership by value") || stderr.contains("take"),
+        "E0337 should guide toward taking ownership; got: {stderr}"
     );
 }
 
@@ -5777,13 +5782,12 @@ fn main() -> i32 {
         "expected compile failure for parent+sub-place"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // Rejected as a parent+subfield borrow conflict (E0374) or as a partial move
-    // of `p.left` out of a Drop aggregate. v0.0.23 routes call args through the
-    // same drop-aware path as let/construction, so the partial move is now the
-    // precise E0509 ("move a field out of a Drop type") rather than the generic
-    // E0337 — all three are correct refusals of `write_pair(p, p.left)`.
+    // Rejected as a parent+subfield borrow conflict (E0374), a partial move out
+    // of a Drop aggregate (E0509), the generic borrow-escape (E0337), or — since
+    // v0.0.24 #9 stage 3e, where a `ref` arg requires a `var` place — E0328.
+    // All are correct refusals of `write_pair(p, p.left)`.
     assert!(
-        stderr.contains("E0374") || stderr.contains("E0337") || stderr.contains("E0509"),
+        stderr.contains("E0374") || stderr.contains("E0337") || stderr.contains("E0509") || stderr.contains("E0328"),
         "expected E0374 / E0337 / E0509, got: {stderr}"
     );
 }
@@ -8279,7 +8283,7 @@ fn phase7_generic_fn_returning_nested_generic_struct_runs() {
         &src,
         "struct Box[T] { value: T }\n\
          struct Pair[A, B] { first: A, second: B }\n\
-         fn wrap[T](v: T, tag: i32) -> Pair[Box[T], i32] {\n\
+         fn wrap[T](take v: T, tag: i32) -> Pair[Box[T], i32] {\n\
              return Pair[Box[T], i32] { first: Box[T] { value: v }, second: tag };\n\
          }\n\
          fn main() -> i32 {\n\

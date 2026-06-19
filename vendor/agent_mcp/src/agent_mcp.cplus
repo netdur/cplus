@@ -37,7 +37,7 @@ fn jbool(b: bool) -> json::Value {
     return json::Value::Bool(b);
 }
 
-fn member(k: str, v: json::Value) -> json::Member {
+fn member(k: str, take v: json::Value) -> json::Member {
     return json::Member { key: k.to_text(), value: v };
 }
 
@@ -135,7 +135,7 @@ fn outcome_result(o: surface::Outcome) -> json::Value {
 
 // ---- JSON-RPC envelopes -----------------------------------------------------
 
-fn ok_response(id: f64, result: json::Value) -> json::Value {
+fn ok_response(id: f64, take result: json::Value) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.push(member("jsonrpc", jstr("2.0")));
     m.push(member("id", jnum(id)));

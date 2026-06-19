@@ -52,7 +52,7 @@ struct Box {
 }
 
 impl Box {
-    fn cast[T](this, value: T) -> T {
+    fn cast[T](this, take value: T) -> T {
         return value;
     }
 }
