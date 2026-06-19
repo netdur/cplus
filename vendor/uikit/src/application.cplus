@@ -2,7 +2,7 @@
 // never returns — it installs the run loop and calls back into the app
 // delegate. The C+ entry convention for the external-builder handoff:
 //
-//   1. The C+ app exports `pub extern fn cplus_app_main(argc, argv) -> i32`
+//   1. The C+ app exports `export extern fn cplus_app_main(argc, argv) -> i32`
 //      (any name works; this is the convention the Xcode shim calls).
 //   2. That function registers a delegate class via `register_app_delegate`
 //      (passing the `application:didFinishLaunchingWithOptions:` IMP where

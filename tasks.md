@@ -145,10 +145,18 @@ Tasks 1–6 are independent (any order among themselves).
   (basic/nested/arg/return, generic, move-into-field no-double-free).
   cplus-core 1550 / cpc e2e 627, both green.
 
-- [→] **9. Binding model + params** — `const`/`static`/`let`/`var`, retire
+- [x] **9. Binding model + params** — `const`/`static`/`let`/`var`, retire
   `mut` entirely; `move`→`take`; bare `x: T` = read-only borrow; `ref x:`/`ref
   this` with the `ref`-requires-a-`var`-place `is_var` check. *Hardest core; the
-  headline.* STAGED (in progress).
+  headline.* DONE 2026-06-19 — all stages 1–4 landed; commits e2458d4 (3e),
+  392a1f4 (`fn(take R)` + flip completion), 92aeed6 (`borrow` retired).
+  cplus-core 1540 / cpc e2e 618, green. Two things beyond the original scope:
+  (1) the flip surfaced a fn-pointer ownership-convention decision — shipped
+  `fn(take R)` (consumes) vs `fn(R)` (borrows); see the 392a1f4 commit (and
+  memory `project_cplus_fnptr_ownership`). (2) the region-lifetime internal machinery is now
+  unreachable DEAD code (parser rejects `borrow`); its removal is DEFERRED (pure
+  cleanup, zero user-facing change) — full scope/risk/ordering in
+  plans/plan.md "Deferred follow-up — region-lifetime dead-code removal".
   **Recon findings (2026-06-18):** (a) today's `let` already freezes field
   writes (`let x: A; x.b = 3` → E0305) and `let mut` allows them — so the
   binding model is a clean RENAME (`let mut`→`var`), NOT a semantic tightening
@@ -341,11 +349,58 @@ Tasks 1–6 are independent (any order among themselves).
     E0513 (str/slice dangling-view escape — not region-specific).
     cplus-core 1540 / cpc e2e 618, both green.
 
-- [ ] **10. Visibility** — `pub`→`_` privacy (fields/methods; ~266 field
+- [→] **10. Visibility** — `pub`→`_` privacy (fields/methods; ~266 field
   `pub`s removed); `export` keyword for the C-ABI/linker/header surface;
   header-gen walks `export` items; **error-level** privacy for raw-ptr /
   custom-`drop` types. Decision B resolved → drop `pub`, uniform `_`-private
-  including top-level items.
+  including top-level items. STAGED (in progress 2026-06-19).
+  **Recon (2026-06-19):** `is_pub` flag on 9 AST nodes, set from
+  `eat(TokenKind::Pub)`; today it does DOUBLE duty — (a) privacy: only FIELDS
+  enforce it (E0403 cross-file read/construct via `field_with_pub`); item/method
+  privacy is NOT enforced today; (b) linkage + header-gen (`is_pub` → external
+  linkage + `--emit-header` walks `is_pub` struct/enum/extern-fn). Corpus: 2632
+  `pub` (≈2008 items + 273 fields + methods) / 139 files; 46 `pub extern fn`.
+  Surface that flips to PUBLIC under the new default: ~1248 non-pub items + ~617
+  non-pub fields — per plan, MOST just become public; only invariant-protectors
+  get `_` (judgment, small set).
+  - [→] **Stage 1 — visibility semantics.** Privacy becomes NAME-based: an
+    item/field/method is private iff its name starts with `_`; public otherwise
+    (Dart model, public-by-default). Enforce cross-module/file access at error
+    level for fields AND items AND methods (extend E0403 beyond fields). Split
+    privacy OFF `is_pub` onto the name rule. `pub` still parses (redundant
+    no-op) during transition. Update privacy-assertion tests (no-pub fields that
+    were private now need `_`).
+    - [x] **1a — field privacy name-based.** Added `is_private_name(name)`
+      (`_`-prefix); the two field E0403 sites (cross-file read + struct-literal
+      construct) now gate on the name, not `is_pub`. Updated the 2 cross-file
+      E0403 tests to use a `_y` private field. `is_pub` still drives
+      linkage/header (→ Stage 2 export).
+    - [x] **1b — item + method privacy name-based.** CORRECTION to recon: item
+      privacy was ALREADY enforced (resolver's public-surface map +
+      PrivateAccess/E0403), gated on `is_pub`; only the *mechanism* changed.
+      Flipped the resolver public-surface builder (8 sites: fn/enum/struct/
+      method/interface/alias/const/static) to `exported_name(name)` =
+      `!starts_with('_')`; updated E0403 messages (4) + 6 privacy tests
+      (resolver ×4, e2e ×2) to `_`-prefixed private items. Verified end-to-end:
+      `m::visible()` works cross-file, `m::_helper()` → E0403.
+    Stage 1 DONE — uniform name-based privacy (fields + items + methods),
+    public-by-default, cross-file E0403. lib 1540 / e2e 618 green. UNCOMMITTED.
+  - [x] **Stage 2 — `export` keyword.** (DONE 2026-06-19.) Added `Export` lexer
+    token + parser recognition at item + method level. SIMPLIFICATION vs the
+    recon plan: no NEW `is_export` AST field — since Stage 1 made privacy
+    name-based, the existing `is_pub` flag NO LONGER means privacy; it now means
+    "exported" (drives external linkage + fastcc-exclusion + C-ABI check +
+    header-gen, exactly as before). `export` sets it; `pub` still sets it
+    transitionally (retired in Stage 3, after which `export` is its sole
+    setter → `is_pub` becomes `is_export` in all but name). Migrated the 46
+    `pub extern fn` → `export extern fn` across 7 .cplus files; updated the
+    extern-decl-rejection parser messages (`pub`→`export`); +1 parser test
+    (`export_keyword_marks_the_c_abi_surface`). The c_consumer example exercises
+    `export extern fn` end-to-end (header + link + run). lib 1541 / e2e 618
+    green. UNCOMMITTED.
+  - [ ] **Stage 3 — drop `pub`.** Migrate corpus (drop `pub` everywhere — it's
+    redundant once public-by-default + export land); `_`-rename the invariant
+    members; parser rejects `pub` with a hint (#1-style reserved token).
 
 - [ ] **11. `Text`→`str` coercion** — FIRST re-base the E0513 view-escape
   check off the `as_str` NAME onto coercion sites; THEN add the borrowed-

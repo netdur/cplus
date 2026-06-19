@@ -9,7 +9,7 @@ import "jni/jni" as jni;
 static STATUS_REF: usize = 0;
 static CLICKS: i32 = 0;
 
-pub extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
+export extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     activity_obj: jni::jobject,
@@ -41,7 +41,7 @@ pub extern fn Java_com_cplus_hello_MainActivity_nativeCreateView(
 }
 
 // The android_view/listener hook: every adapter click lands here.
-pub extern fn cplus_on_click(
+export extern fn cplus_on_click(
     envp: *jni::JNIEnv,
     token: i64,
     view: jni::jobject,

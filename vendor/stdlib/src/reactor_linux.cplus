@@ -144,45 +144,45 @@ fn ptr_is_null(p: *u8) -> bool {
     return p == null_p;
 }
 
-pub extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
+export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
     return;
 }
 
-pub extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
+export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
     return;
 }
 
-pub extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
+export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
     return;
 }
 
-pub extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
+export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
     return;
 }
 
-pub extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
+export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
     return;
 }
 
-pub extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
+export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
     return;
 }
 
-pub extern fn stdlib_reactor_drain_pending_v1() -> i32 {
+export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
     return drain_pending();
 }
 
-pub extern fn stdlib_reactor_waiter_count_v1() -> i32 {
+export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
 }
 
-pub extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
+export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     if poll_one_event() {
         return 1 as i32;
     }

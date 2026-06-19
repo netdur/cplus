@@ -382,6 +382,15 @@ impl StructDef {
     }
 }
 
+/// v0.0.24 #10: visibility is name-based — an item, field, or method whose name
+/// starts with `_` is private to its module; everything else is public (the
+/// Dart model: public by default, `_` to hide). A bare `_` (wildcard) and
+/// compiler-internal `__cplus_*` names are never user cross-module access sites,
+/// so the simple prefix test is sufficient.
+pub fn is_private_name(name: &str) -> bool {
+    name.starts_with('_')
+}
+
 #[derive(Debug, Clone)]
 pub struct FnSig {
     pub params: Vec<ParamSig>,
@@ -7997,13 +8006,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             provided.insert(lit_field.name.name.clone(), ());
             let declared_field = declared.iter().find(|(n, _, _)| n == &lit_field.name.name);
             match declared_field {
-                Some((_, t, is_pub)) => {
-                    // Slice 4C: cross-file field-pub gate. Same-file
+                Some((_, t, _is_pub)) => {
+                    // v0.0.24 #10: visibility is name-based — a field whose name
+                    // starts with `_` is private to its module. Cross-file
+                    // construction of a private field is E0403; same-file
                     // construction always sees private fields.
-                    if !*is_pub && self.is_cross_file_access(&struct_origin) {
+                    if is_private_name(&lit_field.name.name)
+                        && self.is_cross_file_access(&struct_origin)
+                    {
                         self.err(
                             "E0403",
-                            format!("field `{}` of struct `{}` is private (mark it `pub` in its declaration to expose)", lit_field.name.name, struct_name),
+                            format!("field `{}` of struct `{}` is private (its leading `_` marks it module-private; drop the `_` to expose)", lit_field.name.name, struct_name),
                             lit_field.name.span,
                         );
                     }
@@ -8074,12 +8087,13 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let struct_name = def.name.clone();
         let struct_origin = def.origin_file.clone();
         match def.field_with_pub(&name.name) {
-            Some((_, ty, is_pub)) => {
-                // Slice 4C: cross-file private-field read is E0403/Field.
-                if !is_pub && self.is_cross_file_access(&struct_origin) {
+            Some((_, ty, _is_pub)) => {
+                // v0.0.24 #10: name-based privacy — a `_`-prefixed field is
+                // module-private; reading it cross-file is E0403/Field.
+                if is_private_name(&name.name) && self.is_cross_file_access(&struct_origin) {
                     self.err(
                         "E0403",
-                        format!("field `{}` of struct `{}` is private (mark it `pub` in its declaration to expose)", name.name, struct_name),
+                        format!("field `{}` of struct `{}` is private (its leading `_` marks it module-private; drop the `_` to expose)", name.name, struct_name),
                         name.span,
                     );
                 }

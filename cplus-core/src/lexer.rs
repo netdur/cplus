@@ -116,7 +116,7 @@ pub enum TokenKind {
     Fn, Let, Mut, Const, Static, If, Else, While, For, In, Return,
     True, False, As, Unsafe, Extern,
     // keywords (reserved for future phases)
-    Struct, Enum, Union, Match, Trait, Impl, Pub, Use, Mod, Import,
+    Struct, Enum, Union, Match, Trait, Impl, Pub, Export, Use, Mod, Import,
     SelfLower, SelfUpper, Defer, Try, Break, Continue, Loop, Move, Restrict, Opaque, Guard, Assert,
     /// v0.0.3 Phase 5 Slice 5E.1: `async` fn modifier + `await` prefix
     /// expression. Lexed unconditionally; sema/parser gate the
@@ -821,6 +821,7 @@ impl<'a> Lexer<'a> {
             "trait" => TokenKind::Trait,
             "impl" => TokenKind::Impl,
             "pub" => TokenKind::Pub,
+            "export" => TokenKind::Export,
             "use" => TokenKind::Use,
             "mod" => TokenKind::Mod,
             "import" => TokenKind::Import,

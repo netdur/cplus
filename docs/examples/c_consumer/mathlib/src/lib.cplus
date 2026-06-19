@@ -11,7 +11,7 @@
 
 // ---- Types crossing the C boundary ----
 //
-// Every aggregate that appears in a `pub extern fn` signature must be
+// Every aggregate that appears in a `export extern fn` signature must be
 // `#[repr(C)]` (C-compatible layout) and free of `drop` destructors
 // (no cross-language Drop). Sema enforces both via E0410.
 
@@ -46,11 +46,11 @@ pub enum Color {
 // The C and C+ ABIs agree on scalars, so the LLVM signature is unchanged.
 // `add` and `negate` show up in `mathlib.h` as plain C functions.
 
-pub extern fn add(a: i32, b: i32) -> i32 {
+export extern fn add(a: i32, b: i32) -> i32 {
     return a + b;
 }
 
-pub extern fn negate(x: i32) -> i32 {
+export extern fn negate(x: i32) -> i32 {
     return - x;
 }
 
@@ -63,7 +63,7 @@ pub extern fn negate(x: i32) -> i32 {
 // The Phase-1-closeout hand-test that exposed this gap is this function:
 // before Slice 5.D it returned garbage; now it returns 25 for {3,4}.
 
-pub extern fn square(p: Point) -> i32 {
+export extern fn square(p: Point) -> i32 {
     return p.x * p.x + p.y * p.y;
 }
 
@@ -72,7 +72,7 @@ pub extern fn square(p: Point) -> i32 {
 // register-packed value. C callers reconstruct the Point fields from
 // the bits.
 
-pub extern fn make_point(x: i32, y: i32) -> Point {
+export extern fn make_point(x: i32, y: i32) -> Point {
     return Point { x: x, y: y };
 }
 
@@ -80,11 +80,11 @@ pub extern fn make_point(x: i32, y: i32) -> Point {
 //
 // Passes in TWO GPRs. cpc emits `define i64 @sum_pair([2 x i64] %0)`.
 
-pub extern fn sum_pair(p: Pair) -> i64 {
+export extern fn sum_pair(p: Pair) -> i64 {
     return p.a + p.b;
 }
 
-pub extern fn make_pair(a: i64, b: i64) -> Pair {
+export extern fn make_pair(a: i64, b: i64) -> Pair {
     return Pair { a: a, b: b };
 }
 
@@ -93,7 +93,7 @@ pub extern fn make_pair(a: i64, b: i64) -> Pair {
 // Too large for register passing. The caller allocates a stack slot
 // and passes a pointer (indirect). cpc emits `define i64 @sum_triple(ptr %0)`.
 
-pub extern fn sum_triple(t: Triple) -> i64 {
+export extern fn sum_triple(t: Triple) -> i64 {
     return t.a + t.b + t.c;
 }
 
@@ -101,7 +101,7 @@ pub extern fn sum_triple(t: Triple) -> i64 {
 // and passes its address as a hidden first parameter. cpc emits
 // `define void @make_triple(ptr sret(...) align 8 %0)`.
 
-pub extern fn make_triple(a: i64, b: i64, c: i64) -> Triple {
+export extern fn make_triple(a: i64, b: i64, c: i64) -> Triple {
     return Triple { a: a, b: b, c: c };
 }
 
@@ -110,7 +110,7 @@ pub extern fn make_triple(a: i64, b: i64, c: i64) -> Triple {
 // Lowers to `i32` — single register, no special handling. Consumers see
 // `Color_Red = 0`, `Color_Green = 1`, `Color_Blue = 2` in mathlib.h.
 
-pub extern fn color_index(c: Color) -> i32 {
+export extern fn color_index(c: Color) -> i32 {
     return match c {
         Color::Red => 0,
         Color::Green => 1,
@@ -124,7 +124,7 @@ pub extern fn color_index(c: Color) -> i32 {
 // block mutates the caller's storage. The C side allocates the int and
 // passes its address; the C+ side fills it.
 
-pub extern fn fill_with(out: *i32, value: i32) {
+export extern fn fill_with(out: *i32, value: i32) {
     unsafe { *out = value; }
     return;
 }
@@ -135,7 +135,7 @@ pub extern fn fill_with(out: *i32, value: i32) {
 // pass a C callback through. Inside the C+ body, the fn-ptr is just a
 // callable value.
 
-pub extern fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+export extern fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
     return f(x);
 }
 
@@ -149,6 +149,6 @@ fn helper(x: i32) -> i32 {
     return x +% (1 as i32);
 }
 
-pub extern fn use_helper(x: i32) -> i32 {
+export extern fn use_helper(x: i32) -> i32 {
     return helper(x);
 }

@@ -219,12 +219,12 @@ impl std::fmt::Display for ResolveError {
                 match kind {
                     PrivateKind::Method => write!(
                         f,
-                        "[E0403] {}: {what} `{owner}::{name}` is private (mark it `pub` in its declaration to export)",
+                        "[E0403] {}: {what} `{owner}::{name}` is private (its leading `_` marks it module-private; drop the `_` to export)",
                         file.display(),
                     ),
                     _ => write!(
                         f,
-                        "[E0403] {}: {what} `{name}` (in module `{owner}`) is private (mark it `pub` in its declaration to export)",
+                        "[E0403] {}: {what} `{name}` (in module `{owner}`) is private (its leading `_` marks it module-private; drop the `_` to export)",
                         file.display(),
                     ),
                 }
@@ -615,10 +615,10 @@ impl LoadFailure {
                 };
                 let msg = match kind {
                     PrivateKind::Method => format!(
-                        "{what} `{owner}::{name}` is private (mark it `pub` in its declaration to export)",
+                        "{what} `{owner}::{name}` is private (its leading `_` marks it module-private; drop the `_` to export)",
                     ),
                     _ => format!(
-                        "{what} `{name}` is private (mark it `pub` in `{owner}` to export)",
+                        "{what} `{name}` is private (its leading `_` marks it module-private in `{owner}`; drop the `_` to export)",
                     ),
                 };
                 ("E0403", msg, span_in(file, *span))
@@ -1294,6 +1294,14 @@ fn detect_cycle(
 
 // ----- merge / rewrite -----
 
+/// v0.0.24 #10: visibility is name-based — a top-level item or method is
+/// exported (public to importers) unless its name starts with `_`, which marks
+/// it module-private (the Dart model: public by default, `_` to hide). Replaces
+/// the old `pub`-flag gate.
+fn exported_name(name: &str) -> bool {
+    !name.starts_with('_')
+}
+
 fn merge(
     files: BTreeMap<String, FileUnit>,
     entry_file_id: &str,
@@ -1338,7 +1346,9 @@ fn merge(
                     }
                     all.insert(f.name.name.clone());
                     kinds.insert(f.name.name.clone(), ItemKindTag::Function);
-                    if f.is_pub {
+                    // v0.0.24 #10: visibility is name-based — public unless the
+                    // name starts with `_` (Dart model, public by default).
+                    if exported_name(&f.name.name) {
                         pubs.insert(f.name.name.clone());
                     }
                 }
@@ -1346,7 +1356,7 @@ fn merge(
                     all.insert(e.name.name.clone());
                     enums.insert(e.name.name.clone());
                     kinds.insert(e.name.name.clone(), ItemKindTag::Enum);
-                    if e.is_pub {
+                    if exported_name(&e.name.name) {
                         pubs.insert(e.name.name.clone());
                     }
                 }
@@ -1354,14 +1364,14 @@ fn merge(
                     all.insert(s.name.name.clone());
                     structs.insert(s.name.name.clone());
                     kinds.insert(s.name.name.clone(), ItemKindTag::Struct);
-                    if s.is_pub {
+                    if exported_name(&s.name.name) {
                         pubs.insert(s.name.name.clone());
                     }
                 }
                 ItemKind::Impl(b) => {
                     let entry = methods.entry(b.target.name.clone()).or_default();
                     for m in &b.methods {
-                        if m.is_pub {
+                        if exported_name(&m.name.name) {
                             entry.insert(m.name.name.clone());
                         }
                     }
@@ -1372,7 +1382,7 @@ fn merge(
                 ItemKind::Interface(i) => {
                     all.insert(i.name.name.clone());
                     kinds.insert(i.name.name.clone(), ItemKindTag::Interface);
-                    if i.is_pub {
+                    if exported_name(&i.name.name) {
                         pubs.insert(i.name.name.clone());
                     }
                 }
@@ -1382,7 +1392,7 @@ fn merge(
                 ItemKind::TypeAlias(a) => {
                     all.insert(a.name.name.clone());
                     kinds.insert(a.name.name.clone(), ItemKindTag::TypeAlias);
-                    if a.is_pub {
+                    if exported_name(&a.name.name) {
                         pubs.insert(a.name.name.clone());
                     }
                 }
@@ -1394,14 +1404,14 @@ fn merge(
                 ItemKind::Const(c) => {
                     all.insert(c.name.name.clone());
                     kinds.insert(c.name.name.clone(), ItemKindTag::Const);
-                    if c.is_pub {
+                    if exported_name(&c.name.name) {
                         pubs.insert(c.name.name.clone());
                     }
                 }
                 ItemKind::Static(s) => {
                     all.insert(s.name.name.clone());
                     kinds.insert(s.name.name.clone(), ItemKindTag::Static);
-                    if s.is_pub {
+                    if exported_name(&s.name.name) {
                         pubs.insert(s.name.name.clone());
                     }
                 }
@@ -2876,15 +2886,15 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        // No `pub` — private to math.cplus.
+        // Leading `_` — private to math.cplus (v0.0.24 #10 name-based privacy).
         fs::write(
             dir.join("src/math.cplus"),
-            "fn square(n: i32) -> i32 { return n * n; }",
+            "fn _square(n: i32) -> i32 { return n * n; }",
         )
         .unwrap();
         let main_src = r#"
             import "math.cplus" as math;
-            fn main() -> i32 { return math::square(7); }
+            fn main() -> i32 { return math::_square(7); }
         "#;
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
@@ -2908,14 +2918,14 @@ mod tests {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
             dir.join("src/geom.cplus"),
-            "struct Point { x: i32, y: i32 }\n",
+            "struct _Point { x: i32, y: i32 }\n",
         )
         .unwrap();
-        // Slice 4C: cross-file struct literal `g::Point { ... }` now
+        // Slice 4C: cross-file struct literal `g::_Point { ... }` now
         // parses, so the E0403 check fires on the construction site.
         let main_src = r#"
             import "geom.cplus" as g;
-            fn main() -> i32 { let p = g::Point { x: 1, y: 2 }; return 0; }
+            fn main() -> i32 { let p = g::_Point { x: 1, y: 2 }; return 0; }
         "#;
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
@@ -2937,20 +2947,20 @@ mod tests {
         let dir = tmpdir();
         fs::write(dir.join("Cplus.toml"), "[package]\nname=\"x\"").unwrap();
         fs::create_dir_all(dir.join("src")).unwrap();
-        // Struct is pub but method isn't.
+        // Struct is public but the `_new` method is module-private.
         fs::write(
             dir.join("src/geom.cplus"),
             r#"
-            pub struct Point { pub x: i32, pub y: i32 }
+            struct Point { x: i32, y: i32 }
             impl Point {
-                fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
+                fn _new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; }
             }
         "#,
         )
         .unwrap();
         let main_src = r#"
             import "geom.cplus" as g;
-            fn main() -> i32 { let p: g::Point = g::Point::new(1, 2); return 0; }
+            fn main() -> i32 { let p: g::Point = g::Point::_new(1, 2); return 0; }
         "#;
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();
@@ -3070,12 +3080,12 @@ mod tests {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(
             dir.join("src/colors.cplus"),
-            "enum Color { Red, Green, Blue }\n",
+            "enum _Color { Red, Green, Blue }\n",
         )
         .unwrap();
         let main_src = r#"
             import "colors.cplus" as c;
-            fn main() -> i32 { let r: c::Color = c::Color::Red; return 0; }
+            fn main() -> i32 { let r: c::_Color = c::_Color::Red; return 0; }
         "#;
         let main = dir.join("src/main.cplus");
         fs::write(&main, main_src).unwrap();

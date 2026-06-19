@@ -11,7 +11,7 @@
 //
 // Contract: importing this module obligates the app to export the hook
 //
-//     pub extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject)
+//     export extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject)
 //
 // (bionic binds eagerly at System.loadLibrary, so a missing hook fails at
 // library load). The `token` passed to `set_on_click` routes any number of
@@ -24,7 +24,7 @@ extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject);
 
 // The registered JNI target: `static native void nativeOnClick(long, View)`
 // receives (env, class, token, view); forward to the app's hook.
-pub extern fn cplus_av_native_on_click(
+export extern fn cplus_av_native_on_click(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     token: i64,

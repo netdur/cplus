@@ -1289,8 +1289,8 @@ fn cross_module_unknown_item_reports_e0405_g030() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/lib.cplus"),
-        "pub fn real_fn() -> i32 { return 0; }\n\
-         fn hidden_fn() -> i32 { return 1; }\n",
+        "fn real_fn() -> i32 { return 0; }\n\
+         fn _hidden_fn() -> i32 { return 1; }\n",
     )
     .unwrap();
     std::fs::write(
@@ -1300,7 +1300,7 @@ fn cross_module_unknown_item_reports_e0405_g030() {
     .unwrap();
     std::fs::write(
         dir.join("src/private.cplus"),
-        "import \"./lib\" as lib;\nfn main() -> i32 { return lib::hidden_fn(); }\n",
+        "import \"./lib\" as lib;\nfn main() -> i32 { return lib::_hidden_fn(); }\n",
     )
     .unwrap();
     let missing = Command::new(cpc)
@@ -3041,12 +3041,12 @@ fn cross_file_private_fn_emits_e0403() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/math.cplus"),
-        "fn square(n: i32) -> i32 { return n * n; }\n",
+        "fn _square(n: i32) -> i32 { return n * n; }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"./math\" as math;\nfn main() -> i32 { return math::square(7); }\n",
+        "import \"./math\" as math;\nfn main() -> i32 { return math::_square(7); }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -3111,13 +3111,13 @@ fn cross_file_private_field_read_emits_e0403() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/geom.cplus"),
-        // Struct is pub; first field is pub, second isn't.
-        "pub struct Point { pub x: i32, y: i32 }\nimpl Point { pub fn new(x: i32, y: i32) -> Point { return Point { x: x, y: y }; } }\n",
+        // v0.0.24 #10: visibility is name-based — `x` is public, `_y` is private.
+        "pub struct Point { x: i32, _y: i32 }\nimpl Point { pub fn new(x: i32, y: i32) -> Point { return Point { x: x, _y: y }; } }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"./geom\" as g;\nfn main() -> i32 { let p: g::Point = g::Point::new(1, 2); return p.y; }\n",
+        "import \"./geom\" as g;\nfn main() -> i32 { let p: g::Point = g::Point::new(1, 2); return p._y; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -3178,12 +3178,12 @@ fn cross_file_struct_literal_private_field_emits_e0403() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("src/geom.cplus"),
-        "pub struct Point { pub x: i32, y: i32 }\n",
+        "pub struct Point { x: i32, _y: i32 }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
-        "import \"./geom\" as g;\nfn main() -> i32 { let p = g::Point { x: 1, y: 2 }; return 0; }\n",
+        "import \"./geom\" as g;\nfn main() -> i32 { let p = g::Point { x: 1, _y: 2 }; return 0; }\n",
     )
     .unwrap();
     let out = Command::new(cpc)

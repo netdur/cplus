@@ -252,7 +252,11 @@ impl Parser {
         // Optional `pub` prefix (slice 4B). Stays attached to the item that
         // follows; `impl` blocks themselves don't take `pub` (per-method
         // `pub` instead), so a `pub impl` is rejected.
-        let is_pub = self.eat(&TokenKind::Pub);
+        // v0.0.24 #10: `export` marks the C-ABI / linker / header surface
+        // (external linkage + header emission + C-ABI check). Visibility is
+        // name-based now, so `is_pub` no longer gates privacy — it means
+        // "exported". `pub` still sets it transitionally (retired in stage 3).
+        let is_pub = self.eat(&TokenKind::Pub) || self.eat(&TokenKind::Export);
         match self.peek_kind() {
             TokenKind::Fn => self.parse_function(is_pub, attributes),
             // v0.0.3 Phase 5 Slice 5E.1: `async fn` item — `parse_function`
@@ -739,9 +743,11 @@ impl Parser {
     }
 
     fn parse_method(&mut self) -> Result<Method, ParseError> {
-        // Per-method attributes (slice 5ATTR.1) then per-method `pub` (slice 4B).
+        // Per-method attributes (slice 5ATTR.1). v0.0.24 #10: `export` marks a
+        // method for the C-ABI/linker surface; `pub` still sets it (retired in
+        // stage 3). Method privacy is name-based (`_method`).
         let attributes = self.parse_attributes()?;
-        let is_pub = self.eat(&TokenKind::Pub);
+        let is_pub = self.eat(&TokenKind::Pub) || self.eat(&TokenKind::Export);
         // TEXT.1: `unsafe fn` method — call site requires `unsafe { ... }`.
         let is_unsafe = self.eat(&TokenKind::Unsafe);
         // v0.0.4 Phase 4 Slice 4E: `gen` (and `async`, when we land
@@ -1270,15 +1276,15 @@ impl Parser {
             let span = body.span;
             (body, span, true)
         } else {
-            // Plain declaration form: `extern fn name(...);`. `pub` is
-            // meaningful only on definitions (5.C exports). If the user
-            // wrote `pub extern fn name(...);` they likely forgot a body.
+            // Plain declaration form: `extern fn name(...);`. `export` is
+            // meaningful only on definitions (5.C C-ABI exports). If the user
+            // wrote `export extern fn name(...);` they likely forgot a body.
             if is_pub {
                 return Err(self.err_at_peek(
-                    "extern fn — `pub` introduces a C-callable export and requires a body `{ ... }`; a declaration ends in `;` and must not be `pub`",
+                    "extern fn — `export` introduces a C-callable export and requires a body `{ ... }`; a plain declaration ends in `;` and must not be `export`",
                 ));
             }
-            let semi = self.expect(&TokenKind::Semi, "`;` (extern declarations have no body; use `pub extern fn name(...) { body }` to define a C-callable export)")?;
+            let semi = self.expect(&TokenKind::Semi, "`;` (extern declarations have no body; use `export extern fn name(...) { body }` to define a C-callable export)")?;
             // Synthesize an empty block for the body field so every existing
             // AST-walking site keeps working without an Option<Block> migration.
             let body = Block {
@@ -5368,6 +5374,27 @@ mod tests {
         assert!(!f.is_variadic);
         assert_eq!(f.params.len(), 2);
         assert!(!f.body.stmts.is_empty(), "expected a non-empty body");
+    }
+
+    #[test]
+    fn export_keyword_marks_the_c_abi_surface() {
+        // v0.0.24 #10: `export` is the C-ABI / linker / header marker (sets the
+        // exported flag, `is_pub`). It works on the extern-fn C-ABI export form
+        // and on plain items; a plain `export` extern declaration (no body) is
+        // rejected the same as the old `pub` form.
+        let p = parse_src("export extern fn add(a: i32, b: i32) -> i32 { return a + b; }").unwrap();
+        let ItemKind::Function(f) = &p.items[0].kind else { panic!() };
+        assert!(f.is_pub && f.is_extern, "export extern fn must set the exported + extern flags");
+
+        let p2 = parse_src("export fn helper() -> i32 { return 0; }").unwrap();
+        let ItemKind::Function(g) = &p2.items[0].kind else { panic!() };
+        assert!(g.is_pub && !g.is_extern, "export fn must set the exported flag");
+
+        let p3 = parse_src("export struct Handle { fd: i32 }").unwrap();
+        assert!(matches!(&p3.items[0].kind, ItemKind::Struct(s) if s.is_pub));
+
+        // A bodyless `export extern fn ...;` is rejected (declarations aren't exports).
+        assert!(parse_src("export extern fn abs(x: i32) -> i32;").is_err());
     }
 
     #[test]

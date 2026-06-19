@@ -189,14 +189,14 @@ fn ptr_is_null(p: *u8) -> bool {
 // `block_on`'s reactor-integrated drive loop can call them directly.
 // Named at the source level rather than via `#[link_name]` because the
 // link_name attribute is currently honored only on `extern fn`
-// declarations, not on `pub extern fn` export definitions (v0.0.5
+// declarations, not on `export extern fn` export definitions (v0.0.5
 // polish — at which point these can rename via link_name).
-pub extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
+export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
     return;
 }
 
-pub extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
+export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
     return;
 }
@@ -206,7 +206,7 @@ pub extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
 // ident = handle pointer (uintptr_t). On fire, `poll_one_event` reads
 // ident back from the kevent and resumes directly — no waiter table
 // lookup, no separate timer-id allocation.
-pub extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
+export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
     return;
 }
@@ -216,30 +216,30 @@ pub extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
 // before suspending; `notify_completed_v1(this)` runs in every async
 // fn's final_suspend epilogue. See the architecture comment at the
 // top of this file for the full flow.
-pub extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
+export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
     return;
 }
 
-pub extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
+export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
     return;
 }
 
-pub extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
+export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
     return;
 }
 
-pub extern fn stdlib_reactor_drain_pending_v1() -> i32 {
+export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
     return drain_pending();
 }
 
-pub extern fn stdlib_reactor_waiter_count_v1() -> i32 {
+export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
 }
 
-pub extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
+export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     if poll_one_event() {
         return 1 as i32;
     }
